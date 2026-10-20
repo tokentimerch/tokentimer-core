@@ -95,6 +95,7 @@ export function useControlCenterStats() {
   const [data, setData] = useState(
     /** @type {ControlCenterStatsData | null} */ (null)
   );
+  const [dataRevision, setDataRevision] = useState(0);
   const [error, setError] = useState(/** @type {string | null} */ (null));
   const [isUnauthorized, setIsUnauthorized] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -131,6 +132,7 @@ export function useControlCenterStats() {
         if (generation !== loadGenerationRef.current) return;
 
         setData(response?.data ?? null);
+        setDataRevision(value => value + 1);
       } catch (err) {
         if (generation !== loadGenerationRef.current) return;
 
@@ -193,6 +195,7 @@ export function useControlCenterStats() {
 
   return {
     data,
+    dataRevision,
     status,
     isLoading,
     isRefreshing,
@@ -240,7 +243,14 @@ export function useControlCenterListPage(endpointFn, seed) {
   const inFlightRef = useRef(false);
 
   // Reset pagination overlay whenever the stats seed identity changes.
-  const seedKey = `${workspaceId || ''}:${seed.items.length}:${seed.hasMore}:${seed.items[0]?.id || ''}`;
+  const seedKey = `${workspaceId || ''}:${seed.items.length}:${seed.hasMore}:${seed.items[0]?.id || ''}:${seed.refreshToken || 0}`;
+  const requestGenerationRef = useRef(0);
+  const workspaceRef = useRef(workspaceId);
+  if (workspaceRef.current !== workspaceId) {
+    workspaceRef.current = workspaceId;
+    requestGenerationRef.current += 1;
+    inFlightRef.current = false;
+  }
   if (seedKeyRef.current !== seedKey) {
     seedKeyRef.current = seedKey;
     if (pageItems !== null || pageHasMore !== null || error !== null) {
@@ -255,6 +265,8 @@ export function useControlCenterListPage(endpointFn, seed) {
 
   const loadMore = useCallback(async () => {
     if (!workspaceId || inFlightRef.current || !hasMore) return;
+    const generation = ++requestGenerationRef.current;
+    const requestedWorkspace = workspaceId;
     inFlightRef.current = true;
     setIsLoadingMore(true);
     setError(null);
@@ -263,6 +275,12 @@ export function useControlCenterListPage(endpointFn, seed) {
         params: { limit: PAGINATED_LIST_PAGE_SIZE, offset: items.length },
         _suppressLog: true,
       });
+      if (
+        generation !== requestGenerationRef.current ||
+        workspaceRef.current !== requestedWorkspace
+      ) {
+        return;
+      }
       const page = response?.data || {};
       const nextItems = Array.isArray(page.items) ? page.items : [];
       setPageItems(prev => {
@@ -273,14 +291,17 @@ export function useControlCenterListPage(endpointFn, seed) {
       });
       setPageHasMore(Boolean(page.hasMore));
     } catch (err) {
+      if (generation !== requestGenerationRef.current) return;
       const message =
         err?.response?.data?.error ||
         err?.message ||
         'Failed to load more items';
       setError(message);
     } finally {
-      inFlightRef.current = false;
-      setIsLoadingMore(false);
+      if (generation === requestGenerationRef.current) {
+        inFlightRef.current = false;
+        setIsLoadingMore(false);
+      }
     }
   }, [workspaceId, hasMore, items.length, endpointFn, seed.items]);
 

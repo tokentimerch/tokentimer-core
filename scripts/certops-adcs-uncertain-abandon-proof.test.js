@@ -3,7 +3,36 @@
  * submitting/recovery/abandon qualification requires the disposable forest. */
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { assertProof, validateDisposableCaAddress, recoveryWaitBudget } = require("../tests/e2e/helpers/certops-adcs-uncertain-abandon");
+const { assertProof, validateDisposableCaAddress, recoveryWaitBudget, createOwnedRecoverySuspension } = require("../tests/e2e/helpers/certops-adcs-uncertain-abandon");
+
+test("fault suspension restores exact production SCM policy even after a failed disable", () => {
+  for (const failDisable of [false, true]) {
+    const original={actions:Buffer.from("native-installer-policy").toString("base64"),nonCrash:1};
+    let current=original;const commands=[];
+    const controller=createOwnedRecoverySuspension({readPolicy:()=>({...current}),command:(exe,args)=>{
+      assert.equal(exe,"sc.exe");commands.push(args);
+      if(args[3]==="0"){current={...original,actions:"disabled"};if(failDisable)throw Error("SCM response interrupted");}
+      else current=original;
+    }});
+    if(failDisable)assert.throws(()=>controller.suspend(),/interrupted/);else controller.suspend();
+    assert.equal(controller.restore(),true);assert.deepEqual(current,original);
+    assert.deepEqual(commands.map(args=>args.slice(2)),[["reset=","0","actions=",""],["reset=","86400","actions=","restart/5000"]]);
+    assert.equal(controller.restore(),false);
+  }
+});
+
+test("SCM restore refuses changed ownership and cannot claim different restored bytes", () => {
+  const original={actions:"cHJvZHVjdGlvbg==",nonCrash:1};let changed=false;let restores=0;
+  const controller=createOwnedRecoverySuspension({readPolicy:()=>{if(changed)throw Error("Foreign service");return original;},command:()=>{restores++;}});
+  controller.suspend();changed=true;assert.throws(()=>controller.restore(),/Foreign service/);assert.equal(restores,1);
+  let reads=0;
+  const mismatch=createOwnedRecoverySuspension({readPolicy:()=>++reads<3?original:{...original,actions:"wrong"},command:()=>{}});
+  mismatch.suspend();assert.throws(()=>mismatch.restore(),/captured installer bytes/);
+  for(const policy of [{actions:null,nonCrash:1},{actions:"",nonCrash:1},{...original,nonCrash:0}]){
+    const unsafe=createOwnedRecoverySuspension({readPolicy:()=>policy,command:()=>assert.fail("Unsafe policy changed")});
+    assert.throws(()=>unsafe.suspend());assert.equal(unsafe.restore(),false);
+  }
+});
 function fixture() {
   return { scope: "native-zero-request-uncertain-abandon", ownedTransportBlock: true,
     resolvedIssuingCaAddress: "10.64.0.4", ownedObserverDrained: true,

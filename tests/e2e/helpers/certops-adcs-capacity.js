@@ -55,8 +55,9 @@ async function qualifyCapacity(context) {
     // Identity/membership prerequisite only. Every decision uses the real public approval route.
     await query("INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,'workspace_manager')", [fixture.workspaceId, approver.userId]); flags.distinctAuthorizedApprover = true;
     for (const [index, domain] of domains(run).entries()) {
-      const item = { domain, site: `TTAdcsCapacity${run}${index}`, port: await freePort(), certificateId: crypto.randomUUID() }, directory = path.join(workDir, `capacity${index}`);
-      fs.mkdirSync(directory); fs.writeFileSync(path.join(directory, "index.html"), "Owned capacity fixture"); ownedSites.push(item.site); ownedCertificateIds.push(item.certificateId); items.push(item);
+      const item = { domain, site: `TTAdcsCapacity${run}${index}`, port: await freePort() }, directory = path.join(workDir, `capacity${index}`);
+      item.certificateId = await require("./certops-adcs-local-rules").provisionSurvivorSource({ fixture, agentRowId, domain, site: item.site, port: item.port, ownedCertificateIds });
+      fs.mkdirSync(directory); fs.writeFileSync(path.join(directory, "index.html"), "Owned capacity fixture"); ownedSites.push(item.site); items.push(item);
       // The parent must install a store-qualified cleanup guard BEFORE public
       // dispatch, including partial native acceptance without a result/TLS.
       item.cleanup = registerOwnedStoreCertificate({ store: "My", domain, certificateId: item.certificateId });

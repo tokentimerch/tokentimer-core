@@ -6,17 +6,20 @@
  */
 const fs=require("node:fs");
 const assert=require("node:assert/strict");
+const {verifyCandidateProof}=require("../tests/e2e/helpers/certops-adcs-response-loss-candidates");
 function verify(report,candidate){
   assert.equal(report.scope,"enterprise-adcs-response-loss-experimental");
   assert.equal(report.qualificationStatus,"not-qualified");
   assert.equal(report.status,"passed");
   assert.match(candidate,/^[a-f0-9]{40}$/);assert.equal(report.candidateSha,candidate);
   assert.equal(report.fault?.caRequestObserved,true);assert.equal(report.fault?.ownedServiceTree,true);
-  assert.ok(Number.isInteger(report.fault.requestId)&&report.fault.requestId>0);
+  assert.ok(Number.isInteger(report.fault.requestId)&&report.fault.requestId>0&&report.fault.requestId<=0xffffffff);
   assert.ok(Number.isInteger(report.fault.killedProcessId)&&report.fault.killedProcessId>0);
   assert.equal(report.fault.fault,"real-native-certreq-termination-after-CA-observation");
   assert.equal(report.foreignRequestRefused,true);
   assert.equal(report.recoveredOwnedKey,true);
+  verifyCandidateProof(report.candidateSearch);
+  assert.equal(report.candidateSearch.requestIds[0],String(report.fault.requestId));
   return true;
 }
 module.exports={verify};

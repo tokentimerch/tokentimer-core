@@ -1,12 +1,7 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-18 for the integrated AD CS, distribution and real-host
-qualification candidate targeting **0.18.0**. Released agent capabilities remain
-gated until independent real-host qualification passes; lifecycle testing
-infrastructure and coverage remain in progress. Dropped the optional
-already-expired-import notification ask
-([#231](https://github.com/tokentimerch/tokentimer-core/issues/231));
-quiet historical imports stay the default without a toggle.
+Last reviewed: 2026-10-21 after integrating the 0.18.0 release.
+Certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -47,8 +42,9 @@ called stable while they are open.
   never stores private keys. Shared-key Vault mode is explicit opt-in.
   [PR #329](https://github.com/tokentimerch/tokentimer-core/pull/329) adds
   customer Vault publication and independent consumer rollouts for any shared
-  certificate, including ordinary and wildcard certificates. Agent capabilities
-  remain gated pending qualification; this item is still open.
+  certificate, including ordinary and wildcard certificates, shipped in 0.18.0
+  (see [CHANGELOG.md](CHANGELOG.md)); the remaining destination scope stays
+  open on the issue.
 - **Shared outbound policy**
   ([#233](https://github.com/tokentimerch/tokentimer-core/issues/233)).
   Wire offline mode and outbound allowlists into API and worker egress.
@@ -81,26 +77,6 @@ called stable while it is open.
   Implementation and focused local evidence are separate from hosted
   execution and release qualification; see
   [the qualification guide](docs/certops/e2e-qualification.md).
-
-- **AD CS issuer for the Windows agent**
-  ([#321](https://github.com/tokentimerch/tokentimer-core/issues/321)).
-  Goal: issue and renew IIS certificates from an enterprise AD CS CA,
-  including templates that need CA-manager approval. The key stays on
-  the host and the agent authenticates as its machine account.
-  Contracts ([#322](https://github.com/tokentimerch/tokentimer-core/pull/322)),
-  CNG path ([#326](https://github.com/tokentimerch/tokentimer-core/pull/326)),
-  CMC adapter ([#337](https://github.com/tokentimerch/tokentimer-core/pull/337)),
-  inert executor wiring ([#339](https://github.com/tokentimerch/tokentimer-core/pull/339)),
-  and issued-certificate validation before accept
-  ([#342](https://github.com/tokentimerch/tokentimer-core/pull/342)) are on `main`.
-  Durable enrollment journal recovery
-  ([#343](https://github.com/tokentimerch/tokentimer-core/pull/343)) and
-  control-plane enrollment records, continuation scheduling, and issuer
-  preflight ([#345](https://github.com/tokentimerch/tokentimer-core/pull/345))
-  are on `main`. Operator UI and enrollment completion target **0.18.0**
-  (`feat/adcs-dashboard`). The agent contacts a CA only when a local
-  enrollment rule names that CA and template, and only when it has
-  declared `adcs-enroll-v1`.
 
 ---
 

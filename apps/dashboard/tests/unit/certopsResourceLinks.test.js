@@ -12,6 +12,18 @@ const AGENT_ID = '22222222-2222-4222-8222-222222222222';
 const ANCHOR_ID = '33333333-3333-4333-8333-333333333333';
 
 describe('certopsResourceLinks', () => {
+  it('preserves the source workspace across job, certificate and agent navigation', () => {
+    const workspaceId = '44444444-4444-4444-8444-444444444444';
+    expect(jobSubjectHref('managed_certificate', CERT_ID, workspaceId)).toBe(
+      `/certops/certificates?certificateId=${CERT_ID}&workspace=${workspaceId}`
+    );
+    expect(jobSubjectHref('trust_anchor', ANCHOR_ID, workspaceId)).toContain(
+      `&workspace=${workspaceId}`
+    );
+    expect(jobAgentHref(AGENT_ID, workspaceId)).toContain(
+      `&workspace=${workspaceId}`
+    );
+  });
   it('accepts only UUID resource identifiers', () => {
     expect(isCertOpsResourceId(CERT_ID)).toBe(true);
     expect(isCertOpsResourceId('cert-alpha')).toBe(false);
@@ -35,9 +47,7 @@ describe('certopsResourceLinks', () => {
   });
 
   it('builds agent deep links from agent ids', () => {
-    expect(jobAgentHref(AGENT_ID)).toBe(
-      `/certops/agents?agentId=${AGENT_ID}`
-    );
+    expect(jobAgentHref(AGENT_ID)).toBe(`/certops/agents?agentId=${AGENT_ID}`);
     expect(jobAgentHref('agent-1')).toBeNull();
   });
 

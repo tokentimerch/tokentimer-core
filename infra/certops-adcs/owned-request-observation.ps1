@@ -5,14 +5,17 @@ public observations.
 #>
 param([Parameter(Mandatory)][ValidatePattern('^certops-adcs-[a-f0-9]+-(?:[a-z0-9]+|issuer-switch)\.example\.test$')][string]$CommonName,
   [ValidateRange(0,4294967295)][long]$RequestId=0,
-  [switch]$Discover)
+  [switch]$Discover,
+  [switch]$AllowMissing)
 $ErrorActionPreference='Stop'
 if((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test'){throw 'Observation requires isolated qualification forest'}
 if(-not $env:CERTOPS_ADCS_OFFICER_PASSWORD){throw 'Isolated officer credential absent'}
 if(-not $Discover -and $RequestId -lt 1){throw 'An exact request identifier is required'}
 $credential=[PSCredential]::new('TTQUAL\tt-lab-admin',(ConvertTo-SecureString $env:CERTOPS_ADCS_OFFICER_PASSWORD -AsPlainText -Force))
-Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -ArgumentList $CommonName,$RequestId,[bool]$Discover -ScriptBlock {
-  param([string]$CommonName,[long]$RequestId,[bool]$Discover)
+# Evaluate casts before argument-mode parsing; bare [bool] casts become strings
+# and fail the remote ScriptBlock's Boolean parameter binding.
+Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -ArgumentList $CommonName,$RequestId,([bool]$Discover),([bool]$AllowMissing) -ScriptBlock {
+  param([string]$CommonName,[long]$RequestId,[bool]$Discover,[bool]$AllowMissing)
   $ErrorActionPreference='Stop'
   $view=New-Object -ComObject CertificateAuthority.View
   try {
@@ -40,6 +43,7 @@ Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -A
       if($Discover -or [long]$values[0] -eq $RequestId){$matched++;$disposition=[int]$values[3];if($Discover){$RequestId=[long]$values[0]}}
     }
     if($Discover -and $count -eq 0){@{subjectRequestCount=0;requestId=$null;disposition=$null}|ConvertTo-Json -Compress;return}
+    if($AllowMissing -and -not $Discover -and $matched -eq 0){@{subjectRequestCount=$count;requestId=$RequestId;disposition=$null;requestAbsent=$true}|ConvertTo-Json -Compress;return}
     if($matched -ne 1){throw 'Expected exactly one owned CA RequestId'}
     @{subjectRequestCount=$count;requestId=$RequestId;disposition=$disposition}|ConvertTo-Json -Compress
   } finally { if($view){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)} }

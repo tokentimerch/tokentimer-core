@@ -18,9 +18,11 @@ The journey uses public HTTP routes with session cookies and CSRF tokens. It cre
 ```powershell
 # Use the SAME project for every action; choose a fresh name for a fresh run.
 $project = 'tt-wildcard-ux-my-run'
-# Current workstation has the dependency images cached:
+# Reuse dependency images if the default tags are cached:
 ./tests/wildcard-vault/ux-lab/run.ps1 -Action Up -Project $project -BasePort 60800
-./tests/wildcard-vault/ux-lab/run.ps1 -Action Test -Project $project
+# Preserve the active source workspace for UI review:
+./tests/wildcard-vault/ux-lab/run.ps1 -Action Test -Project $project -Phase functional
+./tests/wildcard-vault/ux-lab/run.ps1 -Action Test -Project $project -Phase observations
 ./tests/wildcard-vault/ux-lab/run.ps1 -Action Status -Project $project
 
 # Elsewhere, build isolated lab image tags first:
@@ -33,6 +35,14 @@ $project = 'tt-wildcard-ux-my-run'
 Use a fresh `-Project tt-wildcard-ux-your-run` consistently for Up/Test/Status/Stop. The script default identifies a historical run; choose a new name for your test. `Up` refuses existing containers or journey evidence. Do not use global Docker cleanup or attach this stack to the manual audit database. Vault dev mode and Pebble are volatile: retaining the database volume does **not** preserve Vault objects after restart. A fresh project is required for a fresh replay.
 
 `Up` builds the current dashboard. API, worker, and package source are mounted read-only from this checkout; cached images supply dependencies. Cached defaults are `tt-wildcard-core-api:20261008`, `localhost:58600/core-worker:20261008`, and `tt-wildcard-vault-fixture:20261008`. `-BuildImages` uses dedicated project-specific tags instead. This is source-mounted functional testing, not validation of newly built production images.
+
+Pass `-ApiImage`, `-WorkerImage` and `-CustomerImage` on `Up` to select existing dependency tags explicitly. Their names are retained in this project's ignored `runtime-images.json`. Reusing an image does not attach its original lab's containers or volumes.
+
+`functional` runs the functional phases and leaves workspace transfer out. `all` retains the original destructive journey ending in transfer and is unsuitable for a lab kept for manual distribution review. The `observations` phase first records the actual identity locations, performs trusted TLS handshakes against both services, enables normal agent filesystem discovery on both hosts, and waits for genuine observations at `/lab/nginx/cert.pem` and `/lab/haproxy/cert.pem`. It writes no inventory rows or receipts. Run it after functional deployment. A SAN-only certificate can have an empty subject, so discovery evidence retains a null subject while identifying the certificate by fingerprint and SANs.
+
+## Distribution visibility
+
+Distribution receipts and independently discovered locations have separate provenance. Successful distribution alone does not add an Observed locations row. The lab's trusted deployment receipts establish rollout verification. Agent discovery establishes a separate stored-copy observation. A TLS endpoint monitor, when configured and reachable, establishes an independent service observation. All identity linkage uses an exact fingerprint in the workspace.
 
 `Test` leaves the lab running on success or failure and returns failure when an assertion/API fails. Evidence is in `.scratch/<Project>/`: `report.json`, `journey-state.json`, `http-transcript.jsonl`, and build/journey logs. HTTP transcripts omit bodies, cookies, tokens, and verification links. Customer-side credentials/keys stay in the lab volume with protected file modes. State contains synthetic identities and public certificate/key hashes only. Completed phases can be resumed with `-Action Test -Phase <phase>`; do not run phases concurrently. A partially executed phase may require a fresh project.
 

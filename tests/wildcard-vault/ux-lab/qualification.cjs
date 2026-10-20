@@ -63,7 +63,7 @@ function createGate({ root, candidateSha, mode }) {
     experimental: true,
     qualificationStatus: "not-qualified",
     databaseInjection: false,
-    qualificationScope: "source-mounted-enrolled-agent-lab",
+    qualificationScope: process.env.TT_UX_PACKAGE_ACCEPTANCE === "1" ? "packaged-enrolled-agent-lab" : "source-mounted-enrolled-agent-lab",
     allFeaturesQualified: false,
   });
   gate.report.qualificationEnvironment.certificateMode = mode;
@@ -358,7 +358,28 @@ async function extend(c) {
   assert.equal((await job(rollback.id)).status, "pending_approval");
   await approve(rollback.id);
   await terminal(rollback.id);
-  await converge();
+  // The matrix reports `converged` only for the managed period's current
+  // identity. A rollback to the retained pre-renewal identity is observed and
+  // accepted by every consumer but is deliberately not "converged", so wait
+  // for the observed rollback proof instead.
+  await wait("consumers accept and observe the rolled-back version", async () => {
+    const rows = await matrix();
+    return state.bindings.every((b) => {
+      const row = rows.find((x) => x.binding_id === b.id);
+      return (
+        row &&
+        row.observed_material_version_id === initial.id &&
+        row.accepted_generation === row.desired_generation &&
+        row.stale === false
+      );
+    })
+      ? rows
+      : false;
+  });
+  assert.ok(
+    (await matrix()).every((row) => row.converged !== true),
+    "a rolled-back retired identity must not report converged",
+  );
   await externalProof(initial);
   assert.deepEqual(
     immutable((await versions()).find((v) => v.id === initial.id)),

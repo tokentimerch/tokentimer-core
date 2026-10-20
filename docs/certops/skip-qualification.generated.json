@@ -162,6 +162,16 @@
       "workflowStatus": "exact-site-execution-not-configured"
     },
     {
+      "id": "9dd82ec990cd4e0a09af",
+      "file": "packages/agent/src/acme/acme.test.js",
+      "line": 250,
+      "name": "POSIX hook executes non-executable archive bytes with spaces and quotes in the path",
+      "kind": "test(..., { skip }) option-object",
+      "environment": "linux-filesystem",
+      "workflow": null,
+      "workflowStatus": "exact-site-execution-not-configured"
+    },
+    {
       "id": "b124fed978bfca4e5929",
       "file": "packages/agent/src/config/config.test.js",
       "line": 121,
@@ -432,6 +442,16 @@
       "name": "reports real subjectAltNames end-to-end from the certificate's raw bytes",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures"
+    },
+    {
+      "id": "b45f65881e8f3ba572b1",
+      "file": "packages/agent/src/index.test.js",
+      "line": 4036,
+      "name": "refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities",
+      "kind": "it(..., { skip }) option-object",
+      "environment": "prerequisite-review",
+      "workflow": null,
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "ccf2a2554645cc1020e6",

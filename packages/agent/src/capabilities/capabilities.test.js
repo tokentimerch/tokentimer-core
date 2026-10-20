@@ -31,28 +31,22 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
     );
   });
 
-  it("does not qualify adcs-enroll-v1 in the shipped manifest", () => {
+  it("qualifies adcs-enroll-v1 in the shipped manifest", () => {
     const manifest = loadQualifiedCapabilitiesManifest();
-    assert.equal(manifest.qualified.includes("adcs-enroll-v1"), false);
+    assert.equal(manifest.qualified.includes("adcs-enroll-v1"), true);
   });
 
-  it("keeps AD CS and distribution implemented but absent from production advertisement", () => {
+  it("advertises AD CS and distribution capabilities once the manifest qualifies them", () => {
     const candidates = ["adcs-enroll-v1", "material-store-vault-kv2-v1", "certificate-publication-v1", "deploy-from-store-v1"];
-    assert.deepEqual(filterQualifiedCapabilities(candidates), []);
+    assert.deepEqual([...filterQualifiedCapabilities(candidates)].sort(), [...candidates].sort());
   });
 
-  it("ships with all three gated capabilities qualified after real-host verification (Windows, Debian/Ubuntu, RHEL/AlmaLinux)", () => {
-    // windows-cert-store-v1 and iis-binding-v1 passed real-host verification
-    // against a real Windows Server host (CNG key custody, IIS binding,
-    // retention, and discovery). trust-anchor-deploy-v1 passed real-host
-    // verification for distribute-trust/revoke-trust against a real Windows
-    // Server host, a Debian/Ubuntu host, and a RHEL/AlmaLinux host.
+  it("ships with all seven gated capabilities qualified after real-host verification", () => {
+    // The original three passed Windows Server, Debian/Ubuntu and
+    // RHEL/AlmaLinux verification. AD CS enrollment and Vault distribution
+    // were qualified by the 0.18.0 release campaigns.
     const manifest = loadQualifiedCapabilitiesManifest();
-    assert.deepEqual([...manifest.qualified].sort(), [
-      "iis-binding-v1",
-      "trust-anchor-deploy-v1",
-      "windows-cert-store-v1",
-    ]);
+    assert.deepEqual([...manifest.qualified].sort(), [...GATED_CAPABILITIES].sort());
   });
 
   it("advertises all three real-host-verified gated capabilities plus any ungated candidate", () => {
@@ -182,11 +176,7 @@ describe("qualified-capabilities loader startup rejection (defense in depth agai
 
     _resetQualifiedCapabilitiesCacheForTests();
     const manifest = loadQualifiedCapabilitiesManifest();
-    assert.deepEqual([...manifest.qualified].sort(), [
-      "iis-binding-v1",
-      "trust-anchor-deploy-v1",
-      "windows-cert-store-v1",
-    ]);
+    assert.deepEqual([...manifest.qualified].sort(), [...GATED_CAPABILITIES].sort());
   });
 });
 

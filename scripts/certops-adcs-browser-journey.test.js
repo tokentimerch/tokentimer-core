@@ -164,7 +164,10 @@ test("native browser sources exist and optional bootstrap scripts preserve owned
     path.resolve(__dirname, "../infra/certops-adcs/browser-api-trust.ps1"),
     "utf8",
   );
-  assert.ok(trust.includes("'Root','CurrentUser'"));
+  assert.ok(trust.includes("'Root','LocalMachine'"));
+  assert.ok(trust.includes("$env:CERTOPS_ADCS_DISPOSABLE_LAB -ne '1'"));
+  assert.ok(trust.includes("User.Value -ne 'S-1-5-18'"));
+  assert.ok(trust.includes("$owned.storeLocation -cne 'LocalMachine'"));
   assert.ok(trust.includes("if($owned.added)"));
   assert.ok(trust.includes("$store.Remove($entry)"));
 });
@@ -193,11 +196,50 @@ test("comprehensive browser integration is mandatory outside isolated issuer, el
   assert.ok(guest.includes("}else{ & $runtime.node --test tests/e2e/certops-adcs-real-e2e.test.js }"));
 });
 
-test("CA confirmation selects the independently current visible key group despite historical ordering", () => {
-  const certificate=(key,body,date)=>({keySha256:key,certificateB64:Buffer.from(body).toString("base64"),thumbprintSha1:crypto.createHash("sha1").update(body).digest("hex").toUpperCase(),notBefore:date});
-  const current="a".repeat(64),historical="b".repeat(64);
-  const old=certificate(historical,"historical-public-der","2030-01-01"),first=certificate(current,"current-earlier-public-der","2025-01-01"),latest=certificate(current,"current-renewed-public-der","2026-01-01");
-  assert.equal(helper.currentAuthorityGroup([old,first,latest],current),latest);
-  assert.throws(()=>helper.currentAuthorityGroup([old],current));
-  assert.throws(()=>helper.currentAuthorityGroup([{...latest,thumbprintSha1:"0".repeat(40)}],current));
+test("CA confirmation uses public metadata without DER and verifies the independently observed native key", () => {
+  const ca=new crypto.X509Certificate(fs.readFileSync(path.join(__dirname,"../packages/agent/reference/adcs-cmc/testdata/ca.cer")));
+  const current=crypto.createHash("sha256").update(ca.publicKey.export({type:"spki",format:"der"})).digest("hex");
+  const native={certificateB64:ca.raw.toString("base64")};
+  const old={keySha256:"b".repeat(64),thumbprintSha1:"b".repeat(40),notBefore:"2030-01-01"};
+  const first={keySha256:current,thumbprintSha1:"c".repeat(40),notBefore:"2025-01-01"};
+  const latest={keySha256:current,thumbprintSha1:crypto.createHash("sha1").update(ca.raw).digest("hex").toUpperCase(),notBefore:"2026-01-01"};
+  assert.equal(latest.certificateB64,undefined,"Actual public issuer shape contains no DER");
+  assert.equal(helper.currentAuthorityGroup([old,first,latest],current,native),latest);
+  assert.throws(()=>helper.currentAuthorityGroup([old],current,native));
+  assert.throws(()=>helper.currentAuthorityGroup([{...latest,thumbprintSha1:"0".repeat(40)}],current,native));
+  assert.throws(()=>helper.currentAuthorityGroup([latest],"0".repeat(64),native));
+  assert.throws(()=>helper.currentAuthorityGroup([latest],current,{certificateB64:Buffer.from("wrong DER").toString("base64")}));
+  assert.throws(()=>helper.currentAuthorityGroup([latest],current,{}));
+});
+
+test("package worker proof stays distinct from focused default-sweep qualification", () => {
+  const proof = { ...valid(), scheduler: "production-maintenance-worker" };
+  assert.throws(() => helper.verifyProof(proof));
+  assert.equal(helper.verifyProof(proof, { workerDriven: true }), true);
+  assert.throws(() => helper.verifyProof(valid(), { workerDriven: true }));
+  assert.throws(() => helper.verifyProof({ ...proof, scheduler: "background-worker-loop" }, { workerDriven: true }));
+});
+
+test("native CA isolation runs before package acceptance adds another pass's requests",()=>{
+  const provision=fs.readFileSync(path.resolve(__dirname,"../infra/certops-adcs/provision-lab.ps1"),"utf8");
+  const focused=provision.indexOf("'CERTOPS_STAGE=real-enterprise-adcs-tests-passed'");
+  const packaged=provision.indexOf("'CERTOPS_STAGE=operator-package-acceptance-passed'");
+  assert.ok(focused>0 && focused<packaged);
+  assert.ok(fs.readFileSync(path.resolve(__dirname,"../infra/certops-adcs/owned-ca-checkpoint.ps1"),"utf8").includes("Foreign agent request encountered in isolated checkpoint"));
+});
+
+test("actual native cleanup accounts for only dispatched browser preflights after an earlier failure",async()=>{
+ const source=fs.readFileSync(path.join(__dirname,"../tests/e2e/certops-adcs-real-e2e.test.js"),"utf8");
+ const body=source.match(/await clean\(async\(\)=>\{(const measured=Number[\s\S]*?gate\.report\.primaryNativePreflightDispatchCount=measured;)\}\);/)[1];
+ const execute=new (Object.getPrototypeOf(async function(){}).constructor)("fixture","assert","primaryPreflightCount","elapsedPending","issuerSwitch","ownedBrowserPreflightJobIds","gate",body);
+ const ids=["11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222"];
+ async function check({count,failed=true,orphan=false,foreign=false,duplicate=false}){
+  const owned=ids.slice(0,count);if(duplicate)owned.push(owned[0]);const gate={report:failed?{originalFailure:{errorClass:"AssertionError"}}:{}};
+  const fixture={workspaceId:"owned",pool:{async query(sql,args){assert.equal(args[0],"owned");if(sql.includes("count(*)"))return {rows:[{count:2+owned.length+(orphan?1:0)}]};assert.deepEqual(args[1],owned);return {rows:owned.map(id=>({id:foreign?"33333333-3333-4333-8333-333333333333":id}))};}}};
+  await execute(fixture,assert,2,false,false,owned,gate);return gate.report;
+ }
+ for(const count of [0,1,2]){const report=await check({count});assert.equal(report.browserNativePreflightDispatch.count,count);assert.equal(report.primaryNativePreflightDispatchCount,2+count);assert.ok(report.originalFailure);}
+ await assert.rejects(check({count:0,failed:false}));await assert.rejects(check({count:1,failed:false}));
+ assert.equal((await check({count:2,failed:false})).browserNativePreflightDispatch.count,2);
+ await assert.rejects(check({count:0,orphan:true}));await assert.rejects(check({count:1,foreign:true}));await assert.rejects(check({count:1,duplicate:true}));
 });

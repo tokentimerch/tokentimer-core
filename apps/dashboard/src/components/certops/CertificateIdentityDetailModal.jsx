@@ -24,6 +24,7 @@ import DashboardDetailsSection from '../DashboardDetailsSection.jsx';
 import CopyableId from '../CopyableId.jsx';
 import CertificateDetailsModal from './CertificateDetailsModal.jsx';
 import {
+  getCertificate,
   getCertificateIdentity,
   getManagedCertificatesForToken,
   listCertOpsRenewalProfiles,
@@ -87,6 +88,7 @@ export default function CertificateIdentityDetailModal({
   onClose,
   canManage,
   onChanged,
+  focusDeployments = false,
 }) {
   const [detail, setDetail] = useState(null);
   const [token, setToken] = useState(null);
@@ -100,11 +102,28 @@ export default function CertificateIdentityDetailModal({
   const [showLocationHistory, setShowLocationHistory] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [selectedSourceId, setSelectedSourceId] = useState('');
+  const latestSourceById = new Map();
+  for (const source of detail?.sources || []) {
+    const previous = latestSourceById.get(source.managedCertificateId);
+    if (!previous || new Date(source.startedAt) > new Date(previous.startedAt))
+      latestSourceById.set(source.managedCertificateId, source);
+  }
+  const sourceOptions = [...latestSourceById.values()];
+  const selectedManagedId =
+    selectedSourceId ||
+    (sourceOptions.length === 1
+      ? sourceOptions[0].managedCertificateId
+      : sourceOptions.length
+        ? null
+        : detail?.managedCertificateId ||
+          (!detail?.identityId ? detail?.id : null));
 
   useEffect(() => {
     if (!isOpen || !workspaceId || !certificate) return undefined;
     let active = true;
     setDetail(certificate);
+    setSelectedSourceId(certificate.selectedManagedCertificateId || '');
     setToken(null);
     setCertificateFields(null);
     setError('');
@@ -166,8 +185,41 @@ export default function CertificateIdentityDetailModal({
         ),
         ...detail.certificateSnapshot,
       };
-      setCertificateFields(identityFields);
+      setCertificateFields(
+        sourceOptions.length <= 1
+          ? identityFields
+          : detail.certificateSnapshot || null
+      );
       setTokenError('');
+      if (!tokenId && sourceOptions.length > 1 && selectedManagedId) {
+        let active = true;
+        getCertificate(workspaceId, selectedManagedId)
+          .then(data => {
+            const matching = data?.certificate || data;
+            const normalize = value =>
+              String(value || '')
+                .replace(/:/g, '')
+                .toLowerCase();
+            if (
+              active &&
+              matching?.id === selectedManagedId &&
+              normalize(matching.fingerprintSha256) ===
+                normalize(detail.fingerprintSha256)
+            ) {
+              setCertificateFields({
+                ...matching,
+                ...detail.certificateSnapshot,
+              });
+            }
+          })
+          .catch(() => {
+            if (active)
+              setError('Selected registration details could not be loaded.');
+          });
+        return () => {
+          active = false;
+        };
+      }
       if (!tokenId || !detail.tokenSnapshot || detail.managed === false)
         return undefined;
       let active = true;
@@ -187,10 +239,19 @@ export default function CertificateIdentityDetailModal({
               .toLowerCase();
           const matching = (certificates || []).find(
             item =>
+              item.id === selectedManagedId &&
               normalize(item.fingerprintSha256) ===
-              normalize(detail.fingerprintSha256)
+                normalize(detail.fingerprintSha256)
           );
-          setCertificateFields({ ...matching, ...identityFields });
+          setCertificateFields(
+            selectedManagedId || sourceOptions.length <= 1
+              ? {
+                  ...identityFields,
+                  ...matching,
+                  ...detail.certificateSnapshot,
+                }
+              : detail.certificateSnapshot || null
+          );
           setContactGroups(
             Array.isArray(settings?.contact_groups)
               ? settings.contact_groups
@@ -241,11 +302,7 @@ export default function CertificateIdentityDetailModal({
             : String(item.id) === String(detail?.managedCertificateId)
         );
         setCertificateFields(
-          matching.find(
-            item => String(item.id) === String(detail?.managedCertificateId)
-          ) ||
-            matching[0] ||
-            null
+          matching.find(item => item.id === selectedManagedId) || null
         );
         setContactGroups(
           Array.isArray(settings?.contact_groups) ? settings.contact_groups : []
@@ -261,7 +318,14 @@ export default function CertificateIdentityDetailModal({
     return () => {
       active = false;
     };
-  }, [isOpen, tokenId, workspaceId, detail]);
+  }, [
+    isOpen,
+    tokenId,
+    workspaceId,
+    detail,
+    selectedManagedId,
+    sourceOptions.length,
+  ]);
 
   const refresh = async () => {
     if (!certificate.identityId) {
@@ -357,20 +421,13 @@ export default function CertificateIdentityDetailModal({
       );
   const hiddenPeriodCount =
     (detail.sources || []).length - visibleSources.length;
-  // Job history keys off managed-certificate id. Deep links from jobs often
-  // open without token enrichment, so certificateFields may be null; fall
-  // back to the identity's managedCertificateId / source ids. Never use
-  // detail.id when identityId is set: that id is the identity, not the subject.
-  const managedCertificateId =
-    certificateFields?.id ||
-    detail.managedCertificateId ||
-    (detail.sources || [])
-      .map(source => source.managedCertificateId || source.id)
-      .find(Boolean) ||
-    (!detail.identityId ? detail.id : null) ||
-    null;
+  // Job history and deployment details follow an explicitly selected registration.
+  // An immutable identity ID is never a managed certificate ID.
+  const managedCertificateId = selectedManagedId;
   const certificateFacts = {
-    ...certificateFields,
+    ...(certificateFields?.id && certificateFields.id !== managedCertificateId
+      ? detail.certificateSnapshot
+      : certificateFields),
     ...(managedCertificateId ? { id: managedCertificateId } : {}),
     lifecycleStatus: detail.lifecycleStatus,
     lifecycleDisplay: detail.lifecycleDisplay,
@@ -402,6 +459,25 @@ export default function CertificateIdentityDetailModal({
   ]);
   const identityPanel = (
     <VStack align='stretch' spacing={6} mb={6}>
+      {sourceOptions.length > 1 ? (
+        <Select
+          aria-label='Management registration to inspect'
+          value={selectedSourceId}
+          onChange={event => setSelectedSourceId(event.target.value)}
+        >
+          <option value=''>Select a management registration</option>
+          {sourceOptions.map((source, index) => (
+            <option
+              key={source.managedCertificateId}
+              value={source.managedCertificateId}
+            >
+              {sourceLabel(source.source)} ·{' '}
+              {source.sourceRef || `Registration ${index + 1}`} ·{' '}
+              {source.periodEndedAt || source.endedAt ? 'Ended' : 'Current'}
+            </option>
+          ))}
+        </Select>
+      ) : null}
       <HStack spacing={2} flexWrap='wrap'>
         <CertOpsBadge>
           {detail.locationCount ?? (detail.locations || []).length} locations
@@ -439,7 +515,7 @@ export default function CertificateIdentityDetailModal({
       ) : null}
       <DashboardDetailsSection
         title='Observed locations'
-        description='Where this certificate has been seen. Recreated endpoint monitors share one location; previous observations stay in history. Stored copies do not prove service use or configure automatic renewal.'
+        description='Where this certificate has been seen, with the latest observation at each location and previous observations in history.'
         icon={MapPin}
         enclosed
         mb={0}
@@ -575,7 +651,7 @@ export default function CertificateIdentityDetailModal({
       </DashboardDetailsSection>
       <DashboardDetailsSection
         title='Certificate management'
-        description='Registrations that track this certificate and can automate renewal. Stopping management ends that registration’s automation; it does not remove the certificate or stop location observations.'
+        description='Registrations that track this certificate and can automate renewal.'
         icon={Settings}
         enclosed
         mb={0}
@@ -771,6 +847,10 @@ export default function CertificateIdentityDetailModal({
   return (
     <CertificateDetailsModal
       token={displayToken}
+      workspaceId={workspaceId}
+      identityId={detail.identityId}
+      managedCertificateId={managedCertificateId}
+      focusDeployments={focusDeployments}
       isOpen={isOpen}
       onClose={onClose}
       isViewer={!canManage || !tokenId || !token}

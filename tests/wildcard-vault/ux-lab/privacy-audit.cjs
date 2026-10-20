@@ -27,7 +27,7 @@ function visit(dir) {
     if (item.isSymbolicLink()) continue;
     if (item.isDirectory()) {
       if (
-        !["experimental-agent", "acme"].includes(
+        !["experimental-agent", "packaged-agent", "acme"].includes(
           item.name,
         )
       )
@@ -36,7 +36,7 @@ function visit(dir) {
     }
     const size = fs.statSync(file).size;
     if (size > 4 * 1024 * 1024) continue;
-    if (item.name === "material-token" || item.name.endsWith(".vault-token")) {
+    if (["material-token", "role-id", "secret-id"].includes(item.name) || item.name.endsWith(".vault-token") || item.name.endsWith(".secret-id")) {
       needles.add(fs.readFileSync(file, "utf8").trim());
       credentials++;
       if (item.name.endsWith(".vault-token")) historicalCredentials++;
@@ -47,6 +47,25 @@ function visit(dir) {
     }
   }
 }
+// Inventory is collected first as the controller; historical Vault reads then
+// use the sink owner, retaining the product's strict credential-owner check.
+function adoptTokenOwner(tokenFile, { fileSystem = fs, runtime = process } = {}) {
+  assert.equal(tokenFile, "/lab/issuer/material-token");
+  const stat = fileSystem.lstatSync(tokenFile);
+  assert.ok(stat.isFile() && !stat.isSymbolicLink());
+  assert.equal(stat.mode & 0o077, 0);
+  assert.ok([0, 10001].includes(stat.uid));
+  assert.equal(stat.gid, stat.uid);
+  const current = runtime.getuid();
+  assert.ok(current === 0 || current === stat.uid);
+  if (current !== stat.uid) {
+    runtime.setgid(stat.gid);
+    runtime.setuid(stat.uid);
+  }
+}
+module.exports = { adoptTokenOwner };
+
+if (require.main === module) {
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
@@ -54,12 +73,15 @@ process.stdin.on("data", (chunk) => {
   assert.ok(input.length <= 32 * 1024 * 1024, "Privacy input bound exceeded");
 });
 process.stdin.on("end", async () => {
+  let stage = "inventory";
   try {
     visit(root);
+    stage = "history";
     const publishedVersions = JSON.parse(process.argv[2] || "[]");
     assert.ok(Array.isArray(publishedVersions) && publishedVersions.length >= 2 && publishedVersions.length <= 100);
     const config = JSON.parse(fs.readFileSync("/lab/issuer/config.json", "utf8"));
     const store = config.materialStores.customer;
+    adoptTokenOwner(store.tokenFile);
     const [groupId] = Object.keys(store.groups);
     const { createVaultStore } = require("/repo/packages/agent/src/material-store");
     for (const materialVersionId of publishedVersions) {
@@ -67,9 +89,11 @@ process.stdin.on("end", async () => {
       const bundle = await reader.fetch(1);
       keyNeedles(bundle.privateKeyPem);
     }
+    stage = "coverage";
     assert.ok(privateKeys >= 3);
     assert.ok(credentials >= 3);
     assert.ok(historicalCredentials >= 4, "Rotated and revoked credential history must be audited");
+    stage = "scan";
     const haystack = input + logs.join("\n");
     for (const value of needles)
       assert.ok(
@@ -90,7 +114,10 @@ process.stdin.on("end", async () => {
       }),
     );
   } catch {
+    console.error(`CERTOPS_PRIVACY_FAILURE=${stage}:${privateKeys}:${credentials}:${historicalCredentials}`);
     console.error("Zero-custody audit failed; no material exported");
     process.exitCode = 1;
   }
 });
+
+}

@@ -120,6 +120,7 @@ const {
   CERTOPS_JOB_METADATA_INVALID,
   CERTOPS_JOB_NOT_FOUND,
   CERTOPS_JOB_OPERATION_INVALID,
+  CERTOPS_JOB_MODE_INVALID,
   CERTOPS_JOB_SOURCE_INVALID,
   CERTOPS_JOB_STATUS_INVALID,
   CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
@@ -440,8 +441,14 @@ function handleCertOpsError(res, err) {
   if (err?.code === "CERTOPS_IDENTITY_PRECONDITION_FAILED") {
     return res.status(412).json({ error: err.message, code: err.code });
   }
+  if (err?.code === "CERTOPS_CERTIFICATE_STILL_SERVING") {
+    return res.status(409).json({
+      error: err.message,
+      code: err.code,
+      locations: Array.isArray(err.details?.locations) ? err.details.locations : [],
+    });
+  }
   if (err?.code === CERTOPS_CERTIFICATE_NOT_RENEWABLE ||
-      err?.code === "CERTOPS_CERTIFICATE_STILL_SERVING" ||
       err?.code === "CERTOPS_CERTIFICATE_RETIRED" ||
       err?.code === "CERTOPS_MUTATION_RUNNING" ||
       err?.code === "CERTOPS_LIFECYCLE_DOWNGRADE" ||
@@ -680,6 +687,7 @@ function handleCertOpsError(res, err) {
   const certOpsJobBadRequestCodes = new Set([
     CERTOPS_JOB_INVALID,
     CERTOPS_JOB_OPERATION_INVALID,
+    CERTOPS_JOB_MODE_INVALID,
     CERTOPS_JOB_SOURCE_INVALID,
     CERTOPS_JOB_STATUS_INVALID,
     CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
@@ -990,6 +998,7 @@ function jobCreateOptionsFromRequest(req) {
   return {
     workspaceId: req.workspace.id,
     operation: req.body?.operation,
+    mode: req.body?.mode,
     subjectType: req.body?.subjectType,
     subjectId: req.body?.subjectId,
     payload: req.body?.payload,
@@ -4344,9 +4353,12 @@ router.post("/api/v1/workspaces/:id/certops/distribution-jobs/:jobId/retry", ...
   requireWorkspaceCertOpsActive,
   csrRoute((req) => distribution.retryDistributionJob({ workspaceId:req.workspace.id,jobId:req.params.jobId,actorUserId:req.user?.id })));
 router.get("/api/v1/workspaces/:id/certops/distribution-groups", ...csrReadGuards,
-  csrRoute(async (req) => ({ groups: (await pool.query(`SELECT * FROM certops_distribution_groups WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 1000`,[req.workspace.id])).rows })));
+  csrRoute((req) => require("../services/certops/distributionRead").listDistributionGroups({ client:pool,workspaceId:req.workspace.id,query:req.query })));
 router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers", ...csrReadGuards,
-  csrRoute(async (req) => ({ consumers: await materialDistribution.consumerMatrix({ client:pool,workspaceId:req.workspace.id,groupId:req.params.groupId }) })));
+  csrRoute(async (req) => {
+    const evaluated_at = new Date().toISOString();
+    return { evaluated_at, consumers: await materialDistribution.consumerMatrix({ client:pool,workspaceId:req.workspace.id,groupId:req.params.groupId }) };
+  }));
 router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/versions", ...csrReadGuards,
   csrRoute(async (req) => ({ versions: (await pool.query(`SELECT id,workspace_id,group_id,management_period_id,
     publishing_job_id,profile_revision,state,certificate_identity_id,provider_version,

@@ -20,7 +20,7 @@ if($Action -eq 'trust'){
   if($machine.Name -ine 'tt-agent'){throw 'Only the qualification member may install destination trust'}
   $file=Join-Path $env:TEMP ('tt-destination-'+[Guid]::NewGuid().ToString('N')+'.cer')
   try{
-    & certutil.exe -f -config $config -ca.cert $file | Out-Null
+    & certutil.exe -f -config $config '-ca.cert' $file | Out-Null
     if($LASTEXITCODE){throw 'Destination public CA certificate retrieval failed'}
     $certificate=[Security.Cryptography.X509Certificates.X509Certificate2]::new($file)
     try{if($certificate.Subject -ne 'CN=TTQualificationDestination' -or $certificate.Issuer -ne $certificate.Subject){throw 'Unexpected destination authority'}}finally{$certificate.Dispose()}

@@ -78,20 +78,23 @@ export function scrollCertOpsFocusedNode(selector) {
 /**
  * @returns {string|null} relative path under the dashboard router
  */
-export function jobSubjectHref(subjectType, subjectId) {
+export function jobSubjectHref(subjectType, subjectId, workspaceId) {
   if (!isCertOpsResourceId(subjectId)) return null;
   const id = subjectId.trim();
+  const workspace = workspaceId
+    ? `&workspace=${encodeURIComponent(workspaceId)}`
+    : '';
   switch (String(subjectType || '')) {
     case 'managed_certificate':
-      return `/certops/certificates?certificateId=${encodeURIComponent(id)}`;
+      return `/certops/certificates?certificateId=${encodeURIComponent(id)}${workspace}`;
     case 'trust_anchor':
-      return `/certops/agents?trustAnchorId=${encodeURIComponent(id)}`;
+      return `/certops/agents?trustAnchorId=${encodeURIComponent(id)}${workspace}`;
     default:
       return null;
   }
 }
 
-export function jobAgentHref(agentId) {
+export function jobAgentHref(agentId, workspaceId) {
   if (!isCertOpsResourceId(agentId)) return null;
-  return `/certops/agents?agentId=${encodeURIComponent(agentId.trim())}`;
+  return `/certops/agents?agentId=${encodeURIComponent(agentId.trim())}${workspaceId ? `&workspace=${encodeURIComponent(workspaceId)}` : ''}`;
 }

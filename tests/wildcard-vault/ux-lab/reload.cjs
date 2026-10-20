@@ -81,7 +81,7 @@ async function finish(status) {
 if (name === "nginx") {
   fs.writeFileSync(
     config,
-    `pid ${dir}/service.pid; error_log ${dir}/service.log; events {} http { access_log off; server { listen 8443 ssl; ssl_certificate ${dir}/cert.pem; ssl_certificate_key ${dir}/key.pem; return 200 'Wildcard UX lab nginx'; } }`,
+    `pid ${dir}/service.pid; error_log ${dir}/service.log; events {} http { client_body_temp_path ${dir}/client-body; proxy_temp_path ${dir}/proxy-temp; fastcgi_temp_path ${dir}/fastcgi-temp; uwsgi_temp_path ${dir}/uwsgi-temp; scgi_temp_path ${dir}/scgi-temp; access_log off; server { listen 8443 ssl; ssl_certificate ${dir}/cert.pem; ssl_certificate_key ${dir}/key.pem; return 200 'Wildcard UX lab nginx'; } }`,
   );
   let args = ["-p", dir, "-c", config, "-t"];
   const pid = fs.existsSync(dir + "/service.pid")

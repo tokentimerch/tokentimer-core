@@ -203,6 +203,7 @@ function resultForAdcsOutcome(issuance, { enrollmentId, attempt }, options = {})
         errorMessage: boundErrorMessage(issuance.detail),
         enrollmentResult: enrollmentResultFor(enrollmentId, attempt, "pending_issuance", {
           requestId: options.knownRequestId,
+          errorCode: "ADCS_DISPOSITION_UNKNOWN",
         }),
       };
     }

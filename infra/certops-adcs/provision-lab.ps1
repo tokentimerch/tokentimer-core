@@ -7,6 +7,9 @@ param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][stri
   [ValidateSet(4,8)][int]$Hours = 4,
   [ValidateSet('2019','2022','2025')][string]$WindowsVersion = '2022',
   [ValidateSet('en-US','de-DE','fr-FR')][string]$Language = 'en-US',
+  [ValidateSet('comprehensive','operator-acceptance')][string]$QualificationScope = 'comprehensive',
+  [ValidateSet('0','1')][string]$DebugMode = '0',
+  [ValidateSet('0','1')][string]$ContinueOnFailure = '1',
   [ValidateSet('0','1')][string]$ResponseLossExperiment = '0',
   [ValidateSet('0','1')][string]$PendingElapsedQualification = '0',
   [ValidateSet('0','1')][string]$IssuerReassignment = '0',
@@ -16,11 +19,13 @@ param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][stri
   [string]$AdcsTtl24hNonce,
   [ValidateSet('0','1')][string]$RetentionCadencePrepare = '0',
   [string]$RetentionCadenceNonce,
-  [ValidateSet('none','keygen_intent','prepared','submitting','installing','accepted-before-bind','bound-before-complete')][string]$JournalPhaseExperiment='none',
+  [ValidateSet('none','keygen_intent','prepared','submitting','issued','installing','accepted-before-bind','bound-before-complete')][string]$JournalPhaseExperiment='none',
   [ValidateSet('root','subordinate')][string]$HierarchyRole='root',
   [ValidateSet('Standard_D2s_v5','Standard_D2as_v5')][string]$VmSize = 'Standard_D2s_v5',
   [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9]{1,49}$')][string]$Location)
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'arm-operation.ps1')
+if($QualificationScope -eq 'operator-acceptance' -and ($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Operator acceptance cannot include fault experiments'}
 if($IssuerReassignment -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $PendingElapsedQualification -ne '0' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $RetentionCadencePrepare -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Issuer reassignment requires its isolated four-hour two-CA Server2022 en-US profile'}
 if($RetentionCadencePrepare -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $PendingElapsedQualification -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $RetentionCadenceNonce -cnotmatch '^[a-f0-9]{64}$' -or $env:GITHUB_RUN_ID -notmatch '^[1-9][0-9]*$' -or $env:GITHUB_RUN_ATTEMPT -notmatch '^[1-9][0-9]*$' -or $ResourceGroup -cne "tt-certops-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")){throw 'Installed retention cadence requires its isolated four-hour Server2022 en-US preparation'}
 if($HierarchyRole -eq 'subordinate' -and ($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Hierarchy and experimental fault profiles cannot be combined'}
@@ -63,16 +68,25 @@ function New-TemplateStageScript([string]$TemplatePath, [string]$DescriptorPath,
   [IO.File]::WriteAllText($Destination,$source,[Text.UTF8Encoding]::new($false))
 }
 function Invoke-Stage([string]$Machine, [string]$Script, [string]$Marker, [string[]]$Parameters = @()) {
-  $arguments = @('vm','run-command','invoke','--resource-group',$ResourceGroup,'--name',$Machine,'--command-id','RunPowerShellScript','--scripts',"@$Script",'-o','json')
-  if ($Parameters.Count) { $arguments += @('--parameters'); $arguments += $Parameters }
-  Refresh-LabAuthentication
-  $text = az @arguments
-  if ($LASTEXITCODE -ne 0) { throw "Native lab stage failed for $Machine" }
-  $response = $text | ConvertFrom-Json
+  $stageTimeout=if([IO.Path]::GetFileName($Script) -ceq 'domain-ca.ps1'){900}else{3600}
+  $response=Invoke-CertOpsVmRunCommand -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -ResourceGroup $ResourceGroup -Machine $Machine -Script ([IO.File]::ReadAllText($Script)) -Parameters $Parameters -TimeoutSeconds $stageTimeout -RefreshAuthentication ${function:Refresh-LabAuthentication}
   $message = ($response.value | ForEach-Object message) -join "`n"
   if (-not $message.Contains($Marker)) {
+    $toolsDiagnostic=[regex]::Match($message,'(?m)^CERTOPS_TOOLS_FAILURE=(membership|workspace|node-metadata|node-checksum-metadata|node-download|node-verify|node-extract|go-metadata|go-download|go-verify|go-extract|pnpm-install|source-download|source-extract|source-layout|dependencies|service-host|chain-helper|cmc-helper|verifier-helper|helper-readiness|capability-build|api-trust|package-build|package-verify|runtime-receipt):(RuntimeException|WebException|IOException|UnauthorizedAccessException|ArgumentException|InvalidOperationException|MethodInvocationException|FileNotFoundException|HttpResponseException|TaskCanceledException|TimeoutException|ParameterBindingException|ActionPreferenceStopException|Exception):(WebCmdletWebResponseException|WebCmdletIEDomNotSupportedException|NameResolutionFailure|ConnectFailure|RequestCanceled|Timeout|CommandNotFoundException|NamedParameterNotFound|ParameterArgumentValidationError|PathNotFound|InvokeMethodOnNull|InvalidArchiveFile|ExpandArchiveInvalidParameterSet|InvalidArgument|Unclassified):(0|[1-5][0-9]{2})[\t ]*\r?$')
+    if($toolsDiagnostic.Success){Write-Output $toolsDiagnostic.Value.Trim()}
+    $caDiagnostic=[regex]::Match($message,'(?m)^CERTOPS_CA_FAILED_STAGE=(membership|directory-ready|remoting-setup|directory-officer|role-install|ca-configure|service-check)[\t ]*\r?$')
+    if($caDiagnostic.Success){Write-Output $caDiagnostic.Value.Trim()}
+    foreach($exportDiagnostic in [regex]::Matches($message,'(?m)^CERTOPS_CA_EXPORT_(?:EXIT=-?[0-9]{1,11}|HRESULT=0X[0-9A-F]{8})\s*$')){
+      Write-Output $exportDiagnostic.Value.Trim()
+    }
     $diagnostic=[regex]::Match($message,'(?m)^CERTOPS_TEMPLATE_FAILURE=(descriptor|remoting|definitions|directory|create-oid|create-template|commit-template|template-acl|publish-template|ca-hardening):[0-9]{1,5}:-?[0-9]{1,11}\s*$')
     if($diagnostic.Success){Write-Output $diagnostic.Value.Trim()}
+    $languageDiagnostic=[regex]::Match($message,'(?m)^CERTOPS_LANGUAGE_FAILURE=(membership|asset-input|download|digest|package-install|temporary-cleanup|ui-language|system-locale|culture|system-settings-copy|resource-verification):[0-9]{1,5}:-?[0-9]{1,11}:(RuntimeException|WebException|InvalidOperationException|ArgumentException|COMException|IOException|UnauthorizedAccessException|ParameterBindingException|ActionPreferenceStopException|PSInvalidOperationException|Exception):(WebCmdletWebResponseException|WebCmdletIEDomNotSupportedException|DISMAPI_Error__Failed_To_Add_Package|DISMAPI_Error__Not_Applicable|NamedParameterNotFound|CommandNotFoundException|ParameterArgumentValidationError|PathNotFound|InvokeMethodOnNull|AddWindowsPackageError|Unclassified)\s*$')
+    if($languageDiagnostic.Success){Write-Output $languageDiagnostic.Value.Trim()}
+    $memberDiagnostic=[regex]::Match($message,'(?m)^CERTOPS_MEMBER_FAILURE=(membership|dns-config|dns-lookup|iis-install|domain-join):[0-9]{1,5}:-?[0-9]{1,11}\s*$')
+    if($memberDiagnostic.Success){Write-Output $memberDiagnostic.Value.Trim()}
+    $verifyDiagnostic=[regex]::Match($message,'(?m)^CERTOPS_MEMBER_VERIFY_FAILURE=(membership|secure-channel|ca-rpc|ca-export|ca-identity|root-trust):[0-9]{1,5}:-?[0-9]{1,11}\s*$')
+    if($verifyDiagnostic.Success){Write-Output $verifyDiagnostic.Value.Trim()}
     throw "Expected stage receipt $Marker absent for $Machine ($([IO.Path]::GetFileName($Script)))"
   }
   foreach($field in @('CERTOPS_ROOT_CERT','CERTOPS_SUBORDINATE_REQUEST','CERTOPS_SUBORDINATE_CERT')){
@@ -84,18 +98,51 @@ function Invoke-Stage([string]$Machine, [string]$Script, [string]$Marker, [strin
   $receipts.Add($Marker)
 }
 function Wait-Agent([string]$Machine) {
-  Refresh-LabAuthentication
   for ($attempt=0; $attempt -lt 30; $attempt++) {
+    Refresh-LabAuthentication
     $state = az vm get-instance-view -g $ResourceGroup -n $Machine --query "instanceView.vmAgent.statuses[0].code" -o tsv
     if ($LASTEXITCODE -eq 0 -and $state -eq 'ProvisioningState/succeeded') { return }
     Start-Sleep -Seconds 10
   }
   throw "Guest agent did not become ready after reboot: $Machine"
 }
+function Wait-GuestCommandChannel([string]$Machine) {
+  # After a reboot Azure can hold the first run-command for ~15 minutes while the
+  # agent already reports ready; a new extension operation releases it. Nudge with a
+  # read-only managed run command, which is safe to repeat. Real stages are never resubmitted.
+  for ($attempt=1; $attempt -le 6; $attempt++) {
+    $name='ttready'+[Guid]::NewGuid().ToString('N').Substring(0,12)
+    $uri="https://management.azure.com/subscriptions/$env:AZURE_SUBSCRIPTION_ID/resourceGroups/$ResourceGroup/providers/Microsoft.Compute/virtualMachines/$Machine/runCommands/${name}?api-version=2024-07-01"
+    $body=@{location=$Location;properties=@{source=@{script='Write-Output CERTOPS_GUEST_COMMAND_CHANNEL_READY'};timeoutInSeconds=60;asyncExecution=$false}}|ConvertTo-Json -Depth 6 -Compress
+    try {
+      $null=Invoke-CertOpsArmOperation -Uri $uri -Method PUT -Body $body -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -RefreshAuthentication ${function:Refresh-LabAuthentication} -TimeoutSeconds 120
+      Write-Output 'CERTOPS_GUEST_COMMAND_CHANNEL_READY';return
+    } catch { Write-Output ("CERTOPS_GUEST_COMMAND_CHANNEL_RETRY="+$attempt) }
+    Start-Sleep -Seconds 10
+  }
+  throw "Guest command channel did not recover after reboot: $Machine"
+}
+function Restart-LabMachine([string]$Machine) {
+  $uri="https://management.azure.com/subscriptions/$env:AZURE_SUBSCRIPTION_ID/resourceGroups/$ResourceGroup/providers/Microsoft.Compute/virtualMachines/$Machine/restart?api-version=2024-07-01"
+  $null=Invoke-CertOpsArmOperation -Uri $uri -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -RefreshAuthentication ${function:Refresh-LabAuthentication} -TimeoutSeconds 900
+  Wait-Agent $Machine
+  Wait-GuestCommandChannel $Machine
+}
+function Wait-LabDeployment {
+  $deadline=[DateTimeOffset]::UtcNow.AddMinutes(30)
+  do {
+    Refresh-LabAuthentication
+    $state=az deployment group show -g $ResourceGroup --name qualification --query properties.provisioningState -o tsv
+    if($LASTEXITCODE -ne 0){throw 'Could not inspect owned lab deployment'}
+    if($state -eq 'Succeeded'){return}
+    if($state -in 'Failed','Canceled','Cancelled'){throw 'Owned lab deployment failed'}
+    Start-Sleep -Seconds 15
+  }while([DateTimeOffset]::UtcNow -lt $deadline)
+  throw 'Owned lab deployment timed out'
+}
 function Start-ControlPlane() {
   Refresh-LabAuthentication
-  $response = az vm run-command invoke -g $ResourceGroup -n control-plane --command-id RunShellScript --scripts "@$(Join-Path $PSScriptRoot 'control-plane.sh')" --parameters "candidate=$candidateSha" "journal_phase=$JournalPhaseExperiment" "adcs_ttl24h=$AdcsTtl24hPrepare" -o json | ConvertFrom-Json
-  if ($LASTEXITCODE -ne 0) { throw 'Private control plane bootstrap failed' }
+  $response=Invoke-CertOpsVmRunCommand -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -ResourceGroup $ResourceGroup -Machine control-plane -Script ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'control-plane.sh'))) -Parameters @("candidate=$candidateSha","journal_phase=$JournalPhaseExperiment","adcs_ttl24h=$AdcsTtl24hPrepare") -RefreshAuthentication ${function:Refresh-LabAuthentication}
   $message = ($response.value | ForEach-Object message) -join "`n"
   if (-not $message.Contains('CERTOPS_STAGE=private-https-control-plane-running')) { throw 'Private HTTPS control plane receipt absent' }
   $match = [regex]::Match($message,'-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----')
@@ -117,22 +164,19 @@ try {
   az group create --name $ResourceGroup --location $Location --tags $initialTags -o none
   if ($LASTEXITCODE -ne 0) { throw 'Could not create isolated lab group' }
   @{ vmSize=@{value=$VmSize}; expiresAt=@{value=$expiresAt}; candidateSha=@{value=$candidateSha}; windowsVersion=@{value=$WindowsVersion}; hierarchy=@{value=($HierarchyRole -eq 'subordinate')}; issuerSwitch=@{value=($IssuerReassignment -eq '1')}; adminPassword=@{value=$password} } | ConvertTo-Json -Depth 5 | Set-Content $parameterPath
-  az deployment group create -g $ResourceGroup --name qualification --template-file (Join-Path $PSScriptRoot 'main.bicep') --parameters "@$parameterPath" -o none
+  az deployment group create -g $ResourceGroup --name qualification --template-file (Join-Path $PSScriptRoot 'main.bicep') --parameters "@$parameterPath" --no-wait -o none
   if ($LASTEXITCODE -ne 0) { throw 'Private lab deployment failed' }
+  Wait-LabDeployment
   if($Language -ne 'en-US'){
     foreach($node in @('domain-ca','windows-agent')){
       $version=if($node -eq 'domain-ca'){'2022'}else{$WindowsVersion}
       $asset=$languageAssets["$version/$Language"]
       Invoke-Stage $node (Join-Path $PSScriptRoot 'language-pack.ps1') 'CERTOPS_STAGE=language-installed-reboot-required' @("Language=$Language","PackageUri=$($asset.uri)","PackageSha256=$($asset.sha256)")
-      az vm restart -g $ResourceGroup -n $node -o none
-      if($LASTEXITCODE -ne 0){throw 'Language installation reboot failed'}
-      Wait-Agent $node
+      Restart-LabMachine $node
     }
   }
   Invoke-Stage 'domain-ca' (Join-Path $PSScriptRoot 'domain-forest.ps1') 'CERTOPS_STAGE=forest-created-reboot-required' @("DirectoryRecoveryPassword=$password")
-  az vm restart -g $ResourceGroup -n domain-ca -o none
-  if ($LASTEXITCODE -ne 0) { throw 'Domain controller restart failed' }
-  Wait-Agent 'domain-ca'
+  Restart-LabMachine 'domain-ca'
   if($HierarchyRole -eq 'subordinate'){
     Invoke-Stage 'offline-root' (Join-Path $PSScriptRoot 'hierarchy-root.ps1') 'CERTOPS_STAGE=offline-root-prepared' @('Action=prepare')
     Invoke-Stage 'domain-ca' (Join-Path $PSScriptRoot 'domain-ca.ps1') 'CERTOPS_STAGE=enterprise-subordinate-request-created' @("DomainPassword=$password",'HierarchyRole=subordinate')
@@ -149,19 +193,15 @@ try {
   Start-ControlPlane
   if($IssuerReassignment -ne '1' -and $PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1' -and $AdcsTtl24hPrepare -ne '1' -and $RetentionCadencePrepare -ne '1'){
     Refresh-LabAuthentication
-    $browserResponse=az vm run-command invoke -g $ResourceGroup -n control-plane --command-id RunShellScript --scripts "@$(Join-Path $PSScriptRoot 'browser-control-plane.sh')" --parameters "candidate=$candidateSha" -o json | ConvertFrom-Json
+    $browserResponse=Invoke-CertOpsVmRunCommand -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -ResourceGroup $ResourceGroup -Machine control-plane -Script ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'browser-control-plane.sh'))) -Parameters @("candidate=$candidateSha") -RefreshAuthentication ${function:Refresh-LabAuthentication}
     if($LASTEXITCODE -ne 0 -or -not (($browserResponse.value | ForEach-Object message) -join "`n").Contains('CERTOPS_STAGE=private-same-origin-dashboard-ready')){throw 'Private browser dashboard bootstrap failed'}
     $receipts.Add('CERTOPS_STAGE=private-same-origin-dashboard-ready')
   }
   Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'domain-member.ps1') 'CERTOPS_STAGE=member-joined-reboot-required' @("DomainPassword=$password")
-  az vm restart -g $ResourceGroup -n windows-agent -o none
-  if ($LASTEXITCODE -ne 0) { throw 'Domain member restart failed' }
-  Wait-Agent 'windows-agent'
+  Restart-LabMachine 'windows-agent'
   if($IssuerReassignment -eq '1'){
     Invoke-Stage 'destination-ca' (Join-Path $PSScriptRoot 'issuer-destination.ps1') 'CERTOPS_STAGE=destination-ca-joined-reboot-required' @("DomainPassword=$password",'Action=join')
-    az vm restart -g $ResourceGroup -n destination-ca -o none
-    if($LASTEXITCODE -ne 0){throw 'Destination member restart failed'}
-    Wait-Agent 'destination-ca'
+    Restart-LabMachine 'destination-ca'
     Invoke-Stage 'destination-ca' (Join-Path $PSScriptRoot 'issuer-destination.ps1') 'CERTOPS_STAGE=destination-enterprise-ca-running' @("DomainPassword=$password",'Action=install')
     Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'issuer-destination.ps1') 'CERTOPS_STAGE=destination-ca-trusted-by-member' @("DomainPassword=$password",'Action=trust')
   }
@@ -185,20 +225,52 @@ try {
     Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-windows-tests.ps1') 'CERTOPS_STAGE=retention24h-prepared' @("DomainPassword=$password","Retention24hPrepare=1","Retention24hNonce=$Retention24hNonce","Retention24hCreatedAt=$($createdAt.ToString('o'))","Retention24hRunId=$env:GITHUB_RUN_ID","Retention24hRunAttempt=$env:GITHUB_RUN_ATTEMPT")
     $reportStatus='prepared-actual-cutover-awaiting-independent-handoff'
   }else{
-  $testParameters=@("DomainPassword=$password","Language=$Language","ResponseLossExperiment=$ResponseLossExperiment","JournalPhaseExperiment=$JournalPhaseExperiment","PendingElapsedQualification=$PendingElapsedQualification","IssuerReassignment=$IssuerReassignment","HierarchyRole=$HierarchyRole");if($HierarchyRole -eq 'subordinate'){$testParameters+="RootCertificateBase64=$($publicStageData.CERTOPS_ROOT_CERT)"}
-  try { Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-windows-tests.ps1') 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed' $testParameters }
-  finally {
-    $reportErrors=@();$kinds=if($IssuerReassignment -eq '1'){@('issuer-switch')}elseif($PendingElapsedQualification -eq '1'){@('pending-elapsed')}elseif($HierarchyRole -eq 'subordinate'){@('hierarchy')}else{@('qualification')};if($ResponseLossExperiment -eq '1'){$kinds+='response-loss-experimental'};if($JournalPhaseExperiment -ne 'none'){$kinds+='journal-phase-experimental'}
-    if($IssuerReassignment -eq '0' -and $PendingElapsedQualification -eq '0' -and $HierarchyRole -eq 'root' -and $WindowsVersion -eq '2022' -and $Language -eq 'en-US' -and $ResponseLossExperiment -eq '0' -and $JournalPhaseExperiment -eq 'none'){$kinds+='browser-enrollment';$kinds+='uncertain-abandon'}
+  $testParameters=@("DomainPassword=$password","Language=$Language","ResponseLossExperiment=$ResponseLossExperiment","JournalPhaseExperiment=$JournalPhaseExperiment","PendingElapsedQualification=$PendingElapsedQualification","IssuerReassignment=$IssuerReassignment","HierarchyRole=$HierarchyRole","ContinueOnFailure=$ContinueOnFailure","DebugDetail=$DebugMode");if($HierarchyRole -eq 'subordinate'){$testParameters+="RootCertificateBase64=$($publicStageData.CERTOPS_ROOT_CERT)"}
+  $nativeExecutionFailure=$null
+  try {
+    # The focused CA oracle requires an isolated request set. Package acceptance
+    # issues its own certificate and therefore runs afterward on the same member.
+    if($QualificationScope -eq 'comprehensive'){
+      Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-windows-tests.ps1') 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed' $testParameters
+    }
+    $workerExecutionFailure=$null
+    try {
+      Invoke-Stage 'control-plane' (Join-Path $PSScriptRoot 'acceptance-worker.sh') 'CERTOPS_STAGE=acceptance-worker-started' @('action=start')
+      # Package acceptance always runs without fault injection.
+      Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-windows-tests.ps1') 'CERTOPS_STAGE=operator-package-acceptance-passed' @("DomainPassword=$password","Language=$Language",'Scope=acceptance')
+    } catch {
+      $workerExecutionFailure=$_
+      throw
+    } finally {
+      try { Invoke-Stage 'control-plane' (Join-Path $PSScriptRoot 'acceptance-worker.sh') 'CERTOPS_STAGE=acceptance-worker-stopped' @('action=stop') }
+      catch { if($workerExecutionFailure){Write-Warning 'Production acceptance worker teardown also failed; preserve the original execution failure'}else{throw} }
+    }
+  } catch {
+    $nativeExecutionFailure=$_
+    throw
+  } finally {
+    $reportErrors=@();$kinds=@()
+    if($QualificationScope -eq 'comprehensive'){
+      $kinds=@(if($IssuerReassignment -eq '1'){@('issuer-switch')}elseif($PendingElapsedQualification -eq '1'){@('pending-elapsed')}elseif($HierarchyRole -eq 'subordinate'){@('hierarchy')}else{@('qualification')});if($ResponseLossExperiment -eq '1'){$kinds+='response-loss-experimental'};if($JournalPhaseExperiment -ne 'none'){$kinds+='journal-phase-experimental'}
+      if($IssuerReassignment -eq '0' -and $PendingElapsedQualification -eq '0' -and $HierarchyRole -eq 'root' -and $WindowsVersion -eq '2022' -and $Language -eq 'en-US' -and $ResponseLossExperiment -eq '0' -and $JournalPhaseExperiment -eq 'none'){$kinds+='browser-enrollment';$kinds+='uncertain-abandon'}
+    }
+    $kinds+=@('acceptance-worker','package-acceptance')
     foreach($kind in $kinds){try{& (Join-Path $PSScriptRoot 'read-report.ps1') -ResourceGroup $ResourceGroup -ReportKind $kind}catch{$reportErrors+=$kind}}
-    if($reportErrors.Count){throw "Guest execution report retrieval failed for: $($reportErrors -join ', ')"}
+    if($reportErrors.Count){
+      # Missing reports are expected when an earlier mandatory stage never ran.
+      # Keep that original failure, while still attempting every bounded report.
+      $reportFailure="Guest execution report retrieval failed for: $($reportErrors -join ', ')"
+      if($nativeExecutionFailure){Write-Warning $reportFailure}else{throw $reportFailure}
+    }
   }
   $reportStatus = 'provisioned-and-native-scenarios-completed'
+  if($QualificationScope -eq 'operator-acceptance'){$receipts.Add('CERTOPS_STAGE=operator-acceptance-only-completed-not-comprehensive')}
   }
 } finally {
   New-Item -ItemType Directory -Force 'qualification-results' | Out-Null
   $scenarioReport=if($IssuerReassignment -eq '1'){'native-issuer-reassignment.json'}elseif($RetentionCadencePrepare -eq '1'){'retention-cadence-prepare-public.json'}elseif($AdcsTtl24hPrepare -eq '1'){'adcs-ttl24h-prepare-public.json'}elseif($Retention24hPrepare -eq '1'){'retention24h-prepare-public.json'}elseif($PendingElapsedQualification -eq '1'){'enterprise-adcs-elapsed-pending-real.json'}elseif($HierarchyRole -eq 'subordinate'){'enterprise-adcs-hierarchy-real.json'}else{'enterprise-adcs-real.json'}
-  @{ candidateSha=$candidateSha; scope='disposable-enterprise-adcs-infrastructure'; status=$reportStatus; resourceGroup=$ResourceGroup; expiresAt=$expiresAt; scenarioReport=$scenarioReport; hierarchyRole=$HierarchyRole; noncoverage=@('CMC renewal','Additional uncertainty fault variants','Retention and adoption'); stages=@($receipts) } | ConvertTo-Json -Depth 6 | Set-Content 'qualification-results/enterprise-adcs-infrastructure.json'
+  if($QualificationScope -eq 'operator-acceptance'){$scenarioReport='enterprise-adcs-package-acceptance.json'}
+  @{ candidateSha=$candidateSha; scope='disposable-enterprise-adcs-infrastructure'; qualificationScope=$QualificationScope; status=$reportStatus; resourceGroup=$ResourceGroup; expiresAt=$expiresAt; scenarioReport=$scenarioReport; hierarchyRole=$HierarchyRole; noncoverage=@('CMC renewal','Additional uncertainty fault variants','Retention and adoption'); stages=@($receipts) } | ConvertTo-Json -Depth 6 | Set-Content 'qualification-results/enterprise-adcs-infrastructure.json'
   Remove-Item -LiteralPath $parameterPath -Force -ErrorAction SilentlyContinue
   $password = $null
 }

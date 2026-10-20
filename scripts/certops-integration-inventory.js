@@ -26,12 +26,33 @@ function expandGroups(input) {
   return result;
 }
 const groups = expandGroups(require("../tests/integration/certops-qualification-groups.json"));
+// Resolve literal names and the adjacent literal-array loops used to declare
+// parameterized cases. Never execute test sources or accept a partial name.
+function testNames(source) {
+  const literal = '"(?:\\\\.|[^"\\\\])*"';
+  const expression = `${literal}(?:\\s*\\+\\s*(?:${literal}|[A-Za-z_$][\\w$]*))*`;
+  const cases = [...source.matchAll(new RegExp(`\\bit\\(\\s*(${expression})\\s*,`, "g"))];
+  assert.equal(cases.length, [...source.matchAll(/\bit\(\s*"/g)].length, "Unsupported mandatory case name expression");
+  return cases.flatMap(match => {
+    const parts = match[1].match(new RegExp(`${literal}|[A-Za-z_$][\\w$]*`, "g"));
+    if (parts.length === 1) return [JSON.parse(parts[0])];
+    const loop = source.slice(0, match.index).match(/for\s*\(\s*const\s+([A-Za-z_$][\w$]*)\s+of\s+(\[[^\]\n]*\])\s*\)\s*\{\s*$/);
+    assert.ok(loop, "Parameterized mandatory cases require an adjacent literal-array loop");
+    const values = JSON.parse(loop[2]);
+    assert.ok(values.length > 0 && values.every(value => typeof value === "string"), "Mandatory case parameters must be literal strings");
+    return values.map(value => parts.map(part => {
+      if (part.startsWith('"')) return JSON.parse(part);
+      assert.equal(part, loop[1], "Unknown mandatory case name parameter");
+      return value;
+    }).join(""));
+  });
+}
 function validateInventory() {
   for (const [group, definition] of Object.entries(groups)) {
     const actual = [];
     for (const file of definition.files) {
       const source = fs.readFileSync(path.join(__dirname, "../tests/integration", file), "utf8");
-      const names = [...source.matchAll(/\bit\(\s*"([^"\n]+)"/g)].map((match) => match[1]);
+      const names = testNames(source);
       if (!names.length) throw new Error(`${group}: no literal mandatory cases in ${file}`);
       for (const name of names) actual.push(`${file}\0${name}`);
     }
@@ -44,4 +65,4 @@ if (require.main === module) {
   try { console.log(`Validated ${validateInventory()} mandatory integration group inventories`); }
   catch (error) { console.error(error.message); process.exitCode = 1; }
 }
-module.exports = { validateInventory, groups, expandGroups };
+module.exports = { validateInventory, groups, expandGroups, testNames };

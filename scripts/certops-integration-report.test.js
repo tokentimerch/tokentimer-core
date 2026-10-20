@@ -7,6 +7,26 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { verify } = require("./certops-integration-report");
+
+test("integration inventory expands runtime parameterized names without executing source", () => {
+  const {testNames, validateInventory} = require("./certops-integration-inventory");
+  const source = `
+    throw new Error("source must not execute");
+    it("literal, with punctuation", async () => {});
+    for (const state of ["active", "retired"]) {
+      it("keeps " + state + ", then " + state, async () => {});
+    }
+  `;
+  assert.deepEqual(testNames(source), ["literal, with punctuation", "keeps active, then active", "keeps retired, then retired"]);
+  assert.deepEqual(testNames('it("escaped \\"quote\\"", () => {});'), ['escaped "quote"']);
+  for (const source of [
+    'it("prefix " + unknown, () => {});',
+    'for (const state of ["active"]) { it("prefix " + other, () => {}); }',
+    'for (const state of ["active"]) { it("prefix " + state.toUpperCase(), () => {}); }',
+    'for (const state of [42]) { it("prefix " + state, () => {}); }',
+  ]) assert.throws(() => testNames(source));
+  assert.ok(validateInventory() > 0);
+});
 test("database qualification rejects wrong candidate missing names and skipped cases", () => {
   const required = [{ file: "fixture.js", name: "mandatory" }];
   const report = { scope: "adcs-database-integration", candidateSha: "candidate", tests: [{ ...required[0], status: "pass" }] };

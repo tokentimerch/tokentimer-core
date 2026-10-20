@@ -8,7 +8,7 @@ candidate="${1#*=}"
 [[ "$candidate" =~ ^[a-f0-9]{40}$ ]] || { echo 'Invalid candidate SHA' >&2; exit 1; }
 journal_phase_arg="${2:-journal_phase=none}"
 journal_phase="${journal_phase_arg#*=}"
-case "$journal_phase" in none|keygen_intent|prepared|submitting|installing|accepted-before-bind|bound-before-complete) ;; *) echo 'Unsupported journal phase experiment' >&2; exit 1 ;; esac
+case "$journal_phase" in none|keygen_intent|prepared|submitting|issued|installing|accepted-before-bind|bound-before-complete) ;; *) echo 'Unsupported journal phase experiment' >&2; exit 1 ;; esac
 ttl24h_arg="${3:-adcs_ttl24h=0}"
 ttl24h="${ttl24h_arg#*=}"
 case "$ttl24h" in 0|1) ;; *) echo 'Unsupported default TTL qualification selector' >&2; exit 1 ;; esac

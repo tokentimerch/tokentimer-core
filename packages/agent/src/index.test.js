@@ -307,6 +307,20 @@ describe("runDiscoveryScan", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it("reports SAN-only certificates with an empty subject through the evidence contract", async () => {
+    const pem = fs.readFileSync(path.join(__dirname, "verify/fixtures/san-only.crt.pem"), "utf8");
+    const cert = new crypto.X509Certificate(pem);
+    assert.ok(!cert.subject);
+    fs.writeFileSync(path.join(dir, "san-only.crt"), pem);
+    const client = createRecordingClient();
+    const result = await runDiscoveryScan({ directories: [dir], client, log: silentLog });
+    assert.equal(result.observed, 1);
+    const item = client.calls.reportEvidence[0].evidenceItems[0];
+    assert.equal(item.fingerprintSha256, cert.fingerprint256.replace(/:/g, "").toLowerCase());
+    assert.equal(item.metadata.find(field => field.name === "subject").value, null);
+    assert.match(item.metadata.find(field => field.name === "subjectAltNames").value, /nginx.wildcard.test/);
+  });
+
   it("reports parsed certificates as certificate.observed evidence with public fields only", async () => {
     // Use a SAN-bearing fixture so subjectAltNames is present in metadata.
     const leafPem = fs.readFileSync(
@@ -751,19 +765,23 @@ describe("registerIfNeeded", () => {
     // 'pending' forever against a freshly registered agent. requireSignedAgentId
     // now defaults to true (no override in this test's config.json), so
     // agent-id-binding-v1 is declared too. windows-cert-store-v1/
-    // iis-binding-v1/trust-anchor-deploy-v1 are qualified in
-    // qualified-capabilities.json after real-host verification, so whichever
-    // of them are also candidates on THIS host (win32: all three always;
-    // Debian/RHEL: trust-anchor-deploy-v1 only if its prerequisites resolve)
-    // pass the manifest gate and get declared.
+    // iis-binding-v1/trust-anchor-deploy-v1 and the AD CS and material
+    // distribution capabilities are qualified in qualified-capabilities.json,
+    // so whichever of them are also candidates on THIS host (win32: the three
+    // Windows capabilities plus adcs-enroll-v1; Linux: trust-anchor-deploy-v1
+    // when its prerequisites resolve, plus the Vault distribution trio) pass
+    // the manifest gate and get declared.
     const expectedDeclaredCapabilities = [
       "evidence-claim-binding-v1",
       "job-log-stream-v1",
       ...(process.platform === "win32"
-        ? ["windows-cert-store-v1", "iis-binding-v1", "trust-anchor-deploy-v1"]
-        : AGENT_TRUST_STORE_PREREQUISITES.candidate
-          ? ["trust-anchor-deploy-v1"]
-          : []),
+        ? ["windows-cert-store-v1", "iis-binding-v1", "trust-anchor-deploy-v1", "adcs-enroll-v1"]
+        : [
+            ...(AGENT_TRUST_STORE_PREREQUISITES.candidate ? ["trust-anchor-deploy-v1"] : []),
+            ...(process.platform === "linux"
+              ? ["material-store-vault-kv2-v1", "certificate-publication-v1", "deploy-from-store-v1"]
+              : []),
+          ]),
       "agent-id-binding-v1",
     ];
     assert.deepEqual(registerCall.declaredCapabilities, expectedDeclaredCapabilities);
@@ -3995,16 +4013,59 @@ describe("renew chain deployment", () => {
     }
   });
 
-  it("refuses an adcs renew job while adcs-enroll-v1 is not qualified in the release manifest", async () => {
+  it("gates an adcs renew job on the declared adcs-enroll-v1 capability", async () => {
     seedLiveKey();
     const acmeExecFileImpl = makeCertbotStub();
     const job = makeJob({ issuerKind: "adcs" });
     const { outcome, client } = await runRenew({ job, acmeExecFileImpl });
 
     assert.equal(outcome.status, "blocked");
-    assert.match(outcome.errorMessage, /has not qualified adcs-enroll-v1/);
+    // adcs-enroll-v1 is qualified in the manifest but only a Windows
+    // candidate: Windows reaches the AD CS shape checks, other hosts refuse.
+    assert.match(
+      outcome.errorMessage,
+      process.platform === "win32"
+        ? /AD CS renew requires keyMode os-store-managed and a windows-iis target/
+        : /has not qualified adcs-enroll-v1/,
+    );
     assert.equal(acmeExecFileImpl.calls.length, 0);
     assert.equal(client.calls.reportEvidence.length, 0);
+  });
+
+  // skip-reason: no-host - Linux declares the material capabilities, so this refusal only applies to other hosts.
+  it("refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities", { skip: process.platform === "linux" }, async () => {
+    const shared = {
+      jobId: "job-material",
+      claimId: "claim-material",
+      policyEngine: permissiveEngine(),
+      client: createRecordingClient(),
+      executionContext: makeExecutionContext(),
+      log: silentLog,
+    };
+    const publication = await executeJob({
+      ...shared,
+      job: {
+        action: "renew",
+        mode: "dry_run",
+        publication: { groupId: "11111111-1111-4111-8111-111111111111" },
+      },
+    });
+    assert.equal(publication.status, "blocked");
+    assert.match(
+      publication.errorMessage,
+      /has not qualified material-store-vault-kv2-v1; material distribution jobs are refused/,
+    );
+
+    const deployment = await executeJob({
+      ...shared,
+      job: { action: "deploy-from-store", mode: "real" },
+    });
+    assert.equal(deployment.status, "blocked");
+    assert.match(
+      deployment.errorMessage,
+      /has not qualified material-store-vault-kv2-v1; material distribution jobs are refused/,
+    );
+    assert.equal(shared.client.calls.reportEvidence.length, 0);
   });
 });
 

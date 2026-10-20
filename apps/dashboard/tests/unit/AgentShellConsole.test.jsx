@@ -395,6 +395,144 @@ describe('AgentShellConsole', () => {
     return screen.findByText('Failed');
   });
 
+  it('keeps page one when page two of the same tick fails, then resumes without a gap or a duplicate', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const fetcher = vi.fn(async (_workspaceId, _jobId, options) => {
+      if (!options.cursor) {
+        return {
+          items: [line(1, 'Page one retained')],
+          nextCursor: 'cursor-page-1',
+          hasMore: true,
+          logsComplete: false,
+          streams: streaming,
+          linesVisible: true,
+        };
+      }
+      const resumed = fetcher.mock.calls.filter(
+        call => call[2].cursor === 'cursor-page-1'
+      ).length;
+      if (resumed === 1) throw new Error('page two failed');
+      return {
+        items: [line(2, 'Page two recovered')],
+        nextCursor: 'cursor-page-2',
+        hasMore: false,
+        logsComplete: true,
+        jobStatus: 'succeeded',
+        streams: finalStreams,
+        linesVisible: true,
+      };
+    });
+    renderConsole(fetcher, { pollMs: 700 });
+    await screen.findByText(/Page one retained/);
+    expect(screen.getByText('Reconnecting')).toBeInTheDocument();
+    expect(screen.queryByText('Complete')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Page two recovered/)).not.toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    await screen.findByText(/Page two recovered/);
+    expect(screen.getAllByText(/Page one retained/)).toHaveLength(1);
+    expect(screen.getByText('Succeeded')).toBeInTheDocument();
+    expect(fetcher.mock.calls[2][2].cursor).toBe('cursor-page-1');
+  });
+
+  it('does not show lines from a fetch that resolves after the job changes', async () => {
+    let resolveFirst;
+    const fetcher = vi.fn((_workspaceId, jobId) => {
+      if (jobId === 'job-1') {
+        return new Promise(resolve => {
+          resolveFirst = resolve;
+        });
+      }
+      return Promise.resolve({
+        items: [line(1, 'Replacement job output')],
+        nextCursor: 'cursor-2',
+        hasMore: false,
+        logsComplete: false,
+        streams: streaming,
+        linesVisible: true,
+      });
+    });
+    const view = renderConsole(fetcher);
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
+      'ws-1',
+      'job-1',
+      expect.any(Object)
+    ));
+    view.rerender(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <AgentShellConsole
+            workspaceId='ws-1'
+            jobId='job-2'
+            fetcher={fetcher}
+          />
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+    await screen.findByText(/Replacement job output/);
+    resolveFirst({
+      items: [line(1, 'Stale job output')],
+      nextCursor: 'cursor-stale',
+      hasMore: false,
+      logsComplete: true,
+      jobStatus: 'succeeded',
+      streams: finalStreams,
+      linesVisible: true,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByText(/Stale job output/)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/Replacement job output/)).toHaveLength(1);
+    expect(screen.queryByText('Succeeded')).not.toBeInTheDocument();
+  });
+
+  it('drops an in-flight console page when the workspace changes or the console closes', async () => {
+    let resolveFirst;
+    let calls = 0;
+    const fetcher = vi.fn((_workspaceId, jobId) => {
+      calls += 1;
+      if (calls === 1) {
+        return new Promise(resolve => {
+          resolveFirst = resolve;
+        });
+      }
+      return Promise.resolve({
+        items: [line(1, jobId === 'job-1' ? 'Reopened job output' : 'Other workspace output')],
+        nextCursor: 'cursor-next',
+        hasMore: false,
+        logsComplete: false,
+        streams: streaming,
+        linesVisible: true,
+      });
+    });
+    const view = renderConsole(fetcher);
+    await waitFor(() => expect(resolveFirst).toEqual(expect.any(Function)));
+    view.rerender(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <AgentShellConsole workspaceId='ws-2' jobId='job-1' fetcher={fetcher} />
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+    await screen.findByText(/Reopened job output/);
+    view.unmount();
+    resolveFirst({
+      items: [line(1, 'Stale workspace output')],
+      nextCursor: 'cursor-stale',
+      hasMore: false,
+      logsComplete: true,
+      jobStatus: 'succeeded',
+      streams: finalStreams,
+      linesVisible: true,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByText(/Stale workspace output/)).not.toBeInTheDocument();
+  });
+
   it('formats bare messages into the agent logger line shape', () => {
     expect(
       formatConsoleLine({

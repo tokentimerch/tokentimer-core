@@ -202,7 +202,11 @@ test("workflow keeps trusted main execution and requires aggregate even after co
     "utf8",
   );
   assert.match(text, /needs: \[postgres, agent-lab\]/);
-  assert.match(text, /always\(\) && github.ref == 'refs\/heads\/main'/);
+  const yaml=require("node:module").createRequire(require.resolve("mocha/package.json"))("js-yaml"),workflow=yaml.load(text),guard=require("./certops-workflow-security");
+  assert.deepEqual(guard.validateWorkflow(workflow,"certops-distribution-qualification.yml"),[]);
+  assert.match(workflow.jobs["functional-summary"].if,/^\$\{\{ always\(\) && /);
+  const invalid=structuredClone(workflow);invalid.jobs["functional-summary"].if=invalid.jobs["functional-summary"].if.replace("always() && ","");
+  assert.ok(guard.validateWorkflow(invalid,"certops-distribution-qualification.yml").length);
   assert.match(
     text,
     /Real isolated Vault adapter and ACL regressions\r?\n\s+if: \$\{\{ !cancelled\(\) \}\}/,

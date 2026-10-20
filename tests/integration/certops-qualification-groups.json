@@ -18,7 +18,13 @@
           "dispatches abandonment cleanup and refuses a bad snapshot or a revalidation hold",
           "keeps concurrent preflights inside the hourly limit and stores the agent result",
           "keeps the latest dispatched preflight when an older job finishes later",
-          "orders preflight results by the locked sequence when transaction time is reversed"
+          "orders preflight results by the locked sequence when transaction time is reversed",
+          "survivor fixture uses the insert-trigger management period and creates eligible enrollment work",
+          "WebHosting fixture opens exactly one trigger-created period and its real enrollment job is claimable",
+          "stops uncertain retrieval at the frozen deadline without a cleanup job",
+          "blocks install continuation and deploy-from-store after retirement while cleanup still claims",
+          "fences recovery and claims of every non-terminal continuation after retirement",
+          "retirement covers running and queued install-capable work and spares key cleanup"
         ]
       },
       {
@@ -37,12 +43,6 @@
         "file": "certops-adcs-profile-issuer-switch.test.js",
         "names": [
           "applies AD CS edit rules after an ACME-shaped Windows/IIS profile is moved to an AD CS issuer"
-        ]
-      },
-      {
-        "file": "certops-adcs-enrollments.test.js",
-        "names": [
-          "survivor fixture uses the insert-trigger management period and creates eligible enrollment work"
         ]
       }
     ]
@@ -294,6 +294,8 @@
       {
         "file": "certops-identity-invariants.test.js",
         "names": [
+          "normalizes legacy audit reads without changing immutable metadata or timestamps",
+          "returns real AD CS metadata in every audit feed and JSON/CSV export",
           "upgrades representative pre-v62 history without guessing lifecycle or historical job identity",
           "v62 compatibility preserves erased-workspace audit metadata and rolls preparation back on failure",
           "raw v63 is idempotent with live records and immutable closed periods",
@@ -313,10 +315,34 @@
           "retirement skips a contended source while preserving authoritative lifecycle and token state",
           "endpoint token-first ingestion and retirement cannot invert token/source locks",
           "retirement cancellation locks only work for the affected fingerprint",
+          "suppresses a failed job for its retired identity after the source rotates",
+          "retiring a shared token's displayed certificate projects the live sibling and retired rediscovery cannot overwrite it",
+          "removes only the retired identity's queued failures across source rotation and retains sent history",
+          "never infers an ambiguous historical job identity from a rotated source",
+          "does not reroute a failed job to a newly linked token",
+          "captures job-time token links on insertion and rejects forged or rewritten attribution",
+          "upgrades historical alert context without guessing token links or erasing successful delivery evidence",
+          "rejects a claim racing retirement without advancing the attempt or lease",
+          "keeps expiry alerts and facts consistent for an unidentified active sibling",
+          "dispatch never signs a retired replacement assertion while non-mutating work remains claimable",
+          "permits only initial provisioning with no previously observed fingerprint",
+          "accepts a replacement's active identity before admitting and claiming its next job",
+          "rearms expiry windows after replacement without deleting alert or delivery history",
+          "uses immutable retirement for inventory and scheduling while the source status cache is locked",
           "quota counts distinct managed identities plus provisionals, regardless of lifecycle",
           "re-add fails admission when another identity took the freed slot",
           "two concurrent admissions with one remaining slot cannot both succeed",
           "existing-source rotation allows temporary overage while new enrollment remains blocked",
+          "keeps certificate tokens current across discovery and repeated agent renewals",
+          "updates a shared token even when another source has a different certificate identity",
+          "stopping every management period retains linked fingerprints and their lifecycle evidence",
+          "retires three independent identities sharing one token without suppressing live siblings",
+          "updates the token before fencing a renewal result whose source already rotated",
+          "synchronizes token facts from accepted agent_filesystem observations and rejects stale projection",
+          "synchronizes token facts from accepted agent_windows observations and rejects stale projection",
+          "synchronizes token facts from accepted cert_manager observations and rejects stale projection",
+          "synchronizes token lifecycle through revoked, replacement, and another renewal",
+          "synchronizes token lifecycle through decommissioned, replacement, and another renewal",
           "v64 repairs already-applied v63 without exempting closed or foreign periods from admission",
           "closing cancels only unstarted period jobs and preserves claimed/running reconciliation",
           "claim-first versus stop has a deterministic claimed result with reconciliation",
@@ -333,12 +359,20 @@
           "every direct period opening, including provisional management, passes admission",
           "decommission respects fresh serving evidence and proven absence after binding rotation",
           "legacy raw service-binding fingerprints block decommission on the safety read path",
+          "records reconciliation when completion holds the job lock during revocation",
+          "preserves an existing reconciliation reason across revocation and completion",
+          "does not flag dry-run or read-only work as a retirement mutation conflict",
+          "records revocation without deadlocking a completion that already owns the token",
           "groups recreated endpoint monitors before pagination without hiding genuine visibility gaps",
           "previous deleted monitors do not make a freshly observed endpoint uncertain",
           "visibility is known when all 21 locations are fresh in list and detail",
           "visibility distinguishes no evidence from fresh confirmed absence",
           "stored-copy uncertainty requires acknowledgment and decommissioned rediscovery stays visible",
           "late claimed results cannot update a re-added provisioning source or a rotated active source",
+          "filters grouped inventory by Windows observation source",
+          "searches every associated managed certificate's public properties",
+          "transfers several tokens with managed certificate histories atomically",
+          "refuses transfer during an active AD CS enrollment without moving any token",
           "workspace transfers deduplicate independently, retain closed provenance and admit destination management",
           "workspace transfer preserves source snapshots without hydrating destination token or source data",
           "workspace transfer rolls back completely on quota denial or in-flight work",
@@ -689,7 +723,7 @@
       {
         "file": "retired-certificate-alerts.integration.test.js",
         "names": [
-          "deletes this certificate's unsent renewal-failure alerts on retire, including limit_exceeded, without dropping sibling expiry",
+          "discards and preserves this certificate's unsent renewal-failure alerts on retire, including limit_exceeded, without dropping sibling expiry",
           "delivers endpoint-health after the last shared-token sibling is retired",
           "does not enqueue expiry alerts for a fully retired token, and still enqueues a live one",
           "discards leftover renewal-failure delivery for a retired certificate while the shared token stays live",

@@ -4,6 +4,8 @@ The Windows agent can enroll and renew IIS certificates from an enterprise Activ
 
 A job with issuer kind `adcs` enrolls only when a local enrollment rule names that exact CA and template, a confirmed pin and fresh preflight exist on the enrolling agent, and that agent has declared `adcs-enroll-v1`. Creating an issuer, or selecting it on a profile, does not issue a certificate by itself. See [ADR-0014](../../adr/0014-certops-adcs-issuer-and-async-enrollment.md).
 
+Use a released agent that declares this qualified capability. If it is absent, AD CS enrollment is unavailable on that package; do not edit its capability manifest to enable it. Qualification-lab capability overrides are not an operator installation step.
+
 Cloud Pro and Team, and the Enterprise dashboard, include this issuer under **Renewals**. The CA stays on the customer network. Neither product stores CA credentials.
 
 Linux hosts, and Windows hosts that are not domain-joined, do not enroll over DCOM. Put AD CS enrollment on a domain-joined Windows agent, or keep an [ACME gateway in front of AD CS](dns-and-acme.md#acme-gateway-in-front-of-ad-cs).
@@ -44,6 +46,16 @@ Install the agent on a domain-joined Windows member. The service runs as `LocalS
 Do not install the agent on a domain controller. That placement is not qualified.
 
 The transport is DCOM, the `certreq` default. The agent never passes `-rpc` to `certreq`. Enrollment web services (CES and CEP) are not part of this release.
+
+## Qualification scope
+
+Only the Windows Server versions and display languages named as qualified in the release notes are supported. These are not part of the 0.18.0 qualification:
+
+- Agents on a domain controller.
+- Windows Server 2016 and earlier.
+- Two-tier hierarchies with an offline root.
+- Real elapsed 24-hour retention and 14-day pending timers. They are not waited out in qualification.
+- Native crash and lost-response experiments. Recovery is covered by journal, API and PostgreSQL tests.
 
 ## Firewall
 
@@ -198,11 +210,15 @@ The CA database is not readable by the computer account unless you grant CA Read
 
 ## Installation recovery
 
+Before investigating a stalled approval or recovery, verify the API and the production CertOps worker are both running. With the Core Compose deployment, use the same Compose files and environment as the installation: `docker compose ps api worker-certops` and `docker compose logs --since 15m worker-certops`. Start the complete stack with `docker compose up -d`; do not launch a second scheduler with a manual Node command. The default sweep runs once a minute, while CA polling follows the enrollment's frozen `pollInterval`. Kubernetes deployments use the CertOps CronJob instead; see [maintenance sweeps](../../CONFIGURATION.md#certops-maintenance-sweeps-worker).
+
 An interrupted enrollment reported as `installing` remains eligible for a signed continuation after its active job ends. The agent inspects the existing certificate, key and IIS binding and resumes the first incomplete installation step; it does not generate another key or submit another CA request.
 
 A service crash after lease renewal can leave the current job `orphaned_unknown_effect`, with no final enrollment result. That status requires a human decision. Send `POST /api/v1/workspaces/:id/certops/enrollments/:enrollmentId/recover` with the exact `orphanedJobId`, `acknowledgeUnknownEffect: true`, and a printable `reason` of up to 500 characters after inspecting the CA and host. An authenticated operator with `certops.issuer.manage` receives a new continuation, or the existing active recovery. The endpoint refuses a different job, a job without its reconciliation flag, a live unrelated attempt, terminal enrollment revival and changes to the frozen issuer, agent, key, names or target. Workspace pause and approval policy apply; internal worker identities cannot make this decision.
 
 The agent's authoritative local journal determines which step can resume. A prepared CSR can make its first submit after current safety checks; a submitted or uncertain request cannot be submitted again. A missing journal refuses recovery without deleting or generating a key. The original orphaned job keeps its historical unknown-effect flag; recovery is audited as `certops.enrollment.recovery_requested`, and the new continuation must prove the actual outcome. A legitimately reclaimed original renew job can also resume its own durable journal only while its job, attempt, snapshot and container identity still match. A different job must use a signed continuation, and failed installations require the explicit retry below.
+
+Keep the agent configuration, credential and enrollment journal intact during this investigation. Record the enrollment ID, orphaned job ID and CA RequestId, inspect the CA request and current IIS certificate, then use the recovery endpoint only for that exact flagged job. Check the new continuation's result and the served TLS certificate before considering recovery complete. Restarting the service alone does not acknowledge an unknown side effect. Never delete the journal or key to force a fresh submit.
 
 An explicit `install_failed` result waits for an operator decision. After correcting the IIS or certificate-store problem, an operator with `certops.issuer.manage` can send an empty JSON object to `POST /api/v1/workspaces/:id/certops/enrollments/:enrollmentId/retry-installation`. The endpoint returns `201` with the new `jobId`, or `200` with the existing active retry. It accepts only failed installations and cannot change the enrollment's agent, CA, template, key, DNS names or target. The retry is audited as `certops.enrollment.installation_retry_requested`, respects workspace pause and approval policy, and reuses the issued certificate and protected key. It does not acknowledge an unsafe key deletion or recreate a missing issued key.
 
@@ -241,11 +257,15 @@ A denied request can also carry a CA result. Console text is localized and is no
 | `0x80094811` `CERTSRV_E_KEY_LENGTH` | submit | Choose a key the template allows. |
 | `0x80094003` `CERTSRV_E_BAD_REQUESTSTATUS` | submit | Choose the key algorithm the template allows. |
 | `0x80070005` `E_ACCESSDENIED` | retrieve | That RequestId belongs to another requester. |
-| `0x80094004` `CERTSRV_E_PROPERTY_EMPTY` | retrieve | The CA has no such RequestId. |
+| `0x80094004` `CERTSRV_E_PROPERTY_EMPTY` | retrieve | Retrieval did not establish a certificate for this RequestId. This code alone does not prove deletion or denial; verify the request on the configured CA and preserve the key. |
 | `0x800706BA` `RPC_S_SERVER_UNAVAILABLE` | submit, no response file | The CA never received the request. The same request is retried. |
 | `0x800706BF` `RPC_S_CALL_FAILED_DNE` | submit, no response file | Same as unreachable: nothing was submitted. |
 
 Any other result after submit has started is uncertain. Do not resubmit it.
+
+For a request already recorded as pending, the frozen `pendingTimeout` bounds polling from its original acceptance time; the default is 14 days. If retrieval remains uncertain at that deadline, the enrollment becomes **Submission uncertain**, with `ADCS_RETRIEVAL_RECONCILIATION_REQUIRED`. Automatic polling stops and the RequestId, journal, CSR and key are preserved. Inspect the CA, then reconcile the existing RequestId or explicitly abandon the enrollment. Ordinary pending expiry still uses signed cleanup of the exact unaccepted key; investigate any unacknowledged cleanup job rather than assuming that a displayed expiry proves key removal.
+
+A lost or ambiguous submit response has no proven acceptance time and does not start the pending timer: use the reconciliation or abandonment procedure above. Do not infer a safe key deletion from a missing CA row or an HRESULT alone.
 
 ## Signed response validation
 

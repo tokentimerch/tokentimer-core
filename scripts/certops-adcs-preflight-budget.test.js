@@ -63,7 +63,13 @@ test("actual native descriptor and cache generations fit the original18 primary 
   assert.ok(rootMaximum + 2 <= 20);
 });
 test("all primary caller and cache invalidation sites are explicitly audited", () => {
-  assert.equal((main.match(/await preflight\(/g) || []).length, 6);
+  const responseLoss = read("tests/e2e/helpers/certops-adcs-response-loss-experiment.js");
+  const [sharedRecovery, scopedForeignFixture] = responseLoss.split("module.exports.provisionForeignRequest=");
+  assert.equal((main.match(/await preflight\(/g) || []).length, 5);
+  // The extracted recovery caller remains part of the original full-suite
+  // budget. Only the standalone experiment provisions a fresh foreign request.
+  assert.equal((sharedRecovery.match(/await preflight\(/g) || []).length, 1);
+  assert.equal((scopedForeignFixture.match(/await preflight\(/g) || []).length, 1);
   assert.equal((main.match(/preflightCache\.clear\(\)/g) || []).length, 4);
   assert.equal((main.match(/preflightCache\.set\(/g) || []).length, 2);
   assert.equal((main.match(/\+\+primaryPreflightCount/g) || []).length, 5);

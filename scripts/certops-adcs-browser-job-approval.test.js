@@ -56,6 +56,17 @@ test("browser job approval refuses omitted facts and cannot qualify CA officer a
   ])
     assert.throws(() => h.verifyProof({ ...proof(), ...change }));
 });
+test("completion accepts immediate issuance without stored RequestIds but still refuses a mismatch", () => {
+  // Immediate issuance leaves the control-plane and journal RequestId null.
+  assert.equal(h.verifyCompletionRequestIds("17", null, null), 17);
+  assert.equal(h.verifyCompletionRequestIds("17", null, 17), 17);
+  assert.equal(h.verifyCompletionRequestIds("17", "17", undefined), 17);
+  assert.equal(h.verifyCompletionRequestIds("17", 17, "17"), 17);
+  for (const [controlPlane, journal] of [["18", null], [null, 18], ["17", "18"]])
+    assert.throws(() => h.verifyCompletionRequestIds("17", controlPlane, journal));
+  assert.throws(() => h.verifyCompletionRequestIds("not-a-number", null, null));
+  assert.throws(() => h.verifyCompletionRequestIds("0", null, null));
+});
 test("browser approval proof is bound to both actual native capacity generations", () => {
   const value = proof(),
     capacity = {

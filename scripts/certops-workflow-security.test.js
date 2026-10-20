@@ -146,3 +146,10 @@ test("scheduled janitor remains enabled when new lab provisioning is disabled",(
  for(const condition of [azure.PROVISION_IF,"always()","github.ref == 'refs/heads/main' && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'"]){const bad=structuredClone(workflow);bad.jobs.cleanup.if=condition;assert.ok(azure.validate(name,bad).length);}
  assert.match(azure.PROVISION_IF,/CERTOPS_ADCS_LAB_ENABLED/);assert.doesNotMatch(azure.LIFECYCLE_IF,/CERTOPS_ADCS_LAB_ENABLED/);
 });
+test("manual qualification cannot bypass the trusted main reference",()=>{
+ const workflow=baseline();
+ for(const name of ["certops-qualification.yml","certops-distribution-qualification.yml","certops-enterprise-adcs-qualification.yml"]){
+  workflow.jobs.qualify.if="(github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/review'))";
+  assert.ok(validateWorkflow(workflow,name).length);
+ }
+});

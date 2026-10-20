@@ -306,6 +306,18 @@ export async function retireCertificate(
   return res.data;
 }
 
+/**
+ * Delete an endpoint (domain) monitor. Used by the retire flow when a
+ * certificate is still served at a monitored endpoint: the operator can remove
+ * the checker that keeps reporting the certificate as serving.
+ */
+export async function deleteEndpointMonitor(workspaceId, monitorId) {
+  await apiClient.delete(
+    `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/domains/${encodeURIComponent(monitorId)}`
+  );
+  invalidateCertOpsInventoryCache(workspaceId);
+}
+
 export async function getCertificateIdentity(workspaceId, identityId) {
   const res = await apiClient.get(
     `${workspaceBase(workspaceId)}/certificate-identities/${encodeURIComponent(identityId)}`
@@ -618,9 +630,8 @@ export async function getManagedCertificatesForToken(
 }
 
 /**
- * Resolve the primary managed_certificate row linked to an existing tokens.id.
- * Multiple sources with the same fingerprint have a deterministic representative.
- * Cross-fingerprint or unidentified ambiguity has no automatic selection.
+ * Resolve a single managed certificate linked to an existing token.
+ * Multiple registrations always require an explicit selection.
  */
 export async function getManagedCertificateForToken(
   workspaceId,

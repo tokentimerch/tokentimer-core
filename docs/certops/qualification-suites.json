@@ -5230,7 +5230,8 @@
       {
         "sourceGroup": "shared-certops-adcs-preflight-cohorts-6"
       },
-      "infra/certops-adcs/assert-lab-capacity.ps1"
+      "infra/certops-adcs/assert-lab-capacity.ps1",
+      "infra/certops-adcs/arm-operation.ps1"
     ],
     "kubernetes-controller-api": [
       "scripts/certops-kubernetes-runtime.js"
@@ -5672,7 +5673,16 @@
       "apps/api/routes/certops.js",
       "apps/api/routes/certops-agent.js",
       "tests/wildcard-vault/ux-lab/worker-loop.cjs",
-      "pnpm-lock.yaml"
+      "pnpm-lock.yaml",
+      "scripts/certops-agent-package.js",
+      "tests/wildcard-vault/ux-lab/package-acceptance.cjs",
+      "tests/wildcard-vault/ux-lab/run.ps1",
+      "packages/agent/scripts/pack-release.js",
+      "packages/agent/src/acme/index.js",
+      "packages/agent/package.json",
+      "tests/wildcard-vault/Dockerfile.fixture",
+      "deploy/compose/Dockerfile.api",
+      "deploy/compose/Dockerfile.worker"
     ],
     "windows-installed-bind-failure-rollback": [
       {
@@ -6835,6 +6845,7 @@
         "adcs-real-ca-flags-both-ca-flags-unsafe-refused",
         "adcs-real-late-approval-remains-expired",
         "adcs-real-pending-restart-single-continuation",
+        "adcs-real-deleted-request-bounded-reconciliation-preserves-key",
         "adcs-real-pending-abandon-refused",
         "adcs-real-installation-failure-audited-retry",
         "adcs-real-ec256schema3-issued-cng-iis",
@@ -7316,6 +7327,7 @@
         "adcs-real-ca-flags-both-ca-flags-unsafe-refused",
         "adcs-real-late-approval-remains-expired",
         "adcs-real-pending-restart-single-continuation",
+        "adcs-real-deleted-request-bounded-reconciliation-preserves-key",
         "adcs-real-pending-abandon-refused",
         "adcs-real-installation-failure-audited-retry",
         "adcs-real-ec256schema3-issued-cng-iis",
@@ -7768,7 +7780,8 @@
         "adcs-orphan-recovery-api-approval-and-rbac",
         "adcs-orphan-recovery-api-terminal-refusal",
         "adcs-original-enrollment-api-requester-approval",
-        "adcs-recovery-api-worker-principal-refused"
+        "adcs-recovery-api-worker-principal-refused",
+        "adcs-uncertain-retrieve-api-bounded-reconciliation"
       ],
       "capabilityGroup": "jobs-api-boundaries"
     },

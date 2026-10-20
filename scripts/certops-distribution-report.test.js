@@ -40,6 +40,26 @@ function fixture(t) {
   }));
   return report;
 }
+
+test("package acceptance requires immutable archive and real AppRole rotation proof without release qualification", t => {
+  const report = fixture(t);
+  report.qualificationScope = "packaged-enrolled-agent-lab";
+  assert.throws(() => verify(report, "a".repeat(40)));
+  report.packageAcceptance = { candidateSha: report.candidateSha, packageSha256: "b".repeat(64), buildMode: "qualification-only-not-release",
+    packageFilesUnmodified: true, vaultTlsVerified: true, separateRolesAndSinks: true, rolePermissionsChecked: true, roleIsolationChecked: true,
+    authentication: "vault-agent-approle", supervision: "documented-node-process", agentAccountUid: 10001, vaultAgentUid: 10001, systemdQualified: false, publishedReleaseQualified: false, credentialRotationCount: 1 };
+  assert.equal(verify(report, "a".repeat(40)).scope, "packaged-enrolled-agent-lab");
+  for (const field of ["packageFilesUnmodified", "vaultTlsVerified", "separateRolesAndSinks", "rolePermissionsChecked", "roleIsolationChecked"]) {
+    const changed = structuredClone(report); changed.packageAcceptance[field] = false;
+    assert.throws(() => verify(changed, "a".repeat(40)));
+  }
+  const changed = structuredClone(report); changed.packageAcceptance.credentialRotationCount = 0;
+  assert.throws(() => verify(changed, "a".repeat(40)));
+  for (const field of ["agentAccountUid", "vaultAgentUid"]) {
+    const rootProcess = structuredClone(report); rootProcess.packageAcceptance[field] = 0;
+    assert.throws(() => verify(rootProcess, "a".repeat(40)));
+  }
+});
 test("complete supporting report remains explicitly unqualified for native release", (t) => {
   const r = fixture(t);
   assert.deepEqual(verify(r, "a".repeat(40)), {

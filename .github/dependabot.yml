@@ -1,128 +1,136 @@
-# This file is used to configure Dependabot for the tokentimer-core repository.
-# It is used to automatically update the dependencies in the repository.
-# It is used to ensure that the dependencies are always up to date and secure.
-# It is used to ensure that the dependencies are always up to date and secure.
-# Disabled for now until we have a proper dependency management system in place.
-# version: 2
-# updates:
-#   # Root project npm dependencies
-#   - package-ecosystem: "npm"
-#     directory: "/"
-#     schedule:
-#       interval: "weekly"
-#       day: "monday"
-#       time: "09:00"
-#     open-pull-requests-limit: 10
-#     commit-message:
-#       prefix: "chore"
-#       prefix-development: "chore"
-#       include: "scope"
-#     labels:
-#       - "dependencies"
-#       - "npm"
-#     ignore:
-#       # Ignore major version updates for critical dependencies
-#       - dependency-name: "express"
-#         update-types: ["version-update:semver-major"]
-#       - dependency-name: "passport"
-#         update-types: ["version-update:semver-major"]
-#       - dependency-name: "react"
-#         update-types: ["version-update:semver-major"]
-#       - dependency-name: "react-dom"
-#         update-types: ["version-update:semver-major"]
-#       - dependency-name: "@chakra-ui/react"
-#         update-types: ["version-update:semver-major"]
+# Dependabot configuration for TokenTimer Core
+#
+# POLICY & SUPPLY-CHAIN INTEGRITY:
+# - Dependabot is enabled ONLY for the 'github-actions' package ecosystem.
+# - npm and Docker dependency ecosystems are intentionally disabled and out-of-scope.
+# - GitHub Actions references across .github/workflows/*.yml must remain pinned to
+#   immutable 40-character commit SHAs with inline release tag comments (# vX.Y.Z).
+# - Dependabot preserves commit SHA pinning when opening update PRs.
+# - Auto-merging of dependency updates is strictly forbidden.
+# - Maintainers must review and validate upstream release notes and diffs before merging.
 
-#   # API dependencies
-#   - package-ecosystem: "npm"
-#     directory: "/apps/api"
-#     schedule:
-#       interval: "weekly"
-#       day: "monday"
-#       time: "09:00"
-#     open-pull-requests-limit: 10
-#     commit-message:
-#       prefix: "chore"
-#       prefix-development: "chore"
-#       include: "scope"
-#     labels:
-#       - "dependencies"
-#       - "npm"
-#       - "backend"
-#     ignore:
-#       # Ignore major version updates for critical security dependencies
-#       - dependency-name: "express"
-#         update-types: ["version-update:semver-major"]
-#       - dependency-name: "passport"
-#         update-types: ["version-update:semver-major"]
-#       - dependency-name: "helmet"
-#         update-types: ["version-update:semver-major"]
-#       - dependency-name: "bcrypt"
-#         update-types: ["version-update:semver-major"]
+version: 2
+updates:
+  # GitHub Actions
+  # Proposes updates for GitHub Actions while preserving exact commit SHA pinning.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
 
-#   # Frontend npm dependencies
-#   - package-ecosystem: "npm"
-#     directory: "/frontend"
-#     schedule:
-#       interval: "weekly"
-#       day: "monday"
-#       time: "09:00"
-#     open-pull-requests-limit: 10
-#     commit-message:
-#       prefix: "chore"
-#       prefix-development: "chore"
-#       include: "scope"
-#     labels:
-#       - "dependencies"
-#       - "npm"
-#       - "frontend"
-#     ignore:
-#       # Ignore major version updates for critical React dependencies
-#       - dependency-name: "react"
-#         update-types: ["version-update:semver-major"]
-#       - dependency-name: "react-dom"
-#         update-types: ["version-update:semver-major"]
-#       - dependency-name: "@chakra-ui/react"
-#         update-types: ["version-update:semver-major"]
-#       - dependency-name: "vite"
-#         update-types: ["version-update:semver-major"]
-
-#   # Docker dependencies
-#   - package-ecosystem: "docker"
-#     directory: "/"
-#     schedule:
-#       interval: "weekly"
-#       day: "monday"
-#       time: "09:00"
-#     open-pull-requests-limit: 5
-#     commit-message:
-#       prefix: "chore"
-#       prefix-development: "chore"
-#       include: "scope"
-#     labels:
-#       - "dependencies"
-#       - "docker"
-#     ignore:
-#       # Ignore major version updates for base images
-#       - dependency-name: "node"
-#         update-types: ["version-update:semver-major"]
-#       - dependency-name: "nginx"
-#         update-types: ["version-update:semver-major"]
-#       - dependency-name: "postgres"
-#         update-types: ["version-update:semver-major"]
-
-#   # GitHub Actions
-#   - package-ecosystem: "github-actions"
-#     directory: "/"
-#     schedule:
-#       interval: "weekly"
-#       day: "monday"
-#       time: "09:00"
-#     open-pull-requests-limit: 5
-#     commit-message:
-#       prefix: "chore"
-#       prefix-development: "chore"
-#       include: "scope"
-#     labels:
-#       - "dependencies"
-#       - "github-actions"
+  # ---------------------------------------------------------------------------
+  # DISABLED ECOSYSTEMS (Out of scope - see dependency governance policy)
+  # Automated updates for npm and Docker remain disabled until dedicated review
+  # and qualification policies are established.
+  # ---------------------------------------------------------------------------
+  # Root project npm dependencies (DISABLED)
+  # - package-ecosystem: "npm"
+  #   directory: "/"
+  #   schedule:
+  #     interval: "weekly"
+  #     day: "monday"
+  #     time: "09:00"
+  #   open-pull-requests-limit: 10
+  #   commit-message:
+  #     prefix: "chore"
+  #     prefix-development: "chore"
+  #     include: "scope"
+  #   labels:
+  #     - "dependencies"
+  #     - "npm"
+  #   ignore:
+  #     - dependency-name: "express"
+  #       update-types: ["version-update:semver-major"]
+  #     - dependency-name: "passport"
+  #       update-types: ["version-update:semver-major"]
+  #     - dependency-name: "react"
+  #       update-types: ["version-update:semver-major"]
+  #     - dependency-name: "react-dom"
+  #       update-types: ["version-update:semver-major"]
+  #     - dependency-name: "@chakra-ui/react"
+  #       update-types: ["version-update:semver-major"]
+  #
+  # API dependencies (DISABLED)
+  # - package-ecosystem: "npm"
+  #   directory: "/apps/api"
+  #   schedule:
+  #     interval: "weekly"
+  #     day: "monday"
+  #     time: "09:00"
+  #   open-pull-requests-limit: 10
+  #   commit-message:
+  #     prefix: "chore"
+  #     prefix-development: "chore"
+  #     include: "scope"
+  #   labels:
+  #     - "dependencies"
+  #     - "npm"
+  #     - "backend"
+  #   ignore:
+  #     - dependency-name: "express"
+  #       update-types: ["version-update:semver-major"]
+  #     - dependency-name: "passport"
+  #       update-types: ["version-update:semver-major"]
+  #     - dependency-name: "helmet"
+  #       update-types: ["version-update:semver-major"]
+  #     - dependency-name: "bcrypt"
+  #       update-types: ["version-update:semver-major"]
+  #
+  # Frontend npm dependencies (DISABLED)
+  # - package-ecosystem: "npm"
+  #   directory: "/frontend"
+  #   schedule:
+  #     interval: "weekly"
+  #     day: "monday"
+  #     time: "09:00"
+  #   open-pull-requests-limit: 10
+  #   commit-message:
+  #     prefix: "chore"
+  #     prefix-development: "chore"
+  #     include: "scope"
+  #   labels:
+  #     - "dependencies"
+  #     - "npm"
+  #     - "frontend"
+  #   ignore:
+  #     - dependency-name: "react"
+  #       update-types: ["version-update:semver-major"]
+  #     - dependency-name: "react-dom"
+  #       update-types: ["version-update:semver-major"]
+  #     - dependency-name: "@chakra-ui/react"
+  #       update-types: ["version-update:semver-major"]
+  #     - dependency-name: "vite"
+  #       update-types: ["version-update:semver-major"]
+  #
+  # Docker dependencies (DISABLED)
+  # - package-ecosystem: "docker"
+  #   directory: "/"
+  #   schedule:
+  #     interval: "weekly"
+  #     day: "monday"
+  #     time: "09:00"
+  #   open-pull-requests-limit: 5
+  #   commit-message:
+  #     prefix: "chore"
+  #     prefix-development: "chore"
+  #     include: "scope"
+  #   labels:
+  #     - "dependencies"
+  #     - "docker"
+  #   ignore:
+  #     - dependency-name: "node"
+  #       update-types: ["version-update:semver-major"]
+  #     - dependency-name: "nginx"
+  #       update-types: ["version-update:semver-major"]
+  #     - dependency-name: "postgres"
+  #       update-types: ["version-update:semver-major"]

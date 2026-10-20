@@ -7,7 +7,7 @@ param([Parameter(Mandatory)][string]$OwnedDirectory,
   [Parameter(Mandatory)][string]$ConfigDirectory,
   [Parameter(Mandatory)][string]$RepositoryRoot,
   [Parameter(Mandatory)][string]$NodeExecutable,
-  [Parameter(Mandatory)][ValidateSet('keygen_intent','prepared','submitting','installing')][string]$Phase)
+  [Parameter(Mandatory)][ValidateSet('keygen_intent','prepared','submitting','issued','installing')][string]$Phase)
 $ErrorActionPreference='Stop'
 if($env:CERTOPS_ADCS_DISPOSABLE_LAB -ne '1' -or (Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test'){throw 'Fault requires disposable qualification forest'}
 $owned=[IO.Path]::GetFullPath($OwnedDirectory).TrimEnd('\')

@@ -14,9 +14,10 @@ const {pathToFileURL}=require("node:url");
 const {buildEnrollmentContainerName}=require("../../../packages/agent/src/windows-cert-store");
 const {readEnrollmentJournal}=require("../../../packages/agent/src/issuers/adcs-enrollment");
 const startObserver=require("./certops-adcs-journal-phase");
+const {verifyNativeRequestId}=require("./certops-adcs-live-enroll-acl");
 module.exports=async function runJournalPhaseExperiment(context){
   const phase=process.env.CERTOPS_ADCS_JOURNAL_PHASE_EXPERIMENT;if(!phase)return;
-  assert.ok(["keygen_intent","prepared","submitting","installing"].includes(phase));assert.equal(process.platform,"win32");
+  assert.ok(["keygen_intent","prepared","submitting","issued","installing"].includes(phase));assert.equal(process.platform,"win32");
   assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB,"1");assert.equal(process.env.CERTOPS_JOB_LEASE_SECONDS,"60");
   assert.equal(context.serviceOwned,true);
   assert.equal(process.env.CERTOPS_LEASE_HARD_GRACE_MS,"60000");
@@ -38,12 +39,12 @@ module.exports=async function runJournalPhaseExperiment(context){
     const authority=result.caCertificates[0];assert.equal((await fixture.request(`${api}/issuers/${issuerId}/confirm`,"POST",{caKeySha256:authority.keySha256,caConfig:context.caConfig,template:"TTQualificationRSAShort"})).status,200);
     const port=await new Promise((resolve,reject)=>{const server=net.createServer();server.once("error",reject);server.listen(0,"127.0.0.1",()=>{const selected=server.address().port;server.close(error=>error?reject(error):resolve(selected));});});
     const directory=path.join(workDir,site);fs.mkdirSync(directory);fs.writeFileSync(path.join(directory,"index.html"),"Observed native journal recovery");
-    ps(`Import-Module WebAdministration;if(Test-Path 'IIS:\\Sites\\${site}'){throw 'Foreign fault site'};& netsh.exe http show sslcert hostnameport=${domain}:${port}|Out-Null;if($LASTEXITCODE -eq 0){throw 'Foreign fault endpoint'}`);
+    ps(`Import-Module WebAdministration;if(Test-Path 'IIS:\\Sites\\${site}'){throw 'Foreign fault site'};& netsh.exe http show sslcert hostnameport=${domain}:${port}|Out-Null;if($LASTEXITCODE -eq 0){throw 'Foreign fault endpoint'};exit 0`);
     ownedSites.push(site);ps(`Import-Module WebAdministration;New-Website -Name '${site}' -PhysicalPath '${directory.replace(/'/g,"''")}' -IPAddress '*' -Port ${port} -HostHeader '${domain}' -Ssl|Out-Null;Set-WebBinding -Name '${site}' -BindingInformation '*:${port}:${domain}' -PropertyName sslFlags -Value 1`);
     recoveryPolicy=JSON.parse(ps(`$r=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\\CurrentControlSet\\Services\\TokenTimerAgent');try{$owner=@($r.GetValue('Environment')|Where-Object {$_ -like 'TOKENTIMER_AGENT_CONFIG_DIR=*'});if($owner.Count -ne 1 -or $owner[0].Substring('TOKENTIMER_AGENT_CONFIG_DIR='.Length) -ine '${configDir.replace(/'/g,"''")}'){throw 'Foreign recovery policy'};$v=$r.GetValue('FailureActions');if($v -isnot [byte[]]){throw 'Native failure policy missing'};@{actions=[Convert]::ToBase64String($v);nonCrash=$r.GetValue('FailureActionsOnNonCrashFailures',$null)}|ConvertTo-Json -Compress}finally{$r.Dispose()}`));
     command("sc.exe",["failure","TokenTimerAgent","reset=","0","actions=",""]);report.ownedScmRecoveryTemporarilyDisabled=true;
     observer=startObserver({ownedDirectory:workDir,configDirectory:configDir,repositoryRoot:repoRoot,phase});await observer.ready;
-    const certificateId=crypto.randomUUID();ownedCertificateIds.push(certificateId);
+    const certificateId=await require("./certops-adcs-local-rules").provisionSurvivorSource({fixture,agentRowId,domain,site,port,ownedCertificateIds});
     const created=await fixture.request(`${api}/enrollments`,"POST",{issuerId,certificateId,agentId:agentRowId,target:{type:"windows-iis",reference:domain,store:"My",binding:{site,port,sniHost:domain}},authorizedDnsNames:[domain],keyAlgorithm:"rsa",keySize:2048});assert.equal(created.status,201);
     enrollmentId=created.body.enrollmentId;ownedEnrollmentIds.push(enrollmentId);
     fs.writeFileSync(path.join(workDir,"journal-phase-target.json"),JSON.stringify({enrollmentId,jobId:created.body.jobId,snapshotSha256:created.body.snapshotSha256,containerName:buildEnrollmentContainerName(enrollmentId)}));
@@ -53,6 +54,12 @@ module.exports=async function runJournalPhaseExperiment(context){
     const stoppedJournal=readEnrollmentJournal(configDir,enrollmentId);assert.equal(stoppedJournal.kind,"valid");assert.equal(stoppedJournal.journal.state,phase);
     assert.equal(stoppedJournal.journal.containerName,buildEnrollmentContainerName(enrollmentId));assert.equal(stoppedJournal.journal.snapshotSha256,created.body.snapshotSha256);
     const nativeAtFault=observe();report.caRequestsAtFault=nativeAtFault.subjectRequestCount;
+    if(phase==="issued"){
+      assert.equal(nativeAtFault.subjectRequestCount,1);
+      verifyNativeRequestId(nativeAtFault.requestId,stoppedJournal.journal.requestId);
+      report.nativeRequestIdAtFault=nativeAtFault.requestId;
+      assert.ok(stoppedJournal.artifacts.csrPem,"Issued interruption requires the original durable CSR");
+    }
     assert.ok((await getJob(created.body.jobId)).lease_renewed_at,"Observed native fault requires an actual renewed lease");report.actualRenewedLeaseObserved=true;
     const worker=await import(pathToFileURL(path.join(repoRoot,"apps/worker/src/certops-worker.js")).href);
     await until(async()=>{const client=await fixture.pool.connect();try{await worker.reapExpiredLeases({client,hardGraceMs:60000,offlineAfterMs:60000,log:{debug(){},info(){},warn(){},error(){}}});}finally{client.release();}const job=await getJob(created.body.jobId);return job?.status==="orphaned_unknown_effect"&&job.needs_operator_reconciliation===true;},180000);
@@ -74,26 +81,41 @@ module.exports=async function runJournalPhaseExperiment(context){
       await until(async()=> (await getEnrollment())?.state==="submission_uncertain");
       const recovered=readEnrollmentJournal(configDir,enrollmentId);assert.equal(recovered.kind,"valid");assert.equal(recovered.journal.state,"submission_uncertain");
       const native=observe();assert.equal(native.subjectRequestCount,nativeAtFault.subjectRequestCount,"Uncertain recovery submitted another CA request");
+      for(const field of ["containerName","csrSha256","csrSpkiSha256","snapshotSha256","caConfig","template"])
+        assert.equal(recovered.journal[field],stoppedJournal.journal[field],"Uncertain recovery changed frozen identity");
+      assert.equal(recovered.artifacts.csrPem,stoppedJournal.artifacts.csrPem);
+      assert.ok(command("certutil.exe",["-csp","Microsoft Software Key Storage Provider","-key"]).includes(stoppedJournal.journal.containerName));
+      report.uncertainFrozenIdentityAndKeyPreserved=true;
       report.uncertainNoResubmitVerified=true;
       if(native.subjectRequestCount===0){
-        assert.equal((await fixture.request(`${api}/enrollments/${enrollmentId}/abandon`,"POST",{})).status,204);
-        const cleaned=(await require("../../../apps/api/services/certops/certificateEnrollments").scheduleDueEnrollments({client:fixture.pool,now:new Date(Date.now()+1000)})).find(row=>row.enrollmentId===enrollmentId);assert.ok(cleaned);await jobFinished(cleaned.jobId);
-        assert.ok(!command("certutil.exe",["-csp","Microsoft Software Key Storage Provider","-key"]).includes(stoppedJournal.journal.containerName));
-        report.outcome="uncertain-no-resubmit-abandoned-with-absent-key";report.caRequestsAfterRecovery=0;
-        report.abandonedKeyAbsent=true;
+        // A single absent CA row cannot rule out a late commit of the killed RPC.
+        // Retain the exact key/journal and require operator reconciliation instead
+        // of using absence as permission for terminal key cleanup.
+        report.outcome="uncertain-no-resubmit-operator-action-required";
+        report.caRequestsAfterRecovery=0;report.ownedProtectedKeyPreserved=true;
+        report.cleanupPendingOperatorReconciliation=true;
+        fs.writeFileSync(path.join(workDir,".preserve-adcs-journal-uncertainty.json"),JSON.stringify({enrollmentId,jobId:created.body.jobId}));
+        if(context.allowOperatorReconciliationOutcome===true){
+          Object.assign(report,await verifyActionableUncertainty({fixture,api,enrollmentId,recoveryJobId:recovery.body.jobId,getJob,until,configDir,stoppedJournal,command,observe}));
+        }else throw Object.assign(new Error("ADCS_SUBMISSION_RECONCILIATION_REQUIRED"),{code:"ADCS_SUBMISSION_RECONCILIATION_REQUIRED"});
       }else{
         assert.equal(native.subjectRequestCount,1);
         assert.equal((await fixture.request(`${api}/enrollments/${enrollmentId}/reconcile`,"POST",{requestId:native.requestId})).status,204);
         const dispatched=(await require("../../../apps/api/services/certops/certificateEnrollments").scheduleDueEnrollments({client:fixture.pool,now:new Date(Date.now()+1000)})).find(row=>row.enrollmentId===enrollmentId);assert.ok(dispatched);await jobFinished(dispatched.jobId);report.outcome="uncertain-no-resubmit-operator-reconciled";
       }
     }else{await jobFinished(recovery.body.jobId);report.outcome="same-key-installation-recovered";}
-    if(!["uncertain-no-resubmit-abandoned-with-absent-key","pre-csr-recovery-refused-owned-key-cancelled"].includes(report.outcome)){
+    if(!["uncertain-no-resubmit-operator-action-required","uncertain-no-resubmit-abandoned-with-absent-key","pre-csr-recovery-refused-owned-key-cancelled"].includes(report.outcome)){
       const installed=await getEnrollment();assert.equal(installed.state,"installed");
       const journal=readEnrollmentJournal(configDir,enrollmentId);assert.equal(journal.kind,"valid");assert.equal(journal.journal.containerName,stoppedJournal.journal.containerName);
       for(const field of ["csrSha256","csrSpkiSha256","snapshotSha256"])assert.equal(journal.journal[field],stoppedJournal.journal[field]);
       report.sameKeyAndCsrIdentityPreserved=true;
-      const native=observe();assert.equal(native.subjectRequestCount,1);assert.equal(String(native.requestId),String(installed.request_id));report.caRequestsAfterRecovery=1;
-      if(phase==="installing")assert.equal(String(installed.request_id),String(stoppedJournal.journal.requestId));
+      const native=observe();assert.equal(native.subjectRequestCount,1);verifyNativeRequestId(native.requestId,installed.request_id,journal.journal.requestId);report.caRequestsAfterRecovery=1;
+      if(["issued","installing"].includes(phase))verifyNativeRequestId(native.requestId,stoppedJournal.journal.requestId);
+      if(phase==="issued"){
+        assert.equal(native.requestId,nativeAtFault.requestId);
+        report.nativeRequestIdAfterRecovery=native.requestId;
+        report.issuedRequestIdentityPreserved=true;
+      }
       const leaf=await new Promise((resolve,reject)=>{const socket=tls.connect({host:"127.0.0.1",port,servername:domain,ca:tlsAuthority(authority),rejectUnauthorized:true},()=>{try{assert.equal(socket.authorized,true);resolve(new crypto.X509Certificate(socket.getPeerCertificate().raw));}catch(error){reject(error);}finally{socket.destroy();}});socket.setTimeout(10000,()=>socket.destroy(new Error("Recovered trusted native TLS timed out")));socket.once("error",reject);});assert.equal(leaf.checkHost(domain),domain);ownedThumbprints.add(leaf.fingerprint.replace(/:/g,""));report.trustedNativeTls=true;
     }
     const audits=(await fixture.pool.query("SELECT metadata FROM audit_events WHERE workspace_id=$1 AND action='certops.enrollment.recovery_requested' AND metadata->>'enrollmentId'=$2",[fixture.workspaceId,enrollmentId])).rows;
@@ -102,9 +124,11 @@ module.exports=async function runJournalPhaseExperiment(context){
     report.status="passed";
   }catch(error){primaryError=error;report.status="failed";report.errorClass=error?.constructor?.name || "Error";throw error;}
   finally{
-    observer?.stop();const cleanup=[];
-    try{if(recoveryPolicy){ps(`$r=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\\CurrentControlSet\\Services\\TokenTimerAgent');try{$owner=@($r.GetValue('Environment')|Where-Object {$_ -like 'TOKENTIMER_AGENT_CONFIG_DIR=*'});if($owner.Count -ne 1 -or $owner[0].Substring('TOKENTIMER_AGENT_CONFIG_DIR='.Length) -ine '${configDir.replace(/'/g,"''")}'){throw 'Foreign recovery restore'}}finally{$r.Dispose()}`);command("sc.exe",["failure","TokenTimerAgent","reset=","86400","actions=","restart/5000"]);const restored=JSON.parse(ps(`$r=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\\CurrentControlSet\\Services\\TokenTimerAgent');try{@{actions=[Convert]::ToBase64String($r.GetValue('FailureActions'));nonCrash=$r.GetValue('FailureActionsOnNonCrashFailures',$null)}|ConvertTo-Json -Compress}finally{$r.Dispose()}`));assert.deepEqual(restored,recoveryPolicy,"Owned SCM recovery policy did not restore exact installer bytes");report.ownedScmRecoveryRestored=true;}}catch(error){cleanup.push(error);}
-    try{if(serviceStopped||ps("(Get-Service TokenTimerAgent).Status")==="Stopped")ps("Start-Service TokenTimerAgent -ErrorAction Stop");}catch(error){cleanup.push(error);}
+    const cleanup=[];let observerDrained=!observer;
+    try{await observer?.stopAndDrain();observerDrained=true;}catch(error){cleanup.push(error);report.ownedObserverDrainFailed=true;}
+    // A live fault observer must never overlap SCM recovery or a restarted agent.
+    try{if(recoveryPolicy && observerDrained){ps(`$r=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\\CurrentControlSet\\Services\\TokenTimerAgent');try{$owner=@($r.GetValue('Environment')|Where-Object {$_ -like 'TOKENTIMER_AGENT_CONFIG_DIR=*'});if($owner.Count -ne 1 -or $owner[0].Substring('TOKENTIMER_AGENT_CONFIG_DIR='.Length) -ine '${configDir.replace(/'/g,"''")}'){throw 'Foreign recovery restore'}}finally{$r.Dispose()}`);command("sc.exe",["failure","TokenTimerAgent","reset=","86400","actions=","restart/5000"]);const restored=JSON.parse(ps(`$r=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\\CurrentControlSet\\Services\\TokenTimerAgent');try{@{actions=[Convert]::ToBase64String($r.GetValue('FailureActions'));nonCrash=$r.GetValue('FailureActionsOnNonCrashFailures',$null)}|ConvertTo-Json -Compress}finally{$r.Dispose()}`));assert.deepEqual(restored,recoveryPolicy,"Owned SCM recovery policy did not restore exact installer bytes");report.ownedScmRecoveryRestored=true;}}catch(error){cleanup.push(error);}
+    try{if(observerDrained && (serviceStopped||ps("(Get-Service TokenTimerAgent).Status")==="Stopped"))ps("Start-Service TokenTimerAgent -ErrorAction Stop");}catch(error){cleanup.push(error);}
     // Every certificate for this unique name must carry this exact owned key.
     // Track its public thumbprint even when delivery failed before the TLS oracle.
     try{if(enrollmentId){const container=buildEnrollmentContainerName(enrollmentId);const thumbs=ps(`$matches=@();Get-ChildItem Cert:\\LocalMachine\\My|Where-Object Subject -eq 'CN=${domain}'|ForEach-Object{$c=$_;$k=$null;try{$k=[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c);if(-not $k -or $k.Key.KeyName -ne '${container}'){throw 'Foreign certificate under owned fault name'};$matches+=$c.Thumbprint}finally{if($k){$k.Dispose()};$c.Dispose()}};$matches|ConvertTo-Json -Compress`);if(thumbs){const parsed=JSON.parse(thumbs);for(const thumb of Array.isArray(parsed)?parsed:[parsed]){assert.match(thumb,/^[A-F0-9]{40}$/);ownedThumbprints.add(thumb);}}}}catch(error){cleanup.push(error);}
@@ -113,3 +137,25 @@ module.exports=async function runJournalPhaseExperiment(context){
     if(cleanup.length)throw new AggregateError([...(primaryError?[primaryError]:[]),...cleanup],"Native journal experiment and finalization failed");
   }
 };
+
+module.exports.assertCleanupSafe=function assertCleanupSafe(workDir){
+  assert.equal(fs.existsSync(path.join(workDir,".preserve-adcs-journal-uncertainty.json")),false,
+    "Preserve key and durable journal: an absent CA row does not exclude a late submission commit");
+};
+
+// Only the standalone runner may accept safe operator uncertainty as an
+// experimental outcome. This does not authorize native custody cleanup.
+async function verifyActionableUncertainty({fixture,api,enrollmentId,recoveryJobId,getJob,until,configDir,stoppedJournal,command,observe}){
+ const continuation=await until(async()=>{const row=await getJob(recoveryJobId);return ["failed","blocked"].includes(row?.status)?row:null;});
+ assert.ok(["failed","blocked"].includes(continuation.status));
+ const current=(await fixture.pool.query("SELECT state,request_id,operator_request_id,next_poll_at,snapshot_sha256 FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,enrollmentId])).rows[0];
+ assert.equal(current.state,"submission_uncertain");assert.equal(current.request_id,null);assert.equal(current.operator_request_id,null);assert.equal(current.next_poll_at,null);assert.equal(current.snapshot_sha256,stoppedJournal.journal.snapshotSha256);
+ const page=await fixture.request(`${api}/enrollments`,"GET");assert.equal(page.status,200);const visible=page.body.items.filter(row=>row.id===enrollmentId);assert.equal(visible.length,1);assert.equal(visible[0].state,"submission_uncertain");assert.equal(visible[0].requestId,null);assert.equal(visible[0].operatorRequestId,null);assert.ok(["failed","blocked"].includes(visible[0].jobStatus));
+ const scheduled=await require("../../../apps/api/services/certops/certificateEnrollments").scheduleDueEnrollments({client:fixture.pool,now:new Date(Date.now()+86400000)});assert.equal(scheduled.some(row=>row.enrollmentId===enrollmentId),false);
+ const unchanged=readEnrollmentJournal(configDir,enrollmentId);assert.equal(unchanged.kind,"valid");assert.equal(unchanged.journal.state,"submission_uncertain");
+ for(const field of ["containerName","csrSha256","csrSpkiSha256","snapshotSha256","caConfig","template"])assert.equal(unchanged.journal[field],stoppedJournal.journal[field]);
+ assert.ok(stoppedJournal.artifacts.csrPem);assert.equal(unchanged.artifacts.csrPem,stoppedJournal.artifacts.csrPem);
+ assert.ok(command("certutil.exe",["-csp","Microsoft Software Key Storage Provider","-key"]).includes(stoppedJournal.journal.containerName));assert.equal(observe().subjectRequestCount,0);
+ return {scopedOperatorReconciliationOutcome:true,recoveryContinuationRefused:true,publicOperatorUncertaintyObserved:true,ordinaryPollAbsent:true,supportedSchedulerDidNotResubmit:true,sameKeyAndCsrIdentityPreserved:true,trustedNativeTls:false};
+}
+module.exports.verifyActionableUncertainty=verifyActionableUncertainty;

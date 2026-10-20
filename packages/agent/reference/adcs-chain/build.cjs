@@ -18,7 +18,9 @@ const distDir = path.join(moduleDir, "dist");
 function hostTarget() {
   const goos = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "darwin" : "linux";
   const goarch = process.arch === "arm64" ? "arm64" : "amd64";
-  const outName = goos === "windows" ? "tokentimer-adcs-chain.exe" : "tokentimer-adcs-chain";
+  // Native Windows builds must use the same architecture-specific filename
+  // consumed by the source runner and metadata-only key-survivor guard.
+  const outName = goos === "windows" ? `tokentimer-adcs-chain-windows-${goarch}.exe` : "tokentimer-adcs-chain";
   return { goos, goarch, outName };
 }
 

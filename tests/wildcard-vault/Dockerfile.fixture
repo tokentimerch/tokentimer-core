@@ -1,4 +1,5 @@
 FROM node:24-bookworm-slim
+COPY --from=hashicorp/vault:1.21 /bin/vault /usr/local/bin/vault
 RUN apt-get update && apt-get install -y --no-install-recommends certbot openssl nginx haproxy ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /repo

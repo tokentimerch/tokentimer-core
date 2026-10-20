@@ -95,6 +95,8 @@ describe("pack-release (H10)", () => {
       assert.ok(
         list.stdout.includes(`package/bin/tokentimer-adcs-chain-${arch}.exe`),
       );
+    for (const arch of ["amd64", "arm64"])
+      assert.ok(list.stdout.includes(`package/bin/tokentimer-adcs-cmc-${arch}.exe`));
     assert.doesNotMatch(list.stdout, /reference\/adcs-chain\/dist/);
     assert.doesNotMatch(
       list.stdout,
@@ -105,8 +107,8 @@ describe("pack-release (H10)", () => {
       .filter((file) => file.endsWith(".exe"));
     assert.equal(
       executableEntries.length,
-      4,
-      "Only two service hosts and two matching chain helpers may ship",
+      6,
+      "Only two service hosts, two chain helpers and two CMC helpers may ship",
     );
     const extracted = path.join(outDir, "extracted");
     fs.mkdirSync(extracted);
@@ -122,6 +124,11 @@ describe("pack-release (H10)", () => {
       ["x64", "amd64"],
       ["arm64", "arm64"],
     ]) {
+      const cmc = path.join(extracted, "package", "bin", `tokentimer-adcs-cmc-${arch}.exe`);
+      assertPeArchitecture(cmc, arch);
+      assert.deepEqual(require("../src/issuers/adcs-enrollment").resolveAdcsCmcHelperPath({
+        packageRoot: path.join(extracted, "package"), platform: "win32", arch: runtimeArch,
+      }), { path: cmc });
       const expected = path.join(
         extracted,
         "package",

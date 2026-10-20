@@ -619,6 +619,7 @@ function EditAlertingModal({ isOpen, onClose, agent, onSaved }) {
  *   its own title/description without the caller duplicating them.
  */
 const FLEET_ALL = 'all';
+const FLEET_ACCESS_REVALIDATE_MS = 15000;
 // Fleet aggregates many jobs. Per-job and modal-wide budgets prevent one busy
 // agent from freezing the browser; open a single job for the full stream.
 const FLEET_LOG_PAGE_SIZE = 200;
@@ -839,7 +840,7 @@ export async function loadFleetJobBatches(
   });
 }
 
-function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
+export function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
   const {
     overlayProps,
     headerProps,
@@ -856,12 +857,17 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
   const [fleetIndexCapped, setFleetIndexCapped] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const withdrawnRef = useRef(false);
+  const loadControllerRef = useRef(null);
   const agentLabel =
     agent?.name || agent?.hostname || agent?.agentId || 'Agent';
   useEffect(() => {
     if (!isOpen || !agent?.id || !workspaceId) return undefined;
     let cancelled = false;
     const controller = new AbortController();
+    loadControllerRef.current = controller;
+    withdrawnRef.current = false;
     setLoading(true);
     setJobs([]);
     setMergedLines([]);
@@ -877,7 +883,7 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
           limit: 20,
           signal: controller.signal,
         });
-        if (cancelled) return;
+        if (cancelled || withdrawnRef.current) return;
         const seen = new Set();
         const items = (result.items || []).filter(item => {
           if (!item?.jobId || seen.has(item.jobId)) return false;
@@ -893,7 +899,8 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
         const batches = await loadFleetJobBatches(workspaceId, jobIds, {
           signal: controller.signal,
         });
-        if (cancelled) return;
+        // Access was withdrawn while these pages were in flight: drop them.
+        if (cancelled || withdrawnRef.current) return;
         setMergedLines(batches.flatMap(batch => batch.lines));
         setTruncatedJobIds(
           batches.filter(batch => batch.truncated).map(batch => batch.jobId)
@@ -928,7 +935,36 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
       cancelled = true;
       controller.abort();
     };
-  }, [isOpen, agent, workspaceId]);
+  }, [isOpen, agent, workspaceId, reloadNonce]);
+
+  useEffect(() => {
+    if (!isOpen || !agent?.id || !workspaceId || source !== FLEET_ALL) {
+      return undefined;
+    }
+    let cancelled = false;
+    const timer = setInterval(() => {
+      listAgentFleetLog(workspaceId, agent.id, { limit: 1 })
+        .then(() => {
+          if (cancelled || !withdrawnRef.current) return;
+          withdrawnRef.current = false;
+          setReloadNonce(value => value + 1);
+        })
+        .catch(err => {
+          if (cancelled) return;
+          if (![401, 403].includes(err?.response?.status)) return;
+          withdrawnRef.current = true;
+          loadControllerRef.current?.abort();
+          setMergedLines([]);
+          setJobs([]);
+          setTruncatedJobIds([]);
+          setFailedJobIds([]);
+        });
+    }, FLEET_ACCESS_REVALIDATE_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [isOpen, agent, workspaceId, source]);
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} isCentered scrollBehavior='inside'>

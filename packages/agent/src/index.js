@@ -2450,6 +2450,31 @@ async function executeJob({
   }
 
   if (job.publication || action === "deploy-from-store") {
+    // Same rule as AD CS: advertisement filtering is not enough. A signed job
+    // that reaches this process must still stop when the release manifest has
+    // not qualified material distribution.
+    const requiredMaterialCapabilities = [];
+    if (job.publication) {
+      requiredMaterialCapabilities.push(
+        "material-store-vault-kv2-v1",
+        "certificate-publication-v1",
+      );
+    }
+    if (action === "deploy-from-store") {
+      requiredMaterialCapabilities.push(
+        "material-store-vault-kv2-v1",
+        "deploy-from-store-v1",
+      );
+    }
+    const missingMaterialCapability = requiredMaterialCapabilities.find(
+      (capability) => !AGENT_DECLARED_CAPABILITIES.includes(capability),
+    );
+    if (missingMaterialCapability) {
+      return {
+        status: "blocked",
+        errorMessage: `this build has not qualified ${missingMaterialCapability}; material distribution jobs are refused`,
+      };
+    }
     if (jobMode !== "dry_run" && (typeof claimId !== "string" || claimId.length === 0)) return {status:"blocked",errorMessage:"material_claim_required"};
     if (process.platform !== "linux") return { status: "blocked", errorMessage: "material_platform_unqualified" };
     if (jobMode !== "dry_run" && execution.dryRun === true) return { status: "blocked", errorMessage: "material_local_dry_run_required" };

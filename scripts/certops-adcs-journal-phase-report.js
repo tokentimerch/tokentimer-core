@@ -13,12 +13,18 @@ function verify(report){
   assert.equal(report.qualificationStatus,"not-qualified");assert.equal(report.status,"passed");
   assert.match(report.candidateSha,/^[a-f0-9]{40}$/i);assert.match(report.fixtureSource?.sha256,/^[a-f0-9]{64}$/i);
   assert.equal(report.fixtureSource.file,"tests/e2e/helpers/certops-adcs-journal-phase-experiment.js");
-  assert.ok(["keygen_intent","prepared","submitting","installing"].includes(report.phase));assert.equal(report.fault?.phase,report.phase);
+  assert.ok(["keygen_intent","prepared","submitting","issued","installing"].includes(report.phase));assert.equal(report.fault?.phase,report.phase);
   for(const field of ["observedDurablePhase","unchangedAfterTermination","ownedServiceTree"])assert.equal(report.fault[field],true);
   assert.equal(report.fault.nativeIdentity,"LocalSystem");assert.equal(report.actualRenewedLeaseObserved,true);assert.equal(report.actualOrphanedJobObserved,true);assert.equal(report.ownedScmRecoveryTemporarilyDisabled,true);assert.equal(report.ownedScmRecoveryRestored,true);
   assert.equal(report.operatorRecoveryAuditObserved,true);assert.equal(report.originalUnknownEffectEvidencePreserved,true);
   assert.equal(report.leaseSeconds,60);assert.equal(report.hardGraceMs,60000);assert.equal(report.clocks,"actual-host-and-database");
   assert.equal(report.databasePhaseRewritten,false);assert.equal(report.journalRewritten,false);assert.notEqual(report.cleanupFailed,true);
+  if(report.phase==="issued"){
+    assert.equal(report.caRequestsAtFault,1);
+    assert.equal(report.issuedRequestIdentityPreserved,true);
+    assert.ok(Number.isInteger(report.nativeRequestIdAtFault) && report.nativeRequestIdAtFault > 0 && report.nativeRequestIdAtFault <= 0xffffffff);
+    assert.equal(report.nativeRequestIdAfterRecovery,report.nativeRequestIdAtFault);
+  }
   if(report.phase==="keygen_intent"){
     assert.equal(report.outcome,"pre-csr-recovery-refused-owned-key-cancelled");
     for(const field of ["preCsrRecoveryRefused","ownedProtectedKeyPreserved","durableCsrAbsent","cancelledKeyAbsent"])assert.equal(report[field],true);
@@ -26,10 +32,16 @@ function verify(report){
     assert.equal(report.caRequestsAtFault,0);assert.equal(report.caRequestsAfterRecovery,0);
   }else if(report.phase==="submitting"){
     assert.equal(report.uncertainNoResubmitVerified,true);
-    assert.ok(["uncertain-no-resubmit-abandoned-with-absent-key","uncertain-no-resubmit-operator-reconciled"].includes(report.outcome));
-    assert.equal(report.caRequestsAfterRecovery,report.caRequestsAtFault);
-    if(report.outcome==="uncertain-no-resubmit-abandoned-with-absent-key"){assert.equal(report.caRequestsAfterRecovery,0);assert.equal(report.abandonedKeyAbsent,true);}
-    else {assert.equal(report.caRequestsAfterRecovery,1);assert.equal(report.trustedNativeTls,true);assert.equal(report.sameKeyAndCsrIdentityPreserved,true);}
+    assert.equal(report.uncertainFrozenIdentityAndKeyPreserved,true);
+    if(report.outcome==="uncertain-no-resubmit-operator-action-required"){
+      for(const field of ["scopedOperatorReconciliationOutcome","recoveryContinuationRefused","publicOperatorUncertaintyObserved","ordinaryPollAbsent","supportedSchedulerDidNotResubmit","ownedProtectedKeyPreserved","cleanupPendingOperatorReconciliation","sameKeyAndCsrIdentityPreserved"])assert.equal(report[field],true);
+      assert.equal(report.caRequestsAtFault,0);assert.equal(report.caRequestsAfterRecovery,0);assert.equal(report.trustedNativeTls,false);
+    }else{
+      assert.equal(report.outcome,"uncertain-no-resubmit-operator-reconciled");
+      assert.equal(report.caRequestsAfterRecovery,report.caRequestsAtFault);
+      assert.equal(report.caRequestsAfterRecovery,1);assert.equal(report.trustedNativeTls,true);
+      assert.equal(report.sameKeyAndCsrIdentityPreserved,true);
+    }
   }else{assert.equal(report.outcome,"same-key-installation-recovered");assert.equal(report.caRequestsAfterRecovery,1);assert.equal(report.trustedNativeTls,true);assert.equal(report.sameKeyAndCsrIdentityPreserved,true);}
   return true;
 }

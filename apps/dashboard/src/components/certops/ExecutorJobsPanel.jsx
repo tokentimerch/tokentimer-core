@@ -474,6 +474,7 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
                         spacing={1}
                         flexShrink={0}
                         onClick={event => event.stopPropagation()}
+                        onKeyDown={event => event.stopPropagation()}
                       >
                         <Button
                           size='xs'
@@ -499,6 +500,7 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
                     <Box
                       flexShrink={0}
                       onClick={event => event.stopPropagation()}
+                      onKeyDown={event => event.stopPropagation()}
                     >
                       <JobDetailsButton job={job} agentsById={agentsById} />
                     </Box>
