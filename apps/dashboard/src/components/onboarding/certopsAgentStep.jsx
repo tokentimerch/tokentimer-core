@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FiRefreshCw } from 'react-icons/fi';
-import { Badge, HStack, Text, VStack } from '@chakra-ui/react';
+import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
+  Badge,
+  HStack,
+  Text,
+  VStack,
+} from '@chakra-ui/react';
 import {
   DashboardActionButton,
   DashboardErrorAlert,
@@ -20,7 +28,11 @@ import {
   buildControllerValues,
   buildInstallCommand,
 } from './certopsConfig.js';
-import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
+import {
+  certopsObjectiveFor,
+  certopsProgress,
+  saveCertops,
+} from './certopsSetupSteps.jsx';
 import { createBootstrapToken } from '../certops/certopsAgentsApi.js';
 
 const POLL_MS = 5000;
@@ -52,6 +64,7 @@ export function AgentStep({ ctx }) {
   const [clusterId, setClusterId] = useState(saved.clusterId || '');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [deferred, setDeferred] = useState(false);
   const timer = useRef(null);
 
   const agents = ctx.summary?.certops?.agents;
@@ -77,6 +90,18 @@ export function AgentStep({ ctx }) {
       );
     } finally {
       setBusy(false);
+    }
+  };
+
+  // Progress is saved with every step; this records the choice so the step
+  // can say so on return. It never counts the step as done.
+  const installLater = async () => {
+    setError('');
+    try {
+      await saveCertops(ctx, { agentLaterAt: new Date().toISOString() });
+      setDeferred(true);
+    } catch (e) {
+      setError(e.message || 'Could not save your progress.');
     }
   };
 
@@ -214,17 +239,56 @@ export function AgentStep({ ctx }) {
         ),
       ]}
       actions={
-        <PrimaryButton
-          onClick={issueToken}
-          isLoading={busy}
-          isDisabled={Boolean(token)}
-        >
-          {token ? 'Token created' : 'Create a one-time token'}
-        </PrimaryButton>
+        <>
+          {healthy ? null : (
+            <DashboardActionButton variant='outline' onClick={installLater}>
+              I will install it later
+            </DashboardActionButton>
+          )}
+          <PrimaryButton
+            onClick={issueToken}
+            isLoading={busy}
+            isDisabled={Boolean(token)}
+          >
+            {token ? 'Token created' : 'Create a one-time token'}
+          </PrimaryButton>
+        </>
       }
     >
       <VStack align='stretch' spacing={3}>
         {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
+        {deferred ? (
+          <Alert status='info' borderRadius='md' data-testid='install-later'>
+            <AlertIcon />
+            <VStack align='start' spacing={2}>
+              <AlertDescription fontSize='sm'>
+                Saved. This step stays open until an agent that can do this goal
+                connects. To come back, use the setup banner on Certificate
+                Management (shown while nothing is set up there), open
+                /onboarding?area=certops, or choose Open setup guide in
+                Preferences.
+              </AlertDescription>
+              {ctx.leaveGuide ? (
+                <DashboardActionButton size='sm' onClick={ctx.leaveGuide}>
+                  Go to Certificate Management
+                </DashboardActionButton>
+              ) : null}
+            </VStack>
+          </Alert>
+        ) : saved.agentLaterAt ? (
+          <Text fontSize='xs' color={muted}>
+            You paused here earlier. This page keeps watching for the agent.
+          </Text>
+        ) : null}
+        {certopsObjectiveFor(ctx) === 'adcs' ? (
+          <Alert status='info' borderRadius='md' data-testid='adcs-host-note'>
+            <AlertIcon />
+            <AlertDescription fontSize='sm'>
+              Install the agent on a domain-joined Windows Server member that
+              can reach your CA. A domain controller is not supported.
+            </AlertDescription>
+          </Alert>
+        ) : null}
         {REGISTRATION_NOTES.map(n => (
           <Text key={n} fontSize='xs' color={muted}>
             {n}

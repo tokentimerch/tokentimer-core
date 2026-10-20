@@ -16,7 +16,7 @@ export const OBJECTIVES = {
   adcs: {
     label: 'Issue certificates from my Microsoft CA (AD CS)',
     description:
-      'A domain-joined Windows agent enrolls IIS certificates from your private CA. Candidate: the guide prepares it but cannot verify enrollment.',
+      'A domain-joined Windows agent enrolls certificates for an HTTPS listener (IIS) from your private CA.',
   },
   vault: {
     label: 'Share one certificate across servers with Vault',
@@ -26,6 +26,7 @@ export const OBJECTIVES = {
 };
 
 // status: qualified | candidate. Anything unsupported is simply absent.
+// The wizard also marks a pick Candidate from guidedSetupStatus.js.
 export const INFRASTRUCTURES = {
   linux: {
     label: 'Linux server',
@@ -38,11 +39,24 @@ export const INFRASTRUCTURES = {
     },
   },
   windows: {
-    label: 'Windows Server with IIS',
+    label: 'Windows Server',
     detail: 'Server 2016 or later (build 14393+), PowerShell 5.1',
+    // AD CS was qualified on Server 2019, 2022 and 2025; 2016 and earlier are
+    // outside its qualified scope.
+    goalBase: {
+      adcs: 'Server 2019 or later (build 17763+), PowerShell 5.1',
+    },
+    // Appended per goal: IIS only matters once a certificate is deployed.
+    goalDetail: {
+      observe:
+        'Discover certificates in the machine certificate store and HTTPS bindings. No IIS needed.',
+      automate:
+        'Install the certificate in the machine store and bind it to an HTTPS listener, typically an IIS site.',
+      adcs: 'Use a domain-joined member server, not a domain controller. Install the certificate in the machine store and bind it to an HTTPS listener, typically an IIS site.',
+    },
     platform: 'win32',
-    // The Windows ACME and AD CS paths are built in the guide but have not
-    // been verified on a real host, so they are labelled as candidates.
+    // The guided Windows ACME and AD CS setups are flagged here as well as in
+    // the guided setup register.
     objectives: {
       observe: 'qualified',
       automate: 'candidate',
@@ -60,9 +74,12 @@ export const INFRASTRUCTURES = {
 export function infrastructuresFor(objective) {
   return Object.entries(INFRASTRUCTURES)
     .filter(([, infra]) => infra.objectives[objective])
-    .map(([id, infra]) => ({
+    .map(([id, { goalDetail, goalBase, ...infra }]) => ({
       id,
       ...infra,
+      detail: [goalBase?.[objective] || infra.detail, goalDetail?.[objective]]
+        .filter(Boolean)
+        .join('. '),
       status: infra.objectives[objective],
     }));
 }

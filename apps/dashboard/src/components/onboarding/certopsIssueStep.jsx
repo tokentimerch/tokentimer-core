@@ -229,8 +229,8 @@ export default function IssueStep({ ctx }) {
         {view.failed && windows ? (
           <Text fontSize='sm'>
             Check the job log, then request again. The ACME client path and the
-            IIS site must exist on the host, and the agent must be allowed to
-            run that client.
+            HTTPS listener (usually an IIS site) must exist on the host, and the
+            agent must be allowed to run that client.
           </Text>
         ) : null}
         {view.failed && !windows ? (
@@ -261,7 +261,7 @@ export default function IssueStep({ ctx }) {
         </Text>
         <Text fontSize='sm' data-testid='reload-note'>
           {windows
-            ? `The agent stores the certificate in the ${saved.iisStore || 'My'} machine store and binds it to ${saved.iisSite || 'Default Web Site'} on port ${saved.iisPort || 443}, replacing the existing binding.`
+            ? `The agent stores the certificate in the ${saved.iisStore || 'My'} machine store and binds it to the HTTPS binding ${saved.iisSite || 'Default Web Site'} (usually an IIS site) on port ${saved.iisPort || 443}, replacing the certificate currently bound there.`
             : saved.reloadService
               ? `After writing the certificate, the agent tests the ${reloadLabel} configuration and reloads it only if the test passes.`
               : 'The certificate is written to the path above. Nothing is reloaded; you can choose a web server to reload in the configuration step.'}
@@ -269,7 +269,7 @@ export default function IssueStep({ ctx }) {
         {view.done ? (
           <Text fontSize='sm'>
             {windows
-              ? `The certificate was issued and bound to ${saved.iisSite || 'Default Web Site'}.`
+              ? `The certificate was issued and bound to the HTTPS binding ${saved.iisSite || 'Default Web Site'}.`
               : `The certificate was issued and written to ${saved.certPath}.`}{' '}
             Installing it into a web server and renewal are separate steps.
           </Text>

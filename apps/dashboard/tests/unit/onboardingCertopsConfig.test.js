@@ -98,7 +98,7 @@ describe('install command', () => {
       apiUrl: 'https://tt.example.com',
       workspaceId: WS,
     });
-    expect(cmd).toMatch(/^\.\\install-agent\.ps1/);
+    expect(cmd).toMatch(/^\.\\scripts\\install-agent\.ps1/);
     expect(cmd).not.toContain('sudo');
   });
 

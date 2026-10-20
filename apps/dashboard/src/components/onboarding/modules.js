@@ -7,8 +7,8 @@
 
 export const STEP_DEFS = {
   goal: { title: 'Choose what to set up', kind: 'ui' },
-  monitor: { title: 'Add the website to monitor', kind: 'ui' },
-  asset: { title: 'Add your first asset', kind: 'ui' },
+  monitor: { title: 'Add the websites to monitor', kind: 'ui' },
+  asset: { title: 'Add your assets', kind: 'ui' },
   file_import: { title: 'Import assets from a file', kind: 'ui' },
   integration: { title: 'Import from an integration', kind: 'ui' },
   recipients: { title: 'Choose who gets alerted', kind: 'ui' },
@@ -105,7 +105,7 @@ export const GOALS = {
   certops_automate: {
     doneText: 'Your agent issued a staging certificate.',
     doneTextWindows:
-      'Your agent requested a staging certificate and bound it to IIS. The Windows path is a candidate: it has not yet been verified on a real host.',
+      'Your agent requested a staging certificate and bound it to an HTTPS listener (IIS). This guided Windows setup has not been verified end to end yet.',
     label: 'Issue and renew certificates automatically',
     description:
       'Use an agent to request, install and renew certificates (ACME).',
@@ -129,7 +129,7 @@ export const GOALS = {
       'Your agent is ready to enroll from your Microsoft CA. Enrollment itself is not verified by this guide.',
     label: 'Issue certificates from my Microsoft CA (AD CS)',
     description:
-      'A domain-joined Windows agent enrolls IIS certificates from your private CA.',
+      'A domain-joined Windows agent enrolls certificates for an HTTPS listener (IIS) from your private CA.',
     // The rule must exist before the agent registers, as for ACME profiles.
     steps: [
       'certops_objective',

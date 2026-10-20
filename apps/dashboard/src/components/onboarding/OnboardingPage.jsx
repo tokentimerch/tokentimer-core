@@ -5,7 +5,7 @@ import {
   FiRepeat,
   FiRefreshCw,
 } from 'react-icons/fi';
-import { Link as RouterLink } from 'react-router';
+import { Link as RouterLink, useNavigate } from 'react-router';
 import {
   Alert,
   AlertDescription,
@@ -32,11 +32,12 @@ import { onboardingAPI } from '../../utils/onboardingApi.js';
 import { SessionController } from './sessionController.js';
 import { reconcilePending } from './reconcile.js';
 import { docUrl } from './docLinks.js';
-import StepFrame from './StepFrame.jsx';
+import StepFrame, { INFO_NOTE_PROPS } from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import { PLANNER_VERSION, planJourney } from './journeyPlanner.js';
 import { GOALS } from './modules.js';
 import { clearGoal, skipStep } from './sessionTransitions.js';
+import { scopeCertops } from './certopsScope.js';
 import { resolveNavigation } from './stepNavigation.js';
 import { AssetStep, GoalStep, MonitorStep } from './steps.jsx';
 import { RecipientsStep, VerifyStep } from './recipientAndVerifySteps.jsx';
@@ -97,7 +98,7 @@ export function nextSteps(goalId) {
     case 'certops_adcs':
       return [
         'Attach the profile to your certificate in Certificate Management and watch the first enrollment there.',
-        'Keep this as a candidate until it has been verified against your CA.',
+        'Treat this guided setup as unverified until an enrollment has completed against your CA.',
       ];
     case 'certops_vault':
       return [
@@ -300,7 +301,7 @@ function ReviewBar({ nav, titleOf, onGo, onReturn }) {
         Back{nav.previousId ? `: ${titleOf(nav.previousId)}` : ''}
       </DashboardActionButton>
       {nav.viewing ? (
-        <HStack spacing={2}>
+        <HStack spacing={2} flexWrap='wrap'>
           <Text fontSize='xs' color={muted}>
             Reviewing a finished step. Nothing here is lost.
           </Text>
@@ -338,7 +339,10 @@ function DoneCard({ ctx }) {
       kind='info'
       title='You are set up'
       description={
-        (ctx.session.progress?.certops?.infrastructure === 'windows' &&
+        (scopeCertops(
+          ctx.session.progress?.certops,
+          GOALS[ctx.session.intent?.goal]?.certopsObjective
+        ).infrastructure === 'windows' &&
           GOALS[ctx.session.intent?.goal]?.doneTextWindows) ||
         GOALS[ctx.session.intent?.goal]?.doneText ||
         'Setup is complete.'
@@ -384,6 +388,7 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
     pageTitle: 'Set up TokenTimer',
   });
   const onboarding = useOnboardingState();
+  const navigate = useNavigate();
 
   const docsBaseUrl = onboarding.capabilities?.docsBaseUrl;
   const docs = useCallback(
@@ -439,6 +444,8 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
             skip,
             // Steps call this when they finish something that should leave a review.
             onDone: () => setViewStepId(null),
+            // Leaves the guide without touching progress.
+            leaveGuide: () => navigate('/certops'),
             // The browser origin is the address agents must be able to reach.
             apiUrl: typeof window !== 'undefined' ? resolveApiOrigin() : '',
             isSystemAdmin:
@@ -447,7 +454,7 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
             userName: session?.name || session?.displayName || '',
           }
         : null,
-    [onboarding, docs, session, skip]
+    [onboarding, docs, session, skip, navigate]
   );
 
   // A finished step can be reopened. It is only a view: the planner keeps
@@ -530,7 +537,7 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
                       Change what I am setting up
                     </DashboardActionButton>
                   ) : null}
-                  <Alert status='info' size='sm' borderRadius='md' mt={4}>
+                  <Alert {...INFO_NOTE_PROPS} mt={4}>
                     <AlertIcon />
                     <AlertDescription fontSize='xs' lineHeight='1.45'>
                       Progress is saved to your account. Leave any time and

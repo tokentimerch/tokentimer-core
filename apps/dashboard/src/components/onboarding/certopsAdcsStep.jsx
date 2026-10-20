@@ -98,8 +98,8 @@ export default function AdcsStep({ ctx }) {
           <AlertIcon />
           <AlertDescription fontSize='sm'>
             This guide prepares the agent rule and watches for the issuer and
-            profile. It cannot verify enrollment against your CA, so this path
-            stays a candidate until it is tested on a domain-joined host.
+            profile. It cannot verify enrollment against your CA, and this
+            guided setup has not been verified through a real enrollment yet.
           </AlertDescription>
         </Alert>
         <Row
@@ -126,7 +126,7 @@ export default function AdcsStep({ ctx }) {
         <Row
           done={status.profile}
           label='AD CS renewal profile created'
-          hint='In Renewals, Renewal profiles, New AD CS profile. Pick the confirmed issuer, the IIS site and the certificate name.'
+          hint='In Renewals, Renewal profiles, New AD CS profile. Pick the confirmed issuer, the HTTPS binding (IIS site) and the certificate name.'
         />
         <Text fontSize='sm' fontWeight='semibold'>
           Still to do on your side

@@ -121,7 +121,7 @@ export function buildInstallCommand({
     ];
     if (caBundle) parts.push(`--ca-bundle ${psQuote(caBundle)}`);
     if (insecureLoopback) parts.push('--allow-insecure-local-http');
-    return `.\\install-agent.ps1 \`\n  ${parts.join(' `\n  ')}`;
+    return `.\\scripts\\install-agent.ps1 \`\n  ${parts.join(' `\n  ')}`;
   }
   const flags = [
     `--api-url ${shQuote(apiUrl)}`,
