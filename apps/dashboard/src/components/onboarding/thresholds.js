@@ -2,15 +2,20 @@
 // relative to expiry, -365 to 730, where 0 is the expiry day and negative
 // values fire after expiry.
 
-export const THRESHOLD_MIN = -365;
-export const THRESHOLD_MAX = 730;
-export const THRESHOLD_LIMIT = 12;
+import {
+  DEFAULT_ALERT_THRESHOLDS,
+  MAX_ALERT_THRESHOLD_DAYS,
+  MIN_ALERT_THRESHOLD_DAYS,
+} from '../../utils/alertThresholds.js';
+
+export const THRESHOLD_MIN = MIN_ALERT_THRESHOLD_DAYS;
+export const THRESHOLD_MAX = MAX_ALERT_THRESHOLD_DAYS;
 
 export const THRESHOLD_PRESETS = {
   standard: {
     label: 'Standard',
     description: '30, 14, 7 and 1 day before, and on the day',
-    values: [30, 14, 7, 1, 0],
+    values: [...DEFAULT_ALERT_THRESHOLDS],
   },
   early: {
     label: 'Early warning',
@@ -45,9 +50,6 @@ export function parseThresholds(text) {
   const unique = Array.from(new Set(values)).sort((a, b) => b - a);
   if (unique.length === 0 && problems.length === 0) {
     problems.push('Enter at least one number of days.');
-  }
-  if (unique.length > THRESHOLD_LIMIT) {
-    problems.push(`Use at most ${THRESHOLD_LIMIT} thresholds.`);
   }
   return { values: unique, problems };
 }

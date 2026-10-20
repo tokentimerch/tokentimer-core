@@ -2,6 +2,7 @@
 // are testable without a browser. The shapes match what the alert-settings
 // endpoint and the existing Alert Preferences page read and write.
 
+import { groupThresholdsOverrideForSave } from '../../utils/alertThresholds.js';
 import { parseThresholds } from './thresholds.js';
 
 export const WEBHOOK_KINDS = {
@@ -12,9 +13,6 @@ export const WEBHOOK_KINDS = {
   generic: { label: 'Generic', help: 'Any HTTPS endpoint' },
 };
 
-const NAME = /^[A-Za-z0-9][A-Za-z0-9 _.-]{0,39}$/;
-const MAX_WEBHOOKS = 5;
-
 /** Fields the user can set on a webhook, validated before any call. */
 export function validateWebhookDraft(draft, existing = []) {
   const problems = [];
@@ -22,10 +20,9 @@ export function validateWebhookDraft(draft, existing = []) {
   const url = String(draft?.url || '').trim();
   const kind = draft?.kind || 'generic';
   if (!WEBHOOK_KINDS[kind]) problems.push('Choose a webhook type.');
-  if (!NAME.test(name))
-    problems.push(
-      'Give it a short name (letters, numbers, spaces, dot, dash, underscore).'
-    );
+  // Same as Alert Preferences: a name is required, nothing more. The server
+  // stores any name, so a stricter rule here would only block valid ones.
+  if (!name) problems.push('Give the webhook a name.');
   if (
     existing.some(
       w => String(w.name).toLowerCase() === name.toLowerCase() && name
@@ -42,8 +39,6 @@ export function validateWebhookDraft(draft, existing = []) {
     problems.push('The URL must start with https://.');
   if (kind === 'pagerduty' && !String(draft?.routingKey || '').trim())
     problems.push('PagerDuty needs a routing key.');
-  if (existing.length >= MAX_WEBHOOKS)
-    problems.push(`A workspace can hold up to ${MAX_WEBHOOKS} webhooks.`);
   return { ok: problems.length === 0, problems };
 }
 
@@ -128,10 +123,13 @@ export function buildGroup({
   if (String(thresholdsText || '').trim()) {
     const parsed = parseThresholds(thresholdsText);
     if (parsed.problems.length) problems.push(...parsed.problems);
-    else if (
-      JSON.stringify(parsed.values) !== JSON.stringify(workspaceThresholds)
-    )
-      thresholds = parsed.values;
+    // Same rule as Alert Preferences: no override when it equals the defaults.
+    else
+      thresholds =
+        groupThresholdsOverrideForSave(
+          parsed.values.join(','),
+          (workspaceThresholds || []).join(',')
+        ) || undefined;
   }
   if (problems.length) return { ok: false, problems };
 

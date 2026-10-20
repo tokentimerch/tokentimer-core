@@ -92,6 +92,8 @@ export function validateAsset(asset, now = new Date()) {
     const cost = Number.parseFloat(f.cost);
     if (Number.isNaN(cost) || cost < 0)
       errors.cost = 'Cost must be zero or more.';
+    else if (cost > 999999999999.99)
+      errors.cost = 'Cost must be less than one trillion.';
   }
   if (String(f.key_size || '').trim()) {
     const size = Number.parseInt(f.key_size, 10);

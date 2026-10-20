@@ -45,9 +45,16 @@ describe('validateWebhookDraft', () => {
     expect(r.problems.join(' ')).toMatch(/already exists/);
   });
 
-  it('stops at the workspace limit', () => {
-    const five = Array.from({ length: 5 }, (_, i) => ({ name: `h${i}` }));
-    expect(validateWebhookDraft(hook, five).ok).toBe(false);
+  it('accepts any non-empty name, like Alert Preferences and the server', () => {
+    for (const name of ['On-call (EU)', 'Équipe Sécurité', 'x'.repeat(60)]) {
+      expect(validateWebhookDraft({ ...hook, name }).ok).toBe(true);
+    }
+    expect(validateWebhookDraft({ ...hook, name: '   ' }).ok).toBe(false);
+  });
+
+  it('leaves the webhook count to the server, which may be configured higher', () => {
+    const many = Array.from({ length: 8 }, (_, i) => ({ name: `h${i}` }));
+    expect(validateWebhookDraft(hook, many).ok).toBe(true);
   });
 });
 
@@ -73,6 +80,34 @@ describe('stored webhook', () => {
 });
 
 describe('buildGroup', () => {
+  it('stores no override when the days equal the workspace defaults, in any order', () => {
+    // The Alert Preferences page compares normalized lists, so the wizard must too.
+    const same = buildGroup({
+      name: 'Ops',
+      emailContactIds: ['a'],
+      thresholdsText: '1, 7, 30, 14, 0',
+      workspaceThresholds: [30, 14, 7, 1, 0],
+    });
+    expect(same.ok).toBe(true);
+    expect(same.group.thresholds).toBeUndefined();
+    const unsorted = buildGroup({
+      name: 'Ops',
+      emailContactIds: ['a'],
+      thresholdsText: '30, 14, 7, 1, 0',
+      workspaceThresholds: [0, 1, 7, 14, 30],
+    });
+    expect(unsorted.group.thresholds).toBeUndefined();
+  });
+
+  it('stores an override when the days differ from the defaults', () => {
+    const r = buildGroup({
+      name: 'Ops',
+      emailContactIds: ['a'],
+      thresholdsText: '60, 7',
+      workspaceThresholds: [30, 14, 7, 1, 0],
+    });
+    expect(r.group.thresholds).toEqual([60, 7]);
+  });
   it('needs a name and at least one way to reach someone', () => {
     expect(buildGroup({ name: '', emailContactIds: ['a'] }).ok).toBe(false);
     expect(buildGroup({ name: 'Ops' }).ok).toBe(false);

@@ -79,6 +79,13 @@ describe('validateAsset', () => {
       validateAsset({ ...lic, fields: { cost: '-5' } }).errors.cost
     ).toBeTruthy();
     expect(validateAsset({ ...lic, fields: { cost: '19.90' } }).ok).toBe(true);
+    // The server rejects a cost of one trillion or more.
+    expect(
+      validateAsset({ ...lic, fields: { cost: '1000000000000' } }).errors.cost
+    ).toBeTruthy();
+    expect(
+      validateAsset({ ...lic, fields: { cost: '999999999999.99' } }).ok
+    ).toBe(true);
     expect(
       validateAsset({ ...base, fields: { key_size: '2048' } }).errors.key_size
     ).toBeTruthy();
