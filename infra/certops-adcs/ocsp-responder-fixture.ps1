@@ -698,7 +698,7 @@ function New-OwnedOcspSigningTemplate($Owner) {
  $oidObject.Put('displayName',$name)
  $oidObject.Put('flags',1)
  $oidObject.SetInfo()
- $oidObject.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
+ $oidObject.psbase.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
  $oidObject.RefreshCache()
  $oidDacl=$oidObject.ObjectSecurity.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
  $oidSearch=[DirectoryServices.DirectorySearcher]::new($oids)
@@ -743,9 +743,9 @@ function New-OwnedOcspSigningTemplate($Owner) {
  }
  $security.AddAccessRule([DirectoryServices.ActiveDirectoryAccessRule]::new($computer.SID,'GenericRead','Allow'))
  $security.AddAccessRule([DirectoryServices.ActiveDirectoryAccessRule]::new($computer.SID,'ExtendedRight','Allow',[Guid]'0e10c968-78fb-11d2-90d4-00c04f79dc55'))
- $template.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
- $template.ObjectSecurity=$security
- $template.CommitChanges()
+ $template.psbase.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
+ $template.psbase.ObjectSecurity=$security
+ $template.psbase.CommitChanges()
  $template.RefreshCache()
  $actualDacl=$template.ObjectSecurity.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
  $expectedDacl=$security.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
@@ -778,7 +778,7 @@ function Publish-OwnedOcspSigningTemplate($Owner) {
   }
   if(!$held) { throw 'Another owned OCSP mutation is active' }
   $template=[ADSI]('LDAP://'+$created.phase.facts.templateDn)
-  $template.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
+  $template.psbase.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
   $template.RefreshCache()
   if(([Guid]$template.Guid).ToString('D') -cne $created.phase.facts.templateGuid -or
      [string]$template.Properties['msPKI-Cert-Template-OID'].Value -cne $created.phase.facts.templateOid -or
@@ -843,10 +843,10 @@ function Restore-OwnedOcspSigningTemplate($Owner) {
   # Check BOTH exact AD objects before the first removal. A matching name or
   # OID alone never establishes ownership of a replacement directory object.
   $template=[ADSI]('LDAP://'+$facts.templateDn)
-  $template.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
+  $template.psbase.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
   $template.RefreshCache()
   $oid=[ADSI]('LDAP://'+$facts.oidDn)
-  $oid.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
+  $oid.psbase.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
   $oid.RefreshCache()
   if(([Guid]$template.Guid).ToString('D') -cne $facts.templateGuid -or
      [string]$template.Properties['msPKI-Cert-Template-OID'].Value -cne $facts.templateOid -or
@@ -1233,7 +1233,15 @@ function Restart-OwnedOcspIssuingCa($Owner) {
  $key.Dispose()
  Restart-Service CertSvc -ErrorAction Stop
  (Get-Service CertSvc -ErrorAction Stop).WaitForStatus([ServiceProcess.ServiceControllerStatus]::Running,[TimeSpan]::FromSeconds(60))
- [void](Invoke-OcspContainedCommand 'certutil.exe' @('-config','tt-ca.lab.certops.test\TTQualificationRoot','-ping') $Owner.directory 60)
+  # CertSvc reports Running before its RPC endpoint answers; a read-only ping that exits non-zero is retried.
+  $pingDeadline=[DateTime]::UtcNow.AddSeconds(60)
+  while($true) {
+   try { [void](Invoke-OcspContainedCommand 'certutil.exe' @('-config','tt-ca.lab.certops.test\TTQualificationRoot','-ping') $Owner.directory 20);break }
+   catch {
+    if($_.Exception.Message -cne 'Owned native command failed; phase remains unresolved' -or [DateTime]::UtcNow -gt $pingDeadline) { throw }
+    Start-Sleep -Seconds 2
+   }
+  }
  [void](Invoke-OcspContainedCommand 'certutil.exe' @('-crl') $Owner.directory 120)
  $key=Open-OwnedOcspCaRegistry $Owner $false
  $key.Dispose()

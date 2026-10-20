@@ -155,7 +155,7 @@ function verifyCrl(crlBytes, caBytes, expectedCaKeySha256) {
 function assertHttpOnlyLeafCdp(certificateBytes, expectedUrl) {
   const url = new URL(expectedUrl);
   assert.equal(url.protocol, "http:");
-  assert.equal(url.hostname, "10.64.0.6");
+  assert.equal(url.hostname, "10.64.0.5");
   assert.ok(Number(url.port) >= 1024 && Number(url.port) <= 65535);
   assert.equal(url.pathname, "/TTQualificationRoot.crl");
   for (const field of ["search", "hash", "username", "password"])
