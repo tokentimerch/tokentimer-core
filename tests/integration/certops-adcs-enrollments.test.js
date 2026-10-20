@@ -15,11 +15,13 @@ const {
   createEnrollment,
   dispatchPreflight,
   recordPreflightResult,
+  recoverOrphanedEnrollment,
   scheduleDueEnrollments,
   retryEnrollmentInstallation,
 } = require("../../apps/api/services/certops/certificateEnrollments");
 const { createCertificateJob } = require("../../apps/api/services/certops/jobs");
-const { freezeSnapshot } = require("../../apps/api/services/certops/enrollmentLifecycle");
+const { retireCertificateIdentity } = require("../../apps/api/services/certops/certificateIdentity");
+const { freezeSnapshot, storedAdcsPayload } = require("../../apps/api/services/certops/enrollmentLifecycle");
 const { executeAdcsPreflight } = require("../../packages/agent/src/issuers/adcs-preflight");
 
 const CA = "ca01.corp.example.com\\Corp Issuing CA 01";
@@ -780,9 +782,16 @@ describe("CertOps AD CS enrollments (real database)", function () {
       operatorRequestId: 88,
       nextPollAt: due,
     });
+    // Reconcile can retrieve and install an issued leaf, so it is fenced like an install.
     const reconcileJob = (await scheduleDueEnrollments({ client: pool, now: new Date() }))
       .find((row) => row.enrollmentId === reconcile);
-    expect(reconcileJob).to.exist;
+    expect(reconcileJob).to.equal(undefined);
+    const reconcileRow = await TestUtils.execQuery(
+      "SELECT state, current_job_id FROM certificate_enrollments WHERE id=$1",
+      [reconcile],
+    );
+    expect(reconcileRow.rows[0].state).to.equal("submission_uncertain");
+    expect(reconcileRow.rows[0].current_job_id).to.equal(null);
 
     const otherFingerprint = crypto.randomBytes(32).toString("hex");
     const otherCertificateId = (await TestUtils.execQuery(
@@ -852,5 +861,191 @@ describe("CertOps AD CS enrollments (real database)", function () {
       "UPDATE certificate_enrollments SET next_poll_at=NULL WHERE workspace_id=$1 AND certificate_id=$2",
       [workspaceId, certificateId],
     );
+  });
+
+  it("fences recovery and claims of every non-terminal continuation after retirement", async () => {
+    const { claimJobs, _test: dispatchCaps } = require("../../apps/api/services/certops/agentDispatch");
+    await assertNoForeignDueRows();
+    await pool.query(
+      `UPDATE certops_agents SET agent_version='0.18.0', declared_capabilities=$2::jsonb,
+              capabilities_updated_at=NOW(), declared_target_selectors=$3::jsonb WHERE id=$1`,
+      [agentRowId, JSON.stringify(["adcs-enroll-v1", dispatchCaps.EVIDENCE_CLAIM_BINDING_CAPABILITY,
+        dispatchCaps.SIGNED_PAYLOAD_B64_CAPABILITY]), JSON.stringify(["app.example.com", "iis-01/webhosting"])],
+    );
+    const agentId = (await pool.query("SELECT agent_id FROM certops_agents WHERE id=$1", [agentRowId])).rows[0].agent_id;
+    const claim = () => claimJobs({
+      dbPool: pool,
+      agent: { id: agentRowId, workspaceId, agentId, agentVersion: "0.18.0", protocolVersion: "1.0.0", status: "active" },
+      envelope: { agentId, protocolVersion: "1.0.0" },
+      body: { supportedActions: ["continue-enrollment"], maxJobs: 16 },
+      deps: { enforceAgentSequence: async () => ({ sequence: 1 }), signJobForDispatch: async ({ job, envelopeVersion }) => ({ ...job, envelopeVersion }) },
+    }).then((result) => result.jobs.map((job) => String(job.id ?? job.jobId)));
+    const retiredCertificate = async (name) => {
+      const fingerprint = crypto.randomBytes(32).toString("hex");
+      const certificateId = (await pool.query(
+        `INSERT INTO managed_certificates(workspace_id, source, source_ref, fingerprint_sha256, name,
+                                          common_name, status, key_mode)
+         VALUES($1,'agent_filesystem',$2,$3,$4,'retired.example','discovered','os-store-managed') RETURNING id`,
+        [workspaceId, crypto.randomUUID(), fingerprint, name],
+      )).rows[0].id;
+      const identityId = (await pool.query(
+        "SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2",
+        [workspaceId, fingerprint],
+      )).rows[0].id;
+      return { certificateId, identityId };
+    };
+    const continuation = async (enrollmentId, certificateId) => {
+      const job = await createCertificateJob({
+        client: pool, workspaceId, operation: "continue-enrollment", allowEnrollmentContinuation: true,
+        subjectType: "managed_certificate", subjectId: certificateId, assignedAgentId: agentRowId, enrollmentId,
+        payload: storedAdcsPayload({ certificateId, target: enrollmentInput().target }),
+      });
+      await pool.query("UPDATE certificate_enrollments SET current_job_id=$3 WHERE workspace_id=$1 AND id=$2",
+        [workspaceId, enrollmentId, job.id]);
+      return job.id;
+    };
+
+    // A cancelled enrollment keeps its key-cleanup job claimable, and proves the harness can claim.
+    const cleanupCert = await retiredCertificate("cleanup after retirement");
+    const cleanupEnrollment = await insertEnrollment("cancelled", { certificateId: cleanupCert.certificateId });
+    const cleanupJobId = await continuation(cleanupEnrollment, cleanupCert.certificateId);
+    await pool.query("UPDATE certops_certificate_identities SET lifecycle_status='revoked', retired_at=NOW() WHERE id=$1", [cleanupCert.identityId]);
+    expect(await claim()).to.include(cleanupJobId);
+
+    for (const state of ["requested", "prepared", "issued", "validated"]) {
+      // Orphaned by a crash: the operator-recovery route must not mint a new install-capable job.
+      const orphanCert = await retiredCertificate(`orphan ${state}`);
+      const orphanEnrollment = await insertEnrollment(state, { certificateId: orphanCert.certificateId });
+      const orphanJobId = await continuation(orphanEnrollment, orphanCert.certificateId);
+      await pool.query(
+        `UPDATE certificate_jobs SET status='orphaned_unknown_effect', needs_operator_reconciliation=TRUE,
+                reconciliation_reason='lease_expired' WHERE id=$1`, [orphanJobId]);
+      // Already queued before retirement: the claim must refuse it.
+      const queuedCert = await retiredCertificate(`queued ${state}`);
+      const queuedEnrollment = await insertEnrollment(state, { certificateId: queuedCert.certificateId });
+      const queuedJobId = await continuation(queuedEnrollment, queuedCert.certificateId);
+      await pool.query("UPDATE certops_certificate_identities SET lifecycle_status='revoked', retired_at=NOW() WHERE id = ANY($1::uuid[])",
+        [[orphanCert.identityId, queuedCert.identityId]]);
+
+      let recoveryError;
+      try {
+        await recoverOrphanedEnrollment({
+          client: pool, workspaceId, enrollmentId: orphanEnrollment, orphanedJobId: orphanJobId,
+          acknowledgeUnknownEffect: true, reason: "operator inspected the host", actorUserId: ownerId,
+          env: { CERTOPS_ENABLED: "true" },
+        });
+      } catch (error) {
+        recoveryError = error;
+      }
+      expect(recoveryError?.code, `recovery from ${state}`).to.equal("CERTOPS_CERTIFICATE_RETIRED");
+      const jobs = await pool.query("SELECT count(*)::int AS n FROM certificate_jobs WHERE workspace_id=$1 AND enrollment_id=$2", [workspaceId, orphanEnrollment]);
+      expect(jobs.rows[0].n, `jobs after refused recovery from ${state}`).to.equal(1);
+
+      expect(await claim(), `claim in ${state}`).to.not.include(queuedJobId);
+      const queued = await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [queuedJobId]);
+      expect(queued.rows[0].status).to.equal("pending");
+      try {
+        await pool.query("UPDATE certificate_jobs SET status='claimed' WHERE id=$1", [queuedJobId]);
+        throw new Error(`continuation claim in ${state} should fail`);
+      } catch (error) {
+        expect(error.code).to.equal("55000");
+      }
+    }
+  });
+
+  it("retirement covers running and queued install-capable work and spares key cleanup", async () => {
+    await assertNoForeignDueRows();
+    const managed = async () => {
+      const fingerprint = crypto.randomBytes(32).toString("hex");
+      const certificateId = (await pool.query(
+        `INSERT INTO managed_certificates(workspace_id, source, source_ref, fingerprint_sha256, name,
+                                          common_name, status, key_mode)
+         VALUES($1,'agent_filesystem',$2,$3,'retire coverage','retire.example','discovered','os-store-managed') RETURNING id`,
+        [workspaceId, crypto.randomUUID(), fingerprint],
+      )).rows[0].id;
+      const identityId = (await pool.query(
+        "SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2",
+        [workspaceId, fingerprint],
+      )).rows[0].id;
+      return { fingerprint, certificateId, identityId };
+    };
+    const continuation = async (state, { certificateId }) => {
+      const enrollmentId = await insertEnrollment(state, { certificateId });
+      const job = await createCertificateJob({
+        client: pool, workspaceId, operation: "continue-enrollment", allowEnrollmentContinuation: true,
+        subjectType: "managed_certificate", subjectId: certificateId, assignedAgentId: agentRowId, enrollmentId,
+        payload: storedAdcsPayload({ certificateId, target: enrollmentInput().target }),
+      });
+      await pool.query("UPDATE certificate_enrollments SET current_job_id=$3 WHERE workspace_id=$1 AND id=$2",
+        [workspaceId, enrollmentId, job.id]);
+      return job.id;
+    };
+    const deployFromStore = async ({ certificateId }) => {
+      const id = (await pool.query(
+        `INSERT INTO certificate_jobs(workspace_id,subject_type,subject_id,operation,status)
+         VALUES($1,'managed_certificate',$2,'renew','pending') RETURNING id`,
+        [workspaceId, certificateId],
+      )).rows[0].id;
+      await pool.query("UPDATE certificate_jobs SET operation='deploy-from-store' WHERE id=$1", [id]);
+      return id;
+    };
+    const run = async (jobId) => {
+      await pool.query("UPDATE certificate_jobs SET status='claimed', claimed_by_agent_id=$2 WHERE id=$1", [jobId, agentRowId]);
+      await pool.query("UPDATE certificate_jobs SET status='running' WHERE id=$1", [jobId]);
+    };
+    const retire = (cert, status) => retireCertificateIdentity({
+      workspaceId, identityId: cert.identityId, expectedFingerprintSha256: cert.fingerprint, status,
+      reason: "retirement coverage", acknowledgeUncertainty: true, actorUserId: ownerId,
+    });
+    const job = async (id) => (await pool.query(
+      "SELECT status, needs_operator_reconciliation AS reconcile FROM certificate_jobs WHERE id=$1", [id])).rows[0];
+
+    // A running install-capable job blocks decommission; a running key cleanup does not.
+    for (const [name, make] of [
+      ["installing continuation", (cert) => continuation("installing", cert)],
+      ["polling continuation", (cert) => continuation("pending_issuance", cert)],
+      ["deploy-from-store", deployFromStore],
+    ]) {
+      const cert = await managed();
+      await run(await make(cert));
+      try {
+        await retire(cert, "decommissioned");
+        throw new Error(`${name} should block decommission`);
+      } catch (error) {
+        expect(error.code, name).to.equal("CERTOPS_MUTATION_RUNNING");
+      }
+    }
+    const cleanupCert = await managed();
+    const cleanupId = await continuation("abandoned", cleanupCert);
+    await run(cleanupId);
+    await retire(cleanupCert, "decommissioned");
+    expect((await job(cleanupId)).reconcile).to.equal(false);
+
+    // Revocation flags running install-capable work for reconciliation, never key cleanup.
+    for (const [name, make] of [
+      ["installing continuation", (cert) => continuation("installing", cert)],
+      ["deploy-from-store", deployFromStore],
+    ]) {
+      const cert = await managed();
+      const id = await make(cert);
+      await run(id);
+      await retire(cert, "revoked");
+      expect((await job(id)).reconcile, name).to.equal(true);
+    }
+    const revokedCleanup = await managed();
+    const revokedCleanupId = await continuation("cancelled", revokedCleanup);
+    await run(revokedCleanupId);
+    await retire(revokedCleanup, "revoked");
+    expect((await job(revokedCleanupId)).reconcile).to.equal(false);
+
+    // A queued deploy-from-store is cancelled with the other mutations. A queued
+    // continuation is not cancelled: the claim fence refuses it, and abandoning the
+    // enrollment turns it into the key-cleanup job.
+    const queuedCert = await managed();
+    const queuedDeploy = await deployFromStore(queuedCert);
+    const queuedContinuation = await continuation("installing", queuedCert);
+    await retire(queuedCert, "revoked");
+    expect((await job(queuedDeploy)).status).to.equal("cancelled");
+    expect((await job(queuedContinuation)).status).to.equal("pending");
   });
 });

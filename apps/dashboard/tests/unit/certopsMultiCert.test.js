@@ -143,7 +143,7 @@ describe('resolveTokenCertificate (fingerprint scoped token contexts)', () => {
     expect(resolution.hasManagedLinks).toBe(true);
   });
 
-  it('normalizes the same fingerprint across sources and retains one safe representative', () => {
+  it('requires selection even when registrations share a fingerprint', () => {
     const older = cert({ fingerprintSha256: 'a'.repeat(64) });
     const newer = cert({
       id: 'cert-agent',
@@ -151,9 +151,9 @@ describe('resolveTokenCertificate (fingerprint scoped token contexts)', () => {
       updatedAt: '2026-03-01',
     });
     expect(resolveTokenCertificate([older, newer])).toEqual({
-      certificate: newer,
-      certificateCount: 1,
-      ambiguousLink: false,
+      certificate: null,
+      certificateCount: 2,
+      ambiguousLink: true,
       hasManagedLinks: true,
       allRetired: false,
     });

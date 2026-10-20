@@ -78,7 +78,7 @@ describe('JobExecutionSummary trust-anchor links', () => {
     const link = await screen.findByRole('link', { name: 'Corp Root CA' });
     expect(link).toHaveAttribute(
       'href',
-      `/certops/agents?trustAnchorId=${ANCHOR_ID}`
+      `/certops/agents?trustAnchorId=${ANCHOR_ID}&workspace=ws-1`
     );
     expect(
       screen.queryByTestId('trust-anchor-access-denied')

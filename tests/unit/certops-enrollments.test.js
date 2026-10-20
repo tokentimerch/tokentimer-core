@@ -1660,6 +1660,34 @@ describe("LIFE-04 retired identity installation guards", () => {
     });
   }
 
+  for (const state of ["pending_issuance", "validation_deferred"]) {
+    it(`does not poll a ${state} enrollment for a retired identity, since retrieval can install`, async () => {
+      const db = retiredEnrollment(state, "revoked");
+      let attempted = false;
+      const created = await scheduleDueEnrollments({
+        client: db,
+        now,
+        createJob: async () => {
+          attempted = true;
+          return { id: JOB_ID };
+        },
+      });
+      assert.equal(attempted, false);
+      assert.deepEqual(created, []);
+      assert.equal(db.enrollments.get(ENROLLMENT).current_job_id, null);
+    });
+
+    it(`still polls a ${state} enrollment while the identity is active`, async () => {
+      const db = retiredEnrollment(state, "active");
+      const created = await scheduleDueEnrollments({
+        client: db,
+        now,
+        createJob: async () => ({ id: JOB_ID }),
+      });
+      assert.equal(created.length, 1);
+    });
+  }
+
   it("still resumes installation while the identity is active", async () => {
     const db = retiredEnrollment("installing", "active");
     const created = await scheduleDueEnrollments({
@@ -1671,12 +1699,51 @@ describe("LIFE-04 retired identity installation guards", () => {
     assert.equal(created[0].jobId, JOB_ID);
   });
 
-  it("still dispatches free_key cleanup and operator reconcile after retirement", async () => {
+  it("does not reconcile or retry a submission for a retired identity, since both can install", async () => {
+    for (const [state, extra] of [
+      ["submission_uncertain", { operator_request_id: 77 }],
+      ["submitting", { last_error_code: "ADCS_CA_UNREACHABLE" }],
+    ]) {
+      const db = retiredEnrollment(state, "revoked", extra);
+      let createJobCalls = 0;
+      const created = await scheduleDueEnrollments({
+        client: db,
+        now,
+        createJob: async () => {
+          createJobCalls += 1;
+          return { id: JOB_ID };
+        },
+      });
+      // The scheduler swallows per-row errors, so count calls outside it.
+      assert.equal(createJobCalls, 0, state);
+      assert.deepEqual(created, [], state);
+      assert.equal(db.enrollments.get(ENROLLMENT).current_job_id, null, state);
+      assert.equal(db.enrollments.get(ENROLLMENT).state, state);
+    }
+  });
+
+  it("refuses an operator RequestId proposal for a retired identity", async () => {
+    const db = retiredEnrollment("submission_uncertain", "revoked", { next_poll_at: null });
+    await assert.rejects(
+      proposeReconcileRequestId({
+        client: db,
+        workspaceId: WORKSPACE,
+        enrollmentId: ENROLLMENT,
+        requestId: 77,
+        audit: async () => {
+          throw new Error("must not audit");
+        },
+      }),
+      (error) => error.code === "CERTOPS_CERTIFICATE_RETIRED",
+    );
+    assert.equal(db.enrollments.get(ENROLLMENT).operator_request_id ?? null, null);
+  });
+
+  it("still dispatches free_key cleanup after retirement", async () => {
     for (const [state, extra] of [
       ["cancelled", {}],
       ["expired", {}],
       ["abandoned", {}],
-      ["submission_uncertain", { operator_request_id: 77 }],
     ]) {
       const db = retiredEnrollment(state, "revoked", extra);
       const created = await scheduleDueEnrollments({
@@ -1698,14 +1765,14 @@ describe("LIFE-04 retired identity installation guards", () => {
       "utf8",
     );
     assert.match(dispatch, /cj\.operation = 'continue-enrollment'/);
-    assert.match(dispatch, /continuation\.state IN \('installing', 'install_failed'\)/);
+    assert.match(dispatch, /continuation\.state NOT IN \('cancelled', 'expired', 'abandoned'\)/);
     assert.match(dispatch, /'renew', 'deploy', 'deploy-from-store', 'reload'/);
     const guard = fs.readFileSync(
       path.join(__dirname, "../../apps/api/migrations/certops-distribution-lifecycle-guards.sql"),
       "utf8",
     );
     assert.match(guard, /install_continuation/);
-    assert.match(guard, /continuation\.state IN \('installing', 'install_failed'\)/);
+    assert.match(guard, /continuation\.state NOT IN \('cancelled', 'expired', 'abandoned'\)/);
     assert.match(guard, /NEW\.operation NOT IN \('renew','deploy','deploy-from-store','reload'\)/);
   });
 });

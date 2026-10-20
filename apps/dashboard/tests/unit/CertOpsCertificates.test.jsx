@@ -27,6 +27,7 @@ const {
   listCertOpsRenewalProfilesMock,
   showErrorMock,
   listAgentJobLogMock,
+  distributionGetMock,
 } = vi.hoisted(() => ({
   useCertOpsCertificatesMock: vi.fn(),
   useCertOpsCanManageMock: vi.fn(),
@@ -42,7 +43,16 @@ const {
   listCertOpsRenewalProfilesMock: vi.fn(),
   showErrorMock: vi.fn(),
   listAgentJobLogMock: vi.fn(),
+  distributionGetMock: vi.fn(),
 }));
+
+vi.mock('../../src/utils/apiClient', async () => {
+  const actual = await vi.importActual('../../src/utils/apiClient');
+  return {
+    ...actual,
+    default: { ...actual.default, get: distributionGetMock },
+  };
+});
 
 vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
   useWorkspace: () => ({ workspaceId: 'ws-1', selectWorkspace: vi.fn() }),
@@ -153,6 +163,10 @@ function certificate(overrides = {}) {
 }
 
 beforeEach(() => {
+  distributionGetMock.mockReset();
+  distributionGetMock.mockResolvedValue({
+    data: { groups: [], items: [], configurations: [] },
+  });
   useCertOpsIsWorkspaceAdminMock.mockReturnValue(false);
   useCertOpsCertificatesMock.mockReset();
   useCertOpsCanManageMock.mockReset();
@@ -1617,4 +1631,51 @@ describe('CertOpsCertificates combined lifecycle filters', () => {
       );
     });
   });
+});
+
+it('opens the same certificate identity from its deployment summary and fetches consumers only on opening', async () => {
+  const selected = certificate();
+  useCertOpsCertificatesMock.mockReturnValue(
+    certState({ certificates: [selected] })
+  );
+  getCertificateIdentityMock.mockResolvedValue({
+    ...selected,
+    tokenId: null,
+    sources: [],
+    locations: [],
+  });
+  distributionGetMock.mockImplementation(async (url, options) => ({
+    data: url.endsWith('/distribution-groups')
+      ? {
+          groups: options?.params?.summaries
+            ? [
+                {
+                  id: 'group-test',
+                  current_identity_id: selected.identityId,
+                  managed_certificate_id: 'source-test',
+                  summary: { total: 5, verified: 3, pending: 2 },
+                },
+              ]
+            : [],
+        }
+      : { items: [] },
+  }));
+  renderPage();
+  expect(screen.getAllByText('Deployment').length).toBeGreaterThan(0);
+  const summary = await screen.findByRole('button', {
+    name: /Open certificate deployments: 3\/5 verified. Partially verified/,
+  });
+  expect(
+    distributionGetMock.mock.calls.some(([url]) => url.endsWith('/consumers'))
+  ).toBe(false);
+  fireEvent.click(summary);
+  expect(
+    await screen.findByRole('heading', { name: 'Deployments' })
+  ).toBeInTheDocument();
+  await waitFor(() =>
+    expect(getCertificateIdentityMock).toHaveBeenCalledWith(
+      'ws-1',
+      selected.identityId
+    )
+  );
 });

@@ -105,10 +105,27 @@ function Wait-Agent([string]$Machine) {
   }
   throw "Guest agent did not become ready after reboot: $Machine"
 }
+function Wait-GuestCommandChannel([string]$Machine) {
+  # After a reboot Azure can hold the first run-command for ~15 minutes while the
+  # agent already reports ready; a new extension operation releases it. Nudge with a
+  # read-only managed run command, which is safe to repeat. Real stages are never resubmitted.
+  for ($attempt=1; $attempt -le 6; $attempt++) {
+    $name='ttready'+[Guid]::NewGuid().ToString('N').Substring(0,12)
+    $uri="https://management.azure.com/subscriptions/$env:AZURE_SUBSCRIPTION_ID/resourceGroups/$ResourceGroup/providers/Microsoft.Compute/virtualMachines/$Machine/runCommands/${name}?api-version=2024-07-01"
+    $body=@{location=$Location;properties=@{source=@{script='Write-Output CERTOPS_GUEST_COMMAND_CHANNEL_READY'};timeoutInSeconds=60;asyncExecution=$false}}|ConvertTo-Json -Depth 6 -Compress
+    try {
+      $null=Invoke-CertOpsArmOperation -Uri $uri -Method PUT -Body $body -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -RefreshAuthentication ${function:Refresh-LabAuthentication} -TimeoutSeconds 120
+      Write-Output 'CERTOPS_GUEST_COMMAND_CHANNEL_READY';return
+    } catch { Write-Output ("CERTOPS_GUEST_COMMAND_CHANNEL_RETRY="+$attempt) }
+    Start-Sleep -Seconds 10
+  }
+  throw "Guest command channel did not recover after reboot: $Machine"
+}
 function Restart-LabMachine([string]$Machine) {
   $uri="https://management.azure.com/subscriptions/$env:AZURE_SUBSCRIPTION_ID/resourceGroups/$ResourceGroup/providers/Microsoft.Compute/virtualMachines/$Machine/restart?api-version=2024-07-01"
   $null=Invoke-CertOpsArmOperation -Uri $uri -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -RefreshAuthentication ${function:Refresh-LabAuthentication} -TimeoutSeconds 900
   Wait-Agent $Machine
+  Wait-GuestCommandChannel $Machine
 }
 function Wait-LabDeployment {
   $deadline=[DateTimeOffset]::UtcNow.AddMinutes(30)

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 
 const {
   useWorkspaceMock,
@@ -281,7 +281,7 @@ describe('useCertOpsForToken instance error handling', () => {
     );
   });
 
-  it('keeps same-fingerprint multi-source token details usable without an ambiguity notice', async () => {
+  it('requires an explicit source selection for same-fingerprint registrations', async () => {
     getManagedCertificatesForTokenMock.mockResolvedValue([
       {
         id: 'cert-a',
@@ -298,11 +298,19 @@ describe('useCertOpsForToken instance error handling', () => {
     ]);
     getCertificateInstancesMock.mockResolvedValue({ items: [] });
     const { result } = renderHook(() => useCertOpsForToken(42));
-    await waitFor(() =>
-      expect(result.current.certificate?.id).toBe('cert-agent')
-    );
+    await waitFor(() => expect(result.current.certificateCount).toBe(2));
+    expect(result.current.certificate).toBeNull();
+    expect(result.current.ambiguousLink).toBe(true);
+    expect(result.current.certificateCount).toBe(2);
+    expect(getCertificateInstancesMock).not.toHaveBeenCalled();
+    act(() => result.current.selectCertificate('cert-a'));
+    await waitFor(() => expect(result.current.certificate?.id).toBe('cert-a'));
     expect(result.current.ambiguousLink).toBe(false);
-    expect(result.current.certificateCount).toBe(1);
+    expect(getCertificateInstancesMock).toHaveBeenCalledWith(
+      'ws-1',
+      'cert-a',
+      expect.anything()
+    );
   });
 });
 

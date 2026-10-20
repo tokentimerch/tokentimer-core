@@ -294,5 +294,11 @@ export function useUpdateRenewalProfile() {
     [workspaceId]
   );
 
-  return { savingIds, errors, error: Object.values(errors)[0] || '', clearError, save };
+  return {
+    savingIds,
+    errors,
+    error: Object.values(errors)[0] || '',
+    clearError,
+    save,
+  };
 }

@@ -2,7 +2,8 @@
 
 /**
  * Capability strings that depend on independent real-host evidence under
- * ADR-0012 decision 14. AD CS and material distribution remain gated while
+ * ADR-0012 decision 14. AD CS and material distribution are named in the
+ * manifest only for builds whose release campaign passed on real hosts, while
  * the original Windows/IIS/trust capabilities retain their qualification.
  * These strings are gated
  * real-host evidence, gated at ADVERTISEMENT time, not only at claim time:

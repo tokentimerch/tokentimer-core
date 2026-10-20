@@ -9,6 +9,7 @@ const assert = require("node:assert/strict"),
   crypto = require("node:crypto"),
   { isDeepStrictEqual } = require("node:util");
 const session = require("./certops-adcs-browser-session");
+const { verifyNativeRequestId } = require("./certops-adcs-live-enroll-acl");
 const approvals = require("../../../apps/api/services/certops/jobApprovals");
 const {
   readEnrollmentJournal,
@@ -52,6 +53,11 @@ const FLAGS = Object.freeze([
 const SCOPE =
   "browser-control-plane-job-approval-for-two-real-adcs-capacity-installations";
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
+// Immediate issuance stores no control-plane or journal RequestId, so only IDs
+// that exist are compared against the independently observed CA row.
+function verifyCompletionRequestIds(independent, controlPlane, journal) {
+  return verifyNativeRequestId(Number(independent), controlPlane, journal);
+}
 function verifyProof(value) {
   assert.deepEqual(
     Object.keys(value).sort(),
@@ -519,16 +525,13 @@ function createBrowserJobApprovalActor(context) {
               String(item.approverUserId),
             );
             assert.equal(current.approved_payload_hash, item.payloadHash);
-            assert.equal(
-              String(current.request_id),
-              capacity.requestIds[index],
-            );
             const receipt = readEnrollmentJournal(configDir, item.enrollmentId);
             assert.equal(receipt.kind, "valid");
             assert.equal(receipt.journal.state, "installed");
-            assert.equal(
-              String(receipt.journal.requestId),
-              String(current.request_id),
+            verifyCompletionRequestIds(
+              capacity.requestIds[index],
+              current.request_id,
+              receipt.journal.requestId,
             );
             const history = await decisions(item.jobId);
             assert.equal(history.length, 1);
@@ -587,5 +590,6 @@ module.exports = {
   verifyDecision,
   verifyApprovalRequest,
   verifyRejection,
+  verifyCompletionRequestIds,
   createBrowserJobApprovalActor,
 };

@@ -1,11 +1,14 @@
 param(
   [ValidateSet('Up','Test','Status','Stop')][string]$Action = 'Status',
   [ValidatePattern('^tt-wildcard-ux-[a-z0-9-]+$')][string]$Project = 'tt-wildcard-ux-20261009-merge2',
-  [ValidateSet('all','setup','prepare-publication','publish','bindings','rejection','authorization','recovery','deployment-recovery','repair','validation','scanner','transfer','transfer-status','status')][string]$Phase = 'all',
+  [ValidateSet('all','functional','observations','setup','prepare-publication','publish','bindings','rejection','authorization','recovery','deployment-recovery','repair','validation','scanner','transfer','transfer-status','status')][string]$Phase = 'all',
   [ValidateRange(1024,65392)][int]$BasePort = 58800,
   [ValidateSet('san','wildcard','ordinary')][string]$CertificateMode = 'san',
   [switch]$BuildImages,
-  [switch]$PackageAcceptance
+  [switch]$PackageAcceptance,
+  [string]$ApiImage,
+  [string]$WorkerImage,
+  [string]$CustomerImage
 )
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).Path
@@ -16,8 +19,13 @@ function Dc {
   if ($LASTEXITCODE -ne 0) { throw "Docker Compose failed ($LASTEXITCODE)." }
 }
 function BuildImage([string]$dockerfile, [string]$tag) {
-  & docker build -f $dockerfile -t $tag --label "io.tokentimer.certops.source-sha=$env:TT_UX_CORE_COMMIT" .
-  if ($LASTEXITCODE -ne 0) { throw "Image build failed: $tag" }
+  # Module downloads can hit transient proxy/network errors; layers are cached, so a retry is cheap.
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    & docker build -f $dockerfile -t $tag --label "io.tokentimer.certops.source-sha=$env:TT_UX_CORE_COMMIT" .
+    if ($LASTEXITCODE -eq 0) { return }
+    if ($attempt -lt 3) { Start-Sleep -Seconds (15 * $attempt) }
+  }
+  throw "Image build failed: $tag"
 }
 Push-Location $repo
 $environmentNames = @('TT_WILDCARD_UX_OUTPUT','TT_UX_API_IMAGE','TT_UX_WORKER_IMAGE','TT_UX_CUSTOMER_IMAGE',
@@ -60,6 +68,9 @@ try {
     $env:TT_UX_WORKER_IMAGE = $images.worker
     $env:TT_UX_CUSTOMER_IMAGE = $images.customers
   }
+  if ($ApiImage) { $env:TT_UX_API_IMAGE = $ApiImage }
+  if ($WorkerImage) { $env:TT_UX_WORKER_IMAGE = $WorkerImage }
+  if ($CustomerImage) { $env:TT_UX_CUSTOMER_IMAGE = $CustomerImage }
   switch ($Action) {
     'Up' {
       $existing = & docker ps -aq --filter "label=com.docker.compose.project=$Project"

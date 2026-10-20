@@ -153,9 +153,7 @@ export default function RenewalProfileDetailsModal({
   const ownLoad = useBoundCertificates(
     provided || !isOpen ? null : workspaceId
   );
-  const inventoryFailed = provided
-    ? inventoryIncomplete
-    : ownLoad.incomplete;
+  const inventoryFailed = provided ? inventoryIncomplete : ownLoad.incomplete;
   const scanned = (provided ? boundCertificates : ownLoad.certificates).filter(
     item => item?.profileId === profile?.id
   );
@@ -285,7 +283,8 @@ export default function RenewalProfileDetailsModal({
               {!certificatesLoading &&
               (inventoryFailed ||
                 (certificateRows.length > 0 &&
-                  Number(profile.certificateCount) > certificateRows.length)) ? (
+                  Number(profile.certificateCount) >
+                    certificateRows.length)) ? (
                 <Text
                   fontSize='xs'
                   color={tokens.subtleText}

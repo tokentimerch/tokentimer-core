@@ -784,12 +784,12 @@ describe('EvidenceTimeline', () => {
     });
     expect(certLink).toHaveAttribute(
       'href',
-      `/certops/certificates?certificateId=${certId}`
+      `/certops/certificates?certificateId=${certId}&workspace=ws-1`
     );
     const agentLink = screen.getByRole('link', { name: 'edge-agent' });
     expect(agentLink).toHaveAttribute(
       'href',
-      `/certops/agents?agentId=${agentId}`
+      `/certops/agents?agentId=${agentId}&workspace=ws-1`
     );
   });
 
@@ -809,9 +809,7 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-1' embedded />);
 
-    expect(
-      await screen.findByText('Resource unavailable')
-    ).toBeInTheDocument();
+    expect(await screen.findByText('Resource unavailable')).toBeInTheDocument();
     expect(
       screen.queryByRole('link', { name: /trust anchor/i })
     ).not.toBeInTheDocument();

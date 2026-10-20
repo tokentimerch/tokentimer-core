@@ -859,12 +859,15 @@ export function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
   const [loading, setLoading] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
   const withdrawnRef = useRef(false);
+  const loadControllerRef = useRef(null);
   const agentLabel =
     agent?.name || agent?.hostname || agent?.agentId || 'Agent';
   useEffect(() => {
     if (!isOpen || !agent?.id || !workspaceId) return undefined;
     let cancelled = false;
     const controller = new AbortController();
+    loadControllerRef.current = controller;
+    withdrawnRef.current = false;
     setLoading(true);
     setJobs([]);
     setMergedLines([]);
@@ -880,7 +883,7 @@ export function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
           limit: 20,
           signal: controller.signal,
         });
-        if (cancelled) return;
+        if (cancelled || withdrawnRef.current) return;
         const seen = new Set();
         const items = (result.items || []).filter(item => {
           if (!item?.jobId || seen.has(item.jobId)) return false;
@@ -896,7 +899,8 @@ export function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
         const batches = await loadFleetJobBatches(workspaceId, jobIds, {
           signal: controller.signal,
         });
-        if (cancelled) return;
+        // Access was withdrawn while these pages were in flight: drop them.
+        if (cancelled || withdrawnRef.current) return;
         setMergedLines(batches.flatMap(batch => batch.lines));
         setTruncatedJobIds(
           batches.filter(batch => batch.truncated).map(batch => batch.jobId)
@@ -949,6 +953,7 @@ export function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
           if (cancelled) return;
           if (![401, 403].includes(err?.response?.status)) return;
           withdrawnRef.current = true;
+          loadControllerRef.current?.abort();
           setMergedLines([]);
           setJobs([]);
           setTruncatedJobIds([]);
