@@ -17,8 +17,13 @@ Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -A
   else{& certutil.exe -f -renewCert | Out-Null}
   if($LASTEXITCODE -ne 0){throw 'Native isolated CA key renewal failed'}
   Restart-Service CertSvc
-  & certutil.exe -CRL | Out-Null
-  if($LASTEXITCODE -ne 0){throw 'Native renewed CA CRL publication failed'}
+  # Restart-Service returns before the CA RPC endpoint is up (0x800706BA on the first call).
+  $published=$false
+  for($attempt=0;$attempt -lt 20 -and -not $published;$attempt++){
+    & certutil.exe -CRL | Out-Null
+    if($LASTEXITCODE -eq 0){$published=$true}else{Start-Sleep -Seconds 3}
+  }
+  if(-not $published){throw 'Native renewed CA CRL publication failed'}
   $after=@((Get-ItemProperty -LiteralPath "$config\TTQualificationRoot" -Name CACertHash).CACertHash)
   if($after.Count -le $before.Count -or $after[-1] -eq $before[-1]){throw 'No new native CA certificate recorded'}
   if($Mode -eq 'reuse-key'){Write-Output 'CERTOPS_CA_RENEWAL=reused-key-certificate-recorded'}
