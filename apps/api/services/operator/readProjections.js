@@ -217,7 +217,7 @@ function projectObservations(record, { offset = 0, limit = DEFAULT_LIMIT } = {})
   const total = Number(record.locationCount || all.length);
   const page = all.slice(offset, offset + limit);
   return {
-    identityId: record.identityId,
+    identityId: record.identityId || record.id,
     visibilityUnknown: record.visibilityUnknown === true,
     items: page.map(projectObservation),
     // The source returns at most 20 locations per certificate, so a longer
@@ -288,9 +288,37 @@ function approvalState(job) {
   return "not_required";
 }
 
+// Fixed wording per code. The session API's message can interpolate what an
+// agent declared about itself, so nothing from it may reach an assistant.
+const PENDING_WORDING = Object.freeze({
+  awaiting_claim: "Waiting for an eligible agent to poll and claim this job.",
+  awaiting_progress: "This job has been claimed and is waiting for the agent to start or report progress.",
+  assigned_agent_missing: "The assigned agent is no longer registered, so this job cannot be claimed.",
+  agent_offline: "The assigned agent is offline and cannot claim this job until it heartbeats again.",
+  agent_retired: "The assigned agent has been retired and can no longer claim any job.",
+  compatibility_blocked: "The assigned agent's version is outside what this control plane accepts, so it cannot claim any job until it is upgraded.",
+  operation_unsupported: "The assigned agent does not support this kind of job, or has not been set up to run it.",
+  adcs_enroll_capability_unavailable: "The assigned agent has not recently declared support for AD CS enrollment.",
+  trust_anchor_deploy_capability_unavailable: "The assigned agent has not recently declared support for trust-anchor distribution.",
+  agent_kind_mismatch: "The assigned agent is not of the kind this job needs.",
+  assigned_agent_mismatch: "This job is assigned to a different agent.",
+  command_profile_unsupported: "The assigned agent does not offer the command profile this job needs.",
+  dns_provider_unsupported: "The assigned agent does not offer the DNS provider this job needs.",
+  target_selector_unsupported: "The assigned agent does not cover the target this job needs.",
+  material_capability_unavailable: "The assigned agent has not declared support for the certificate material this job needs.",
+  executor_lane_mismatch: "This job needs a different kind of executor than the assigned agent.",
+  claim_bound_evidence_unavailable: "The assigned agent cannot yet provide the evidence this job needs.",
+});
+const PENDING_WORDING_FALLBACK = "The assigned agent cannot currently claim this job.";
+
+function pendingWording(code) {
+  return Object.hasOwn(PENDING_WORDING, code) ? PENDING_WORDING[code] : PENDING_WORDING_FALLBACK;
+}
+
 function projectJobDetail(job) {
   const state = approvalState(job);
   const pending = job.pendingReason;
+  const pendingCode = pending ? snakeCodeOrNull(pending.code) : null;
   return {
     summary: projectJobSummary(job),
     updatedAt: isoOrNull(job.updatedAt),
@@ -301,10 +329,7 @@ function projectJobDetail(job) {
       state,
       decidedAt: isoOrNull(job.approvedAt),
     },
-    pendingReason:
-      pending && snakeCodeOrNull(pending.code)
-        ? { code: pending.code, message: String(pending.message || "").slice(0, MAX_MESSAGE) }
-        : null,
+    pendingReason: pendingCode ? { code: pendingCode, message: pendingWording(pendingCode) } : null,
   };
 }
 
@@ -326,4 +351,5 @@ module.exports = {
   projectJobDetail,
   projectJobSummary,
   projectObservations,
+  pendingWording,
 };

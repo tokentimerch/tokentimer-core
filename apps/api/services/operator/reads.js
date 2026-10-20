@@ -12,7 +12,7 @@ const { listAgents } = require("../certops/agentRegistry");
 const { getCertificateJobById, listCertificateJobs } = require("../certops/jobs");
 const { resolveRenewalPathsForCertificateIds } = require("../certops/renewalPathHealth");
 const read = require("./readProjections");
-const { isoOrNull } = require("./projections");
+const { isoOrNull, snakeCodeOrNull } = require("./projections");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -88,7 +88,8 @@ async function loadIdentity({ workspaceId, identityId, fingerprintSha256 }) {
   const result = await listCertificateIdentities({
     workspaceId,
     identityId,
-    // A fingerprint lookup is an exact match through the same service.
+    // An id may name a provisional certificate, which has no fingerprint.
+    includeProvisional: Boolean(identityId),
     q: identityId ? undefined : fingerprintSha256,
     restrictedSearch: true,
     limit: 1,
@@ -96,10 +97,12 @@ async function loadIdentity({ workspaceId, identityId, fingerprintSha256 }) {
     excludeRetired: false,
     ...NO_TOPOLOGY,
   });
-  const record = result.items.find(
-    (item) => item.fingerprintSha256 && (identityId ? item.identityId === identityId : item.fingerprintSha256 === fingerprintSha256),
+  // A provisional record's `id` is the handle the list returned.
+  return (
+    result.items.find((item) =>
+      identityId ? (item.identityId || item.id) === identityId : item.fingerprintSha256 && item.fingerprintSha256 === fingerprintSha256,
+    ) || null
   );
-  return record || null;
 }
 
 async function getCertificate({ workspaceId, identityId, fingerprintSha256, now = Date.now() }) {
@@ -231,12 +234,15 @@ function jobReasons(jobs) {
   const [latest] = jobs;
   for (const job of jobs) {
     if (AWAITING_JOB_STATUSES.has(job.status) && job.pendingReason?.code) {
+      const pendingCode = snakeCodeOrNull(job.pendingReason.code);
+      if (!pendingCode) continue;
       out.push(
         reason({
-          code: job.pendingReason.code,
+          code: pendingCode,
           domain: "job",
           severity: "warning",
-          message: job.pendingReason.message || "A job for this certificate is waiting.",
+          // Fixed wording; the upstream message can carry agent-declared text.
+          message: read.pendingWording(pendingCode),
           evidenceAt: isoOrNull(job.updatedAt),
           sourceRef: read.isUuid(job.id) ? { kind: "job", id: job.id } : null,
         }),
@@ -364,7 +370,7 @@ async function explainCertificate({ workspaceId, identityId, now = Date.now() })
 
   const areas = [...unknownAreas];
   return {
-    identityId: record.identityId,
+    identityId: record.identityId || record.id,
     evaluatedAt: new Date(now).toISOString(),
     lifecycleStatus,
     overall: overallState({ lifecycleStatus, reasons, unknownAreas: areas }),
