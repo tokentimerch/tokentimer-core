@@ -42,6 +42,29 @@ describe('StepFrame', () => {
     }
   });
 
+  it('separates the header from the body only when there is a body', () => {
+    const { unmount } = renderFrame({ kind: 'ui', description: 'Subtitle' });
+    const separator = screen.getByRole('separator');
+    const heading = screen.getByRole('heading', { name: 'A step' });
+    const body = screen.getByText('body');
+    expect(
+      heading.compareDocumentPosition(separator) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(
+      separator.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    unmount();
+
+    render(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <StepFrame kind='info' title='Empty step' />
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+    expect(screen.queryByRole('separator')).not.toBeInTheDocument();
+  });
   it('rejects unknown kinds instead of rendering a mislabeled step', () => {
     expect(() => assertStepKind('wizardry')).toThrow(/Unknown/);
     for (const kind of STEP_KINDS) {

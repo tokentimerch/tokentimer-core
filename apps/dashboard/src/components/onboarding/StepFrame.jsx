@@ -1,13 +1,16 @@
+import { Children } from 'react';
 import {
   Alert,
   AlertDescription,
   AlertIcon,
   Badge,
   Box,
+  Divider,
   HStack,
   VStack,
 } from '@chakra-ui/react';
 import { DashboardPanel, DashboardPanelHeader } from '../DashboardPrimitives';
+import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import LearnMorePanel, { DocsLink, INFO_NOTE_PROPS } from '../LearnMorePanel';
 
 // Re-exported so existing imports keep working.
@@ -47,18 +50,33 @@ export default function StepFrame({
 }) {
   assertStepKind(kind);
   const badge = KIND_BADGE[kind];
+  const { border } = useDashboardTheme();
+  // A divider only helps when something sits below the header.
+  const hasBody =
+    Children.toArray(children).length > 0 || blockers.length > 0 || !!actions;
 
   return (
     <DashboardPanel as='section' aria-label={title}>
       <DashboardPanelHeader
         title={title}
         description={description}
+        mb={hasBody ? 3 : 4}
         action={
           <Badge colorScheme={badge.colorScheme} data-testid='step-kind'>
             {badge.label}
           </Badge>
         }
       />
+      {hasBody ? (
+        // Chakra's Divider hardcodes a dark-mode color; _dark keeps the card's.
+        <Divider
+          data-testid='step-divider'
+          borderColor={border}
+          _dark={{ borderColor: border }}
+          opacity={1}
+          mb={3}
+        />
+      ) : null}
       <VStack align='stretch' spacing={3}>
         {blockers.map(blocker => (
           <Alert
