@@ -1049,7 +1049,7 @@ function Accept-OwnedOcspSigner($Owner,[string]$VerifiedCertificateSha256) {
  $path=Join-Path $Owner.directory 'signer.cer'
  $certificatePin=[TTQualificationOcspReceipt]::PinRead($path)
  try {
- $bytes=[TTQualificationOcspReceipt]::Read($path)
+ $bytes=Get-OcspSignerDer ([TTQualificationOcspReceipt]::Read($path))
  if((Get-OcspPublicDigest $bytes) -cne $VerifiedCertificateSha256) {
   throw 'Issued signer DER changed before machine acceptance'
  }
@@ -1177,6 +1177,12 @@ function Write-OwnedOcspPublicTool($Owner,[string]$Name,[byte[]]$Bytes,[string]$
    return @{name=$Name;sha256=$readback;bytes=$Bytes.Length}
   } finally { $stream.Dispose() }
  }
+}
+
+function Get-OcspSignerDer([byte[]]$Bytes) {
+ # certreq writes the issued signer as base64 PEM, while receipts bind the DER.
+ $certificate=[Security.Cryptography.X509Certificates.X509Certificate2]::new($Bytes)
+ try { return ,[byte[]]$certificate.RawData } finally { $certificate.Dispose() }
 }
 
 function Get-OcspPublicDigest([byte[]]$Bytes) {
@@ -1608,7 +1614,7 @@ function Set-OwnedOcspConfiguration($Owner,[byte[]]$VerifiedSignedCrlDer) {
    throw 'Original responder service changed before configuration'
   }
  }
- $signer=[TTQualificationOcspReceipt]::Read((Join-Path $Owner.directory 'signer.cer'))
+ $signer=Get-OcspSignerDer ([TTQualificationOcspReceipt]::Read((Join-Path $Owner.directory 'signer.cer')))
  if((Get-OcspPublicDigest $signer) -cne $accepted.phase.facts.certificateSha256) {
   throw 'Accepted signer certificate changed before responder configuration'
  }
