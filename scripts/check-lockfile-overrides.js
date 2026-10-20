@@ -37,7 +37,7 @@ const REQUIRED_PINS = {
   picomatch: { 2: "2.3.2", 4: "4.0.4" },
   ajv: { 6: "6.15.0" },
   lodash: { "*": "4.18.1" },
-  "follow-redirects": { "*": "1.16.0" },
+  "follow-redirects": { "*": "1.16.1" },
   postcss: { "*": "8.5.26" },
   nanoid: { "*": "3.3.18" },
   "@babel/core": { "*": "7.29.6" },
