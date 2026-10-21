@@ -590,7 +590,13 @@ function readV2Journal(stateDir, enrollmentId, filePath) {
     ["issued", "validation_deferred", "installing", "installed", "install_failed"].includes(
       parsed.state,
     ) || hasDeferredTier2Candidate;
-  if (needsLeaf) {
+  // A leaf refused at validation keeps its public evidence: expose it when the
+  // journal committed a leafSha256 and the file is still there.
+  const hasRejectedLeafEvidence =
+    parsed.state === "rejected_invalid" &&
+    typeof parsed.leafSha256 === "string" &&
+    fs.existsSync(leafArtifactPath(stateDir, enrollmentId));
+  if (needsLeaf || hasRejectedLeafEvidence) {
     const leafPath = leafArtifactPath(stateDir, enrollmentId);
     if (!fs.existsSync(leafPath)) {
       return {

@@ -715,6 +715,8 @@ describe("adcs-enrollment-journal", () => {
     const rejected = readEnrollmentJournal(stateDir, ENROLLMENT_ID);
     assert.equal(rejected.kind, "valid");
     assert.equal(rejected.journal.errorCode, "ADCS_CERTIFICATE_INVALID");
+    // The refused leaf stays readable as evidence of what the CA returned.
+    assert.equal(rejected.artifacts.leafPem, LEAF_PEM);
   });
 
   it("preserves the first predecessorThumbprint across verify-stage journal updates", async () => {

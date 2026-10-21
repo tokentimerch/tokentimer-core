@@ -275,13 +275,18 @@ async function qualifySameCertificateLateApproval(context) {
         ).status,
         204,
       );
+      // The API stamps next_poll_at on the control-plane host; this test host's
+      // clock can trail it, so the cancellation's due time is read from the DB host.
+      const dueNow = (
+        await query("SELECT clock_timestamp() AS now")
+      ).rows[0].now;
       cleanup = (
-        await scheduler.scheduleDueEnrollments({ client: fixture.pool })
+        await scheduler.scheduleDueEnrollments({
+          client: fixture.pool,
+          now: dueNow,
+        })
       ).find((value) => value.enrollmentId === cancelled.enrollmentId);
-      assert.ok(
-        cleanup,
-        "Actual default-clock cancellation cleanup must dispatch",
-      );
+      assert.ok(cleanup, "Cancellation cleanup must be due and dispatch");
       await jobFinished(cleanup.jobId);
       const old = await row(cancelled.enrollmentId);
       assert.equal(old.state, "cancelled");
