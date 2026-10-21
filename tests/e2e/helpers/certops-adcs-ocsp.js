@@ -49,6 +49,9 @@ const {
 const execute = promisify(execFile);
 const active = new Map();
 const hash = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
+// The sanitized report keeps only an error code, so name which poll timed out.
+const tagTimeout = (error, code) =>
+  error && !error.code ? Object.assign(error, { code }) : error;
 const fingerprint = (certificate) =>
   certificate.fingerprint256.replace(/:/g, "").toLowerCase();
 const q = (text) => text.replace(/'/g, "''");
@@ -955,29 +958,37 @@ async function qualifyOcsp(c) {
                   ...payload,
                   crlDerBase64: verifiedCrl.toString("base64"),
                 };
-                return await c.until(async () => {
-                  const observed = await signedStatus(
-                    generations[0].leaf,
-                    false,
-                    null,
-                  );
-                  return observed.status === "revoked" ? observed : null;
-                }, 60000);
+                return await c
+                  .until(async () => {
+                    const observed = await signedStatus(
+                      generations[0].leaf,
+                      false,
+                      null,
+                    );
+                    return observed.status === "revoked" ? observed : null;
+                  }, 60000)
+                  .catch((error) => {
+                    throw tagTimeout(error, "CERTOPS_OCSP_REVOKED_SIGNED_TIMEOUT");
+                  });
               },
               probeRevoked: async (certificate) => {
                 writeProbeArtifacts(certificate.raw);
                 ps(
                   "& certutil.exe -urlcache 'http://10.64.0.4/ocsp' delete *> $null;$code=([long]$LASTEXITCODE -band 0xffffffffL);if($code -notin @(0L,0x80092004L,0x80070002L)){throw 'Exact owned OCSP URL cache eviction failed'}",
                 );
-                return await c.until(async () => {
-                  const result = await probe();
-                  if (result.verdict === "revoked") return result;
-                  assert.ok(
-                    ["valid", "revocation_unknown"].includes(result.verdict),
-                    "Unrelated native chain failure during revoked probe",
-                  );
-                  return null;
-                }, 60000);
+                return await c
+                  .until(async () => {
+                    const result = await probe();
+                    if (result.verdict === "revoked") return result;
+                    assert.ok(
+                      ["valid", "revocation_unknown"].includes(result.verdict),
+                      "Unrelated native chain failure during revoked probe",
+                    );
+                    return null;
+                  }, 60000)
+                  .catch((error) => {
+                    throw tagTimeout(error, "CERTOPS_OCSP_REVOKED_NATIVE_TIMEOUT");
+                  });
               },
             });
           },
@@ -1028,6 +1039,10 @@ async function qualifyOcsp(c) {
             proofContract.FALSE_FLAGS.map((flag) => [flag, false]),
           ),
         });
+        assert.ok(
+          revokedResult,
+          "Historical revoked journey did not complete",
+        );
         gate.report.nativeOcspRevoked = historicalRevoked.verifyCrossProof(
           {
             ...revokedResult.facts,

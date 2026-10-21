@@ -74,6 +74,8 @@ function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = 
   // Failure triage metadata. Release evidence keeps only the error class, a fixed-shape code and the
   // source location; debug mode adds the (secret-redacted) message and top stack frames.
   let failureCount = 0;
+  let guardedCount = 0;
+  let lastGuardedFailure;
   function describeFailure(error) {
     const detail = {};
     if (typeof error?.constructor?.name === "string" && /^[A-Za-z0-9_]{1,64}$/.test(error.constructor.name)) detail.errorClass = error.constructor.name;
@@ -124,7 +126,13 @@ function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = 
       add(id, "running", { startedAt: new Date().toISOString(), evidenceLevel: level, ...(metadata.oracle ? { oracle: bounded(metadata.oracle) } : {}), ...(metadata.catalogId ? { catalogId: bounded(metadata.catalogId) } : {}) });
       const entry = report.scenarios.at(-1);
       await save();
-      try { await execute(); entry.status = "passed"; }
+      const guardedBefore = guardedCount;
+      try {
+        await execute();
+        // A swallowed journey failure must not leave its scenario reported as passed.
+        if (guardedCount > guardedBefore) { entry.status = "failed"; entry.failure = lastGuardedFailure; }
+        else entry.status = "passed";
+      }
       catch (error) {
         entry.status = "failed"; report.status = "failed";
         if (!continueOnFailure) throw error;
@@ -140,7 +148,9 @@ function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = 
       try { return await execute(); }
       catch (error) {
         report.guardedFailures ??= [];
-        report.guardedFailures.push({ label: bounded(label).slice(0, 128), ...noteFailure(error) });
+        lastGuardedFailure = noteFailure(error);
+        guardedCount += 1;
+        report.guardedFailures.push({ label: bounded(label).slice(0, 128), ...lastGuardedFailure });
         await save();
         if (report.failureBudgetExhausted) throw error;
         return undefined;
