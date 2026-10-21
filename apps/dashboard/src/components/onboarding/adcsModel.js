@@ -220,7 +220,7 @@ export const ADCS_DRY_RUN_NOTE =
 /** What the person still has to do after the guide has prepared its part. */
 export const ADCS_REMAINING_STEPS = [
   'Join the Windows server to the domain (it must not be a domain controller) and grant the computer account Enroll on the template.',
-  'In Certificate Management, Renewals, open AD CS issuers and create the issuer with the same CA and template, then pin the CA certificate.',
+  'In Certificate Management, Renewals, open AD CS issuers and create the issuer with the same CA and template, then pin the CA certificate. Renewal needs a CA check taken after the pin, so choose Check again on the issuer once more.',
   'Create an AD CS renewal profile for the site and attach it to the certificate.',
   'Once the issuer has passed its CA check, set "dryRun" to false under "execution" in the saved config.json and restart TokenTimerAgent. Until then the agent refuses real enrollment and only the CA check runs.',
 ];

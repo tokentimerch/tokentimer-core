@@ -34,6 +34,8 @@ import {
   listIssuers,
 } from './certopsEnrollmentsApi';
 import LearnMorePanel from '../LearnMorePanel.jsx';
+import { getJob } from './certopsJobsApi.js';
+import { failedPreflightMessage } from './adcsPreflightJob.js';
 import { ADCS_DOCS } from '../../utils/docsUrls.js';
 import { showError, showSuccess } from '../../utils/toast.js';
 
@@ -152,6 +154,7 @@ export default function AdcsIssuerWizard({
   const draftIdRef = useRef(null);
   const finishedRef = useRef(false);
   const expectedPairRef = useRef(null);
+  const preflightJobIdRef = useRef(null);
 
   useEffect(() => {
     if (!isOpen) {
@@ -185,6 +188,19 @@ export default function AdcsIssuerWizard({
         );
         if (cancelled) return;
         if (current) setIssuer(current);
+        // An agent refusal never updates the issuer, so read the job itself.
+        const jobId = preflightJobIdRef.current;
+        if (jobId) {
+          const failure = failedPreflightMessage(
+            (await getJob(workspaceId, jobId))?.job
+          );
+          if (cancelled) return;
+          if (failure) {
+            setWaiting(false);
+            setLocalError(failure);
+            return;
+          }
+        }
         const expected = expectedPairRef.current;
         const pairMatches =
           current?.lastPreflight?.caConfig === expected?.caConfig &&
@@ -253,11 +269,12 @@ export default function AdcsIssuerWizard({
         template: template.trim(),
         previousJobId: issuer?.lastPreflightJobId || null,
       };
-      await dispatchIssuerPreflight(workspaceId, issuerId, {
+      const dispatched = await dispatchIssuerPreflight(workspaceId, issuerId, {
         agentId,
         caConfig: caConfig.trim(),
         template: template.trim(),
       });
+      preflightJobIdRef.current = dispatched?.job?.id || null;
       setWaiting(true);
       showSuccess(
         'Preflight dispatched. This wizard updates when the agent reports.'
@@ -350,7 +367,7 @@ export default function AdcsIssuerWizard({
                   onChange={event => setName(event.target.value)}
                 />
                 <FormHelperText>
-                  A name you will recognize later, such as TTLab Issuing CA.
+                  A name you will recognize later, such as Corp Issuing CA.
                 </FormHelperText>
               </FormControl>
             ) : null}
@@ -474,8 +491,10 @@ export default function AdcsIssuerWizard({
                 New AD CS profile there. The last step attaches the profile to a
                 certificate already in inventory and turns automation on. The
                 sweep enrolls when that certificate is inside the profile lead
-                time and an agent that declares the DNS name has passed the CA
-                check and is online.
+                time and an agent that declares the DNS name has passed a CA
+                check taken after you pinned the certificate and is online. The
+                check you just ran came before the pin, so on the issuer choose
+                Check again once more.
               </Text>
             ) : null}
           </Stack>
