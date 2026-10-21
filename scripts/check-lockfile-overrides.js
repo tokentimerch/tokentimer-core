@@ -4,7 +4,7 @@
 // Asserts that pnpm-lock.yaml actually resolves the security-patched versions
 // pinned in pnpm-workspace.yaml overrides. This catches the failure mode where
 // override configuration moves (or is duplicated) and silently stops applying.
-// Mirror of the tokentimer-cloud checker, with the core override set.
+// Checks the Core lockfile against its declared dependency overrides.
 
 const fs = require("node:fs");
 const path = require("node:path");
@@ -37,7 +37,7 @@ const REQUIRED_PINS = {
   picomatch: { 2: "2.3.2", 4: "4.0.4" },
   ajv: { 6: "6.15.0" },
   lodash: { "*": "4.18.1" },
-  "follow-redirects": { "*": "1.16.0" },
+  "follow-redirects": { "*": "1.16.1" },
   postcss: { "*": "8.5.26" },
   nanoid: { "*": "3.3.18" },
   "@babel/core": { "*": "7.29.6" },

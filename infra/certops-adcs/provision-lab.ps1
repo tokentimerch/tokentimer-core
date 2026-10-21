@@ -31,7 +31,6 @@ if($QualificationScope -eq 'operator-acceptance' -and ($ResponseLossExperiment -
 if($Shard -ne 'all' -and ($QualificationScope -ne 'comprehensive' -or $HierarchyRole -ne 'root' -or $PendingElapsedQualification -ne '0' -or $IssuerReassignment -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $RetentionCadencePrepare -ne '0')){throw 'A diagnostic shard only applies to the plain comprehensive scope'}
 # Production worker and package acceptance are scope-independent; exactly one shard (issuance) carries them.
 $runAcceptance=($Shard -in @('all','issuance'))
-if($JournalPhaseExperiment -notin @('none','submitting','issued','installing') -or $PendingElapsedQualification -ne '0' -or $IssuerReassignment -ne '0' -or $HierarchyRole -ne 'root' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $RetentionCadencePrepare -ne '0'){throw 'Only the core AD CS lab is included; extended campaigns are deferred'}
 if($IssuerReassignment -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $PendingElapsedQualification -ne '0' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $RetentionCadencePrepare -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Issuer reassignment requires its isolated four-hour two-CA Server2022 en-US profile'}
 if($RetentionCadencePrepare -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $PendingElapsedQualification -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $RetentionCadenceNonce -cnotmatch '^[a-f0-9]{64}$' -or $env:GITHUB_RUN_ID -notmatch '^[1-9][0-9]*$' -or $env:GITHUB_RUN_ATTEMPT -notmatch '^[1-9][0-9]*$' -or $ResourceGroup -cne "tt-certops-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")){throw 'Installed retention cadence requires its isolated four-hour Server2022 en-US preparation'}
 if($HierarchyRole -eq 'subordinate' -and ($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Hierarchy and experimental fault profiles cannot be combined'}
@@ -217,6 +216,20 @@ try {
   $apiPublic=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $env:RUNNER_TEMP 'certops-api-public.pem')))
   Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'windows-tools.ps1') 'CERTOPS_STAGE=isolated-candidate-windows-tools-built' @("CandidateSha=$candidateSha","ApiPublicPemBase64=$apiPublic","WindowsVersion=$WindowsVersion")
   if($IssuerReassignment -ne '1' -and $PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1' -and $AdcsTtl24hPrepare -ne '1' -and $RetentionCadencePrepare -ne '1'){Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'browser-windows-tools.ps1') 'CERTOPS_STAGE=locked-domain-browser-ready' @("CandidateSha=$candidateSha")}
+  if($RetentionCadencePrepare -eq '1'){
+    # This producer leaves the original service running. Its separate immutable
+    # owner handoff, never this guest stage, authorizes the bounded timer wait.
+    Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-retention-cadence-prepare.ps1') 'CERTOPS_STAGE=retention-cadence-prepared' @("DomainPassword=$password","Nonce=$RetentionCadenceNonce","CreatedAt=$($createdAt.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ'))","RunId=$env:GITHUB_RUN_ID","RunAttempt=$env:GITHUB_RUN_ATTEMPT")
+    $reportStatus='prepared-actual-service-timer-awaiting-independent-handoff'
+  }elseif($AdcsTtl24hPrepare -eq '1'){
+    Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-ttl24h-prepare.ps1') 'CERTOPS_STAGE=adcs-ttl24h-prepared' @("DomainPassword=$password","AdcsTtl24hNonce=$AdcsTtl24hNonce","AdcsTtl24hCreatedAt=$($createdAt.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ"))","AdcsTtl24hRunId=$env:GITHUB_RUN_ID","AdcsTtl24hRunAttempt=$env:GITHUB_RUN_ATTEMPT")
+    $reportStatus='prepared'
+  }elseif($Retention24hPrepare -eq '1'){
+    # Keep the forest credential in this process only. The dedicated producer
+    # freezes actual cutover before the external controller may extend TTL.
+    Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-windows-tests.ps1') 'CERTOPS_STAGE=retention24h-prepared' @("DomainPassword=$password","Retention24hPrepare=1","Retention24hNonce=$Retention24hNonce","Retention24hCreatedAt=$($createdAt.ToString('o'))","Retention24hRunId=$env:GITHUB_RUN_ID","Retention24hRunAttempt=$env:GITHUB_RUN_ATTEMPT")
+    $reportStatus='prepared-actual-cutover-awaiting-independent-handoff'
+  }else{
   $testParameters=@("DomainPassword=$password","Language=$Language","ResponseLossExperiment=$ResponseLossExperiment","JournalPhaseExperiment=$JournalPhaseExperiment","PendingElapsedQualification=$PendingElapsedQualification","IssuerReassignment=$IssuerReassignment","HierarchyRole=$HierarchyRole","ContinueOnFailure=$ContinueOnFailure","DebugDetail=$DebugMode","Shard=$Shard");if($HierarchyRole -eq 'subordinate'){$testParameters+="RootCertificateBase64=$($publicStageData.CERTOPS_ROOT_CERT)"}
   $nativeExecutionFailure=$null
   try {
@@ -259,6 +272,7 @@ try {
   }
   $reportStatus = 'provisioned-and-native-scenarios-completed'
   if($QualificationScope -eq 'operator-acceptance'){$receipts.Add('CERTOPS_STAGE=operator-acceptance-only-completed-not-comprehensive')}
+  }
 } finally {
   New-Item -ItemType Directory -Force 'qualification-results' | Out-Null
   $scenarioReport=if($IssuerReassignment -eq '1'){'native-issuer-reassignment.json'}elseif($RetentionCadencePrepare -eq '1'){'retention-cadence-prepare-public.json'}elseif($AdcsTtl24hPrepare -eq '1'){'adcs-ttl24h-prepare-public.json'}elseif($Retention24hPrepare -eq '1'){'retention24h-prepare-public.json'}elseif($PendingElapsedQualification -eq '1'){'enterprise-adcs-elapsed-pending-real.json'}elseif($HierarchyRole -eq 'subordinate'){'enterprise-adcs-hierarchy-real.json'}else{'enterprise-adcs-real.json'}

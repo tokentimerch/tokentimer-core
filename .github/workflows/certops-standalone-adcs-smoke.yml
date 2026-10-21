@@ -1,0 +1,29 @@
+name: "CertOps / Standalone AD CS hosted feasibility smoke"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - name: Provision disposable standalone CA and run native certreq CNG IIS smoke
+        shell: pwsh
+        run: ./scripts/certops-standalone-adcs-smoke.ps1
+      - name: Verify every native feasibility case and cleanup
+        run: node scripts/certops-standalone-report.js qualification-results/adcs/report.json
+      - name: Preserve smoke and cleanup evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: standalone-adcs-smoke
+          path: qualification-results/adcs/
+          if-no-files-found: error

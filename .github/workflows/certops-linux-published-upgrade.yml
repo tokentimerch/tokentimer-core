@@ -1,0 +1,90 @@
+name: "CertOps / Published Linux archive upgrade qualification"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  linux-systemd:
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    env:
+      NODE_ENV: test
+      CERTOPS_ENABLED: 'true'
+      CERTOPS_PROTOCOL_DISPOSABLE_STACK: '1'
+      CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST: '1'
+      CERTOPS_SIGNING_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      CERTOPS_REGISTRATION_ENCRYPTION_KEY: abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: '11.13.0'
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: packages/agent/windows-service-host/go.mod
+      - name: Prepare exact public predecessor and candidate release archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          downloads=$(mktemp -d "$RUNNER_TEMP/certops-linux-archive-downloads.XXXXXX")
+          gh api repos/tokentimerch/tokentimer-core/releases/tags/v0.17.2 > "$downloads/release.json"
+          node scripts/certops-linux-published-package.js --verify-release "$downloads/release.json"
+          gh release download v0.17.2 --repo tokentimerch/tokentimer-core --pattern 'tokentimer-agent-0.17.2.tgz*' --dir "$downloads"
+          pnpm --dir packages/agent build
+          node packages/agent/scripts/pack-release.js --out-dir "$downloads/candidate"
+          candidate_version=$(node -p "require('./packages/agent/package.json').version")
+          node scripts/certops-linux-published-package.js "$downloads/tokentimer-agent-0.17.2.tgz" "$downloads/tokentimer-agent-0.17.2.tgz.sha256" "$downloads/candidate/tokentimer-agent-$candidate_version.tgz" "$downloads/candidate/tokentimer-agent-$candidate_version.tgz.sha256" "$RUNNER_TEMP/certops-linux-published-upgrade"
+      - name: Provision disposable migrated API database
+        run: docker compose -f deploy/compose/docker-compose.test.yml up -d --build
+      - name: Wait for migrated API stack
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:4000/ >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - name: Qualify published predecessor to candidate installed service upgrade
+        run: |
+          candidate_node="$(command -v node)"
+          sudo env PATH="$PATH" GITHUB_ACTIONS=true GITHUB_SHA="$GITHUB_SHA" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_TEMP="$RUNNER_TEMP" \
+            NODE_ENV=test CERTOPS_ENABLED=true CERTOPS_PROTOCOL_DISPOSABLE_STACK=1 \
+            CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST=1 CERTOPS_LINUX_PUBLISHED_INPUTS="$RUNNER_TEMP/certops-linux-published-upgrade/inputs.json" \
+            CERTOPS_SIGNING_ENCRYPTION_KEY="$CERTOPS_SIGNING_ENCRYPTION_KEY" \
+            CERTOPS_REGISTRATION_ENCRYPTION_KEY="$CERTOPS_REGISTRATION_ENCRYPTION_KEY" \
+            "$candidate_node" scripts/certops-linux-systemd.js
+      - name: Independently clean only receipt-owned host resources
+        id: owned-host-cleanup
+        if: always()
+        run: |
+          sudo env GITHUB_ACTIONS=true RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_TEMP="$RUNNER_TEMP" CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST=1 \
+            "$(command -v node)" scripts/certops-linux-systemd-cleanup.js
+      - name: Destroy disposable database stack
+        if: always()
+        env:
+          CERTOPS_HOST_CLEANUP_OUTCOME: ${{ steps.owned-host-cleanup.outcome }}
+        run: |
+          test "$CERTOPS_HOST_CLEANUP_OUTCOME" = success
+          node -e "require('./scripts/certops-linux-systemd-ownership').assertHostReceiptRemoved(process.env.RUNNER_TEMP)"
+          docker compose -f deploy/compose/docker-compose.test.yml down -v --remove-orphans
+      - name: Preserve sanitized qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: published-linux-upgrade-${{ matrix.os }}
+          path: |
+            qualification-results/linux-systemd-published-upgrade.json
+            qualification-results/linux-installed-file-discovery.json
+          if-no-files-found: error

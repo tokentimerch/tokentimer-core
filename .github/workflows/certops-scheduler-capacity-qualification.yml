@@ -1,0 +1,69 @@
+name: "CertOps / Renewal scheduler shared capacity qualification"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: certops-scheduler-capacity-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  scheduler-capacity:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      NODE_ENV: test
+      CERTOPS_ENABLED: 'true'
+      CERTOPS_CSR_API_URL: http://localhost:4000
+      CERTOPS_CSR_DISPOSABLE_STACK: '1'
+      CERTOPS_SCHEDULER_EXCLUSIVE_STACK: '1'
+      CERTOPS_E2E_REQUIRED: '1'
+      CERTOPS_SCHEDULER_CAPACITY_REPORT: qualification-results/scheduler-capacity.json
+      CERTOPS_RENEWAL_TOGGLE_REPORT: qualification-results/renewal-toggle.json
+      CERTOPS_RETIRED_SCHEDULER_REPORT: qualification-results/retired-scheduler.json
+      CERTOPS_SIGNING_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      CERTOPS_REGISTRATION_ENCRYPTION_KEY: abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+      DB_HOST: localhost
+      DB_PORT: '5432'
+      DB_USER: tokentimer
+      DB_PASSWORD: password
+      DB_NAME: tokentimer
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/certops-node-setup
+      - name: Start isolated actual API and database
+        run: |
+          docker compose -f deploy/compose/docker-compose.test.yml up -d --build
+          for attempt in $(seq 1 90); do
+            if curl -fsS http://localhost:4000/ >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - name: Execute actual SQL clock scheduler and shared public admission
+        run: |
+          node --test tests/e2e/certops-scheduler-capacity-e2e.test.js
+          node scripts/certops-qualification-report.js qualification-results/scheduler-capacity.json
+      - name: Verify automatic renewal disable manual admission and batch fairness
+        run: |
+          node --test tests/e2e/certops-renewal-toggle-e2e.test.js
+          node scripts/certops-qualification-report.js qualification-results/renewal-toggle.json
+      - name: Verify authoritative retirement excludes stale-cache automatic renewal
+        run: |
+          node --test tests/e2e/certops-retired-scheduler-e2e.test.js
+          node scripts/certops-qualification-report.js qualification-results/retired-scheduler.json
+      - name: Destroy isolated stack
+        if: always()
+        run: docker compose -f deploy/compose/docker-compose.test.yml down -v --remove-orphans
+      - name: Preserve only bounded qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: scheduler-capacity-api-${{ github.sha }}
+          path: |
+            qualification-results/scheduler-capacity.json
+            qualification-results/renewal-toggle.json
+            qualification-results/retired-scheduler.json
+          if-no-files-found: error
+          retention-days: 14

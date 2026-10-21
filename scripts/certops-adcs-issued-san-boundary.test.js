@@ -1,4 +1,22 @@
 "use strict";
+/**
+ * Qualification notes: CA-issued unauthorized SAN refusal
+ *
+ * Find exact installed successor journal matching actually served pending-cancel site, never
+ * assume cancelled request installed. Register unaccepted receipt before POST, append returned ID.
+ * Officer binds RequestId/run CN/requester/disposition/template OID/full native CSR-DER hash;
+ * change only SAN 2.5.29.17 to distinct owned DNS then actually issue. Require original signature/
+ * request/CN/SPKI/template and exactly unauthorized SAN. Signed continuation rejected_invalid/
+ * ADCS_CERTIFICATE_INVALID, no My/WebHosting acceptance, exact key removed/rejected journal
+ * retained, same CA count and predecessor CNG/IIS/TLS; revoke exact faulty issuance. Parent exact
+ * service drainage/all-store survivor guard precedes broad cleanup; unknown association/ active
+ * dispatch preserves public/local ownership. Public SAN input retains parent/file-ID/hash;
+ * no-delete-sharing handle permits certutil reader, exclusive exact delete handle cleans only
+ * original. Same-byte foreign replacement preserved. Benign certutil-hash Windows controls prove
+ * file mechanics only, no CA/store/key/service operations.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Supporting contracts only: these checks never issue or mutate certificates. */
 const { test } = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path");
 const helper = require("../tests/e2e/helpers/certops-adcs-issued-san-boundary");

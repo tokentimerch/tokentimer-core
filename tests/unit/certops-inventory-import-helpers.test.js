@@ -7,6 +7,7 @@ const path = require("node:path");
 const {
   fingerprintsFromCertificates,
   tokenNameFor,
+  ensureManagedCertificateToken,
 } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/inventory.js"),
 );
@@ -122,6 +123,29 @@ describe("CertOps inventory import helpers", () => {
     ]) {
       assert.equal(typeof inventory[name], "function", `missing export ${name}`);
     }
+  });
+
+  it("reuses an already-linked source token without waiting on allocation admission", async () => {
+    const [certificate] = parsePublicCertificateMaterial(PUBLIC_LEAF_CERT);
+    const tokenId = "11111111-1111-4111-8111-111111111111";
+    const client = { query() { throw new Error("Unchanged source must not wait on the quota lock"); } };
+    const result = await ensureManagedCertificateToken(client, certificate,
+      { workspaceId: "22222222-2222-4222-8222-222222222222" },
+      { id: "33333333-3333-4333-8333-333333333333", token_id: tokenId });
+    assert.equal(result, tokenId);
+  });
+
+  it("still serializes token allocation when an existing source has no linked token", async () => {
+    const [certificate] = parsePublicCertificateMaterial(PUBLIC_LEAF_CERT);
+    const locked = new Error("Held allocation lock");
+    const calls = [];
+    const client = { query(sql, values) { calls.push({ sql, values }); throw locked; } };
+    await assert.rejects(ensureManagedCertificateToken(client, certificate,
+      { workspaceId: "22222222-2222-4222-8222-222222222222" },
+      { id: "33333333-3333-4333-8333-333333333333", token_id: null }), (error) => error === locked);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].sql, /pg_advisory_xact_lock/);
+    assert.deepEqual(calls[0].values, ["22222222-2222-4222-8222-222222222222"]);
   });
 
   it("importPublicCertificates invokes validateImport before token creation", () => {

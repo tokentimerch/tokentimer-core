@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "version": "17.11",
+  "build": "17.11-5",
+  "architecture": "x64",
+  "execution": "Windows11-ARM64-x64-emulation-dependency",
+  "sourcePage": "https://www.enterprisedb.com/download-postgresql-binaries",
+  "sourceUrl": "https://sbp.enterprisedb.com/getfile.jsp?fileid=1260616",
+  "url": "https://get.enterprisedb.com/postgresql/postgresql-17.11-5-windows-x64-binaries.zip",
+  "bytes": 381531864,
+  "sha256": "80379b2c04d51c30225532e0ae04509899141e9957ed096fe749d7fd9df8f82f",
+  "reviewedAt": "2026-10-14T18:53:40Z"
+}

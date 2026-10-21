@@ -1,7 +1,7 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-19 at `main` 34ae0a70 for the 0.18.0 release. Other
-certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
+Last reviewed: 2026-10-21 after integrating the 0.18.0 release.
+Certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -67,7 +67,16 @@ called stable while they are open.
 Accepted work that ships in 0.x stages on its own schedule. v1.0.0 can be
 called stable while it is open.
 
-No open items. The AD CS issuer for the Windows agent shipped in 0.18.0 (see [CHANGELOG.md](CHANGELOG.md)).
+- **Verifiable certificate lifecycle and real-host qualification**
+  ([#354](https://github.com/tokentimerch/tokentimer-core/issues/354)).
+  Cover Windows installation, services, CNG, certificate stores and IIS,
+  enterprise AD CS enrollment and recovery, ACME, Linux destinations and
+  edition integration. Use disposable hosted Windows runners and isolated
+  on-demand domain labs, with independent cleanup safeguards. Mandatory
+  execution reports must fail on missing prerequisites or skipped tests.
+  Implementation and focused local evidence are separate from hosted
+  execution and release qualification; see
+  [the qualification guide](docs/certops/e2e-qualification.md).
 
 ---
 

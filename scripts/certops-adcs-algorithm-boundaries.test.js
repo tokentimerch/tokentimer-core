@@ -1,4 +1,16 @@
 "use strict";
+/**
+ * Qualification notes: native algorithm and template boundaries
+ *
+ * Four signed refusals: RSA2048 vs RSA3072 minimum, RSA3072 vs RSA4096, P256 vs P384 schema 3/4.
+ * Bind each to actual matching-template issuance before its renewal: CA RequestId/DER, protected
+ * CNG identity/provider/export/size and trusted IIS TLS remain unchanged. Genuine safe native
+ * preflight/schema/algorithm and public confirmation precede assigned refusal before CA/keygen;
+ * RequestId/key/accepted leaf/journal/receipt stay absent. Root/hierarchy require closed
+ * nativeAlgorithmBoundaries; pending-elapsed and arbitrary template pairs remain separate.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Pure production policy/descriptor and proof adversaries. Static public CA
  * test material never constitutes native template observation or host execution. */
 const test = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path");

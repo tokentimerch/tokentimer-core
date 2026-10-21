@@ -1,3 +1,19 @@
+/*
+ * Qualification notes: adcs-pending-elapsed
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Use the main-only Enterprise AD CS actual-one-hour-pending workflow, protected certops-adcs-lab
+ * Azure OIDC, fresh Server2022/en-US domain lab, four-hour resource expiry, 180-minute job and
+ * independent janitor. After real installed SYSTEM RSA2048 issuance/IIS deployment, create a public
+ * held request with pendingTimeout=3600/pollInterval=60. Measure at least one hour by monotonic host
+ * and PostgreSQL time with default scheduler clocks. Restart must preserve
+ * credential/CSR/request/snapshot/key before expiry. Then remove only the unaccepted key, preserve
+ * trusted outgoing IIS and refuse late officer-approved reconciliation without resubmission; revoke
+ * that late leaf by its actual CA serial. Verify
+ * qualification-results/enterprise-adcs-elapsed-pending-real.json and
+ * scripts/certops-adcs-pending-elapsed-report.js. An80-minute native bound fits the90-minute
+ * RunCommand ceiling; this does not prove fourteen-day default expiry or the comprehensive nine domain
+ * slots.
+ */
 "use strict";
 /* Opt-in one-hour AD CS qualification, called by the dedicated elapsed-pending
  * workflow through the installed SYSTEM-agent harness. It owns one public

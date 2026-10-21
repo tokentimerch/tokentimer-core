@@ -69,9 +69,9 @@ function verifyProof(proof) {
   return true;
 }
 
-async function qualifyTwoRenewals(context) {
-  const { gate, fixture, renewalFixture, configDir, ps, command, until, jobFinished, ownedEnrollmentIds, ownedThumbprints, tlsAuthority } = context;
-  assert.equal(process.platform, "win32"); assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB, "1");
+// Both scheduler lanes observe the same real TLS, CA request and native key custody.
+function createRenewalObservers({gate, fixture, renewalFixture, configDir, ps, command, tlsAuthority}, REQUIRED_SOURCES) {
+assert.equal(process.platform, "win32"); assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB, "1");
   const { item, site, port, profileId, authority } = renewalFixture;
   assert.equal(item.template, "TTQualificationRSAShort"); assert.equal(item.algorithm, "rsa"); assert.equal(item.size, 2048); assert.ok(profileId);
   const root = path.resolve(__dirname, "../../..");
@@ -99,6 +99,11 @@ async function qualifyTwoRenewals(context) {
     assert.equal(receipt?.status, "enrolled_by_agent"); assert.equal(receipt.acceptedThumbprint, leaf.thumb); assert.equal(receipt.acceptedStore, "My");
     return { value, receipt };
   };
+ return {item, site, port, profileId, authority, root, query, peer, nativeRequest, custody};
+}
+async function qualifyTwoRenewals(context) {
+  const { gate, fixture, renewalFixture, configDir, ps, command, until, jobFinished, ownedEnrollmentIds, ownedThumbprints, tlsAuthority } = context;
+  const {item, site, port, profileId, authority, root, query, peer, nativeRequest, custody} = createRenewalObservers({gate, fixture, renewalFixture, configDir, ps, command, tlsAuthority}, REQUIRED_SOURCES);
   const binding = leaf => {
     const value = JSON.parse(ps(`Import-Module WebAdministration;$keys=@(Get-ChildItem -LiteralPath 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\HTTP\\Parameters\\SslSniBindingInfo'|Where-Object {[string]$_.GetValue('HostnamePort') -ieq '${item.domain}:${port}'});if($keys.Count -ne 1){throw 'Exact owned HTTP.sys SNI selector required'};$b=@(Get-WebBinding -Name '${site}' -Protocol https|Where-Object bindingInformation -eq '*:${port}:${item.domain}');if($b.Count -ne 1){throw 'Exact owned IIS binding required'};@{hash=[BitConverter]::ToString([byte[]]$keys[0].GetValue('SslCertHash')).Replace('-','');coordinates=[string]$b[0].bindingInformation;flags=[int]$b[0].sslFlags}|ConvertTo-Json -Compress`));
     assert.equal(value.hash, leaf.thumb); assert.equal(value.coordinates, `*:${port}:${item.domain}`); assert.equal(value.flags, 1);
@@ -175,4 +180,4 @@ async function qualifyTwoRenewals(context) {
   verifyProof(proof); gate.report.nativeAdcsTwoRenewals = proof;
   renewalFixture.observed = leaves[2].certificate; renewalFixture.thumbprint = leaves[2].thumb; renewalFixture.currentEnrollmentId = enrollments[1];
 }
-module.exports = { qualifyTwoRenewals, verifyProof, REQUIRED_SCENARIOS, REQUIRED_SOURCES, FLAGS };
+module.exports = { createRenewalObservers, qualifyTwoRenewals, verifyProof, REQUIRED_SCENARIOS, REQUIRED_SOURCES, FLAGS };

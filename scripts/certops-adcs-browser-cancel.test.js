@@ -1,4 +1,18 @@
 "use strict";
+/**
+ * Qualification notes: browser cancellation before approval
+ *
+ * After two capacity installs create sequential pending-approval renewal for originally refused
+ * then issued subject (any capacity0..5, race index not fixed). Reuse exact
+ * issuer/certificate/site/ domain; register ID immediately. Exact dashboard bodyless same-origin
+ * cancellation POST returning 204, count every workspace's CertOps writes. SQL/native proof:
+ * cancelled row/job,one human audit, zero claims/RequestId/journal/key/CArequest, unchanged prior
+ * CNG/IIS/TLS, capacity five to four. Not claimed/ approved/submitted cancellation. Failed UI
+ * fallback withdraws only exact unclaimed approval via API but cannot produce browser pass; parent
+ * native ownership/browser-trust drainage stays.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 // Supporting request/proof checks only. No browser, native key or CA is run.
 const { test } = require("node:test");
 const assert = require("node:assert/strict");

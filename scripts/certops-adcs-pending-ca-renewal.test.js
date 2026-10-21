@@ -1,4 +1,19 @@
 "use strict";
+/**
+ * Qualification notes: pending request across same-key CA renewal
+ *
+ * Root-only uses actual current capacity leaf/journal/acceptance receipt, not assumed first row.
+ * Guard/register My ownership before public pending admission; observe disposition 9/job/CSR/
+ * snapshot/CNG signature before existing one same-key CA renewal/preflight (no extra dispatch). CA
+ * certificate set grows/same key; issuer version/pin, count/RequestId/key and predecessor/TLS
+ * unchanged without reconfirmation. Approve same request, production continuation installs real
+ * leaf on original pending key with My/IIS/TLS/claim proof; predecessor key/receipt survive.
+ * Scheduler-now only reaches stored poll eligibility. Unknown acceptance/restoration retains guard
+ * until parent drainage/cleanup. No CMC/key rotation/offline-parent/timer; hierarchy/elapsed
+ * exclude.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Pure pending/CA-renewal source/proof controls. No CA, CNG or service executes. */
 const test=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),h=require("../tests/e2e/helpers/certops-adcs-pending-ca-renewal");
 function proof(){return{scope:h.SCOPE,schedulerClock:"supported-scheduler-now-input",backgroundWorkerIntervalQualified:false,enrollmentId:"11111111-1111-1111-1111-111111111111",originalJobId:"22222222-2222-2222-2222-222222222222",continuationJobId:"33333333-3333-3333-3333-333333333333",requestId:"17",caKeySha256:"a".repeat(64),caCertificateCountBefore:1,caCertificateCountAfter:2,csrSha256:"b".repeat(64),spkiSha256:"c".repeat(64),leafFingerprint:"d".repeat(64),predecessorFingerprint:"e".repeat(64),...Object.fromEntries(h.FLAGS.map(flag=>[flag,true]))};}

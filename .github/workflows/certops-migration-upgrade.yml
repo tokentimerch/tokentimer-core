@@ -1,0 +1,85 @@
+name: "CertOps / CertOps historical API migration qualification"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  migration:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16.6-alpine
+        env:
+          POSTGRES_DB: certops_migration
+          POSTGRES_USER: migration_fixture
+          POSTGRES_PASSWORD: migration-fixture-only
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U migration_fixture -d certops_migration"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DB_HOST: 127.0.0.1
+      DB_NAME: certops_migration
+      DB_USER: migration_fixture
+      DB_PASSWORD: migration-fixture-only
+      CERTOPS_MIGRATION_DISPOSABLE_STACK: '1'
+      CERTOPS_QUALIFICATION_STRICT: '1'
+      CERTOPS_MIGRATION_BASELINE_DIR: ${{ github.workspace }}/baseline
+      CERTOPS_MIGRATION_REPORT: qualification-results/core-api-migration-upgrade.json
+    defaults:
+      run:
+        working-directory: candidate
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          path: candidate
+          persist-credentials: false
+      - name: Checkout immutable historical Core source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: b6ad7fc3d38db35b4c41a2c6137b0c39afc72158
+          path: baseline
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: '11.13.0'
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: |
+            candidate/pnpm-lock.yaml
+            baseline/pnpm-lock.yaml
+      - name: Install each version from its own frozen lockfile
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir ../baseline install --frozen-lockfile
+          openssl version
+      - name: Resolve actual disposable PostgreSQL port
+        env:
+          MIGRATION_DB_PORT: ${{ job.services.postgres.ports['5432'] }}
+        run: |
+          [[ "$MIGRATION_DB_PORT" =~ ^[0-9]+$ ]]
+          test "$MIGRATION_DB_PORT" -gt 0
+          test "$MIGRATION_DB_PORT" -lt 65536
+          echo "DB_PORT=$MIGRATION_DB_PORT" >> "$GITHUB_ENV"
+      - name: Measure actual disposable PostgreSQL image
+        run: echo "CERTOPS_MIGRATION_PG_IMAGE_ID=$(docker inspect --format '{{.Image}}' '${{ job.services.postgres.id }}')" >> "$GITHUB_ENV"
+      - name: Run real historical-to-candidate public API migration journey
+        run: node scripts/certops-migration-upgrade.js
+      - name: Require all migration scenarios and exact source evidence
+        if: success()
+        run: |
+          node scripts/certops-qualification-report.js qualification-results/core-api-migration-upgrade.json
+          node scripts/certops-migration-upgrade-report.js qualification-results/core-api-migration-upgrade.json
+      - name: Preserve sanitized migration evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certops-core-api-migration-upgrade
+          path: candidate/qualification-results/core-api-migration-upgrade.json
+          if-no-files-found: error

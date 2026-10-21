@@ -43,6 +43,14 @@ const BINARY_EXTENSIONS = new Set([
 // costs a permanent public leak.
 const PATTERNS = [
   {
+    id: "private-edition-source-reference",
+    // Public product names and asset filenames remain valid; checkout names,
+    // source paths and repository URLs are inaccessible implementation links.
+    re: /\btokentimer-(?:cloud|enterprise)(?![\w-])/gi,
+    documentationOnly: true,
+    describe: () => "private downstream repository reference in public documentation",
+  },
+  {
     id: "issue-tracker-id",
     // Case-sensitive on purpose: every real issue-tracker reference this
     // project has ever used historically has been written as an
@@ -249,6 +257,7 @@ function scanText(relPath, text, violations) {
   const lines = text.split("\n");
   const excludedLines = computeAllowedLineExclusions(lines);
   for (const pattern of PATTERNS) {
+    if (pattern.documentationOnly && !(/\.md$/i.test(relPath) || /^docs\/.*\.json$/i.test(relPath))) continue;
     if (
       pattern.id.startsWith("milestone-code") &&
       MILESTONE_CODE_FALSE_POSITIVE_EXTENSIONS.has(path.extname(relPath).toLowerCase())
@@ -287,7 +296,7 @@ function scanRefName(violations) {
     return; // detached HEAD or no repo; nothing to check
   }
   const refPatterns = [
-    ...PATTERNS.filter((p) => p.id !== "issue-tracker-id"),
+    ...PATTERNS.filter((p) => p.id !== "issue-tracker-id" && !p.documentationOnly),
     ...REF_NAME_ONLY_PATTERNS,
   ];
   for (const pattern of refPatterns) {
@@ -334,4 +343,5 @@ function main() {
   console.log("leak-scan: ok");
 }
 
-main();
+if (require.main === module) main();
+module.exports = { scanText };

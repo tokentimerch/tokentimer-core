@@ -1,4 +1,18 @@
 "use strict";
+/**
+ * Qualification notes: late approval with distinct successor identity
+ *
+ * Reuse cancelled request and real later-installed successor on same endpoint; no new enrollment/
+ * preflight/submit. Bind CA RequestId/requester/template/CSR/SPKI, cancellation
+ * audit/jobs/journal/ absent key and independent current CNG/IIS/HTTP.sys/TLS+claim evidence
+ * before officer action. Late leaf keeps original names/key/template/signature but is never
+ * machine-accepted. Real-now and overdue scheduler controls cannot revive it; public retry
+ * refused; rows/custody/TLS fixed. Recheck exact unused issuance ownership/DER before revoke,
+ * fixed request count/successor TLS. Unresolved guard preserves cleanup. Successor identity
+ * differs; same-certificate is separate.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 // Supporting public-proof/ownership controls. Software CSR material stays in
 // memory; no native certificate, key, service, IIS, CA or browser is operated.
 const assert = require("node:assert/strict");

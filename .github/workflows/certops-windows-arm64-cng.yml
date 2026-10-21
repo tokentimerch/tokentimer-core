@@ -1,0 +1,66 @@
+name: "CertOps / Windows ARM64 native CNG runtime"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: certops-windows-arm64-cng-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native-cng:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-11-arm
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CERTOPS_ARM64_NATIVE_REQUIRED: '1'
+      CERTOPS_QUALIFICATION_STRICT: '1'
+      CERTOPS_QUALIFICATION_REPORT: qualification-results/windows-arm64-cng-runtime.json
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+          architecture: arm64
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: packages/agent/reference/adcs-chain/go.mod
+          architecture: arm64
+          cache: false
+      - name: Select native PowerShell and independent private cleanup receipt
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture -ne [Runtime.InteropServices.Architecture]::Arm64) { throw 'Native ARM64 PowerShell required' }
+          "CERTOPS_ARM64_PWSH=$((Get-Process -Id $PID).Path)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CERTOPS_ARM64_RECEIPT=$([IO.Path]::Combine([IO.Path]::GetTempPath(), 'certops-arm64-native-receipt.json'))" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Execute all mandatory native ARM64 desktop CNG cases
+        timeout-minutes: 12
+        run: |
+          node scripts/certops-arm64-runtime.js
+          if ($LASTEXITCODE) { throw 'Native ARM64 runtime qualification failed' }
+      - name: Independently clean only drained receipt-owned public certificates and keys
+        if: always()
+        run: |
+          if ($env:CERTOPS_ARM64_RECEIPT) {
+            node scripts/certops-arm64-runtime.js --cleanup
+            if ($LASTEXITCODE) { throw 'Exact-owned cleanup refused; keep private evidence on disposable runner' }
+          }
+      - name: Verify current sources, measured desktop identity and all mandatory cases
+        run: |
+          node scripts/certops-arm64-runtime.js --verify-report qualification-results/windows-arm64-cng-runtime.json
+          if ($LASTEXITCODE) { throw 'ARM64 mandatory proof verification failed' }
+      - name: Preserve bounded public runtime report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certops-windows-arm64-cng-runtime
+          path: qualification-results/windows-arm64-cng-runtime.json
+          if-no-files-found: error

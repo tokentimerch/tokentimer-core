@@ -7,6 +7,7 @@
  */
 const { verifyNativeRequestId } = require("./certops-adcs-live-enroll-acl");
 const assert = require("node:assert/strict");
+const {createRenewalObservers} = require("./certops-adcs-two-renewals");
 const { isDeepStrictEqual } = require("node:util");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -30,6 +31,7 @@ const REQUIRED_SCENARIOS = Object.freeze([
   "adcs-real-background-worker-profile-and-custody-preservation",
 ]);
 const REQUIRED_SOURCES = Object.freeze([
+  "tests/e2e/helpers/certops-adcs-two-renewals.js",
   "tests/e2e/helpers/certops-adcs-live-enroll-acl.js",
   "packages/agent/src/issuers/adcs.js",
   "tests/e2e/helpers/certops-adcs-background-renewals.js",
@@ -70,19 +72,7 @@ const FLAGS = Object.freeze([
 ]);
 const normalized = (value) => String(value).replace(/:/g, "").toLowerCase();
 const serial = (value) => normalized(value).replace(/^0+(?=[0-9a-f])/, "");
-function describe(certificate) {
-  return {
-    certificate,
-    fingerprint: normalized(certificate.fingerprint256),
-    thumb: certificate.fingerprint.replace(/:/g, "").toUpperCase(),
-    spki: crypto
-      .createHash("sha256")
-      .update(certificate.publicKey.export({ type: "spki", format: "der" }))
-      .digest("hex"),
-    serial: serial(certificate.serialNumber),
-    expires: Date.parse(certificate.validTo),
-  };
-}
+
 function verifyProof(proof) {
   const fields = new Set([
     "scope",
@@ -166,99 +156,7 @@ async function qualifyBackgroundRenewals(context) {
     ownedPhaseObservers,
     registerOwnedStoreCertificate,
   } = context;
-  assert.equal(process.platform, "win32");
-  assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB, "1");
-  const { item, site, port, profileId, authority } = renewalFixture;
-  assert.equal(item.template, "TTQualificationRSAShort");
-  assert.equal(item.algorithm, "rsa");
-  assert.equal(item.size, 2048);
-  assert.ok(profileId);
-  const root = path.resolve(__dirname, "../../..");
-  gate.report.fixtureSources ??= [];
-  for (const file of REQUIRED_SOURCES) {
-    const sha256 = crypto
-      .createHash("sha256")
-      .update(fs.readFileSync(path.join(root, file)))
-      .digest("hex");
-    const prior = gate.report.fixtureSources.filter((row) => row.file === file);
-    if (prior.length) {
-      assert.equal(prior.length, 1);
-      assert.equal(prior[0].sha256, sha256);
-    } else gate.report.fixtureSources.push({ file, sha256 });
-  }
-  const query = (sql, args = []) => fixture.pool.query(sql, args);
-  const peer = () =>
-    new Promise((resolve, reject) => {
-      const socket = tls.connect(
-        {
-          host: "127.0.0.1",
-          port,
-          servername: item.domain,
-          ca: tlsAuthority(authority),
-          rejectUnauthorized: true,
-        },
-        () => {
-          try {
-            assert.equal(socket.authorized, true);
-            const leaf = new crypto.X509Certificate(
-              socket.getPeerCertificate().raw,
-            );
-            assert.equal(leaf.checkHost(item.domain), item.domain);
-            resolve(describe(leaf));
-          } catch (error) {
-            reject(error);
-          } finally {
-            socket.destroy();
-          }
-        },
-      );
-      socket.once("error", reject);
-      socket.setTimeout(10000, () =>
-        socket.destroy(
-          new Error("Two-cycle AD CS trusted TLS observation timed out"),
-        ),
-      );
-    });
-  const nativeRequest = (leaf) =>
-    JSON.parse(
-      command("powershell.exe", [
-        "-NoProfile",
-        "-NonInteractive",
-        "-File",
-        path.join(root, "infra/certops-adcs/owned-issued-request.ps1"),
-        "-CommonName",
-        item.domain,
-        "-FingerprintSha256",
-        leaf.fingerprint,
-      ]),
-    );
-  const custody = (leaf) => {
-    const value = JSON.parse(
-      ps(
-        `$c=Get-Item 'Cert:\\LocalMachine\\My\\${leaf.thumb}';$k=$null;try{$k=[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c);@{container=$k.Key.KeyName;unique=$k.Key.UniqueName;policy=[int]$k.Key.ExportPolicy;provider=$k.Key.Provider.Provider;machine=$k.Key.IsMachineKey;bits=$k.KeySize;der=[Convert]::ToBase64String($c.RawData)}|ConvertTo-Json -Compress}finally{if($k){$k.Dispose()};$c.Dispose()}`,
-      ),
-    );
-    assert.equal(value.policy, 0);
-    assert.equal(value.machine, true);
-    assert.equal(value.provider, "Microsoft Software Key Storage Provider");
-    assert.equal(value.bits, 2048);
-    assert.ok(value.unique);
-    assert.equal(
-      normalized(
-        new crypto.X509Certificate(Buffer.from(value.der, "base64"))
-          .fingerprint256,
-      ),
-      leaf.fingerprint,
-    );
-    const receipt = readIssuedContainerRecord({
-      stateDir: configDir,
-      containerName: value.container,
-    });
-    assert.equal(receipt?.status, "enrolled_by_agent");
-    assert.equal(receipt.acceptedThumbprint, leaf.thumb);
-    assert.equal(receipt.acceptedStore, "My");
-    return { value, receipt };
-  };
+  const {item, site, port, profileId, authority, root, query, peer, nativeRequest, custody} = createRenewalObservers({gate, fixture, renewalFixture, configDir, ps, command, tlsAuthority}, REQUIRED_SOURCES);
   const binding = (leaf) => {
     const value = JSON.parse(
       ps(

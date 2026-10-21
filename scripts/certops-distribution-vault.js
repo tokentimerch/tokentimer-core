@@ -140,7 +140,7 @@ async function main() {
       file,
     ]);
     const slot =
-      require("../docs/certops/qualification-suites.json").slots.find(
+      require("./certops-qualification-manifest").slots.find(
         (s) => s.id === "distribution-vault-adapter",
       );
     verify(

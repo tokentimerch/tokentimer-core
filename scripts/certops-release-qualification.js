@@ -1,3 +1,19 @@
+/**
+ * Qualification notes: Release collection
+ * Run node scripts/certops-release-qualification.js <40-character-candidate-sha> <report.json>
+ * <report.jsonl> ... after downloading every required report. The manual collector accepts explicit
+ * successful trusted-main run IDs for one exact candidate; local reports cannot fill release slots.
+ * Full is the default; standard-hosted, adcs and extended-adcs require every selected cell and report
+ * omitted slots with fullMatrixQualified=false. standard-hosted still needs live DNS credentials and
+ * published-package evidence. Bounds: 512 matrix slots, 1024 collection items, 20 MiB per archive, 2
+ * MiB per report, 512 MiB total download, 100 artifacts per run and 128 unique supporting source
+ * files. Failed/skipped/missing/duplicate/stale-source/wrong-environment reports fail. Catalog
+ * implementation is distinct from observed execution; even a complete committed matrix retains
+ * allFeaturesQualified=false. The collector verifies evidence only and never enables a production
+ * capability.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
 "use strict";
 /**
  * Validates collected reports against the committed release matrix and candidate/source identity.
@@ -11,12 +27,16 @@ const crypto = require("node:crypto");
 const { verifyReport } = require("./certops-qualification-report");
 const { verify: verifyStack } = require("./certops-stack-report");
 const { verify: verifyDatabase } = require("./certops-integration-report");
-const matrix = require("../docs/certops/qualification-suites.json");
-const catalog = require("../docs/certops/qualification-suites.json");
+const matrix = require("./certops-qualification-manifest");
+const catalog = require("./certops-qualification-manifest");
 // These registrations describe local contracts, with no native qualifying
 // producer. A passed outer envelope must never upgrade their simulated proofs.
 // A future native implementation must deliberately replace this eligibility gate.
-const localContractSuites = new Set(["adcs-install-interruption", "adcs-lost-submit", "adcs-cmc-renewal", "adcs-safety-variants", "adcs-crash-experiments"]);
+const localContractSuites = new Set([
+  ...require("./_registration/adcs-coverage.json").suites.map(item => item.id).filter(id => !["adcs-browser-enrollment","adcs-uncertain-abandon"].includes(id)),
+  ...require("./_registration/cross-coverage.json").suites.map(item => item.id),
+  ...require("./_registration/windows-coverage.json").contracts.map(item => item.suiteId),
+]);
 function catalogCoverage(specification = catalog) {
   const errors = require("./certops-qualification-catalog").validateCatalog(specification);
   if (errors.length) throw new Error("Invalid committed scenario catalog");
@@ -53,12 +73,12 @@ function validateMatrix(specification = matrix) {
     }
     const identity = JSON.stringify([slot.kind, slot.suite, Object.entries(slot.environment || {}).sort()]);
     if (identities.has(identity)) errors.push(`${slot.id}: duplicate suite/environment specification`); identities.add(identity);
-    if (slot.kind === "host" && !require("../docs/certops/qualification-suites.json").suites[slot.suite]) errors.push(`${slot.id}: unknown mandatory suite`);
+    if (slot.kind === "host" && !require("./certops-qualification-manifest").suites[slot.suite]) errors.push(`${slot.id}: unknown mandatory suite`);
     if (slot.kind === "stack" && !slot.requiredInventory && !slot.requiredTests?.length) errors.push(`${slot.id}: mandatory tests are missing`);
-    if (slot.kind === "database" && !require("../tests/integration/certops-qualification-groups.json")[slot.requiredGroup]) errors.push(`${slot.id}: unknown mandatory database group`);
+    if (slot.kind === "database" && !require("./certops-integration-inventory").groups[slot.requiredGroup]) errors.push(`${slot.id}: unknown mandatory database group`);
   }
-  for (const suite of Object.keys(require("../docs/certops/qualification-suites.json").suites)) if (!specification.slots.some((slot) => slot.kind === "host" && slot.suite === suite) && !(specification.deferredSlots || []).some(slot => slot.suite === suite)) errors.push(`Mandatory suite has no release environment: ${suite}`);
-  for (const group of Object.keys(require("../tests/integration/certops-qualification-groups.json"))) if (!specification.slots.some((slot) => slot.kind === "database" && slot.requiredGroup === group)) errors.push(`Mandatory database group has no release environment: ${group}`);
+  for (const suite of Object.keys(require("./certops-qualification-manifest").suites)) if (!specification.slots.some((slot) => slot.kind === "host" && slot.suite === suite)) errors.push(`Mandatory suite has no release environment: ${suite}`);
+  for (const group of Object.keys(require("./certops-integration-inventory").groups)) if (!specification.slots.some((slot) => slot.kind === "database" && slot.requiredGroup === group)) errors.push(`Mandatory database group has no release environment: ${group}`);
   return errors;
 }
 
@@ -96,11 +116,108 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (artifact.report.suite !== slot.suite) throw new Error("Suite mismatch");
         if (verifyReport(artifact.report, undefined, { expectedSha: candidateSha }).length) throw new Error("Mandatory runtime evidence incomplete");
         if (localContractSuites.has(slot.suite)) throw new Error("Local-contract-only suite has no native qualifying producer");
-
-
-
-
-
+        if (slot.suite === "dns-provider-errors") require("./certops-dns-provider-errors-report").verifyDnsErrors(artifact.report);
+        if(slot.suite==="linux-native-acme-browser-lifecycle"){
+          require("../tests/e2e/helpers/certops-acme-browser-lifecycle").verifyProof(artifact.report.nativeAcmeBrowserLifecycle);
+          require("../tests/e2e/helpers/certops-native-file-discovery").verifyProof(artifact.report.nativeFileDiscoveryRefusals);
+          const n=artifact.report.qualificationEnvironment;
+          if(artifact.report.platform!=="linux"||artifact.report.architecture!=="x64"||n.osFamily!=="linux"||n.distributionId!=="ubuntu"||n.distributionVersion!=="24.04"||n.executionSurface!=="host"||n.libc!=="glibc")throw new Error("Native browser issue/renew lifecycle requires exact Ubuntu host scope");
+        }
+        if(slot.suite==="linux-installed-file-discovery"){
+          require("../tests/e2e/helpers/certops-linux-installed-discovery").verifyProof(artifact.report.nativeInstalledFileDiscovery);
+          const native=artifact.report.qualificationEnvironment;
+          if(artifact.report.platform!=="linux"||artifact.report.architecture!=="x64"||native.measurement!=="native"||native.osFamily!=="linux"||native.distributionId!=="ubuntu"||!["22.04","24.04"].includes(native.distributionVersion)||native.executionSurface!=="host")throw new Error("Installed discovery requires the declared native Ubuntu systemd host");
+        }
+        if (slot.suite === "dns-routing-host") {
+          require("./certops-dns-resolver-views").verifyProof(artifact.report.nativeResolverViews);
+          require("./certops-dns-hook-interruption").verifyProof(artifact.report.nativeDnsHookInterruption);
+          if (!artifact.report.scenarios.some(row => row.id === require("./certops-dns-hook-interruption").SCENARIO && row.status === "passed")) throw new Error("Native DNS interruption scenario required");
+          const native=artifact.report.qualificationEnvironment;
+          if(artifact.report.platform!=="linux" || artifact.report.architecture!=="x64" || native.osFamily!=="linux" || native.distributionId!=="ubuntu" || native.distributionVersion!=="24.04" || native.executionSurface!=="host")throw new Error("Native configured DNS resolver views require the owned Ubuntu host");
+        }
+        if (slot.suite === "kubernetes-host") {
+          require("./certops-kubernetes-rbac").verifyProof(artifact.report.nativeKubernetesRbacStartupRecovery);
+          const evidence = artifact.report.nativeCompaction;
+          if (!evidence || evidence.expiredStatus !== 410 || !["productionClient", "productionObserver", "controlPlaneRestarted", "ownedSingleNodeCluster"].every(key => evidence[key] === true) ||
+              !["originalResourceVersion", "compactedRevision", "observedResourceVersion"].every(key => typeof evidence[key] === "string" && /^[1-9][0-9]{0,19}$/.test(evidence[key])) ||
+              typeof evidence.certificateUid !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(evidence.certificateUid) || BigInt(evidence.originalResourceVersion) > BigInt(evidence.compactedRevision) || BigInt(evidence.observedResourceVersion) <= BigInt(evidence.compactedRevision)) throw new Error("Native watch compaction and recovery evidence incomplete");
+        }
+        if (slot.suite === "agent-log-maintenance-worker") require("./certops-log-maintenance-report").verify(artifact.report, root, candidateSha);
+        if (slot.suite === "windows-host") { require("../packages/agent/scripts/host/cng-export-fixture").verifyCustodyProof(artifact.report.cngCustody); require("../packages/agent/scripts/host/iis-shared-port-fixture").verifyIsolationFacts(artifact.report.nativeSamePortSni); require("../packages/agent/scripts/host/enrollment-contention-fixture").verifyContentionFacts(artifact.report.nativeEnrollmentContention); }
+        if (slot.suite === "browser-agent-console") require("./certops-completed-console-proof").verifyProof(artifact.report.completedConsolePrivacy);
+        if (slot.suite === "windows-domain-adcs-default-ttl24h") {
+          const helper = require("./certops-adcs-ttl24h-proof"); helper.verifyProof(artifact.report[helper.FIELD]);
+          if (artifact.report[helper.FIELD].candidateSha !== candidateSha || artifact.report.platform !== "win32" || artifact.report.architecture !== "x64" || artifact.report.cleanup?.status !== "passed") throw new Error("Actual TTL native environment, candidate and cleanup required");
+        }
+        if (slot.suite === "windows-domain-installed-retention-default-timer") {
+          const native = require("./certops-retention-cadence-proof").verifyProof(artifact.report.nativeRetentionCadence);
+          if (native.candidateSha !== candidateSha || artifact.report.platform !== "win32" || artifact.report.architecture !== "x64" || artifact.report.cleanup?.status !== "passed") throw new Error("Installed timer native environment, original candidate and cleanup required");
+        }
+        if (slot.suite === "windows-domain-adcs-retention24h") require("./certops-retention24h-proof").verifyProof(artifact.report.nativeRetention24h);
+        if (slot.suite === "windows-canonical-root-lifecycle") {
+          if (artifact.report.nativeCanonicalRoot?.scope !== "unmodified-candidate-cli-canonical-root-same-version-reapplication") throw new Error("Native canonical-root lifecycle proof required; local contract cannot qualify");
+          require("../tests/e2e/helpers/certops-windows-fixed-root").verifyProof(artifact.report.nativeCanonicalRoot);
+        }
+        if (slot.suite === "windows-installer-first-rename-refusal") require("../tests/e2e/helpers/certops-windows-rename-refusal").verifyProof(artifact.report.nativeRenameRefusal);
+        if (slot.suite === "windows-activation-second-rename") {
+          if (artifact.report.nativeSecondRename?.scope !== "production-activation-functions-not-installer-cli") throw new Error("Native second-rename activation proof required; local contract cannot qualify");
+          require("../tests/e2e/helpers/certops-windows-second-rename").verifyProof(artifact.report.nativeSecondRename);
+        }
+        if (slot.suite === "windows-installer-cli-second-rename") require("../tests/e2e/helpers/certops-windows-cli-second-rename").verifyProof(artifact.report.nativeCliSecondRename);
+        if (slot.suite === "windows-arm64-installed-agent") require("./certops-arm64-installed-proof").verifyRuntimeReport(artifact.report);
+        if (slot.suite === "windows-arm64-packaged-scm") require("./certops-arm64-scm-proof").verifyRuntimeReport(artifact.report);
+        if (slot.suite === "windows-arm64-cng-runtime") require("./certops-arm64-runtime-proof").verifyRuntimeReport(artifact.report);
+        if (slot.suite === "windows-two-unattended-renewals") require("../tests/e2e/helpers/certops-windows-two-renewals").verifyProof(artifact.report.nativeTwoRenewals);
+        if (slot.suite === "windows-certificate-dry-run") require("../tests/e2e/helpers/certops-windows-certificate-dry-run").verifyProof(artifact.report.nativeCertificateDryRun);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/iis-public-only-fixture").verifyProof(artifact.report.nativeIisPublicOnly);
+        if (slot.suite === "windows-host") require("./certops-native-key-survivor-proof").verifyProof(artifact.report.nativeKeySurvivors);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/cng-key-usage-proof").verifyProof(artifact.report.nativeKeyUsage);
+        if (slot.suite === "windows-installed-alive-grace-renewal") require("../tests/e2e/helpers/certops-windows-alive-grace-proof").verifyProof(artifact.report.nativeWindowsAliveGrace);
+        if (slot.suite === "windows-installed-failed-rollback-renewal") require("../tests/e2e/helpers/certops-windows-installed-failed-rollback").verifyProof(artifact.report.nativeInstalledFailedRollback);
+        if (["windows-installed-stop-offline-renewal","windows-installed-alive-grace-renewal","windows-installed-failed-rollback-renewal","windows-installed-bind-failure-rollback","windows-installed-interruption-recovery"].includes(slot.suite)) {
+          if(slot.suite === "windows-installed-stop-offline-renewal") require("../tests/e2e/helpers/certops-windows-stop-offline-proof").verifyProof(artifact.report.nativeWindowsStoppedOffline);
+          const env=artifact.report.qualificationEnvironment;
+          if(artifact.report.cleanup?.status!=="passed" || artifact.report.platform!=="win32" || artifact.report.architecture!=="x64" || env.osFamily!=="windows" || !["2022","2025"].includes(env.osVersion) || ![2,3].includes(env.productType) || env.identity!=="LocalSystem" || env.nativeLanguage!=="en-US" || env.measurement!=="native" || env.architecture!=="x64") throw new Error("Actual SYSTEM Server stopped/offline native environment and cleanup required");
+        }
+        if (slot.suite === "windows-webhosting-retention") { if (artifact.report.cleanup?.status !== "passed") throw new Error("WebHosting owned cleanup incomplete"); require("../packages/agent/scripts/host/retention-webhosting-fixture").verifyProof(artifact.report.nativeWebHostingRetention); }
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/iis-client-settings-fixture").verifyProof(artifact.report.nativeHttpSysClientSettings);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/packaged-helper-runtime-fixture").verifyProof(artifact.report.nativePackagedChainRuntime);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-ledger-atomic-fixture").verifyAtomicProof(artifact.report.nativeRetentionAtomicReplace);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-elapsed-fixture").verifyElapsedProof(artifact.report.nativeElapsedRetention);
+        if (slot.suite === "windows-host") {
+          const policies = artifact.report.nativeRetentionPolicyExpiry;
+          assert.deepEqual(Object.keys(policies || {}).sort(), ["168", "720"]);
+          const helper = require("../packages/agent/scripts/host/retention-policy-expiry-proof");
+          for (const hours of helper.POLICIES) { assert.equal(policies[String(hours)].configuredRetentionHours, hours); helper.verifyProof(policies[String(hours)]); }
+        }
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-reference-fixture").verifyProof(artifact.report.nativeRetentionReferences);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/credential-weak-acl-fixture").verifyProof(artifact.report.nativeCredentialWeakAcl);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/state-read-refusal-fixture").verifyProof(artifact.report.nativeStateReadRefusals);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/journal-read-refusal-fixture").verifyProof(artifact.report.nativeJournalReadRefusals);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-ledger-read-refusal-fixture").verifyProof(artifact.report.nativeLedgerReadRefusals);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/orphan-journal-fixture").verifyProof(artifact.report.nativeOrphanJournalProtection);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/orphan-journal-acl-fixture").verifyProof(artifact.report.nativeCngJournalAcl);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-configured-timer-fixture").verifyProof(artifact.report.supportingConfiguredRetentionTimer);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/ipv6-shadow-fixture").verifyProof(artifact.report.nativeIpv6SniShadow);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/ipv6-wildcard-fixture").verifyProof(artifact.report.nativeIpv6WildcardShadow);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/ipv4-wildcard-fixture").verifyProof(artifact.report.nativeIpv4WildcardShadow);
+        if (slot.suite === "linux-systemd-published-upgrade") require("../tests/e2e/helpers/linux-systemd-published-upgrade").verifyProof(artifact.report.nativePublishedLinuxUpgrade);
+        if (slot.suite === "linux-systemd-reapply") require("../tests/e2e/helpers/linux-systemd-reapply").verifyProof(artifact.report.nativeInstallerReapply);
+        if (slot.suite === "native-agent-api") {
+          require("../tests/e2e/helpers/certops-native-certificate-dry-run").verifyFacts(artifact.report.nativeCertificateDryRun);
+          require("../tests/e2e/helpers/certops-native-dispatch-timing").verifyTimingFacts(artifact.report.nativeDispatchTiming);
+          const privacy = artifact.report.nativeChildOutputPrivacy;
+          if (!privacy || privacy.executedChildren !== 2 || !["stdoutEmitted", "stderrEmitted", "rawChildOutputWithheld", "genericExecutionMarkerPersisted", "jobSucceeded"].every(key => privacy[key] === true)) throw new Error("Native child-output confidentiality evidence incomplete");
+          const cases = require("./certops-qualification-manifest").suites[slot.suite].filter(id => id.startsWith("native-agent-log-"));
+          const rows = artifact.report.nativeLogFaults;
+          if (!Array.isArray(rows) || rows.length !== cases.length) throw new Error("Native log transport fault evidence incomplete");
+          for (const id of cases) {
+            const found = rows.filter(row => row?.scenario === id);
+            if (found.length !== 1 || !["actualNativeConsole", "jobSucceeded", "finalAcknowledged"].every(key => found[0][key] === true) ||
+                found[0].attempts !== 1 || !Number.isInteger(found[0].persistedLines) || found[0].persistedLines < 1 || found[0].persistedLines > 1000 ||
+                found[0].serverDroppedLines !== 0 || found[0].agentGapLines !== (id === "native-agent-log-413-drop-accounting" ? 1 : 0)) throw new Error("Native log transport persistence or gap evidence invalid");
+          }
+        }
         if (slot.suite === "enterprise-adcs-real") require("../tests/e2e/helpers/certops-adcs-pending-ca-renewal").verifyCrossProof(artifact.report.nativePendingCaRenewal,artifact.report.nativeAdcsCapacity);
         if (slot.suite === "enterprise-adcs-real") require("../tests/e2e/helpers/certops-adcs-pending-ca-key-change").verifyCrossProof(artifact.report.nativePendingCaKeyChange,artifact.report.nativePendingCaRenewal);
         if (slot.suite === "enterprise-adcs-hierarchy-real") require("../tests/e2e/helpers/certops-adcs-http-intermediate-crl").verifyProof(artifact.report.nativeHttpIntermediateCrl);
@@ -159,7 +276,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
             workspaces.add(cohort.workspaceId); agents.add(cohort.agentId);
           }
           const mutations = artifact.report.nativeTemplateMutations;
-          const mutationCases = require("../docs/certops/qualification-suites.json").suites[slot.suite].filter(id => id.startsWith("adcs-real-mutated-template-")).map(id => id.slice("adcs-real-mutated-template-".length, -"-native-refused".length));
+          const mutationCases = require("./certops-qualification-manifest").suites[slot.suite].filter(id => id.startsWith("adcs-real-mutated-template-")).map(id => id.slice("adcs-real-mutated-template-".length, -"-native-refused".length));
           if (!Array.isArray(mutations) || mutations.length !== mutationCases.length) throw new Error("Native template mutation evidence incomplete");
           for (const caseId of mutationCases) {
             const rows = mutations.filter(item => item?.caseId === caseId);
@@ -167,7 +284,23 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
                 !["originalConfirmedIssuerReused", "actualSignedJobRefused", "noCaRequestAllocated", "noKeyGenerated", "outgoingTrustedTlsPreserved"].every(key => rows[0][key] === true)) throw new Error("Native template mutation refusal evidence invalid");
           }
         }
-
+        if (["nginx-host","apache-host","haproxy-host"].includes(slot.suite)) {
+          const p=artifact.report.nativeDaemonCoordinatorRollback,n=artifact.report.qualificationEnvironment;require("./certops-daemon-coordinator-rollback").verifyProof(p);
+          const served=artifact.report.nativeDaemonServedLeafMismatch;require("./certops-daemon-served-leaf-mismatch").verifyProof(served);if(served.service!==p.service || JSON.stringify(served.fingerprints)!==JSON.stringify(p.fingerprints))throw new Error("Native served-leaf mismatch original fixture binding required");
+          if(p.service+"-host"!==slot.suite || artifact.report.platform!=="linux" || artifact.report.architecture!=="x64" || n.osFamily!=="linux" || n.distributionId!=="ubuntu" || !["22.04","24.04"].includes(n.distributionVersion) || n.executionSurface!=="host")throw new Error("Native consuming-daemon rollback environment required");
+        }
+        if (slot.suite === "linux-public-signed-trust-lifecycle") {
+          const h=require("./certops-linux-signed-trust-proof");h.verifyProof(artifact.report[h.FIELD]);
+          const n=artifact.report.qualificationEnvironment;
+          if(artifact.report.platform!=="linux"||artifact.report.architecture!=="x64"||n.osFamily!=="linux"||n.distribution!=="ubuntu"||n.osVersion!=="24.04"||n.measurement!=="native"||n.executionSurface!=="disposable-vm")throw new Error("Native Ubuntu24 signed trust evidence required");
+        }
+        if (slot.suite === "native-certificate-signing-rotation") {
+          require("../tests/e2e/helpers/certops-acme-certificate-signing").verifyProof(artifact.report.nativeCertificateSigningRotation);
+          const n = artifact.report.qualificationEnvironment;
+          if (artifact.report.platform !== "linux" || artifact.report.architecture !== "x64" || n.osFamily !== "linux" || n.distributionId !== "ubuntu" || n.distributionVersion !== "24.04" || n.distribution !== "ubuntu" || n.osVersion !== "24.04" || n.executionSurface !== "host" || n.measurement !== "native") throw new Error("Ubuntu24 certificate signing rotation evidence required");
+        }
+        if (slot.suite === "windows-installed-bind-failure-rollback") require("../tests/e2e/helpers/certops-windows-installed-bind-failure-native").verifyProof(artifact.report.nativeInstalledBindFailure);
+        if (slot.suite === "windows-installed-interruption-recovery") require("../tests/e2e/helpers/certops-windows-interruption-native").verifyProof(artifact.report.nativeInstalledInterruption);
         if (slot.suite === "native-adcs-issuer-reassignment") {
           const proof = artifact.report.nativeIssuerReassignment;
           require("../tests/e2e/helpers/certops-native-issuer-reassignment").verifyNativeProof(proof);
@@ -184,19 +317,148 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           const n=artifact.report.qualificationEnvironment;
           if(artifact.report.platform!=="win32"||artifact.report.architecture!=="x64"||n.osFamily!=="windows"||n.osVersion!=="2022"||n.nativeLanguage!=="en-US"||n.identity!=="LocalSystem"||n.measurement!=="native"||artifact.report.cleanup?.status!=="passed")throw new Error("Native uncertain abandon requires completed SYSTEM root-domain Server2022 execution");
         }
+        const adcsLocalContracts = {
+          "adcs-install-interruption": ["../tests/e2e/helpers/certops-adcs-install-interruption", "nativeAdcsInstallInterruption"],
+          "adcs-lost-submit": ["../tests/e2e/helpers/certops-adcs-lost-submit", "nativeAdcsLostSubmit"],
+          "adcs-cmc-renewal": ["../tests/e2e/helpers/certops-adcs-cmc-renewal", "nativeAdcsCmcRenewal"],
+          "adcs-safety-variants": ["../tests/e2e/helpers/certops-adcs-safety-variants", "nativeAdcsSafetyVariants"],
+          "adcs-crash-experiments": ["../tests/e2e/helpers/certops-adcs-crash-experiments", "nativeAdcsCrashExperiments"],
+        };
+        if (adcsLocalContracts[slot.suite]) {
+          const [modulePath, field] = adcsLocalContracts[slot.suite];
+          const proof = artifact.report[field];
+          require(modulePath).verifyProof(proof);
+          if (proof.disposableForestRan !== false || proof.nativeExecutionQualified !== false || proof.hostCapabilityAbsentIsPass !== false) throw new Error("AD CS local contract stays unqualified without a disposable forest");
+          if (slot.suite === "adcs-crash-experiments" && proof.releaseQualificationSatisfied !== false) throw new Error("AD CS crash experiments cannot satisfy release qualification");
+        }
+        const crossLocalContracts = {
+          "acme-key-reuse-variants": ["../tests/e2e/helpers/certops-acme-key-reuse", "nativeAcmeKeyReuseVariants", "variants"],
+          "dns-interruption": ["../tests/e2e/helpers/certops-dns-interruption", "nativeDnsInterruption"],
+          "issuer-adoption-capacity": ["../tests/e2e/helpers/certops-issuer-adoption-capacity", "nativeIssuerAdoptionCapacity"],
+          "linux-reboot-upgrade": ["../tests/e2e/helpers/certops-linux-reboot-upgrade", "nativeLinuxRebootUpgrade"],
+          "fs-symlink-rollback": ["../tests/e2e/helpers/certops-fs-symlink-rollback", "nativeFsSymlinkRollback"],
+          "trust-concurrency": ["../tests/e2e/helpers/certops-trust-concurrency", "nativeTrustConcurrency"],
+          "k8s-rbac-outage": ["../tests/e2e/helpers/certops-k8s-rbac-outage", "nativeK8sRbacOutage"],
+          "browser-audit-redaction": ["../tests/e2e/helpers/certops-browser-audit-redaction", "nativeBrowserAuditRedaction"],
+        };
+        if (crossLocalContracts[slot.suite]) {
+          const [modulePath, field, exportName] = crossLocalContracts[slot.suite];
+          const loaded = require(modulePath);
+          const verifier = exportName ? loaded[exportName] : loaded;
+          const proof = artifact.report[field];
+          verifier.verifyProof(proof);
+          if (proof.hostCapabilityAbsentIsPass !== false) throw new Error("Cross-platform local contract cannot pass on a missing host");
+          if (slot.suite === "dns-interruption" && proof.liveDnsQualified !== false) throw new Error("Live DNS stays unqualified");
+          if (slot.suite === "k8s-rbac-outage" && (proof.kubernetesQualified !== false || proof.talkedToCluster !== false)) throw new Error("Kubernetes coverage stays unqualified without a cluster");
+          if (slot.suite === "issuer-adoption-capacity" && proof.nativeCell !== "pending") throw new Error("Issuer adoption stays pending");
+          if (slot.suite === "linux-reboot-upgrade" && proof.realRebootQualified !== false) throw new Error("Linux reboot stays unqualified");
+          if (slot.suite === "acme-key-reuse-variants" && (proof.nativeExecutionQualified !== false || proof.sharedFleetQualified !== false || proof.liveCertbot !== "pending")) throw new Error("ACME key reuse stays a local contract");
+        }
+        const windowsLocalContracts = {
+          "windows-fixed-root-unmodified-contract": ["../tests/e2e/helpers/certops-windows-fixed-root", "unmodifiedFixedRoot", "verifyLocalContract"],
+          "windows-full-installer-second-rename-contract": ["../tests/e2e/helpers/certops-windows-second-rename", "fullInstallerSecondRename", "verifyLocalContract"],
+          "windows-published-package-upgrade-contract": ["../tests/e2e/helpers/certops-windows-published-upgrade", "publishedPackageUpgrade"],
+          "windows-native-arm64-execution-contract": ["../tests/e2e/helpers/certops-windows-arm64-execution", "nativeArm64Execution"],
+          "windows-acl-path-env-contract": ["../tests/e2e/helpers/certops-windows-acl-path-env", "aclPathEnvironment"],
+          "windows-operation-interruption-contract": ["../tests/e2e/helpers/certops-windows-operation-interruption", "operationInterruption"],
+          "windows-reregister-custody-contract": ["../tests/e2e/helpers/certops-windows-reregister-custody", "reregisterCustody"],
+          "windows-retention-boundary-contract": ["../tests/e2e/helpers/certops-windows-retention-boundaries", "retentionBoundaries"],
+          "windows-protected-recovery-contract": ["../tests/e2e/helpers/certops-windows-protected-recovery", "protectedKeyRecovery"],
+          "windows-crash-dump-containment-contract": ["../tests/e2e/helpers/certops-windows-crash-dump", "crashDumpContainment"],
+        };
+        if (windowsLocalContracts[slot.suite]) {
+          const [modulePath, field, exportName] = windowsLocalContracts[slot.suite];
+          const loaded = require(modulePath);
+          const proof = artifact.report[field];
+          (exportName ? loaded[exportName] : loaded.verifyProof)(proof);
+          if (proof.nativeExecutionQualified !== false || proof.hostCapabilityAbsentIsPass !== false || proof.powerLossDurabilityQualified === true || proof.realRebootQualified === true || proof.inUseKeyDeleted === true || proof.crashDumpContainmentQualified === true) throw new Error("Windows local contract stays unqualified");
+          if (slot.suite === "windows-retention-boundary-contract" && proof.twentyFourHourElapsedQualified !== false) throw new Error("Retention elapsed qualification cannot be shortened");
+          if (slot.suite === "windows-native-arm64-execution-contract" && proof.nativeArm64ExecutionQualified !== false) throw new Error("Native ARM64 execution stays unqualified");
+          if (slot.suite === "windows-published-package-upgrade-contract" && proof.publishedPackageMigrationQualified !== false) throw new Error("Published package migration stays blocked");
+        }
+        if (slot.suite === "linux-trust-host") {
+          const conflict=artifact.report.nativeTrustReceiptConflict;require("./certops-linux-trust-receipt-conflict").verifyProof(conflict);
+          if(conflict.family!==artifact.report.nativeIndependentTrustRoots?.family)throw new Error("Native receipt conflict family differs from trust host");
+          const h=require("./certops-linux-trust-independent-roots"),p=artifact.report.nativeIndependentTrustRoots,n=artifact.report.qualificationEnvironment;h.verifyProof(p);
+          if(artifact.report.platform!=="linux" || artifact.report.architecture!=="x64" || n.osFamily!=="linux" || !((p.family==="debian" && n.distribution==="ubuntu" && ["22.04","24.04"].includes(n.osVersion) && n.executionSurface==="disposable-vm")||(p.family==="rhel" && n.distribution==="almalinux" && n.osVersion==="9.6" && n.executionSurface==="disposable-container")))throw new Error("Native independent trust platform required");
+        }
+        if (slot.suite === "filesystem-host") {
+          require("./certops-filesystem-host").verifyRollbackProof(artifact.report.nativeFilesystemPairedRollback);
+          require("./certops-filesystem-concurrent").verifyProof(artifact.report.nativeFilesystemConcurrency);
+          require("./certops-filesystem-backup-alias").verifyProof(artifact.report.nativeFilesystemBackupAlias);
+          require("./certops-filesystem-backup-retention").verifyProof(artifact.report.nativeFilesystemBackupRetention);
+          if (artifact.report.nativeFilesystemBackupAlias.aliasKind !== (artifact.report.platform === "win32" ? "junction" : "symlink")) throw new Error("Native backup alias kind differs from host");
+          const native = artifact.report.qualificationEnvironment;
+          if (artifact.report.architecture !== "x64" || !((artifact.report.platform === "linux" && native.osFamily === "linux" && native.distributionId === "ubuntu" && ["22.04", "24.04"].includes(native.distributionVersion) && native.executionSurface === "host") || (artifact.report.platform === "win32" && native.osFamily === "windows" && ["2022", "2025"].includes(native.osVersion) && [2,3].includes(native.productType)))) throw new Error("Native filesystem concurrency environment required");
+        }
+        if (slot.suite === "filesystem-linux-backup-dac-host") {
+          require("./certops-linux-filesystem-permission").verifyProof(artifact.report.nativeLinuxBackupDac);
+          const native = artifact.report.qualificationEnvironment;
+          if (artifact.report.platform !== "linux" || artifact.report.architecture !== "x64" || native.distributionId !== "ubuntu" || !["22.04", "24.04"].includes(native.distributionVersion) || native.executionSurface !== "disposable-vm") throw new Error("Native Ubuntu nonroot backup-DAC evidence required");
+        }
+        if (slot.suite === "linux-native-acme-browser-console") {
+          require("../tests/e2e/helpers/certops-acme-browser-console").verifyProof(artifact.report.nativeAcmeBrowserConsole);
+          const native = artifact.report.qualificationEnvironment;
+          if (artifact.report.platform !== "linux" || artifact.report.architecture !== "x64" || native.osFamily !== "linux" || native.distributionId !== "ubuntu" || native.distributionVersion !== "24.04" || native.executionSurface !== "host" || native.libc !== "glibc") throw new Error("Native Ubuntu24 certbot browser console evidence required");
+        }
+        if (slot.suite === "linux-systemd-writepath") {
+          const evidence = artifact.report.nativeWritePath;
+          if (evidence?.freshExecStartPreEvidence !== true || evidence.hostDacWriteVerified !== true ||
+              evidence.allowedWrite !== true || evidence.deniedError !== "EROFS" || evidence.samePeerDacMode !== "0777" ||
+              !Number.isInteger(evidence.nonRootUid) || evidence.nonRootUid <= 0) throw new Error("Native systemd write-path isolation evidence incomplete");
+        }
+        if (slot.suite === "windows-historical-source-upgrade") require("../tests/e2e/helpers/certops-windows-source-upgrade").verifySourceUpgradeReport(artifact.report, { expectedSha: candidateSha });
+        if (slot.suite === "windows-acme-wrong-spki") require("../tests/e2e/helpers/certops-windows-wrong-leaf").verifyProof(artifact.report.nativeWrongSpki);
+        if (slot.suite === "windows-native-child-output-privacy") require("../tests/e2e/helpers/certops-windows-output-privacy").verifyPrivacyReport(artifact.report, { expectedSha: candidateSha });
         if (slot.suite === "enterprise-adcs-elapsed-pending-real") {
           require("./certops-adcs-pending-elapsed-report").verify(artifact.report, { expectedSha: candidateSha });
           const count = artifact.report.primaryNativePreflightDispatchCount;
           if (count !== undefined && (!Number.isInteger(count) || count < 0 || count > 18)) throw new Error("Elapsed AD CS preflight budget cannot claim the browser exception");
         }
-
+        if (slot.suite === "core-api-migration-upgrade") {
+          require("./certops-migration-upgrade-report").verifyEvidence(artifact.report);
+          if (artifact.report.sourceIdentity?.candidate?.sha !== candidateSha) throw new Error("Migration candidate differs from release candidate");
+          const lockDigest = crypto.createHash("sha256").update(fs.readFileSync(path.join(root, "pnpm-lock.yaml"))).digest("hex");
+          if (artifact.report.sourceIdentity.candidate.lockfileSha256 !== lockDigest ||
+              artifact.report.sourceIdentity.candidate.version !== require("../package.json").version) {
+            throw new Error("Migration candidate package identity differs from the current candidate");
+          }
+        }
       } else if (slot.kind === "stack") {
-
-
+        if (["real-agent-acme-filesystem", "real-agent-acme-eab-filesystem", "real-agent-acmesh-filesystem", "real-agent-acmesh-eab-filesystem", "real-agent-alpine-acmesh"].includes(slot.suite)) {
+          const native = entries.filter(entry => entry.name === "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence");
+          if (native.length !== 1 || native[0].type !== "test:pass") throw new Error("Actual Linux ACME journey evidence missing");
+          require("../tests/e2e/helpers/certops-acme-key-reuse").verifyProof(native[0].nativeAcmeKeyReuse);
+          require("./certops-acme-stage-report").verifyForScope(native[0].nativeAcmeStageFaults,slot.suite);
+          require("./certops-acme-background-report").verifyForScope(native[0].nativeAcmeBackgroundRenewals,native[0].nativeAcmeKeyReuse,slot.suite);
+          if(slot.suite==='real-agent-acme-filesystem'){const bulk=require('./certops-acme-bulk-report');bulk.verifyForScope(native[0].nativeAcmeBulkRenewal,slot.suite,native[0].qualificationEnvironment);bulk.verifyCrossJourney(native[0].nativeAcmeBulkRenewal,native[0].nativeAcmeKeyReuse,native[0].nativeAcmeBackgroundRenewals);require("../tests/e2e/helpers/certops-acme-native-adoption").verifyAgainstBulk(native[0].nativeAcmeRenewalSetup,native[0].nativeAcmeBulkRenewal);require("../tests/e2e/helpers/certops-acme-certificate-outbox").verifyAgainstJourney(native[0].nativeAcmeCertificateOutbox,native[0].nativeAcmeBulkRenewal,native[0].nativeAcmeRenewalSetup);require("../tests/e2e/helpers/certops-acme-disabled-profile").verifyAgainstBulk(native[0].nativeAcmeDisabledProfile,native[0].nativeAcmeBulkRenewal);require("../tests/e2e/helpers/certops-acme-renewal-alert").verifyAgainstOutbox(native[0].nativeAcmeRenewalAlert,native[0].nativeAcmeCertificateOutbox);}
+          if (native[0].nativeAcmeKeyReuse.client !== (slot.suite.includes("acmesh") ? "acme.sh" : "certbot")) throw new Error("ACME key reuse client scope mismatch");
+        }
+        if (slot.suite.startsWith("real-agent-windows-acme-iis/")) {
+          const native = entries.filter(entry => entry.name === "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence");
+          if (native.length !== 1 || native[0].type !== "test:pass") throw new Error("Actual Windows native journey evidence missing");
+          require("../tests/e2e/helpers/certops-windows-public-issuance").verifyPublicIssuanceFacts(native[0].windowsPublicIssuance);
+          require("../tests/e2e/helpers/certops-windows-installed-handoff").verifyProof(native[0].nativeInstalledStateHandoff);
+          require("../tests/e2e/helpers/certops-windows-key-reuse-refusal").verifyProof(native[0].nativeWindowsKeyReuseRefusal);
+          require("../tests/e2e/helpers/certops-windows-installed-iis-refusal").verifyProof(native[0].nativeInstalledIisRefusal);
+          require("../tests/e2e/helpers/certops-windows-owned-process").verifyPublicProof(native[0].nativeInstalledCrash);
+          require("../tests/e2e/helpers/certops-windows-installed-verify-rollback").verifyProof(native[0].nativeInstalledVerifyRollback);
+          require("../tests/e2e/helpers/certops-windows-installed-paths").verifyProof(native[0].nativeInstalledPaths);
+          require("../tests/e2e/helpers/certops-windows-multi-target-admission-refusal").verifyProof(native[0].nativeWindowsMultiTargetAdmission);
+          require("../tests/e2e/helpers/certops-windows-active-service-controls").verifyProof(native[0].nativeInstalledActiveServiceControls);
+          require("../tests/e2e/helpers/certops-windows-service-controls").verifyProof(native[0].nativeInstalledServiceControls);
+          require("../tests/e2e/helpers/certops-windows-config-encoding").verifyProof(native[0].nativeInstalledConfigEncoding);
+          require("../tests/e2e/helpers/certops-windows-public-retirement").verifyProof(native[0].nativeInstalledPublicRetirement);
+          require("../tests/e2e/helpers/certops-windows-retention-config").verifyProof(native[0].nativeInstalledRetentionConfig);
+          require("../tests/e2e/helpers/certops-windows-signing-pin-refusal").verifyProof(native[0].nativeInstalledSigningPinRefusal);
+          require("../tests/e2e/helpers/certops-windows-credential-refusal").verifyProof(native[0].nativeInstalledCredentialRefusal);
+          require("../tests/e2e/helpers/certops-windows-installed-weak-acl").verifyProof(native[0].nativeInstalledWeakCredentialAcl);
+          require("../tests/e2e/helpers/certops-windows-source-junction").verifyProof(native[0].nativeInstalledSourceJunction);
+        }
         const required = slot.requiredInventory ? require(path.join(root, slot.requiredInventory)).requiredTests : [];
         verifyStack(entries.map((entry) => JSON.stringify(entry)).join("\n"), [...required, ...(slot.requiredTests || [])], path.basename(slot.source), slot.suite, candidateSha);
       } else if (slot.kind === "database") {
-        const definition = require("../tests/integration/certops-qualification-groups.json")[slot.requiredGroup];
+        const definition = require("./certops-integration-inventory").groups[slot.requiredGroup];
         if (!definition || artifact.report.evidenceLevel !== "integration") throw new Error("Unknown database evidence classification");
         if (!Array.isArray(artifact.report.fixtureSources) || artifact.report.fixtureSources.length !== definition.files.length) throw new Error("Database source inventory mismatch");
         for (const file of definition.files) {

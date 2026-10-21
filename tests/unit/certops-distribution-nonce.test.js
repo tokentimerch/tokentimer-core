@@ -1,3 +1,10 @@
+/**
+ * Regression: a genuine failed-reload dispatch produced a public nonce whose decoded
+ * prefix resembled a zlib private container. The result POST was rejected, leaving
+ * the job running. Resampling is bounded and retains 24-byte randomness, signing,
+ * ownership and replay checks; the private-material detector is unchanged.
+ * Run: node --test tests/unit/certops-distribution-nonce.test.js
+ */
 "use strict";
 const { test } = require("node:test"),
   assert = require("node:assert/strict");

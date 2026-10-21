@@ -1,4 +1,18 @@
 "use strict";
+/**
+ * Qualification notes: pending request across CA rekey
+ *
+ * Freeze real pending CSR/snapshot/CNG signature/RequestId/count before existing single root CA
+ * new-key rekey. Continuation ADCS_CA_KEY_CHANGED retains request, removes exact invalid-terminal
+ * key, preserves serving CNG/IIS/TLS. Deny only owned row; one native preflight/public new-key
+ * confirmation enables fresh snapshot/CSR/key/RequestId + actual approval/install/claim proof,
+ * never repin rejected row. Guard My ownership before POST, preserve unknown acceptance/process.
+ * Explicit scheduler-now is eligibility only; root primary budget 18 plus two browser checks
+ * within the 20-request limit, subordinate excludes root mutation. Two mandatory scenarios, not
+ * background interval qualification.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Synthetic proof/source controls only; no native CA rekey or issuance evidence. */
 const test = require("node:test"),
   assert = require("node:assert/strict"),

@@ -1,65 +1,159 @@
-name: CertOps / AD CS and Vault supporting checks
-'on':
+name: "CertOps / CertOps host qualification"
+
+on:
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
-      - scripts/certops-adcs-*
-      - scripts/certops_adcs_*
-      - scripts/certops-distribution-*
-      - scripts/certops-qualification-*
-      - scripts/certops-release-*
-      - scripts/certops-stack-*
-      - scripts/certops-api-qualification.js
-      - scripts/certops-workflow-security*
-      - scripts/certops-scoped-inventory.test.js
-      - scripts/certops-native-issuer-reassignment*
-      - scripts/fixtures/certops-adcs-*
-      - scripts/certops-retention*
-      - scripts/run-certops-*
-      - scripts/ci-guards/certops-*
-      - tests/wildcard-vault/**
-      - tests/e2e/helpers/certops-adcs-*
-      - tests/e2e/certops-adcs-*
-      - tests/e2e/certops-enrollment-*
-      - tests/e2e/helpers/certops-native-issuer-reassignment.js
-      - infra/certops-adcs/**
-      - packages/agent/src/windows-adcs/**
-      - packages/agent/src/material-store/**
-      - docs/certops/qualification-suites.json
-      - docs/certops/qualification-suites.json
-      - package.json
-      - pnpm-lock.yaml
-      - .github/workflows/certops-qualification.yml
-      - .github/workflows/certops-*adcs*.yml
-      - .github/workflows/certops-native-issuer-reassignment.yml
-      - .github/workflows/certops-distribution-qualification.yml
+      - '.github/actions/certops-node-setup/**'
+      - 'packages/**'
+      - 'apps/api/**'
+      - 'apps/worker/**'
+      - 'apps/dashboard/src/components/certops/**'
+      - 'apps/dashboard/src/pages/certops/**'
+      - 'apps/dashboard/src/hooks/useCertOpsUrlState.js'
+      - 'apps/dashboard/src/components/RequireManagerRoute.jsx'
+      - 'apps/dashboard/src/utils/WorkspaceContext.jsx'
+      - 'apps/dashboard/src/utils/apiClient.js'
+      - 'apps/dashboard/src/utils/lastWorkspacePreference.js'
+      - 'apps/dashboard/src/App.jsx'
+      - 'apps/dashboard/src/pages/Audit.jsx'
+      - 'apps/dashboard/tests/unit/AgentShellConsole.test.jsx'
+      - 'apps/dashboard/tests/unit/RequireManagerRoute.test.jsx'
+      - 'apps/dashboard/tests/unit/WorkspaceContext.test.jsx'
+      - 'apps/dashboard/tests/unit/useCertOpsUrlState.test.jsx'
+      - 'tests/e2e/**'
+      - 'tests/wildcard-vault/**'
+      - 'scripts/qualification/**'
+      - 'scripts/certops-*'
+      - 'scripts/test-support/arm64-scm-artifact.cjs'
+      - 'scripts/certops_retention24h_collection.py'
+      - 'scripts/certops_retention_cadence_collection.py'
+      - 'scripts/certops_retention_policy_expiry.py'
+      - 'scripts/certops_windows_stop_offline_proof.py'
+      - 'scripts/certops_windows_alive_grace_proof.py'
+      - 'scripts/certops_windows_failed_rollback_proof.py'
+      - 'scripts/certops_linux_backup_dac_proof.py'
+      - 'scripts/certops_filesystem_concurrent_proof.py'
+      - 'scripts/certops_linux_trust_independent_proof.py'
+      - 'scripts/certops_linux_signed_trust_proof.py'
+      - 'scripts/certops_daemon_coordinator_proof.py'
+      - 'scripts/certops_daemon_served_leaf_proof.py'
+      - 'scripts/certops_acme_stage_proof.py'
+      - 'scripts/certops_acme_background_proof.py'
+      - 'scripts/certops_acme_bulk_proof.py'
+      - 'scripts/certops_acme_native_adoption_proof.py'
+      - 'scripts/certops_acme_certificate_outbox_proof.py'
+      - 'scripts/certops_acme_disabled_profile_proof.py'
+      - 'scripts/certops_acme_renewal_alert_proof.py'
+      - 'scripts/certops_acme_certificate_signing_proof.py'
+      - 'scripts/certops_acme_native_console_proof.py'
+      - 'scripts/certops_dns_resolver_views_proof.py'
+      - 'scripts/certops_acme_browser_lifecycle_proof.py'
+      - 'scripts/certops_linux_installed_discovery_proof.py'
+      - 'scripts/certops_qualification_profiles.py'
+      - 'scripts/certops_qualification_manifest.py'
+      - 'scripts/certops_adcs_ttl24h_collection.py'
+      - 'scripts/certops_adcs_ttl24h_proof.py'
+      - 'scripts/certops_adcs_live_enroll_acl_proof.py'
+      - 'scripts/certops_adcs_http_crl_proof.py'
+      - 'scripts/certops_adcs_http_leaf_crl_proof.py'
+      - 'scripts/certops_adcs_ocsp_proof.py'
+      - 'scripts/certops_adcs_ocsp_revoked_proof.py'
+      - 'scripts/fixtures/certops-adcs-ocsp-revoked.cjs'
+      - 'scripts/certops_adcs_result_outbox_proof.py'
+      - 'scripts/fixtures/certops-adcs-http-leaf-crl.cjs'
+      - 'scripts/fixtures/certops-adcs-ttl24h.cjs'
+      - 'scripts/fixtures/certops-adcs-ttl24h-proof.cjs'
+      - 'infra/certops-adcs/**'
+      - 'scripts/run-certops-tooling-tests.js'
+      - 'scripts/run-certops-collector-tests.js'
+      - 'scripts/ci-guards/**'
+      - 'scripts/generate-skip-inventory.cjs'
+      - 'tests/qualification/**'
+      - 'tests/integration/certops-*.json'
+      - 'tests/integration/certops-*.test.js'
+      - 'tests/integration/import-cleanup*.test.js'
+      - 'docs/certops/**'
+      - 'deploy/compose/**'
+      - '.npmrc'
+      - 'package.json'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/certops-*.yml'
+      - 'pnpm-lock.yaml'
   workflow_dispatch:
     inputs:
       lane:
-        description: Tooling only, or tooling plus disposable database integration tests
+        description: Choose tooling, Windows, API stack or all standard lanes
         type: choice
         default: tooling
-        options:
-          - tooling
-          - stack
-          - all
+        options: [tooling, windows, stack, all]
+
 permissions:
   contents: read
+
 concurrency:
   group: certops-qualification-${{ github.ref }}
   cancel-in-progress: false
+
 jobs:
-  tooling:
+  selection:
     if: github.ref == 'refs/heads/main'
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-24.04
-          - windows-2025
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tooling: ${{ steps.select.outputs.tooling }}
+      windows: ${{ steps.select.outputs.windows }}
+      stack: ${{ steps.select.outputs.stack }}
+      candidate_sha: ${{ steps.select.outputs.candidate_sha }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - id: select
+        name: Select affected trusted candidate lanes
+        env:
+          CERTOPS_CI_LANE: ${{ inputs.lane }}
+        run: node scripts/certops-ci-selection.js
+  tooling:
+    needs: selection
+    if: github.ref == 'refs/heads/main' && needs.selection.outputs.tooling == 'true'
+    runs-on: ubuntu-24.04
+    # Leave room for the full bounded inventory, collectors and guards.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/certops-node-setup
+      - name: Install checksum-pinned official Actions schema validator
+        run: |
+          set -euo pipefail
+          actionlint_directory=$(mktemp -d "$RUNNER_TEMP/certops-actionlint.XXXXXX")
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$actionlint_directory/actionlint.tar.gz"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$actionlint_directory/actionlint.tar.gz" | sha256sum -c -
+          tar -xzf "$actionlint_directory/actionlint.tar.gz" -C "$actionlint_directory" actionlint
+          chmod 0755 "$actionlint_directory/actionlint"
+          echo "$actionlint_directory" >> "$GITHUB_PATH"
+      - name: Qualification framework and ownership regressions
+        run: pnpm run test:certops:qualification
+      - name: CertOps console and route authority regressions
+        run: pnpm --dir apps/dashboard test tests/unit/AgentShellConsole.test.jsx tests/unit/RequireManagerRoute.test.jsx tests/unit/WorkspaceContext.test.jsx tests/unit/useCertOpsUrlState.test.jsx
+      - name: Release collector regression tests
+        run: pnpm run test:certops:release-collector
+      - name: Current qualification security and inventory guards
+        run: |
+          set -euo pipefail
+          for guard in scripts/ci-guards/certops-*.cjs; do node "$guard"; done
+          pnpm run check:certops:skip-qualification
+  tooling-windows:
+    needs: selection
+    if: github.ref == 'refs/heads/main' && needs.selection.outputs.tooling == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -72,8 +166,58 @@ jobs:
           node-version: '24'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Expose hosted Git OpenSSL on Windows
-        if: runner.os == 'Windows'
+      - name: Install checksum-pinned Windows Actions schema validator
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $actionlintDirectory = Join-Path $env:RUNNER_TEMP 'certops-actionlint'
+          New-Item -ItemType Directory -Path $actionlintDirectory | Out-Null
+          $actionlintArchive = Join-Path $actionlintDirectory 'actionlint.zip'
+          Invoke-WebRequest -Uri 'https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_windows_amd64.zip' -OutFile $actionlintArchive
+          $actionlintHash = (Get-FileHash -LiteralPath $actionlintArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actionlintHash -ne '6e7241b51e6817ea6a047693d8e6fed13b31819c9a0dd6c5a726e1592d22f6e9') { throw 'Actionlint checksum mismatch' }
+          Expand-Archive -LiteralPath $actionlintArchive -DestinationPath $actionlintDirectory
+          $actionlintBinary = Join-Path $actionlintDirectory 'actionlint.exe'
+          "CERTOPS_ACTIONLINT=$actionlintBinary" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Complete Windows tooling inventory (supporting only)
+        run: pnpm run test:certops:qualification
+  windows:
+    needs: selection
+    if: github.ref == 'refs/heads/main' && needs.selection.outputs.windows == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    # Three genuine expiry/grace waits share this bounded disposable host;
+    # leave time for native builds, independent cleanup and report verification.
+    timeout-minutes: 50
+    env:
+      CERTOPS_HOST_TESTS: '1'
+      CERTOPS_QUALIFICATION_STRICT: '1'
+      CERTOPS_QUALIFICATION_REPORT: qualification-results/windows.json
+      CERTOPS_HOST_ARTIFACTS: qualification-results/host
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: '11.13.0'
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+          cache: pnpm
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: packages/agent/windows-service-host/go.mod
+          cache: false
+      - run: pnpm install --frozen-lockfile
+      - name: Validate qualification catalog and skip ownership
+        run: |
+          node scripts/certops-qualification-catalog.js
+          pnpm run check:certops:skip-qualification
+      - name: Expose shipped Git OpenSSL and fail if missing
         shell: pwsh
         run: |
           $candidates = @(
@@ -86,23 +230,64 @@ jobs:
           & $openssl version
           if ($LASTEXITCODE -ne 0) { throw 'OpenSSL prerequisite unusable' }
           Split-Path -Parent $openssl | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-      - run: pnpm run test:certops:qualification
-      - run: pnpm run test:certops:release-collector
-      - name: Validate exact scoped inventories
+      - name: Installer activation filesystem regression (supporting only)
+        shell: powershell
         run: |
-          node scripts/certops-adcs-safety-inventory.js
-          node scripts/certops-distribution-inventory.js
-          node scripts/certops-integration-inventory.js
-          node scripts/certops-qualification-catalog.js
-  integration:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.lane != 'tooling'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 35
+          $ErrorActionPreference = 'Stop'
+          if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) { throw 'Windows PowerShell 5.1 is required for installer compatibility' }
+          & ./scripts/certops-installer-swap.test.ps1
+      - name: SAN public temporary file ownership (supporting only)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./scripts/certops-adcs-issued-san-file.test.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'SAN public temporary file controls failed' }
+      - name: Temporary file response barriers (supporting only)
+        shell: pwsh
+        env:
+          CERTOPS_RESPONSE_BARRIER_SUPPORT: '1'
+        run: |
+          node scripts/certops-response-barrier-support.js
+          if ($LASTEXITCODE -ne 0) { throw 'Temporary file barrier supporting controls failed' }
+      - name: Enable hosted IIS without reboot
+        shell: pwsh
+        run: |
+          $result = Install-WindowsFeature Web-Server,Web-Scripting-Tools -IncludeManagementTools
+          if (-not $result.Success -or $result.RestartNeeded -ne 'No') {
+            throw 'Hosted IIS installation failed or requires reboot; qualification unsupported on this image'
+          }
+      - name: Build candidate machine-store query helper before native cleanup cases
+        run: node packages/agent/scripts/build-windows-chain-helper.js
+      - name: Build candidate service hosts before native helper image controls
+        run: node packages/agent/scripts/build-windows-service-host.js
+      - name: Installer native helper image regression (supporting only)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./scripts/certops-installer-pe.test.ps1
+      - name: Real Windows discovery CNG IIS and supporting Go checks
+        run: node --test packages/agent/scripts/host/windows-host.test.js
+      - name: Assert required host scenarios executed
+        run: node scripts/certops-qualification-report.js qualification-results/windows.json
+      - name: Preserve execution evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certops-${{ matrix.os }}
+          path: qualification-results/
+          if-no-files-found: error
+  agent-stack:
+    needs: selection
+    if: github.ref == 'refs/heads/main' && needs.selection.outputs.stack == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
-      NODE_ENV: test
+      CERTOPS_E2E_REQUIRED: '1'
+      CERTOPS_PROTOCOL_DISPOSABLE_STACK: '1'
       CERTOPS_ENABLED: 'true'
-      CERTOPS_INTEGRATION_GROUP: adcs
-      TEST_API_URL: http://localhost:4000
+      CERTOPS_SIGNING_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      CERTOPS_REGISTRATION_ENCRYPTION_KEY: abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+      NODE_ENV: test
       DB_HOST: localhost
       DB_PORT: '5432'
       DB_NAME: tokentimer
@@ -112,28 +297,48 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
-        with:
-          version: 11.13.0
-      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
-        with:
-          node-version: '24'
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Verify catalog and explicit skip ownership
+      - uses: ./.github/actions/certops-node-setup
+      - name: Validate qualification catalog and skip ownership
         run: |
           node scripts/certops-qualification-catalog.js
-          openssl version
+          pnpm run check:certops:skip-qualification
       - run: docker compose -f deploy/compose/docker-compose.test.yml up -d --build
-      - name: Require migrated API readiness
+      - name: Wait for migrations and API readiness
         run: |
           for i in $(seq 1 60); do
             if curl -fsS http://localhost:4000/ >/dev/null; then exit 0; fi
             sleep 2
           done
           exit 1
-      - name: Execute all selected integration cases without skips
-        run: node scripts/certops-integration-qualification.js
+      - name: Execute required agent API and worker journeys
+        run: |
+          mkdir -p qualification-results
+          node --test --test-reporter=junit --test-reporter-destination=qualification-results/agent-stack.xml --test-reporter=./scripts/certops-stack-reporter.js --test-reporter-destination=qualification-results/agent-protocol.jsonl tests/e2e/certops-agent-e2e.test.js
+      - name: Parse native Windows and AD CS read-only oracles against the migrated schema
+        env:
+          CERTOPS_CSR_DISPOSABLE_STACK: '1'
+        run: node scripts/certops-harness-source.js --explain-native
+      - name: Assert every mandatory protocol journey ran
+        run: node scripts/certops-stack-report.js qualification-results/agent-protocol.jsonl
+      - name: Required authenticated Certificate API scenarios
+        env:
+          CERTOPS_CSR_API_URL: http://localhost:4000
+          CERTOPS_CSR_DISPOSABLE_STACK: '1'
+          CERTOPS_API_REPORTS_DIR: qualification-results/api
+          CERTOPS_API_WORKER_FIXTURE_KEY: test-session-secret-key
+        run: node scripts/certops-api-qualification.js
+      - name: Linux OpenSSL discovery parser regression prerequisites
+        env:
+          CERTOPS_REPORT_SCOPE: openssl-discovery-parser-regression
+        run: |
+          openssl version
+          node --test --test-reporter=./scripts/certops-stack-reporter.js --test-reporter-destination=qualification-results/linux-discovery.jsonl packages/agent/src/discovery/windows.test.js
+          node scripts/certops-linux-discovery-report.js qualification-results/linux-discovery.jsonl
+      - name: Collect stack diagnostics
+        if: always()
+        run: |
+          mkdir -p qualification-results
+          docker compose -f deploy/compose/docker-compose.test.yml ps > qualification-results/compose-state.txt
       - name: Destroy disposable stack
         if: always()
         run: docker compose -f deploy/compose/docker-compose.test.yml down -v --remove-orphans
@@ -141,6 +346,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: certops-integration-adcs
-          path: qualification-results/adcs-database-integration.json
+          name: certops-agent-stack
+          path: qualification-results/
           if-no-files-found: error

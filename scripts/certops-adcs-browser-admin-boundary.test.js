@@ -1,4 +1,18 @@
 "use strict";
+/**
+ * Qualification notes: browser workspace administration boundary
+ *
+ * Use distinct nonowner users (users.is_admin=false), explicit controller-admin/manager
+ * membership. This workspace's admin is required, not system admin or other-workspace role. Public
+ * PATCH manager->viewer->manager gives two audits, refuses admin change; DELETE refuses admin and
+ * invites cannot grant it. Same mounted manager/viewer page shows admin-only/no Reconcile/Abandon;
+ * actual calls return 403, owner demotion refused. No mounted-admin withdrawal/polling claim.
+ * Uncertain jobs/journal/key/CA count zero  and separate serving CNG/IIS/TLS unchanged. Register
+ * identities first, restore original memberships in finally; separate positive admin Abandon
+ * follows.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Proof/authorization-observation contract only. No public request, browser,
  * role mutation, native certificate operation or hosted resource is executed. */
 const test = require("node:test"),

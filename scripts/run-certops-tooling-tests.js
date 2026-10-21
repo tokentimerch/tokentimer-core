@@ -1,5 +1,5 @@
 "use strict";
-// Discover the retained AD CS/Vault report and ownership tests. Bounded workers avoid
+// Discover the entire report/ownership/security inventory. Bounded workers avoid
 // multiplying source hashing and filesystem contention on Windows worktrees.
 const fs = require("node:fs");
 const path = require("node:path");
@@ -14,7 +14,7 @@ function discover(root = path.resolve(__dirname, "..")) {
     .filter(file => /^certops-.*\.test\.js$/.test(file))
     .map(file => `scripts/${file}`).sort();
   assert.ok(files.length > 0, "No qualification framework tests discovered");
-  return files;
+  return ["packages/agent/scripts/host-gate.test.js", ...files];
 }
 function concurrency(value = process.env.TEST_CONCURRENCY) {
   if (value === undefined || value === "") return Math.min(4, os.availableParallelism());

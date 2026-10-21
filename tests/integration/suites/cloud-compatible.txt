@@ -1,6 +1,6 @@
 # Cloud-compatible core integration subset
 # Keep this suite focused on behavior expected to be shared
-# between tokentimer-core and tokentimer-cloud.
+# between Core and downstream hosted deployments.
 #
 # CertOps exclusions: all 12 certops-*.test.js files (fake-executor,
 # executor-events, api-token-routes, api-tokens, migration,

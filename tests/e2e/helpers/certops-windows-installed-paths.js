@@ -1,3 +1,16 @@
+/*
+ * Qualification notes: installed-unicode-paths
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Run genuine public signed ACME/CNG/IIS journey under exclusive root with spaces,é,[literal]; adapter
+ * changes only installer root. Independently decode SCM/live child via CommandLineToArgvW; require
+ * exact host/Node/entry/state/SYSTEM ancestry and candidate bytes. Node retains external path. Bound
+ * real claim/evidence/native custody/IIS/trusted TLS to registered agent; do not publish
+ * paths/PIDs/argv/credentials. Historical upgrade runs separately first under ASCII root, completes
+ * cleanup and saves qualification-results/historical-supporting-rsa-2048/; never patch historical
+ * installer or substitute it for Unicode proof. Budgets native26m/producer28m/task32m/job45m. AST
+ * filesystem regression uses actual copy/upgrade/uninstall literal branches and preserves
+ * wildcard-lookalike sibling, without service/certificate operations.
+ */
 "use strict";
 /** Real installed-service path qualification. The parent changes only its owned
  * installer root, then executes the original registration/issuance journey.

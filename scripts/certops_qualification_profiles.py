@@ -1,15 +1,16 @@
 """Closed evidence profiles; normal hosted collection never implies full qualification."""
+import certops_qualification_manifest as qualification_manifest
 import json
 from pathlib import Path
 DOMAIN = {"enterprise-adcs-real", "enterprise-adcs-hierarchy-real", "native-adcs-issuer-reassignment", "adcs-browser-enrollment", "adcs-install-interruption", "adcs-lost-submit", "adcs-uncertain-abandon", "adcs-cmc-renewal", "adcs-safety-variants", "adcs-crash-experiments"}
 EXTENDED = {"enterprise-adcs-elapsed-pending-real", "windows-domain-adcs-retention24h", "windows-domain-adcs-default-ttl24h", "windows-domain-installed-retention-default-timer"}
-ADCS_NATIVE = {"enterprise-adcs-real"}
+ADCS_NATIVE = {"enterprise-adcs-real", "enterprise-adcs-hierarchy-real", "native-adcs-issuer-reassignment", "adcs-browser-enrollment", "adcs-uncertain-abandon"}
 PROFILES = {"full": {"hosted", "domain-adcs", "extended-domain-adcs"}, "standard-hosted": {"hosted"}, "adcs": {"domain-adcs"}, "adcs-native": {"domain-adcs"}, "extended-adcs": {"extended-domain-adcs"}}
 
 
 def select_profile(matrix, profile="full", capabilities=None):
     if capabilities is None:
-        capabilities=json.loads((Path(__file__).resolve().parent.parent / "docs/certops/qualification-suites.json").read_text())["requiredCapabilities"]
+        capabilities=qualification_manifest.load(Path(__file__).resolve().parent.parent / "docs/certops/qualification-suites.json")["requiredCapabilities"]
     if not isinstance(profile, str) or profile not in PROFILES:
         raise ValueError("Unknown qualification profile")
     slots = matrix.get("slots")
@@ -28,11 +29,11 @@ def select_profile(matrix, profile="full", capabilities=None):
     if not selected:
         raise ValueError("Qualification profile selects no environments")
     selected_ids = [slot["id"] for slot in selected]
-    return {"profile":profile,"selectedSlotIds":selected_ids,"omittedSlotIds":[identity for identity in ids if identity not in selected_ids] + [slot["id"] for slot in matrix.get("deferredSlots", [])],"specification":{**matrix,"slots":selected}}
+    return {"profile":profile,"selectedSlotIds":selected_ids,"omittedSlotIds":[identity for identity in ids if identity not in selected_ids],"specification":{**matrix,"slots":selected}}
 
 
 def summary_fields(selection, qualified=False):
-    return {"qualificationProfile":selection["profile"],"qualificationScope":"committed-mandatory-matrix" if selection["profile"] == "full" else "declared-profile","selectedSlotIds":selection["selectedSlotIds"][:],"omittedSlotIds":selection["omittedSlotIds"][:],"fullMatrixQualified":qualified is True and selection["profile"] == "full" and not selection["omittedSlotIds"]}
+    return {"qualificationProfile":selection["profile"],"qualificationScope":"committed-mandatory-matrix" if selection["profile"] == "full" else "declared-profile","selectedSlotIds":selection["selectedSlotIds"][:],"omittedSlotIds":selection["omittedSlotIds"][:],"fullMatrixQualified":qualified is True and selection["profile"] == "full"}
 
 
 def requested_profile(arguments, environment):

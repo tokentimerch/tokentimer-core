@@ -1,4 +1,17 @@
 "use strict";
+/**
+ * Qualification notes: native signed-response tamper copy
+ *
+ * Native lane takes actual pending-expiry response: decoder accepts original/equivalent DER with
+ * pinned key/exact RequestId. Bounded canonical definite DER/one CMS signer/expected SignedData
+ * order flips one outer SignerInfo signature OCTET byte only, no embedded cert/attribute edits.
+ * Altered copy must yield no RequestId/accepted cert; original hash exact. Pure genuine pending/
+ * issued/denied fixtures prove one changed byte/unchanged input, not native decoder execution. No
+ * CA submit/accept/custody or request signer. ADR-0014 fresh-key/CSR renewal supported, signed
+ * same-key CMC renewal outside product contract.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 // Supporting DER-copy mechanics against genuine committed CA response fixtures.
 // Native signature refusal is measured separately by the protected AD CS lane.
 const test = require("node:test");

@@ -1,0 +1,45 @@
+# Manual fail-closed record for the remaining Windows coverage contracts.
+# Dispatch runs the local contracts, writes a failed report, and exits 1.
+# It does not qualify native execution, ARM64, published upgrade, elapsed retention, power loss, or reboot.
+name: "CertOps / Windows coverage variants"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  coverage-variants:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - name: Run local Windows coverage contracts
+        run: >-
+          node --test
+          scripts/certops-windows-fixed-root.test.js
+          scripts/certops-windows-second-rename.test.js
+          scripts/certops-windows-published-upgrade.test.js
+          scripts/certops-windows-arm64-execution.test.js
+          scripts/certops-windows-acl-path-env.test.js
+          scripts/certops-windows-operation-interruption.test.js
+          scripts/certops-windows-reregister-custody.test.js
+          scripts/certops-windows-retention-boundaries.test.js
+          scripts/certops-windows-protected-recovery.test.js
+          scripts/certops-windows-crash-dump.test.js
+      - name: Write failed coverage report
+        if: always()
+        run: |
+          node -e "const fs=require('node:fs'); fs.mkdirSync('qualification-results',{recursive:true}); const report={passed:false,qualified: false,nativeExecutionQualified:false,hostCapabilityAbsentIsPass:false,powerLossDurabilityQualified:false,realRebootQualified:false,inUseKeyDeleted:false,blanketNetshReset:false,crashDumpContainmentQualified:false,nativeArm64ExecutionQualified:false,publishedPackageMigrationQualified:false,twentyFourHourElapsedQualified:false}; fs.writeFileSync('qualification-results/windows-coverage-variants.json', JSON.stringify(report,null,2)+'\n'); process.stdout.write(JSON.stringify(report)+'\n'); process.exit(1);"
+      - name: Preserve failed coverage evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certops-windows-coverage-variants-failed-evidence
+          retention-days: 7
+          if-no-files-found: error
+          path: qualification-results/windows-coverage-variants.json

@@ -1,4 +1,17 @@
 "use strict";
+/**
+ * Qualification notes: browser control-plane job approval
+ *
+ * Jobs-page approval is not CA-officer UI. Reuse two capacity jobs, distinct manager/exact
+ * filtered job/details. Cancel writes zero; confirmed approve/reject each one public 200/no
+ * unrelated writes. Approval decisions bind actor/reason/canonical payload+intent hashes;
+ * rejection retains product null hashes and unchanged intent. One rejected job has zero
+ * claims/attempts/CA requests/journal/key; parent cleans remaining three. Approved IDs bind two
+ * actual installed generations/CNG/IIS/TLS/DB/journal. Browser/trust must drain; pure decision
+ * controls execute no browser/CA/agent.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Pure browser-job proof/decision controls; no browser, API, role change,
  * approval, CA, machine key or installed agent executes in this test. */
 const test = require("node:test"),

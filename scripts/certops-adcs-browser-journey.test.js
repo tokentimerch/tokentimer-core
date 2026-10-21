@@ -1,4 +1,22 @@
 "use strict";
+/**
+ * Qualification notes: native browser existing-inventory renewal
+ *
+ * Flow creates issuer -> actual agent preflight -> observed CA pin -> fresh post-confirmation
+ * preflight -> profile -> attach existing RSA2048 inventory/enable automation; no browser first
+ * issuance/generic manual ADCS renewal exists. Observe six real mutations and both preflight jobs,
+ * never intercept. Parent provides SYSTEM/IIS/PG/ownership. Temporarily disable only fixture
+ * workspace other profiles, restore exact policy, invoke full production sweep using SQL NOW/
+ * actual expiry -> exactly one enrollment. Require new CA leaf/SPKI/request, CNG/journal/receipt,
+ * IIS/HTTP.sys/trusted TLS/claim evidence and matching installed dashboard row. Sweep!=timer.
+ * Candidate dashboard is loopback behind private HTTPS; frozen pnpm/Playwright tools. Receipt
+ * before exact SYSTEM CurrentUser Root API trust; preserve preexisting trust. Drain Chromium
+ * before owned-trust removal/profile restore; preserve state on unknown child/receipt. No
+ * traces/screenshots/cookies/raw bodies. Missing selected full-lane browser fails; elapsed lane
+ * separate and experimental base-suite evidence cannot qualify release.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Pure native-browser proof checks; no browser/domain/certificate mutation. */
 const { test } = require("node:test"),
   assert = require("node:assert/strict"),
@@ -183,9 +201,17 @@ test("comprehensive browser integration is mandatory outside isolated issuer, el
   const provision=fs.readFileSync(path.join(root,"infra/certops-adcs/provision-lab.ps1"),"utf8");
   assert.ok(provision.includes("if($IssuerReassignment -ne '1' -and $PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1' -and $AdcsTtl24hPrepare -ne '1' -and $RetentionCadencePrepare -ne '1'){Invoke-Stage 'windows-agent'"));
   assert.match(provision, /if\(\$IssuerReassignment -ne '1' -and \$PendingElapsedQualification -ne '1' -and \$Retention24hPrepare -ne '1' -and \$AdcsTtl24hPrepare -ne '1' -and \$RetentionCadencePrepare -ne '1'\)\{\s+Refresh-LabAuthentication/);
-  assert.ok(provision.includes("Only the core AD CS lab is included"));
-  assert.ok(!provision.includes("run-retention-cadence-prepare.ps1"));
-  assert.ok(!provision.includes("run-ttl24h-prepare.ps1"));
+  assert.ok(provision.includes("if($RetentionCadencePrepare -eq '1'){"));
+  assert.ok(provision.includes("run-retention-cadence-prepare.ps1"));
+  assert.ok(provision.includes("if($Retention24hPrepare -eq '1'){"));
+  assert.ok(provision.includes("'CERTOPS_STAGE=retention24h-prepared'"));
+  assert.ok(provision.includes("if($AdcsTtl24hPrepare -eq '1'){"));
+  assert.ok(provision.includes("run-ttl24h-prepare.ps1"));
+  assert.ok(provision.includes("'CERTOPS_STAGE=adcs-ttl24h-prepared'"));
+  const guest=fs.readFileSync(path.join(root,"infra/certops-adcs/run-windows-tests.ps1"),"utf8");
+  assert.ok(guest.includes("$env:CERTOPS_ADCS_BROWSER=if($IssuerReassignment -eq '1' -or $PendingElapsedQualification -eq '1' -or $Retention24hPrepare -eq '1'){$null}else{'1'}"));
+  assert.ok(guest.includes("scripts/certops-retention24h-bootstrap.ps1"));
+  assert.ok(guest.includes("}else{ & $runtime.node --test tests/e2e/certops-adcs-real-e2e.test.js }"));
 });
 
 test("CA confirmation uses public metadata without DER and verifies the independently observed native key", () => {

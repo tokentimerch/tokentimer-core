@@ -1,4 +1,17 @@
 "use strict";
+/**
+ * Qualification notes: read-only other-enrollment candidate refusal
+ *
+ * Reuse genuine later-issued certificate under same requester/CA: actual fingerprint/request
+ * lookup and retrieval/signature prove existence, CSR SPKI differs from original. Explicit
+ * candidate and bounded forward search remain unresolved/unattachable. Allocate zero
+ * requests/keys; preserve CA count/watermark/journal/CNG provider+identity+usage and outgoing
+ * trusted TLS. Failed native observation is error, not absence. nativeForeignSpkiCandidate has
+ * public IDs/digests+ eight booleans only. Read-only candidate check neither creates uncertainty
+ * nor completes public recovery; deterministic lost-response journey remains separate.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Offline foreign-SPKI contract checks; native CA execution remains protected and pending. */
 const {test}=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),crypto=require("node:crypto");
 const helper=require("../tests/e2e/helpers/certops-adcs-native-reconcile");

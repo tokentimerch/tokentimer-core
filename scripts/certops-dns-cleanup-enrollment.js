@@ -1,0 +1,11 @@
+"use strict";
+// Explicit enrollment couples each mutating DNS fixture to unattended cleanup.
+// The hourly plan includes only enrolled providers and never creates resources.
+const assert=require("node:assert/strict"),fs=require("node:fs"),{listSupportedDnsProviders}=require("../packages/agent/src/dns");
+const PROVIDERS=Object.freeze(listSupportedDnsProviders().filter(value=>value!=="pebble-challtestsrv"));
+function enrolledProviders(raw){assert.ok(raw===undefined||typeof raw==="string");assert.ok(!raw||raw.length<=4096);const values=JSON.parse(raw||"[]");assert.ok(Array.isArray(values)&&values.length<=PROVIDERS.length,"DNS cleanup enrollment must be a bounded provider array");assert.equal(new Set(values).size,values.length,"Duplicate DNS cleanup enrollment");for(const value of values)assert.ok(PROVIDERS.includes(value),"Unknown enrolled DNS provider");return PROVIDERS.filter(value=>values.includes(value));}
+function assertProducerEnrollment(provider,raw){assert.ok(PROVIDERS.includes(provider));assert.ok(enrolledProviders(raw).includes(provider),"DNS fixture provider must be enrolled for independent cleanup before mutation");}
+function selectProviders({raw,mode,requested}){assert.ok(["janitor","qualify"].includes(mode));const enrolled=enrolledProviders(raw);if(mode==="janitor")return enrolled.filter(value=>value!=="acme-dns");assert.ok(PROVIDERS.includes(requested)||requested==="all","Unknown DNS qualification selection");if(requested==="all"){assert.ok(enrolled.length>0,"No DNS providers enrolled for qualification");return enrolled;}assertProducerEnrollment(requested,raw);return [requested];}
+function main(){assert.equal(process.env.GITHUB_REF,"refs/heads/main");assert.equal(process.env.GITHUB_ACTIONS,"true");assert.equal(process.env.RUNNER_ENVIRONMENT,"github-hosted");const selected=selectProviders({raw:process.env.CERTOPS_DNS_ENROLLED_PROVIDERS_JSON,mode:process.argv[2],requested:process.env.CERTOPS_DNS_SELECTED_PROVIDER});fs.appendFileSync(process.env.GITHUB_OUTPUT,`providers=${JSON.stringify(selected)}\nenabled=${selected.length>0}\n`);console.log(JSON.stringify({mode:process.argv[2],selectedProviders:selected}));}
+if(require.main===module)main();
+module.exports={PROVIDERS,enrolledProviders,assertProducerEnrollment,selectProviders};

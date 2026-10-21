@@ -17,7 +17,7 @@
 
 const path = require("node:path");
 
-const modRoot = "C:\\TokenTimerAgentTest\\src";
+const modRoot = path.resolve(__dirname, "../../src");
 const { acquireWindowsStoreLocks } = require(path.join(modRoot, "index.js"));
 
 function sleep(ms) {
@@ -48,6 +48,7 @@ async function main() {
   }
 
   try {
+    if (process.argv[6]) require("node:fs").writeFileSync(process.argv[6], "locked");
     await sleep(holdMs);
     console.log(
       JSON.stringify({

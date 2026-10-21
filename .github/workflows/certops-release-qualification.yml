@@ -1,13 +1,12 @@
-name: CertOps / Collect AD CS evidence
-'on':
+name: "CertOps / Collect Certificate release qualification"
+on:
   workflow_dispatch:
     inputs:
       profile:
-        description: Core native AD CS only; deferred campaigns remain unqualified
+        description: Evidence scope; adcs-native collects runnable native AD CS cells and reports all omitted environments
         type: choice
-        default: adcs-native
-        options:
-          - adcs-native
+        default: full
+        options: [full, standard-hosted, adcs, adcs-native, extended-adcs]
       candidate_sha:
         description: Exact trusted main candidate commit (40 lowercase hexadecimal characters)
         required: true
@@ -43,12 +42,12 @@ jobs:
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
           node-version: '24'
-      - name: Collect explicit trusted candidate runs and verify every selected AD CS slot
+      - name: Collect explicit trusted candidate runs and verify every matrix slot
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           node scripts/run-certops-collector-tests.js
-          node --test scripts/certops-release-qualification.test.js
+          node --test scripts/certops-release-qualification.test.js scripts/certops-arm64-release.test.js
           python3 scripts/certops-release-collector.py --profile "$CERTOPS_QUALIFICATION_PROFILE"
       - name: Preserve sanitized consolidated verdict
         if: always()

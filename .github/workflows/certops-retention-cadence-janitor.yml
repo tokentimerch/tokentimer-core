@@ -1,0 +1,44 @@
+# Separate unattended cleanup protects interrupted and orphaned timer campaigns.
+name: "CertOps / Optional AD CS / Cleanup default retention timer lab"
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "7 * * * *"
+concurrency:
+  group: certops-retention24h-owned-azure-lifecycle
+  cancel-in-progress: false
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+jobs:
+  janitor:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: certops-adcs-cleanup
+    timeout-minutes: 25
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: "24"
+      - name: Authenticate independent cleanup identity
+        shell: pwsh
+        run: ./infra/certops-adcs/login-oidc.ps1
+      - name: Delete only authenticated failed-owner or expired groups
+        run: node scripts/certops-retention-cadence-azure.js janitor
+      - name: Preserve bounded cleanup failure receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: retention-cadence-janitor-${{ github.run_id }}-${{ github.run_attempt }}
+          path: qualification-results/retention-cadence-controller-failure-janitor-*.json
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "qualificationScope": "Production scanner normalization and authenticated inventory import are supporting integration evidence. Upstream fixture responses do not qualify live provider credentials, permissions, pagination or eventual consistency.",
+  "sources": [
+    { "provider": "aws", "service": "ACM", "scanner": "apps/api/services/awsIntegration.js", "export": "scanAWS", "source": "aws-acm", "sourceKind": "aws-acm", "objectIdentity": "CertificateArn", "instanceIdentity": "account and region", "material": "public certificate metadata", "liveProviderQualified": false },
+    { "provider": "azure", "service": "Key Vault certificates", "scanner": "apps/api/services/azureIntegration.js", "export": "scanAzure", "source": "azure-key-vault-certificate", "sourceKind": "azure-key-vault-certificate", "objectIdentity": "certificate name", "instanceIdentity": "normalized vault URL", "material": "public DER certificate and metadata", "liveProviderQualified": false },
+    { "provider": "gcp", "service": "Certificate Manager", "scanner": "apps/api/services/gcpIntegration.js", "export": "scanGCP", "source": "gcp-certificate-manager", "sourceKind": "gcp-certificate-manager-cert", "objectIdentity": "certificate name with location dimensions", "instanceIdentity": "project", "material": "public certificate metadata", "liveProviderQualified": false },
+    { "provider": "gcp", "service": "Compute SSL certificates", "scanner": "apps/api/services/gcpIntegration.js", "export": "scanGCP", "source": "gcp-compute-ssl-cert", "sourceKind": "gcp-compute-ssl-cert", "objectIdentity": "self link or scoped certificate name", "instanceIdentity": "project", "material": "public certificate metadata", "liveProviderQualified": false },
+    { "provider": "vault", "service": "KV certificate fields", "scanner": "apps/api/services/vaultIntegration.js", "export": "scanVault", "source": "vault-kv", "sourceKind": "vault-kv", "objectIdentity": "mount and secret path, certificate field suffix when multiple", "instanceIdentity": "address and namespace", "material": "certificate values normalized without private secret values", "liveProviderQualified": false },
+    { "provider": "vault", "service": "PKI issued certificates", "scanner": "apps/api/services/vaultIntegration.js", "export": "scanVault", "source": "vault-pki", "sourceKind": "vault-pki", "objectIdentity": "mount and certificate serial", "instanceIdentity": "address and namespace", "material": "public PEM certificate", "liveProviderQualified": false }
+  ]
+}

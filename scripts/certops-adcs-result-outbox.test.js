@@ -1,4 +1,22 @@
 "use strict";
+/**
+ * Qualification notes: native success with deferred result delivery
+ *
+ * Reuse member/CA/no new VM/preflight. Owned loopback gateway validates original API HTTPS,
+ * forwards original bytes, holds claims until selected job registered, evidence through/selected
+ * result HTTP 503. Fresh leaf/key/claim evidence/My/IIS/HTTP.sys/trusted TLS precede durable
+ * successful outbox. Observe actual attempt/nextRetryAt, no edits. Retain exact
+ * host/Node/descendant native handles before ordinary SCM stop, natural zero exits/drain; config
+ * identity/hash/DACL/credential/pins unchanged. Restart real retry at persisted deadline -> same
+ * claim/attempt/one consumed nonce, same journal/CSR/key/leaf/independent RequestId/CA count
+ * (compare reported IDs if present). Second ordinary stop restores config bytes via original
+ * retained handle; authenticate original API/CNG/TLS before closing gateway/guards. Unknown
+ * native/config/result/drain preserves whole fixture. Closed projection excludes raw
+ * outbox/paths/container/secrets. No future-descendant atomic ownership, background timer, every
+ * retry duration, reboot or power-loss claim.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 const test = require("node:test"),
   assert = require("node:assert/strict");
 const subject = require("../tests/e2e/helpers/certops-adcs-result-outbox");

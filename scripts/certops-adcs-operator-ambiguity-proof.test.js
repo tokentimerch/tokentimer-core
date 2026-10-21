@@ -1,4 +1,20 @@
 "use strict";
+/**
+ * Qualification notes: operator-created uncertain ambiguity
+ *
+ * Fresh unbound target has real transport-blocked submitting interruption/CA count zero ; separate
+ * serving TLS is positive control. Stopped agent/working transport, operator submits retained
+ * actual CSR twice as SYSTEM: distinct RequestIds/serials/same SPKI within original 16-ID window,
+ * verified CA CN/requester/DER/count; stale watermark fails, never rewrite. After actual lease+
+ * grace acknowledged recovery refuses two matches, retains CSR/CNG/empty site/unrelatedTLS;
+ * real-now sweeps cannot resubmit. Public selected RequestId + real-now signed continuation
+ * installs exact leaf/original key/snapshot/IIS/TLS/claim evidence/proposal+recovery audits,
+ * retains unknown job. All-store absence and exact requester/CSR/DER before revoking unused leaf
+ * only. Parent owns unresolved CA/custody/process/site, no blind revoke while acceptance unknown.
+ * Deliberate operator ambiguity is not deterministic lost successful-submit response.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Synthetic bounded report refusals; no native CA/key/service action runs. */
 const test = require("node:test"), assert = require("node:assert/strict");
 const helper = require("../tests/e2e/helpers/certops-adcs-uncertain-operator-ambiguity");

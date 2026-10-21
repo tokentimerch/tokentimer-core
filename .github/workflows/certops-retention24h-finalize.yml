@@ -1,0 +1,49 @@
+# Short independent hourly controller; no resident runner or native developer-host action.
+name: "CertOps / Finalize real native24h retention"
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "43 * * * *"
+# Participating Azure lease writers share one queue; external Azure actors do not.
+concurrency:
+  group: certops-retention24h-owned-azure-lifecycle
+  cancel-in-progress: false
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+jobs:
+  finalize:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    # Cleanup identity must not require lab approval or depend on its running job.
+    environment: certops-adcs-cleanup
+    timeout-minutes: 25
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: "24"
+      - name: Authenticate dedicated independent cleanup identity
+        shell: pwsh
+        run: ./infra/certops-adcs/login-oidc.ps1
+      - name: Collect actual native result and destroy exact owned group
+        run: node scripts/certops-retention24h-azure.js finalize
+      - name: Preserve only bounded public composite evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: retention24h-final-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            qualification-results/retention24h-final-*.json
+            qualification-results/retention24h-qualification-*.json
+            qualification-results/retention24h-controller-failure-finalize-*.json
+          if-no-files-found: warn
+          retention-days: 14

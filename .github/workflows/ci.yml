@@ -358,6 +358,7 @@ jobs:
 
       - name: Run AD CS API qualification on the existing test stack
         env:
+          CERTOPS_API_QUALIFICATION_SCOPE: adcs
           CERTOPS_ENABLED: 'true'
           CERTOPS_E2E_REQUIRED: '1'
           CERTOPS_CSR_DISPOSABLE_STACK: '1'

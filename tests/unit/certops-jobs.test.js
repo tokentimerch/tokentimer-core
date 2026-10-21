@@ -2780,6 +2780,27 @@ describe("CertOps jobs service - managed certificate ownership guard", () => {
     );
   });
 
+  it("prioritizes immutable retirement during renew admission despite a stale source cache", async () => {
+    for (const status of ["revoked", "decommissioned"]) {
+      for (const cachedStatus of ["active", status]) {
+        const client = createOwnershipMemoryClient({ certificates: [{
+          workspace_id: WORKSPACE_A,
+          id: AGENT_LOCAL_CERT_ID,
+          key_mode: "agent-local",
+          status: cachedStatus,
+          identity_lifecycle_status: status,
+          profile_status: "disabled",
+        }] });
+        await assert.rejects(createCertificateJob({
+          client, workspaceId: WORKSPACE_A, operation: "renew",
+          subjectType: "managed_certificate", subjectId: AGENT_LOCAL_CERT_ID,
+          payload: {}, mode: "dry_run",
+        }), { code: "CERTOPS_CERTIFICATE_RETIRED" });
+        assert.equal(client.jobs.length, 0);
+      }
+    }
+  });
+
   it("allows a renew job for a managed_certificate with agent-local key custody and no discovery agent", async () => {
     const client = createOwnershipMemoryClient({
       certificates: [
@@ -3193,6 +3214,20 @@ describe("CertOps jobs service - manualRenewalJobCreator (canonical manual/bulk 
       },
     };
   }
+
+  it("refuses retired manual/bulk subjects before profile or issuer materialization", async () => {
+    const { manualRenewalJobCreator } = require("../../apps/api/services/certops/jobs");
+    for (const status of ["revoked", "decommissioned"]) for (const staleCache of [false, true]) {
+      const create = manualRenewalJobCreator({
+        certificateId: MANUAL_RENEWAL_CERT_ID,
+        loadCertificate: () => ({ ...certificateRow(), status: staleCache ? "discovered" : status, identity_lifecycle_status: status, profile_issuer_id: "retired-issuer", profile_public_metadata: null }),
+        createJob: () => assert.fail("A retired subject must not reach job admission"),
+      });
+      await assert.rejects(create({ client: {}, workspaceId: WORKSPACE_A, source: "api" }), {
+        code: "CERTOPS_CERTIFICATE_NOT_RENEWABLE",
+      });
+    }
+  });
 
   it("materializes the exact same payload the scheduler would build, when the manual request supplies no override", async () => {
     const { buildRenewalJobPayload } = require(

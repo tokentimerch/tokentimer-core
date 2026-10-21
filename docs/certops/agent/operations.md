@@ -2,6 +2,14 @@
 
 Use this guide after installation for upgrades, compatibility, logs, failed jobs, and retirement. Preserve the state directory: it contains the agent credential, pinned signing key, custody state, and recovery journals.
 
+## Registration replacement and declaration refresh
+
+A registered agent reuses its stored credential and `agentId` on restart. Supplying a fresh bootstrap token to that same state directory does not replace its identity or signing-key pin; the agent scrubs the unnecessary token. Preserve the original protected state directory, including recovery journals and key-custody receipts.
+
+Configuration changes do not require a replacement registration. After restart, authenticated heartbeats publish the configured command-profile names, including an explicit empty list to remove stale profiles. Observe-only agents publish no supported execution operations and never claim jobs. Setting `TT_AGENT_LOG_STREAM=off` withdraws the log-stream capability while retaining the registered identity and credential.
+
+A retired identity cannot register again with a new bootstrap token: the control plane returns `CERTOPS_AGENT_REGISTRATION_CONFLICT` without consuming that token or overwriting working state. A replacement needs a new `agentId` and separate protected state. Coordinate any installed Windows service handoff and custody migration separately; registering an independent replacement process does not transfer the predecessor's jobs, journals, or keys.
+
 <a id="9-troubleshooting"></a>
 
 ## Troubleshooting
@@ -21,8 +29,10 @@ Common terminal states and what to look for:
   (`CERTOPS_AGENT_RESULT_STATUS_INVALID`).
 - **Job `blocked`, "no control-plane signing key is pinned yet"**: execution
   is enabled but `signing-key-pin.json` is absent (the register response did
-  not carry `signingKeyId`/`signingPublicKeyPem`). Re-register the agent
-  against a control plane that dispatches signing key info. The heartbeat's
+  not carry `signingKeyId`/`signingPublicKeyPem`). Restore the verified pin or
+  replace registration using separate protected state against a control plane
+  that dispatches signing key info. A new bootstrap token alone does not
+  re-pin an existing registration. The heartbeat's
   `pinnedSigningKeyId` will be null until then.
 - **Agent registers and heartbeats, but never claims a pending job**: check
   `execution.enabled`. When it is not true, the agent is observe-only and
@@ -36,7 +46,8 @@ Common terminal states and what to look for:
   deliberate: an integrity verdict is terminal and silent, so there is no
   `rejected` result and no `policy.checked` evidence item to read. Look for the
   detail in the agent's own log. If it persists after a control-plane key
-  rotation, re-register to re-pin.
+  rotation, inspect the verified pin and supported signing-key rotation path;
+  a fresh bootstrap token does not re-pin an existing credential.
 - **`rejected` with `clock_drift_suspected`**: the adjusted time fell
   outside `[issuedAt - tolerance, expiresAt + tolerance]`. Check NTP sync on
   the agent host, and compare the heartbeat's `clockOffsetMs` against
@@ -233,7 +244,7 @@ components in still matters:
 | Envelope v2 (`signed-payload-b64-v1`) | the release that ships dual-format dispatch | Either order; this is dispatch-time, not connection-time. An agent advertising the capability gets v2 once its capability declaration is fresh (`CERTOPS_CAPABILITY_FRESHNESS_MS`); every other agent gets v1. | None: an agent that never advertises the capability, or whose declaration goes stale, simply keeps getting v1. |
 | Required `agentId` in the signed payload | the release that starts emitting `agentId` unconditionally | Upgrade the server first, let it run until every agent you operate has re-registered or heartbeated at least once, *then* upgrade the agent (`CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID` now defaults to `true`, enforcing this automatically). If any agent still talks to a control plane that has not finished emitting `agentId`, set `CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID=false` on that agent first as a temporary rollback. | Upgrading the agent before the server emits `agentId` on every dispatch turns every not-yet-upgraded control plane's dispatch into a hard failure for that agent, unless the rollback override is set. |
 | `agent-id-binding-v1` capability (reference clients) | same release as required `agentId` above | Reference clients advertise this capability only once their local `agentId` enforcement is actually the effective behavior, not merely because the shipped code supports it. | A client advertising the capability while its own enforcement flag is still off would falsely promise a guarantee it is not enforcing. |
-| Enterprise pin | `tokentimer-enterprise` at the matching core version | Bump and pin core and enterprise together; do not let one lag. | Enterprise CI can silently stop skipping edition-gated core tests it must skip if the cross-repo marker it depends on drifts from core. |
+| Downstream composition | The Core version supported by the deployment | Verify the deployment compatibility manifest before changing its Core pin. | Edition policy and contract tests may no longer describe the deployed Core runtime. |
 
 ## Upgrade and uninstall
 

@@ -1,4 +1,19 @@
 "use strict";
+/**
+ * Qualification notes: public unrelated-SPKI reconciliation
+ *
+ * Generate separate software RSA2048 CSR under authorized SAN/template, owned
+ * certops-adcs-<run>-foreignspki.example.test CN/different SPKI; remove temporary software key
+ * before SYSTEM submit, no machine CNG key. Verify actual CA/requester/RequestId beyond watermark/
+ * signature/SAN/template/SPKI. Public proposal 204 -> real signed default-clock continuation
+ * ADCS_DISPOSITION_UNKNOWN/SPKI mismatch; uncertain CSR/journal/watermark/CNG/empty target and
+ * sibling TLS fixed, no resubmit. Separate subject one request/original two fixed. Prove all-store
+ * absence before exact unrelated revoke; matching-candidate install positive control. Ownership
+ * before keygen/submit, unresolved response/custody blocks cleanup through valid recovery.
+ * Deliberate ambiguity does not qualify lost-response timing or borrowed certificate adoption.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Offline contracts and the actual pure candidate validator; no CA execution. */
 const test = require("node:test"),
   assert = require("node:assert/strict"),

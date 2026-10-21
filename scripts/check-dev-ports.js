@@ -33,7 +33,7 @@ function fetchJson(url, timeoutMs = 1000) {
       response.on("end", () => {
         try {
           resolve(JSON.parse(body));
-        } catch (error) {
+        } catch {
           reject(new Error(`non-JSON response from ${url}`));
         }
       });
@@ -50,7 +50,7 @@ async function describeApiPort(port) {
   try {
     const payload = await fetchJson(`http://127.0.0.1:${port}/health`);
     if (payload?.demoMode === true || payload?.status === "ok") {
-      return "tokentimer-enterprise dev-mock-api";
+      return "another development API";
     }
     if (payload?.status === "healthy") {
       return "tokentimer-core API";
@@ -103,8 +103,8 @@ function formatConflictMessage(conflicts) {
         `  - ${conflict.port} (${conflict.label}): ${conflict.owner}`,
     ),
     "",
-    "Stop the other dev stack first. Common cause: tokentimer-enterprise `pnpm demo:local`.",
-    "  cd ../tokentimer-enterprise && pkill -f dev-mock-api/server.js",
+    "Stop the other dev stack first. Check for another development API using the same ports.",
+    "  Stop the owning development process before restarting this stack.",
     "Or stop whatever is listening on those ports, then rerun `pnpm dev`.",
   ];
   return lines.join("\n");
