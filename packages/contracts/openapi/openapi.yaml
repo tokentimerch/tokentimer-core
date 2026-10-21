@@ -3195,6 +3195,23 @@ paths:
                                     type: integer
                                   verified:
                                     type: boolean
+                                  outboxBacklog:
+                                    type: object
+                                    description: >-
+                                      CertOps notifications and rollout
+                                      requests that have been due for over 5
+                                      minutes and are not claimed or backing
+                                      off. A non-zero count usually means the
+                                      CertOps worker is not running. Absent on
+                                      older servers.
+                                    properties:
+                                      count:
+                                        type: integer
+                                      oldestAt:
+                                        type: string
+                                        format: date-time
+                                        nullable: true
+                                    additionalProperties: true
                                 additionalProperties: true
                               adcs:
                                 type: object
@@ -3216,6 +3233,30 @@ paths:
                                       additionalProperties: true
                                   profiles:
                                     type: integer
+                                  installedEnrollments:
+                                    type: integer
+                                  enrollments:
+                                    type: object
+                                    properties:
+                                      overdue:
+                                        type: object
+                                        description: >-
+                                          Enrollments whose next poll date
+                                          passed by more than twice their poll
+                                          interval (at least 5 minutes) with no
+                                          job running and not waiting on a
+                                          person. A non-zero count usually
+                                          means the CertOps worker is not
+                                          running. Absent on older servers.
+                                        properties:
+                                          count:
+                                            type: integer
+                                          oldestDueAt:
+                                            type: string
+                                            format: date-time
+                                            nullable: true
+                                        additionalProperties: true
+                                    additionalProperties: true
                                 additionalProperties: true
                               dryRun:
                                 allOf:

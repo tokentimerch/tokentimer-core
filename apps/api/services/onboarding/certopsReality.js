@@ -6,6 +6,10 @@
 // callers must treat null as "unknown", never as "nothing installed".
 
 const { listAgents } = require("../certops/agentRegistry");
+const {
+  CONTINUATION_STATES,
+  DEFAULT_POLL_INTERVAL_SECONDS,
+} = require("../certops/enrollmentLifecycle");
 
 // Operations that only exist once execution is switched on in the agent.
 const EXECUTION_OPERATIONS = new Set([
@@ -58,7 +62,11 @@ function summarizeAgents(items, { now = Date.now(), since = null } = {}) {
  * Distribution is verified only when a rollout reached the verified state,
  * which requires consumer evidence. Existing groups alone prove nothing.
  */
-async function loadDistributionReality(pool, workspaceId) {
+async function loadDistributionReality(
+  pool,
+  workspaceId,
+  { now = Date.now() } = {},
+) {
   const { rows } = await pool.query(
     `SELECT (SELECT COUNT(*)::int FROM certops_distribution_groups WHERE workspace_id = $1) AS groups,
             (SELECT COUNT(*)::int FROM certops_consumer_bindings WHERE workspace_id = $1) AS bindings,
@@ -71,6 +79,33 @@ async function loadDistributionReality(pool, workspaceId) {
     groups: row.groups || 0,
     bindings: row.bindings || 0,
     verified: (row.verified_rollouts || 0) > 0,
+    outboxBacklog: await loadOutboxBacklog(pool, workspaceId, { now }),
+  };
+}
+
+// Pending outbox rows that have been due for a while with nobody working on
+// them. A deferred or backing-off row has a future next_retry_at, and a row a
+// live worker holds has an unexpired lease, so neither counts. The window is
+// generous (the worker defers for 60 s) because under Helm the worker starts
+// fresh once a minute.
+const OUTBOX_BACKLOG_MIN_AGE_MS = 5 * 60 * 1000;
+
+async function loadOutboxBacklog(pool, workspaceId, { now = Date.now() } = {}) {
+  const cutoff = new Date(now - OUTBOX_BACKLOG_MIN_AGE_MS);
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS n, MIN(next_retry_at) AS oldest
+       FROM certops_outbox
+      WHERE workspace_id = $1
+        AND status = 'pending'
+        AND next_retry_at <= $2
+        AND (claimed_until IS NULL OR claimed_until < $3)`,
+    [workspaceId, cutoff, new Date(now)],
+  );
+  const row = rows[0] || {};
+  const count = row.n || 0;
+  return {
+    count,
+    oldestAt: count > 0 && row.oldest ? new Date(row.oldest).toISOString() : null,
   };
 }
 
@@ -109,7 +144,7 @@ async function loadJobStatus(pool, workspaceId, jobId) {
  * confirmed once its current version has a pinned CA certificate, and as safe
  * once the last check found both the template and the CA safe.
  */
-async function loadAdcsReality(pool, workspaceId) {
+async function loadAdcsReality(pool, workspaceId, { now = Date.now() } = {}) {
   const issuers = await pool.query(
     `SELECT i.id, i.name, i.last_preflight,
             (v.confirmed_at IS NOT NULL AND v.ca_key_sha256 IS NOT NULL) AS confirmed
@@ -134,6 +169,7 @@ async function loadAdcsReality(pool, workspaceId) {
       WHERE workspace_id = $1`,
     [workspaceId],
   );
+  const overdue = await loadOverdueEnrollments(pool, workspaceId, { now });
   return {
     issuers: issuers.rows.map((row) => ({
       id: row.id,
@@ -145,6 +181,75 @@ async function loadAdcsReality(pool, workspaceId) {
     })),
     profiles: profiles.rows[0]?.n || 0,
     installedEnrollments: enrollments.rows[0]?.installed || 0,
+    enrollments: { overdue },
+  };
+}
+
+// Enrollments the CertOps worker should have picked up by now. The worker
+// claims a due row (next_poll_at <= now) and clears next_poll_at, so a poll
+// date that stays in the past with no job running means nobody is scheduling.
+// A row waiting on the CA has a future poll date, and one waiting on a human
+// (an approved job, or an uncertain submission with no operator request id)
+// is skipped. The 2x poll interval and 5 minute floor absorb a worker that
+// starts fresh every minute (Helm) and a slow sweep.
+const ENROLLMENT_OVERDUE_MIN_SECONDS = 5 * 60;
+const ENROLLMENT_OVERDUE_SCAN_LIMIT = 200;
+const ACTIVE_JOB_STATUSES = [
+  "pending_approval",
+  "approved",
+  "pending",
+  "claimed",
+  "running",
+];
+
+function snapshotPollSeconds(bytes) {
+  try {
+    const snapshot = JSON.parse(Buffer.from(bytes).toString("utf8"));
+    const seconds = Number(snapshot?.pollInterval);
+    if (Number.isFinite(seconds) && seconds > 0) return seconds;
+  } catch (_) {
+    // Fall through to the default poll interval.
+  }
+  return DEFAULT_POLL_INTERVAL_SECONDS;
+}
+
+async function loadOverdueEnrollments(
+  pool,
+  workspaceId,
+  { now = Date.now() } = {},
+) {
+  const nowMs = typeof now === "number" ? now : new Date(now).getTime();
+  const floor = new Date(nowMs - ENROLLMENT_OVERDUE_MIN_SECONDS * 1000);
+  const { rows } = await pool.query(
+    `SELECT e.next_poll_at, e.snapshot_bytes
+       FROM certificate_enrollments e
+       LEFT JOIN certificate_jobs j
+         ON j.workspace_id = e.workspace_id AND j.id = e.current_job_id
+      WHERE e.workspace_id = $1
+        AND e.state = ANY($2::text[])
+        AND e.next_poll_at IS NOT NULL
+        AND e.next_poll_at <= $3
+        AND (j.status IS NULL OR NOT (j.status = ANY($4::text[])))
+        AND (e.state <> 'submission_uncertain' OR e.operator_request_id IS NOT NULL)
+      ORDER BY e.next_poll_at ASC
+      LIMIT ${ENROLLMENT_OVERDUE_SCAN_LIMIT}`,
+    [workspaceId, [...CONTINUATION_STATES], floor, ACTIVE_JOB_STATUSES],
+  );
+  let count = 0;
+  let oldest = null;
+  for (const row of rows) {
+    const dueMs = new Date(row.next_poll_at).getTime();
+    const graceSeconds = Math.max(
+      2 * snapshotPollSeconds(row.snapshot_bytes),
+      ENROLLMENT_OVERDUE_MIN_SECONDS,
+    );
+    if (!Number.isFinite(dueMs) || nowMs - dueMs < graceSeconds * 1000) continue;
+    count += 1;
+    if (oldest === null || dueMs < oldest) oldest = dueMs;
+  }
+  return {
+    count,
+    oldestDueAt: oldest === null ? null : new Date(oldest).toISOString(),
   };
 }
 
@@ -213,6 +318,8 @@ module.exports = {
   loadAdcsReality,
   loadControllerReality,
   loadDistributionReality,
+  loadOutboxBacklog,
+  loadOverdueEnrollments,
   loadJobStatus,
   EXECUTION_OPERATIONS,
 };
