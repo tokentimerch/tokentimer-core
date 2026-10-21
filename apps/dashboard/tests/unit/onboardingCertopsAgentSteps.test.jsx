@@ -1,4 +1,10 @@
-﻿import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 import { describe, expect, it, vi } from 'vitest';
 import { AgentStep } from '../../src/components/onboarding/certopsAgentStep.jsx';
@@ -113,9 +119,11 @@ describe('agent step', () => {
     expect(
       screen.getByLabelText(/Copy Download, verify and extract/)
     ).toBeInTheDocument();
-    expect(screen.getByTestId('package-doc-link').getAttribute('href')).toBe(
-      'https://docs.example/certops.agentPackage'
-    );
+    expect(
+      within(screen.getByTestId('package-doc-links'))
+        .getByRole('link')
+        .getAttribute('href')
+    ).toBe('https://docs.example/certops.agentPackage');
   });
 
   it('gives Windows the same steps with its own folder and shell', () => {

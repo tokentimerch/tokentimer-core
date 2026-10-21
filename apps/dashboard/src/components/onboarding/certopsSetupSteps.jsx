@@ -106,11 +106,15 @@ const IIS_SITE_HELPER =
 // Errors use the theme-safe red from ErrorText: the theme pins Text to a dark
 // grey in the light theme, which made plain red text read as body text there.
 function errorLines(messages) {
-  return messages.map(m => (
-    <ErrorText key={m} as='span' display='block'>
-      {m}
-    </ErrorText>
-  ));
+  return (
+    <div>
+      {messages.map(m => (
+        <ErrorText key={m} as='span' display='block'>
+          {m}
+        </ErrorText>
+      ))}
+    </div>
+  );
 }
 
 export function certopsObjectiveFor(ctx) {

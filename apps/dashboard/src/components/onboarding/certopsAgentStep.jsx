@@ -9,7 +9,6 @@ import {
   FormLabel,
   HStack,
   Input,
-  Link,
   Text,
   VStack,
 } from '@chakra-ui/react';
@@ -18,7 +17,7 @@ import {
   DashboardErrorAlert,
 } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
-import StepFrame from './StepFrame.jsx';
+import StepFrame, { DocsLink } from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import { CopyBlock, ErrorText, WarnText } from './blocks.jsx';
 import {
@@ -404,19 +403,15 @@ export function AgentStep({ ctx }) {
               label='Download, verify and extract the agent package (replace <version>)'
               text={buildPackageCommand(os)}
             />
-            {ctx
-              .docs('certops.agentPackage', 'Where to get the package')
-              .map(link => (
-                <Link
-                  key={link.url}
-                  href={link.url}
-                  isExternal
-                  fontSize='xs'
-                  data-testid='package-doc-link'
-                >
-                  {link.label}
-                </Link>
-              ))}
+            <HStack data-testid='package-doc-links'>
+              {ctx
+                .docs('certops.agentPackage', 'Where to get the package')
+                .map(link => (
+                  <DocsLink key={link.url} href={link.url}>
+                    {link.label}
+                  </DocsLink>
+                ))}
+            </HStack>
           </InstallStep>
           <InstallStep n={2} text={notes[1]} />
           <InstallStep
