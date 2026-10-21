@@ -1,7 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   FiArrowLeft,
   FiArrowRight,
+  FiChevronDown,
+  FiChevronUp,
   FiRepeat,
   FiRefreshCw,
 } from 'react-icons/fi';
@@ -112,7 +121,7 @@ export function nextSteps(goalId, certops) {
     case 'certops_vault':
       return [
         certops?.distribution?.verified === true
-          ? 'Assign more consumers and request a rollout for each, or request a rollout with verificationOnly true to check for drift.'
+          ? 'Assign more consumers and request a rollout for each, or request a check-only rollout (no changes) to look for drift.'
           : 'Run a verified rollout once your agents declare the distribution capabilities.',
       ];
     default:
@@ -294,6 +303,46 @@ function JourneyRail({ steps, shownId, onSelect }) {
 }
 
 /**
+ * Below the lg breakpoint the full list would push the active step far down
+ * the page, so it folds into one summary line that opens on demand. From lg
+ * up the list is always shown, as before.
+ */
+export function CollapsibleSteps({ steps, shownId, children }) {
+  const [open, setOpen] = useState(false);
+  const listId = useId();
+  const found = steps.findIndex(s => s.id === shownId);
+  const index = found < 0 ? 0 : found;
+  return (
+    <>
+      <Box display={{ base: 'block', lg: 'none' }}>
+        <DashboardActionButton
+          variant='outline'
+          w='full'
+          h='auto'
+          py={2}
+          justifyContent='space-between'
+          whiteSpace='normal'
+          textAlign='left'
+          rightIcon={open ? <FiChevronUp /> : <FiChevronDown />}
+          aria-expanded={open}
+          aria-controls={listId}
+          onClick={() => setOpen(value => !value)}
+        >
+          {`Step ${index + 1} of ${steps.length}: ${steps[index]?.title || ''}`}
+        </DashboardActionButton>
+      </Box>
+      <Box
+        id={listId}
+        mt={{ base: 3, lg: 0 }}
+        display={{ base: open ? 'block' : 'none', lg: 'block' }}
+      >
+        {children(() => setOpen(false))}
+      </Box>
+    </>
+  );
+}
+
+/**
  * Back/next controls and a notice while a finished step is being reviewed.
  * Looking at a step never changes what is recorded as done.
  */
@@ -334,9 +383,17 @@ function ReviewBar({ nav, titleOf, onGo, onReturn }) {
     </HStack>
   );
 }
-function DoneCard({ ctx }) {
+export function DoneCard({ ctx }) {
   const { muted } = useDashboardTheme();
   const smtp = ctx.summary?.alerts?.smtpConfigured;
+  const goal = GOALS[ctx.session.intent?.goal];
+  const windows =
+    scopeCertops(ctx.session.progress?.certops, goal?.certopsObjective)
+      .infrastructure === 'windows';
+  // A body that hedges must not sit under a title that says all is well.
+  const unverified =
+    goal?.doneUnverified === true ||
+    (windows && goal?.doneUnverifiedWindows === true);
   const restart = async () => {
     await ctx.controller.update(session => ({
       intent: { ...session.intent, goal: '' },
@@ -348,14 +405,10 @@ function DoneCard({ ctx }) {
   return (
     <StepFrame
       kind='info'
-      title='You are set up'
+      title={unverified ? 'Setup finished, not verified yet' : 'You are set up'}
       description={
-        (scopeCertops(
-          ctx.session.progress?.certops,
-          GOALS[ctx.session.intent?.goal]?.certopsObjective
-        ).infrastructure === 'windows' &&
-          GOALS[ctx.session.intent?.goal]?.doneTextWindows) ||
-        GOALS[ctx.session.intent?.goal]?.doneText ||
+        (windows && goal?.doneTextWindows) ||
+        goal?.doneText ||
         'Setup is complete.'
       }
       docs={ctx.docs('alerts.thresholds', 'Alert thresholds')}
@@ -524,37 +577,48 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
                   w={{ base: 'full', lg: '320px' }}
                   flexShrink={0}
                 >
-                  <Text fontWeight='bold' fontSize='sm' mb={3}>
+                  <Text
+                    fontWeight='bold'
+                    fontSize='sm'
+                    mb={3}
+                    display={{ base: 'none', lg: 'block' }}
+                  >
                     Your setup
                   </Text>
-                  <JourneyRail
-                    steps={plan.steps}
-                    shownId={nav.shownId}
-                    onSelect={id =>
-                      id === plan.currentStepId
-                        ? returnToCurrent()
-                        : goToStep(id)
-                    }
-                  />
-                  {ctx.session.intent?.goal ? (
-                    <DashboardActionButton
-                      mt={4}
-                      w='full'
-                      colorScheme='blue'
-                      variant='outline'
-                      leftIcon={<FiRepeat />}
-                      onClick={changeGoal}
-                    >
-                      Change what I am setting up
-                    </DashboardActionButton>
-                  ) : null}
-                  <Alert {...INFO_NOTE_PROPS} mt={4}>
-                    <AlertIcon />
-                    <AlertDescription fontSize='xs' lineHeight='1.45'>
-                      Progress is saved to your account. Leave any time and
-                      continue on any device.
-                    </AlertDescription>
-                  </Alert>
+                  <CollapsibleSteps steps={plan.steps} shownId={nav.shownId}>
+                    {close => (
+                      <>
+                        <JourneyRail
+                          steps={plan.steps}
+                          shownId={nav.shownId}
+                          onSelect={id => {
+                            close();
+                            if (id === plan.currentStepId) returnToCurrent();
+                            else goToStep(id);
+                          }}
+                        />
+                        {ctx.session.intent?.goal ? (
+                          <DashboardActionButton
+                            mt={4}
+                            w='full'
+                            colorScheme='blue'
+                            variant='outline'
+                            leftIcon={<FiRepeat />}
+                            onClick={changeGoal}
+                          >
+                            Change what I am setting up
+                          </DashboardActionButton>
+                        ) : null}
+                        <Alert {...INFO_NOTE_PROPS} mt={4}>
+                          <AlertIcon />
+                          <AlertDescription fontSize='xs' lineHeight='1.45'>
+                            Progress is saved to your account. Leave any time
+                            and continue on any device.
+                          </AlertDescription>
+                        </Alert>
+                      </>
+                    )}
+                  </CollapsibleSteps>
                 </DashboardPanel>
                 <Box as='main' flex='1' minW={0} w='full'>
                   <ReviewBar
@@ -566,7 +630,7 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
                   {plan.complete && !nav.viewing ? (
                     <DoneCard ctx={ctx} />
                   ) : Current ? (
-                    <Current ctx={ctx} />
+                    <Current ctx={ctx} reviewing={nav.viewing} />
                   ) : null}
                 </Box>
               </Flex>

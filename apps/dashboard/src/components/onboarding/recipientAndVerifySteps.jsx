@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FiRefreshCw } from 'react-icons/fi';
-import { Badge, HStack, Spinner, Text, VStack } from '@chakra-ui/react';
+import { Badge, HStack, Link, Spinner, Text, VStack } from '@chakra-ui/react';
 import {
   DashboardActionButton,
   DashboardErrorAlert,
@@ -138,7 +138,7 @@ export function VerifyStep({ ctx }) {
     <StepFrame
       kind='verify'
       title='Check that it is working'
-      description='These checks read the real state of your workspace.'
+      description='These checks read the real state of your workspace. They do not send an alert.'
       docs={[
         ...ctx.docs('quickstart.verifyAlert', 'Verifying an alert'),
         ...ctx.docs('alerts.troubleshooting', 'If alerts do not arrive'),
@@ -196,6 +196,19 @@ export function VerifyStep({ ctx }) {
             {note}
           </Text>
         ))}
+        {result ? (
+          <Text fontSize='xs' color={muted} data-testid='verify-test-hint'>
+            To test delivery, send a test email from System Settings, Email
+            (SMTP).{' '}
+            {ctx.isSystemAdmin === true ? (
+              <Link href='/system-settings' color='blue.500'>
+                Open System Settings
+              </Link>
+            ) : (
+              'An administrator can do this.'
+            )}
+          </Text>
+        ) : null}
       </VStack>
     </StepFrame>
   );

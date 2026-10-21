@@ -38,10 +38,11 @@ const summaryOf = (items, extra = {}) => ({
   ...extra,
 });
 
-function mount({ items, refs, summaryExtra }) {
+function mount({ items, refs, summaryExtra, isSystemAdmin = false }) {
   const summary = summaryOf(items, summaryExtra);
   const ctx = {
     workspaceId: 'ws-1',
+    isSystemAdmin,
     docs: () => [],
     refresh: vi.fn().mockResolvedValue(undefined),
     fetchSummary: vi.fn().mockResolvedValue(summary),
@@ -67,6 +68,27 @@ beforeEach(() => {
   actions.soonestToken.mockReset().mockResolvedValue(null);
 });
 
+describe('VerifyStep says what it does not do', () => {
+  const one = { items: [site('a')], refs: { monitorIds: ['m-a'] } };
+
+  it('states that the check sends no alert and where to test delivery', async () => {
+    mount(one);
+    const hint = await screen.findByTestId('verify-test-hint');
+    expect(screen.getByText(/They do not send an alert\./)).toBeTruthy();
+    expect(hint.textContent).toMatch(/send a test email from System Settings/);
+    expect(within(hint).queryByRole('link')).toBeNull();
+    expect(hint.textContent).toMatch(/An administrator can do this/);
+  });
+
+  it('links an administrator to System Settings', async () => {
+    mount({ ...one, isSystemAdmin: true });
+    const hint = await screen.findByTestId('verify-test-hint');
+    const link = within(hint).getByRole('link', {
+      name: 'Open System Settings',
+    });
+    expect(link.getAttribute('href')).toBe('/system-settings');
+  });
+});
 describe('VerifyStep with several websites', () => {
   it('lists every website of the session with its own certificate line', async () => {
     mount({
