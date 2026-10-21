@@ -182,7 +182,15 @@ export function VaultStep({ ctx }) {
   });
   const { workspaceId, refresh } = ctx;
 
-  // The job is read back from the server, never from a stored flag.
+  // The job is read back from the server, never from a stored flag. It is
+  // polled while it is still moving, so an approval elsewhere shows up here.
+  const publishStatus = pub.job?.status || '';
+  const publishSettled = [
+    'succeeded',
+    'failed',
+    'rejected',
+    'cancelled',
+  ].includes(publishStatus);
   useEffect(() => {
     if (!publishJobId) return undefined;
     let cancelled = false;
@@ -195,10 +203,17 @@ export function VaultStep({ ctx }) {
       }
     };
     load();
+    if (publishSettled) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    const timer = setInterval(load, 5000);
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
-  }, [publishJobId, workspaceId]);
+  }, [publishJobId, workspaceId, publishSettled]);
 
   const createPublishJob = async () => {
     setPub(p => ({ ...p, busy: true, error: '' }));
