@@ -38,6 +38,7 @@ import {
   AGENT_KEYS_DIR,
   buildObserveConfig,
   buildPreseedSteps,
+  dnsCredentialsExample,
   mergeInstallerFields,
   windowsCredentialAclCommand,
 } from './certopsConfig.js';
@@ -302,7 +303,10 @@ export function ConfigStep({ ctx }) {
         ...ctx.docs('certops.agentConfig', 'Agent configuration'),
         ...(objective === 'adcs' || objective === 'observe'
           ? []
-          : ctx.docs('certops.dns', 'DNS providers')),
+          : [
+              ...ctx.docs('certops.dns', 'DNS providers'),
+              ...ctx.docs('certops.dnsPropagation', 'DNS propagation settings'),
+            ]),
       ]}
       actions={
         <PrimaryButton onClick={confirm} isDisabled={!result.ok}>
@@ -671,11 +675,28 @@ export function ConfigStep({ ctx }) {
                   ?.credentialsFile || 'the path in the file above'}{' '}
                 {os === 'windows'
                   ? '(then lock it down so only SYSTEM and Administrators can read it, see below)'
-                  : '(mode 0600, owned by the agent user)'}{' '}
+                  : '(mode 0600; once the installer has created the service user, make that user the owner)'}{' '}
                 with these fields:{' '}
                 {(DNS_PROVIDERS[form.dnsProvider]?.fields || []).join(', ')}.
                 The DNS providers page shows the exact file format. The CA is
                 the Let&apos;s Encrypt staging endpoint until you change it.
+              </Text>
+            ) : null}
+            {objective === 'automate' &&
+            dnsCredentialsExample(form.dnsProvider) ? (
+              <CopyBlock
+                label='Credential file shape (replace the placeholders)'
+                text={dnsCredentialsExample(form.dnsProvider)}
+                language='json'
+              />
+            ) : null}
+            {objective === 'automate' ? (
+              <Text fontSize='xs' data-testid='dns-propagation-note'>
+                After publishing the challenge record, the agent waits until it
+                can see it. If your DNS is split-horizon or the zone is not
+                publicly delegated, the agent may not see the record in time;
+                see dnsPropagation (resolvers, timeoutMs, checkAuthoritative) in
+                the DNS providers documentation.
               </Text>
             ) : null}
             {objective === 'automate' && os === 'windows' ? (

@@ -26,6 +26,8 @@ import {
   STAGING_CA,
   AGENT_KEYS_DIR,
   certDirectoryFor,
+  dnsCredentialsExample,
+  DNS_PROVIDERS,
   mergeInstallerFields,
   registrationNotesFor,
   windowsCredentialAclCommand,
@@ -831,5 +833,48 @@ describe('windows ACME configuration', () => {
     const windows = buildPreseedSteps({ os: 'windows', config: {} });
     expect(windows.steps.join(' ')).toMatch(/agentId/);
     expect(windows.steps.join(' ')).toMatch(/refuses to start/);
+  });
+});
+
+describe('DNS credential file examples', () => {
+  it('shows a JSON example with placeholders for every supported provider', () => {
+    for (const id of Object.keys(DNS_PROVIDERS)) {
+      const parsed = JSON.parse(dnsCredentialsExample(id));
+      expect(Object.keys(parsed).length).toBeGreaterThan(0);
+      expect(dnsCredentialsExample(id)).not.toMatch(SENSITIVE_PATTERN);
+    }
+    expect(dnsCredentialsExample('nope')).toBe('');
+  });
+
+  it('uses the field names the agent solvers read', () => {
+    expect(Object.keys(JSON.parse(dnsCredentialsExample('azure-dns')))).toEqual(
+      expect.arrayContaining([
+        'tenantId',
+        'clientId',
+        'clientSecret',
+        'subscriptionId',
+        'resourceGroup',
+      ])
+    );
+    expect(
+      Object.keys(JSON.parse(dnsCredentialsExample('google-cloud-dns')))
+    ).toEqual(
+      expect.arrayContaining(['project_id', 'client_email', 'private_key'])
+    );
+    expect(Object.keys(JSON.parse(dnsCredentialsExample('rfc2136')))).toEqual(
+      expect.arrayContaining(['server', 'keyName', 'keySecretBase64'])
+    );
+  });
+
+  it('keeps the generated agent config on the safe propagation default', () => {
+    const r = buildAutomateConfig({
+      os: 'linux',
+      names: ['www.example.com'],
+      zone: 'example.com',
+      dnsProvider: 'azure-dns',
+      certPath: '/etc/ssl/tokentimer/a.pem',
+    });
+    expect(r.ok).toBe(true);
+    expect(r.config.dnsPropagation).toBeUndefined();
   });
 });

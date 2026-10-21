@@ -142,6 +142,10 @@
     "path": "/certops/dns-providers",
     "anchor": "credentials"
   },
+  "certops.dnsPropagation": {
+    "path": "/certops/dns-providers",
+    "anchor": "propagation"
+  },
   "certops.dryRun": {
     "path": "/runbooks/certops-agent-install",
     "anchor": "dry-run"

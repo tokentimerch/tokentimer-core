@@ -53,6 +53,42 @@ export const DNS_PROVIDERS = {
   },
 };
 
+// Shape of the agent-local credential file per provider, with placeholders
+// only. Field names are the ones the agent's DNS solvers read.
+const DNS_CREDENTIAL_SHAPES = {
+  cloudflare: { apiToken: '<api token>' },
+  route53: {
+    accessKeyId: '<access key id>',
+    secretAccessKey: '<secret access key>',
+    hostedZoneId: '<hosted zone id>',
+  },
+  'azure-dns': {
+    tenantId: '<tenant id>',
+    clientId: '<application (client) id>',
+    clientSecret: '<client secret>',
+    subscriptionId: '<subscription id>',
+    resourceGroup: '<resource group of the DNS zone>',
+  },
+  'google-cloud-dns': {
+    project_id: '<project id>',
+    client_email: '<service account email>',
+    private_key: '<private_key from the service account JSON key>',
+  },
+  rfc2136: {
+    server: '<name server host or IP>',
+    port: 53,
+    keyName: '<TSIG key name>',
+    keyAlgorithm: 'hmac-sha256',
+    keySecretBase64: '<base64 TSIG secret>',
+  },
+};
+
+/** Credential file example with placeholders, or '' for an unknown provider. */
+export function dnsCredentialsExample(dnsProvider) {
+  const shape = DNS_CREDENTIAL_SHAPES[dnsProvider];
+  return shape ? JSON.stringify(shape, null, 2) : '';
+}
+
 export function isValidHostname(value) {
   return HOSTNAME.test(String(value || '').trim());
 }
