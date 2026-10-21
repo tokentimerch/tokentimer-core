@@ -1672,6 +1672,24 @@ function Get-OwnedOcspConfigurationObservation(
  [byte[]]$OwnedSignerDer,
  [byte[]]$CurrentSignedCrlDer
 ) {
+ # The responder loads a changed configuration asynchronously and reports
+ # RevocationErrorCode only after it has fetched the CRL source. Re-read
+ # briefly before declaring the provider not ready.
+ for($attempt=1;;$attempt++) {
+  try { return Get-OwnedOcspConfigurationObservationOnce $Identifier $OriginalCaDer $OwnedSignerDer $CurrentSignedCrlDer }
+  catch {
+   if($attempt -ge 20 -or $_.Exception.Message -cnotmatch ' is not ready') { throw }
+   Start-Sleep -Seconds 3
+  }
+ }
+}
+
+function Get-OwnedOcspConfigurationObservationOnce(
+ [string]$Identifier,
+ [byte[]]$OriginalCaDer,
+ [byte[]]$OwnedSignerDer,
+ [byte[]]$CurrentSignedCrlDer
+) {
  Assert-OcspFixtureIdentifier $Identifier
  $caDigest=Get-OcspPublicDigest $OriginalCaDer
  $signerDigest=Get-OcspPublicDigest $OwnedSignerDer
@@ -1718,7 +1736,7 @@ function Get-OwnedOcspConfigurationObservation(
   if($null -eq $revocationError -or [int]$revocationError -ne 0 -or
      $null -eq $baseCrlUrls -or $baseCrlUrls.Count -ne 1 -or $baseCrlUrls[0] -cne (Get-OcspCrlSourceUrl) -or
      (Get-OcspPublicDigest (Read-OcspPublishedCrl)) -cne $crlDigest) {
-   throw 'Actual signed native revocation provider is not ready'
+   throw ('Actual signed native revocation provider is not ready (revocationError={0}; urls={1}; crlMatches={2})' -f $revocationError,(@($baseCrlUrls) -join ','),((Get-OcspPublicDigest (Read-OcspPublishedCrl)) -ceq $crlDigest))
   }
   return @{
    identifier=$Identifier
