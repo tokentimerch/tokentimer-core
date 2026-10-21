@@ -135,7 +135,12 @@ export function ExecutionStep({ ctx }) {
       kind='verify'
       title='Turn on execution safely'
       description='Three stages, each confirmed by what the server observed. Real work only starts after the dry run passes.'
-      docs={ctx.docs('certops.dryRun', 'Dry-run guide')}
+      docs={ctx.docs(
+        saved.infrastructure === 'windows'
+          ? 'certops.dryRunWindows'
+          : 'certops.dryRun',
+        'Dry-run guide'
+      )}
       actions={
         agent && !saved.dryRunJobId ? (
           <PrimaryButton

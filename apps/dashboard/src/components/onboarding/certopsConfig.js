@@ -889,6 +889,7 @@ export function buildPreseedSteps({ os, config }) {
       steps: [
         'Create the state folder if it does not exist: C:\\ProgramData\\TokenTimerAgent\\state',
         'Save the JSON below as config.json in that folder, as UTF-8 without a byte order mark. Notepad does this by default. In Windows PowerShell 5.1, Set-Content -Encoding utf8 adds a mark and the agent then refuses the file; use [IO.File]::WriteAllText with a UTF8Encoding($false) instead.',
+        'If an agent is already installed on this server, a config.json exists and holds an agentId line. Keep that line when you replace the file, or the service refuses to start.',
         'Run the installer. It keeps your config.json and adds the server address.',
       ],
       json,

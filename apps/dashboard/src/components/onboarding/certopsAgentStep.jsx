@@ -422,7 +422,16 @@ export function AgentStep({ ctx }) {
               {target.hostname || target.name} ({target.platform}, version{' '}
               {target.agentVersion})
             </Text>
-            {lacksProfile ? (
+            {lacksProfile && os === 'windows' ? (
+              <Text fontSize='xs' color='orange.400'>
+                This agent has not reported the {wantedProfileName} command
+                profile yet, usually because it was set up for discovery only.
+                Save the configuration above on the server, keeping the agentId
+                line already in config.json, then run Restart-Service
+                TokenTimerAgent. The agent publishes its command profiles on its
+                next heartbeat, so it does not need to register again.
+              </Text>
+            ) : lacksProfile ? (
               <Text fontSize='xs' color='orange.400'>
                 This agent was registered without the {wantedProfileName}{' '}
                 command profile, usually because it was set up for discovery

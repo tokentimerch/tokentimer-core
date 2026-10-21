@@ -146,6 +146,10 @@
     "path": "/runbooks/certops-agent-install",
     "anchor": "dry-run"
   },
+  "certops.dryRunWindows": {
+    "path": "/runbooks/certops-agent-install-windows",
+    "anchor": "windows-verify"
+  },
   "certops.controller": {
     "path": "/runbooks/acme-cert-manager",
     "anchor": "reporting"

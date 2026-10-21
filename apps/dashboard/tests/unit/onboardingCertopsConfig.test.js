@@ -7,6 +7,7 @@ import {
   buildInstallCommand,
   buildIssueJob,
   buildObserveConfig,
+  buildPreseedSteps,
   buildVaultConfigs,
   buildVaultPolicies,
   buildVaultPublishJob,
@@ -824,5 +825,11 @@ describe('windows ACME configuration', () => {
   it('gives Windows its own registration notes without --write-path', () => {
     expect(registrationNotesFor('windows').join(' ')).not.toMatch(/write-path/);
     expect(registrationNotesFor('linux').join(' ')).toMatch(/write-path/);
+  });
+
+  it('warns a Windows reader with an installed agent to keep its agentId line', () => {
+    const windows = buildPreseedSteps({ os: 'windows', config: {} });
+    expect(windows.steps.join(' ')).toMatch(/agentId/);
+    expect(windows.steps.join(' ')).toMatch(/refuses to start/);
   });
 });
