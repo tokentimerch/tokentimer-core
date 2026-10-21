@@ -99,6 +99,7 @@ export function VaultStep({ ctx }) {
     vaultAddress: saved.vaultAddress || '',
     mount: saved.vaultMount || 'secret',
     groupId: saved.groupId || '',
+    caFile: saved.vaultCaFile || '',
   });
   const set = key => e => setForm(f => ({ ...f, [key]: e.target.value }));
   const names = (saved.names || '').split(/[\s,]+/).filter(Boolean);
@@ -110,6 +111,8 @@ export function VaultStep({ ctx }) {
     names,
     zone: saved.zone,
     dnsProvider: saved.dnsProvider || 'cloudflare',
+    caEndpoint: saved.caEndpoint || undefined,
+    caFile: form.caFile.trim(),
   });
   let policies = null;
   try {
@@ -193,6 +196,18 @@ export function VaultStep({ ctx }) {
             placeholder='from publication.groupId'
           />
         </FormControl>
+        <FormControl>
+          <FormLabel fontSize='sm'>Vault CA file (optional)</FormLabel>
+          <Input
+            size='sm'
+            value={form.caFile}
+            onChange={set('caFile')}
+            placeholder='/etc/tokentimer-agent/vault-ca.pem'
+          />
+          <Text fontSize='xs' mt={1} color={muted}>
+            Needed when Vault uses a private CA. The file stays on each host.
+          </Text>
+        </FormControl>
         {!out.ok
           ? (out.problems || []).map(p => (
               <Text key={p} fontSize='xs' color='red.400'>
@@ -242,6 +257,7 @@ export function VaultStep({ ctx }) {
             saveCertops(ctx, {
               vaultAddress: form.vaultAddress,
               vaultMount: form.mount,
+              vaultCaFile: form.caFile.trim(),
               groupId: form.groupId,
               configReviewed: true,
             })

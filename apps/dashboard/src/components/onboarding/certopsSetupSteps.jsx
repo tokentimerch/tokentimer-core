@@ -458,6 +458,9 @@ export function ConfigStep({ ctx }) {
                     </option>
                   ))}
                 </Select>
+                <Text fontSize='xs' mt={1} data-testid='dns-provider-note'>
+                  {DNS_PROVIDERS[form.dnsProvider]?.note}
+                </Text>
               </FormControl>
             </HStack>
             {os === 'windows' ? (
@@ -557,6 +560,14 @@ export function ConfigStep({ ctx }) {
                   those two commands, nothing else. Your server must already be
                   set up to read the certificate path above.
                 </Text>
+                <Text fontSize='xs' mt={1} data-testid='reload-privilege-note'>
+                  The test runs as the agent&apos;s own unprivileged user. On
+                  stock Debian and Ubuntu packages, nginx -t and apachectl
+                  configtest need to write the server&apos;s pid and log files,
+                  so they fail unless you grant that access first. The HAProxy
+                  check works unprivileged. When the test fails, the certificate
+                  is still written but the server is not reloaded.
+                </Text>
               </FormControl>
             ) : null}
           </>
@@ -585,10 +596,15 @@ export function ConfigStep({ ctx }) {
                 {ADCS_DRY_RUN_NOTE}
               </Text>
             ) : objective !== 'observe' ? (
-              <Text fontSize='xs'>
+              <Text fontSize='xs' data-testid='dns-credentials-note'>
                 The DNS credential stays on the host in a file readable only by
-                the agent. It is never entered here. The CA is the Let&apos;s
-                Encrypt staging endpoint until you change it.
+                the agent. It is never entered here. Create it yourself at{' '}
+                {result.config.dnsProviders?.[form.dnsProvider]
+                  ?.credentialsFile || 'the path in the file above'}{' '}
+                (mode 0600, owned by the agent user) with these fields:{' '}
+                {(DNS_PROVIDERS[form.dnsProvider]?.fields || []).join(', ')}.
+                The DNS providers page shows the exact file format. The CA is
+                the Let&apos;s Encrypt staging endpoint until you change it.
               </Text>
             ) : null}
           </>

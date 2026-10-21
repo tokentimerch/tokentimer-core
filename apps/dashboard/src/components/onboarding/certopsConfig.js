@@ -552,10 +552,13 @@ export function buildVaultConfigs({
   consumerAgentId,
   consumerBindingId,
   deployPath = '/etc/nginx/tokentimer',
+  caFile = '',
 }) {
   const problems = [];
   if (!/^https:\/\//.test(vaultAddress || ''))
     problems.push('The Vault address must use https.');
+  if (caFile && !String(caFile).startsWith('/'))
+    problems.push('The Vault CA file must be an absolute path.');
   if (!UUID.test(workspaceId || '')) problems.push('Invalid workspace id.');
   if (!UUID.test(groupId || '')) {
     problems.push(
@@ -571,6 +574,7 @@ export function buildVaultConfigs({
     address: vaultAddress,
     mount,
     ...(namespace ? { namespace } : {}),
+    ...(caFile ? { caFile } : {}),
     timeoutMs: 10000,
   };
   const group = { workspaceId, prefix, sans: names, keyAlgorithm: 'ec' };
@@ -582,11 +586,11 @@ export function buildVaultConfigs({
     execution: {
       enabled: true,
       dryRun: true,
-      keysDir: '/var/lib/tokentimer-agent/keys',
+      keysDir: AGENT_KEYS_DIR,
     },
     policy: {
       allowedTargetSelectors: names,
-      allowedPaths: ['/var/lib/tokentimer-agent'],
+      allowedPaths: [AGENT_KEYS_DIR],
       allowedCaEndpoints: [caEndpoint],
       allowedDnsZones: [zone],
       allowedDnsProviders: [dnsProvider],
@@ -631,11 +635,11 @@ export function buildVaultConfigs({
     execution: {
       enabled: true,
       dryRun: true,
-      keysDir: '/var/lib/tokentimer-agent/keys',
+      keysDir: AGENT_KEYS_DIR,
     },
     policy: {
       allowedTargetSelectors: [bindingId],
-      allowedPaths: [deployPath, '/var/lib/tokentimer-agent'],
+      allowedPaths: [deployPath, AGENT_KEYS_DIR],
       allowedCommands: {
         'nginx-validate': { argv: ['/usr/sbin/nginx', '-t'] },
         'nginx-reload': { argv: ['/usr/sbin/nginx', '-s', 'reload'] },

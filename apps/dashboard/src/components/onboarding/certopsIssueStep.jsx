@@ -98,6 +98,9 @@ export default function IssueStep({ ctx }) {
   const attempt = saved.issueAttempt || 1;
   const caEndpoint = saved.caEndpoint || STAGING_CA;
   const reloadLabel = RELOAD_SERVICES[saved.reloadService]?.label || '';
+  // Orders made before this was recorded fall back to the current choice.
+  const jobReloadService = saved.issueReloadService ?? saved.reloadService;
+  const jobReloadLabel = RELOAD_SERVICES[jobReloadService]?.label || '';
   const { refresh } = ctx;
 
   useEffect(() => {
@@ -137,7 +140,12 @@ export default function IssueStep({ ctx }) {
         })
       );
       const created = res.job || res;
-      await saveCertops(ctx, { issueJobId: created.id });
+      await saveCertops(ctx, {
+        issueJobId: created.id,
+        // The outcome text names the server this order used, even if the
+        // configuration is edited afterwards.
+        issueReloadService: windows ? '' : saved.reloadService || '',
+      });
     } catch (e) {
       // The server explains a taken path itself (409), so show it as is.
       setError(
@@ -177,6 +185,19 @@ export default function IssueStep({ ctx }) {
           >
             Request again
           </DashboardActionButton>
+        ) : view.noRetry ? (
+          <>
+            <DashboardActionButton
+              leftIcon={<FiRefreshCw />}
+              variant='outline'
+              onClick={() => refresh()}
+            >
+              Check again
+            </DashboardActionButton>
+            <DashboardActionButton variant='outline' onClick={askAgain}>
+              I reviewed the job log, request again
+            </DashboardActionButton>
+          </>
         ) : (
           <DashboardActionButton
             leftIcon={<FiRefreshCw />}
@@ -243,8 +264,8 @@ export default function IssueStep({ ctx }) {
         ) : null}
         {view.noRetry ? (
           <Text fontSize='sm'>
-            {saved.reloadService
-              ? `The certificate may already be on disk, but the ${reloadLabel} configuration test failed, so it was not reloaded and nothing was rolled back. Fix the ${reloadLabel} configuration, then check the job log before asking again.`
+            {jobReloadService
+              ? `The certificate may already be on disk, but the ${jobReloadLabel} configuration test failed, so it was not reloaded and nothing was rolled back. Fix the ${jobReloadLabel} configuration, then check the job log before asking again.`
               : 'The agent may have placed the order before the result was lost. Review the job log before asking again.'}
           </Text>
         ) : null}

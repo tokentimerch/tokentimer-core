@@ -479,6 +479,35 @@ describe('vault distribution', () => {
     expect(out.issuer.agentId).toMatch(/REPLACE_WITH/);
   });
 
+  it('keeps keys in the installed state folder and allows only what it needs', () => {
+    const out = buildVaultConfigs(base);
+    expect(out.issuer.execution.keysDir).toBe(AGENT_KEYS_DIR);
+    expect(out.issuer.policy.allowedPaths).toEqual([AGENT_KEYS_DIR]);
+    expect(out.consumer.execution.keysDir).toBe(AGENT_KEYS_DIR);
+    expect(out.consumer.policy.allowedPaths).toEqual([
+      '/etc/nginx/tokentimer',
+      AGENT_KEYS_DIR,
+    ]);
+  });
+
+  it('adds a Vault CA file to both stores only when given, and only as an absolute path', () => {
+    const plain = buildVaultConfigs(base);
+    expect(plain.issuer.materialStores.customer.caFile).toBeUndefined();
+    const withCa = buildVaultConfigs({
+      ...base,
+      caFile: '/etc/tokentimer-agent/vault-ca.pem',
+    });
+    expect(withCa.issuer.materialStores.customer.caFile).toBe(
+      '/etc/tokentimer-agent/vault-ca.pem'
+    );
+    expect(withCa.consumer.materialStores.customer.caFile).toBe(
+      '/etc/tokentimer-agent/vault-ca.pem'
+    );
+    expect(buildVaultConfigs({ ...base, caFile: 'vault-ca.pem' }).ok).toBe(
+      false
+    );
+  });
+
   it('scopes the object prefix to the workspace and group', () => {
     const out = buildVaultConfigs(base);
     expect(out.issuer.materialStores.customer.groups[GROUP].prefix).toBe(
