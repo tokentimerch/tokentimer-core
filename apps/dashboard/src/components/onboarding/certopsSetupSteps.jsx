@@ -146,7 +146,7 @@ export function ObjectiveStep({ ctx }) {
     const key = pickKey(ctx.session.intent?.goal, o.id);
     return {
       ...o,
-      candidate: isCandidatePick(key, o.status === 'candidate'),
+      candidate: isCandidatePick(key),
       hint: pickHint(key),
     };
   });

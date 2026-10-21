@@ -45,7 +45,7 @@ export function GoalStep({ ctx }) {
     ? GOAL_AREAS.filter(a => a.id === areaFilter)
     : GOAL_AREAS;
   const anyCandidate = areas.some(area =>
-    goals.some(g => g.area === area.id && isCandidatePick(g.id, g.candidate))
+    goals.some(g => g.area === area.id && isCandidatePick(g.id))
   );
   const current = ctx.session.intent?.goal || '';
   const [choice, setChoice] = useState(current);
@@ -109,10 +109,7 @@ export function GoalStep({ ctx }) {
                   </Text>
                   <Stack spacing={3}>
                     {inArea.map(goal => {
-                      const candidate = isCandidatePick(
-                        goal.id,
-                        goal.candidate
-                      );
+                      const candidate = isCandidatePick(goal.id);
                       const hint = pickHint(goal.id);
                       const scope = candidate
                         ? untestedPlatformsNote(

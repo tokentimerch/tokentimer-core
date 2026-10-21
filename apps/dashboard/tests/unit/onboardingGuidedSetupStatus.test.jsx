@@ -13,6 +13,7 @@ import {
   CANDIDATE_REPORT_LABEL,
   CANDIDATE_REPORT_URL,
   GUIDED_SETUP_STATUS,
+  entry,
   isCandidatePick,
   pickKey,
   untestedPlatformsNote,
@@ -95,12 +96,13 @@ describe('guided setup register', () => {
     }
   });
 
-  it('marks a pick when unverified or when the module flags it', () => {
+  it('marks a pick from the register alone', () => {
     withRegister(['monitor_https'], () => {
       expect(isCandidatePick('import_file')).toBe(true);
       expect(isCandidatePick('not-in-register')).toBe(true);
       expect(isCandidatePick('monitor_https')).toBe(false);
-      expect(isCandidatePick('monitor_https', true)).toBe(true);
+      // A planning flag passed by mistake changes nothing.
+      expect(isCandidatePick('monitor_https', true)).toBe(false);
     });
   });
   it('keeps the wording about the guided setup, not the feature', () => {
@@ -161,18 +163,21 @@ describe('goal picker badges', () => {
     );
   });
 
-  it('a module candidate flag still marks a verified goal', () => {
+  it('a module planning flag does not mark a verified goal', () => {
+    expect(GOALS.certops_adcs.candidate).toBe(true);
     withRegister(Object.keys(GUIDED_SETUP_STATUS), () => {
       wrap(<GoalStep ctx={makeCtx()} />);
-      expect(screen.getAllByText(CANDIDATE_BADGE)).toHaveLength(1);
-      expect(
-        describedText(screen.getByRole('radio', { name: /Microsoft CA/ }))
-      ).toContain(CANDIDATE_BADGE);
+      expect(screen.queryByText(CANDIDATE_BADGE)).toBeNull();
+      expect(screen.queryByText(CANDIDATE_NOTE)).toBeNull();
     });
   });
 
-  it('separates the AD CS feature from its guided setup', () => {
+  it('shows a register hint beside the badge of a pick that carries one', () => {
     withRegister([], () => {
+      GUIDED_SETUP_STATUS.certops_adcs = entry(
+        ['x'],
+        'AD CS enrollment is qualified in 0.18.0. This guided setup has not been verified through a real enrollment yet.'
+      );
       wrap(<GoalStep ctx={makeCtx()} />);
       const text = describedText(
         screen.getByRole('radio', {
@@ -198,93 +203,56 @@ describe('goal picker badges', () => {
 });
 
 describe('shipped register', () => {
-  it('clears only the picks with end-to-end evidence and keeps their caveats', () => {
-    const verifiedKeys = Object.keys(GUIDED_SETUP_STATUS)
-      .filter(k => GUIDED_SETUP_STATUS[k].verified)
-      .sort();
-    expect(verifiedKeys).toEqual([
-      'alerting',
-      'certops_observe:kubernetes',
-      'certops_observe:linux',
-      'import_file',
-      'import_integration',
-      'monitor_https',
-      'track_asset',
-    ]);
-    for (const k of verifiedKeys) {
-      expect(GUIDED_SETUP_STATUS[k].untested.length, k).toBeGreaterThan(0);
+  it('has every key verified and keeps each list of what was not covered', () => {
+    for (const [key, item] of Object.entries(GUIDED_SETUP_STATUS)) {
+      expect(item.verified, key).toBe(true);
+      expect(item.untested.length, key).toBeGreaterThan(0);
+      expect(item.hint, key).toBe('');
+      expect(isCandidatePick(key), key).toBe(false);
     }
   });
 
-  it('keeps the other CertOps picks as Candidate', () => {
-    for (const key of [
-      'certops_observe',
-      'certops_observe:windows',
-      'certops_automate',
-      'certops_automate:linux',
-      'certops_automate:windows',
-      'certops_adcs',
-      'certops_adcs:windows',
-      'certops_vault',
-      'certops_vault:linux',
-    ]) {
-      expect(isCandidatePick(key), key).toBe(true);
-    }
-  });
-
-  it('keeps a goal row Candidate while any of its cards is', () => {
+  it('keeps a goal row consistent with its cards', () => {
     for (const [id, goal] of Object.entries(GOALS)) {
       if (!goal.certopsObjective) continue;
       const cards = infrastructuresFor(goal.certopsObjective).map(infra =>
         isCandidatePick(pickKey(id, infra.id))
       );
       expect(isCandidatePick(id), id).toBe(cards.some(Boolean));
-    }
-  });
-
-  it('shows a mixed picker: verified rows are clean, the note stays', () => {
-    wrap(<GoalStep ctx={makeCtx()} />);
-    for (const name of [
-      /Monitor a website certificate/,
-      /Track an API key, secret or license/,
-      /Import many assets/,
-      /Import from GitHub/,
-      /Set up alert notifications/,
-    ]) {
-      expect(describedText(screen.getByRole('radio', { name }))).not.toContain(
-        CANDIDATE_BADGE
-      );
-    }
-    for (const name of [
-      /Discover certificates/,
-      /Issue and renew/,
-      /Microsoft CA/,
-      /Share one certificate/,
-    ]) {
-      expect(describedText(screen.getByRole('radio', { name }))).toContain(
-        CANDIDATE_BADGE
-      );
-    }
-    expect(screen.getAllByText(CANDIDATE_BADGE)).toHaveLength(4);
-    expect(screen.getAllByText(CANDIDATE_NOTE)).toHaveLength(1);
-  });
-
-  it('observe cards: only Windows is marked, Linux and Kubernetes are clean', () => {
-    wrap(<ObjectiveStep ctx={makeCtx('certops_observe')} />);
-    const text = name => describedText(screen.getByRole('radio', { name }));
-    expect(text(/Linux server/)).not.toContain(CANDIDATE_BADGE);
-    expect(text(/Kubernetes/)).not.toContain(CANDIDATE_BADGE);
-    expect(text(/Windows Server/)).toContain(CANDIDATE_BADGE);
-    expect(screen.getAllByText(CANDIDATE_BADGE)).toHaveLength(1);
-    expect(screen.getAllByText(CANDIDATE_NOTE)).toHaveLength(1);
-  });
-
-  it('marks every automate, AD CS and Vault card', () => {
-    for (const goal of ['certops_automate', 'certops_adcs', 'certops_vault']) {
-      const view = wrap(<ObjectiveStep ctx={makeCtx(goal)} />);
-      for (const card of screen.getAllByRole('radio')) {
-        expect(describedText(card), goal).toContain(CANDIDATE_BADGE);
+      // A row lists what each of its cards left untested.
+      for (const infra of infrastructuresFor(goal.certopsObjective)) {
+        for (const line of GUIDED_SETUP_STATUS[pickKey(id, infra.id)]
+          .untested) {
+          expect(GUIDED_SETUP_STATUS[id].untested, `${id} ${line}`).toContain(
+            line
+          );
+        }
       }
+    }
+  });
+
+  it('shows a clean picker: no badge and no note', () => {
+    wrap(<GoalStep ctx={makeCtx()} />);
+    expect(screen.getAllByRole('radio')).toHaveLength(
+      Object.keys(GOALS).length
+    );
+    expect(screen.queryByText(CANDIDATE_BADGE)).toBeNull();
+    expect(screen.queryByText(CANDIDATE_NOTE)).toBeNull();
+    expect(document.body.textContent).not.toMatch(
+      /Not fully tested|not been verified|qualified in 0\.18\.0|Candidate/
+    );
+  });
+
+  it('shows no badge on any infrastructure card of any CertOps goal', () => {
+    for (const [id, goal] of Object.entries(GOALS)) {
+      if (!goal.certopsObjective) continue;
+      const view = wrap(<ObjectiveStep ctx={makeCtx(id)} />);
+      expect(screen.getAllByRole('radio').length, id).toBeGreaterThan(0);
+      expect(screen.queryByText(CANDIDATE_BADGE), id).toBeNull();
+      expect(screen.queryByText(CANDIDATE_NOTE), id).toBeNull();
+      expect(document.body.textContent, id).not.toMatch(
+        /not been verified|qualified in 0\.18\.0/
+      );
       view.unmount();
     }
   });
@@ -469,6 +437,10 @@ describe('infrastructure card badges', () => {
   });
   it('keeps the AD CS feature and guided setup apart on the Windows card', () => {
     withRegister([], () => {
+      GUIDED_SETUP_STATUS['certops_adcs:windows'] = entry(
+        ['x'],
+        'AD CS enrollment is qualified in 0.18.0. This guided setup has not been verified through a real enrollment yet.'
+      );
       wrap(<ObjectiveStep ctx={makeCtx('certops_adcs')} />);
       const card = screen.getByRole('radio', { name: /Windows Server/ });
       const text = describedText(card);

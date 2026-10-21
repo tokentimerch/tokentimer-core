@@ -1,6 +1,6 @@
 // What CertOps combinations the wizard may offer. Only qualified paths are
-// offered as normal choices; candidates are labelled; everything else is not
-// listed, so the wizard never presents an unsupported combination.
+// offered as normal choices; everything else is not listed, so the wizard
+// never presents an unsupported combination.
 
 export const OBJECTIVES = {
   observe: {
@@ -26,7 +26,7 @@ export const OBJECTIVES = {
 };
 
 // status: qualified | candidate. Anything unsupported is simply absent.
-// The wizard also marks a pick Candidate from guidedSetupStatus.js.
+// The Not fully tested label comes from guidedSetupStatus.js only.
 export const INFRASTRUCTURES = {
   linux: {
     label: 'Linux server',
@@ -55,8 +55,6 @@ export const INFRASTRUCTURES = {
       adcs: 'Use a domain-joined member server, not a domain controller. Install the certificate in the machine store and bind it to an HTTPS listener, typically an IIS site.',
     },
     platform: 'win32',
-    // The guided Windows ACME and AD CS setups are flagged here as well as in
-    // the guided setup register.
     objectives: {
       observe: 'qualified',
       automate: 'candidate',
