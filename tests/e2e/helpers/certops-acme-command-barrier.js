@@ -13,7 +13,11 @@ if(fs.existsSync(arm)){
  const item=fs.lstatSync(arm);if(!item.isFile()||item.isSymbolicLink())throw new Error("Unsafe command barrier");
  const proof=JSON.parse(fs.readFileSync(arm,"utf8"));if(!/^[a-f0-9-]{36}$/.test(proof.token))throw new Error("Invalid owned barrier token");
  const native=process.platform==="linux"?fs.readFileSync("/proc/self/stat","utf8").slice(fs.readFileSync("/proc/self/stat","utf8").lastIndexOf(")")+2).trim().split(/\s+/):null;
- fs.writeFileSync(receipt,JSON.stringify({token:proof.token,pid:process.pid,parentPid:process.ppid,binary,...(native?{processGroup:Number(native[2]),startTicks:native[19]}:{})}),{flag:"wx",mode:0o600});
+ // Publish only a closed, complete receipt. Linking preserves exclusive
+ // creation: an existing receipt is never overwritten or truncated.
+ const temporary=receipt+"."+require("node:crypto").randomUUID()+".tmp";
+ fs.writeFileSync(temporary,JSON.stringify({token:proof.token,pid:process.pid,parentPid:process.ppid,binary,...(native?{processGroup:Number(native[2]),startTicks:native[19]}:{})}),{flag:"wx",mode:0o600});
+ try{fs.linkSync(temporary,receipt);}finally{fs.unlinkSync(temporary);}
  timer=setInterval(()=>{if(!fs.existsSync(arm))execute();},100);
  deadline=setTimeout(()=>{throw new Error("Native command barrier deadline exceeded");},120000);deadline.unref();
 }else execute();
