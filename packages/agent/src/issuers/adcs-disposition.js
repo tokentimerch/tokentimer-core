@@ -37,6 +37,9 @@ function hexHresult(code) {
 // validation, because the CMC signer is not the pinned key.
 const CA_KEY_CHANGED_DETAIL = "CMS signer key does not match caKeySha256";
 
+// Exact text from tokentimer-adcs-cmc: signed success without a leaf, as for the CA's own CA-cert request row.
+const CMC_SUCCESS_WITHOUT_LEAF_ERROR = "success status without issued certificate";
+
 function isCaKeyChanged(cmc) {
   return Boolean(cmc) && cmc.error === CA_KEY_CHANGED_DETAIL;
 }
@@ -188,6 +191,7 @@ function mapAdcsDisposition({
 module.exports = {
   HRESULT,
   CA_KEY_CHANGED_DETAIL,
+  CMC_SUCCESS_WITHOUT_LEAF_ERROR,
   mapAdcsDisposition,
   toUint32,
   hexHresult,

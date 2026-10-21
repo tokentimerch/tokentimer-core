@@ -11,6 +11,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { durableWriteFile } = require("./adcs-enrollment-journal");
 const { acquireExclusiveLockFile } = require("../windows-cert-store");
+const { CMC_SUCCESS_WITHOUT_LEAF_ERROR } = require("./adcs-disposition");
 
 const WATERMARK_DIR = "adcs-ca-watermarks";
 const DEFAULT_RECONCILE_WINDOW = 16;
@@ -35,7 +36,14 @@ function isSkippableReconcileProbe(issuance) {
   ) {
     return true;
   }
-  return false;
+  // A first enrollment scans from RequestId 1, whose row is the CA's own CA certificate:
+  // signed success with no leaf. It can never become this enrollment's certificate.
+  return (
+    issuance.outcome === "uncertain" &&
+    issuance.caHresult === "0x00000000" &&
+    typeof issuance.detail === "string" &&
+    issuance.detail.includes(CMC_SUCCESS_WITHOUT_LEAF_ERROR)
+  );
 }
 
 /**
