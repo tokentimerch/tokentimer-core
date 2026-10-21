@@ -11,19 +11,22 @@
  * together with every phase it reads state from:
  *  - capacity -> ca: the pending CA renewal proof reads gate.report.nativeAdcsCapacity and the capacity store receipts.
  *  - pending  -> ca: pending CA key change and renewal reuse pendingRecoveryFixtures.
+ *  - uncertain and recovery are separate shards: each uncertain fixture waits out a real 15 minute job lease, and one
+ *    60 minute run-command window cannot hold all four of them. The fixtures are self-contained.
  *  - ca keeps its own order (same-key renewal, key change, revalidation, validation expiry, CRL outage, stopped site)
  *    because they chain renewalFixture.observed / currentEnrollmentId.
  *  - renewals is one chain: manual -> profile -> scheduler -> two -> background -> live ACL -> HTTP CRL -> OCSP -> outbox
  *    (profileId, ownedBackgroundStoreCertificates and renewalFixture.observed are produced step by step).
  */
 
-const PHASES = Object.freeze(["core", "capacity", "renewals", "pending", "templates", "ca", "uncertain"]);
+const PHASES = Object.freeze(["core", "capacity", "renewals", "pending", "templates", "ca", "uncertain", "recovery"]);
 
 const SHARDS = Object.freeze({
   issuance: Object.freeze(["core"]),
   renewals: Object.freeze(["renewals"]),
   "pending-and-ca": Object.freeze(["capacity", "pending", "ca"]),
   "templates-and-uncertain": Object.freeze(["templates", "uncertain"]),
+  "uncertain-recovery": Object.freeze(["recovery"]),
 });
 
 const SHARD_NAMES = Object.freeze(["all", ...Object.keys(SHARDS)]);
@@ -40,6 +43,9 @@ const RULES = Object.freeze([
   [/^adcs-real-owned-cleanup$/, "cleanup"],
   [CAPACITY_BROWSER, "capacity"],
   [/^adcs-real-capacity-/, "capacity"],
+  [/^adcs-real-uncertain-(?:single-|operator-created-|public-explicit-|unused-operator-)/, "recovery"],
+  [/^adcs-real-public-reconcile-/, "recovery"],
+  [/^adcs-real-browser-(?:owned-requestid-reconcile|reconcile-native-installed-and-unused-revoked)$/, "recovery"],
   [/^adcs-real-browser-/, "uncertain"],
   [/^adcs-real-[a-z0-9]+-(?:issued|renewed)-cng-iis$/, "core"],
   [/^adcs-real-localized-/, "core"],
