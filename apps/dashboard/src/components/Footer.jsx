@@ -135,15 +135,17 @@ const Footer = () => {
         borderTopWidth='1px'
         borderColor={border}
         w='100%'
-        pl={
-          isAuthShellPage || isUnknownRoute
-            ? DASHBOARD_PAGE_GUTTER_X
-            : {
-                base: 4,
-                lg: `calc(var(--tt-dashboard-sidebar-width, ${DASHBOARD_SIDEBAR_FALLBACK_WIDTH}) + 1rem)`,
-                '2xl': `calc(var(--tt-dashboard-sidebar-width, ${DASHBOARD_SIDEBAR_FALLBACK_WIDTH}) + 1.25rem)`,
-              }
-        }
+        pl={DASHBOARD_PAGE_GUTTER_X}
+        // Edition-specific routes can mount the shell without being in the route list.
+        sx={{
+          'body:has([data-dashboard-shell-header]) &': {
+            pl: {
+              base: 4,
+              lg: `calc(var(--tt-dashboard-sidebar-width, ${DASHBOARD_SIDEBAR_FALLBACK_WIDTH}) + 1rem)`,
+              '2xl': `calc(var(--tt-dashboard-sidebar-width, ${DASHBOARD_SIDEBAR_FALLBACK_WIDTH}) + 1.25rem)`,
+            },
+          },
+        }}
         pr={DASHBOARD_PAGE_GUTTER_X}
         minH={{ base: '104px', md: '58px' }}
         pt={{ base: 3, md: 2 }}
