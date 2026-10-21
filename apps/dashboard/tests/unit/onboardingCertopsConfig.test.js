@@ -846,7 +846,9 @@ describe('windows ACME configuration', () => {
     // Said once, and before the installer step that keeps the file.
     expect(linux.steps.filter(s => /agentId/.test(s))).toHaveLength(1);
     const warning = linux.steps.findIndex(s => /agentId/.test(s));
-    const installer = linux.steps.findIndex(s => /Next page: you install/.test(s));
+    const installer = linux.steps.findIndex(s =>
+      /Next page: you install/.test(s)
+    );
     expect(warning).toBeGreaterThan(-1);
     expect(warning).toBeLessThan(installer);
   });

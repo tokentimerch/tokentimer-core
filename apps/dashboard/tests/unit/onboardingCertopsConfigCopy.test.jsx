@@ -236,7 +236,7 @@ describe('ACME configuration form', () => {
   });
 
   it('says the installer comes on the next page and keeps the file', () => {
-    const steps = buildPreseedSteps({ os: 'windows', config: {} }).steps;
+    const { steps } = buildPreseedSteps({ os: 'windows', config: {} });
     expect(steps[steps.length - 1]).toMatch(/Next page: you install the agent/);
     expect(steps.join(' ')).not.toMatch(/adds the server address/);
   });
