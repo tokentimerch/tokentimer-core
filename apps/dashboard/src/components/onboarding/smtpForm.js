@@ -27,6 +27,37 @@ export function suggestTls(port) {
   return null;
 }
 
+// The server requires a STARTTLS upgrade unless told otherwise, so a plain
+// relay or a local test server only works when the operator can say so.
+export const TLS_MODES = {
+  starttls: {
+    label: 'STARTTLS (recommended)',
+    fields: { secure: false, require_tls: true },
+  },
+  ssl: {
+    label: 'SSL/TLS from the start (usually port 465)',
+    fields: { secure: true, require_tls: false },
+  },
+  none: {
+    label: 'No encryption (internal relay or local test server only)',
+    fields: { secure: false, require_tls: false },
+  },
+};
+
+export function defaultTlsMode(port) {
+  return Number(port) === 465 ? 'ssl' : 'starttls';
+}
+
+const isOff = v => v === false || String(v).toLowerCase() === 'false';
+const isOn = v => v === true || String(v).toLowerCase() === 'true';
+
+/** The mode the saved settings describe, for the form to start from. */
+export function tlsModeFromSaved(current = {}, port) {
+  if (isOn(current.secure?.value)) return 'ssl';
+  if (isOff(current.require_tls?.value)) return 'none';
+  return defaultTlsMode(port);
+}
+
 /**
  * @param {object} form      values the user typed (strings/booleans)
  * @param {object} current   GET smtp section: { field: { value, locked } }
@@ -91,6 +122,22 @@ export function explainSmtpTestError(code, message) {
   switch (code) {
     case 'SMTP_NOT_CONFIGURED':
       return 'Save the settings first, then send the test.';
+    case 'SMTP_CONNECTION':
+      return 'Could not connect. Check the host and port, and that the TokenTimer server (not your browser) can reach the mail server.';
+    case 'SMTP_AUTH':
+      return 'The mail server rejected the login. Check the username and password.';
+    case 'SMTP_TIMEOUT':
+      return 'The mail server did not answer in time. Check the host, the port and any firewall.';
+    case 'SMTP_RATE_LIMIT':
+    case 'SMTP_TEMPORARY_FAILURE':
+      return `${message || 'The mail server is limiting messages.'} Try again in a few minutes.`;
+    case 'SMTP_ERROR':
+      // The server requires STARTTLS by default, which a plain relay or a
+      // local test server cannot offer.
+      return (
+        `${message || 'The message could not be sent.'} ` +
+        'If this server has no encryption, such as a local test server, set Connection security to "No encryption". Otherwise check the host, port, login and sender address.'
+      );
     case 'SMTP_TEST_FAILED':
       return (
         `${message || 'The server refused the message.'} ` +

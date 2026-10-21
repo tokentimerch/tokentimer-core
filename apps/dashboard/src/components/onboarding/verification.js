@@ -311,7 +311,7 @@ export function evaluateVerification({
           'routing',
           CHECK_STATUS.FAIL,
           'Alerts have a recipient',
-          'No alert channel would be used for this asset. Make sure the default contact group has an email recipient.'
+          'No alert channel would be used for this asset. Make sure the default contact group has an email recipient and that email alerts are switched on in workspace preferences.'
         )
       );
     }

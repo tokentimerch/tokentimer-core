@@ -10,6 +10,7 @@ import {
   Input,
   Radio,
   RadioGroup,
+  Select,
   Spinner,
   Stack,
   Switch,
@@ -32,11 +33,13 @@ import {
   parseThresholds,
 } from './thresholds.js';
 import {
+  TLS_MODES,
   buildSmtpPayload,
+  defaultTlsMode,
   explainSmtpTestError,
   lockedFields,
   smtpIsReady,
-  suggestTls,
+  tlsModeFromSaved,
 } from './smtpForm.js';
 
 export function NotificationsStep({ ctx }) {
@@ -210,7 +213,13 @@ export function SmtpStep({ ctx }) {
     pass: '',
     from_email: '',
     from_name: 'TokenTimer',
+    tls: 'starttls',
   });
+  const [tlsTouched, setTlsTouched] = useState(false);
+  // Once saved the step stays so the test email can be sent. The summary is
+  // not refreshed until Continue, because a refreshed summary would move the
+  // guide on and drop the form.
+  const [saved, setSaved] = useState(false);
   const [testTo, setTestTo] = useState(ctx.userEmail || '');
   const [message, setMessage] = useState(null);
   const [error, setError] = useState('');
@@ -232,6 +241,7 @@ export function SmtpStep({ ctx }) {
         pass: '',
         from_email: smtp.from_email?.value || '',
         from_name: smtp.from_name?.value || 'TokenTimer',
+        tls: tlsModeFromSaved(smtp, smtp.port?.value || '587'),
       }));
       setState({ loading: false, smtp });
     } catch (e) {
@@ -243,12 +253,22 @@ export function SmtpStep({ ctx }) {
     load();
   }, [load]);
 
-  const set = key => e => setForm(f => ({ ...f, [key]: e.target.value }));
+  const set = key => e => {
+    const { value } = e.target;
+    setForm(f => ({
+      ...f,
+      [key]: value,
+      ...(key === 'port' && !tlsTouched ? { tls: defaultTlsMode(value) } : {}),
+    }));
+  };
   const smtp = state.smtp || {};
   const locked = lockedFields(smtp);
 
   const save = async () => {
-    const { payload, problems } = buildSmtpPayload(form, smtp);
+    const { payload, problems } = buildSmtpPayload(
+      { ...form, ...TLS_MODES[form.tls].fields },
+      smtp
+    );
     if (problems.length) {
       setError(problems.join(' '));
       return;
@@ -257,19 +277,24 @@ export function SmtpStep({ ctx }) {
     setError('');
     setMessage(null);
     try {
-      const tls = suggestTls(form.port);
-      const data = await onboardingActions.putSmtpSettings({
-        ...payload,
-        ...(tls && payload.secure === undefined && !smtp.secure?.locked
-          ? tls
-          : {}),
-      });
+      const data = await onboardingActions.putSmtpSettings(payload);
       setState(s => ({ ...s, smtp: data.smtp || s.smtp }));
       setForm(f => ({ ...f, pass: '' }));
-      setMessage('Saved. Send a test email to confirm it works.');
-      await ctx.refresh();
+      setSaved(true);
+      setMessage(
+        'Saved. Send a test email to confirm it works, then continue.'
+      );
     } catch (e) {
       setError(e.message || 'Could not save the email settings.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const finish = async () => {
+    setBusy(true);
+    try {
+      await ctx.refresh();
     } finally {
       setBusy(false);
     }
@@ -291,8 +316,12 @@ export function SmtpStep({ ctx }) {
     }
   };
 
-  // A working setup is never asked about again.
-  if (smtpIsReady(smtp) || ctx.summary?.alerts?.smtpConfigured === true) {
+  // A working setup is never asked about again, except right after saving it
+  // here, where the test email still has to be sent.
+  if (
+    !saved &&
+    (smtpIsReady(smtp) || ctx.summary?.alerts?.smtpConfigured === true)
+  ) {
     return (
       <StepFrame
         kind='verify'
@@ -364,23 +393,40 @@ export function SmtpStep({ ctx }) {
       ]}
       actions={
         <>
-          <DashboardActionButton
-            variant='outline'
-            onClick={() => ctx.skip('smtp')}
-          >
-            Skip for now
-          </DashboardActionButton>
+          {saved ? null : (
+            <DashboardActionButton
+              variant='outline'
+              onClick={() => ctx.skip('smtp')}
+            >
+              Skip for now
+            </DashboardActionButton>
+          )}
           <DashboardActionButton
             variant='outline'
             onClick={sendTest}
             isLoading={busy}
-            isDisabled={!testTo}
+            isDisabled={!saved || !testTo}
           >
             Send test email
           </DashboardActionButton>
-          <PrimaryButton onClick={save} isLoading={busy}>
-            Save
-          </PrimaryButton>
+          {saved ? (
+            <>
+              <DashboardActionButton
+                variant='outline'
+                onClick={save}
+                isDisabled={busy}
+              >
+                Save again
+              </DashboardActionButton>
+              <PrimaryButton onClick={finish} isLoading={busy}>
+                Continue
+              </PrimaryButton>
+            </>
+          ) : (
+            <PrimaryButton onClick={save} isLoading={busy}>
+              Save
+            </PrimaryButton>
+          )}
         </>
       }
     >
@@ -431,6 +477,30 @@ export function SmtpStep({ ctx }) {
             />
           </FormControl>
         </HStack>
+        <FormControl
+          isDisabled={smtp.secure?.locked || smtp.require_tls?.locked}
+        >
+          <FormLabel fontSize='sm'>Connection security</FormLabel>
+          <Select
+            size='sm'
+            value={form.tls}
+            onChange={e => {
+              setTlsTouched(true);
+              setForm(f => ({ ...f, tls: e.target.value }));
+            }}
+          >
+            {Object.entries(TLS_MODES).map(([id, mode]) => (
+              <option key={id} value={id}>
+                {mode.label}
+              </option>
+            ))}
+          </Select>
+          <FormHelperText fontSize='xs'>
+            {form.tls === 'none'
+              ? 'The login and every message travel in clear text. Use this only for a trusted internal relay or a local test server such as Mailpit.'
+              : 'Most providers use STARTTLS on port 587 or SSL/TLS on port 465.'}
+          </FormHelperText>
+        </FormControl>
         <HStack align='start' spacing={3} flexWrap='wrap'>
           <FormControl flex='1 1 200px' isDisabled={smtp.user?.locked}>
             <FormLabel fontSize='sm'>Username</FormLabel>
