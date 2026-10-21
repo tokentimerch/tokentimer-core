@@ -12,6 +12,7 @@ import {
   isLoopbackHttp,
   WINDOWS_ACME_PROFILE,
   RELOAD_SERVICES,
+  NGINX_RELOAD_DROPIN,
   reloadCommands,
   issueIdempotencyKey,
   isValidHostname,
@@ -599,11 +600,21 @@ describe('optional web server reload', () => {
     }
   });
 
-  it('never validates after reloading, and always tests the config first', () => {
+  it('runs a check before the reload, and tests the config as root for nginx', () => {
     for (const def of Object.values(RELOAD_SERVICES)) {
-      expect(def.validate.join(' ')).toMatch(/-t$|configtest$|-c /);
+      expect(def.validate.join(' ')).toMatch(
+        /-t$|configtest$|-c |is-active --quiet nginx$/
+      );
       expect(def.reload[1]).toBe('reload');
     }
+    // nginx -t needs write access the unprivileged service user lacks, so the
+    // config test moves into the unit's reload, which runs as root.
+    expect(RELOAD_SERVICES.nginx.validate).not.toContain('-t');
+    expect(NGINX_RELOAD_DROPIN).toContain('ExecReload=/usr/sbin/nginx -t');
+    expect(NGINX_RELOAD_DROPIN).toContain(
+      '/etc/systemd/system/nginx.service.d/'
+    );
+    expect(NGINX_RELOAD_DROPIN).not.toMatch(SENSITIVE_PATTERN);
   });
 
   it('refers to the same command names in the job as in the policy', () => {

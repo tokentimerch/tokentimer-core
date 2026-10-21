@@ -205,9 +205,14 @@ export function buildObserveConfig({ os, directories = [] }) {
 }
 
 /**
- * Web servers the agent can validate and reload after it writes a certificate.
- * The validate command is always the server's own config test, so a broken
- * config is never reloaded. argv is exact: policy refuses anything else.
+ * Web servers the agent can reload after it writes a certificate. The agent
+ * always runs a "validate" command before the reload and both run as its
+ * unprivileged service user. Apache and HAProxy can test their configuration
+ * that way; nginx cannot (nginx -t must open /run/nginx.pid and its error log
+ * for writing, which stock packages only allow for root). For nginx the
+ * validate step therefore only checks that the unit is running, and the
+ * configuration test is done as root by the unit's own reload (see
+ * NGINX_RELOAD_DROPIN). argv is exact: policy refuses anything else.
  */
 /** Name the Windows job and policy use for the operator's ACME client. */
 export { WINDOWS_ACME_PROFILE };
@@ -216,7 +221,7 @@ const WINDOWS_PATH = /^([A-Za-z]:[\\/]|\\\\)[^\n\r]+$/;
 export const RELOAD_SERVICES = {
   nginx: {
     label: 'nginx',
-    validate: ['/usr/sbin/nginx', '-t'],
+    validate: ['/usr/bin/systemctl', 'is-active', '--quiet', 'nginx'],
     reload: ['/usr/bin/systemctl', 'reload', 'nginx'],
   },
   apache: {
@@ -230,6 +235,23 @@ export const RELOAD_SERVICES = {
     reload: ['/usr/bin/systemctl', 'reload', 'haproxy'],
   },
 };
+
+/**
+ * One-time host setup that makes `systemctl reload nginx` test the
+ * configuration (as root) before it signals nginx. The stock nginx unit
+ * reloads without testing, so without this a rejected configuration would
+ * look like a successful reload.
+ */
+export const NGINX_RELOAD_DROPIN = [
+  'sudo mkdir -p /etc/systemd/system/nginx.service.d',
+  "sudo tee /etc/systemd/system/nginx.service.d/tokentimer-reload.conf <<'EOF'",
+  '[Service]',
+  'ExecReload=',
+  'ExecReload=/usr/sbin/nginx -t -q -g "daemon on; master_process on;"',
+  'ExecReload=/usr/sbin/nginx -g "daemon on; master_process on;" -s reload',
+  'EOF',
+  'sudo systemctl daemon-reload',
+].join('\n');
 
 /** The two named commands a reload needs; names are what jobs refer to. */
 export function reloadCommands(service) {

@@ -269,7 +269,7 @@ export default function IssueStep({ ctx }) {
         {view.noRetry ? (
           <Text fontSize='sm'>
             {jobReloadService
-              ? `The certificate may already be on disk, but the ${jobReloadLabel} configuration test failed, so it was not reloaded and nothing was rolled back. Fix the ${jobReloadLabel} configuration, then check the job log before asking again.`
+              ? `The certificate may already be on disk, but the ${jobReloadLabel} check or reload failed, so the server was not reloaded and nothing was rolled back. Fix the ${jobReloadLabel} configuration, then check the job log before asking again.`
               : 'The agent may have placed the order before the result was lost. Review the job log before asking again.'}
           </Text>
         ) : null}
@@ -288,7 +288,7 @@ export default function IssueStep({ ctx }) {
           {windows
             ? `The agent stores the certificate in the ${saved.iisStore || 'My'} machine store and binds it to the HTTPS binding ${saved.iisSite || 'Default Web Site'} (usually an IIS site) on port ${saved.iisPort || 443}, replacing the certificate currently bound there.`
             : saved.reloadService
-              ? `After writing the certificate, the agent tests the ${reloadLabel} configuration and reloads it only if the test passes.`
+              ? `After writing the certificate, the agent checks ${reloadLabel} and then reloads it with systemctl. The configuration test happens in that check (Apache, HAProxy) or in the unit's own reload (nginx, Apache, HAProxy), so a broken configuration is not loaded.`
               : 'The certificate is written to the path above. Nothing is reloaded; you can choose a web server to reload in the configuration step.'}
         </Text>
         {view.done ? (

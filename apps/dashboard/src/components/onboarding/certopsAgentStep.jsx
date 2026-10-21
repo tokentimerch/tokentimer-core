@@ -78,6 +78,13 @@ export function AgentStep({ ctx }) {
   const [deferred, setDeferred] = useState(false);
   const timer = useRef(null);
 
+  // A token belongs to the setup it was made for. Switching goals in the same
+  // page must not keep showing a used token or a disabled button.
+  useEffect(() => {
+    setToken(null);
+    setDeferred(false);
+  }, [saved.objective, infra]);
+
   const agents = ctx.summary?.certops?.agents;
   const items = agents?.items || [];
   const target =

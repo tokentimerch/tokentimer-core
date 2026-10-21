@@ -34,6 +34,7 @@ import {
   buildAutomateConfig,
   STAGING_CA,
   RELOAD_SERVICES,
+  NGINX_RELOAD_DROPIN,
   buildObserveConfig,
   buildPreseedSteps,
   mergeInstallerFields,
@@ -584,19 +585,51 @@ export function ConfigStep({ ctx }) {
                   ))}
                 </Select>
                 <Text fontSize='xs' mt={1}>
-                  The agent first tests the server&apos;s own configuration and
-                  only reloads if the test passes. It is allowed to run exactly
+                  The agent runs a check command, then{' '}
+                  <code>systemctl reload</code>, both as its own unprivileged
+                  user. The installer command in the next step grants only that
+                  reload for the server you choose. It is allowed to run exactly
                   those two commands, nothing else. Your server must already be
                   set up to read the certificate path above.
                 </Text>
-                <Text fontSize='xs' mt={1} data-testid='reload-privilege-note'>
-                  The test runs as the agent&apos;s own unprivileged user. On
-                  stock Debian and Ubuntu packages, nginx -t and apachectl
-                  configtest need to write the server&apos;s pid and log files,
-                  so they fail unless you grant that access first. The HAProxy
-                  check works unprivileged. When the test fails, the certificate
-                  is still written but the server is not reloaded.
-                </Text>
+                {form.reloadService === 'nginx' ? (
+                  <VStack align='stretch' spacing={2} mt={1}>
+                    <Text fontSize='xs' data-testid='reload-nginx-note'>
+                      nginx cannot test its own configuration as an unprivileged
+                      user (nginx -t has to write /run/nginx.pid and its error
+                      log), so for nginx the agent only checks that the service
+                      is running. The stock nginx unit does not test the
+                      configuration on reload either, so run this once on the
+                      server. It makes every reload test the configuration as
+                      root first and fail when the test fails.
+                    </Text>
+                    <CopyBlock
+                      label='One-time nginx setup'
+                      text={NGINX_RELOAD_DROPIN}
+                    />
+                  </VStack>
+                ) : null}
+                {form.reloadService === 'apache' ? (
+                  <Text fontSize='xs' mt={1} data-testid='reload-apache-note'>
+                    <code>apachectl configtest</code> runs without privileges
+                    while Apache is running. The unit&apos;s own reload (
+                    <code>apachectl graceful</code>) tests the configuration
+                    again as root and refuses a broken one.
+                  </Text>
+                ) : null}
+                {form.reloadService === 'haproxy' ? (
+                  <Text fontSize='xs' mt={1} data-testid='reload-haproxy-note'>
+                    <code>haproxy -c</code> reads /etc/haproxy/haproxy.cfg
+                    without privileges. The unit&apos;s own reload tests the
+                    configuration again as root first.
+                  </Text>
+                ) : null}
+                {form.reloadService ? (
+                  <Text fontSize='xs' mt={1} data-testid='reload-failure-note'>
+                    When the test or the reload fails, the certificate is still
+                    written but the server keeps running with its old one.
+                  </Text>
+                ) : null}
               </FormControl>
             ) : null}
           </>

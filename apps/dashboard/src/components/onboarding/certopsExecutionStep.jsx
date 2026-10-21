@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Badge, HStack, Text, VStack } from '@chakra-ui/react';
 import { DashboardErrorAlert } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
@@ -50,11 +50,27 @@ export function ExecutionStep({ ctx }) {
   const goal = GOALS[ctx.session.intent?.goal];
   const needsExecution = goal?.certopsObjective !== 'observe';
 
+  // Read through refs so a new ctx object on every render does not restart
+  // the polling effect below.
+  const latest = useRef(ctx);
+  latest.current = ctx;
+
   const loadJob = useCallback(async () => {
     if (!saved.dryRunJobId) return;
     try {
       const res = await getJob(ctx.workspaceId, saved.dryRunJobId);
-      setJob(res.job || res);
+      const next = res.job || res;
+      setJob(next);
+      // The journey is planned from the workspace summary, so it has to be
+      // re-read once the test job reaches its final state or the guide would
+      // keep showing this step after it passed.
+      const current = latest.current;
+      if (
+        next?.status === 'dry_run_complete' &&
+        current.summary?.certops?.dryRun?.status !== 'dry_run_complete'
+      ) {
+        await current.refresh();
+      }
     } catch (e) {
       setError(e.message);
     }
