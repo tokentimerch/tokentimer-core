@@ -36,7 +36,7 @@ describe("Alert Queue Retry and Requeue", function () {
         .send({
           name: "Retry Token",
           type: "api_key",
-          category: "general",
+          category: "key_secret",
           expiresAt: soon.toISOString().slice(0, 10),
           workspace_id: ws,
         })
@@ -432,7 +432,7 @@ describe("Alert Queue Retry and Requeue", function () {
         .send({
           name: "Requeue Token",
           type: "api_key",
-          category: "general",
+          category: "key_secret",
           expiresAt: soon.toISOString().slice(0, 10),
           workspace_id: ws,
         })

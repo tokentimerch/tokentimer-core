@@ -64,7 +64,7 @@ describe("Contact Group Reassignment", function () {
       .send({
         name: "CG Token 1",
         type: "api_key",
-        category: "general",
+        category: "key_secret",
         expiresAt: soon.toISOString().slice(0, 10),
         workspace_id: ws,
         contact_group_id: "group-a",
@@ -77,7 +77,7 @@ describe("Contact Group Reassignment", function () {
       .send({
         name: "CG Token 2",
         type: "api_key",
-        category: "general",
+        category: "key_secret",
         expiresAt: soon.toISOString().slice(0, 10),
         workspace_id: ws,
         contact_group_id: "group-a",

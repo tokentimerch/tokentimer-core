@@ -16,6 +16,7 @@ const {
   enrichTokensWithAlertState,
 } = require("../services/alertEligibility");
 const { fetchAlertLifecycle } = require("../services/alertLifecycle");
+const { validateTypeCategoryUpdate } = require("../utils/tokenClassification");
 const {
   interpretContactGroupWrite,
   normalizeAssignedGroupIds,
@@ -1149,56 +1150,17 @@ router.put(
         }
       }
 
-      // Validate category if provided
-      if (
-        category &&
-        !["cert", "key_secret", "license", "general"].includes(category)
-      ) {
+      // Same rules as create; an unchanged stored pair is never re-judged.
+      const classificationError = validateTypeCategoryUpdate(
+        { type, category },
+        existingToken,
+      );
+      if (classificationError) {
         return res.status(400).json({
           error: "Validation failed",
           code: "VALIDATION_ERROR",
-          details: ["Invalid category"],
+          details: [classificationError],
         });
-      }
-
-      // Validate type and category compatibility if both are provided
-      if (type && category) {
-        const certTypes = [
-          "ssl_cert",
-          "tls_cert",
-          "code_signing",
-          "client_cert",
-        ];
-        const keySecretTypes = [
-          "api_key",
-          "secret",
-          "password",
-          "encryption_key",
-          "ssh_key",
-        ];
-        const licenseTypes = ["software_license", "service_subscription"];
-
-        if (category === "cert" && !certTypes.includes(type)) {
-          return res.status(400).json({
-            error: "Validation failed",
-            code: "VALIDATION_ERROR",
-            details: ["Invalid token type for selected category"],
-          });
-        }
-        if (category === "key_secret" && !keySecretTypes.includes(type)) {
-          return res.status(400).json({
-            error: "Validation failed",
-            code: "VALIDATION_ERROR",
-            details: ["Invalid token type for selected category"],
-          });
-        }
-        if (category === "license" && !licenseTypes.includes(type)) {
-          return res.status(400).json({
-            error: "Validation failed",
-            code: "VALIDATION_ERROR",
-            details: ["Invalid token type for selected category"],
-          });
-        }
       }
 
       // Defense in depth: a managed-backed token must keep a certificate

@@ -148,7 +148,7 @@ describe("Contact group default fallback", function () {
         name: "NoGroup-Fallback-Token",
         expiresAt,
         type: "api_key",
-        category: "general",
+        category: "key_secret",
         workspace_id: wsId,
       })
       .expect(201);

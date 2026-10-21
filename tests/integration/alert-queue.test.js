@@ -99,7 +99,7 @@ describe("Alert Queue and Delivery Integration", function () {
         name: "OpsToken",
         expiresAt: mkDate(9),
         type: "api_key",
-        category: "general",
+        category: "key_secret",
         contact_group_id: "ops",
         workspace_id: ws,
       })
@@ -111,7 +111,7 @@ describe("Alert Queue and Delivery Integration", function () {
         name: "DefToken",
         expiresAt: mkDate(13),
         type: "api_key",
-        category: "general",
+        category: "key_secret",
         workspace_id: ws,
       })
       .expect(201);
@@ -139,7 +139,7 @@ describe("Alert Queue and Delivery Integration", function () {
       .send({
         name: "Queue Test Token",
         type: "api_key",
-        category: "general",
+        category: "key_secret",
         expiresAt: soon.toISOString().slice(0, 10),
         workspace_id: ws,
       });

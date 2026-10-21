@@ -163,7 +163,7 @@ describe("Alert Bug Fixes", function () {
       .send({
         name: "Duplicate Test Token",
         type: "api_key",
-        category: "general",
+        category: "key_secret",
         expiresAt: futureDate.toISOString().slice(0, 10),
         workspace_id: workspaceId,
       });
