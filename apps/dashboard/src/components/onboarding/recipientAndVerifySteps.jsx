@@ -170,6 +170,16 @@ export function VerifyStep({ ctx }) {
             </VStack>
           </HStack>
         ))}
+        {(result?.notes || []).map(note => (
+          <Text
+            key={note}
+            fontSize='xs'
+            color={muted}
+            data-testid='verify-note'
+          >
+            {note}
+          </Text>
+        ))}
       </VStack>
     </StepFrame>
   );

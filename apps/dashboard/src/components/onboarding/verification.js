@@ -2,6 +2,7 @@
 // reads (summary, the asset, its alert state), never session flags.
 
 import {
+  WORKER_NOTE,
   overdueEnrollmentsMessage,
   outboxBacklogMessage,
 } from './certopsWorkerMessages.js';
@@ -378,5 +379,8 @@ export function evaluateVerification({
     needsDeliverySetup: checks.some(
       c => c.id === 'smtp' && c.status === CHECK_STATUS.WARN
     ),
+    // Static reminders shown under the checks. Renewals and rollouts do not
+    // run without the worker, and nothing else on this page proves it is up.
+    notes: goal && goal.startsWith('certops_') ? [WORKER_NOTE] : [],
   };
 }

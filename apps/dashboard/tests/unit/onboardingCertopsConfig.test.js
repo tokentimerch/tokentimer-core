@@ -836,6 +836,18 @@ describe('windows ACME configuration', () => {
     expect(windows.steps.join(' ')).toMatch(/agentId/);
     expect(windows.steps.join(' ')).toMatch(/refuses to start/);
   });
+
+  it('warns a Linux reader with an installed agent to keep its agentId line', () => {
+    const linux = buildPreseedSteps({ os: 'linux', config: {} });
+    expect(linux.steps.join(' ')).toMatch(/agentId/);
+    expect(linux.steps.join(' ')).toMatch(/refuses to start/);
+    // Said once, and before the installer step that keeps the file.
+    expect(linux.steps.filter(s => /agentId/.test(s))).toHaveLength(1);
+    const warning = linux.steps.findIndex(s => /agentId/.test(s));
+    const installer = linux.steps.findIndex(s => /Run the installer/.test(s));
+    expect(warning).toBeGreaterThan(-1);
+    expect(warning).toBeLessThan(installer);
+  });
 });
 
 describe('DNS credential file examples', () => {

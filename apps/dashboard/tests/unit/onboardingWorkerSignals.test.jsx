@@ -233,4 +233,31 @@ describe('final check', () => {
     ).toBe(false);
     expect(verify({}).checks.some(c => c.id === 'worker')).toBe(false);
   });
+
+  it('always carries the static worker sentence once for CertOps goals', () => {
+    expect(verify({}).notes).toEqual([WORKER_NOTE]);
+    expect(
+      verify({ distribution: { outboxBacklog: { count: 3 } } }).notes
+    ).toEqual([WORKER_NOTE]);
+    for (const goal of [
+      'certops_observe',
+      'certops_automate',
+      'certops_adcs',
+    ]) {
+      expect(
+        evaluateVerification({ goal, monitors: [], token: null, summary: {} })
+          .notes
+      ).toEqual([WORKER_NOTE]);
+    }
+  });
+
+  it('keeps the sentence off goals that have nothing to do with the worker', () => {
+    const result = evaluateVerification({
+      goal: 'track_asset',
+      monitors: [],
+      token: null,
+      summary: {},
+    });
+    expect(result.notes).toEqual([]);
+  });
 });

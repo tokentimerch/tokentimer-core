@@ -993,6 +993,7 @@ export function buildPreseedSteps({ os, config }) {
     steps: [
       'Create the state directory: sudo mkdir -p /opt/tokentimer-agent/state && sudo chmod 0700 /opt/tokentimer-agent/state',
       'Save the JSON below as /opt/tokentimer-agent/state/config.json with mode 0600.',
+      'If an agent is already installed on this server, the existing config.json holds an agentId line. Keep that line when you replace the file, or the service refuses to start.',
       'Run the installer. It logs "Existing config.json found; leaving it untouched" and keeps your file.',
       'The installer adds the service user and fixes ownership. Check the file is readable by it with: sudo -u tokentimer-agent test -r /opt/tokentimer-agent/state/config.json',
     ],
