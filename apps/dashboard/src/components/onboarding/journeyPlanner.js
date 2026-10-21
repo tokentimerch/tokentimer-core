@@ -4,7 +4,7 @@
 // Adding steps later therefore needs no data migration.
 
 import { existingAssetStepIds } from './assetRefs.js';
-import { commandProfileFor } from './certopsMatrix.js';
+import { commandProfileFor, reportedCertificates } from './certopsMatrix.js';
 import { GOALS, STEP_DEFS } from './modules.js';
 import { scopeCertops } from './certopsScope.js';
 
@@ -140,8 +140,10 @@ function certopsDone(stepId, { reality, progress, objective }) {
         );
       }
       return (
-        (certops?.certificates?.observed ?? certops?.certificates?.total ?? 0) >
-        0
+        reportedCertificates(certops, {
+          infrastructure: saved.infrastructure,
+          clusterId: saved.clusterId,
+        }) > 0
       );
     }
     case 'certops_adcs': {

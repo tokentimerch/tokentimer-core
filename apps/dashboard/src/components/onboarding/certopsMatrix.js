@@ -65,7 +65,7 @@ export const INFRASTRUCTURES = {
   },
   kubernetes: {
     label: 'Kubernetes with cert-manager',
-    detail: 'Installed with Helm; observe or provision mode',
+    detail: 'Installed with Helm; reports the cert-manager certificates',
     platform: null,
     objectives: { observe: 'qualified' },
   },
@@ -120,6 +120,28 @@ export function pickGoalAgent(items, objective, infrastructure) {
     if (match) return match;
   }
   return list[0];
+}
+
+/**
+ * Certificates an agent or the Kubernetes controller of this setup can have
+ * reported. The summary counts every observed certificate in the workspace,
+ * website monitors included, so a certificate only counts as reported once
+ * there is a live agent (or a reporting controller) to have sent it.
+ */
+export function reportedCertificates(
+  certops,
+  { infrastructure, clusterId } = {}
+) {
+  const observed =
+    certops?.certificates?.observed ?? certops?.certificates?.total ?? 0;
+  if (!(observed > 0)) return 0;
+  if (infrastructure === 'kubernetes') {
+    const clusters = certops?.controllers?.clusters || [];
+    return clusters.some(c => !clusterId || c.clusterId === clusterId)
+      ? observed
+      : 0;
+  }
+  return (certops?.agents?.live || 0) > 0 ? observed : 0;
 }
 
 /** Capabilities an agent must declare for this combination. */

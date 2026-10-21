@@ -304,10 +304,42 @@ describe('certops_first completion', () => {
       progress,
     });
 
-  it('treats discovery goals as done once an observed certificate exists', () => {
+  it('treats discovery goals as done once an agent has reported a certificate', () => {
     const p = { certops: { objective: 'observe' } };
-    expect(done(p, { certificates: { total: 1, observed: 0 } })).toBe(false);
-    expect(done(p, { certificates: { total: 1, observed: 1 } })).toBe(true);
+    const agents = { live: 1 };
+    expect(done(p, { agents, certificates: { total: 1, observed: 0 } })).toBe(
+      false
+    );
+    expect(done(p, { agents, certificates: { total: 1, observed: 1 } })).toBe(
+      true
+    );
+  });
+
+  it('does not count a certificate that no agent of this setup can have reported', () => {
+    const p = { certops: { objective: 'observe', infrastructure: 'linux' } };
+    // The workspace already holds a certificate, for example from a website
+    // monitor, but no agent is connected.
+    const certificates = { total: 1, observed: 1 };
+    expect(done(p, { certificates })).toBe(false);
+    expect(done(p, { agents: { live: 0 }, certificates })).toBe(false);
+    expect(done(p, { agents: { live: 1 }, certificates })).toBe(true);
+  });
+
+  it('keeps Kubernetes working through the controller instead of an agent', () => {
+    const p = {
+      certops: {
+        objective: 'observe',
+        infrastructure: 'kubernetes',
+        clusterId: 'prod-eu',
+      },
+    };
+    const certificates = { total: 2, observed: 2 };
+    const clusters = id => ({ controllers: { clusters: [{ clusterId: id }] } });
+    expect(done(p, { certificates })).toBe(false);
+    // A live agent elsewhere is not the controller.
+    expect(done(p, { agents: { live: 1 }, certificates })).toBe(false);
+    expect(done(p, { ...clusters('other'), certificates })).toBe(false);
+    expect(done(p, { ...clusters('prod-eu'), certificates })).toBe(true);
   });
 
   it('does not count a requested order as an issued certificate on Linux', () => {

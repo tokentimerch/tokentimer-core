@@ -22,6 +22,7 @@ import { CopyBlock } from './blocks.jsx';
 import {
   capabilityGap,
   pickGoalAgent,
+  reportedCertificates,
   requiredCapabilities,
 } from './certopsMatrix.js';
 import {
@@ -65,7 +66,11 @@ export function FirstCertificateStep({ ctx }) {
     return <IssueStep ctx={ctx} />;
   }
   const certs = ctx.summary?.certops?.certificates;
-  const total = certs?.observed ?? certs?.total ?? 0;
+  const workspaceTotal = certs?.observed ?? certs?.total ?? 0;
+  const total = reportedCertificates(ctx.summary?.certops, {
+    infrastructure: saved.infrastructure,
+    clusterId: saved.clusterId,
+  });
   return (
     <StepFrame
       kind='verify'
@@ -96,6 +101,17 @@ export function FirstCertificateStep({ ctx }) {
               : 'No certificates have been reported yet.'}
           </Text>
         </HStack>
+        {total === 0 && workspaceTotal > 0 ? (
+          <Text fontSize='xs' color={muted} data-testid='not-from-agent'>
+            The inventory already holds {workspaceTotal} certificate
+            {workspaceTotal === 1 ? '' : 's'} (for example from a website
+            monitor). They do not count here: this step waits for{' '}
+            {saved.infrastructure === 'kubernetes'
+              ? 'the Kubernetes controller'
+              : 'your agent'}{' '}
+            to report one.
+          </Text>
+        ) : null}
         {total === 0 ? (
           <Text fontSize='xs' color={muted}>
             {saved.infrastructure === 'windows'
