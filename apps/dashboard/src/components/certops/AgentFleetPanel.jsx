@@ -84,7 +84,6 @@ import { useCertOpsAgents } from './useCertOpsAgents.js';
 import {
   CertOpsMobileFieldLabel,
   CertOpsSortableHeader,
-  CertOpsTruncatedText,
   nextCertOpsTableSort,
   useCertOpsResponsiveTableStyles,
 } from './CertOpsResponsiveTable.jsx';
@@ -133,11 +132,6 @@ function AgentStatusBadge({ status }) {
       {AGENT_STATUS_LABEL[key] || (status ? String(status) : 'Unknown')}
     </CertOpsBadge>
   );
-}
-
-function shortId(value) {
-  const raw = String(value || '');
-  return raw.length > 12 ? `${raw.slice(0, 12)}...` : raw;
 }
 
 // Friendly OS labels for the raw `platform` the agent reports at
@@ -1201,11 +1195,6 @@ export default function AgentFleetPanel({
         overflowWrap: 'anywhere',
       },
       'tbody .chakra-badge': { whiteSpace: 'normal', maxW: '100%' },
-      'tbody td span[title]': {
-        whiteSpace: 'nowrap',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-      },
       'tbody td button[aria-label="Copy to clipboard"]': { flexShrink: 0 },
     },
   };
@@ -1422,17 +1411,15 @@ export default function AgentFleetPanel({
                     >
                       <Td {...agentPrimaryCellProps}>
                         <Box>
-                          <CertOpsTruncatedText
-                            value={
-                              agent.name || agent.hostname || 'Unnamed agent'
-                            }
+                          <Text
                             fontSize='sm'
                             fontWeight='semibold'
-                          />
-                          <CopyableId
-                            id={agent.agentId}
-                            display={shortId(agent.agentId)}
-                          />
+                            whiteSpace='normal'
+                            overflowWrap='anywhere'
+                          >
+                            {agent.name || agent.hostname || 'Unnamed agent'}
+                          </Text>
+                          <CopyableId id={agent.agentId} />
                         </Box>
                       </Td>
                       <Td {...agentCellProps}>
@@ -1558,10 +1545,7 @@ export default function AgentFleetPanel({
                           Signing key
                         </CertOpsMobileFieldLabel>
                         {agent.pinnedSigningKeyId ? (
-                          <CopyableId
-                            id={agent.pinnedSigningKeyId}
-                            display={shortId(agent.pinnedSigningKeyId)}
-                          />
+                          <CopyableId id={agent.pinnedSigningKeyId} />
                         ) : (
                           <Text fontSize='sm'>--</Text>
                         )}

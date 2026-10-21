@@ -258,7 +258,7 @@ describe('AgentFleetPanel', () => {
       }
       fireEvent.keyDown(menu, { key: 'Escape' });
       await waitFor(() =>
-        expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+        expect(menus[index]).toHaveAttribute('aria-expanded', 'false')
       );
     }
   });
@@ -513,8 +513,34 @@ describe('AgentFleetPanel', () => {
     expect(screen.getByText('Synced')).toBeInTheDocument();
     expect(screen.getByText('Not synced')).toBeInTheDocument();
 
-    // Signing key ids are shortened for display.
-    expect(screen.getByText('ttsk_0123456...')).toBeInTheDocument();
+    // The whole key remains readable without opening its title tooltip.
+    expect(
+      screen.getByText(sampleAgents()[0].pinnedSigningKeyId)
+    ).toBeInTheDocument();
+  });
+
+  it('shows full hostnames and agent identities instead of shortening them', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    const agents = sampleAgents().slice(0, 1);
+    agents[0].name = 'windows-iis-prod-02.corp.acme-corporation.example.com';
+    agents[0].agentId = 'agent_0123456789abcdef_0123456789abcdef';
+    useCertOpsAgentsMock.mockReturnValue(agentsState({ agents }));
+
+    renderWithProviders(<AgentFleetPanel />);
+
+    const row = screen
+      .getByRole('button', {
+        name: `Actions for ${agents[0].name}`,
+      })
+      .closest('tr');
+    expect(within(row).getByText(agents[0].name)).toBeInTheDocument();
+    expect(within(row).getByText(agents[0].agentId)).toBeInTheDocument();
+    expect(
+      within(row).getByText(agents[0].pinnedSigningKeyId)
+    ).toBeInTheDocument();
+    expect(
+      within(row).getAllByRole('button', { name: 'Copy to clipboard' })
+    ).toHaveLength(2);
   });
 
   it('renders an Execution column badging declared-capability agents "Enabled" and others "No capability declared"', () => {
