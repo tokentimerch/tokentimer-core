@@ -240,7 +240,10 @@ export const RELOAD_SERVICES = {
  * One-time host setup that makes `systemctl reload nginx` test the
  * configuration (as root) before it signals nginx. The stock nginx unit
  * reloads without testing, so without this a rejected configuration would
- * look like a successful reload.
+ * look like a successful reload. The final one-second pause gives the new
+ * workers time to take over: `nginx -s reload` returns before they serve, and
+ * a consumer's check of the served certificate right after the reload would
+ * otherwise still see the old one.
  */
 export const NGINX_RELOAD_DROPIN = [
   'sudo mkdir -p /etc/systemd/system/nginx.service.d',
@@ -249,6 +252,7 @@ export const NGINX_RELOAD_DROPIN = [
   'ExecReload=',
   'ExecReload=/usr/sbin/nginx -t -q -g "daemon on; master_process on;"',
   'ExecReload=/usr/sbin/nginx -g "daemon on; master_process on;" -s reload',
+  'ExecReload=/usr/bin/sleep 1',
   'EOF',
   'sudo systemctl daemon-reload',
 ].join('\n');
@@ -587,6 +591,34 @@ export function buildControllerUpgradeCommand({
   ].join('\n');
 }
 
+/**
+ * Extra values for a cluster that does not run TokenTimer itself. The chart
+ * renders the whole application unless these are set, and it insists on an
+ * admin email and a database host even when only the controller is wanted.
+ * The database values are placeholders the controller never reads.
+ */
+export function buildControllerOnlyValues() {
+  return [
+    'api:',
+    '  enabled: false',
+    'dashboard:',
+    '  enabled: false',
+    'worker:',
+    '  cronjobs:',
+    '    discovery: { enabled: false }',
+    '    delivery: { enabled: false }',
+    '    weeklyDigest: { enabled: false }',
+    '    endpointCheck: { enabled: false }',
+    '    autoSync: { enabled: false }',
+    '    certops: { enabled: false }',
+    'postgresql:',
+    '  cloudnative: { enabled: false }',
+    '  external: { enabled: true, host: unused.invalid, password: unused }',
+    'config:',
+    '  disableAdminBootstrap: true',
+  ].join('\n');
+}
+
 export function buildControllerSecretCommand({ namespace = 'tokentimer' }) {
   // The token is read from stdin so it never appears in shell history.
   return [
@@ -615,12 +647,17 @@ export function buildVaultConfigs({
   consumerBindingId,
   deployPath = '/etc/nginx/tokentimer',
   caFile = '',
+  probeTrustCaFile = '',
 }) {
   const problems = [];
   if (!/^https:\/\//.test(vaultAddress || ''))
     problems.push('The Vault address must use https.');
   if (caFile && !String(caFile).startsWith('/'))
     problems.push('The Vault CA file must be an absolute path.');
+  if (probeTrustCaFile && !String(probeTrustCaFile).startsWith('/'))
+    problems.push(
+      'The CA file for the served-certificate check must be an absolute path.'
+    );
   if (!UUID.test(workspaceId || '')) problems.push('Invalid workspace id.');
   if (!UUID.test(groupId || '')) {
     problems.push(
@@ -703,8 +740,7 @@ export function buildVaultConfigs({
       allowedTargetSelectors: [bindingId],
       allowedPaths: [deployPath, AGENT_KEYS_DIR],
       allowedCommands: {
-        'nginx-validate': { argv: ['/usr/sbin/nginx', '-t'] },
-        'nginx-reload': { argv: ['/usr/sbin/nginx', '-s', 'reload'] },
+        ...reloadCommands('nginx'),
       },
     },
     materialStores: {
@@ -740,12 +776,76 @@ export function buildVaultConfigs({
             dialAddress: '127.0.0.1',
             port: 443,
             sni: names[0].replace(/^\*\./, 'www.'),
+            // Needed when the certificate comes from a private CA: the
+            // "trust" check validates the chain against this file.
+            ...(probeTrustCaFile ? { trustCaFile: probeTrustCaFile } : {}),
           },
         ],
       },
     },
   };
   return { ok: true, issuer, consumer };
+}
+
+/**
+ * The job that publishes a certificate to Vault. The group id appears on the
+ * created job as payload.publication.groupId. The agent refuses a publish job
+ * without a key algorithm, so it is part of the body. There is no screen for
+ * this job: it is created through the Jobs API.
+ */
+export function buildVaultPublishJob({
+  names,
+  zone,
+  dnsProvider,
+  caEndpoint = LETS_ENCRYPT_STAGING,
+  assignedAgentId,
+  idempotencyKey,
+  materialStoreRef = 'customer',
+  issuanceProfileRef = 'wildcard',
+  profileRevision = 1,
+}) {
+  const list = (names || []).map(n => String(n).trim()).filter(Boolean);
+  return {
+    operation: 'issue',
+    // Hold the job until the Vault policies and agent configuration exist.
+    requiresApproval: true,
+    idempotencyKey,
+    ...(assignedAgentId ? { assignedAgentId } : {}),
+    payload: {
+      target: { type: 'domain', reference: list[0] },
+      sans: list,
+      commandRef: 'certbot',
+      caEndpoint,
+      dnsZone: zone,
+      dnsProvider,
+      keyAlgorithm: 'ecdsa',
+      keySize: 256,
+      publicationDestination: {
+        materialStoreRef,
+        issuanceProfileRef,
+        profileRevision,
+      },
+    },
+  };
+}
+
+/** Assigns one consumer agent to the distribution group. */
+export function buildVaultConsumerAssignment({ agentRowId }) {
+  return {
+    agentId: agentRowId,
+    deploymentProfileRef: 'nginx-public',
+    profileRevision: 1,
+    required: true,
+    wave: 0,
+    verificationPolicy: 'trust',
+    freshnessSeconds: 3600,
+    state: 'active',
+  };
+}
+
+/** Rollout of one published version to the assigned consumers. */
+export function buildVaultRollout({ materialVersionId }) {
+  return { materialVersionId, maxParallel: 1 };
 }
 
 /**

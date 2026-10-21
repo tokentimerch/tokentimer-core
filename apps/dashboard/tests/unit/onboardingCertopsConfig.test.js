@@ -9,6 +9,10 @@ import {
   buildObserveConfig,
   buildVaultConfigs,
   buildVaultPolicies,
+  buildVaultPublishJob,
+  buildVaultConsumerAssignment,
+  buildVaultRollout,
+  buildControllerOnlyValues,
   isLoopbackHttp,
   WINDOWS_ACME_PROFILE,
   RELOAD_SERVICES,
@@ -414,6 +418,14 @@ describe('jobs', () => {
 });
 
 describe('kubernetes', () => {
+  it('can render the controller without the rest of the application', () => {
+    const only = buildControllerOnlyValues();
+    expect(only).toContain('enabled: false');
+    expect(only).toContain('disableAdminBootstrap: true');
+    expect(only).toContain('host: unused.invalid');
+    expect(only).not.toMatch(SENSITIVE_PATTERN);
+  });
+
   it('generates observe-mode values and validates the cluster id', () => {
     const values = buildControllerValues({
       apiUrl: 'https://tt.example.com',
@@ -480,6 +492,70 @@ describe('vault distribution', () => {
     expect(out.issuer.execution.dryRun).toBe(true);
     expect(out.consumer.execution.dryRun).toBe(true);
     expect(out.issuer.agentId).toMatch(/REPLACE_WITH/);
+  });
+
+  it('adds a trust CA file to the consumer probe only when given', () => {
+    const plain = buildVaultConfigs({
+      ...base,
+      consumerBindingId: '33333333-3333-4333-8333-333333333333',
+    });
+    const probe = () =>
+      Object.values(plain.consumer.materialBindings)[0].probes[0];
+    expect(probe().trustCaFile).toBeUndefined();
+    const withCa = buildVaultConfigs({
+      ...base,
+      consumerBindingId: '33333333-3333-4333-8333-333333333333',
+      probeTrustCaFile: '/etc/tokentimer-agent/issuing-ca.pem',
+    });
+    expect(
+      Object.values(withCa.consumer.materialBindings)[0].probes[0].trustCaFile
+    ).toBe('/etc/tokentimer-agent/issuing-ca.pem');
+    expect(
+      buildVaultConfigs({ ...base, probeTrustCaFile: 'relative.pem' }).ok
+    ).toBe(false);
+  });
+
+  it('gives the consumer the same unprivileged reload commands as the automate guide', () => {
+    const out = buildVaultConfigs(base);
+    const commands = out.consumer.policy.allowedCommands;
+    expect(commands['nginx-validate'].argv).toEqual(
+      RELOAD_SERVICES.nginx.validate
+    );
+    expect(commands['nginx-reload'].argv).toEqual(RELOAD_SERVICES.nginx.reload);
+  });
+
+  it('builds the publish job with the key algorithm the agent requires, held for approval', () => {
+    const job = buildVaultPublishJob({
+      names: ['www.example.com'],
+      zone: 'example.com',
+      dnsProvider: 'cloudflare',
+      assignedAgentId: 'issuer-row',
+      idempotencyKey: 'k',
+    });
+    expect(job.operation).toBe('issue');
+    expect(job.requiresApproval).toBe(true);
+    expect(job.payload.keyAlgorithm).toBe('ecdsa');
+    expect(job.payload.keySize).toBe(256);
+    expect(job.payload.publicationDestination).toEqual({
+      materialStoreRef: 'customer',
+      issuanceProfileRef: 'wildcard',
+      profileRevision: 1,
+    });
+    expect(job.payload.certPath).toBeUndefined();
+    expect(JSON.stringify(job)).not.toMatch(SENSITIVE_PATTERN);
+  });
+
+  it('builds the consumer assignment and rollout bodies', () => {
+    expect(buildVaultConsumerAssignment({ agentRowId: 'row' })).toMatchObject({
+      agentId: 'row',
+      deploymentProfileRef: 'nginx-public',
+      verificationPolicy: 'trust',
+      state: 'active',
+    });
+    expect(buildVaultRollout({ materialVersionId: 'v' })).toEqual({
+      materialVersionId: 'v',
+      maxParallel: 1,
+    });
   });
 
   it('keeps keys in the installed state folder and allows only what it needs', () => {

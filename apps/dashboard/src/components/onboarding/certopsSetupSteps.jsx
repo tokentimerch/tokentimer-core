@@ -35,6 +35,7 @@ import {
   STAGING_CA,
   RELOAD_SERVICES,
   NGINX_RELOAD_DROPIN,
+  AGENT_KEYS_DIR,
   buildObserveConfig,
   buildPreseedSteps,
   mergeInstallerFields,
@@ -246,8 +247,13 @@ export function ConfigStep({ ctx }) {
       dnsProvider: form.dnsProvider,
       certPath: form.certPath,
       caEndpoint: form.caEndpoint,
-      reloadService: form.reloadService,
+      reloadService: objective === 'vault' ? '' : form.reloadService,
     });
+    if (result.ok && objective === 'vault') {
+      // The issuer publishes to Vault and writes no certificate file, so it
+      // is allowed to touch its key folder only.
+      result.config.policy.allowedPaths = [AGENT_KEYS_DIR];
+    }
   }
   const adcsErrors = objective === 'adcs' ? result.fieldErrors || {} : {};
   const shown = key => (touched[key] ? adcsErrors[key] || [] : []);
@@ -545,7 +551,7 @@ export function ConfigStep({ ctx }) {
                 </Text>
               </>
             ) : null}
-            {os === 'linux' ? (
+            {os === 'linux' && objective !== 'vault' ? (
               <FormControl>
                 <FormLabel fontSize='sm'>Certificate file path</FormLabel>
                 <Input
@@ -567,7 +573,7 @@ export function ConfigStep({ ctx }) {
                 private ACME CA address if you have one.
               </Text>
             </FormControl>
-            {os === 'linux' ? (
+            {os === 'linux' && objective !== 'vault' ? (
               <FormControl>
                 <FormLabel fontSize='sm'>
                   After issuing, reload a web server (optional)

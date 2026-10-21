@@ -17,9 +17,24 @@ import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import { CopyBlock } from './blocks.jsx';
 import { capabilityGap, requiredCapabilities } from './certopsMatrix.js';
-import { buildVaultConfigs, buildVaultPolicies } from './certopsConfig.js';
+import {
+  buildVaultConfigs,
+  buildVaultConsumerAssignment,
+  buildVaultPolicies,
+  buildVaultPublishJob,
+  buildVaultRollout,
+  buildInstallCommand,
+  NGINX_RELOAD_DROPIN,
+} from './certopsConfig.js';
 import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
 import IssueStep from './certopsIssueStep.jsx';
+
+/** A UUID the operator uses for the consumer binding (not secret). */
+function newBindingId() {
+  const c = globalThis.crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return '00000000-0000-4000-8000-000000000001';
+}
 
 export function FirstCertificateStep({ ctx }) {
   const { muted } = useDashboardTheme();
@@ -100,6 +115,10 @@ export function VaultStep({ ctx }) {
     mount: saved.vaultMount || 'secret',
     groupId: saved.groupId || '',
     caFile: saved.vaultCaFile || '',
+    probeCa: saved.vaultProbeCa || '',
+    // Chosen by the operator and used in the consumer config and the
+    // assignment call, so it is generated once and kept.
+    bindingId: saved.vaultBindingId || newBindingId(),
   });
   const set = key => e => setForm(f => ({ ...f, [key]: e.target.value }));
   const names = (saved.names || '').split(/[\s,]+/).filter(Boolean);
@@ -113,6 +132,8 @@ export function VaultStep({ ctx }) {
     dnsProvider: saved.dnsProvider || 'cloudflare',
     caEndpoint: saved.caEndpoint || undefined,
     caFile: form.caFile.trim(),
+    probeTrustCaFile: form.probeCa.trim(),
+    consumerBindingId: form.bindingId,
   });
   let policies = null;
   try {
@@ -132,6 +153,27 @@ export function VaultStep({ ctx }) {
     distribution: ctx.summary?.certops?.distribution,
   });
   const gap = capabilityGap('vault', 'linux', declared);
+  const publishJob = buildVaultPublishJob({
+    names,
+    zone: saved.zone,
+    dnsProvider: saved.dnsProvider || 'cloudflare',
+    caEndpoint: saved.caEndpoint || undefined,
+    assignedAgentId: 'ISSUER_AGENT_ID_FROM_AGENTS',
+    idempotencyKey: 'vault-publish-1',
+  });
+  const bindingId = form.bindingId;
+  let consumerInstall = '';
+  try {
+    consumerInstall = buildInstallCommand({
+      os: 'linux',
+      apiUrl: ctx.apiUrl,
+      workspaceId: ctx.workspaceId,
+      writePaths: ['/etc/nginx/tokentimer'],
+      reloadServices: ['nginx'],
+    });
+  } catch (e) {
+    consumerInstall = e.message;
+  }
 
   return (
     <StepFrame
@@ -168,10 +210,21 @@ export function VaultStep({ ctx }) {
           ) : null}
         </HStack>
         <Text fontSize='sm'>
-          First create an issue job that publishes to your Vault store. The
-          group id appears on that job as publication.groupId; paste it here. Do
-          not invent one.
+          1. There is no screen for the publish job: create it through the API
+          as a signed-in workspace manager (POST{' '}
+          <code>/api/v1/workspaces/{ctx.workspaceId}/certops/jobs</code>) with
+          this body. Use the issuer&apos;s id from Certificate Management,
+          Agents. The job needs <code>keyAlgorithm</code>, or the agent refuses
+          it, and <code>requiresApproval</code> holds it until a different user
+          approves it, so Vault and the issuer can be set up first. The response
+          carries <code>job.payload.publication.groupId</code>; paste it below.
+          Do not invent one.
         </Text>
+        <CopyBlock
+          label='Publish job body (API only)'
+          text={JSON.stringify(publishJob, null, 2)}
+          language='json'
+        />
         <HStack align='start' spacing={3} flexWrap='wrap'>
           <FormControl flex='2 1 240px'>
             <FormLabel fontSize='sm'>Vault address</FormLabel>
@@ -208,6 +261,25 @@ export function VaultStep({ ctx }) {
             Needed when Vault uses a private CA. The file stays on each host.
           </Text>
         </FormControl>
+        <FormControl>
+          <FormLabel fontSize='sm'>
+            CA file for the consumer&apos;s served-certificate check (optional)
+          </FormLabel>
+          <Input
+            size='sm'
+            value={form.probeCa}
+            onChange={set('probeCa')}
+            placeholder='/etc/tokentimer-agent/issuing-ca.pem'
+          />
+          <Text fontSize='xs' mt={1} color={muted}>
+            Needed when the certificate comes from a private CA: the
+            consumer&apos;s trust check validates the chain against this file
+            and fails without it.
+          </Text>
+        </FormControl>
+        <Text fontSize='xs' color={muted}>
+          Consumer binding id (generated, keep it): {form.bindingId}
+        </Text>
         {!out.ok
           ? (out.problems || []).map(p => (
               <Text key={p} fontSize='xs' color='red.400'>
@@ -244,10 +316,59 @@ export function VaultStep({ ctx }) {
               language='json'
             />
             <Text fontSize='xs' color={muted}>
-              Replace the REPLACE_WITH values with each agent&apos;s own wire id
-              from its config. Each agent reads a Vault token file refreshed by
-              Vault Agent. No Vault token is ever entered here.
+              Both configs name an agent by its wire id (agentId, and the
+              consumer repeats it in materialBindings). Choose each id before
+              the agent registers by setting agentId in its config.json, or read
+              it from the registered agent&apos;s config.json and merge these
+              keys into that file instead of replacing it. Each agent reads a
+              Vault token file refreshed by Vault Agent. No Vault token is ever
+              entered here. Both agents start in dry run: after a signed dry run
+              passes, set execution.dryRun to false in each config and restart
+              it.
             </Text>
+            <Text fontSize='sm'>
+              2. Install the consumer agent on its own host with the same
+              installer. It needs its deploy folder and the right to reload the
+              server. The stock nginx unit does not test its configuration on
+              reload, so run the one-time nginx setup there as well.
+            </Text>
+            <CopyBlock
+              label='Consumer install command'
+              text={consumerInstall}
+            />
+            <CopyBlock
+              label='One-time nginx setup (consumer host)'
+              text={NGINX_RELOAD_DROPIN}
+            />
+            <Text fontSize='sm'>
+              3. Once both agents are registered, assign the consumer and
+              request a rollout. Both are API calls too, and a rollout needs
+              approval from a different user and a running CertOps worker.
+              Without the worker an approved rollout stays pending and nothing
+              is deployed.
+            </Text>
+            <CopyBlock
+              label={`PUT .../certops/distribution-groups/${form.groupId || 'GROUP_ID'}/consumers/${bindingId}`}
+              text={JSON.stringify(
+                buildVaultConsumerAssignment({
+                  agentRowId: 'CONSUMER_AGENT_ID_FROM_AGENTS',
+                }),
+                null,
+                2
+              )}
+              language='json'
+            />
+            <CopyBlock
+              label={`POST .../certops/distribution-groups/${form.groupId || 'GROUP_ID'}/rollouts (Idempotency-Key header)`}
+              text={JSON.stringify(
+                buildVaultRollout({
+                  materialVersionId: 'VERSION_ID_FROM_GROUP_VERSIONS',
+                }),
+                null,
+                2
+              )}
+              language='json'
+            />
           </>
         ) : null}
         <DashboardActionButton
@@ -258,6 +379,8 @@ export function VaultStep({ ctx }) {
               vaultAddress: form.vaultAddress,
               vaultMount: form.mount,
               vaultCaFile: form.caFile.trim(),
+              vaultProbeCa: form.probeCa.trim(),
+              vaultBindingId: form.bindingId,
               groupId: form.groupId,
               configReviewed: true,
             })

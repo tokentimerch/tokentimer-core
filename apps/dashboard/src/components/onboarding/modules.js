@@ -149,7 +149,7 @@ export const GOALS = {
   },
   certops_vault: {
     doneText:
-      'Your Vault distribution configuration is prepared. It is not verified until a rollout is.',
+      'Your Vault distribution is set up. It is not verified until a rollout is: the verify step shows the rollout state, and Certificate Management, Renewals lists each host.',
     label: 'Share one certificate across servers with Vault',
     description:
       'Publish an issued certificate to your Vault and deploy it to several hosts.',

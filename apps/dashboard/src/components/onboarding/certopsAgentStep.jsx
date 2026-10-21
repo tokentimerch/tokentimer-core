@@ -28,6 +28,7 @@ import {
 import {
   registrationNotesFor,
   buildControllerSecretCommand,
+  buildControllerOnlyValues,
   buildControllerUpgradeCommand,
   buildControllerValues,
   buildInstallCommand,
@@ -233,6 +234,16 @@ export function AgentStep({ ctx }) {
                 cert-manager must already be installed in the cluster.
               </Text>
               <CopyBlock label='Helm values' text={values} />
+              <Text fontSize='sm'>
+                If this cluster does not run TokenTimer, add these lines to the
+                same file too. The chart otherwise installs the whole
+                application and asks for an admin email and a database, and only
+                the controller is wanted here.
+              </Text>
+              <CopyBlock
+                label='Only if the cluster has no TokenTimer release'
+                text={buildControllerOnlyValues()}
+              />
               <CopyBlock
                 label='Apply the values'
                 text={buildControllerUpgradeCommand({})}
@@ -270,9 +281,8 @@ export function AgentStep({ ctx }) {
   // The hardened service can only write where --write-path says and reload
   // only what --reload-service allows, so the choices made in the
   // configuration step have to reach the installer.
-  const linuxIssuing =
-    os === 'linux' &&
-    (saved.objective === 'automate' || saved.objective === 'vault');
+  // The Vault issuer publishes to Vault and writes no certificate file.
+  const linuxIssuing = os === 'linux' && saved.objective === 'automate';
   const certDirectory = linuxIssuing ? certDirectoryFor(saved.certPath) : '';
   try {
     command = buildInstallCommand({
