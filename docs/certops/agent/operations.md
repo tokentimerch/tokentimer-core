@@ -250,6 +250,7 @@ Retire the agent in the fleet panel after its jobs finish. `install-agent.sh --u
 A renewal can stop with `agent custody key does not match the deployed certificate` or `agent custody key is quarantined after a failed promotion`, and no staging key remains. The agent refuses to reuse a key it cannot prove belongs to the deployed certificate.
 
 A rotation that is rolled back after a failed reload or verify restores the previous key into custody automatically. A promotion whose outcome is unknown stays quarantined, and so does a host affected before that fix. To recover, stop renewals for the certificate, delete the custody key named in the error (`<state>/keys/<certificate id>.key.pem`) and, when present, its `.custody-quarantine` marker. The next renewal issues a new key and installs it with the new certificate.
+
 ## Related
 
 [Agent overview](../agent.md) · [Configuration](configuration.md) · [Linux installation](install-linux.md) · [Windows installation](install-windows.md)
