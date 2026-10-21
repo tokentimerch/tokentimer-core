@@ -156,6 +156,20 @@ function verifyCrossProof(value, control) {
   assert.equal(value.oldCaKeySha256, control.caKeySha256);
   return true;
 }
+// Waits for a job that must end failed; any other terminal status is a defect.
+async function waitForFailedJob({ until, query, workspaceId, jobId }) {
+  return until(async () => {
+    const row = (
+      await query(
+        "SELECT status FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",
+        [workspaceId, jobId],
+      )
+    ).rows[0];
+    if (["succeeded", "rejected", "cancelled"].includes(row?.status))
+      throw new Error(`Job ended ${row.status}, expected failed`);
+    return row?.status === "failed";
+  });
+}
 async function qualifyPendingCaKeyChange(context) {
   const {
     gate,
@@ -420,7 +434,11 @@ async function qualifyPendingCaKeyChange(context) {
     ownedEnrollmentIds.push(response.body.enrollmentId);
     return response.body;
   };
-  const continuePending = async (id, pending) => {
+  const continuePending = async (
+    id,
+    pending,
+    { expectFailure = false } = {},
+  ) => {
     const scheduled = (
       await require("../../../apps/api/services/certops/certificateEnrollments").scheduleDueEnrollments(
         {
@@ -430,7 +448,14 @@ async function qualifyPendingCaKeyChange(context) {
       )
     ).find((value) => value.enrollmentId === id);
     assert.ok(scheduled);
-    await jobFinished(scheduled.jobId);
+    if (expectFailure)
+      await waitForFailedJob({
+        until,
+        query,
+        workspaceId: fixture.workspaceId,
+        jobId: scheduled.jobId,
+      });
+    else await jobFinished(scheduled.jobId);
     return scheduled.jobId;
   };
   const predecessorUnchanged = async () => {
@@ -517,9 +542,11 @@ async function qualifyPendingCaKeyChange(context) {
         "Pending native key identity changed before signed refusal",
       );
       await predecessorUnchanged();
+      // The signed refusal is the expected outcome, so a failed job is success here.
       oldContinuationJobId = await continuePending(
         old.enrollmentId,
         oldPending,
+        { expectFailure: true },
       );
       const refused = await until(async () => {
         const value = await row(old.enrollmentId);
@@ -868,5 +895,6 @@ module.exports = {
   REQUIRED_SOURCES,
   verifyProof,
   verifyCrossProof,
+  waitForFailedJob,
   qualifyPendingCaKeyChange,
 };
