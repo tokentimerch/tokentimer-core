@@ -32,7 +32,7 @@ WORKSPACE_ID=YOUR_WORKSPACE_ID
 sha256sum -c "tokentimer-agent-$VERSION.tgz.sha256"
 tar -xzf "tokentimer-agent-$VERSION.tgz"
 cd package
-sudo ./scripts/install-agent.sh --api-url https://cp.example.com --workspace-id "$WORKSPACE_ID" \
+sudo bash ./scripts/install-agent.sh --api-url https://cp.example.com --workspace-id "$WORKSPACE_ID" \
   --write-path /etc/letsencrypt --reload-service nginx
 ```
 
@@ -54,7 +54,7 @@ signing scheme only for this package.
 Upgrade (preserves `/opt/tokentimer-agent/state`):
 
 1. Verify the new tarball checksum.
-2. Extract and run `sudo ./scripts/install-agent.sh ...` with the same
+2. Extract and run `sudo bash ./scripts/install-agent.sh ...` with the same
    `--api-url` / `--workspace-id` / `--write-path` / `--reload-service` values.
 3. The installer stages into `app.staging.$$`, swaps atomically, then restarts
    the systemd unit so the new tree is actually loaded. Credentials and keys in
@@ -72,7 +72,7 @@ Rollback:
 Uninstall (keeps state for forensic recovery):
 
 ```sh
-sudo ./scripts/install-agent.sh --uninstall
+sudo bash ./scripts/install-agent.sh --uninstall
 # then, only when intentional:
 # sudo rm -rf /opt/tokentimer-agent && sudo userdel tokentimer-agent
 ```
