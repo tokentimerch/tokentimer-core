@@ -1,13 +1,15 @@
 {
   "agentId": "REPLACE_WITH_ISSUER_WIRE_ID",
-  "execution": { "enabled": true, "dryRun": false, "keysDir": "/var/lib/tokentimer-agent/keys" },
+  "declaredTargetSelectors": ["*.example.com", "example.com"],
+  "declaredCommandProfileNames": ["certbot"],
+  "execution": { "enabled": true, "dryRun": true, "keysDir": "/opt/tokentimer-agent/state/keys" },
   "policy": {
     "allowedTargetSelectors": ["*.example.com"],
-    "allowedPaths": ["/var/lib/tokentimer-agent"],
+    "allowedPaths": ["/opt/tokentimer-agent/state/keys"],
     "allowedCaEndpoints": ["https://acme-v02.api.letsencrypt.org/directory"],
     "allowedDnsZones": ["example.com"],
     "allowedDnsProviders": ["cloudflare"],
-    "allowedCommands": { "certbot": { "argv": ["/usr/bin/certbot"] } }
+    "allowedCommands": { "certbot": { "argv": ["/usr/bin/certbot", "--agree-tos", "--register-unsafely-without-email"] } }
   },
   "dnsProviders": { "cloudflare": { "credentialsFile": "/etc/tokentimer-agent/cloudflare.json" }, "zoneProviderMap": { "example.com": "cloudflare" } },
   "materialStores": {

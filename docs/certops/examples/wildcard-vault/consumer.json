@@ -1,12 +1,13 @@
 {
   "agentId": "REPLACE_WITH_CONSUMER_WIRE_ID",
-  "execution": { "enabled": true, "dryRun": false, "keysDir": "/var/lib/tokentimer-agent/keys" },
+  "declaredTargetSelectors": ["33333333-3333-4333-8333-333333333333"],
+  "execution": { "enabled": true, "dryRun": true, "keysDir": "/opt/tokentimer-agent/state/keys" },
   "policy": {
     "allowedTargetSelectors": ["33333333-3333-4333-8333-333333333333"],
-    "allowedPaths": ["/etc/nginx/tokentimer", "/var/lib/tokentimer-agent"],
+    "allowedPaths": ["/etc/nginx/tokentimer", "/opt/tokentimer-agent/state/keys"],
     "allowedCommands": {
-      "nginx-validate": { "argv": ["/usr/sbin/nginx", "-t"] },
-      "nginx-reload": { "argv": ["/usr/sbin/nginx", "-s", "reload"] }
+      "nginx-validate": { "argv": ["/usr/bin/systemctl", "is-active", "--quiet", "nginx"] },
+      "nginx-reload": { "argv": ["/usr/bin/systemctl", "reload", "nginx"] }
     }
   },
   "materialStores": {
