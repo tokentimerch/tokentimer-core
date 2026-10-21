@@ -75,3 +75,16 @@ test("the workflow matrix keeps release evidence serial and shards parallel with
   assert.throws(() => plan({ shard: "parallel", fault: "issued" }), /plain comprehensive/);
   assert.throws(() => plan({ shard: "bogus" }), /Unknown shard/);
 });
+
+test("the 15 minute lease fixtures are split so no shard holds more than two (60 minute run-command window)", () => {
+  const { phaseOf, createShard } = require("../tests/e2e/helpers/certops-adcs-shards");
+  const waits = { "adcs-real-uncertain-zero-request-acknowledged-recovery": "uncertain", "adcs-real-uncertain-single-candidate-auto-installs": "recovery", "adcs-real-uncertain-operator-created-ambiguity-refuses-attachment": "recovery" };
+  for (const [id, phase] of Object.entries(waits)) assert.equal(phaseOf(id), phase, id);
+  for (const id of ["adcs-real-uncertain-public-explicit-request-recovers", "adcs-real-uncertain-unused-operator-request-revoked", "adcs-real-public-reconcile-foreign-spki-refused", "adcs-real-browser-owned-requestid-reconcile"]) assert.equal(phaseOf(id), "recovery", id);
+  assert.equal(phaseOf("adcs-real-browser-uncertain-abandon-confirmation"), "uncertain");
+  const recovery = createShard("uncertain-recovery");
+  assert.equal(recovery.runs("recovery"), true);
+  assert.equal(recovery.runs("uncertain"), false);
+  assert.equal(createShard("templates-and-uncertain").runs("recovery"), false);
+  assert.equal(createShard("all").runs("recovery"), true);
+});

@@ -21,7 +21,7 @@ param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][stri
   [string]$RetentionCadenceNonce,
   [ValidateSet('none','keygen_intent','prepared','submitting','issued','installing','accepted-before-bind','bound-before-complete')][string]$JournalPhaseExperiment='none',
   [ValidateSet('root','subordinate')][string]$HierarchyRole='root',
-  [ValidateSet('all','issuance','renewals','pending-and-ca','templates-and-uncertain')][string]$Shard='all',
+  [ValidateSet('all','issuance','renewals','pending-and-ca','templates-and-uncertain','uncertain-recovery')][string]$Shard='all',
   [ValidateSet('Standard_D2s_v5','Standard_D2as_v5')][string]$VmSize = 'Standard_D2s_v5',
   [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9]{1,49}$')][string]$Location)
 $ErrorActionPreference = 'Stop'
