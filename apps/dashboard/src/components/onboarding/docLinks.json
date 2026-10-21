@@ -110,8 +110,8 @@
     "anchor": "inventory"
   },
   "certops.discovery": {
-    "path": "/certificates",
-    "anchor": "monitor-bridge"
+    "path": "/certops/agent-configuration",
+    "anchor": "discovery"
   },
   "certops.enable": {
     "path": "/runbooks/certops-enablement",
