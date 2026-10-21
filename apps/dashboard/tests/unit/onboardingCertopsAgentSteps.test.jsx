@@ -7,6 +7,13 @@ import {
 } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 import { describe, expect, it, vi } from 'vitest';
+
+const { createToken } = vi.hoisted(() => ({ createToken: vi.fn() }));
+vi.mock('../../src/components/certops/certopsAgentsApi.js', async orig => ({
+  ...(await orig()),
+  createBootstrapToken: createToken,
+}));
+
 import { AgentStep } from '../../src/components/onboarding/certopsAgentStep.jsx';
 import { ConfigStep } from '../../src/components/onboarding/certopsSetupSteps.jsx';
 import {
@@ -185,5 +192,18 @@ describe('Kubernetes configuration step', () => {
     await waitFor(() =>
       expect(ctx.session.progress.certops.configReviewed).toBe(true)
     );
+  });
+});
+
+describe('bootstrap token name', () => {
+  it('calls the token a setup guide token, not a wizard token', async () => {
+    createToken.mockReset().mockResolvedValue({ plaintextToken: 'ttboot_x' });
+    mount(AgentStep, makeCtx('certops_observe', linux, noAgents));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create a one-time token' })
+    );
+    await waitFor(() => expect(createToken).toHaveBeenCalled());
+    expect(createToken.mock.calls[0][1].name).toMatch(/^Setup guide \d{4}-/);
+    expect(createToken.mock.calls[0][1].name).not.toMatch(/wizard/i);
   });
 });

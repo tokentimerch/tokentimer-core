@@ -115,7 +115,7 @@ export function AgentStep({ ctx }) {
     try {
       const expiresAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
       const res = await createBootstrapToken(ctx.workspaceId, {
-        name: `Setup wizard ${new Date().toISOString().slice(0, 16)}`,
+        name: `Setup guide ${new Date().toISOString().slice(0, 16)}`,
         expiresAt,
       });
       setToken({ plaintext: res.plaintextToken, expiresAt });

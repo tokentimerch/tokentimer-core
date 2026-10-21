@@ -88,7 +88,7 @@ function adviceFor(issuer, agents) {
   if (!agents.length) {
     return {
       status: 'warning',
-      text: 'No Windows agent is registered. Install the agent on a domain machine that can reach the CA, then open this wizard again.',
+      text: 'No Windows agent is registered. Install the agent on a domain machine that can reach the CA, then open this dialog again.',
     };
   }
   const preflight = issuer?.lastPreflight;
@@ -277,7 +277,7 @@ export default function AdcsIssuerWizard({
       preflightJobIdRef.current = dispatched?.job?.id || null;
       setWaiting(true);
       showSuccess(
-        'Preflight dispatched. This wizard updates when the agent reports.'
+        'Preflight dispatched. This dialog updates when the agent reports.'
       );
     } catch (err) {
       setLocalError(errorText(err, 'Could not dispatch preflight.'));

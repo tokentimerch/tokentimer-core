@@ -692,7 +692,7 @@ export default function AdcsProfileWizard({
                   <Alert status='warning' borderRadius='md'>
                     <AlertIcon />
                     <AlertDescription fontSize='sm'>
-                      No certificate in inventory uses {dnsName}. This wizard
+                      No certificate in inventory uses {dnsName}. This dialog
                       does not create one. Open Certificates later, open that
                       certificate, and start managing it again with this
                       profile. Do not attach a different certificate. That
