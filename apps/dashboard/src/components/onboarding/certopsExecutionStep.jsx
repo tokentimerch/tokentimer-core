@@ -6,10 +6,21 @@ import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import { CopyBlock } from './blocks.jsx';
 import { GOALS } from './modules.js';
-import { buildDryRunJob } from './certopsConfig.js';
+import {
+  agentConfigPathFor,
+  agentRestartCommandFor,
+  buildDryRunJob,
+} from './certopsConfig.js';
 import { pickGoalAgent } from './certopsMatrix.js';
 import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
+import { useSummaryPolling } from './useSummaryPolling.js';
 import { createJob, getJob } from '../certops/certopsJobsApi.js';
+
+// Shown as a block to merge: pasting it over the file would drop agentId.
+const EXECUTION_BLOCK = `"execution": {
+  "enabled": true,
+  "dryRun": true
+}`;
 
 // Three stages, each proven by observed state rather than assumed.
 export const EXECUTION_STAGES = [
@@ -89,6 +100,15 @@ export function ExecutionStep({ ctx }) {
   }, [loadJob, saved.dryRunJobId]);
 
   const state = executionStage({ agents, dryRunJob: job });
+  // The agent turns execution on by itself once restarted, so keep reading
+  // until the server has seen it.
+  useSummaryPolling(
+    ctx.refresh,
+    needsExecution && (agents?.live || 0) > 0 && !agents?.executionEnabled
+  );
+  const os = saved.infrastructure === 'windows' ? 'windows' : 'linux';
+  const configPath = agentConfigPathFor(os);
+  const restartCommand = agentRestartCommandFor(os);
 
   if (!needsExecution) {
     return (
@@ -178,29 +198,37 @@ export function ExecutionStep({ ctx }) {
         {!state.done.includes('enabled') ? (
           <>
             <Text fontSize='sm'>
-              On the server set execution.enabled to true and keep dryRun true
-              in config.json, then restart the agent.
+              Open <code>{configPath}</code> on the server. Do not replace the
+              file: keep <code>agentId</code>, your policy and the other keys in
+              the execution block, and set only these two values. Then restart
+              the agent.
             </Text>
             <CopyBlock
-              label='config.json'
-              text={JSON.stringify(
-                { execution: { enabled: true, dryRun: true } },
-                null,
-                2
-              )}
+              label='execution block (merge into config.json, do not replace the file)'
+              text={EXECUTION_BLOCK}
+              language='json'
             />
+            <CopyBlock label='Restart the agent' text={restartCommand} />
+            {agent && !saved.dryRunJobId ? (
+              <Text fontSize='xs' color={muted} data-testid='send-test-hint'>
+                Send a test job stays disabled until the agent checks in again
+                with execution enabled. This page re-checks every 15 seconds.
+              </Text>
+            ) : null}
           </>
         ) : null}
         {job && job.status !== 'dry_run_complete' ? (
           <Text fontSize='xs' color='orange.400'>
-            Test job is {job.status}. A dry run must end as dry_run_complete,
-            never succeeded.
+            The test job is {job.status}. A passing dry run ends as
+            dry_run_complete, not as succeeded.
           </Text>
         ) : null}
         {state.done.includes('dryrun') ? (
           <Text fontSize='sm'>
-            The dry run passed. Set dryRun to false and restart the agent when
-            you are ready for real work.
+            The dry run passed. When you are ready for real work, set{' '}
+            <code>dryRun</code> to <code>false</code> in the same execution
+            block of <code>{configPath}</code> and restart the agent with{' '}
+            <code>{restartCommand}</code>.
           </Text>
         ) : null}
       </VStack>

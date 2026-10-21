@@ -5,6 +5,7 @@ import {
   AlertDescription,
   AlertIcon,
   Badge,
+  Checkbox,
   HStack,
   Text,
   VStack,
@@ -18,6 +19,8 @@ import { CopyBlock } from './blocks.jsx';
 import { pickGoalAgent } from './certopsMatrix.js';
 import {
   AGENT_KEYS_DIR,
+  agentConfigPathFor,
+  agentRestartCommandFor,
   buildIssueJob,
   buildServerSnippet,
   issueIdempotencyKey,
@@ -47,8 +50,8 @@ export function issueWaitNotice({ status, since, now = Date.now() }) {
   const waited = now - Date.parse(since);
   if (!(waited >= NO_CLAIM_AFTER_MS)) return null;
   return (
-    'No agent has taken this request. Check that the agent is online and that its config lists the DNS provider (dnsProviders), the target names and the command profiles this request needs, then restart it. ' +
-    'This request cannot be cancelled from here and it keeps the certificate path reserved, so asking again is not possible until it ends. Once the agent declares what it needs, it takes this same request.'
+    'No agent has taken this request. Check that the agent is online and that its config.json lists the DNS provider you chose, the target names and the command profiles this request needs, then restart it. ' +
+    'You cannot cancel this request from here, and until it ends its certificate file path stays locked, so asking again is not possible. Once the agent declares what it needs, it takes this same request.'
   );
 }
 
@@ -114,12 +117,15 @@ export default function IssueStep({ ctx }) {
   const view = issueView(job);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [acknowledged, setAcknowledged] = useState(false);
   const gate = canRequestIssue({
     agents: certops?.agents,
     dryRun: certops?.dryRun,
     saved,
   });
   const windows = saved.infrastructure === 'windows';
+  const configPath = agentConfigPathFor(windows ? 'windows' : 'linux');
+  const restartCommand = agentRestartCommandFor(windows ? 'windows' : 'linux');
   const names = (saved.names || '').split(/[\s,]+/).filter(Boolean);
   const attempt = saved.issueAttempt || 1;
   const caEndpoint = saved.caEndpoint || STAGING_CA;
@@ -225,7 +231,7 @@ export default function IssueStep({ ctx }) {
           <PrimaryButton
             onClick={request}
             isLoading={busy}
-            isDisabled={!gate.ok || !agent}
+            isDisabled={!gate.ok || !agent || !acknowledged}
           >
             Request a staging certificate
           </PrimaryButton>
@@ -277,12 +283,39 @@ export default function IssueStep({ ctx }) {
           </Alert>
         ) : null}
         {!job ? (
-          <Text fontSize='sm'>
-            Before you request: in the agent configuration set{' '}
-            <code>execution.dryRun</code> to <code>false</code> and restart the
-            agent. While it is true the agent refuses real orders, and the
-            control plane cannot see that setting.
-          </Text>
+          <Alert
+            status='warning'
+            borderRadius='md'
+            alignItems='flex-start'
+            data-testid='dryrun-ack-warning'
+          >
+            <AlertIcon />
+            <VStack align='stretch' spacing={2} flex='1' minW={0}>
+              <AlertDescription fontSize='sm'>
+                Before you request: while <code>execution.dryRun</code> is{' '}
+                <code>true</code> the agent refuses real orders, and this page
+                cannot see that setting. Open <code>{configPath}</code> on the
+                server, set <code>dryRun</code> to <code>false</code> in the
+                execution block (keep the other keys, do not replace the file)
+                and restart the agent.
+              </AlertDescription>
+              <CopyBlock label='Restart the agent' text={restartCommand} />
+              <Checkbox
+                size='sm'
+                isChecked={acknowledged}
+                onChange={e => setAcknowledged(e.target.checked)}
+                data-testid='dryrun-ack'
+              >
+                I set dryRun to false and restarted the agent
+              </Checkbox>
+              {!acknowledged ? (
+                <Text fontSize='xs' color={muted} data-testid='ack-hint'>
+                  The request button stays disabled until you tick this box
+                  {gate.ok ? '.' : ` and ${gate.missing.join(', ')} are ready.`}
+                </Text>
+              ) : null}
+            </VStack>
+          </Alert>
         ) : null}
         {waitNotice ? (
           <Alert status='warning' borderRadius='md' data-testid='issue-wait'>
@@ -292,16 +325,17 @@ export default function IssueStep({ ctx }) {
         ) : null}
         {job?.errorCode === 'AGENT_RESULT_BLOCKED' ? (
           <Text fontSize='sm'>
-            The agent refused the order. Set <code>execution.dryRun</code> to{' '}
-            <code>false</code>, restart it, then request again.
+            The agent refused the order because it is still in dry run. Set{' '}
+            <code>execution.dryRun</code> to <code>false</code>, restart it with{' '}
+            <code>{restartCommand}</code>, then request again.
           </Text>
         ) : null}
         {job?.errorMessage ? (
           <Alert status='error' borderRadius='md'>
             <AlertIcon />
             <AlertDescription fontSize='sm'>
-              {job.errorCode ? `${job.errorCode}: ` : ''}
               {job.errorMessage}
+              {job.errorCode ? ` (code: ${job.errorCode})` : ''}
             </AlertDescription>
           </Alert>
         ) : null}
@@ -314,10 +348,11 @@ export default function IssueStep({ ctx }) {
         ) : null}
         {view.failed && !windows ? (
           <Text fontSize='sm'>
-            A failed order leaves an entry in <code>provisioning</code> that
-            still holds <code>{saved.certPath}</code>, so asking again with the
-            same path is rejected. Go back and choose a different file name in
-            the same folder, then request again.
+            A failed order still reserves the certificate file{' '}
+            <code>{saved.certPath}</code> and it cannot be retired, so asking
+            again with the same path is rejected. Choose a different file name
+            in the same folder (go back to the configuration step), then request
+            again.
           </Text>
         ) : null}
         {view.noRetry ? (

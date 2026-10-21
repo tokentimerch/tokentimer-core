@@ -236,9 +236,9 @@ export function AgentStep({ ctx }) {
           ) : null}
           <Text fontSize='sm'>
             2. Create a machine token: in Certificate Management, open Settings
-            and add a token with the scope <code>certops:observations:write</code>{' '}
-            and that same cluster id (the token is bound to it). Then store it
-            in the cluster:
+            and add a token with the scope{' '}
+            <code>certops:observations:write</code> and that same cluster id
+            (the token is bound to it). Then store it in the cluster:
           </Text>
           <CopyBlock
             label='Create the secret (token read from stdin)'
@@ -362,10 +362,10 @@ export function AgentStep({ ctx }) {
             <AlertIcon />
             <VStack align='start' spacing={2}>
               <AlertDescription fontSize='sm'>
-                Saved. This step stays open until a suitable agent connects.
-                To come back, use the setup banner on Certificate Management
-                (shown while nothing is set up there) or Preferences, Setup
-                guide, Open setup guide.
+                Saved. This step stays open until a suitable agent connects. To
+                come back, use the setup banner on Certificate Management (shown
+                while nothing is set up there) or Preferences, Setup guide, Open
+                setup guide.
               </AlertDescription>
               {ctx.leaveGuide ? (
                 <DashboardActionButton size='sm' onClick={ctx.leaveGuide}>
@@ -407,8 +407,9 @@ export function AgentStep({ ctx }) {
               label='Download, verify and extract the agent package (replace <version>)'
               text={buildPackageCommand(os)}
             />
-            {ctx.docs('certops.agentPackage', 'Where to get the package').map(
-              link => (
+            {ctx
+              .docs('certops.agentPackage', 'Where to get the package')
+              .map(link => (
                 <Link
                   key={link.url}
                   href={link.url}
@@ -418,8 +419,7 @@ export function AgentStep({ ctx }) {
                 >
                   {link.label}
                 </Link>
-              )
-            )}
+              ))}
           </InstallStep>
           <InstallStep n={2} text={notes[1]} />
           <InstallStep
