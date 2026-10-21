@@ -44,7 +44,7 @@ const {
 } = require("../../../packages/agent/src/windows-key-survivors");
 const {
   startContainedNativeProcess,
-  assertContainedProcessesDrained,
+  assertCleanupSafe: assertContainedProcessesDrained,
 } = require("./certops-windows-contained-process");
 const execute = promisify(execFile);
 const active = new Map();

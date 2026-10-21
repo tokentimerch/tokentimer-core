@@ -78,12 +78,24 @@ public sealed class StopObservationHandle : IDisposable {
  if($targets.Count -lt 2){throw 'Installed host and actual Node required'}
  $nodeTargets=@($targets|Where-Object ProcessId -eq $context.nodeIdentity.pid)
  if($nodeTargets.Count -ne 1 -or $context.nodeIdentity.parentPid -ne $context.identity.pid -or !(Same (Identity $nodeTargets[0]) $context.nodeIdentity)){throw 'Original installed Node identity mismatch'}
- foreach($p in $targets){
-  $identity=Identity $p;$handle=[StopObservationHandle]::new([uint32]$p.ProcessId)
-  $entry=@{identity=$identity;handle=$handle};$handles+=,$entry
-  $fresh=Identity (Get-CimInstance Win32_Process -Filter "ProcessId=$($identity.pid)" -ErrorAction Stop)
-  if(!(Same $identity $fresh) -or $handle.Exited -or $handle.Image -ine $identity.executable -or $handle.Sid -cne 'S-1-5-18' -or $handle.CreatedMicroseconds -cne $p.CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.ffffffZ')){throw 'Captured native handle identity mismatch'}
- }
+  foreach($p in $targets){
+   $handle=$null;$entry=$null
+   try{
+    $identity=Identity $p;$handle=[StopObservationHandle]::new([uint32]$p.ProcessId)
+    $entry=@{identity=$identity;handle=$handle};$handles+=,$entry
+    $fresh=Identity (Get-CimInstance Win32_Process -Filter "ProcessId=$($identity.pid)" -ErrorAction Stop)
+    if(!(Same $identity $fresh) -or $handle.Exited -or $handle.Image -ine $identity.executable -or $handle.Sid -cne 'S-1-5-18' -or $handle.CreatedMicroseconds -cne $p.CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.ffffffZ')){throw 'Captured native handle identity mismatch'}
+   }catch{
+    # A short-lived helper child can exit between the inventory and the handle
+    # capture; it needs no stop evidence. The installed host and Node never qualify.
+    $isRoot=([int]$p.ProcessId -eq [int]$context.identity.pid) -or ([int]$p.ProcessId -eq [int]$context.nodeIdentity.pid)
+    $live=Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$p.ProcessId)" -ErrorAction SilentlyContinue
+    $gone=!$live -or $live.CreationDate -ne $p.CreationDate
+    if($isRoot -or !$gone){throw}
+    if($entry){$handles=@($handles|Where-Object {$_ -ne $entry})}
+    if($handle){try{$handle.Dispose()}catch{}}
+   }
+  }
  # A new descendant after capture is never adopted by PID or terminated.
  foreach($p in (Inventory)){if($known.ContainsKey([int]$p.ParentProcessId) -and !$known.ContainsKey([int]$p.ProcessId)){throw 'Uncaptured descendant; preserve fixture'}}
  $ready=@{schemaVersion=1;token=$context.token;observerPid=$PID;capturedProcessCount=$handles.Count;retainedReadOnlyHandles=$true}|ConvertTo-Json -Compress
