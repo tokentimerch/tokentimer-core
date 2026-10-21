@@ -92,3 +92,13 @@ test("a scenario whose journey failure was swallowed by the guard is reported as
   assert.equal(gate.report.scenarios[1].failure.errorClass, "Error");
   assert.equal(gate.report.status, "failed");
 });
+
+test("a hung scenario fails by id after its timeout and later scenarios still run", async () => {
+  const gate = await gateWith({ continueOnFailure: true, scenarioTimeoutMs: 50 });
+  await gate.scenario("hung", () => new Promise(() => {}));
+  await gate.scenario("after", async () => {});
+  assert.deepEqual(gate.report.scenarios.map((row) => row.status), ["failed", "passed"]);
+  assert.equal(gate.report.scenarios[0].failure.errorCode, "CERTOPS_SCENARIO_TIMEOUT");
+  assert.equal(gate.report.status, "failed");
+  await assert.rejects(gateWith({ scenarioTimeoutMs: -1 }), /Invalid scenario timeout/);
+});
