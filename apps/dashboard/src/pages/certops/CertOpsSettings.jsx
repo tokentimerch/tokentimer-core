@@ -5,6 +5,7 @@ import { useOutletContext } from 'react-router';
 import ApiTokenList from '../../components/certops/ApiTokenList.jsx';
 import ApiTokenModal from '../../components/certops/ApiTokenModal.jsx';
 import WorkspaceKillSwitchPanel from '../../components/certops/WorkspaceKillSwitchPanel.jsx';
+import CertopsQuickstartCard from '../../components/onboarding/CertopsQuickstartCard.jsx';
 import {
   SettingsActionList,
   SettingsActionRow,
@@ -109,6 +110,8 @@ export default function CertOpsSettings() {
           <JobApprovalPolicyRow />
         </SettingsActionList>
       </DashboardPanel>
+
+      <CertopsQuickstartCard />
 
       <DashboardPanel>
         <DashboardPanelHeader
