@@ -356,6 +356,9 @@ jobs:
           DB_PASSWORD: password
         run: pnpm run certops:integrity-check
 
+      - name: Prove concurrent enrollment admission on isolated PostgreSQL
+        run: node --test --test-force-exit tests/postgres/certops-enrollment-admission.test.js
+
       - name: Run AD CS API qualification on the existing test stack
         env:
           CERTOPS_ENABLED: 'true'

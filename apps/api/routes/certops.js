@@ -906,7 +906,7 @@ function handleCertOpsError(res, err) {
     });
   }
 
-  if (err?.code === CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED) {
+  if (err?.code === CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED || err?.code === "CERTOPS_ENROLLMENT_OPEN") {
     return res.status(409).json({
       error: err.message || "Per-CA renewal capacity exceeded",
       code: CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
