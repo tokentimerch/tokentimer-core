@@ -166,6 +166,12 @@ function coerceArray(value) {
     .filter(Boolean);
 }
 
+// Arrays from json or a split csv cell; keep a separator between entries.
+function formatSection(section) {
+  if (Array.isArray(section)) return section.join(', ');
+  return section || '';
+}
+
 function coerceIdList(value) {
   if (Array.isArray(value)) {
     return value.map(v => String(v).trim()).filter(Boolean);
@@ -896,6 +902,7 @@ function ImportTokensModalContent({
   const gcpFormRef = React.useRef(null);
   const certPemFormRef = React.useRef(null);
   const [fileName, setFileName] = React.useState('');
+  const [noRowsRead, setNoRowsRead] = React.useState(false);
 
   // Vault integration state
   const [vaultAddress, setVaultAddress] = React.useState(() => {
@@ -1826,6 +1833,7 @@ function ImportTokensModalContent({
   const onSelectFile = async e => {
     const f = e?.target?.files?.[0];
     setError(null);
+    setNoRowsRead(false);
     setRows([]);
     setSelectedRowsFile(new Set());
     setFileDuplicates(new Set());
@@ -1843,6 +1851,7 @@ function ImportTokensModalContent({
         .map(normalizeRow)
         .filter(r => r && r.name && r.category && r.type && r.expiresAt);
       setRows(normalized);
+      setNoRowsRead(normalized.length === 0);
       // Auto-select all rows
       setSelectedRowsFile(new Set(normalized.map((_, i) => i)));
 
@@ -3489,6 +3498,16 @@ function ImportTokensModalContent({
                 </VStack>
               ) : null}
 
+              {source === 'file' && noRowsRead && !parsing ? (
+                <Alert status='warning' borderRadius='md' py={2}>
+                  <AlertIcon />
+                  <Text fontSize='sm'>
+                    No rows could be read from this file. Check the columns
+                    against the template.
+                  </Text>
+                </Alert>
+              ) : null}
+
               {source === 'file' && parsing ? (
                 <HStack>
                   <Text>Parsing…</Text>
@@ -3599,7 +3618,7 @@ function ImportTokensModalContent({
                             <Td>{r.category}</Td>
                             <Td>{r.type}</Td>
                             <Td>{r.expiresAt}</Td>
-                            <Td>{r.section || ''}</Td>
+                            <Td>{formatSection(r.section)}</Td>
                           </Tr>
                         ))}
                       </Tbody>

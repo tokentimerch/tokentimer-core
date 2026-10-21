@@ -497,3 +497,68 @@ describe('ImportTokensModal docs panel', () => {
     expect(screen.queryByRole('note', { name: 'Learn more' })).toBeNull();
   });
 });
+
+describe('ImportTokensModal file preview', () => {
+  const NO_ROWS =
+    'No rows could be read from this file. Check the columns against the template.';
+
+  beforeEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    apiGetMock.mockResolvedValue({ data: {} });
+  });
+
+  const upload = (body, name) => {
+    const input = document.querySelector('input[type="file"]');
+    const file = new File([body], name, { type: 'text/plain' });
+    // jsdom's File has no text(); browsers do.
+    file.text = () => Promise.resolve(body);
+    fireEvent.change(input, { target: { files: [file] } });
+  };
+
+  it.each([
+    ['wrong columns', 'foo,bar\n1,2\n', 'wrong.csv'],
+    ['an empty csv', '', 'empty.csv'],
+    ['an empty json array', '[]', 'empty.json'],
+  ])('explains an unreadable file: %s', async (_label, body, name) => {
+    render(renderModal(null));
+    await screen.findByText(/Upload a file in/);
+    upload(body, name);
+    expect(await screen.findByText(NO_ROWS)).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Import 0 selected/ })
+    ).toBeDisabled();
+  });
+
+  it('shows the preview without the message for a readable file', async () => {
+    render(renderModal(null));
+    await screen.findByText(/Upload a file in/);
+    upload(
+      'name,category,type,expiresAt\nweb,cert,ssl_cert,2030-01-01\n',
+      'ok.csv'
+    );
+    expect(
+      await screen.findByText('Detected 1 valid rows')
+    ).toBeInTheDocument();
+    expect(screen.queryByText(NO_ROWS)).toBeNull();
+  });
+
+  it('joins the sections of a row with a comma and a space', async () => {
+    render(renderModal(null));
+    await screen.findByText(/Upload a file in/);
+    upload(
+      JSON.stringify([
+        {
+          name: 'web',
+          category: 'cert',
+          type: 'ssl_cert',
+          expiresAt: '2030-01-01',
+          section: ['prod', 'public'],
+        },
+      ]),
+      'sections.json'
+    );
+    expect(await screen.findByText('prod, public')).toBeInTheDocument();
+    expect(screen.queryByText('prodpublic')).toBeNull();
+  });
+});
