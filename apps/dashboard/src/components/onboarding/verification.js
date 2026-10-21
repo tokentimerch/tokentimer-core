@@ -285,7 +285,7 @@ export function evaluateVerification({
                 ready
                   ? 'Issuer and profile exist, enrollment is not verified'
                   : 'The AD CS issuer or profile is missing',
-                'Attach the profile to a certificate and confirm the first enrollment in Certificate Management. This guided setup has not been verified through a real enrollment yet.'
+                'Attach the profile to a certificate and confirm the first enrollment in Certificate Management.'
               )
         );
       }

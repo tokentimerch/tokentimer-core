@@ -79,6 +79,11 @@ describe('AdcsStep', () => {
     expect(screen.getAllByText('To do')).toHaveLength(3);
   });
 
+  it('says what the guide cannot do without a testing disclaimer', () => {
+    show(ctxWith({ adcs: { issuers: [], profiles: 0 }, agents: [] }));
+    expect(document.body.textContent).toMatch(/start the first enrollment/i);
+    expect(document.body.textContent).not.toMatch(/not been verified/i);
+  });
   it('shows the exact CA and template the issuer must match', () => {
     show(ctxWith({ adcs: { issuers: [], profiles: 0 } }));
     expect(

@@ -45,21 +45,17 @@ describe('final card title follows the verdict', () => {
     }
   });
 
-  it('hedges Windows ACME only, not the Linux path', () => {
-    const windows = show('certops_automate', {
-      objective: 'automate',
-      infrastructure: 'windows',
-    });
-    expect(screen.getByText('Setup finished, not verified yet')).toBeVisible();
-    windows.unmount();
-
-    show('certops_automate', {
-      objective: 'automate',
-      infrastructure: 'linux',
-    });
-    expect(screen.getByText('You are set up')).toBeVisible();
+  it('does not hedge Windows ACME or Linux ACME', () => {
+    for (const infrastructure of ['windows', 'linux']) {
+      const view = show('certops_automate', {
+        objective: 'automate',
+        infrastructure,
+      });
+      expect(screen.getByText('You are set up')).toBeVisible();
+      expect(document.body.textContent).not.toMatch(/not (been )?verified/);
+      view.unmount();
+    }
   });
-
   it('flags exactly the goals whose body hedges', () => {
     const hedgingBodies = Object.entries(GOALS)
       .filter(([, g]) => /not verified/i.test(g.doneText))

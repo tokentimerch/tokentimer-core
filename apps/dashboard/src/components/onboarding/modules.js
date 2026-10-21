@@ -120,8 +120,7 @@ export const GOALS = {
   certops_automate: {
     doneText: 'Your agent issued a staging certificate.',
     doneTextWindows:
-      'Your agent requested a staging certificate and bound it to an HTTPS listener (IIS). This guided Windows setup has not been verified end to end yet.',
-    doneUnverifiedWindows: true,
+      'Your agent requested a staging certificate and bound it to an HTTPS listener (IIS).',
     label: 'Issue and renew certificates automatically',
     description:
       'Use an agent to request, install and renew certificates (ACME).',

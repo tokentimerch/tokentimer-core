@@ -116,7 +116,7 @@ export function nextSteps(goalId, certops) {
     case 'certops_adcs':
       return [
         'Attach the profile to your certificate in Certificate Management and watch the first enrollment there.',
-        'Treat this guided setup as unverified until an enrollment has completed against your CA.',
+        'Your setup is only proven once the first enrollment has completed against your CA.',
       ];
     case 'certops_vault':
       return [
@@ -391,9 +391,7 @@ export function DoneCard({ ctx }) {
     scopeCertops(ctx.session.progress?.certops, goal?.certopsObjective)
       .infrastructure === 'windows';
   // A body that hedges must not sit under a title that says all is well.
-  const unverified =
-    goal?.doneUnverified === true ||
-    (windows && goal?.doneUnverifiedWindows === true);
+  const unverified = goal?.doneUnverified === true;
   const restart = async () => {
     await ctx.controller.update(session => ({
       intent: { ...session.intent, goal: '' },

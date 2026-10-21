@@ -107,8 +107,8 @@ export default function AdcsStep({ ctx }) {
           <AlertIcon />
           <AlertDescription fontSize='sm'>
             This guide prepares the agent rule and watches for the issuer and
-            profile. It cannot verify enrollment against your CA, and this
-            guided setup has not been verified through a real enrollment yet.
+            profile. It cannot verify enrollment against your CA: start the
+            first enrollment from Certificate Management.
           </AlertDescription>
         </Alert>
         {overdueMessage ? (
