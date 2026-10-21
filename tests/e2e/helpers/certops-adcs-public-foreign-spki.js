@@ -473,9 +473,15 @@ function createForeignReconcileActor({ ownedForeignRequests }) {
           "csrSha256",
           "csrSpkiSha256",
           "snapshotSha256",
-          "reconcileSearchFrom",
         ])
           assert.equal(current.journal[field], original.journal[field]);
+        // Reconcile may advance the cursor past terminal CA rows, never backwards
+        // and never beyond the refused foreign request.
+        assert.ok(
+          current.journal.reconcileSearchFrom >=
+            original.journal.reconcileSearchFrom &&
+            current.journal.reconcileSearchFrom <= Number(foreignRequestId),
+        );
         assert.ok(
           current.artifacts.csrPem === original.artifacts.csrPem,
           "Original public CSR changed",
@@ -539,9 +545,12 @@ function createForeignReconcileActor({ ownedForeignRequests }) {
           assert.equal(proposal.state, "submission_uncertain");
           assert.equal(String(proposal.operator_request_id), foreignRequestId);
           assert.equal(proposal.request_id, null);
+          // Use the database clock: the proposal sets next_poll_at = NOW() there, and the
+          // runner VM clock can lag it by a few hundred milliseconds.
+          const dueNow = (await query("SELECT clock_timestamp() AS now")).rows[0].now;
           const scheduled = (
             await require("../../../apps/api/services/certops/certificateEnrollments").scheduleDueEnrollments(
-              { client: fixture.pool },
+              { client: fixture.pool, now: dueNow },
             )
           ).filter((value) => value.enrollmentId === id);
           assert.equal(scheduled.length, 1);

@@ -25,7 +25,7 @@ test("single native candidate proof refuses broader fault claims and spliced ide
     { caRequestsAtFault: 1 },
     { caRequestsAfterOperatorSubmission: 2 },
     { caRequestsAfterRecovery: 2 },
-    { actualLeaseWaitMs: 60000 },
+    { actualLeaseWaitMs: 58999 },
     { actualLeaseWaitMs: 151001 },
     { resolvedIssuingCaAddress: "10.64.0.7" },
     { requestId: "4294967296" },
