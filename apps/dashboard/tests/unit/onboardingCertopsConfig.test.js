@@ -28,6 +28,7 @@ import {
   certDirectoryFor,
   dnsCredentialsExample,
   vaultPublishIdempotencyKey,
+  buildVaultAgentConfig,
   DNS_PROVIDERS,
   mergeInstallerFields,
   registrationNotesFor,
@@ -909,5 +910,18 @@ describe('Vault publish job creation', () => {
       'customer'
     );
     expect(job.assignedAgentId).toBe('agent-1');
+  });
+});
+
+describe('Vault Agent config', () => {
+  it('logs in with AppRole and writes the token file the agent reads', () => {
+    const text = buildVaultAgentConfig({
+      vaultAddress: 'https://vault.example.com:8200',
+      caFile: '/etc/tokentimer-agent/vault-ca.pem',
+    });
+    expect(text).toContain('method "approle"');
+    expect(text).toContain('path = "/run/tokentimer-vault/issuer-token"');
+    expect(text).toContain('ca_cert = "/etc/tokentimer-agent/vault-ca.pem"');
+    expect(text).not.toMatch(SENSITIVE_PATTERN);
   });
 });

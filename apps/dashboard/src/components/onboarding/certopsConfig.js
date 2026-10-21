@@ -570,6 +570,38 @@ export function issueIdempotencyKey({
 }
 
 /**
+ * Vault Agent config that logs in with AppRole and keeps a token file fresh.
+ * The TokenTimer agent reads only that file (materialStores.*.tokenFile): it
+ * has no AppRole login of its own.
+ */
+export function buildVaultAgentConfig({
+  vaultAddress,
+  caFile = '',
+  tokenFile = '/run/tokentimer-vault/issuer-token',
+  credentialDir = '/etc/tokentimer-vault-agent',
+}) {
+  return [
+    'vault {',
+    `  address = "${vaultAddress || 'https://vault.example.com:8200'}"`,
+    ...(caFile ? [`  ca_cert = "${caFile}"`] : []),
+    '}',
+    'auto_auth {',
+    '  method "approle" {',
+    '    config = {',
+    `      role_id_file_path = "${credentialDir}/role-id"`,
+    `      secret_id_file_path = "${credentialDir}/secret-id"`,
+    '      remove_secret_id_file_after_reading = false',
+    '    }',
+    '  }',
+    '  sink "file" {',
+    `    config = { path = "${tokenFile}", mode = 0600 }`,
+    '  }',
+    '}',
+    '',
+  ].join('\n');
+}
+
+/**
  * Stable per issuer and request, so a reload or double click returns the
  * existing publish job instead of creating a second one.
  */

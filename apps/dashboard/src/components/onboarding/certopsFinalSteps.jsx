@@ -27,6 +27,7 @@ import {
   buildVaultRollout,
   buildInstallCommand,
   NGINX_RELOAD_DROPIN,
+  buildVaultAgentConfig,
   vaultPublishIdempotencyKey,
 } from './certopsConfig.js';
 import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
@@ -125,7 +126,13 @@ export function VaultStep({ ctx }) {
   });
   const set = key => e => setForm(f => ({ ...f, [key]: e.target.value }));
   const names = (saved.names || '').split(/[\s,]+/).filter(Boolean);
+  const agentItems = ctx.summary?.certops?.agents?.items || [];
+  const [issuerPick, setIssuerPick] = useState(saved.vaultIssuerAgentId || '');
+  const issuerId = issuerPick || agentItems[0]?.id || '';
+  const issuerWireId =
+    agentItems.find(a => a.id === issuerId)?.wireAgentId || undefined;
   const out = buildVaultConfigs({
+    issuerAgentId: issuerWireId,
     vaultAddress: form.vaultAddress,
     mount: form.mount,
     workspaceId: ctx.workspaceId,
@@ -156,9 +163,6 @@ export function VaultStep({ ctx }) {
     distribution: ctx.summary?.certops?.distribution,
   });
   const gap = capabilityGap('vault', 'linux', declared);
-  const agentItems = ctx.summary?.certops?.agents?.items || [];
-  const [issuerPick, setIssuerPick] = useState(saved.vaultIssuerAgentId || '');
-  const issuerId = issuerPick || agentItems[0]?.id || '';
   const [pub, setPub] = useState({ job: null, busy: false, error: '' });
   const publishJobId = saved.vaultPublishJobId || '';
   const publishKey = vaultPublishIdempotencyKey({
@@ -432,12 +436,28 @@ export function VaultStep({ ctx }) {
               consumer repeats it in materialBindings). Choose each id before
               the agent registers by setting agentId in its config.json, or read
               it from the registered agent&apos;s config.json and merge these
-              keys into that file instead of replacing it. Each agent reads a
-              Vault token file refreshed by Vault Agent. No Vault token is ever
-              entered here. Both agents start in dry run: after a signed dry run
-              passes, set execution.dryRun to false in each config and restart
-              it.
+              keys into that file instead of replacing it. No Vault token is
+              ever entered here. Both agents start in dry run: after a signed
+              dry run passes, set execution.dryRun to false in each config and
+              restart it.
             </Text>
+            <Text fontSize='xs' color={muted} data-testid='vault-auth-note'>
+              Authentication to Vault: each agent reads a Vault token from a
+              file (tokenFile) and has no login of its own, so AppRole,
+              Kubernetes or other auth methods are handled by Vault Agent, which
+              keeps that file fresh. The file must be owned by the agent user
+              with mode 0600. The example uses AppRole: create the role with the
+              policy above, put its role id and secret id in two files readable
+              only by the user that runs Vault Agent, and run Vault Agent as the
+              agent user.
+            </Text>
+            <CopyBlock
+              label='Vault Agent config (AppRole, writes the issuer token file)'
+              text={buildVaultAgentConfig({
+                vaultAddress: form.vaultAddress,
+                caFile: form.caFile.trim(),
+              })}
+            />
             <Text fontSize='sm'>
               2. Install the consumer agent on its own host with the same
               installer. It needs its deploy folder and the right to reload the
