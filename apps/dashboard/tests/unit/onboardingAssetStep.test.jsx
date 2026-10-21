@@ -158,6 +158,25 @@ describe('AssetStep list', () => {
   });
 });
 
+describe('AssetStep leave warning', () => {
+  const leave = () => {
+    const event = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+
+  it('warns before a reload only while there is unsaved work', () => {
+    mount(makeCtx());
+    expect(leave()).toBe(false);
+    setName('Draft key');
+    expect(leave()).toBe(true);
+    setName('');
+    expect(leave()).toBe(false);
+    stageNamed('Listed key');
+    expect(leave()).toBe(true);
+  });
+});
+
 describe('AssetStep creation', () => {
   it('creates every listed asset and finishes the step', async () => {
     const ctx = makeCtx();
@@ -195,6 +214,25 @@ describe('AssetStep creation', () => {
     expect(refs.tokenIds).toEqual([50, 1, 2]);
     expect(refs.assetTokenIds).toEqual([1, 2]);
     expect(refs.monitorIds).toEqual(['m1']);
+  });
+
+  it('keeps the saved ids within what the saved progress accepts', async () => {
+    const ctx = makeCtx();
+    const old = Array.from({ length: 99 }, (_, i) => 1000 + i);
+    ctx.controller.session.operationRefs = {
+      tokenIds: old,
+      assetTokenIds: old,
+    };
+    mount(ctx);
+    stageNamed('Payments API key');
+    stageNamed('Billing API key');
+    fireEvent.click(screen.getByRole('button', { name: 'Create 2 assets' }));
+    await waitFor(() => expect(ctx.onDone).toHaveBeenCalled());
+    const refs = ctx.controller.session.operationRefs;
+    expect(refs.tokenIds).toHaveLength(100);
+    expect(refs.assetTokenIds).toHaveLength(100);
+    expect(refs.assetTokenIds.slice(-2)).toEqual([1, 2]);
+    expect(refs.assetTokenIds).not.toContain(1000);
   });
 
   it('carries over asset ids from a session saved before assetTokenIds', async () => {

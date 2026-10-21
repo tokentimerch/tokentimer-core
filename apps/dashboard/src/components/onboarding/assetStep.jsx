@@ -46,6 +46,7 @@ import {
   fieldsFor,
   validateAsset,
 } from './assetModel.js';
+import { mergeRefs } from './monitorModel.js';
 import { onboardingActions } from '../../utils/onboardingActions.js';
 import ContactGroupCheckboxGroup from '../ContactGroupCheckboxGroup.jsx';
 import { AlertsGoTo } from './alertsGoTo.jsx';
@@ -117,6 +118,19 @@ export function AssetStep({ ctx }) {
     setAsset(a => ({ ...a, fields: { ...a.fields, [key]: value } }));
 
   const changeCategory = value => setAsset(a => changeAssetCategory(a, value));
+
+  // The list and the form live only in this page, so a reload would drop
+  // them. Not while creating: the batch is already running.
+  const warnOnLeave = (staged.length > 0 || asset.name.trim() !== '') && !busy;
+  useEffect(() => {
+    if (!warnOnLeave) return undefined;
+    const onBeforeUnload = event => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [warnOnLeave]);
 
   /** Validates the form and puts the asset on the list. Nothing is created yet. */
   const stageCurrent = () => {
@@ -193,10 +207,8 @@ export function AssetStep({ ctx }) {
       },
       create: () => onboardingActions.createToken(payload),
       record: (refs, created) => ({
-        tokenIds: Array.from(
-          new Set([...(refs.tokenIds || []), created.id].filter(Boolean))
-        ),
-        assetTokenIds: withAssetTokenId(refs, created.id),
+        tokenIds: mergeRefs(refs.tokenIds, [created.id]),
+        assetTokenIds: mergeRefs(withAssetTokenId(refs, created.id), []),
       }),
     });
     return { name: payload.name, adopted };
