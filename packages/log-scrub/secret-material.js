@@ -715,6 +715,15 @@ function stringContainsPrivateKey(value) {
 
   const decoded = base64DecodeIfLikely(value);
   if (decoded) {
+    // Short blobs and hex-shaped strings are identifiers/digests (thumbprints,
+    // ids, nonces); ~0.1% of them look like a zlib header (half with FDICT)
+    // and must not hit the compressed-input fail-closed path. A compressed
+    // PEM cannot be smaller than this bound; real DER/PEM shapes are still
+    // checked directly below.
+    if (hexDecoded || decoded.length < 64) {
+      if (ordinaryBufferContainsPrivateKey(decoded)) return true;
+      return false;
+    }
     if (bufferContainsPrivateKey(decoded)) return true;
   }
   return false;
