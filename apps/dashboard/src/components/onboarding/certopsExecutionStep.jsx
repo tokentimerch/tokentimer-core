@@ -7,6 +7,7 @@ import PrimaryButton from './PrimaryButton.jsx';
 import { CopyBlock } from './blocks.jsx';
 import { GOALS } from './modules.js';
 import { buildDryRunJob } from './certopsConfig.js';
+import { pickGoalAgent } from './certopsMatrix.js';
 import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
 import { createJob, getJob } from '../certops/certopsJobsApi.js';
 
@@ -43,7 +44,11 @@ export function ExecutionStep({ ctx }) {
   const { muted } = useDashboardTheme();
   const saved = certopsProgress(ctx);
   const agents = ctx.summary?.certops?.agents;
-  const agent = agents?.items?.[0];
+  const agent = pickGoalAgent(
+    agents?.items,
+    saved.objective,
+    saved.infrastructure
+  );
   const [job, setJob] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);

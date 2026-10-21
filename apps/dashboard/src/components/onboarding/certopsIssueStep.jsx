@@ -15,6 +15,7 @@ import { createJob, getJob } from '../certops/certopsJobsApi.js';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import { CopyBlock } from './blocks.jsx';
+import { pickGoalAgent } from './certopsMatrix.js';
 import {
   AGENT_KEYS_DIR,
   buildIssueJob,
@@ -104,7 +105,11 @@ export default function IssueStep({ ctx }) {
   const { muted } = useDashboardTheme();
   const saved = certopsProgress(ctx);
   const certops = ctx.summary?.certops;
-  const agent = certops?.agents?.items?.[0];
+  const agent = pickGoalAgent(
+    certops?.agents?.items,
+    saved.objective,
+    saved.infrastructure
+  );
   const job = certops?.issueJob;
   const view = issueView(job);
   const [busy, setBusy] = useState(false);
@@ -340,6 +345,15 @@ export default function IssueStep({ ctx }) {
               ? `After writing the certificate, the agent checks ${reloadLabel} and then reloads it with systemctl. The configuration test happens in that check (Apache, HAProxy) or in the unit's own reload (nginx, Apache, HAProxy), so a broken configuration is not loaded.`
               : 'The certificate is written to the path above. Nothing is reloaded; you can choose a web server to reload in the configuration step.'}
         </Text>
+        {!windows && saved.reloadService ? (
+          <Text fontSize='xs' color={muted} data-testid='server-running-note'>
+            Start {reloadLabel} before you request, for example with its default
+            site. The agent checks that the unit is active before it reloads,
+            and a stopped server ends the order as Needs review even though the
+            certificate was written. Add the lines below to a TLS server block
+            once the files exist.
+          </Text>
+        ) : null}
         {!windows && keyPathFor(saved.certPath) ? (
           <>
             <Text fontSize='sm' data-testid='key-note'>

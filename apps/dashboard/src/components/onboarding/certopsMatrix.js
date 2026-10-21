@@ -104,6 +104,24 @@ export function commandProfileFor(objective, infrastructure) {
   return 'certbot';
 }
 
+/**
+ * The agent a guide step sends its jobs to. With several agents in the
+ * workspace (for example an issuer and a Vault consumer) the newest one is not
+ * necessarily the one that can place orders, so prefer a live agent that
+ * declared the goal's command profile.
+ */
+export function pickGoalAgent(items, objective, infrastructure) {
+  const list = items || [];
+  const profile = commandProfileFor(objective, infrastructure);
+  if (profile) {
+    const has = a => (a.commandProfiles || []).includes(profile);
+    const match =
+      list.find(a => a.livenessState === 'live' && has(a)) || list.find(has);
+    if (match) return match;
+  }
+  return list[0];
+}
+
 /** Capabilities an agent must declare for this combination. */
 export function requiredCapabilities(objective, infrastructure) {
   if (objective === 'observe') return [];

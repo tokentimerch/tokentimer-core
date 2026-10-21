@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VaultStep } from '../../src/components/onboarding/certopsFinalSteps.jsx';
 import {
   NO_CLAIM_AFTER_MS,
+  default as IssueStep,
   issueWaitNotice,
 } from '../../src/components/onboarding/certopsIssueStep.jsx';
 import { nextSteps } from '../../src/components/onboarding/OnboardingPage.jsx';
@@ -21,6 +22,7 @@ import {
   verifyNeedsPolling,
 } from '../../src/components/onboarding/useSummaryPolling.js';
 import { CHECK_STATUS } from '../../src/components/onboarding/verification.js';
+import { pickGoalAgent } from '../../src/components/onboarding/certopsMatrix.js';
 
 vi.mock('../../src/hooks/useDashboardTheme', async importOriginal => ({
   ...(await importOriginal()),
@@ -35,6 +37,20 @@ const UUID_A = '11111111-1111-4111-8111-111111111111';
 const UUID_B = '22222222-2222-4222-8222-222222222222';
 
 describe('Linux key location', () => {
+  it('picks the agent that can place orders, not the newest one', () => {
+    const consumer = { id: 'c', livenessState: 'live', commandProfiles: [] };
+    const issuer = {
+      id: 'i',
+      livenessState: 'live',
+      commandProfiles: ['certbot'],
+    };
+    expect(pickGoalAgent([consumer, issuer], 'automate', 'linux').id).toBe('i');
+    expect(pickGoalAgent([consumer, issuer], 'vault', 'linux').id).toBe('i');
+    expect(pickGoalAgent([consumer], 'automate', 'linux').id).toBe('c');
+    expect(pickGoalAgent([consumer, issuer], 'observe', 'linux').id).toBe('c');
+    expect(pickGoalAgent([], 'automate', 'linux')).toBeUndefined();
+  });
+
   it('derives the key next to the certificate', () => {
     expect(keyPathFor('/etc/ssl/tt/site.pem')).toBe('/etc/ssl/tt/site.pem.key');
     expect(keyPathFor('relative.pem')).toBe('');
@@ -148,6 +164,58 @@ describe('Vault consumer folder', () => {
       /A rollout itself has no dry run/
     );
     expect(document.body.textContent).toMatch(/"mode": "dry_run"/);
+  });
+});
+
+describe('Linux request step', () => {
+  const ctx = (extra = {}) => ({
+    docs: () => [],
+    workspaceId: 'w1',
+    refresh: vi.fn().mockResolvedValue(undefined),
+    session: {
+      progress: {
+        certops: {
+          objective: 'automate',
+          infrastructure: 'linux',
+          names: 'app.example.com',
+          zone: 'example.com',
+          dnsProvider: 'rfc2136',
+          certPath: '/etc/ssl/tt/app.pem',
+          reloadService: 'nginx',
+          ...extra,
+        },
+      },
+    },
+    summary: {
+      certops: {
+        agents: {
+          live: 1,
+          executionEnabled: true,
+          items: [
+            { id: 'c', livenessState: 'live', commandProfiles: [] },
+            { id: 'i', livenessState: 'live', commandProfiles: ['certbot'] },
+          ],
+        },
+        dryRun: { status: 'dry_run_complete' },
+      },
+    },
+  });
+
+  it('prints the key path, the server lines and the running-server note', () => {
+    render(
+      <ChakraProvider>
+        <IssueStep ctx={ctx()} />
+      </ChakraProvider>
+    );
+    expect(screen.getByTestId('key-note').textContent).toMatch(
+      /\/etc\/ssl\/tt\/app\.pem\.key/
+    );
+    expect(document.body.textContent).toMatch(
+      /ssl_certificate_key \/etc\/ssl\/tt\/app\.pem\.key;/
+    );
+    expect(screen.getByTestId('server-running-note').textContent).toMatch(
+      /Start nginx before you request/
+    );
   });
 });
 

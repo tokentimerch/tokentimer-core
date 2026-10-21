@@ -19,7 +19,11 @@ import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { createJob, getJob } from '../certops/certopsJobsApi.js';
 import StepFrame from './StepFrame.jsx';
 import { CopyBlock } from './blocks.jsx';
-import { capabilityGap, requiredCapabilities } from './certopsMatrix.js';
+import {
+  capabilityGap,
+  pickGoalAgent,
+  requiredCapabilities,
+} from './certopsMatrix.js';
 import {
   buildVaultConfigs,
   buildVaultConsumerAssignment,
@@ -141,7 +145,8 @@ export function VaultStep({ ctx }) {
   const names = (saved.names || '').split(/[\s,]+/).filter(Boolean);
   const agentItems = ctx.summary?.certops?.agents?.items || [];
   const [issuerPick, setIssuerPick] = useState(saved.vaultIssuerAgentId || '');
-  const issuerId = issuerPick || agentItems[0]?.id || '';
+  const issuerId =
+    issuerPick || pickGoalAgent(agentItems, 'vault', 'linux')?.id || '';
   const issuerWireId =
     agentItems.find(a => a.id === issuerId)?.wireAgentId || undefined;
   const [consumerPick, setConsumerPick] = useState('');
