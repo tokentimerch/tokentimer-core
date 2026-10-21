@@ -50,6 +50,8 @@ that the dashboard's Deploy-an-agent panel generates a command for. It:
 
 `--dry-run` prints every action without touching the system.
 
+Run the installer as `sudo bash ./scripts/install-agent.sh`. The `bash` form works whether or not the tarball kept the script's executable bit. The 0.17.3 and earlier release tarballs ship it without that bit, so `sudo ./scripts/install-agent.sh` fails with `Permission denied` there.
+
 <a id="installer-flags"></a>
 
 #### Installer flags
@@ -100,6 +102,19 @@ write `LocalMachine\Root` and `LocalMachine\CA`. `--trust-store` is
 accepted so a Linux install command pasted into PowerShell does not fail.
 
 The installer is POSIX shell and needs root (or sudo) for a real install. Create a bootstrap token, run the generated command, then verify registration and a fresh heartbeat in the dashboard. For removal, see [Upgrade and uninstall](operations.md#upgrade-and-uninstall).
+
+#### Reload Apache or HAProxy
+
+A configuration test run as the unprivileged agent user fails as soon as the configuration loads a key or PEM that only root can read (for example Debian's `default-ssl` site or a PEM folder under `/etc/haproxy`). The validate command therefore only checks that the unit is running, and the unit's own reload tests the configuration as root and refuses a broken one. Install with `--reload-service apache2` or `--reload-service haproxy` and add the matching pair to `policy.allowedCommands`:
+
+```json
+"apache2-validate": { "argv": ["/usr/bin/systemctl", "is-active", "--quiet", "apache2"] },
+"apache2-reload": { "argv": ["/usr/bin/systemctl", "reload", "apache2"] },
+"haproxy-validate": { "argv": ["/usr/bin/systemctl", "is-active", "--quiet", "haproxy"] },
+"haproxy-reload": { "argv": ["/usr/bin/systemctl", "reload", "haproxy"] }
+```
+
+The issue request's `target.keyPath` decides where the private key is written; keep it in a `--write-path` folder. HAProxy loads `<crt>.key` by itself when the file in `bind ... ssl crt` holds no key (HAProxy 2.8).
 
 ## Related
 
