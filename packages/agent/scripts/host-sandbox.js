@@ -10,13 +10,15 @@
  *
  * CLI:
  *   node host-sandbox.js override --state-dir DIR [--write-path DIR ...]
- *   node host-sandbox.js polkit --user NAME [--reload-service UNIT ...]
+ *   node host-sandbox.js polkit --user NAME [--rule-file FILE] [--replace] [--reload-service UNIT ...]
  *   node host-sandbox.js validate-path PATH
  *   node host-sandbox.js map-reload-service NAME
  *   node host-sandbox.js trust-store-paths FAMILY
  *   node host-sandbox.js is-trust-store-path PATH
  *   node host-sandbox.js is-trust-store-recursive-acl PATH
  */
+
+const fs = require("node:fs");
 
 /**
  * OS-owned trust-store directories the agent must write for
@@ -71,6 +73,10 @@ const ALLOWED_RELOAD_SERVICES = Object.freeze({
     validateBinaries: ["haproxy"],
   }),
 });
+
+const ALLOWED_RELOAD_UNITS = new Set(
+  Object.values(ALLOWED_RELOAD_SERVICES).map((entry) => entry.unit),
+);
 
 function fail(message) {
   const error = new Error(message);
@@ -220,13 +226,14 @@ function mapReloadService(name) {
  * @param {{ user: string, reloadServices?: string[] }} options
  * @returns {string|null} JS polkit rule, or null when no reload services
  */
-function buildPolkitRule({ user, reloadServices = [] } = {}) {
+function buildPolkitRule({ user, reloadServices = [], existingUnits = [] } = {}) {
   if (typeof user !== "string" || !/^[a-z_][a-z0-9_-]{0,31}$/.test(user)) {
     fail(`agent user name is invalid: ${JSON.stringify(user)}`);
   }
-  const units = uniquePreserveOrder(
-    reloadServices.map((name) => mapReloadService(name).unit),
-  );
+  const units = uniquePreserveOrder([
+    ...existingUnits.filter((unit) => ALLOWED_RELOAD_UNITS.has(unit)),
+    ...reloadServices.map((name) => mapReloadService(name).unit),
+  ]);
   if (units.length === 0) return null;
 
   const unitList = units.map((unit) => JSON.stringify(unit)).join(", ");
@@ -257,11 +264,79 @@ function buildPolkitRule({ user, reloadServices = [] } = {}) {
   ].join("\n");
 }
 
+/**
+ * Units granted by a rule this installer wrote earlier. Returns null when the
+ * text is not one of our generated rules, so a hand-written file is never
+ * mistaken for an empty grant list.
+ * @param {string} ruleText
+ * @returns {string[]|null}
+ */
+function parseExistingPolkitUnits(ruleText) {
+  if (typeof ruleText !== "string") return null;
+  const match = /var allowedUnits = (\[[^\]\n]*\]);/.exec(ruleText);
+  if (!match) return null;
+  try {
+    const parsed = JSON.parse(match[1]);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.filter((unit) => typeof unit === "string");
+  } catch (_error) {
+    return null;
+  }
+}
+
+/**
+ * Decides the polkit rule for an install or re-run.
+ *
+ * Default is to merge: units already granted stay granted, so re-running the
+ * installer for one more service cannot silently take reload rights away from
+ * the others. `replace` makes the requested list authoritative and reports
+ * what it drops.
+ *
+ * @param {{
+ *   user: string,
+ *   reloadServices?: string[],
+ *   existingRuleText?: string|null,
+ *   replace?: boolean,
+ * }} options
+ * @returns {{ rule: string|null, existing: string[], added: string[], dropped: string[], unrecognizedExisting: boolean }}
+ */
+function planPolkitRule({
+  user,
+  reloadServices = [],
+  existingRuleText = null,
+  replace = false,
+} = {}) {
+  const parsed = parseExistingPolkitUnits(existingRuleText);
+  const unrecognizedExisting =
+    typeof existingRuleText === "string" &&
+    existingRuleText.trim().length > 0 &&
+    parsed === null;
+  const existing = parsed || [];
+  const requested = uniquePreserveOrder(
+    reloadServices.map((name) => mapReloadService(name).unit),
+  );
+  const keptExisting = replace
+    ? []
+    : existing.filter((unit) => ALLOWED_RELOAD_UNITS.has(unit));
+  const finalUnits = uniquePreserveOrder([...keptExisting, ...requested]);
+  const rule = buildPolkitRule({
+    user,
+    reloadServices: [],
+    existingUnits: finalUnits,
+  });
+  return {
+    rule,
+    existing,
+    added: finalUnits.filter((unit) => !existing.includes(unit)),
+    dropped: existing.filter((unit) => !finalUnits.includes(unit)),
+    unrecognizedExisting,
+  };
+}
 function printUsage() {
   process.stdout.write(
     "Usage:\n" +
       "  node host-sandbox.js override --state-dir DIR [--write-path DIR ...]\n" +
-      "  node host-sandbox.js polkit --user NAME [--reload-service UNIT ...]\n" +
+      "  node host-sandbox.js polkit --user NAME [--rule-file FILE] [--replace] [--reload-service UNIT ...]\n" +
       "  node host-sandbox.js validate-path PATH\n" +
       "  node host-sandbox.js map-reload-service NAME\n" +
       "  node host-sandbox.js trust-store-paths FAMILY\n" +
@@ -277,6 +352,8 @@ function parseArgs(argv) {
     user: "",
     writePaths: [],
     reloadServices: [],
+    ruleFile: "",
+    replace: false,
     path: "",
     service: "",
     family: "",
@@ -295,6 +372,12 @@ function parseArgs(argv) {
       options.writePaths.push(argv[++i] || "");
     } else if (arg.startsWith("--write-path=")) {
       options.writePaths.push(arg.slice("--write-path=".length));
+    } else if (arg === "--rule-file") {
+      options.ruleFile = argv[++i] || "";
+    } else if (arg.startsWith("--rule-file=")) {
+      options.ruleFile = arg.slice("--rule-file=".length);
+    } else if (arg === "--replace") {
+      options.replace = true;
     } else if (arg === "--reload-service") {
       options.reloadServices.push(argv[++i] || "");
     } else if (arg.startsWith("--reload-service=")) {
@@ -332,11 +415,40 @@ function main(argv = process.argv.slice(2)) {
     return 0;
   }
   if (command === "polkit") {
-    const rule = buildPolkitRule({
+    let existingRuleText = null;
+    if (options.ruleFile) {
+      try {
+        existingRuleText = fs.readFileSync(options.ruleFile, "utf8");
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+    }
+    const plan = planPolkitRule({
       user: options.user,
       reloadServices: options.reloadServices,
+      existingRuleText,
+      replace: options.replace,
     });
-    if (rule) process.stdout.write(rule);
+    if (plan.unrecognizedExisting) {
+      process.stderr.write(
+        `host-sandbox: WARNING: ${options.ruleFile} was not written by this installer; it is being replaced\n`,
+      );
+    }
+    if (plan.dropped.length > 0) {
+      process.stderr.write(
+        `host-sandbox: WARNING: dropping reload grants no longer listed: ${plan.dropped.join(", ")}\n`,
+      );
+    }
+    if (plan.added.length > 0) {
+      process.stderr.write(`host-sandbox: granting reload for: ${plan.added.join(", ")}\n`);
+    }
+    if (!options.replace && plan.existing.length > 0) {
+      const kept = plan.existing.filter((unit) => !plan.dropped.includes(unit));
+      if (kept.length > 0) {
+        process.stderr.write(`host-sandbox: keeping existing reload grants: ${kept.join(", ")}\n`);
+      }
+    }
+    if (plan.rule) process.stdout.write(plan.rule);
     return 0;
   }
   if (command === "validate-path") {
@@ -373,6 +485,8 @@ module.exports = {
   isTrustStoreRecursiveAclPath,
   buildSystemdOverride,
   buildPolkitRule,
+  planPolkitRule,
+  parseExistingPolkitUnits,
   mapReloadService,
   main,
 };

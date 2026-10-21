@@ -37,6 +37,8 @@ Target: **0.18.0**.
 - Workspace invitations preserve existing admin and owner access. Certificate job links open their history, multi-certificate tokens support targeted retirement, and Control Center asset lists populate correctly.
 - Distribution permits authorized pause and retirement while execution is blocked; resume remains gated. Publishing claim IDs remain private.
 - **Non-English Windows hosts:** certificate discovery, IIS deployment and retention no longer depend on localized command output. **Operator action:** upgrade affected agents, ensure Windows PowerShell 5.1 is available, and review TLS settings on previously renewed IIS bindings with `netsh http show sslcert` ([#327](https://github.com/tokentimerch/tokentimer-core/issues/327), [#330](https://github.com/tokentimerch/tokentimer-core/issues/330)).
+- **Linux agent installer:** `install-agent.sh` is executable in the release tarball again (it shipped as `-rw-r--r--`), and the release build fails if the mode is lost. Re-running it with another `--reload-service` now merges with the polkit grants already on the host. **Operator guidance:** pass `--replace-reload-services` to make the list authoritative; each dropped unit is printed. A re-run with no reload flag leaves the existing rule in place.
+- **Agent custody key:** a rotation rolled back after a failed reload or verify restores the previous key, so the certificate stays renewable. Unusable keys now report their cause with a recovery step. **Operator action:** a path already stuck on `agent custody key ...` needs the recovery in the agent operations guide.
 
 ### Security
 

@@ -53,6 +53,9 @@ UNINSTALL=0
 WRITE_PATHS=""
 # Space-separated reload service names (nginx|apache|httpd|haproxy).
 RELOAD_SERVICES=""
+# 0 (default): merge --reload-service with grants from an earlier install.
+# 1: the --reload-service list replaces them (see --replace-reload-services).
+POLKIT_REPLACE=0
 WRITE_PATHS_FILE=""
 ALLOW_INSECURE_LOCAL_HTTP=0
 # auto: grant when Debian/RHEL trust-store tools are present (Ubuntu
@@ -125,6 +128,13 @@ Options:
                          nginx, apache/apache2, httpd, haproxy. Polkit is used
                          instead of sudoers because the unit keeps
                          NoNewPrivileges=true (sudo cannot escalate).
+                         A re-run MERGES with the reload grants already on
+                         the host, so adding one service never drops another.
+  --replace-reload-services
+                         Make the --reload-service list authoritative: grants
+                         not listed are removed (the installer prints each
+                         dropped unit). With no --reload-service this removes
+                         the polkit rule entirely.
   --allow-insecure-local-http
                          Permit plain http:// ONLY for loopback hosts, matching
                          the runtime allowInsecureLocalHttp gate. Required for
@@ -155,6 +165,7 @@ Layout created:
                                 + auto-detected OS trust-store dirs)
   /etc/polkit-1/rules.d/50-tokentimer-agent.rules
                                 optional, only when --reload-service is set
+                                (re-runs merge; see --replace-reload-services)
 
 After install:
   systemctl status tokentimer-agent
@@ -247,6 +258,7 @@ while [ $# -gt 0 ]; do
       RELOAD_SERVICES="$RELOAD_SERVICES ${1#--reload-service=}"
       shift
       ;;
+    --replace-reload-services) POLKIT_REPLACE=1; shift ;;
     --allow-insecure-local-http) ALLOW_INSECURE_LOCAL_HTTP=1; shift ;;
     --trust-store)
       [ "$TRUST_STORE_MODE" = off ] && fail "cannot combine --trust-store and --no-trust-store"
@@ -669,8 +681,15 @@ fi
 
 # Optional polkit rule for narrowly scoped systemctl reload. Prefer polkit
 # over sudoers: NoNewPrivileges=true blocks setuid helpers such as sudo.
-if [ -n "$RELOAD_SERVICES" ]; then
-  POLKIT_ARGS="--user $AGENT_USER"
+# A re-run merges with the rule already on the host (host-sandbox.js reads
+# --rule-file), so a later install for one service cannot drop the grants of
+# another. --replace-reload-services opts into a replace and the helper prints
+# every unit it drops.
+if [ -n "$RELOAD_SERVICES" ] || [ "$POLKIT_REPLACE" -eq 1 ]; then
+  POLKIT_ARGS="--user $AGENT_USER --rule-file $POLKIT_RULE_FILE"
+  if [ "$POLKIT_REPLACE" -eq 1 ]; then
+    POLKIT_ARGS="$POLKIT_ARGS --replace"
+  fi
   for reload_service in $RELOAD_SERVICES; do
     POLKIT_ARGS="$POLKIT_ARGS --reload-service $reload_service"
   done
@@ -683,14 +702,18 @@ if [ -n "$RELOAD_SERVICES" ]; then
     POLKIT_TMP="$POLKIT_RULE_FILE.tmp.$$"
     mkdir -p "$(dirname -- "$POLKIT_RULE_FILE")"
     # shellcheck disable=SC2086
-    node "$HOST_SANDBOX_JS" polkit $POLKIT_ARGS > "$POLKIT_TMP"
-    chmod 0644 "$POLKIT_TMP"
-    mv "$POLKIT_TMP" "$POLKIT_RULE_FILE"
+    node "$HOST_SANDBOX_JS" polkit $POLKIT_ARGS > "$POLKIT_TMP" \
+      || { rm -f "$POLKIT_TMP"; fail "could not build the polkit rule; $POLKIT_RULE_FILE was left untouched"; }
+    if [ -s "$POLKIT_TMP" ]; then
+      chmod 0644 "$POLKIT_TMP"
+      mv "$POLKIT_TMP" "$POLKIT_RULE_FILE"
+    else
+      # --replace-reload-services with nothing left to grant.
+      rm -f "$POLKIT_TMP" "$POLKIT_RULE_FILE"
+    fi
   fi
 elif [ "$DRY_RUN" -eq 1 ]; then
-  printf '%s\n' "[dry-run] no --reload-service set; leaving $POLKIT_RULE_FILE untouched/absent"
-else
-  rm -f "$POLKIT_RULE_FILE"
+  printf '%s\n' "[dry-run] no --reload-service set; leaving $POLKIT_RULE_FILE untouched (pass --replace-reload-services to remove it)"
 fi
 
 run systemctl daemon-reload
@@ -726,6 +749,7 @@ if [ -n "$WRITE_PATHS" ] || [ -n "$TRUST_STORE_PATHS" ]; then
 fi
 if [ -n "$RELOAD_SERVICES" ]; then
   log "  6. Reload authorization installed via polkit for: $RELOAD_SERVICES"
+  log "     (merged with grants from earlier installs; see $POLKIT_RULE_FILE)"
   log "     Configure policy commandProfiles.reloadArgv as"
   log "     [\"systemctl\",\"reload\",\"<unit>\"] (no sudo)."
 fi
