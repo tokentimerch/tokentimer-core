@@ -262,8 +262,8 @@ export default function IssueStep({ ctx }) {
           <Text fontSize='sm'>
             A failed order leaves an entry in <code>provisioning</code> that
             still holds <code>{saved.certPath}</code>, so asking again with the
-            same path is rejected. Retire that entry in Certificate Management,
-            or go back and choose a different file name, then request again.
+            same path is rejected. Go back and choose a different file name in
+            the same folder, then request again.
           </Text>
         ) : null}
         {view.noRetry ? (
