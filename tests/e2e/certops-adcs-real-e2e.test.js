@@ -410,10 +410,15 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
     });
     await require("./helpers/certops-adcs-two-renewals").qualifyTwoRenewals({gate,fixture,renewalFixture,configDir,ps,command,until,jobFinished,ownedEnrollmentIds,ownedThumbprints,tlsAuthority});
     await require("./helpers/certops-adcs-background-renewals").qualifyBackgroundRenewals({gate,fixture,renewalFixture,configDir,ps,command,until,jobFinished,ownedEnrollmentIds,tlsAuthority,workDir,ownedPhaseObservers,registerOwnedStoreCertificate:value=>webHostingJourney.registerBackgroundStoreCertificate(ownedBackgroundStoreCertificates,value)});
+    // Windows discovery never merges into the agent_issuance row, so the renewed leaf lives under the discovered
+    // identity that background renewal owns. Later renewal journeys must enroll against that same identity.
+    const issuanceCertificateId=renewalFixture.certificateId;
+    if(ownedBackgroundStoreCertificates[0])renewalFixture.certificateId=ownedBackgroundStoreCertificates[0].certificateId;
     gate.report.nativeLiveEnrollAcl=await require("./helpers/certops-adcs-live-enroll-acl").qualifyLiveEnrollAcl({gate,fixture,api,agentRowId,renewalFixture,configDir,workDir,run,command,ps,until,jobFinished,ownedEnrollmentIds,ownedStoreReceipt:ownedBackgroundStoreCertificates[0],tlsAuthority});
     gate.report.nativeHttpOnlyLeafCrl=await httpLeafCrlJourney.qualifyHttpOnlyLeafCrl({gate,fixture,api,agentRowId,renewalFixture,configDir,workDir,run,command,ps,until,jobFinished,ownedEnrollmentIds,ownedStoreReceipt:ownedBackgroundStoreCertificates[0],tlsAuthority,registerOwnership:resource=>ownedHttpCrlResources.push(resource)});
     gate.report.nativeOcspResponder=await ocspJourney.qualifyOcsp({gate,fixture,api,agentRowId,renewalFixture,configDir,workDir,run,command,ps,until,jobFinished,ownedEnrollmentIds,ownedStoreReceipt:ownedBackgroundStoreCertificates[0],tlsAuthority,registerOwnership:resource=>ownedHttpCrlResources.push(resource)});
     await gate.scenario(resultOutboxJourney.SCENARIO,async()=>{gate.report[resultOutboxJourney.FIELD]=await resultOutboxJourney.qualifyResultOutbox({gate,fixture,api,agentRowId,renewalFixture,configDir,workDir,run,command,ps,until,ownedEnrollmentIds,ownedStoreReceipt:ownedBackgroundStoreCertificates[0],ownedResultResources,configurationIdentity:originalConfigurationIdentity,tlsAuthority});},{evidenceLevel:"real-host"});
+    renewalFixture.certificateId=issuanceCertificateId;
     if(hierarchy)gate.report.nativeHttpIntermediateCrl=await httpIntermediateCrlJourney.qualifyHttpIntermediateCrl({gate,workDir,run,renewalFixture,command,ps,tlsAuthority,registerOwnership:resource=>ownedHttpCrlResources.push(resource)});
     } // end shard phase renewals
     if(shard.runs("pending")){ // shard phase pending

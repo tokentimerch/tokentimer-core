@@ -196,15 +196,16 @@ try {
  }
  $bytes=[Text.UTF8Encoding]::new($false,$true).GetBytes(($result|ConvertTo-Json -Depth 20 -Compress))
  if($bytes.Length -lt 1 -or $bytes.Length -gt 65536) { throw 'Bounded OCSP operation result required' }
- $stream=[IO.FileStream]::new($OutputPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+ # The containing parent owns/protects this output directory. Never repair an
+ # existing output or emit remoting diagnostics into the public report.
+ $acl=[Security.AccessControl.FileSecurity]::new();$acl.SetAccessRuleProtection($true,$false)
+ foreach($sid in @('S-1-5-18','S-1-5-32-544')) {
+  $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($sid),[Security.AccessControl.FileSystemRights]::FullControl,[Security.AccessControl.AccessControlType]::Allow))
+ }
+ # Create with the ACL: a write-only FileStream handle cannot set it afterwards.
+ $stream=[IO.FileStream]::new($OutputPath,[IO.FileMode]::CreateNew,[Security.AccessControl.FileSystemRights]'Write,ChangePermissions',[IO.FileShare]::None,4096,[IO.FileOptions]::None,$acl)
  try {
-  # The containing parent owns/protects this output directory. Never repair an
-  # existing output or emit remoting diagnostics into the public report.
-  $acl=[Security.AccessControl.FileSecurity]::new();$acl.SetAccessRuleProtection($true,$false)
-  foreach($sid in @('S-1-5-18','S-1-5-32-544')) {
-   $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($sid),[Security.AccessControl.FileSystemRights]::FullControl,[Security.AccessControl.AccessControlType]::Allow))
-  }
-  $stream.SetAccessControl($acl);$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)
+  $stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)
  } finally { $stream.Dispose() }
 } finally {
  if($null -ne $session){Remove-PSSession -Session $session -ErrorAction Stop}

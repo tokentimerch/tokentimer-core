@@ -41,6 +41,32 @@ function Get-OcspDaclText([byte[]]$Bytes){
  return $descriptor.GetSddlForm([Security.AccessControl.AccessControlSections]::Access)
 }
 
+function Test-OcspDaclWritten([byte[]]$Actual,[byte[]]$Written){
+ # CNG expands generic rights into key-specific bits and merges duplicate
+ # trustees, so a read-back never equals the written bytes. Require the same
+ # ACEs in order, with every written right still present and no extra trustee.
+ $merge={
+  param([byte[]]$Bytes)
+  $d=[Security.AccessControl.RawSecurityDescriptor]::new($Bytes,0)
+  if(!$d.DiscretionaryAcl -or !($d.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclPresent)){throw 'Signer requires an actual DACL'}
+  $rows=[ordered]@{}
+  foreach($ace in $d.DiscretionaryAcl){
+   if($ace -isnot [Security.AccessControl.CommonAce]){throw 'Only plain signer ACEs are accepted'}
+   $key='{0}|{1}|{2}' -f [int]$ace.AceType,[int]$ace.AceFlags,$ace.SecurityIdentifier.Value
+   $mask=[uint32]([BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$ace.AccessMask),0))
+   if($rows.Contains($key)){$rows[$key]=[uint32]($rows[$key] -bor $mask)}else{$rows[$key]=$mask}
+  }
+  return $rows
+ }
+ $a=& $merge $Actual;$w=& $merge $Written
+ if($a.Count -ne $w.Count){return $false}
+ $ak=@($a.Keys);$wk=@($w.Keys)
+ for($i=0;$i -lt $wk.Count;$i++){
+  if($ak[$i] -cne $wk[$i]){return $false}
+  if(([uint32]$a[$ak[$i]] -band [uint32]$w[$wk[$i]]) -ne [uint32]$w[$wk[$i]]){return $false}
+ }
+ return $true
+}
 function Get-OwnedOcspKeyIdentity([Security.Cryptography.CngKey]$Key){
  if(!$Key -or !$Key.IsMachineKey -or $Key.Provider.Provider -cne 'Microsoft Software Key Storage Provider' -or $Key.Algorithm.Algorithm -cne 'RSA' -or $Key.ExportPolicy -ne [Security.Cryptography.CngExportPolicies]::None){throw 'Owned nonexportable machine RSA signer required'}
  if($Key.KeyName -cnotmatch '^tokentimer-enr-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$' -or !$Key.UniqueName){throw 'Canonical exact signer identity required'}
@@ -55,7 +81,8 @@ function Get-OwnedOcspKeyIdentity([Security.Cryptography.CngKey]$Key){
 
 function Assert-OwnedOcspKeyIdentity([Security.Cryptography.CngKey]$Key,$Expected){
  $actual=Get-OwnedOcspKeyIdentity $Key
- foreach($name in @('container','unique','provider','modulus','exponent')){if($actual[$name] -cne $Expected[$name]){throw 'Native signer key identity changed'}}
+ # Expected is a hashtable when fresh and a JSON object when read from a receipt.
+ foreach($name in @('container','unique','provider','modulus','exponent')){if($actual[$name] -cne $Expected.$name){throw 'Native signer key identity changed'}}
 }
 
 function New-OwnedOcspSignerRequestText([string]$Container,[string]$CommonName) {
@@ -107,7 +134,7 @@ function New-OwnedOcspKey([string]$Container){
   $bytes=[byte[]]::new($descriptor.BinaryLength);$descriptor.GetBinaryForm($bytes,0)
   [TTQualificationOcspKeySecurity]::WriteDacl($key.Handle,$bytes)
   $original=[TTQualificationOcspKeySecurity]::ReadDacl($key.Handle)
-  if((Get-OcspDaclText $original) -cne (Get-OcspDaclText $bytes)){throw 'New signer private DACL readback mismatch'}
+  if(!(Test-OcspDaclWritten $original $bytes)){throw 'New signer private DACL readback mismatch'}
   return @{key=$key;identity=(Get-OwnedOcspKeyIdentity $key);originalDacl=$original}
  }catch{
   # Do not delete an unknown partially created key. The enclosing receipt is
@@ -162,7 +189,7 @@ function Grant-OwnedOcspServiceRead([Security.Cryptography.CngKey]$Key,$Expected
  $applied=[byte[]]::new($descriptor.BinaryLength);$descriptor.GetBinaryForm($applied,0)
  [TTQualificationOcspKeySecurity]::WriteDacl($Key.Handle,$applied)
  $actual=[TTQualificationOcspKeySecurity]::ReadDacl($Key.Handle)
- if((Get-OcspDaclText $actual) -cne (Get-OcspDaclText $applied)){throw 'Exact responder key access grant unproven'}
+ if(!(Test-OcspDaclWritten $actual $applied)){throw 'Exact responder key access grant unproven'}
  return ,$actual
 }
 
