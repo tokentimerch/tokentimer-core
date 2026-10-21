@@ -754,6 +754,15 @@ async function qualifyOcsp(c) {
         execute(file, args, { ...options, env: nativeEnvironment() }),
     });
   }
+  // Each publication change restarts the CA and republishes its base CRL.
+  // The responder reads that file by URL, so track the CRL it now serves.
+  async function refreshCrl() {
+    const published = await operation("ReadCrl");
+    const latest = Buffer.from(published.crlDerBase64, "base64");
+    verifyCrl(latest, caBytes, current.authority.keySha256);
+    crl = latest;
+    payload = { ...payload, crlDerBase64: latest.toString("base64") };
+  }
   async function cleanup() {
     if (!prepared || !payload)
       throw new Error(
@@ -764,6 +773,7 @@ async function qualifyOcsp(c) {
     if (publicationAttempted && !publicationRestored) {
       await operation("RestorePublication");
       publicationRestored = true;
+      await refreshCrl();
     }
     requireNativeFlags(await operation("RemoveConfiguration", payload), [
       "nativeConfigurationAbsent",
@@ -847,6 +857,7 @@ async function qualifyOcsp(c) {
       async () => {
         publicationAttempted = true;
         await operation("ApplyPublication");
+        await refreshCrl();
         ps(
           `$k=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('${cacheKey}');try{$s=@{exists=[bool]($k -and @($k.GetValueNames()) -contains 'ChainCacheResyncFiletime')};if($s.exists){$s.kind=$k.GetValueKind('ChainCacheResyncFiletime').ToString();if($s.kind -notin @('QWord','Binary')){throw 'Unsupported OCSP cache policy'};$s.value=$k.GetValue('ChainCacheResyncFiletime')};$s|Export-Clixml -LiteralPath '${q(cachePath)}' -NoClobber -Encoding UTF8}finally{if($k){$k.Dispose()}}`,
         );
@@ -862,6 +873,7 @@ async function qualifyOcsp(c) {
         await renew(true);
         await operation("RestorePublication");
         publicationRestored = true;
+        await refreshCrl();
       },
       {
         evidenceLevel: "real-host",
