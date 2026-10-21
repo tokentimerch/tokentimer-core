@@ -145,11 +145,15 @@ function ensureEnrollmentDir(stateDir, enrollmentId) {
  * Atomic durable write: tmp → permissions → fsync → rename → dir fsync.
  * @param {string} dest absolute path
  * @param {string|Buffer} contents
+ * @param {{ dirRestricted?: boolean }} [options] true when the caller just ran
+ *   ensureEnrollmentDir; each restriction costs several process spawns on Windows.
  */
-function durableWriteFileSync(dest, contents) {
+function durableWriteFileSync(dest, contents, { dirRestricted = false } = {}) {
   const dir = path.dirname(dest);
   fs.mkdirSync(dir, { recursive: true, mode: DIR_MODE });
-  applyRestrictivePermissions(dir, { kind: "directory", mode: DIR_MODE });
+  if (!dirRestricted) {
+    applyRestrictivePermissions(dir, { kind: "directory", mode: DIR_MODE });
+  }
   const tmp = `${dest}.${process.pid}.${crypto.randomBytes(4).toString("hex")}.tmp`;
   const data = typeof contents === "string" ? contents : Buffer.from(contents);
   const fd = fs.openSync(tmp, "w", FILE_MODE);
@@ -173,8 +177,8 @@ function durableWriteFileSync(dest, contents) {
   }
 }
 
-async function durableWriteFile(dest, contents) {
-  durableWriteFileSync(dest, contents);
+async function durableWriteFile(dest, contents, options) {
+  durableWriteFileSync(dest, contents, options);
 }
 
 function parseJsonFile(filePath) {
@@ -665,7 +669,9 @@ async function writeKeygenIntent({
     jobId: typeof jobId === "string" ? jobId : null,
     updatedAt: new Date().toISOString(),
   };
-  await durableWriteFile(keygenIntentPath(stateDir, enrollmentId), `${JSON.stringify(payload)}\n`);
+  await durableWriteFile(keygenIntentPath(stateDir, enrollmentId), `${JSON.stringify(payload)}\n`, {
+    dirRestricted: true,
+  });
   return payload;
 }
 
@@ -694,7 +700,9 @@ async function writeCsrArtifact({ stateDir, enrollmentId, csrPem }) {
   // Hash the exact bytes persisted (normalize trailing newline first).
   const normalized = csrPem.endsWith("\n") ? csrPem : `${csrPem}\n`;
   const csrSha256 = sha256HexOfString(normalized);
-  await durableWriteFile(csrArtifactPath(stateDir, enrollmentId), normalized);
+  await durableWriteFile(csrArtifactPath(stateDir, enrollmentId), normalized, {
+    dirRestricted: true,
+  });
   return { csrSha256, path: csrArtifactPath(stateDir, enrollmentId) };
 }
 
@@ -711,12 +719,16 @@ async function writeIssuedCertificateArtifacts({
   ensureEnrollmentDir(stateDir, enrollmentId);
   const normalizedLeaf = leafPem.endsWith("\n") ? leafPem : `${leafPem}\n`;
   const leafSha256 = sha256HexOfString(normalizedLeaf);
-  await durableWriteFile(leafArtifactPath(stateDir, enrollmentId), normalizedLeaf);
+  await durableWriteFile(leafArtifactPath(stateDir, enrollmentId), normalizedLeaf, {
+    dirRestricted: true,
+  });
   let chainSha256 = null;
   if (typeof chainPem === "string" && chainPem.includes("BEGIN")) {
     const normalizedChain = chainPem.endsWith("\n") ? chainPem : `${chainPem}\n`;
     chainSha256 = sha256HexOfString(normalizedChain);
-    await durableWriteFile(chainArtifactPath(stateDir, enrollmentId), normalizedChain);
+    await durableWriteFile(chainArtifactPath(stateDir, enrollmentId), normalizedChain, {
+      dirRestricted: true,
+    });
   }
   return { leafSha256, chainSha256 };
 }
@@ -949,7 +961,9 @@ async function writeEnrollmentJournal(stateDir, enrollmentId, fields) {
     ...mergedFields,
     updatedAt: new Date().toISOString(),
   };
-  await durableWriteFile(journalV2Path(stateDir, enrollmentId), `${JSON.stringify(payload)}\n`);
+  await durableWriteFile(journalV2Path(stateDir, enrollmentId), `${JSON.stringify(payload)}\n`, {
+    dirRestricted: true,
+  });
   return payload;
 }
 
