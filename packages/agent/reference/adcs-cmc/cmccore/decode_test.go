@@ -1,15 +1,20 @@
 package cmccore
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha1"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/hex"
 	"encoding/pem"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"go.mozilla.org/pkcs7"
 )
@@ -76,6 +81,35 @@ func TestDecodeRejectsWrongPin(t *testing.T) {
 	wrong := "0000000000000000000000000000000000000000000000000000000000000000"
 	if _, err := Decode(issued, wrong, ca); err == nil {
 		t.Fatal("expected wrong-pin rejection")
+	}
+}
+
+// A pending response verified against a different (rekeyed) CA certificate
+// must surface as a key mismatch, not as a generic signature failure.
+func TestDecodePendingWithRekeyedCAReportsKeyMismatch(t *testing.T) {
+	pin := readFile(t, filepath.Join("..", "testdata", "ca-key-sha256.txt"))
+	pending := readFileBytes(t, filepath.Join("..", "testdata", "pending.rsp"))
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "rekeyed"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Decode(pending, string(pin), other)
+	if err == nil || err.Error() != "CMS signer key does not match caKeySha256" {
+		t.Fatalf("expected key mismatch, got %v", err)
 	}
 }
 
