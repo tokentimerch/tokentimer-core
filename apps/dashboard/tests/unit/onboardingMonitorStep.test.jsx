@@ -183,6 +183,25 @@ describe('MonitorStep website list', () => {
     ]);
   });
 
+  it('says where alerts will go, with a way to change it', async () => {
+    actions.getAlertSettings.mockResolvedValue({
+      contact_groups: [
+        { id: 'g1', name: 'Ops team' },
+        { id: 'g2', name: 'Security' },
+      ],
+      default_contact_group_id: 'g1',
+    });
+    mount(makeCtx());
+    const line = await screen.findByTestId('alerts-go-to');
+    expect(line.textContent).toContain(
+      'Alerts will go to: Ops team (workspace default group)'
+    );
+    expect(
+      screen.getByRole('button', { name: 'Change who gets alerted' })
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear groups' }));
+    expect(screen.queryByTestId('alerts-go-to')).toBeNull();
+  });
   it('does not override a group chosen before the settings arrive', async () => {
     actions.getAlertSettings.mockResolvedValue({
       contact_groups: [

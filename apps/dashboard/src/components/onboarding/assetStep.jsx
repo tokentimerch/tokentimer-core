@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Accordion,
   AccordionButton,
@@ -47,6 +47,7 @@ import {
 } from './assetModel.js';
 import { onboardingActions } from '../../utils/onboardingActions.js';
 import ContactGroupCheckboxGroup from '../ContactGroupCheckboxGroup.jsx';
+import { AlertsGoTo } from './alertsGoTo.jsx';
 
 function dayKey(value) {
   return Math.floor(new Date(value).getTime() / 86400000);
@@ -70,6 +71,7 @@ export function AssetStep({ ctx }) {
   const [busy, setBusy] = useState(false);
   const [groups, setGroups] = useState([]);
   const [defaultGroupId, setDefaultGroupId] = useState('');
+  const pickerRef = useRef(null);
   const [added, setAdded] = useState([]);
   const [existing, setExisting] = useState([]);
   const [staged, setStaged] = useState([]);
@@ -490,14 +492,22 @@ export function AssetStep({ ctx }) {
 
         <FormControl>
           <FormLabel fontSize='sm'>Who gets alerted</FormLabel>
-          <ContactGroupCheckboxGroup
-            contactGroups={groups}
-            value={asset.contactGroupIds}
-            onChange={contactGroupIds => set({ contactGroupIds })}
-            isDisabled={busy}
-            defaultContactGroupId={defaultGroupId}
-            emptyText='No contact group yet. You choose who gets alerted in the next step.'
-            helperText=''
+          <Box ref={pickerRef}>
+            <ContactGroupCheckboxGroup
+              contactGroups={groups}
+              value={asset.contactGroupIds}
+              onChange={contactGroupIds => set({ contactGroupIds })}
+              isDisabled={busy}
+              defaultContactGroupId={defaultGroupId}
+              emptyText='No contact group yet. You choose who gets alerted in the next step.'
+              helperText=''
+            />
+          </Box>
+          <AlertsGoTo
+            selectedIds={asset.contactGroupIds}
+            groups={groups}
+            defaultId={defaultGroupId}
+            pickerRef={pickerRef}
           />
           {groups.length > 0 && asset.contactGroupIds.length === 0 ? (
             <FormHelperText fontSize='xs' data-testid='no-group-hint'>

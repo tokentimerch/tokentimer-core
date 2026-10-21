@@ -27,7 +27,6 @@ import {
   useDashboardThemeColors,
 } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
-import PrimaryButton from './PrimaryButton.jsx';
 import GroupEditor from './alertGroupEditor.jsx';
 import { GroupRow } from './alertGroupRow.jsx';
 import { describeGroup } from './alertGroups.js';
@@ -128,7 +127,7 @@ function DeleteDialog({ target, defaultName, busy, onCancel, onConfirm }) {
   );
 }
 
-export function RecipientsStep({ ctx }) {
+export function RecipientsStep({ ctx, reviewing = false }) {
   const { muted } = useDashboardTheme();
   const { dashboard } = useDashboardThemeColors();
   const [state, setState] = useState({ loading: true });
@@ -322,9 +321,11 @@ export function RecipientsStep({ ctx }) {
       }
       docs={docs}
       actions={
-        <DashboardActionButton variant='outline' onClick={skip}>
-          Skip for now
-        </DashboardActionButton>
+        reviewing ? null : (
+          <DashboardActionButton variant='outline' onClick={skip}>
+            Skip for now
+          </DashboardActionButton>
+        )
       }
     >
       <VStack align='stretch' spacing={4}>
@@ -356,9 +357,13 @@ export function RecipientsStep({ ctx }) {
                 {CREATE_HELP}
               </Text>
             </VStack>
-            <PrimaryButton size='sm' onClick={() => setEditing('new')}>
+            <DashboardActionButton
+              size='sm'
+              variant='outline'
+              onClick={() => setEditing('new')}
+            >
               Create a new group
-            </PrimaryButton>
+            </DashboardActionButton>
           </HStack>
           {ticks.status === 'blocked' ? (
             <Text

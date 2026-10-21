@@ -34,11 +34,13 @@ import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import ContactGroupCheckboxGroup from '../ContactGroupCheckboxGroup.jsx';
+import { AlertsGoTo } from './alertsGoTo.jsx';
 import { runIdempotent } from './operations.js';
 import {
   ALERT_AFTER_MAX,
   ALERT_AFTER_MIN,
   CHECK_INTERVALS,
+  DEFAULT_MONITOR_SETTINGS,
   MAX_STAGED_WEBSITES,
   discoveredHostnames,
   discoveryErrorMessage,
@@ -84,7 +86,9 @@ function CheckSettings({ settings, errors, onChange, disabled }) {
           >
             {CHECK_INTERVALS.map(i => (
               <option key={i.value} value={i.value}>
-                {i.label}
+                {i.value === DEFAULT_MONITOR_SETTINGS.checkInterval
+                  ? `${i.label} (recommended)`
+                  : i.label}
               </option>
             ))}
           </Select>
@@ -319,8 +323,9 @@ function DiscoveryPanel({
         <AccordionPanel px={3} pb={3}>
           <VStack align='stretch' spacing={3}>
             <Text fontSize='xs' color={muted}>
-              Looks up the public subdomains of a domain. This can take a minute
-              or two. Pick the ones to monitor and they join the list above.
+              Looks up the public subdomains of a domain. Your domain name is
+              sent to public lookup services. This can take a minute or two.
+              Pick the ones to monitor and they join the list above.
             </Text>
             <HStack align='flex-start' spacing={2}>
               <FormControl isDisabled={disabled || finding}>
@@ -573,6 +578,7 @@ export function MonitorStep({ ctx }) {
   const [groups, setGroups] = useState([]);
   const [defaultGroupId, setDefaultGroupId] = useState('');
   const [contactGroupIds, setContactGroupIds] = useState([]);
+  const pickerRef = useRef(null);
   useEffect(() => {
     let live = true;
     Promise.resolve()
@@ -891,13 +897,21 @@ export function MonitorStep({ ctx }) {
 
         <FormControl>
           <FormLabel fontSize='sm'>Who gets alerted</FormLabel>
-          <ContactGroupCheckboxGroup
-            contactGroups={groups}
-            value={contactGroupIds}
-            onChange={setContactGroupIds}
-            isDisabled={busy}
-            defaultContactGroupId={defaultGroupId}
-            helperText=''
+          <Box ref={pickerRef}>
+            <ContactGroupCheckboxGroup
+              contactGroups={groups}
+              value={contactGroupIds}
+              onChange={setContactGroupIds}
+              isDisabled={busy}
+              defaultContactGroupId={defaultGroupId}
+              helperText=''
+            />
+          </Box>
+          <AlertsGoTo
+            selectedIds={contactGroupIds}
+            groups={groups}
+            defaultId={defaultGroupId}
+            pickerRef={pickerRef}
           />
           {groups.length > 0 && contactGroupIds.length === 0 ? (
             <FormHelperText fontSize='xs' data-testid='no-group-hint'>

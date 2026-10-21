@@ -106,11 +106,11 @@ function makeCtx({
   };
 }
 
-const mount = ctx =>
+const mount = (ctx, props = {}) =>
   render(
     <ChakraProvider>
       <DashboardThemeProvider>
-        <RecipientsStep ctx={ctx} />
+        <RecipientsStep ctx={ctx} {...props} />
       </DashboardThemeProvider>
     </ChakraProvider>
   );
@@ -185,6 +185,30 @@ describe('RecipientsStep layout', () => {
     expect(screen.queryByText('Used for this setup')).toBeNull();
   });
 
+  it('hides Skip for now while a finished step is reviewed', async () => {
+    mount(makeCtx(), { reviewing: true });
+    await screen.findByRole('button', { name: 'Create a new group' });
+    expect(screen.queryByRole('button', { name: 'Skip for now' })).toBeNull();
+  });
+
+  it('keeps Skip for now on the live step', async () => {
+    mount(makeCtx());
+    expect(
+      await screen.findByRole('button', { name: 'Skip for now' })
+    ).toBeVisible();
+  });
+
+  it('makes Create a new group an outline button', async () => {
+    mount(makeCtx());
+    const button = await screen.findByRole('button', {
+      name: 'Create a new group',
+    });
+    const skip = screen.getByRole('button', { name: 'Skip for now' });
+    // Both are outline buttons, so neither carries the solid primary fill.
+    expect(getComputedStyle(button).backgroundColor).toBe(
+      getComputedStyle(skip).backgroundColor
+    );
+  });
   it('keeps the Default and Reaches nobody badges', async () => {
     store.settings.contact_groups = [
       group('ops', 'Ops'),

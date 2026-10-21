@@ -374,6 +374,24 @@ describe('AssetStep contact group hint', () => {
     expect(screen.queryByTestId('no-group-hint')).toBeNull();
   });
 
+  it('says where alerts will go, with a way to change it', async () => {
+    actions.getAlertSettings.mockResolvedValue(settings('g1'));
+    mount(makeCtx());
+    const line = await screen.findByTestId('alerts-go-to');
+    expect(line.textContent).toContain(
+      'Alerts will go to: Ops team (workspace default group)'
+    );
+    expect(
+      screen.getByRole('button', { name: 'Change who gets alerted' })
+    ).toBeVisible();
+    fireEvent.click(screen.getByLabelText('Security'));
+    expect(screen.getByTestId('alerts-go-to').textContent).toContain(
+      'Alerts will go to: Ops team, Security'
+    );
+    fireEvent.click(screen.getByLabelText('Ops team'));
+    fireEvent.click(screen.getByLabelText('Security'));
+    expect(screen.queryByTestId('alerts-go-to')).toBeNull();
+  });
   it('says alerts have no recipient when there is no default group', async () => {
     actions.getAlertSettings.mockResolvedValue(settings(''));
     mount(makeCtx());
