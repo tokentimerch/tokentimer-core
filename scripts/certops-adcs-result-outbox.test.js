@@ -106,3 +106,13 @@ test("native admission and broad parent cleanup are fenced by the same sticky ow
   for (const source of subject.REQUIRED_SOURCES)
     assert.ok(fs.statSync(path.join(root, source)).isFile());
 });
+
+test("result outbox journey reads the enrollment journal with positional arguments", () => {
+  const source = fs.readFileSync(
+    path.resolve(__dirname, "../tests/e2e/helpers/certops-adcs-result-outbox.js"),
+    "utf8",
+  );
+  const calls = source.match(/readEnrollmentJournal\([^)]*\)/g) || [];
+  assert.ok(calls.length >= 2);
+  for (const call of calls) assert.match(call, /^readEnrollmentJournal\(configDir, enrollmentId\)$/);
+});

@@ -507,10 +507,7 @@ async function qualifyResultOutbox(c) {
         .equals(original.publicKey.export({ format: "der", type: "spki" })),
       "Real renewal must generate a fresh protected key",
     );
-    const journal = readEnrollmentJournal({
-      stateDir: configDir,
-      enrollmentId,
-    });
+    const journal = readEnrollmentJournal(configDir, enrollmentId);
     assert.equal(journal.kind, "valid");
     assert.equal(journal.journal.state, "installed");
     assert.equal(journal.journal.jobId, jobId);
@@ -593,10 +590,7 @@ async function qualifyResultOutbox(c) {
     assert.equal(finalEnrollment.state, "installed");
     assert.equal(finalEnrollment.current_job_id, jobId);
     verifyNativeRequestId(request.requestId, finalEnrollment.request_id);
-    const finalJournal = readEnrollmentJournal({
-      stateDir: configDir,
-      enrollmentId,
-    });
+    const finalJournal = readEnrollmentJournal(configDir, enrollmentId);
     assert.ok(
       isDeepStrictEqual(finalJournal, journal),
       "Restart must preserve the exact installed enrollment journal and artifacts",
