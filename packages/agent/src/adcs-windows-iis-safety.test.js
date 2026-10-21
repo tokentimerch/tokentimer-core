@@ -107,9 +107,11 @@ for (const phase of ["prepared", "keygen_intent", "keygen_intent-operator", "pre
       assert.equal(refused.journal.preSubmitPhase, "keygen_intent");
       assert.equal(refused.journal.csrSpkiSha256, undefined); assert.equal(refused.journal.templateOid, undefined);
     }
-    assert.equal(calls.length, 2);
-    assert.deepEqual(calls[0], ["--key-survivors", "--container", containerName]);
-    assert.deepEqual(calls[1], ["-csp", "Microsoft Software Key Storage Provider", "-delkey", containerName]);
+    // Pending REQUEST stubs are cleared first, then survivors are checked before delkey.
+    assert.equal(calls.length, 3);
+    assert.deepEqual(calls[0], ["-store", "-silent", "REQUEST"]);
+    assert.deepEqual(calls[1], ["--key-survivors", "--container", containerName]);
+    assert.deepEqual(calls[2], ["-csp", "Microsoft Software Key Storage Provider", "-delkey", containerName]);
   } finally { await fsp.rm(stateDir, { recursive: true, force: true }); }
 });
 

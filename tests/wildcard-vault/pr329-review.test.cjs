@@ -1310,13 +1310,13 @@ test("a required failure in a later wave pauses the rollout, keeps earlier waves
   assert.deepEqual(await lab.advance(), { deferred: true, retryInMs: 15000, reason: "waiting_for_consumers" });
   let deployments = await lab.deployments();
   assert.ok(deployments.canary.job_id);
-  for (const later of ["web-a", "web-b", "tail"]) assert.equal(deployments[later].job_id, null, `${later} must wait for wave 0`);
-  assert.equal(await lab.claim("web-a"), null, "wave 1 cannot be claimed before wave 0 is verified");
+  for (const later of ["web-a", "web-b", "tail"]) assert.equal(deployments[later].job_id, null, `${later} must wait for the canary`);
+  assert.equal(await lab.claim("web-a"), null, "the web tier cannot be claimed before the canary is verified");
 
   await lab.run("canary", "succeeded");
   deployments = await lab.deployments();
   assert.ok(deployments["web-a"].job_id && deployments["web-b"].job_id);
-  assert.equal(deployments.tail.job_id, null, "wave 2 must wait for wave 1");
+  assert.equal(deployments.tail.job_id, null, "the tail must wait for the web tier");
   await lab.run("web-a", "succeeded");
   const earlier = await lab.snapshotOf(["canary", "web-a"]);
   const failedRun = await lab.run("web-b", "failed");
