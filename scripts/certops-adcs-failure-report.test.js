@@ -85,3 +85,17 @@ test("enrollment error takes priority over generic agent failure without exposin
   const bounded=api.boundedFailureMetadata({code:api.boundedJobErrorCode({enrollment_error_code:"ADCS_CERTIFICATE_INVALID",error_code:"AGENT_RESULT_FAILED"})},{});
   assert.equal(bounded.errorCode,"ADCS_CERTIFICATE_INVALID");assert.doesNotMatch(JSON.stringify(bounded),/SECRET|AGENT_RESULT_FAILED|result_metadata/);
 });
+test("cleanup step label is bounded and untrusted labels are dropped",()=>{
+  const api=producer({status:0,stdout:"",stderr:""});
+  assert.equal(api.boundedFailureMetadata(Object.assign(new Error("x"),{cleanupStep:"firewall-rule"}),{}).cleanupStep,"firewall-rule");
+  assert.equal(api.boundedFailureMetadata(Object.assign(new Error("x"),{cleanupStep:"SECRET value"}),{}).cleanupStep,undefined);
+});
+test("owned firewall cleanup accepts every helper-created rule name",()=>{
+  const source=fs.readFileSync(path.resolve(__dirname,"../tests/e2e/certops-adcs-real-e2e.test.js"),"utf8");
+  const pattern=source.match(/new RegExp\(`(\^TTQualification[^`]+)`\),"Refusing firewall rule outside this run"/)?.[1];
+  assert.ok(pattern);
+  const run="0123456789",re=new RegExp(pattern.replace("${run}",run));
+  // Names built in certops-adcs-{crl-fault,submission-boundaries,uncertain-abandon}.js.
+  for(const name of [`TTQualificationChainCRL-${run}-0a1b2c3d`,`TTQualification-Certreq-${run}-0a1b2c3d`,`TTQualification-Uncertain-${run}`,`TTQualification-OperatorAmbiguity-${run}`])assert.match(name,re);
+  for(const name of ["TTQualification-Uncertain-9999999999",`Other-${run}`,`TTQualification-Uncertain-${run}-zz`])assert.doesNotMatch(name,re);
+});
