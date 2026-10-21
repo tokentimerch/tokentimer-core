@@ -227,6 +227,7 @@ export default function AdcsProfileWizard({
   const [matchesLoading, setMatchesLoading] = useState(false);
   const [lookupFailed, setLookupFailed] = useState(false);
   const [attached, setAttached] = useState(null);
+  const [openConflict, setOpenConflict] = useState(null);
 
   useEffect(() => {
     if (!isOpen) {
@@ -250,6 +251,7 @@ export default function AdcsProfileWizard({
       setMatchesLoading(false);
       setLookupFailed(false);
       setAttached(null);
+      setOpenConflict(null);
     }
   }, [isOpen]);
 
@@ -348,21 +350,35 @@ export default function AdcsProfileWizard({
     }
   }
 
-  async function handleAttach() {
+  async function handleAttach(openPeriodId = null) {
     if (!selected || !created?.id) return;
     setBusy(true);
     setLocalError('');
+    setOpenConflict(null);
     try {
       await replaceManagingSource(workspaceId, selected.managedCertificateId, {
-        periodId: selected.open && selected.periodId ? selected.periodId : null,
+        periodId:
+          openPeriodId ||
+          (selected.open && selected.periodId ? selected.periodId : null),
         renewalProfileId: created.id,
         automationEnabled: true,
       });
       setAttached(selected);
       showSuccess('Automatic renewal is on for this certificate.');
     } catch (err) {
-      const code = err?.response?.data?.code;
-      if (code === 'CERTOPS_MANAGEMENT_ALREADY_OPEN') {
+      const data = err?.response?.data;
+      const current = data?.currentPeriod?.periodId;
+      if (
+        current &&
+        (data.code === 'CERTOPS_MANAGEMENT_ALREADY_OPEN' ||
+          data.code === 'CERTOPS_MANAGEMENT_PERIOD_MISMATCH')
+      ) {
+        // The server names the open period; replacing it stays an explicit click.
+        setOpenConflict({ periodId: current });
+        setLocalError(
+          `${data.error} Nothing changed; the certificate is still managed as before.`
+        );
+      } else if (data?.code === 'CERTOPS_MANAGEMENT_ALREADY_OPEN') {
         setLocalError(
           'This certificate is already being managed. Open it in Certificates, stop managing, then start managing again and choose this profile. Automation turns on with the profile.'
         );
@@ -419,7 +435,21 @@ export default function AdcsProfileWizard({
             {localError ? (
               <Alert status='error' borderRadius='md'>
                 <AlertIcon />
-                <AlertDescription fontSize='sm'>{localError}</AlertDescription>
+                <Stack spacing={2}>
+                  <AlertDescription fontSize='sm'>
+                    {localError}
+                  </AlertDescription>
+                  {openConflict ? (
+                    <Button
+                      size='sm'
+                      alignSelf='flex-start'
+                      isLoading={busy}
+                      onClick={() => handleAttach(openConflict.periodId)}
+                    >
+                      Replace the current management with this profile
+                    </Button>
+                  ) : null}
+                </Stack>
               </Alert>
             ) : null}
             {step === 0 && readyIssuers.length === 0 ? (
@@ -765,7 +795,7 @@ export default function AdcsProfileWizard({
               {...modal.primaryButtonProps}
               isLoading={busy}
               isDisabled={matchesLoading || !selected}
-              onClick={handleAttach}
+              onClick={() => handleAttach()}
             >
               Attach and enable automation
             </Button>

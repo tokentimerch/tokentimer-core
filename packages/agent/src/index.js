@@ -3465,7 +3465,7 @@ async function runWindowsIisDeployTail({
     // when they are the same) -- see acquireWindowsStoreLocks' own doc
     // comment for why `target.store` alone is not the actual mutation
     // scope for a non-default-store job.
-    storeLock = acquireWindowsStoreLocks(stateDir, target.store);
+    storeLock = await acquireWindowsStoreLocksWithWait(stateDir, target.store);
   } catch (err) {
     return {
       status: "failed",
@@ -4189,6 +4189,27 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
  */
 /** After multi-store lock loss, wait this long for cooperative cancel before release. */
 const WINDOWS_STORE_LOCKS_ABORT_DRAIN_MS = 5_000;
+
+/**
+ * Job-path acquire: the background retention sweep (and a sibling job) only
+ * holds a store lock for a short slice, so poll briefly instead of failing the
+ * job outright. Still fails closed once the budget is spent. Only
+ * STORE_LOCKED is retried; any other error surfaces immediately.
+ * Budget: TOKENTIMER_AGENT_STORE_LOCK_WAIT_MS (default 20000, 0 disables).
+ */
+async function acquireWindowsStoreLocksWithWait(stateDir, targetStore) {
+  const parsed = Number.parseInt(process.env.TOKENTIMER_AGENT_STORE_LOCK_WAIT_MS ?? "", 10);
+  const budgetMs = Number.isFinite(parsed) && parsed >= 0 ? parsed : 20_000;
+  const deadline = Date.now() + budgetMs;
+  for (;;) {
+    try {
+      return acquireWindowsStoreLocks(stateDir, targetStore);
+    } catch (err) {
+      if (err?.code !== "STORE_LOCKED" || Date.now() >= deadline) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+}
 
 function acquireWindowsStoreLocks(stateDir, targetStore) {
   const storeNames = [...new Set(["My", targetStore])];

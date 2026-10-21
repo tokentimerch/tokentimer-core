@@ -45,17 +45,52 @@ on:
         description: Run every independent journey to completion and report all failures; the run still fails
         type: boolean
         default: true
+      shard:
+        description: 'all = one serial lab (the only release evidence). parallel = four labs at once (diagnostic, not release evidence). Or one named shard (diagnostic).'
+        type: choice
+        options: ['all', 'parallel', 'issuance', 'renewals', 'pending-and-ca', 'templates-and-uncertain']
+        default: all
 permissions:
   contents: read
-  id-token: write
 jobs:
+  plan:
+    if: github.ref == 'refs/heads/main' && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    env:
+      SHARD: ${{ inputs.shard }}
+      QUALIFICATION_SCOPE: ${{ inputs.qualification_scope }}
+      FAULT_PROFILE: ${{ inputs.fault_profile }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '24'
+      - name: Plan the lab matrix
+        id: plan
+        # The resource group must stay tt-certops-<run>-<number>, so a shard encodes its slot in the number.
+        run: node scripts/certops-adcs-shard-plan.js >> "$GITHUB_OUTPUT"
   lab:
+    needs: plan
     if: github.ref == 'refs/heads/main' && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: certops-adcs-lab
     timeout-minutes: 150
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
-      LAB_GROUP: tt-certops-${{ github.run_id }}-${{ github.run_attempt }}
+      LAB_GROUP: tt-certops-${{ github.run_id }}-${{ matrix.suffix }}
+      SHARD: ${{ matrix.shard }}
       LAB_HOURS: ${{ inputs.lab_hours }}
       LAB_LOCATION: ${{ inputs.location }}
       LAB_VM_SIZE: ${{ inputs.vm_size }}
@@ -87,14 +122,18 @@ jobs:
           $responseLoss = if($env:FAULT_PROFILE -eq 'response-loss'){'1'}else{'0'}
           $journalPhase = if($env:FAULT_PROFILE -in @('submitting','issued','installing')){$env:FAULT_PROFILE}else{'none'}
           if($env:FAULT_PROFILE -notin @('none','submitting','issued','installing','response-loss')){throw 'Unknown fault profile'}
-          ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:LAB_GROUP -Hours ([int]$env:LAB_HOURS) -WindowsVersion $env:WINDOWS_VERSION -Language $env:WINDOWS_LANGUAGE -Location $env:LAB_LOCATION -VmSize $env:LAB_VM_SIZE -ResponseLossExperiment $responseLoss -JournalPhaseExperiment $journalPhase -QualificationScope $env:QUALIFICATION_SCOPE -DebugMode $env:DEBUG_MODE -ContinueOnFailure $env:CONTINUE_ON_FAILURE
+          ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:LAB_GROUP -Hours ([int]$env:LAB_HOURS) -WindowsVersion $env:WINDOWS_VERSION -Language $env:WINDOWS_LANGUAGE -Location $env:LAB_LOCATION -VmSize $env:LAB_VM_SIZE -ResponseLossExperiment $responseLoss -JournalPhaseExperiment $journalPhase -QualificationScope $env:QUALIFICATION_SCOPE -DebugMode $env:DEBUG_MODE -ContinueOnFailure $env:CONTINUE_ON_FAILURE -Shard $env:SHARD
       - name: Assert mandatory native scenarios and candidate source evidence
-        if: inputs.qualification_scope == 'comprehensive'
+        if: inputs.qualification_scope == 'comprehensive' && matrix.shard == 'all'
         run: node scripts/certops-qualification-report.js qualification-results/enterprise-adcs-real.json
+      - name: Assert the diagnostic shard ran every scenario it owns (not release evidence)
+        if: matrix.shard != 'all'
+        run: node scripts/certops-adcs-shard-report.js qualification-results/enterprise-adcs-real.json "$SHARD"
       - name: Assert installed operator scope and native environment receipts
         if: inputs.qualification_scope == 'operator-acceptance'
         run: node scripts/certops-agent-package.js verify-operator-scope qualification-results/enterprise-adcs-infrastructure.json qualification-results/enterprise-adcs-package-acceptance.json
       - name: Verify production worker startup and graceful drainage
+        if: matrix.shard == 'all' || matrix.shard == 'issuance'
         run: node scripts/certops-adcs-worker-deployment-report.js qualification-results/enterprise-adcs-acceptance-worker.json
       - name: Verify observed journal fault without release promotion
         if: inputs.fault_profile == 'submitting' || inputs.fault_profile == 'issued' || inputs.fault_profile == 'installing'
@@ -117,6 +156,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: disposable-enterprise-adcs-infrastructure
+          name: disposable-enterprise-adcs-infrastructure${{ matrix.artifactSuffix }}
           path: qualification-results/enterprise-adcs-*.json
           if-no-files-found: warn

@@ -91,7 +91,7 @@ test("template DACL mutation uses fixed template ownership and receipt before LD
   assert.match(source, /0e10c968-78fb-11d2-90d4-00c04f79dc55/);
   assert.ok(
     source.indexOf("$file.Flush($true)") <
-      source.indexOf("$entry.CommitChanges()"),
+      source.indexOf("$entry.psbase.CommitChanges()"),
   );
   assert.match(
     source,

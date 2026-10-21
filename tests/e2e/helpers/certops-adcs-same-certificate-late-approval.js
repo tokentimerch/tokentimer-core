@@ -240,15 +240,19 @@ async function qualifySameCertificateLateApproval(context) {
         ? current
         : null;
     });
+  // A submitted renew job parks in awaiting_issuer; it never reaches
+  // "succeeded" (that is the continuation's job), so jobFinished cannot be used.
   const awaiting = async (admitted) => {
-    await jobFinished(admitted.jobId);
-    const actual = (
-      await query(
-        "SELECT id,status,claim_id,enrollment_id FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",
-        [fixture.workspaceId, admitted.jobId],
-      )
-    ).rows[0];
-    assert.equal(actual?.status, "awaiting_issuer");
+    const actual = await until(async () => {
+      const value = (
+        await query(
+          "SELECT id,status,claim_id,enrollment_id FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",
+          [fixture.workspaceId, admitted.jobId],
+        )
+      ).rows[0];
+      assert.ok(!["failed", "rejected", "cancelled"].includes(value?.status));
+      return value?.status === "awaiting_issuer" ? value : null;
+    });
     assert.equal(actual.enrollment_id, admitted.enrollmentId);
     assert.match(actual.claim_id, UUID);
   };
@@ -271,13 +275,18 @@ async function qualifySameCertificateLateApproval(context) {
         ).status,
         204,
       );
+      // The API stamps next_poll_at on the control-plane host; this test host's
+      // clock can trail it, so the cancellation's due time is read from the DB host.
+      const dueNow = (
+        await query("SELECT clock_timestamp() AS now")
+      ).rows[0].now;
       cleanup = (
-        await scheduler.scheduleDueEnrollments({ client: fixture.pool })
+        await scheduler.scheduleDueEnrollments({
+          client: fixture.pool,
+          now: dueNow,
+        })
       ).find((value) => value.enrollmentId === cancelled.enrollmentId);
-      assert.ok(
-        cleanup,
-        "Actual default-clock cancellation cleanup must dispatch",
-      );
+      assert.ok(cleanup, "Cancellation cleanup must be due and dispatch");
       await jobFinished(cleanup.jobId);
       const old = await row(cancelled.enrollmentId);
       assert.equal(old.state, "cancelled");

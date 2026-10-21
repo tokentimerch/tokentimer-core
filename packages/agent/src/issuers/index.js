@@ -49,8 +49,8 @@ const ISSUANCE_OUTCOMES = Object.freeze([
 // enrollment rule names is still refused.
 const IMPLEMENTED_ISSUER_KINDS = Object.freeze(["acme", "adcs"]);
 
-// AD CS RequestIds are 32-bit unsigned (enrollment-result contract).
-const MAX_REQUEST_ID = 0xffffffff;
+// AD CS RequestIds are signed 32-bit: certreq -retrieve rejects larger values with 0x80070057.
+const MAX_REQUEST_ID = 0x7fffffff;
 
 function isNonEmptyString(value) {
   return typeof value === "string" && value.length > 0;
@@ -84,7 +84,7 @@ function findOutcomeProblem(value) {
         value.requestId >= 1 &&
         value.requestId <= MAX_REQUEST_ID
         ? null
-        : "requestId must be an integer from 1 to 4294967295";
+        : "requestId must be an integer from 1 to 2147483647";
     case "refused":
       if (!isNonEmptyString(value.rejectionReason)) return "rejectionReason is required";
       return isNonEmptyString(value.detail) ? null : "detail is required";

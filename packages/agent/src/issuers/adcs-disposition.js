@@ -19,7 +19,18 @@ const HRESULT = Object.freeze({
   RPC_S_SERVER_UNAVAILABLE: 0x800706ba,
   RPC_S_CALL_FAILED_DNE: 0x800706bf,
   RPC_S_CALL_FAILED: 0x800706be,
+  CO_E_REMOTE_COMMUNICATION_FAILURE: 0x8000401d,
 });
+
+// DCOM could not reach the CA (for example the dynamic RPC ports are filtered while 135 is open).
+// Activation fails before any request is transmitted, so these are all safe to retry with the same CSR.
+function isCaUnreachable(hr) {
+  return (
+    hr === HRESULT.RPC_S_SERVER_UNAVAILABLE ||
+    hr === HRESULT.RPC_S_CALL_FAILED_DNE ||
+    hr === HRESULT.CO_E_REMOTE_COMMUNICATION_FAILURE
+  );
+}
 
 function toUint32(code) {
   if (typeof code !== "number" || !Number.isFinite(code)) return null;
@@ -36,6 +47,9 @@ function hexHresult(code) {
 // Exact text from tokentimer-adcs-cmc. A new CA key fails here, before leaf
 // validation, because the CMC signer is not the pinned key.
 const CA_KEY_CHANGED_DETAIL = "CMS signer key does not match caKeySha256";
+
+// Exact text from tokentimer-adcs-cmc: signed success without a leaf, as for the CA's own CA-cert request row.
+const CMC_SUCCESS_WITHOUT_LEAF_ERROR = "success status without issued certificate";
 
 function isCaKeyChanged(cmc) {
   return Boolean(cmc) && cmc.error === CA_KEY_CHANGED_DETAIL;
@@ -61,13 +75,13 @@ function mapAdcsDisposition({
   const hr = toUint32(exitCode);
   const hrText = hexHresult(exitCode);
 
-  // Narrow not_submitted: RPC pair + no response/certificate/chain on submit.
+  // Narrow not_submitted: unreachable-CA HRESULTs + no response/certificate/chain on submit.
   if (
     phase === "submit" &&
     !responsePresent &&
     !certificatePresent &&
     !chainPresent &&
-    (hr === HRESULT.RPC_S_SERVER_UNAVAILABLE || hr === HRESULT.RPC_S_CALL_FAILED_DNE)
+    isCaUnreachable(hr)
   ) {
     return {
       outcome: "not_submitted",
@@ -79,7 +93,7 @@ function mapAdcsDisposition({
   // RPC pair with any artefact written is uncertain (may have executed).
   if (
     phase === "submit" &&
-    (hr === HRESULT.RPC_S_SERVER_UNAVAILABLE || hr === HRESULT.RPC_S_CALL_FAILED_DNE) &&
+    isCaUnreachable(hr) &&
     (responsePresent || certificatePresent || chainPresent)
   ) {
     return {
@@ -188,6 +202,7 @@ function mapAdcsDisposition({
 module.exports = {
   HRESULT,
   CA_KEY_CHANGED_DETAIL,
+  CMC_SUCCESS_WITHOUT_LEAF_ERROR,
   mapAdcsDisposition,
   toUint32,
   hexHresult,

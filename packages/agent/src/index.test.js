@@ -4822,6 +4822,30 @@ describe("windows-iis renew job (os-store-managed)", () => {
     // "My"-targeted job (or this same job's own -delstore My step racing
     // reconciliation) could corrupt shared "My" state.
 
+    let priorWait;
+    beforeEach(() => {
+      priorWait = process.env.TOKENTIMER_AGENT_STORE_LOCK_WAIT_MS;
+      process.env.TOKENTIMER_AGENT_STORE_LOCK_WAIT_MS = "0";
+    });
+    afterEach(() => {
+      if (priorWait === undefined) delete process.env.TOKENTIMER_AGENT_STORE_LOCK_WAIT_MS;
+      else process.env.TOKENTIMER_AGENT_STORE_LOCK_WAIT_MS = priorWait;
+    });
+
+    it("waits out a short-lived store lock holder instead of failing the job", async () => {
+      process.env.TOKENTIMER_AGENT_STORE_LOCK_WAIT_MS = "5000";
+      const myLock = acquireStoreLock(stateDir(), "My");
+      const releaseTimer = setTimeout(() => myLock.release(), 600);
+      try {
+        const job = makeJob();
+        const { outcome } = await runIisRenew({ job });
+        assert.doesNotMatch(String(outcome.errorMessage || ""), /could not acquire windows-iis store lock/);
+      } finally {
+        clearTimeout(releaseTimer);
+        myLock.release();
+      }
+    });
+
     it("a WebHosting-targeted renewal fails closed when 'My' is already locked by a concurrent operation, not just when 'WebHosting' is", async () => {
       const myLock = acquireStoreLock(stateDir(), "My");
       try {

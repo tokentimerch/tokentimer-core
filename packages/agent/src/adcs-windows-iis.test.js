@@ -99,6 +99,21 @@ describe("AD CS renew evidence ordering", () => {
     );
   });
 
+  it("validates a directly issued certificate against the journaled key before any install", () => {
+    const src = fs.readFileSync(require.resolve("./adcs-windows-iis.js"), "utf8");
+    const renewFn = src.indexOf("async function executeWindowsIisAdcsRenewJob");
+    const renewSrc = src.slice(
+      renewFn,
+      src.indexOf("async function executeWindowsIisContinueEnrollmentJob"),
+    );
+    const validateAt = renewSrc.indexOf("await runDecision6Validation({");
+    const deployAt = renewSrc.indexOf("await runWindowsIisDeployTail({");
+    assert.ok(validateAt >= 0 && deployAt > validateAt, "decision-6 must precede the first deploy");
+    assert.match(renewSrc.slice(validateAt, validateAt + 400), /csrSpkiSha256,/);
+    // Decision-6 itself must bind the leaf to the journaled key.
+    const d6 = src.slice(src.indexOf("async function runDecision6Validation"));
+    assert.match(d6.slice(d6.indexOf("return validateIssuedCertificate({"), d6.indexOf("return validateIssuedCertificate({") + 200), /csrSpkiSha256,/);
+  });
   it("keeps the last renew install step when journaling install_failed", () => {
     const src = fs.readFileSync(require.resolve("./adcs-windows-iis.js"), "utf8");
     const renewFn = src.indexOf("async function executeWindowsIisAdcsRenewJob");
@@ -1092,7 +1107,7 @@ describe("continue-enrollment recovery executor", () => {
     "-----BEGIN CERTIFICATE REQUEST-----\nMIIB\n-----END CERTIFICATE REQUEST-----\n";
   const leafPem = "-----BEGIN CERTIFICATE-----\nLEAF\n-----END CERTIFICATE-----\n";
 
-  async function seedEnrollment(stateDir, enrollmentId, states, csrSpkiSha256 = "c".repeat(64)) {
+  async function seedEnrollment(stateDir, enrollmentId, states, csrSpkiSha256 = "c".repeat(64), snapshotExtra = {}) {
     const caPem = fs.readFileSync(
       path.join(__dirname, "verify", "fixtures", "selfsigned.crt.pem"),
     );
@@ -1110,6 +1125,7 @@ describe("continue-enrollment recovery executor", () => {
       authorizedDnsNames: ["app.example.com"],
       keyAlgorithm: "ecdsa",
       keySize: 256,
+      ...snapshotExtra,
     };
     const snapshotBytes = Buffer.from(JSON.stringify(snapshot), "utf8");
     const snapshotSha256 = crypto.createHash("sha256").update(snapshotBytes).digest("hex");
@@ -1294,6 +1310,38 @@ describe("continue-enrollment recovery executor", () => {
     });
   });
 
+  it("re-proposing the journal's own RequestId resumes retrieval; a different id is rejected", async () => {
+    const enrollmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6";
+    await withState(enrollmentId, async (stateDir) => {
+      const seed = await seedEnrollment(stateDir, enrollmentId, "submitting");
+      await writeEnrollmentJournal(stateDir, enrollmentId, { ...seed.journalBase,
+        state: "pending", requestId: 42 });
+      const retrieved = [];
+      const { executeWindowsIisContinueEnrollmentJob } = executorsFor(stateDir);
+      const executionContext = contextFor(seed, {
+        adcsExecFileImpl: async (file, args) => {
+          retrieved.push(Number(args[args.indexOf("-config") + 2]));
+          fs.writeFileSync(args.at(-1), "unit CMC response fixture");
+          return { stdout: "", stderr: "" };
+        },
+        adcsDecodeCmcImpl: async () => ({ ok: true, result: { disposition: "unknown" } }),
+      });
+      seed.job.enrollment.reconcileRequestId = 43;
+      let result = await executeWindowsIisContinueEnrollmentJob({ job: seed.job,
+        jobId: seed.journalBase.jobId, client: {}, log: {}, executionContext });
+      assert.equal(result.status, "rejected");
+      assert.equal(result.rejectionReason, "invalid_reconcile_state");
+      assert.deepEqual(retrieved, []);
+      seed.job.enrollment.reconcileRequestId = 42;
+      result = await executeWindowsIisContinueEnrollmentJob({ job: seed.job,
+        jobId: seed.journalBase.jobId, client: {}, log: {}, executionContext });
+      assert.notEqual(result.status, "rejected");
+      assert.deepEqual(retrieved, [42]);
+      assert.equal(result.enrollmentResult.state, "pending_issuance");
+      assert.equal(result.enrollmentResult.requestId, 42);
+    });
+  });
+
   for (const terminalState of ["expired", "cancelled", "abandoned"]) {
     it(`signed ${terminalState} continuation frees its pending key and replays without CA contact`, async () => {
       const enrollmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
@@ -1339,6 +1387,131 @@ describe("continue-enrollment recovery executor", () => {
     });
   }
 
+  // Real decision-6 (no adcsRunDecision6ValidationImpl): a retrieved certificate
+  // for another requester's key must never reach install on any path.
+  describe("foreign-key certificates never install", () => {
+    const fixtures = path.join(__dirname, "verify", "fixtures");
+    const ownPem = fs.readFileSync(path.join(fixtures, "leaf.crt.pem"), "utf8");
+    const foreignPem = fs.readFileSync(path.join(fixtures, "wrong-san.crt.pem"), "utf8");
+    const ownSpki = computeSpkiSha256Hex(ownPem);
+    const snapshotExtra = { minimumRemainingValidity: 0, requireLaterNotAfter: false };
+
+    function harness(stateDir, seed, deliver, extraContext = {}) {
+      const counters = { deployments: 0, chainCalls: 0, observed: 0, retrieved: [] };
+      const { executeWindowsIisContinueEnrollmentJob } = executorsFor(stateDir, {
+        runWindowsIisDeployTail: async () => {
+          counters.deployments += 1;
+          return { status: "succeeded", keyRotated: null };
+        },
+      });
+      const executionContext = contextFor(seed, {
+        ...extraContext,
+        adcsObserveInstalledIdentityImpl: async () => {
+          counters.observed += 1;
+          return { existingNotAfter: null, existingSerialHex: null };
+        },
+        adcsChainValidateImpl: async () => { counters.chainCalls += 1; return { verdict: "valid" }; },
+        adcsExecFileImpl: async (_file, args) => {
+          assert.equal(args.includes("-retrieve"), true, "never submits");
+          counters.retrieved.push(Number(args[args.indexOf("-config") + 2]));
+          fs.writeFileSync(args.at(-1), "unit CMC response fixture");
+          return { stdout: "", stderr: "" };
+        },
+        adcsDecodeCmcImpl: async () => ({ ok: true, result: { disposition: "issued",
+          certificateDerB64: new crypto.X509Certificate(deliver()).raw.toString("base64") } }),
+      });
+      const run = () => executeWindowsIisContinueEnrollmentJob({ job: seed.job,
+        jobId: seed.journalBase.jobId, client: {}, log: {}, executionContext });
+      return { counters, run };
+    }
+
+    it("pending poll or late approval rejects a certificate for another key", async () => {
+      const enrollmentId = "cccccccc-cccc-4ccc-8ccc-ccccccccccc1";
+      await withState(enrollmentId, async (stateDir) => {
+        const seed = await seedEnrollment(stateDir, enrollmentId, "submitting", ownSpki, snapshotExtra);
+        await writeEnrollmentJournal(stateDir, enrollmentId, { ...seed.journalBase,
+          state: "pending_issuance", requestId: 42 });
+        const { counters, run } = harness(stateDir, seed, () => foreignPem);
+        const result = await run();
+        assert.equal(result.status, "failed");
+        assert.equal(result.enrollmentResult.state, "rejected_invalid");
+        assert.match(result.errorMessage, /SubjectPublicKeyInfo does not match/);
+        assert.deepEqual(counters.retrieved, [42]);
+        assert.equal(counters.deployments, 0);
+        assert.equal(counters.chainCalls, 0);
+        assert.equal(readEnrollmentJournal(stateDir, enrollmentId).journal.state, "rejected_invalid");
+      });
+    });
+
+    it("a durable issued leaf for another key is rejected on resume", async () => {
+      const enrollmentId = "cccccccc-cccc-4ccc-8ccc-ccccccccccc2";
+      await withState(enrollmentId, async (stateDir) => {
+        const seed = await seedEnrollment(stateDir, enrollmentId, "submitting", ownSpki, snapshotExtra);
+        const written = await writeIssuedCertificateArtifacts({ stateDir, enrollmentId, leafPem: foreignPem });
+        await writeEnrollmentJournal(stateDir, enrollmentId, { ...seed.journalBase, state: "issued",
+          leafSha256: written.leafSha256, requestId: 40 });
+        const { counters, run } = harness(stateDir, seed, () => assert.fail("no CA contact on resume"));
+        const result = await run();
+        assert.equal(result.status, "failed");
+        assert.equal(result.enrollmentResult.state, "rejected_invalid");
+        assert.match(result.errorMessage, /SubjectPublicKeyInfo does not match/);
+        assert.equal(counters.deployments, 0);
+        assert.equal(counters.chainCalls, 0);
+      });
+    });
+
+    it("automatic tier-2 reconcile never attaches or installs a certificate for another key", async () => {
+      const enrollmentId = "cccccccc-cccc-4ccc-8ccc-ccccccccccc3";
+      await withState(enrollmentId, async (stateDir) => {
+        const seed = await seedEnrollment(stateDir, enrollmentId, "submitting", ownSpki, snapshotExtra);
+        await writeEnrollmentJournal(stateDir, enrollmentId, { ...seed.journalBase,
+          state: "submission_uncertain", reconcileSearchFrom: 100 });
+        const { counters, run } = harness(stateDir, seed, () => foreignPem,
+          { adcsReconcileWindowSize: 1 });
+        const result = await run();
+        assert.equal(result.status, "failed");
+        assert.equal(result.enrollmentResult.state, "submission_uncertain");
+        assert.ok(counters.retrieved.length > 0, "the scan actually saw foreign certificates");
+        assert.equal(counters.observed, 0, "foreign certificate must be filtered before decision-6");
+        assert.equal(counters.deployments, 0);
+        assert.equal(counters.chainCalls, 0);
+        const { journal } = readEnrollmentJournal(stateDir, enrollmentId);
+        assert.equal(journal.state, "submission_uncertain");
+        assert.equal(journal.requestId, undefined);
+        assert.equal(journal.leafSha256 ?? null, null);
+      });
+    });
+
+    it("an operator-proposed RequestId for another key is never attached or installed", async () => {
+      const enrollmentId = "cccccccc-cccc-4ccc-8ccc-ccccccccccc4";
+      await withState(enrollmentId, async (stateDir) => {
+        const seed = await seedEnrollment(stateDir, enrollmentId, "submitting", ownSpki, snapshotExtra);
+        await writeEnrollmentJournal(stateDir, enrollmentId, { ...seed.journalBase,
+          state: "submission_uncertain", reconcileSearchFrom: 100 });
+        seed.job.enrollment.reconcileRequestId = 77;
+        const { counters, run } = harness(stateDir, seed, () => foreignPem);
+        const result = await run();
+        assert.equal(result.status, "failed");
+        assert.equal(result.enrollmentResult.state, "submission_uncertain");
+        assert.deepEqual(counters.retrieved, [77]);
+        assert.equal(counters.observed, 0, "foreign certificate must be filtered before decision-6");
+        assert.equal(counters.deployments, 0);
+        assert.equal(readEnrollmentJournal(stateDir, enrollmentId).journal.state, "submission_uncertain");
+      });
+    });
+
+    it("control: the matching key passes the key check and is judged on later rules", async () => {
+      const enrollmentId = "cccccccc-cccc-4ccc-8ccc-ccccccccccc5";
+      await withState(enrollmentId, async (stateDir) => {
+        const seed = await seedEnrollment(stateDir, enrollmentId, "submitting", ownSpki, snapshotExtra);
+        await writeEnrollmentJournal(stateDir, enrollmentId, { ...seed.journalBase,
+          state: "pending_issuance", requestId: 42 });
+        const { run } = harness(stateDir, seed, () => ownPem);
+        const result = await run();
+        assert.doesNotMatch(String(result.errorMessage ?? ""), /SubjectPublicKeyInfo does not match/);
+      });
+    });
+  });
   it("a missing journal acknowledges only independently absent keys and refuses any deletion", async () => {
     const enrollmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4";
     await withState(enrollmentId, async (stateDir) => {

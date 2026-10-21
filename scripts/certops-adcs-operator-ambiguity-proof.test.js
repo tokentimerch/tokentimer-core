@@ -6,7 +6,7 @@ function fixture() { const enrollmentId = "11111111-1111-1111-1111-111111111111"
 test("operator ambiguity requires every actual zero-fault/public recovery/owned cleanup fact", () => {
   const valid = fixture(); assert.equal(helper.verifyProof(valid), true);
   for (const flag of helper.FLAGS) { const missing = { ...valid }; delete missing[flag]; assert.throws(() => helper.verifyProof(missing)); for (const value of [false, null, 1, "true"]) assert.throws(() => helper.verifyProof({ ...valid, [flag]: value })); }
-  for (const patch of [{ fixtureOrigin: "lost-submit-response" }, { scope: "native-zero-request-uncertain-abandon" }, { resolvedIssuingCaAddress: "10.64.0.7" }, { caRequestsAtFault: 1 }, { caRequestsAfterOperatorSubmissions: 3 }, { caRequestsAfterAmbiguousRecovery: 3 }, { caRequestsAfterExplicitRecovery: 3 }, { actualLeaseWaitMs: 60000 }, { actualLeaseWaitMs: 152000 }, { recoveryWaitBudgetMs: 150001 }, { privateKey: "private" }]) assert.throws(() => helper.verifyProof({ ...valid, ...patch }));
+  for (const patch of [{ fixtureOrigin: "lost-submit-response" }, { scope: "native-zero-request-uncertain-abandon" }, { resolvedIssuingCaAddress: "10.64.0.7" }, { caRequestsAtFault: 1 }, { caRequestsAfterOperatorSubmissions: 3 }, { caRequestsAfterAmbiguousRecovery: 3 }, { caRequestsAfterExplicitRecovery: 3 }, { actualLeaseWaitMs: 58999 }, { actualLeaseWaitMs: 152000 }, { recoveryWaitBudgetMs: 150001 }, { privateKey: "private" }]) assert.throws(() => helper.verifyProof({ ...valid, ...patch }));
 });
 test("only two owned distinct candidates inside the actual default window can be selected", () => {
   const valid = fixture();

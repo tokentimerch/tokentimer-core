@@ -19,8 +19,8 @@ function verifyProof(proof) {
   assert.equal(proof.scope, SCOPE); assert.equal(proof.fixtureOrigin, "operator-created-two-real-system-submissions-of-the-same-public-csr"); assert.equal(proof.resolvedIssuingCaAddress, "10.64.0.4");
   for (const flag of FLAGS) assert.equal(proof[flag], true, flag);
   assert.equal(proof.caRequestsAtFault, 0); for (const field of ["caRequestsAfterOperatorSubmissions", "caRequestsAfterAmbiguousRecovery", "caRequestsAfterExplicitRecovery"]) assert.equal(proof[field], 2);
-  for (const field of ["leaseRemainingAtFaultMs", "recoveryWaitBudgetMs", "actualLeaseWaitMs"]) assert.ok(Number.isInteger(proof[field]) && proof[field] >= 0 && proof[field] <= 900000);
-  assert.equal(proof.recoveryWaitBudgetMs, proof.leaseRemainingAtFaultMs + 90000); assert.ok(proof.actualLeaseWaitMs + 1000 >= proof.leaseRemainingAtFaultMs + 60000); assert.ok(proof.actualLeaseWaitMs <= proof.recoveryWaitBudgetMs + 1000);
+  for (const field of ["leaseRemainingAtFaultMs", "recoveryWaitBudgetMs", "actualLeaseWaitMs"]) assert.ok(Number.isInteger(proof[field]) && proof[field] >= 0 && proof[field] <= require("./certops-adcs-uncertain-abandon").MAX_RECOVERY_WAIT_MS);
+  assert.equal(proof.recoveryWaitBudgetMs, proof.leaseRemainingAtFaultMs + 90000); /* The hard grace only defers reaping while the agent heartbeats; this one is stopped. */ assert.ok(proof.actualLeaseWaitMs + 1000 >= proof.leaseRemainingAtFaultMs); assert.ok(proof.actualLeaseWaitMs <= proof.recoveryWaitBudgetMs + 1000);
   assert.match(proof.enrollmentId, UUID); assert.match(proof.containerName, /^tokentimer-enr-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/); assert.equal(proof.containerName, `tokentimer-enr-${proof.enrollmentId}`);
   for (const field of ["csrSpkiSha256", "csrSha256"]) assert.match(proof[field], /^[a-f0-9]{64}$/);
   assert.ok(Number.isInteger(proof.reconcileSearchFrom) && proof.reconcileSearchFrom >= 1 && proof.reconcileSearchFrom <= 0xffffffff); assert.equal(proof.scanWindowSize, 16);
@@ -97,7 +97,7 @@ async function runOperatorCreatedAmbiguity(session) {
     const selected = requests[0];
     if(context.reconcileActor)await context.reconcileActor.reconcileEnrollment(id, selected.requestId);
     else assert.equal((await fixture.request(`${api}/enrollments/${id}/reconcile`, "POST", { requestId: Number(selected.requestId) })).status, 204);
-    explicit = (await scheduler.scheduleDueEnrollments({ client: fixture.pool })).find(row => row.enrollmentId === id); assert.ok(explicit); await jobFinished(explicit.jobId);
+    const dueNow = (await query("SELECT clock_timestamp() AS now")).rows[0].now; explicit = (await scheduler.scheduleDueEnrollments({ client: fixture.pool, now: dueNow })).find(row => row.enrollmentId === id); assert.ok(explicit); await jobFinished(explicit.jobId);
     const installed = await enrollment(); assert.equal(installed.state, "installed"); assert.equal(String(installed.request_id), selected.requestId);
     const final = readEnrollmentJournal(configDir, id); assert.equal(final.kind, "valid"); assert.equal(final.journal.state, "installed");
     for (const field of ["containerName", "csrSha256", "csrSpkiSha256", "snapshotSha256"]) assert.equal(final.journal[field], original.journal[field]);

@@ -152,7 +152,8 @@ function Set-OwnedOcspRevokedProvider($Owner,[byte[]]$CaDer,[byte[]]$SignerDer,[
   throw 'Independently verified actual native CRL transition required'
  }
  $identifier=$Owner.ownership.baseline.signingTemplateName
- [void](Get-OwnedOcspConfigurationObservation $identifier $CaDer $SignerDer $OriginalCrl)
+ # The CA already republished the file the responder reads, so it must match the revoked CRL.
+ [void](Get-OwnedOcspConfigurationObservation $identifier $CaDer $SignerDer $RevokedCrl)
  $admin=$null;$collection=$null;$entry=$null
  try {
   $admin=New-Object -ComObject 'CertAdm.OCSPAdmin'
@@ -167,14 +168,19 @@ function Set-OwnedOcspRevokedProvider($Owner,[byte[]]$CaDer,[byte[]]$SignerDer,[
    throw 'Native responder identity changed before provider refresh'
   }
   $before=$entry.ProviderProperties;$originalFingerprint=Get-OwnedOcspProviderFingerprint $before
+  # The responder reads the CA's published CRL by URL (a BaseCrl value is not
+  # persisted), so the revoked CRL is already in place. Re-applying the same
+  # provider properties makes the service reload it; nothing else is edited.
   $after=$before.Clone();$matches=0
   for($index=0;$index -lt $after.GetLength(0);$index++) {
-   if($after[$index,0] -ceq 'BaseCrl') {
-    if((Get-OcspPublicDigest ([byte[]]$after[$index,1])) -cne (Get-OcspPublicDigest $OriginalCrl)) { throw 'Original native base CRL changed' }
-    $after[$index,1]=[byte[]]$RevokedCrl;$matches++
+   if($after[$index,0] -ceq 'BaseCrlUrls') {
+    $urls=@($after[$index,1])
+    if($urls.Count -ne 1 -or $urls[0] -cne (Get-OcspCrlSourceUrl)) { throw 'Original native base CRL source changed' }
+    $matches++
    }
   }
-  if($matches -ne 1) { throw 'Exactly one native base CRL must be replaced' }
+  if($matches -ne 1) { throw 'Exactly one native base CRL source required' }
+  if((Get-OcspPublicDigest (Read-OcspPublishedCrl)) -cne (Get-OcspPublicDigest $RevokedCrl)) { throw 'Published CRL is not the revoked CRL' }
   $appliedFingerprint=Get-OwnedOcspProviderFingerprint $after
   [void](Write-OwnedOcspPhase $Owner 'revocation-refresh-intent' @{originalProviderSha256=$originalFingerprint;appliedProviderSha256=$appliedFingerprint;revokedCrlSha256=$published.phase.facts.revokedCrlSha256})
   if((Get-OwnedOcspProviderFingerprint $entry.ProviderProperties) -cne $originalFingerprint) { throw 'Provider changed immediately before refresh' }

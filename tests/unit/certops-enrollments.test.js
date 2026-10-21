@@ -142,13 +142,13 @@ describe("AD CS enrollment lifecycle", () => {
     assert.equal(validateSignedJob({ ...signed, action: "continue-enrollment",
       enrollment: { ...signed.enrollment, terminalState: "installed" } }).valid, false);
     const reconcile = { ...signed, action: "continue-enrollment",
-      enrollment: { ...signed.enrollment, reconcileRequestId: 4294967295 } };
+      enrollment: { ...signed.enrollment, reconcileRequestId: 2147483647 } };
     assert.equal(validateSignedJob(reconcile).valid, true);
     assert.equal(validateSignedJob({ ...reconcile, action: "renew" }).valid, false);
     assert.equal(validateSignedJob({ ...reconcile,
       enrollment: { ...reconcile.enrollment, terminalState: "expired" } }).valid, false);
     assert.equal(validateSignedJob({ ...reconcile,
-      enrollment: { ...reconcile.enrollment, reconcileRequestId: 4294967296 } }).valid, false);
+      enrollment: { ...reconcile.enrollment, reconcileRequestId: 2147483648 } }).valid, false);
   });
 
   it("polls a pending enrollment and retries an unreachable submit", () => {
@@ -811,6 +811,28 @@ describe("enrollment rows", () => {
     assert.equal(validate(job), true, JSON.stringify(validate.errors));
   });
 
+  it("accepts a proposed RequestId only within the signed 32-bit CA range", async () => {
+    for (const requestId of [0, -1, 1.5, "abc", 2147483648, "2147483648", 4294967295]) {
+      const db = rowDb();
+      db.putEnrollment(storedEnrollment(ENROLLMENT, "submission_uncertain", { attempt: 1 }));
+      await assert.rejects(
+        proposeReconcileRequestId({
+          client: db, workspaceId: WORKSPACE, enrollmentId: ENROLLMENT, requestId,
+          audit: async () => { throw new Error("must not audit"); },
+        }),
+        (error) => error.code === "CERTOPS_ENROLLMENT_TRANSITION_INVALID" &&
+          /1 to 2147483647/.test(error.message),
+        String(requestId),
+      );
+      assert.equal(db.enrollments.get(ENROLLMENT).operator_request_id ?? null, null);
+    }
+    const db = rowDb();
+    db.putEnrollment(storedEnrollment(ENROLLMENT, "submission_uncertain", { attempt: 1 }));
+    await proposeReconcileRequestId({
+      client: db, workspaceId: WORKSPACE, enrollmentId: ENROLLMENT, requestId: 2147483647, audit,
+    });
+    assert.equal(Number(db.enrollments.get(ENROLLMENT).operator_request_id), 2147483647);
+  });
   it("dispatches a continuation after an uncertain RequestId is proposed", async () => {
     const db = rowDb();
     const id = ENROLLMENT;
@@ -986,11 +1008,11 @@ describe("enrollment rows", () => {
     assert.equal(typeof jobs[0].metadata[0].value, "number");
   });
 
-  it("does not schedule a RequestId outside uint32", async () => {
+  it("does not schedule a RequestId outside signed int32", async () => {
     const db = rowDb();
     db.putEnrollment(storedEnrollment(ENROLLMENT, "submission_uncertain", {
       attempt: 1,
-      operator_request_id: "4294967296",
+      operator_request_id: "2147483648",
       next_poll_at: new Date("2026-10-11T12:00:00.000Z"),
     }));
     const created = await scheduleDueEnrollments({

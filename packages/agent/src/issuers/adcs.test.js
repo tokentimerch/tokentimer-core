@@ -120,6 +120,19 @@ describe("mapAdcsDisposition", () => {
     assert.equal(m.outcome, "not_submitted");
   });
 
+  it("maps a DCOM activation failure without artefacts to not_submitted on submit", () => {
+    const base = {
+      phase: "submit",
+      responsePresent: false,
+      certificatePresent: false,
+      chainPresent: false,
+      exitCode: -2147467235,
+      cmc: null,
+    };
+    assert.equal(mapAdcsDisposition(base).outcome, "not_submitted");
+    assert.equal(mapAdcsDisposition({ ...base, responsePresent: true }).outcome, "uncertain");
+  });
+
   it("maps RPC unavailable with a chain artefact to uncertain", () => {
     const m = mapAdcsDisposition({
       phase: "submit",
@@ -449,6 +462,19 @@ describe("createAdcsIssuer", () => {
     assert.deepEqual(seen.slice(0, 5), ["-q", "-retrieve", "-config", CA_CONFIG, "5"]);
   });
 
+  it("retrieve refuses a RequestId outside the signed 32-bit range without running certreq", async () => {
+    let runs = 0;
+    const issuer = makeIssuer({
+      execFileImpl: async () => { runs += 1; return { stdout: "", stderr: "" }; },
+    });
+    for (const id of [0, -1, 1.5, "5", 2147483648, 4294967295]) {
+      const outcome = await issuer.retrieve(id);
+      assert.equal(outcome.outcome, "refused", String(id));
+      assert.equal(outcome.rejectionReason, "invalid_request_id");
+      assert.match(outcome.detail, /1 to 2147483647/);
+    }
+    assert.equal(runs, 0);
+  });
   it("retrieve refuses a mismatched pend token", async () => {
     const issuer = makeIssuer({
       execFileImpl: async (_bin, argv) => {

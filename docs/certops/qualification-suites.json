@@ -3055,7 +3055,11 @@
         "renewal health returns one current-period issuer across single, workspace and page projections",
         "binding changes terminally invalidate approval, preserve snapshots and permit a fresh API request",
         "expansion serializes a concurrent binding edit and preserves the approved snapshot",
-        "workspace transfer retains source history and creates no destination issuer dependency"
+        "workspace transfer retains source history and creates no destination issuer dependency",
+        "every distribution write route rejects private-key material before any handler runs and persists or logs none of it",
+        "a required failure in a later wave pauses the rollout, keeps earlier waves current and starts nothing further",
+        "a required failure inside a wave pauses the rollout without disturbing its verified sibling or later waves",
+        "an optional destination failure never blocks the rollout, a required one does"
       ],
       "environment": {
         "osFamily": "linux"

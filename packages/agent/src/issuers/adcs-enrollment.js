@@ -54,7 +54,7 @@ function decodeEnrollmentSnapshot(job) {
   const terminalState = enrollment.terminalState;
   const reconcileRequestId = enrollment.reconcileRequestId;
   if (reconcileRequestId !== undefined &&
-      (!Number.isInteger(reconcileRequestId) || reconcileRequestId < 1 || reconcileRequestId > 0xffffffff || terminalState !== undefined)) {
+      (!Number.isInteger(reconcileRequestId) || reconcileRequestId < 1 || reconcileRequestId > 0x7fffffff || terminalState !== undefined)) {
     return { ok: false, error: "enrollment.reconcileRequestId must be a bounded RequestId without terminal cleanup" };
   }
   if (terminalState !== undefined &&

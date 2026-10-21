@@ -65,7 +65,9 @@ function Get-OwnedOcspIisSnapshot($Owner) {
     throw 'Unexpected application on fresh responder site'
    }
    foreach($directory in $application.VirtualDirectories) {
-    $route=$application.Path.TrimEnd('/')+$directory.Path
+    # An application's root virtual directory is '/', so '/ocsp' + '/' must
+    # resolve to '/ocsp' rather than '/ocsp/'.
+    $route=if($directory.Path -ceq '/'){ $application.Path } else { $application.Path.TrimEnd('/')+$directory.Path }
     if($route -ceq '/ocsp') {
      $physical=Assert-OcspNativePhysicalPath $directory.PhysicalPath
      $routes+=@{

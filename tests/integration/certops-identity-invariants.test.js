@@ -984,6 +984,176 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     assert.equal((await period(mcB)).ended_at, null);
   });
 
+  describe("replace-management names the open period when it refuses", () => {
+    async function profile(ws, name) {
+      return (
+        await db.query(
+          "INSERT INTO certificate_profiles(workspace_id,name) VALUES($1,$2) RETURNING id",
+          [ws, name],
+        )
+      ).rows[0].id;
+    }
+    const replace = (ws, mc, periodId) =>
+      replaceManagingSource({
+        workspaceId: ws,
+        periodId,
+        managedCertificateId: mc.id,
+        renewalProfileId: null,
+        automationEnabled: false,
+        client: db,
+      });
+    const refused = (promise) =>
+      promise.then(
+        () => assert.fail("expected refusal"),
+        (error) => error,
+      );
+
+    it("(a) no open period and no periodId starts a new period", async () => {
+      const ws = await workspace(),
+        mc = await source(ws, A),
+        old = await period(mc);
+      await stopManagingSource({ workspaceId: ws, periodId: old.id, client: db });
+      const result = await replace(ws, mc, null);
+      assert.equal(result.stopped, null);
+      assert.notEqual(result.readded.periodId, old.id);
+      assert.equal((await period(mc)).ended_at, null);
+    });
+
+    it("(b) open period and no periodId: 409 code kept, body names the open period", async () => {
+      const ws = await workspace(),
+        mc = await source(ws, A),
+        open = await period(mc),
+        profileId = await profile(ws, "Edge IIS");
+      await db.query(
+        "UPDATE certops_management_periods SET renewal_profile_id=$2, automation_enabled=TRUE WHERE id=$1",
+        [open.id, profileId],
+      );
+      await db.query(
+        "UPDATE managed_certificates SET key_reference='vault://secret/path' WHERE id=$1",
+        [mc.id],
+      );
+      const error = await refused(replace(ws, mc, null));
+      assert.equal(error.code, "CERTOPS_MANAGEMENT_ALREADY_OPEN");
+      assert.equal(error.details.reason, "period_id_required");
+      assert.equal(error.details.currentPeriod.periodId, open.id);
+      assert.equal(error.details.currentPeriod.managementMode, "automatic");
+      assert.deepEqual(error.details.currentPeriod.renewalProfile, {
+        id: profileId,
+        name: "Edge IIS",
+      });
+      assert.ok(error.details.currentPeriod.startedAt);
+      assert.match(error.message, /already managed/);
+      assert.ok(error.message.includes(open.id));
+      assert.ok(error.message.includes("Edge IIS"));
+      assert.match(error.message, /periodId/);
+      assert.ok(!JSON.stringify(error.details).includes("vault://"));
+      assert.equal((await period(mc)).id, open.id);
+      assert.equal((await period(mc)).ended_at, null);
+    });
+
+    it("(c) a stale periodId is refused with the current open period", async () => {
+      const ws = await workspace(),
+        mc = await source(ws, A),
+        old = await period(mc);
+      await stopManagingSource({ workspaceId: ws, periodId: old.id, client: db });
+      const current = (
+        await readdManagingSource({
+          workspaceId: ws,
+          managedCertificateId: mc.id,
+          renewalProfileId: null,
+          automationEnabled: false,
+          client: db,
+        })
+      ).periodId;
+      const error = await refused(replace(ws, mc, old.id));
+      assert.equal(error.code, "CERTOPS_MANAGEMENT_ALREADY_OPEN");
+      assert.equal(error.details.reason, "period_id_stale");
+      assert.equal(error.details.currentPeriod.periodId, current);
+      assert.equal(error.details.currentPeriod.managementMode, "tracking");
+      assert.equal(error.details.currentPeriod.renewalProfile, null);
+      assert.ok(error.message.includes(current));
+      assert.equal((await period(mc)).id, current);
+      assert.equal((await period(mc)).ended_at, null);
+    });
+
+    it("(c) another certificate's periodId is a mismatch that still names this certificate's period", async () => {
+      const ws = await workspace(),
+        mcA = await source(ws, A),
+        mcB = await source(ws, B),
+        periodA = await period(mcA),
+        periodB = await period(mcB);
+      const error = await refused(replace(ws, mcB, periodA.id));
+      assert.equal(error.code, "CERTOPS_MANAGEMENT_PERIOD_MISMATCH");
+      assert.equal(error.details.reason, "period_id_mismatch");
+      assert.equal(error.details.currentPeriod.periodId, periodB.id);
+      assert.ok(!error.message.includes(periodA.id));
+      assert.equal((await period(mcA)).ended_at, null);
+    });
+
+    it("(c) an unknown periodId stays a not-found refusal without details", async () => {
+      const ws = await workspace(),
+        mc = await source(ws, A);
+      const error = await refused(replace(ws, mc, randomUUID()));
+      assert.equal(error.code, "CERTOPS_MANAGEMENT_PERIOD_NOT_FOUND");
+      assert.equal(error.details, undefined);
+    });
+
+    it("(d) the correct open periodId ends it and starts the replacement", async () => {
+      const ws = await workspace(),
+        mc = await source(ws, A),
+        open = await period(mc);
+      const result = await replace(ws, mc, open.id);
+      assert.equal(result.stopped.periodId, open.id);
+      assert.notEqual(result.readded.periodId, open.id);
+      assert.equal((await period(mc)).id, result.readded.periodId);
+    });
+
+    it("does not disclose another workspace's periods, even by id", async () => {
+      const wsA = await workspace(),
+        wsB = await workspace(),
+        mcA = await source(wsA, A),
+        mcB = await source(wsB, B),
+        periodA = await period(mcA),
+        periodB = await period(mcB);
+      const foreignPeriod = await refused(replace(wsA, mcA, periodB.id));
+      assert.equal(foreignPeriod.code, "CERTOPS_MANAGEMENT_PERIOD_NOT_FOUND");
+      assert.equal(foreignPeriod.details, undefined);
+      assert.ok(!foreignPeriod.message.includes(periodB.id));
+      for (const periodId of [null, periodA.id, periodB.id]) {
+        const foreignSource = await refused(replace(wsA, mcB, periodId));
+        assert.ok(
+          [
+            "CERTOPS_CERTIFICATE_NOT_FOUND",
+            "CERTOPS_MANAGEMENT_PERIOD_NOT_FOUND",
+            "CERTOPS_MANAGEMENT_PERIOD_MISMATCH",
+          ].includes(foreignSource.code),
+          foreignSource.code,
+        );
+        assert.equal(foreignSource.details?.currentPeriod ?? null, null);
+        assert.ok(!foreignSource.message.includes(periodB.id));
+      }
+      assert.equal((await period(mcB)).ended_at, null);
+    });
+
+    it("plain re-add of a managed certificate reports the open period too", async () => {
+      const ws = await workspace(),
+        mc = await source(ws, A),
+        open = await period(mc);
+      const error = await refused(
+        readdManagingSource({
+          workspaceId: ws,
+          managedCertificateId: mc.id,
+          renewalProfileId: null,
+          automationEnabled: false,
+          client: db,
+        }),
+      );
+      assert.equal(error.code, "CERTOPS_MANAGEMENT_ALREADY_OPEN");
+      assert.equal(error.details.reason, "already_managed");
+      assert.equal(error.details.currentPeriod.periodId, open.id);
+    });
+  });
+
   it("replace-management rolls back the stop when the re-attach is refused", async () => {
     const ws = await workspace(),
       mc = await source(ws, A),

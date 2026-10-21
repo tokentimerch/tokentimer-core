@@ -12,7 +12,8 @@ param(
 $ErrorActionPreference='Stop'
 if((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test' -or -not $env:CERTOPS_ADCS_OFFICER_PASSWORD){throw 'Safety faults require isolated forest credentials'}
 $credential=[PSCredential]::new('TTQUAL\tt-lab-admin',(ConvertTo-SecureString $env:CERTOPS_ADCS_OFFICER_PASSWORD -AsPlainText -Force))
-$definition=if($Action -eq 'apply'){@((Get-Content (Join-Path $PSScriptRoot 'safety-cases.json') -Raw | ConvertFrom-Json).caFlagCases | Where-Object id -eq $CaseId)}else{@()}
+# @() around the whole if-expression: Windows PowerShell 5.1 unrolls a single-element array, so .Count would be $null.
+$definition=@(if($Action -eq 'apply'){(Get-Content (Join-Path $PSScriptRoot 'safety-cases.json') -Raw | ConvertFrom-Json).caFlagCases | Where-Object id -eq $CaseId})
 if($Action -eq 'apply' -and $definition.Count -ne 1){throw 'Unknown native CA fault case'}
 if($Action -eq 'request-count' -and -not $CommonName){throw 'Owned request common name required'}
 Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -ArgumentList $Action,$RunId,$CaseId,$CommonName,$definition -ScriptBlock {

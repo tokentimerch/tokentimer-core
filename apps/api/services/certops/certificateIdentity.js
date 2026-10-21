@@ -974,6 +974,63 @@ async function retireCertificateIdentity({
   });
 }
 
+// Workspace-scoped on purpose: callers reach this only through a write-role
+// route, and nothing here reads another workspace's rows. No key material.
+async function loadOpenPeriodSummary(tx, workspaceId, managedCertificateId) {
+  const result = await tx.query(
+    `SELECT p.id, p.started_at, p.automation_enabled, p.renewal_profile_id,
+            mc.source, pr.name AS profile_name
+       FROM certops_management_periods p
+       JOIN managed_certificates mc
+         ON mc.workspace_id = p.workspace_id AND mc.id = p.managed_certificate_id
+       LEFT JOIN certificate_profiles pr
+         ON pr.workspace_id = p.workspace_id AND pr.id = p.renewal_profile_id
+      WHERE p.workspace_id = $1 AND p.managed_certificate_id = $2
+        AND p.ended_at IS NULL`,
+    [workspaceId, managedCertificateId],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    periodId: row.id,
+    startedAt: row.started_at,
+    managementMode: row.automation_enabled ? "automatic" : "tracking",
+    automationEnabled: Boolean(row.automation_enabled),
+    renewalProfile: row.renewal_profile_id
+      ? { id: row.renewal_profile_id, name: row.profile_name || null }
+      : null,
+    source: row.source || null,
+  };
+}
+
+function describeOpenPeriod(open) {
+  const since = open.startedAt instanceof Date
+    ? open.startedAt.toISOString()
+    : String(open.startedAt);
+  const how = open.renewalProfile
+    ? `automatic renewal with profile "${open.renewalProfile.name || open.renewalProfile.id}"`
+    : "tracking without automatic renewal";
+  return `already managed since ${since} (${how}), period ${open.periodId}`;
+}
+
+// 409 whose body tells the operator which period is open and how to proceed.
+function failOpenPeriod(open, { reason, requestedPeriodId = null }) {
+  const lead = {
+    period_id_required: "This certificate is",
+    period_id_stale: `periodId ${requestedPeriodId} is not the current period. The certificate is`,
+    already_managed: "This certificate is",
+  }[reason];
+  const next =
+    reason === "already_managed"
+      ? "Stop that management period first, or call replace-management with that periodId."
+      : "Retry replace-management with that periodId to end it and attach the new configuration, or stop it first.";
+  fail(
+    "CERTOPS_MANAGEMENT_ALREADY_OPEN",
+    `${lead} ${describeOpenPeriod(open)}. ${next}`,
+    { reason, currentPeriod: open },
+  );
+}
+
 // Ends the open period (if any) and starts the replacement in one transaction,
 // so a failed start cannot leave the certificate unmanaged.
 async function replaceManagingSource({
@@ -1002,11 +1059,22 @@ async function replaceManagingSource({
       if (
         String(owner.rows[0].managed_certificate_id).toLowerCase() !==
         String(managedCertificateId).toLowerCase()
-      )
+      ) {
+        const open = UUID_PATTERN.test(String(managedCertificateId))
+          ? await loadOpenPeriodSummary(tx, workspaceId, managedCertificateId)
+          : null;
         fail(
           "CERTOPS_MANAGEMENT_PERIOD_MISMATCH",
-          "That management period belongs to a different certificate source",
+          open
+            ? `That management period belongs to a different certificate source. This certificate is ${describeOpenPeriod(open)}; retry with that periodId.`
+            : "That management period belongs to a different certificate source",
+          { reason: "period_id_mismatch", currentPeriod: open },
         );
+      }
+      // An ended period of this certificate must not pass as the open one.
+      const open = await loadOpenPeriodSummary(tx, workspaceId, managedCertificateId);
+      if (open && String(open.periodId).toLowerCase() !== String(periodId).toLowerCase())
+        failOpenPeriod(open, { reason: "period_id_stale", requestedPeriodId: periodId });
     }
     const stopped = periodId
       ? await stopManagingSource({ workspaceId, periodId, actorUserId, client: tx })
@@ -1018,6 +1086,7 @@ async function replaceManagingSource({
       automationEnabled,
       actorUserId,
       client: tx,
+      openPeriodReason: "period_id_required",
     });
     return { stopped, readded };
   });
@@ -1094,6 +1163,7 @@ async function readdManagingSource({
   automationEnabled,
   actorUserId = null,
   client = pool,
+  openPeriodReason = "already_managed",
 }) {
   if (!UUID_PATTERN.test(String(managedCertificateId || "")))
     fail("CERTOPS_CERTIFICATE_NOT_FOUND", "Certificate source not found");
@@ -1144,13 +1214,8 @@ async function readdManagingSource({
         "Disable automation with no renewal profile selected",
       );
     }
-    const open = await tx.query(
-      `SELECT 1 FROM certops_management_periods
-      WHERE workspace_id = $1 AND managed_certificate_id = $2 AND ended_at IS NULL`,
-      [workspaceId, managedCertificateId],
-    );
-    if (open.rowCount)
-      fail("CERTOPS_MANAGEMENT_ALREADY_OPEN", "Source is already managed");
+    const open = await loadOpenPeriodSummary(tx, workspaceId, managedCertificateId);
+    if (open) failOpenPeriod(open, { reason: openPeriodReason });
     if (renewalProfileId) {
       const profile = await tx.query(
         `SELECT 1 FROM certificate_profiles

@@ -89,8 +89,8 @@ describe("assertIssuanceOutcome", () => {
     }
   });
 
-  it("requires pending to carry a 32-bit unsigned CA RequestId", () => {
-    for (const requestId of [undefined, 0, -1, 1.5, "4242", 4294967296]) {
+  it("requires pending to carry a signed 32-bit CA RequestId", () => {
+    for (const requestId of [undefined, 0, -1, 1.5, "4242", 2147483648, 4294967295]) {
       assert.throws(
         () => assertIssuanceOutcome({ outcome: "pending", requestId }),
         /malformed pending outcome/,
@@ -98,7 +98,7 @@ describe("assertIssuanceOutcome", () => {
     }
     assert.doesNotThrow(() => assertIssuanceOutcome({ outcome: "pending", requestId: 1 }));
     assert.doesNotThrow(() =>
-      assertIssuanceOutcome({ outcome: "pending", requestId: 4294967295 }),
+      assertIssuanceOutcome({ outcome: "pending", requestId: 2147483647 }),
     );
   });
 

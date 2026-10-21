@@ -429,9 +429,10 @@ function New-OcspOwnershipReceipt([string]$RunId,[string]$Token,[string]$Expecte
  if($bytes.Length -lt 1 -or $bytes.Length -gt 65536) { throw 'OCSP ownership receipt exceeds bound' }
  $directoryPin=[TTQualificationOcspReceipt]::PinDirectory($directory,$directoryIdentity)
  try {
- $stream=[IO.File]::Open($receipt,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+ # A write-only handle lacks WRITE_DAC, so FileStream.SetAccessControl fails on
+ # Windows PowerShell 5.1. Create the file with its private ACL instead.
+ $stream=[IO.FileStream]::new($receipt,[IO.FileMode]::CreateNew,[Security.AccessControl.FileSystemRights]'Write,ChangePermissions',[IO.FileShare]::None,4096,[IO.FileOptions]::None,(New-OcspPrivateAcl $false))
  try {
-  $stream.SetAccessControl((New-OcspPrivateAcl $false))
   $stream.Write($bytes,0,$bytes.Length)
   $stream.Flush($true)
  } finally { $stream.Dispose() }
@@ -698,7 +699,7 @@ function New-OwnedOcspSigningTemplate($Owner) {
  $oidObject.Put('displayName',$name)
  $oidObject.Put('flags',1)
  $oidObject.SetInfo()
- $oidObject.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
+ $oidObject.psbase.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
  $oidObject.RefreshCache()
  $oidDacl=$oidObject.ObjectSecurity.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
  $oidSearch=[DirectoryServices.DirectorySearcher]::new($oids)
@@ -709,8 +710,11 @@ function New-OwnedOcspSigningTemplate($Owner) {
   $oidSearch.ClientTimeout=[TimeSpan]::FromSeconds(10)
   $created=$oidSearch.FindAll()
   try {
+   # DirectoryEntry.Guid is the raw-byte string, which differs from the
+   # objectGUID struct form returned by the searcher; compare the same encoding.
+   $createdGuid=[Guid]::new([byte[]]$oidObject.Properties['objectguid'][0])
    if($created.Count -ne 1 -or
-      ([Guid]::new([byte[]]$created[0].Properties['objectguid'][0])) -ne [Guid]$oidObject.Guid) {
+      ([Guid]::new([byte[]]$created[0].Properties['objectguid'][0])) -ne $createdGuid) {
     throw 'New template OID identity is not unique'
    }
   } finally { $created.Dispose() }
@@ -743,14 +747,20 @@ function New-OwnedOcspSigningTemplate($Owner) {
  }
  $security.AddAccessRule([DirectoryServices.ActiveDirectoryAccessRule]::new($computer.SID,'GenericRead','Allow'))
  $security.AddAccessRule([DirectoryServices.ActiveDirectoryAccessRule]::new($computer.SID,'ExtendedRight','Allow',[Guid]'0e10c968-78fb-11d2-90d4-00c04f79dc55'))
- $template.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
- $template.ObjectSecurity=$security
- $template.CommitChanges()
+ $template.psbase.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
+ $template.psbase.ObjectSecurity=$security
+ $template.psbase.CommitChanges()
  $template.RefreshCache()
  $actualDacl=$template.ObjectSecurity.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
  $expectedDacl=$security.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
- if($actualDacl -cne $expectedDacl -or
-    [string]$template.Properties['msPKI-Cert-Template-OID'].Value -cne $oid) {
+  # AD marks a stored DACL auto-inherited (AI) even when protected, so compare
+  # the protection flag and the exact ACE list rather than the flag prefix.
+  $aceStart=$actualDacl.IndexOf('(')
+  $expectedAceStart=$expectedDacl.IndexOf('(')
+  if($aceStart -lt 0 -or $expectedAceStart -lt 0 -or
+     $actualDacl.Substring(0,$aceStart) -cnotmatch '^D:[A-Z]*P[A-Z]*$' -or
+     $actualDacl.Substring($aceStart) -cne $expectedDacl.Substring($expectedAceStart) -or
+     [string]$template.Properties['msPKI-Cert-Template-OID'].Value -cne $oid) {
   throw 'Owned signer-only template readback mismatch'
  }
  $facts=@{
@@ -778,7 +788,7 @@ function Publish-OwnedOcspSigningTemplate($Owner) {
   }
   if(!$held) { throw 'Another owned OCSP mutation is active' }
   $template=[ADSI]('LDAP://'+$created.phase.facts.templateDn)
-  $template.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
+  $template.psbase.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
   $template.RefreshCache()
   if(([Guid]$template.Guid).ToString('D') -cne $created.phase.facts.templateGuid -or
      [string]$template.Properties['msPKI-Cert-Template-OID'].Value -cne $created.phase.facts.templateOid -or
@@ -843,10 +853,10 @@ function Restore-OwnedOcspSigningTemplate($Owner) {
   # Check BOTH exact AD objects before the first removal. A matching name or
   # OID alone never establishes ownership of a replacement directory object.
   $template=[ADSI]('LDAP://'+$facts.templateDn)
-  $template.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
+  $template.psbase.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
   $template.RefreshCache()
   $oid=[ADSI]('LDAP://'+$facts.oidDn)
-  $oid.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
+  $oid.psbase.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
   $oid.RefreshCache()
   if(([Guid]$template.Guid).ToString('D') -cne $facts.templateGuid -or
      [string]$template.Properties['msPKI-Cert-Template-OID'].Value -cne $facts.templateOid -or
@@ -1039,7 +1049,7 @@ function Accept-OwnedOcspSigner($Owner,[string]$VerifiedCertificateSha256) {
  $path=Join-Path $Owner.directory 'signer.cer'
  $certificatePin=[TTQualificationOcspReceipt]::PinRead($path)
  try {
- $bytes=[TTQualificationOcspReceipt]::Read($path)
+ $bytes=Get-OcspSignerDer ([TTQualificationOcspReceipt]::Read($path))
  if((Get-OcspPublicDigest $bytes) -cne $VerifiedCertificateSha256) {
   throw 'Issued signer DER changed before machine acceptance'
  }
@@ -1148,11 +1158,11 @@ function Write-OwnedOcspPublicTool($Owner,[string]$Name,[byte[]]$Bytes,[string]$
  Invoke-OwnedOcspPinnedOperation $Owner {
   param($PinnedOwner)
   $path=Join-Path $PinnedOwner.directory $Name
-  # CreateNew refuses every existing object. Applying the ACL to the retained
-  # new stream avoids a path-based security-descriptor replacement race.
-  $stream=[IO.FileStream]::new($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::ReadWrite,[IO.FileShare]::Read)
+  # CreateNew refuses every existing object. Creating the file with its private
+  # ACL avoids a path-based security-descriptor replacement race (and the
+  # missing WRITE_DAC right on a plain FileStream handle).
+  $stream=[IO.FileStream]::new($path,[IO.FileMode]::CreateNew,[Security.AccessControl.FileSystemRights]'Read,Write,ChangePermissions',[IO.FileShare]::Read,4096,[IO.FileOptions]::None,(New-OcspPrivateAcl $false))
   try {
-   $stream.SetAccessControl((New-OcspPrivateAcl $false))
    $stream.Write($Bytes,0,$Bytes.Length)
    $stream.Flush($true)
    if($stream.Length -ne $Bytes.Length) { throw 'Candidate OCSP tool write length mismatch' }
@@ -1167,6 +1177,12 @@ function Write-OwnedOcspPublicTool($Owner,[string]$Name,[byte[]]$Bytes,[string]$
    return @{name=$Name;sha256=$readback;bytes=$Bytes.Length}
   } finally { $stream.Dispose() }
  }
+}
+
+function Get-OcspSignerDer([byte[]]$Bytes) {
+ # certreq writes the issued signer as base64 PEM, while receipts bind the DER.
+ $certificate=[Security.Cryptography.X509Certificates.X509Certificate2]::new($Bytes)
+ try { return ,[byte[]]$certificate.RawData } finally { $certificate.Dispose() }
 }
 
 function Get-OcspPublicDigest([byte[]]$Bytes) {
@@ -1233,7 +1249,15 @@ function Restart-OwnedOcspIssuingCa($Owner) {
  $key.Dispose()
  Restart-Service CertSvc -ErrorAction Stop
  (Get-Service CertSvc -ErrorAction Stop).WaitForStatus([ServiceProcess.ServiceControllerStatus]::Running,[TimeSpan]::FromSeconds(60))
- [void](Invoke-OcspContainedCommand 'certutil.exe' @('-config','tt-ca.lab.certops.test\TTQualificationRoot','-ping') $Owner.directory 60)
+  # CertSvc reports Running before its RPC endpoint answers; a read-only ping that exits non-zero is retried.
+  $pingDeadline=[DateTime]::UtcNow.AddSeconds(60)
+  while($true) {
+   try { [void](Invoke-OcspContainedCommand 'certutil.exe' @('-config','tt-ca.lab.certops.test\TTQualificationRoot','-ping') $Owner.directory 20);break }
+   catch {
+    if($_.Exception.Message -cne 'Owned native command failed; phase remains unresolved' -or [DateTime]::UtcNow -gt $pingDeadline) { throw }
+    Start-Sleep -Seconds 2
+   }
+  }
  [void](Invoke-OcspContainedCommand 'certutil.exe' @('-crl') $Owner.directory 120)
  $key=Open-OwnedOcspCaRegistry $Owner $false
  $key.Dispose()
@@ -1477,18 +1501,17 @@ function Remove-OwnedOcspConfiguration($Owner,[byte[]]$OriginalCaDer,[byte[]]$Si
      $properties.GetLowerBound(1) -ne 0) {
    throw 'Bounded native revocation properties required immediately before removal'
   }
-  $names=@{};$actualCrl=$null;$revocationError=$null
+  $names=@{};$revocationError=$null
   for($index=0;$index -lt $properties.GetLength(0);$index++) {
    $name=$properties[$index,0]
    if($name -isnot [string] -or $name.Length -lt 1 -or $name.Length -gt 128 -or $names.ContainsKey($name)) {
     throw 'Ambiguous native revocation properties before removal'
    }
    $names[$name]=$true
-   if($name -ceq 'BaseCrl') { $actualCrl=[byte[]]$properties[$index,1] }
    if($name -ceq 'RevocationErrorCode') { $revocationError=$properties[$index,1] }
   }
   if($null -eq $revocationError -or [int]$revocationError -ne 0 -or
-     (Get-OcspPublicDigest $actualCrl) -cne (Get-OcspPublicDigest $CurrentSignedCrlDer)) {
+     (Get-OcspPublicDigest (Read-OcspPublishedCrl)) -cne (Get-OcspPublicDigest $CurrentSignedCrlDer)) {
    throw 'Native signed revocation state changed before removal'
   }
   # The preceding independent native observation pins every configured value.
@@ -1590,7 +1613,7 @@ function Set-OwnedOcspConfiguration($Owner,[byte[]]$VerifiedSignedCrlDer) {
    throw 'Original responder service changed before configuration'
   }
  }
- $signer=[TTQualificationOcspReceipt]::Read((Join-Path $Owner.directory 'signer.cer'))
+ $signer=Get-OcspSignerDer ([TTQualificationOcspReceipt]::Read((Join-Path $Owner.directory 'signer.cer')))
  if((Get-OcspPublicDigest $signer) -cne $accepted.phase.facts.certificateSha256) {
   throw 'Accepted signer certificate changed before responder configuration'
  }
@@ -1615,12 +1638,13 @@ function Set-OwnedOcspConfiguration($Owner,[byte[]]$VerifiedSignedCrlDer) {
   $entry.SigningCertificate=[byte[]]$signer
   $entry.HashAlgorithm='SHA256'
   $entry.ProviderCLSID='{4956d17f-88fd-4198-b287-1e6e65883b19}'
-  # Explicit actual signed CRL bytes avoid an unrelated network dependency or
-  # a responder using a stale publication cache. The caller independently
-  # verifies this exact DER against the original issuing key before this call.
+  # The Online Responder discards a BaseCrl value written without a source URL
+  # and then logs ERROR_OBJECT_NOT_FOUND (0x800710D8). Point it at the CA's own
+  # CertEnroll file, and pin the verified CRL to that file's exact bytes first.
+  if((Get-OcspPublicDigest (Read-OcspPublishedCrl)) -cne $crlDigest) { throw 'Published CRL changed before responder configuration' }
   $properties=[Array]::CreateInstance([object],1,2)
-  $properties[0,0]='BaseCrl'
-  $properties[0,1]=[byte[]]$VerifiedSignedCrlDer
+  $properties[0,0]='BaseCrlUrls'
+  $properties[0,1]=[string[]]@(Get-OcspCrlSourceUrl)
   $entry.ProviderProperties=$properties
   [void]$admin.SetConfiguration('tt-ca.lab.certops.test',$false)
  } finally {
@@ -1635,7 +1659,32 @@ function Set-OwnedOcspConfiguration($Owner,[byte[]]$VerifiedSignedCrlDer) {
  return $observation
 }
 
+function Get-OcspCrlSourceUrl { return 'file://tt-ca.lab.certops.test/CertEnroll/TTQualificationRoot.crl' }
+
+function Read-OcspPublishedCrl {
+ $directory=Join-Path $env:SystemRoot 'System32\CertSrv\CertEnroll'
+ return [TTQualificationOcspReceipt]::ReadPublic((Join-Path $directory 'TTQualificationRoot.crl'))
+}
+
 function Get-OwnedOcspConfigurationObservation(
+ [string]$Identifier,
+ [byte[]]$OriginalCaDer,
+ [byte[]]$OwnedSignerDer,
+ [byte[]]$CurrentSignedCrlDer
+) {
+ # The responder loads a changed configuration asynchronously and reports
+ # RevocationErrorCode only after it has fetched the CRL source. Re-read
+ # briefly before declaring the provider not ready.
+ for($attempt=1;;$attempt++) {
+  try { return Get-OwnedOcspConfigurationObservationOnce $Identifier $OriginalCaDer $OwnedSignerDer $CurrentSignedCrlDer }
+  catch {
+   if($attempt -ge 20 -or $_.Exception.Message -cnotmatch ' is not ready') { throw }
+   Start-Sleep -Seconds 3
+  }
+ }
+}
+
+function Get-OwnedOcspConfigurationObservationOnce(
  [string]$Identifier,
  [byte[]]$OriginalCaDer,
  [byte[]]$OwnedSignerDer,
@@ -1674,19 +1723,20 @@ function Get-OwnedOcspConfigurationObservation(
      $properties.GetLowerBound(1) -ne 0) {
    throw 'Bounded native revocation provider properties required'
   }
-  $names=@{};$baseCrl=$null;$revocationError=$null
+  $names=@{};$baseCrlUrls=$null;$revocationError=$null
   for($index=0;$index -lt $properties.GetLength(0);$index++) {
    $name=$properties[$index,0]
    if($name -isnot [string] -or $name.Length -lt 1 -or $name.Length -gt 128 -or $names.ContainsKey($name)) {
     throw 'Ambiguous native revocation provider properties'
    }
    $names[$name]=$true
-   if($name -ceq 'BaseCrl') { $baseCrl=[byte[]]$properties[$index,1] }
+   if($name -ceq 'BaseCrlUrls') { $baseCrlUrls=@($properties[$index,1]) }
    if($name -ceq 'RevocationErrorCode') { $revocationError=$properties[$index,1] }
   }
   if($null -eq $revocationError -or [int]$revocationError -ne 0 -or
-     (Get-OcspPublicDigest $baseCrl) -cne $crlDigest) {
-   throw 'Actual signed native revocation provider is not ready'
+     $null -eq $baseCrlUrls -or $baseCrlUrls.Count -ne 1 -or $baseCrlUrls[0] -cne (Get-OcspCrlSourceUrl) -or
+     (Get-OcspPublicDigest (Read-OcspPublishedCrl)) -cne $crlDigest) {
+   throw ('Actual signed native revocation provider is not ready (revocationError={0}; urls={1}; crlMatches={2})' -f $revocationError,(@($baseCrlUrls) -join ','),((Get-OcspPublicDigest (Read-OcspPublishedCrl)) -ceq $crlDigest))
   }
   return @{
    identifier=$Identifier
@@ -1761,15 +1811,25 @@ function Get-OcspResponderAdmission([string]$TemplateName,[string]$ExpectedCaThu
  if(Test-Path -LiteralPath $iisConfig) {
   throw 'Preexisting IIS configuration cannot be adopted'
  }
- # An absent IIS role does not prove that its default physical namespace is
- # disposable. Refuse an existing directory, file or dangling reparse point;
- # feature installation must never overwrite foreign content under inetpub.
- $inetpub=Join-Path $env:SystemDrive 'inetpub'
- $physicalNamespace=@(Get-ChildItem -LiteralPath ($env:SystemDrive+'\') -Force -ErrorAction Stop |
+# An absent IIS role does not prove that its default physical namespace is
+# disposable. Refuse foreign files, directories and reparse points under
+# inetpub. The only tolerated content is the stock Windows Server image's
+# DeviceHealthAttestation tree, which ships without the IIS role.
+$physicalNamespace=@(Get-ChildItem -LiteralPath ($env:SystemDrive+'\') -Force -ErrorAction Stop |
   Where-Object Name -IEQ 'inetpub')
- if($physicalNamespace.Count -ne 0 -or (Test-Path -LiteralPath $inetpub)) {
-  throw 'Preexisting IIS physical namespace cannot be adopted'
- }
+if($physicalNamespace.Count -gt 1) { throw 'Preexisting IIS physical namespace cannot be adopted' }
+if($physicalNamespace.Count -eq 1) {
+  $namespace=$physicalNamespace[0]
+  if(-not $namespace.PSIsContainer -or ($namespace.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    throw 'Preexisting IIS physical namespace cannot be adopted'
+  }
+  foreach($child in @(Get-ChildItem -LiteralPath $namespace.FullName -Force -ErrorAction Stop)) {
+    if($child.Name -ine 'DeviceHealthAttestation' -or -not $child.PSIsContainer -or
+       ($child.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+      throw 'Preexisting IIS physical namespace cannot be adopted'
+    }
+  }
+}
 
  $configuration='HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration'
  $active=(Get-ItemProperty -LiteralPath $configuration -Name Active -ErrorAction Stop).Active

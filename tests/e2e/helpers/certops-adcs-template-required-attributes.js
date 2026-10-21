@@ -391,7 +391,8 @@ async function qualifyRequiredTemplateAttributes(context) {
             ).rows[0];
             if (value?.status === "succeeded")
               throw new Error("Unreadable live template was issued");
-            return value?.status === "failed" ? value : null;
+            // A signed-job pre-key refusal is recorded as "rejected"; "failed" is an execution error.
+            return ["failed", "rejected"].includes(value?.status) ? value : null;
           });
           assert.equal(
             outcome.result_metadata.enrollmentResult.state,

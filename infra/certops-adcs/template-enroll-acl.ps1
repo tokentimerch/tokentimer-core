@@ -21,7 +21,7 @@ Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -A
  $root=[ADSI]'LDAP://RootDSE'
  $configuration=[string]$root.configurationNamingContext
  $entry=[DirectoryServices.DirectoryEntry]::new("LDAP://CN=TTQualificationRSAShort,CN=Certificate Templates,CN=Public Key Services,CN=Services,$configuration")
- $entry.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
+ $entry.psbase.Options.SecurityMasks=[DirectoryServices.SecurityMasks]::Dacl
  $mutex=$null;$held=$false
  function Sha([byte[]]$Bytes){$h=[Security.Cryptography.SHA256]::Create();try{return [BitConverter]::ToString($h.ComputeHash($Bytes)).Replace('-','').ToLowerInvariant()}finally{$h.Dispose()}}
  function TemplateIdentity {
@@ -95,7 +95,7 @@ Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -A
    try{$file.Write($bytes,0,$bytes.Length);$file.Flush($true)}finally{$file.Dispose()}
    PrivateAcl $receipt $false
    # Only the DACL is requested/written; owner, group and SACL are untouched.
-   $entry.ObjectSecurity=$security;$entry.CommitChanges();$current=TemplateIdentity
+   $entry.psbase.ObjectSecurity=$security;$entry.psbase.CommitChanges();$current=TemplateIdentity
    if($current.guid -cne $identity.guid -or $current.oid -cne $identity.oid -or (CurrentDacl) -cne $appliedSddl){throw 'Applied owned template DACL readback mismatch'}
   }else{
    $item=Get-Item -LiteralPath $receipt
@@ -108,16 +108,20 @@ Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -A
    if($currentSddl -cne $appliedSddl -and $currentSddl -cne $originalSddl){throw 'Current template ACL is not the exact owned mutation'}
    $security=[DirectoryServices.ActiveDirectorySecurity]::new();$security.SetSecurityDescriptorBinaryForm([Convert]::FromBase64String($proof.originalBase64),[Security.AccessControl.AccessControlSections]::Access)
    if($security.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access) -cne $originalSddl){throw 'Original template DACL receipt mismatch'}
-   $entry.ObjectSecurity=$security;$entry.CommitChanges();$current=TemplateIdentity
+   $entry.psbase.ObjectSecurity=$security;$entry.psbase.CommitChanges();$current=TemplateIdentity
    if($current.guid -cne $identity.guid -or $current.oid -cne $identity.oid -or (CurrentDacl) -cne $originalSddl){throw 'Exact template DACL restoration failed'}
   }
   Restart-Service CertSvc -ErrorAction Stop
   (Get-Service CertSvc).WaitForStatus([ServiceProcess.ServiceControllerStatus]::Running,[TimeSpan]::FromSeconds(60))
-  & certutil.exe -config 'tt-ca.lab.certops.test\TTQualificationRoot' -ping | Out-Null
-  if($LASTEXITCODE -ne 0){throw 'Actual owned CA did not recover after template cache flush'}
+   # CertSvc reports Running before its RPC endpoint accepts requests, so poll the ping.
+   $pingDeadline=[DateTime]::UtcNow.AddSeconds(60);$pinged=$false
+   while(-not $pinged){
+    & certutil.exe -config 'tt-ca.lab.certops.test\TTQualificationRoot' -ping | Out-Null
+    if($LASTEXITCODE -eq 0){$pinged=$true}elseif([DateTime]::UtcNow -gt $pingDeadline){throw 'Actual owned CA did not recover after template cache flush'}else{Start-Sleep -Seconds 2}
+   }
   # Keep the immutable private receipt until whole-lab teardown. Restoration
   # does not need to unlink a pathname after releasing its read handle, and a
   # second Apply must never adopt this original owner or silently overwrite it.
   @{scope='actual-live-same-template-current-machine-enroll-dacl';action=$Action;templateGuid=$identity.guid;templateOid=$identity.oid;machineSid=$MachineSid;originalDaclSha256=(Sha ([Text.Encoding]::UTF8.GetBytes($originalSddl)));appliedDaclSha256=(Sha ([Text.Encoding]::UTF8.GetBytes($appliedSddl)));applied=($Action -eq 'Apply');restored=($Action -eq 'Restore');actualCaReady=$true}|ConvertTo-Json -Compress
- }finally{if($held){$mutex.ReleaseMutex()};if($mutex){$mutex.Dispose()};$entry.Dispose();$root.Dispose()}
+ }finally{if($held){$mutex.ReleaseMutex()};if($mutex){$mutex.Dispose()};$entry.psbase.Dispose();$root.psbase.Dispose()}
 }

@@ -11,12 +11,17 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { durableWriteFile } = require("./adcs-enrollment-journal");
 const { acquireExclusiveLockFile } = require("../windows-cert-store");
+const { CMC_SUCCESS_WITHOUT_LEAF_ERROR } = require("./adcs-disposition");
 
 const WATERMARK_DIR = "adcs-ca-watermarks";
 const DEFAULT_RECONCILE_WINDOW = 16;
 const DIR_MODE = 0o700;
-/** E_ACCESSDENIED: RequestId belongs to another requester; never our leaf. */
-const RECONCILE_SKIP_CA_HRESULT = new Set(["0x80070005"]);
+/**
+ * E_ACCESSDENIED: RequestId belongs to another requester; never our leaf.
+ * Template / key-length policy denials: the CA row is final (Denied), so an earlier
+ * refused request must not pin the window and block a later unique SPKI match.
+ */
+const RECONCILE_SKIP_CA_HRESULT = new Set(["0x80070005", "0x80094012", "0x80094800", "0x80094811"]);
 
 /**
  * Outcomes that cannot become this enrollment's leaf later. Skip them for
@@ -31,7 +36,14 @@ function isSkippableReconcileProbe(issuance) {
   ) {
     return true;
   }
-  return false;
+  // A first enrollment scans from RequestId 1, whose row is the CA's own CA certificate:
+  // signed success with no leaf. It can never become this enrollment's certificate.
+  return (
+    issuance.outcome === "uncertain" &&
+    issuance.caHresult === "0x00000000" &&
+    typeof issuance.detail === "string" &&
+    issuance.detail.includes(CMC_SUCCESS_WITHOUT_LEAF_ERROR)
+  );
 }
 
 /**
@@ -297,7 +309,7 @@ async function tryReconcileUncertainSubmission({
 // promote it. Pending, denied, malformed and foreign-key leaves stay uncertain.
 async function retrieveProposedEnrollmentCandidate({ issuer, requestId, csrSpkiSha256,
   reconcileSearchFrom, assertIssuanceOutcome }) {
-  if (!Number.isInteger(requestId) || requestId < 1 || requestId > 0xffffffff ||
+  if (!Number.isInteger(requestId) || requestId < 1 || requestId > 0x7fffffff ||
       typeof csrSpkiSha256 !== "string" || !/^[a-f0-9]{64}$/.test(csrSpkiSha256)) {
     return { status: "error", error: "Invalid proposed RequestId or enrollment SPKI" };
   }

@@ -114,7 +114,7 @@ function withCdp(urls) {
   );
 }
 test("actual leaf CDP DER allows only one exact owned HTTP endpoint", () => {
-  const url = "http://10.64.0.6:18443/TTQualificationRoot.crl";
+  const url = "http://10.64.0.5:18443/TTQualificationRoot.crl";
   subject.assertHttpOnlyLeafCdp(withCdp([url]), url);
   for (const alternatives of [
     [url, "ldap://tt-ca.example/CRL"],
@@ -127,8 +127,8 @@ test("actual leaf CDP DER allows only one exact owned HTTP endpoint", () => {
   assert.throws(() => subject.assertHttpOnlyLeafCdp(certificate(), url));
   for (const invalid of [
     url + "?x=1",
-    url.replace("10.64.0.6", "user@10.64.0.6"),
-    url.replace("10.64.0.6", "127.0.0.1"),
+    url.replace("10.64.0.5", "user@10.64.0.5"),
+    url.replace("10.64.0.5", "127.0.0.1"),
   ])
     assert.throws(() =>
       subject.assertHttpOnlyLeafCdp(withCdp([invalid]), invalid),
@@ -175,7 +175,7 @@ test("owned HTTP GET accepts an explicit empty body but no alternate target or b
   const request = {
     method: "GET",
     url: "/TTQualificationRoot.crl",
-    headers: { host: "10.64.0.6:24001" },
+    headers: { host: "10.64.0.5:24001" },
   };
   assert.equal(acceptsRequest(request, 24001), true);
   assert.equal(
@@ -194,7 +194,7 @@ test("owned HTTP GET accepts an explicit empty body but no alternate target or b
     assert.equal(acceptsRequest({ ...request, headers }, 24001), false);
   for (const url of [
     "/TTQualificationRoot.crl?x=1",
-    "http://10.64.0.6:24001/TTQualificationRoot.crl",
+    "http://10.64.0.5:24001/TTQualificationRoot.crl",
     "/other.crl",
   ])
     assert.equal(acceptsRequest({ ...request, url }, 24001), false);
@@ -214,7 +214,7 @@ test("publication receipt admits only the original signed CRL and exact restore 
       /:/g,
       "",
     ),
-    httpUrl: "http://10.64.0.6:24001/TTQualificationRoot.crl",
+    httpUrl: "http://10.64.0.5:24001/TTQualificationRoot.crl",
     caBytes,
     caKeySha256: pin,
   };

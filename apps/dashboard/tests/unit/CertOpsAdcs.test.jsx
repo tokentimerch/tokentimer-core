@@ -17,6 +17,7 @@ const {
   proposeEnrollmentRequestIdMock,
   confirmIssuerKeyMock,
   showSuccessMock,
+  showErrorMock,
 } = vi.hoisted(() => ({
   isAdminMock: vi.fn(),
   listIssuersMock: vi.fn(),
@@ -28,6 +29,7 @@ const {
   proposeEnrollmentRequestIdMock: vi.fn(),
   confirmIssuerKeyMock: vi.fn(),
   showSuccessMock: vi.fn(),
+  showErrorMock: vi.fn(),
 }));
 
 vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
@@ -36,7 +38,7 @@ vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
 
 vi.mock('../../src/utils/toast.js', () => ({
   showSuccess: showSuccessMock,
-  showError: vi.fn(),
+  showError: showErrorMock,
 }));
 
 vi.mock('../../src/components/certops/useCertOps.js', () => ({
@@ -115,6 +117,7 @@ beforeEach(() => {
   dispatchIssuerPreflightMock.mockReset();
   discardIssuerMock.mockReset();
   proposeEnrollmentRequestIdMock.mockReset();
+  showErrorMock.mockReset();
   confirmIssuerKeyMock.mockReset();
   confirmIssuerKeyMock.mockResolvedValue({});
   showSuccessMock.mockReset();
@@ -136,6 +139,32 @@ describe('CertOpsAdcs', () => {
     expect(marker.parentElement).toHaveTextContent('Installed');
     expect(checkbox).toBeChecked();
   });
+  it('rejects a RequestId above the signed 32-bit CA range before calling the API', async () => {
+    isAdminMock.mockReturnValue(true);
+    listEnrollmentsMock.mockResolvedValue({
+      items: [{ id: 'enr-2', state: 'submission_uncertain', requestId: null }],
+    });
+    proposeEnrollmentRequestIdMock.mockResolvedValue({});
+    renderPage();
+    const input = await screen.findByLabelText(/RequestId for enr-2/);
+    const submit = screen.getByRole('button', { name: /^Reconcile/ });
+    for (const bad of ['2147483648', '4294967295']) {
+      fireEvent.change(input, { target: { value: bad } });
+      fireEvent.click(submit);
+      await waitFor(() =>
+        expect(showErrorMock).toHaveBeenCalledWith(
+          'RequestId must be an integer from 1 to 2147483647.'
+        )
+      );
+      showErrorMock.mockClear();
+    }
+    expect(proposeEnrollmentRequestIdMock).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: '2147483647' } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(proposeEnrollmentRequestIdMock).toHaveBeenCalledTimes(1));
+    expect(showErrorMock).not.toHaveBeenCalled();
+  });
+
   it('hides issuer management from a non-admin', () => {
     isAdminMock.mockReturnValue(false);
 
