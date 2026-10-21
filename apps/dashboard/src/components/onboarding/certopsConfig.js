@@ -569,6 +569,31 @@ export function issueIdempotencyKey({
   return `wizard-issue-${hash.toString(16)}-${attempt}`;
 }
 
+/**
+ * Stable per issuer and request, so a reload or double click returns the
+ * existing publish job instead of creating a second one.
+ */
+export function vaultPublishIdempotencyKey({
+  names,
+  zone,
+  dnsProvider,
+  caEndpoint = LETS_ENCRYPT_STAGING,
+  agentId,
+}) {
+  const text = [
+    (names || []).join(','),
+    zone,
+    dnsProvider,
+    caEndpoint,
+    agentId,
+  ].join('|');
+  let hash = 5381;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = ((hash << 5) + hash + text.charCodeAt(i)) >>> 0;
+  }
+  return `wizard-vault-publish-${hash.toString(16)}`;
+}
+
 export const STAGING_CA = LETS_ENCRYPT_STAGING;
 export const PRODUCTION_CA = LETS_ENCRYPT_PRODUCTION;
 

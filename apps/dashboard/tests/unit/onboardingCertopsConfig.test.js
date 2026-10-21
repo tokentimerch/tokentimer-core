@@ -27,6 +27,7 @@ import {
   AGENT_KEYS_DIR,
   certDirectoryFor,
   dnsCredentialsExample,
+  vaultPublishIdempotencyKey,
   DNS_PROVIDERS,
   mergeInstallerFields,
   registrationNotesFor,
@@ -876,5 +877,37 @@ describe('DNS credential file examples', () => {
     });
     expect(r.ok).toBe(true);
     expect(r.config.dnsPropagation).toBeUndefined();
+  });
+});
+
+describe('Vault publish job creation', () => {
+  const base = {
+    names: ['*.example.com', 'example.com'],
+    zone: 'example.com',
+    dnsProvider: 'azure-dns',
+    agentId: 'agent-1',
+  };
+
+  it('uses a stable key per issuer and request', () => {
+    const key = vaultPublishIdempotencyKey(base);
+    expect(vaultPublishIdempotencyKey(base)).toBe(key);
+    expect(
+      vaultPublishIdempotencyKey({ ...base, agentId: 'agent-2' })
+    ).not.toBe(key);
+    expect(key).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
+  });
+
+  it('holds the job for approval and carries the key algorithm', () => {
+    const job = buildVaultPublishJob({
+      ...base,
+      assignedAgentId: 'agent-1',
+      idempotencyKey: vaultPublishIdempotencyKey(base),
+    });
+    expect(job.requiresApproval).toBe(true);
+    expect(job.payload.keyAlgorithm).toBe('ecdsa');
+    expect(job.payload.publicationDestination.materialStoreRef).toBe(
+      'customer'
+    );
+    expect(job.assignedAgentId).toBe('agent-1');
   });
 });

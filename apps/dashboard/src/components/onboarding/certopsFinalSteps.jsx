@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { FiRefreshCw } from 'react-icons/fi';
 import {
   Alert,
@@ -9,11 +9,13 @@ import {
   FormLabel,
   HStack,
   Input,
+  Select,
   Text,
   VStack,
 } from '@chakra-ui/react';
 import { DashboardActionButton } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
+import { createJob, getJob } from '../certops/certopsJobsApi.js';
 import StepFrame from './StepFrame.jsx';
 import { CopyBlock } from './blocks.jsx';
 import { capabilityGap, requiredCapabilities } from './certopsMatrix.js';
@@ -25,6 +27,7 @@ import {
   buildVaultRollout,
   buildInstallCommand,
   NGINX_RELOAD_DROPIN,
+  vaultPublishIdempotencyKey,
 } from './certopsConfig.js';
 import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
 import IssueStep from './certopsIssueStep.jsx';
@@ -153,14 +156,73 @@ export function VaultStep({ ctx }) {
     distribution: ctx.summary?.certops?.distribution,
   });
   const gap = capabilityGap('vault', 'linux', declared);
+  const agentItems = ctx.summary?.certops?.agents?.items || [];
+  const [issuerPick, setIssuerPick] = useState(saved.vaultIssuerAgentId || '');
+  const issuerId = issuerPick || agentItems[0]?.id || '';
+  const [pub, setPub] = useState({ job: null, busy: false, error: '' });
+  const publishJobId = saved.vaultPublishJobId || '';
+  const publishKey = vaultPublishIdempotencyKey({
+    names,
+    zone: saved.zone,
+    dnsProvider: saved.dnsProvider || 'cloudflare',
+    caEndpoint: saved.caEndpoint || undefined,
+    agentId: issuerId,
+  });
   const publishJob = buildVaultPublishJob({
     names,
     zone: saved.zone,
     dnsProvider: saved.dnsProvider || 'cloudflare',
     caEndpoint: saved.caEndpoint || undefined,
-    assignedAgentId: 'ISSUER_AGENT_ID_FROM_AGENTS',
-    idempotencyKey: 'vault-publish-1',
+    assignedAgentId: issuerId || 'ISSUER_AGENT_ID_FROM_AGENTS',
+    idempotencyKey: issuerId ? publishKey : 'vault-publish-1',
   });
+  const { workspaceId, refresh } = ctx;
+
+  // The job is read back from the server, never from a stored flag.
+  useEffect(() => {
+    if (!publishJobId) return undefined;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await getJob(workspaceId, publishJobId);
+        if (!cancelled) setPub(p => ({ ...p, job: res.job || res }));
+      } catch (_) {
+        if (!cancelled) setPub(p => ({ ...p, job: null }));
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [publishJobId, workspaceId]);
+
+  const createPublishJob = async () => {
+    setPub(p => ({ ...p, busy: true, error: '' }));
+    try {
+      // The same key always maps to the same job server-side, so a reload or
+      // a second click returns the existing job.
+      const res = await createJob(workspaceId, publishJob);
+      const created = res.job || res;
+      const groupId = created.payload?.publication?.groupId || '';
+      await saveCertops(ctx, {
+        vaultPublishJobId: created.id,
+        vaultIssuerAgentId: issuerId,
+        ...(groupId ? { groupId } : {}),
+      });
+      if (groupId) setForm(f => ({ ...f, groupId }));
+      setPub({ job: created, busy: false, error: '' });
+      await refresh();
+    } catch (e) {
+      setPub(p => ({
+        ...p,
+        busy: false,
+        error:
+          e?.response?.data?.error ||
+          e?.message ||
+          'The job could not be created.',
+      }));
+    }
+  };
   const bindingId = form.bindingId;
   let consumerInstall = '';
   try {
@@ -210,18 +272,68 @@ export function VaultStep({ ctx }) {
           ) : null}
         </HStack>
         <Text fontSize='sm'>
-          1. There is no screen for the publish job: create it through the API
-          as a signed-in workspace manager (POST{' '}
-          <code>/api/v1/workspaces/{ctx.workspaceId}/certops/jobs</code>) with
-          this body. Use the issuer&apos;s id from Certificate Management,
-          Agents. The job needs <code>keyAlgorithm</code>, or the agent refuses
-          it, and <code>requiresApproval</code> holds it until a different user
-          approves it, so Vault and the issuer can be set up first. The response
-          carries <code>job.payload.publication.groupId</code>; paste it below.
-          Do not invent one.
+          1. Create the publish job. It is held for approval, so you can set up
+          Vault and the issuer first. A workspace manager other than the person
+          who creates it must approve it (Certificate Management, Jobs): you
+          cannot approve your own job. Only then does the issuer order the
+          certificate and publish it to Vault. The group id appears on the job
+          and is filled in below.
         </Text>
+        <FormControl>
+          <FormLabel fontSize='sm'>Issuing agent</FormLabel>
+          <Select
+            size='sm'
+            value={issuerId}
+            onChange={e => setIssuerPick(e.target.value)}
+            isDisabled={Boolean(publishJobId)}
+            placeholder={agentItems.length ? undefined : 'No agent registered'}
+          >
+            {agentItems.map(a => (
+              <option key={a.id} value={a.id}>
+                {a.name || a.hostname || 'agent'} ({a.wireAgentId})
+              </option>
+            ))}
+          </Select>
+        </FormControl>
+        <HStack align='center' spacing={3} flexWrap='wrap'>
+          <DashboardActionButton
+            variant='outline'
+            onClick={createPublishJob}
+            isLoading={pub.busy}
+            isDisabled={
+              Boolean(publishJobId) ||
+              !issuerId ||
+              names.length === 0 ||
+              !saved.zone
+            }
+          >
+            Create the publish job
+          </DashboardActionButton>
+          {publishJobId ? (
+            <Text fontSize='sm' data-testid='vault-publish-job'>
+              Publish job {publishJobId}
+              {pub.job?.status ? (
+                <>
+                  {' '}
+                  <Badge>{pub.job.status}</Badge>
+                </>
+              ) : null}
+            </Text>
+          ) : null}
+        </HStack>
+        {pub.error ? (
+          <Text fontSize='xs' color='red.400'>
+            {pub.error}
+          </Text>
+        ) : null}
+        {pub.job?.status === 'pending_approval' ? (
+          <Text fontSize='xs' color={muted}>
+            Waiting for approval by another workspace manager. After approval
+            the issuing agent must be online and out of dry run.
+          </Text>
+        ) : null}
         <CopyBlock
-          label='Publish job body (API only)'
+          label='The same job through the API (POST /certops/jobs)'
           text={JSON.stringify(publishJob, null, 2)}
           language='json'
         />
