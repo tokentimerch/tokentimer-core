@@ -117,7 +117,12 @@ export function describeTicks({
     ? `Anything without a group uses the workspace default group ${quoted(defaultName)}.`
     : 'No default group is set, so anything without a group has no recipient.';
   if (!canTickGoal(goal)) {
-    if (goal === 'import_file' || goal === 'import_integration') {
+    if (goal === 'import_file') {
+      return defaultName
+        ? `Imported rows use the groups named in your file (contact_group_ids), or the workspace default group ${quoted(defaultName)}.`
+        : 'Imported rows use the groups named in your file (contact_group_ids). No default group is set, so any without a group have no recipient.';
+    }
+    if (goal === 'import_integration') {
       return defaultName
         ? `Imported assets use the groups chosen in the import dialog, or the workspace default group ${quoted(defaultName)}.`
         : 'Imported assets use the groups chosen in the import dialog. No default group is set, so any without a group have no recipient.';

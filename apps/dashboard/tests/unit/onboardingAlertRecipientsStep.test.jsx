@@ -572,17 +572,21 @@ describe('RecipientsStep sentence', () => {
     }
   );
 
-  it.each(['import_file', 'import_integration'])(
-    'says imports choose their groups in the dialog for %s',
-    async goal => {
-      mount(makeCtx({ goal, websiteIds: [], assetIds: [21] }));
-      expect((await sentence()).textContent).toBe(
-        'Imported assets use the groups chosen in the import dialog, or the workspace default group "Ops".'
-      );
-      expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
-      expect(actions.getToken).not.toHaveBeenCalled();
-    }
-  );
+  it.each([
+    [
+      'import_file',
+      'Imported rows use the groups named in your file (contact_group_ids), or the workspace default group "Ops".',
+    ],
+    [
+      'import_integration',
+      'Imported assets use the groups chosen in the import dialog, or the workspace default group "Ops".',
+    ],
+  ])('says where imports get their groups for %s', async (goal, expected) => {
+    mount(makeCtx({ goal, websiteIds: [], assetIds: [21] }));
+    expect((await sentence()).textContent).toBe(expected);
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    expect(actions.getToken).not.toHaveBeenCalled();
+  });
 });
 
 describe.each(['track_asset', 'import_file', 'import_integration'])(
