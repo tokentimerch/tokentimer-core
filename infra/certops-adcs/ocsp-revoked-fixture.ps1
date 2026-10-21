@@ -187,7 +187,9 @@ function Set-OwnedOcspRevokedProvider($Owner,[byte[]]$CaDer,[byte[]]$SignerDer,[
   # Preserve every other native VARIANT, including its original type/value.
   # No URL fallback, cache policy or unrelated responder property is edited.
   $entry.ProviderProperties=$after
-  [void]$admin.SetConfiguration('tt-ca.lab.certops.test',$false)
+  # Force the commit: re-applying identical properties with bForce=false can be a no-op, leaving the
+  # running responder on its cached pre-revocation CRL. The service process itself is never restarted.
+  [void]$admin.SetConfiguration('tt-ca.lab.certops.test',$true)
  } finally {
   foreach($resource in @($entry,$collection,$admin)) {
    if($null -ne $resource -and [Runtime.InteropServices.Marshal]::IsComObject($resource)) {

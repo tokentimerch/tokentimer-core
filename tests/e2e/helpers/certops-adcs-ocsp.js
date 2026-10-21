@@ -976,7 +976,7 @@ async function qualifyOcsp(c) {
                     );
                     lastSeen = observed;
                     return observed.status === "revoked" ? observed : null;
-                  }, 60000)
+                  }, 300000)
                   .catch((error) => {
                     throw tagTimeout(
                       error,
