@@ -220,22 +220,74 @@ export function certDirectoryFor(certPath) {
   return dir && dir !== '/' ? dir : '';
 }
 
+// Same four points on both systems, in the order an operator does them.
+// "Download and verify" is shown as its own block (buildPackageCommand).
 export const REGISTRATION_NOTES = [
-  'The installer asks for the bootstrap token with a hidden prompt. Do not put it on the command line.',
-  'Run it once with --dry-run first to see what it will change.',
+  'On the server, download the agent package for your TokenTimer version and check its checksum, with the commands below.',
+  'Extract it and open a terminal in the extracted folder, the one that contains scripts/install-agent.sh.',
+  'Run the install command below from that folder, with sudo. Add --dry-run first to see what it will change.',
+  'The installer asks for the bootstrap token with a hidden prompt: paste the token there. Do not put it on the command line.',
   'The installer creates every --write-path directory and hands it to the agent user (mode 0750). Files you place there yourself must belong to that user too, or the agent cannot replace them.',
 ];
 
 // --write-path only applies to the Linux service sandbox. The Windows
 // installer takes the flag for parity but does not use it.
 export const WINDOWS_REGISTRATION_NOTES = [
-  'Run it from an elevated PowerShell, in the folder where you extracted the agent package (the one that contains scripts\\install-agent.ps1). Node.js 22 or 24 must be installed on the server.',
-  'The installer asks for the bootstrap token with a hidden prompt. Do not put it on the command line.',
-  'Run it once with --dry-run first to see what it will change.',
+  'On the server, download the agent package for your TokenTimer version and check its checksum, with the commands below. Node.js 22 or 24 must be installed on the server.',
+  'Extract it and open an elevated PowerShell in the extracted folder, the one that contains scripts\\install-agent.ps1.',
+  'Run the install command below from that folder. Add --dry-run first to see what it will change.',
+  'The installer asks for the bootstrap token with a hidden prompt: paste the token there. Do not put it on the command line.',
 ];
 
 export function registrationNotesFor(os) {
   return os === 'windows' ? WINDOWS_REGISTRATION_NOTES : REGISTRATION_NOTES;
+}
+
+/**
+ * Download, checksum and extract the agent release. Same commands as the
+ * install runbook ("Getting the agent package"). The release publishes the
+ * tarball and a .sha256 file next to it, and the tarball unpacks into
+ * package/.
+ */
+export function buildPackageCommand(os) {
+  if (os === 'windows') {
+    return [
+      "$Version = '<version>'   # your TokenTimer version, for example 0.18.0",
+      '$Base = "https://github.com/tokentimerch/tokentimer-core/releases/download/v$Version"',
+      '$Archive = "tokentimer-agent-$Version.tgz"',
+      'Invoke-WebRequest "$Base/$Archive" -OutFile $Archive',
+      'Invoke-WebRequest "$Base/$Archive.sha256" -OutFile "$Archive.sha256"',
+      '$Expected = ((Get-Content "$Archive.sha256" -Raw).Trim() -split \'\\s+\')[0]',
+      "if ($Expected -notmatch '^[a-fA-F0-9]{64}$' -or (Get-FileHash $Archive -Algorithm SHA256).Hash -ine $Expected) { throw 'Agent archive checksum mismatch' }",
+      "if (Test-Path package) { throw 'Use an empty folder; package already exists' }",
+      'tar -xzf $Archive',
+      'Set-Location package',
+    ].join('\n');
+  }
+  return [
+    'VERSION="<version>"   # your TokenTimer version, for example 0.18.0',
+    'BASE_URL="https://github.com/tokentimerch/tokentimer-core/releases/download/v${VERSION}"',
+    'TARBALL="tokentimer-agent-${VERSION}.tgz"',
+    'curl -fsSL -O "${BASE_URL}/${TARBALL}" &&',
+    'curl -fsSL -O "${BASE_URL}/${TARBALL}.sha256" &&',
+    'sha256sum -c "${TARBALL}.sha256" &&',
+    'test ! -e package &&',
+    'tar -xzf "${TARBALL}" &&',
+    'cd package',
+  ].join('\n');
+}
+
+/** Where the agent keeps config.json, and how to restart it, per system. */
+export function agentConfigPathFor(os) {
+  return os === 'windows'
+    ? 'C:\\ProgramData\\TokenTimerAgent\\state\\config.json'
+    : `${AGENT_STATE_DIR}/config.json`;
+}
+
+export function agentRestartCommandFor(os) {
+  return os === 'windows'
+    ? 'Restart-Service TokenTimerAgent'
+    : 'sudo systemctl restart tokentimer-agent';
 }
 
 /**

@@ -216,8 +216,24 @@ export function ConfigStep({ ctx }) {
         kind='info'
         title='Kubernetes'
         description='The controller needs no agent configuration.'
+        actions={
+          <PrimaryButton
+            onClick={async () => {
+              try {
+                await saveCertops(ctx, { configReviewed: true });
+              } catch (e) {
+                setError(e.message);
+              }
+            }}
+          >
+            Continue
+          </PrimaryButton>
+        }
       >
-        <Text fontSize='sm'>The next step shows the Helm values.</Text>
+        <VStack align='stretch' spacing={2}>
+          {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
+          <Text fontSize='sm'>The next step shows the Helm values.</Text>
+        </VStack>
       </StepFrame>
     );
   }

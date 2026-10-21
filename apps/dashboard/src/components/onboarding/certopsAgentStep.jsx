@@ -9,6 +9,7 @@ import {
   FormLabel,
   HStack,
   Input,
+  Link,
   Text,
   VStack,
 } from '@chakra-ui/react';
@@ -32,6 +33,8 @@ import {
   buildControllerUpgradeCommand,
   buildControllerValues,
   buildInstallCommand,
+  buildPackageCommand,
+  agentConfigPathFor,
   certDirectoryFor,
   isLoopbackHttp,
 } from './certopsConfig.js';
@@ -67,11 +70,25 @@ export function describeAgent(agent, gap = []) {
   return { healthy: problems.length === 0, problems };
 }
 
+/** One numbered instruction with the block it refers to right under it. */
+function InstallStep({ n, text, children }) {
+  return (
+    <VStack align='stretch' spacing={1}>
+      <Text fontSize='sm'>
+        {n}. {text}
+      </Text>
+      {children}
+    </VStack>
+  );
+}
+
 export function AgentStep({ ctx }) {
   const { muted } = useDashboardTheme();
   const saved = certopsProgress(ctx);
   const infra = saved.infrastructure || 'linux';
   const os = INFRASTRUCTURES[infra]?.platform === 'win32' ? 'windows' : 'linux';
+  const notes = registrationNotesFor(os);
+  const configPath = agentConfigPathFor(os);
   const [token, setToken] = useState(null); // shown once, never persisted
   const [clusterId, setClusterId] = useState(saved.clusterId || '');
   const [error, setError] = useState('');
@@ -218,9 +235,10 @@ export function AgentStep({ ctx }) {
             </Text>
           ) : null}
           <Text fontSize='sm'>
-            2. Create a machine token in Certificate Management, Settings, with
-            the observations:write scope and that same cluster id (the token is
-            bound to it), then store it in the cluster:
+            2. Create a machine token: in Certificate Management, open Settings
+            and add a token with the scope <code>certops:observations:write</code>{' '}
+            and that same cluster id (the token is bound to it). Then store it
+            in the cluster:
           </Text>
           <CopyBlock
             label='Create the secret (token read from stdin)'
@@ -344,11 +362,10 @@ export function AgentStep({ ctx }) {
             <AlertIcon />
             <VStack align='start' spacing={2}>
               <AlertDescription fontSize='sm'>
-                Saved. This step stays open until an agent that can do this goal
-                connects. To come back, use the setup banner on Certificate
-                Management (shown while nothing is set up there), open
-                /onboarding?area=certops, or choose Open setup guide in
-                Preferences.
+                Saved. This step stays open until a suitable agent connects.
+                To come back, use the setup banner on Certificate Management
+                (shown while nothing is set up there) or Preferences, Setup
+                guide, Open setup guide.
               </AlertDescription>
               {ctx.leaveGuide ? (
                 <DashboardActionButton size='sm' onClick={ctx.leaveGuide}>
@@ -371,11 +388,6 @@ export function AgentStep({ ctx }) {
             </AlertDescription>
           </Alert>
         ) : null}
-        {registrationNotesFor(os).map(n => (
-          <Text key={n} fontSize='xs' color={muted}>
-            {n}
-          </Text>
-        ))}
         {os === 'linux' && ['automate', 'vault'].includes(saved.objective) ? (
           <Text fontSize='xs' color={muted} data-testid='certbot-note'>
             The agent places orders with /usr/bin/certbot on the issuing server,
@@ -389,27 +401,60 @@ export function AgentStep({ ctx }) {
             through the address that server can reach.
           </Text>
         ) : null}
-        {token ? (
-          <>
-            <Text fontSize='sm' fontWeight='semibold'>
-              Paste this when the installer asks for the token. It is shown only
-              once and expires in 24 hours.
-            </Text>
+        <VStack align='stretch' spacing={3} data-testid='install-steps'>
+          <InstallStep n={1} text={notes[0]}>
             <CopyBlock
-              label='One-time bootstrap token'
-              text={token.plaintext}
-              allowSecret
+              label='Download, verify and extract the agent package (replace <version>)'
+              text={buildPackageCommand(os)}
             />
-          </>
-        ) : null}
-        {commandError ? (
-          <DashboardErrorAlert>{commandError}</DashboardErrorAlert>
-        ) : (
-          <CopyBlock
-            label='Install command (run as administrator)'
-            text={command}
-          />
-        )}
+            {ctx.docs('certops.agentPackage', 'Where to get the package').map(
+              link => (
+                <Link
+                  key={link.url}
+                  href={link.url}
+                  isExternal
+                  fontSize='xs'
+                  data-testid='package-doc-link'
+                >
+                  {link.label}
+                </Link>
+              )
+            )}
+          </InstallStep>
+          <InstallStep n={2} text={notes[1]} />
+          <InstallStep
+            n={3}
+            text='Create a one-time bootstrap token with the button at the bottom of this card. It is shown once and expires in 24 hours. If you lose it or it expires, create another.'
+          >
+            {token ? (
+              <CopyBlock
+                label='One-time bootstrap token'
+                text={token.plaintext}
+                allowSecret
+              />
+            ) : null}
+          </InstallStep>
+          <InstallStep n={4} text={notes[2]}>
+            {commandError ? (
+              <DashboardErrorAlert>{commandError}</DashboardErrorAlert>
+            ) : (
+              <CopyBlock
+                label='Install command (run as administrator)'
+                text={command}
+              />
+            )}
+          </InstallStep>
+          <InstallStep n={5} text={notes[3]} />
+          <Text fontSize='xs' color={muted} data-testid='keep-config-note'>
+            The installer keeps a config.json that already exists ({configPath}
+            ), so the file you saved in the previous step stays as it is.
+          </Text>
+          {notes.slice(4).map(n => (
+            <Text key={n} fontSize='xs' color={muted}>
+              {n}
+            </Text>
+          ))}
+        </VStack>
         <HStack>
           <Text fontSize='sm' fontWeight='semibold'>
             Agent status

@@ -201,7 +201,8 @@ describe('agent step for AD CS', () => {
 
     const text = screen.getByTestId('install-later').textContent;
     expect(text).toMatch(/setup banner/);
-    expect(text).toMatch(/\/onboarding\?area=certops/);
+    expect(text).toMatch(/Preferences, Setup guide, Open setup guide/);
+    expect(text).not.toMatch(/\/onboarding/);
     expect(ctx.session.progress.certops.agentLaterAt).toBeTruthy();
     // Config and objective survive.
     expect(ctx.session.progress.certops.objective).toBe('adcs');
