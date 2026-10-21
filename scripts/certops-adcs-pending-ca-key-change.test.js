@@ -81,7 +81,10 @@ test("source uses one retained rekey callback, owned officer action and one genu
   );
   const compact = source.replace(/\s/g, "");
   assert.ok(compact.indexOf("receipt.pendingCaRenewalUnresolved=true") >= 0);
-  assert.ok(compact.indexOf("receipt.pendingCaRenewalUnresolved=true") < compact.indexOf("old=awaitpost()"));
+  assert.ok(
+    compact.indexOf("receipt.pendingCaRenewalUnresolved=true") <
+      compact.indexOf("old=awaitpost()"),
+  );
   assert.ok(compact.includes('officer(oldRequestId,"deny")'));
   assert.ok(compact.includes('officer(requestId,"approve")'));
   assert.ok(
@@ -94,4 +97,23 @@ test("source uses one retained rekey callback, owned officer action and one genu
     source,
     /UPDATE\s|DELETE\s|INSERT\s|writeEnrollmentJournal|Set-Date|Stop-Process|Set-Content|utimes/i,
   );
+});
+test("expected signed refusal is awaited as a failed job, not thrown as a job error", async () => {
+  const run = (status) => {
+    const polls = [];
+    const until = async (fn) => {
+      for (let i = 0; i < 3; i++) {
+        const value = await fn();
+        if (value) return value;
+      }
+      throw new Error("timeout");
+    };
+    const query = async () => ({
+      rows: [{ status: polls.push(1) < 2 ? "running" : status }],
+    });
+    return h.waitForFailedJob({ until, query, workspaceId: "w", jobId: "j" });
+  };
+  assert.equal(await run("failed"), true);
+  await assert.rejects(run("succeeded"), /expected failed/);
+  await assert.rejects(run("cancelled"), /expected failed/);
 });
