@@ -12,12 +12,18 @@ import {
   FormHelperText,
   FormLabel,
   HStack,
+  IconButton,
+  Menu,
+  MenuButton,
+  MenuItem,
+  MenuList,
   Modal,
   ModalBody,
   ModalCloseButton,
   ModalFooter,
   ModalHeader,
   ModalOverlay,
+  Portal,
   Select,
   Spinner,
   Stack,
@@ -32,6 +38,7 @@ import {
   Tr,
   VStack,
 } from '@chakra-ui/react';
+import { FiMoreHorizontal } from 'react-icons/fi';
 import {
   DashboardModalDescription,
   DashboardModalFrame,
@@ -1170,14 +1177,19 @@ export default function AgentFleetPanel({
   const infoBorder = dashboard.accent.interactiveBorder;
   const infoText = dashboard.accent.interactiveForeground;
   const focusRing = dashboard.accent?.interactiveBorder || infoBorder;
-  const tableStyles = useCertOpsResponsiveTableStyles();
+  const tableStyles = useCertOpsResponsiveTableStyles({
+    desktopBreakpoint: 'xl',
+  });
   const agentTableProps = {
     ...tableStyles.tableProps,
+    w: '100%',
     sx: {
       ...tableStyles.tableProps.sx,
+      tableLayout: { xl: 'fixed' },
       'thead th': {
         ...tableStyles.tableProps.sx['thead th'],
         px: 2,
+        whiteSpace: 'normal',
       },
       'thead th button': {
         px: 0,
@@ -1185,25 +1197,34 @@ export default function AgentFleetPanel({
       'tbody td': {
         ...tableStyles.tableProps.sx['tbody td'],
         verticalAlign: 'top',
+        whiteSpace: 'normal',
+        overflowWrap: 'anywhere',
       },
+      'tbody .chakra-badge': { whiteSpace: 'normal', maxW: '100%' },
+      'tbody td span[title]': {
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+      },
+      'tbody td button[aria-label="Copy to clipboard"]': { flexShrink: 0 },
     },
   };
   const agentPrimaryCellProps = {
     ...tableStyles.primaryCellProps,
-    px: { base: 3, lg: 2 },
-    py: { base: 3, lg: '0.45rem' },
+    px: { base: 3, xl: 2 },
+    py: { base: 3, xl: '0.45rem' },
     verticalAlign: 'top',
   };
   const agentCellProps = {
     ...tableStyles.cellProps,
-    px: { base: 3, lg: 2 },
-    py: { base: 2, lg: '0.45rem' },
+    px: { base: 3, xl: 2 },
+    py: { base: 2, xl: '0.45rem' },
     verticalAlign: 'top',
   };
   const agentActionCellProps = {
     ...tableStyles.actionCellProps,
-    px: { base: 3, lg: 2 },
-    py: { base: 2, lg: '0.45rem' },
+    px: { base: 3, xl: 2 },
+    py: { base: 2, xl: '0.45rem' },
     verticalAlign: 'top',
   };
   const handleSort = key => {
@@ -1294,6 +1315,49 @@ export default function AgentFleetPanel({
 
       {!loading && agents.length > 0 ? (
         <Box>
+          <HStack
+            display={{ base: 'flex', xl: 'none' }}
+            align='end'
+            flexWrap='wrap'
+            spacing={3}
+            mb={4}
+          >
+            <FormControl flex={1} minW='160px' maxW='sm'>
+              <FormLabel htmlFor='agent-fleet-sort' fontSize='sm' mb={1}>
+                Sort agents
+              </FormLabel>
+              <Select
+                id='agent-fleet-sort'
+                size='sm'
+                value={sort.key || ''}
+                onChange={event => {
+                  setSort({
+                    key: event.target.value || null,
+                    direction: 'asc',
+                  });
+                  setPage({ offset: 0 });
+                }}
+              >
+                <option value=''>Default order</option>
+                {AGENT_COLUMNS.filter(
+                  ([key]) => !AGENT_NON_SORTABLE_COLUMNS.has(key)
+                ).map(([key, label]) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
+            </FormControl>
+            <Button
+              size='sm'
+              variant='outline'
+              isDisabled={!sort.key}
+              aria-label={`Sort ${sort.direction === 'asc' ? 'descending' : 'ascending'}`}
+              onClick={() => handleSort(sort.key)}
+            >
+              {sort.direction === 'asc' ? 'Ascending' : 'Descending'}
+            </Button>
+          </HStack>
           {pagination ? (
             <Flex justify='flex-end' mb={4}>
               <DashboardPagination
@@ -1307,7 +1371,16 @@ export default function AgentFleetPanel({
             </Flex>
           ) : null}
           <TableContainer {...tableStyles.tableContainerProps}>
-            <Table {...agentTableProps}>
+            <Table {...agentTableProps} aria-label='Agent fleet'>
+              <colgroup>
+                {/* Keep identity and diagnostic fields bounded so actions remain visible. */}
+                {[17.5, 7.5, 9, 6, 5.5, 9, 8, 7, 9, 8, 8].map(
+                  (width, index) => (
+                    <col key={index} style={{ width: `${width}%` }} />
+                  )
+                )}
+                {canManage ? <col style={{ width: '5.5%' }} /> : null}
+              </colgroup>
               <Thead {...tableStyles.theadProps}>
                 <Tr>
                   {AGENT_COLUMNS.map(([key, label]) =>
@@ -1320,6 +1393,7 @@ export default function AgentFleetPanel({
                         sortKey={key}
                         sort={sort}
                         onSort={handleSort}
+                        compact
                       />
                     )
                   )}
@@ -1362,7 +1436,10 @@ export default function AgentFleetPanel({
                         </Box>
                       </Td>
                       <Td {...agentCellProps}>
-                        <CertOpsMobileFieldLabel color={muted}>
+                        <CertOpsMobileFieldLabel
+                          color={muted}
+                          desktopBreakpoint='xl'
+                        >
                           OS
                         </CertOpsMobileFieldLabel>
                         <Text fontSize='sm'>
@@ -1370,7 +1447,10 @@ export default function AgentFleetPanel({
                         </Text>
                       </Td>
                       <Td {...agentCellProps}>
-                        <CertOpsMobileFieldLabel color={muted}>
+                        <CertOpsMobileFieldLabel
+                          color={muted}
+                          desktopBreakpoint='xl'
+                        >
                           Status
                         </CertOpsMobileFieldLabel>
                         <VStack align='flex-start' spacing={0.5}>
@@ -1398,7 +1478,10 @@ export default function AgentFleetPanel({
                         </VStack>
                       </Td>
                       <Td {...agentCellProps}>
-                        <CertOpsMobileFieldLabel color={muted}>
+                        <CertOpsMobileFieldLabel
+                          color={muted}
+                          desktopBreakpoint='xl'
+                        >
                           Version
                         </CertOpsMobileFieldLabel>
                         <Text fontSize='sm' fontFamily='mono'>
@@ -1406,7 +1489,10 @@ export default function AgentFleetPanel({
                         </Text>
                       </Td>
                       <Td {...agentCellProps}>
-                        <CertOpsMobileFieldLabel color={muted}>
+                        <CertOpsMobileFieldLabel
+                          color={muted}
+                          desktopBreakpoint='xl'
+                        >
                           Protocol
                         </CertOpsMobileFieldLabel>
                         <Text fontSize='sm' fontFamily='mono'>
@@ -1417,7 +1503,10 @@ export default function AgentFleetPanel({
                         </Text>
                       </Td>
                       <Td {...agentCellProps}>
-                        <CertOpsMobileFieldLabel color={muted}>
+                        <CertOpsMobileFieldLabel
+                          color={muted}
+                          desktopBreakpoint='xl'
+                        >
                           Compatibility
                         </CertOpsMobileFieldLabel>
                         <AgentCompatibilityBadge
@@ -1426,26 +1515,35 @@ export default function AgentFleetPanel({
                         />
                       </Td>
                       <Td {...agentCellProps}>
-                        <CertOpsMobileFieldLabel color={muted}>
+                        <CertOpsMobileFieldLabel
+                          color={muted}
+                          desktopBreakpoint='xl'
+                        >
                           Clock drift
                         </CertOpsMobileFieldLabel>
-                        <HStack spacing={2}>
+                        <Flex gap={1} flexWrap='wrap'>
                           <Text fontSize='sm' fontFamily='mono'>
                             {formatClockOffset(agent.clockOffsetMs)}
                           </Text>
                           <ClockDriftBadge
                             clockDriftState={agent.clockDriftState}
                           />
-                        </HStack>
+                        </Flex>
                       </Td>
                       <Td {...agentCellProps}>
-                        <CertOpsMobileFieldLabel color={muted}>
+                        <CertOpsMobileFieldLabel
+                          color={muted}
+                          desktopBreakpoint='xl'
+                        >
                           NTP
                         </CertOpsMobileFieldLabel>
                         <NtpBadge ntpSynced={agent.ntpSynced} />
                       </Td>
                       <Td {...agentCellProps}>
-                        <CertOpsMobileFieldLabel color={muted}>
+                        <CertOpsMobileFieldLabel
+                          color={muted}
+                          desktopBreakpoint='xl'
+                        >
                           Execution
                         </CertOpsMobileFieldLabel>
                         <ExecutionCapabilityBadge
@@ -1453,7 +1551,10 @@ export default function AgentFleetPanel({
                         />
                       </Td>
                       <Td {...agentCellProps}>
-                        <CertOpsMobileFieldLabel color={muted}>
+                        <CertOpsMobileFieldLabel
+                          color={muted}
+                          desktopBreakpoint='xl'
+                        >
                           Signing key
                         </CertOpsMobileFieldLabel>
                         {agent.pinnedSigningKeyId ? (
@@ -1466,7 +1567,10 @@ export default function AgentFleetPanel({
                         )}
                       </Td>
                       <Td {...agentCellProps}>
-                        <CertOpsMobileFieldLabel color={muted}>
+                        <CertOpsMobileFieldLabel
+                          color={muted}
+                          desktopBreakpoint='xl'
+                        >
                           Last heartbeat
                         </CertOpsMobileFieldLabel>
                         <Text
@@ -1479,34 +1583,38 @@ export default function AgentFleetPanel({
                       </Td>
                       {canManage ? (
                         <Td {...agentActionCellProps} textAlign='right'>
-                          <HStack spacing={2} justify='flex-end'>
-                            {status !== 'retired' ? (
-                              <Button
-                                size='xs'
-                                variant='outline'
-                                onClick={() => setAlertingTarget(agent)}
-                              >
-                                Edit alerting
-                              </Button>
-                            ) : null}
-                            <Button
-                              size='xs'
+                          <Menu placement='bottom-end' isLazy>
+                            <MenuButton
+                              as={IconButton}
+                              aria-label={`Actions for ${agent.name || agent.hostname || agent.agentId}`}
+                              icon={<FiMoreHorizontal />}
+                              size='sm'
                               variant='outline'
-                              onClick={() => setLogTarget(agent)}
-                            >
-                              View logs
-                            </Button>
-                            {status !== 'retired' ? (
-                              <Button
-                                size='xs'
-                                colorScheme='red'
-                                variant='outline'
-                                onClick={() => setRetireTarget(agent)}
-                              >
-                                Retire
-                              </Button>
-                            ) : null}
-                          </HStack>
+                            />
+                            <Portal>
+                              <MenuList>
+                                {status !== 'retired' ? (
+                                  <MenuItem
+                                    onClick={() => setAlertingTarget(agent)}
+                                  >
+                                    Edit alerting
+                                  </MenuItem>
+                                ) : null}
+                                <MenuItem onClick={() => setLogTarget(agent)}>
+                                  View logs
+                                </MenuItem>
+                                {status !== 'retired' ? (
+                                  <MenuItem
+                                    color='red.600'
+                                    _dark={{ color: 'red.300' }}
+                                    onClick={() => setRetireTarget(agent)}
+                                  >
+                                    Retire
+                                  </MenuItem>
+                                ) : null}
+                              </MenuList>
+                            </Portal>
+                          </Menu>
                         </Td>
                       ) : null}
                     </Tr>

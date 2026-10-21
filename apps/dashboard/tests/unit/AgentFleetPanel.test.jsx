@@ -218,7 +218,7 @@ describe('AgentFleetPanel', () => {
     ).toBeInTheDocument();
   });
 
-  it('renders agents with status badges, version and heartbeat, retire only on non-retired rows', () => {
+  it('offers retirement only in non-retired agent menus', async () => {
     useCertOpsCanManageMock.mockReturnValue(true);
     useCertOpsAgentsMock.mockReturnValue(
       agentsState({ agents: sampleAgents() })
@@ -231,8 +231,36 @@ describe('AgentFleetPanel', () => {
     expect(screen.getByText('Offline')).toBeInTheDocument();
     expect(screen.getByText('Retired')).toBeInTheDocument();
     expect(screen.getByText('1.2.3')).toBeInTheDocument();
-    // Active + offline are retirable, the retired agent is not.
-    expect(screen.getAllByRole('button', { name: 'Retire' })).toHaveLength(2);
+    const menus = screen.getAllByRole('button', { name: /^Actions for / });
+    expect(menus).toHaveLength(3);
+    for (let index = 0; index < menus.length; index += 1) {
+      fireEvent.click(menus[index]);
+      // The lazy menu container can appear before its items are mounted.
+      const viewLogs = await screen.findByRole('menuitem', {
+        name: 'View logs',
+      });
+      const menu = viewLogs.closest('[role="menu"]');
+      expect(viewLogs).toBeInTheDocument();
+      if (index < 2) {
+        expect(
+          within(menu).getByRole('menuitem', { name: 'Retire' })
+        ).toBeInTheDocument();
+        expect(
+          within(menu).getByRole('menuitem', { name: 'Edit alerting' })
+        ).toBeInTheDocument();
+      } else {
+        expect(
+          within(menu).queryByRole('menuitem', { name: 'Retire' })
+        ).not.toBeInTheDocument();
+        expect(
+          within(menu).queryByRole('menuitem', { name: 'Edit alerting' })
+        ).not.toBeInTheDocument();
+      }
+      fireEvent.keyDown(menu, { key: 'Escape' });
+      await waitFor(() =>
+        expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+      );
+    }
   });
 
   it('preserves server order, sorts through the hook, and leaves derived status static', async () => {
@@ -277,6 +305,34 @@ describe('AgentFleetPanel', () => {
         direction: 'desc',
       });
     });
+  });
+
+  it('sorts cards without relying on the desktop column headers', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAgentsMock.mockReturnValue(
+      agentsState({ agents: sampleAgents() })
+    );
+    renderWithProviders(<AgentFleetPanel />);
+    fireEvent.change(screen.getByLabelText('Sort agents'), {
+      target: { value: 'os' },
+    });
+    await waitFor(() =>
+      expect(useCertOpsAgentsMock).toHaveBeenLastCalledWith(undefined, {
+        limit: 20,
+        offset: 0,
+        sort: 'os',
+        direction: 'asc',
+      })
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Sort descending' }));
+    await waitFor(() =>
+      expect(useCertOpsAgentsMock).toHaveBeenLastCalledWith(undefined, {
+        limit: 20,
+        offset: 0,
+        sort: 'os',
+        direction: 'desc',
+      })
+    );
   });
 
   it('renders a friendly OS label from the raw platform, and unknown/missing values safely', () => {
@@ -507,7 +563,10 @@ describe('AgentFleetPanel', () => {
 
     renderWithProviders(<AgentFleetPanel />);
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Retire' })[0]);
+    fireEvent.click(
+      screen.getAllByRole('button', { name: /^Actions for / })[0]
+    );
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Retire' }));
     expect(
       await screen.findByText(/can no longer connect or lease jobs/)
     ).toBeInTheDocument();
@@ -538,7 +597,10 @@ describe('AgentFleetPanel', () => {
 
     renderWithProviders(<AgentFleetPanel />);
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Retire' })[0]);
+    fireEvent.click(
+      screen.getAllByRole('button', { name: /^Actions for / })[0]
+    );
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Retire' }));
     fireEvent.click(
       await screen.findByRole('button', { name: 'Retire agent' })
     );
@@ -670,7 +732,10 @@ describe('AgentFleetPanel', () => {
     renderWithProviders(<AgentFleetPanel />);
 
     fireEvent.click(
-      screen.getAllByRole('button', { name: 'Edit alerting' })[0]
+      screen.getAllByRole('button', { name: /^Actions for / })[0]
+    );
+    fireEvent.click(
+      await screen.findByRole('menuitem', { name: 'Edit alerting' })
     );
     expect(
       await screen.findByText(/Downtime alert settings for/)
@@ -721,7 +786,10 @@ describe('AgentFleetPanel', () => {
     renderWithProviders(<AgentFleetPanel />);
 
     fireEvent.click(
-      screen.getAllByRole('button', { name: 'Edit alerting' })[0]
+      screen.getAllByRole('button', { name: /^Actions for / })[0]
+    );
+    fireEvent.click(
+      await screen.findByRole('menuitem', { name: 'Edit alerting' })
     );
     await screen.findByText(/Downtime alert settings for/);
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
