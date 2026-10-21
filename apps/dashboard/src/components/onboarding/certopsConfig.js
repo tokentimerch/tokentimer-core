@@ -958,23 +958,32 @@ export function buildVaultConfigs({
   probeTrustCaFile = '',
 }) {
   const problems = [];
+  // Grouped by field so the Vault form can show each message next to its input.
+  const fieldErrors = {};
+  const problem = (field, message) => {
+    problems.push(message);
+    (fieldErrors[field] ||= []).push(message);
+  };
   if (!/^https:\/\//.test(vaultAddress || ''))
-    problems.push('The Vault address must use https.');
+    problem('vaultAddress', 'The Vault address must use https.');
   if (caFile && !String(caFile).startsWith('/'))
-    problems.push('The Vault CA file must be an absolute path.');
+    problem('caFile', 'The Vault CA file must be an absolute path.');
   if (probeTrustCaFile && !String(probeTrustCaFile).startsWith('/'))
-    problems.push(
+    problem(
+      'probeCa',
       'The CA file for the served-certificate check must be an absolute path.'
     );
-  if (!UUID.test(workspaceId || '')) problems.push('Invalid workspace id.');
+  if (!UUID.test(workspaceId || ''))
+    problem('workspace', 'Invalid workspace id.');
   if (!UUID.test(groupId || '')) {
-    problems.push(
+    problem(
+      'groupId',
       'Use the group id shown on the distribution group after the first publish job.'
     );
   }
-  if (!(names || []).length) problems.push('Enter at least one name.');
-  if (!isValidZone(zone)) problems.push('Enter a valid DNS zone.');
-  if (problems.length) return { ok: false, problems };
+  if (!(names || []).length) problem('names', 'Enter at least one name.');
+  if (!isValidZone(zone)) problem('zone', 'Enter a valid DNS zone.');
+  if (problems.length) return { ok: false, problems, fieldErrors };
 
   const prefix = `tokentimer/${workspaceId}/${groupId}`;
   const store = {
@@ -1162,6 +1171,45 @@ export function buildVaultRollout({ materialVersionId }) {
  * consumer can only read them, and the scanner identity is explicitly denied.
  * Nothing broader than the bundles path is ever granted.
  */
+/**
+ * Sign-in for the API calls in the Vault guide. These routes accept a
+ * signed-in workspace manager session with a CSRF token, not a machine
+ * token, so the example signs in once. Email and password are prompted for:
+ * they never appear in the command or in shell history.
+ */
+export function buildApiSignIn({ apiUrl, workspaceId }) {
+  const api = String(apiUrl || '').replace(/\/+$/, '');
+  return [
+    `API=${shQuote(api)}`,
+    `WS=${shQuote(workspaceId || '')}`,
+    'JAR="$(mktemp)"',
+    'csrf() { curl -fsS -b "$JAR" -c "$JAR" "$API/api/csrf-token" | sed -n \'s/.*"csrfToken" *: *"\\([^"]*\\)".*/\\1/p\'; }',
+    "read -r -p 'TokenTimer email: ' EMAIL",
+    "read -r -s -p 'TokenTimer password: ' PASSWORD; echo",
+    'curl -fsS -b "$JAR" -c "$JAR" -X POST "$API/auth/login" \\',
+    '  -H \'Content-Type: application/json\' -H "X-CSRF-Token: $(csrf)" \\',
+    '  -d "$(printf \'{"email":"%s","password":"%s"}\' "$EMAIL" "$PASSWORD")" >/dev/null',
+    'unset PASSWORD',
+  ].join('\n');
+}
+
+/** One workspace API write, sent with the session from buildApiSignIn. */
+export function buildApiCall({ method, path, body, idempotencyKey = '' }) {
+  return [
+    `curl -fsS -b "$JAR" -c "$JAR" -X ${method} "$API/api/v1/workspaces/$WS/${path}" \\`,
+    '  -H \'Content-Type: application/json\' -H "X-CSRF-Token: $(csrf)" \\',
+    ...(idempotencyKey ? [`  -H 'Idempotency-Key: ${idempotencyKey}' \\`] : []),
+    "  -d @- <<'JSON'",
+    JSON.stringify(body, null, 2),
+    'JSON',
+  ].join('\n');
+}
+
+/** A read with the same session, used to find the published version id. */
+export function buildApiRead(path) {
+  return `curl -fsS -b "$JAR" -c "$JAR" "$API/api/v1/workspaces/$WS/${path}"`;
+}
+
 export function buildVaultPolicies({ mount = 'secret', workspaceId, groupId }) {
   if (!UUID.test(workspaceId || '') || !UUID.test(groupId || '')) {
     throw new Error('Workspace and group ids are required for Vault policies.');

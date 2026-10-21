@@ -7,9 +7,11 @@ import {
   Text,
   Tooltip,
   VStack,
+  useColorModeValue,
 } from '@chakra-ui/react';
 import { FiCheck, FiCopy } from 'react-icons/fi';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
+import { dashboardThemeColors } from '../../styles/theme.js';
 import { SENSITIVE_PATTERN } from './certopsConfig.js';
 
 /**
@@ -18,8 +20,8 @@ import { SENSITIVE_PATTERN } from './certopsConfig.js';
  * light-mode override as well and read right in both themes.
  */
 export function ErrorText({ children, ...props }) {
-  const { dashboard } = useDashboardTheme();
-  const color = dashboard.state.danger;
+  const { danger } = dashboardThemeColors.state;
+  const color = useColorModeValue(danger.light, danger.dark);
   return (
     <Text fontSize='xs' color={color} _light={{ color }} {...props}>
       {children}
@@ -28,8 +30,8 @@ export function ErrorText({ children, ...props }) {
 }
 
 export function WarnText({ children, ...props }) {
-  const { dashboard } = useDashboardTheme();
-  const color = dashboard.state.warning;
+  const { warning } = dashboardThemeColors.state;
+  const color = useColorModeValue(warning.light, warning.dark);
   return (
     <Text fontSize='xs' color={color} _light={{ color }} {...props}>
       {children}

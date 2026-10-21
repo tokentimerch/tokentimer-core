@@ -236,8 +236,10 @@ describe('issueWaitNotice', () => {
       now,
     });
     expect(text).toMatch(/^No agent has taken this request\./);
-    expect(text).toMatch(/dnsProviders/);
-    expect(text).toMatch(/cannot be cancelled from here/);
+    expect(text).toMatch(/DNS provider you chose/);
+    expect(text).not.toMatch(/dnsProviders/);
+    expect(text).toMatch(/You cannot cancel this request from here/);
+    expect(text).toMatch(/certificate file path stays locked/);
   });
 
   it('only applies to a request an agent could still take', () => {

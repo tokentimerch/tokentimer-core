@@ -7,6 +7,7 @@ import {
   Badge,
   Box,
   FormControl,
+  FormErrorMessage,
   FormLabel,
   HStack,
   Input,
@@ -18,7 +19,8 @@ import { DashboardActionButton } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { createJob, getJob } from '../certops/certopsJobsApi.js';
 import StepFrame from './StepFrame.jsx';
-import { CopyBlock } from './blocks.jsx';
+import PrimaryButton from './PrimaryButton.jsx';
+import { CopyBlock, ErrorText } from './blocks.jsx';
 import {
   capabilityGap,
   pickGoalAgent,
@@ -40,6 +42,9 @@ import {
   buildConsumerPlaceholderCommand,
   buildDryRunJob,
   buildReconcileCommand,
+  buildApiCall,
+  buildApiRead,
+  buildApiSignIn,
   AGENT_STATE_DIR,
   CONSUMER_DEPLOY_PATH,
   probeHostFor,
@@ -144,6 +149,42 @@ export function vaultOutcome({ declaredByAgents, distribution }) {
   return { level: 'prepared', missing };
 }
 
+/** A numbered part of the Vault guide, with who runs it and as which user. */
+function Part({ n, title, who, children }) {
+  const { border } = useDashboardTheme();
+  return (
+    <Box
+      as='section'
+      aria-label={`${n}. ${title}`}
+      data-testid={`vault-part-${n}`}
+      borderTop='1px solid'
+      borderColor={border}
+      pt={4}
+    >
+      <HStack align='baseline' spacing={2} flexWrap='wrap'>
+        <Text fontSize='sm' fontWeight='semibold'>
+          {n}. {title}
+        </Text>
+        <Badge>{who}</Badge>
+      </HStack>
+      <VStack align='stretch' spacing={3} mt={2}>
+        {children}
+      </VStack>
+    </Box>
+  );
+}
+
+// Field names for the line that says why Save is off.
+const VAULT_FIELD_NAMES = {
+  vaultAddress: 'the Vault address',
+  groupId: 'the group id',
+  caFile: 'the Vault CA file',
+  probeCa: 'the check CA file',
+  names: 'the names',
+  zone: 'the DNS zone',
+  workspace: 'the workspace id',
+};
+
 export function VaultStep({ ctx }) {
   const { muted } = useDashboardTheme();
   const saved = certopsProgress(ctx);
@@ -157,7 +198,13 @@ export function VaultStep({ ctx }) {
     // assignment call, so it is generated once and kept.
     bindingId: saved.vaultBindingId || newBindingId(),
   });
-  const set = key => e => setForm(f => ({ ...f, [key]: e.target.value }));
+  const [touched, setTouched] = useState({});
+  const blur = key => () =>
+    setTouched(t => (t[key] ? t : { ...t, [key]: true }));
+  const set = key => e => {
+    blur(key)();
+    setForm(f => ({ ...f, [key]: e.target.value }));
+  };
   const names = (saved.names || '').split(/[\s,]+/).filter(Boolean);
   const agentItems = ctx.summary?.certops?.agents?.items || [];
   const [issuerPick, setIssuerPick] = useState(saved.vaultIssuerAgentId || '');
@@ -294,7 +341,30 @@ export function VaultStep({ ctx }) {
       }));
     }
   };
-  const bindingId = form.bindingId;
+  const { bindingId } = form;
+  const [savedOk, setSavedOk] = useState(false);
+  const shownErrors = key => (touched[key] ? out.fieldErrors?.[key] || [] : []);
+  const missingFields = Object.keys(out.fieldErrors || {}).map(
+    k => VAULT_FIELD_NAMES[k] || k
+  );
+  const groupPath = form.groupId || 'GROUP_ID';
+  const agentRef = id => id || 'AGENT_ID_FROM_AGENTS';
+  const saveSettings = async () => {
+    await saveCertops(ctx, {
+      vaultAddress: form.vaultAddress,
+      vaultMount: form.mount,
+      vaultCaFile: form.caFile.trim(),
+      vaultProbeCa: form.probeCa.trim(),
+      vaultBindingId: form.bindingId,
+      groupId: form.groupId,
+      configReviewed: true,
+    });
+    setSavedOk(true);
+  };
+  const apiSignIn = buildApiSignIn({
+    apiUrl: ctx.apiUrl,
+    workspaceId: ctx.workspaceId,
+  });
   let consumerInstall = '';
   try {
     consumerInstall = buildInstallCommand({
@@ -318,13 +388,30 @@ export function VaultStep({ ctx }) {
         ...ctx.docs('certops.vaultAuth', 'Vault Agent authentication'),
         ...ctx.docs('certops.worker', 'Check the CertOps worker'),
       ]}
+      actions={
+        <VStack align='flex-end' spacing={1}>
+          <PrimaryButton onClick={saveSettings} isDisabled={!out.ok}>
+            Save these settings
+          </PrimaryButton>
+          {!out.ok ? (
+            <Text fontSize='xs' color={muted} data-testid='vault-save-hint'>
+              Save stays disabled until these are valid:{' '}
+              {missingFields.join(', ')}.
+            </Text>
+          ) : savedOk ? (
+            <Text fontSize='xs' color={muted} data-testid='vault-saved'>
+              Saved. This step finishes by itself once a rollout is verified.
+            </Text>
+          ) : null}
+        </VStack>
+      }
     >
-      <VStack align='stretch' spacing={3}>
+      <VStack align='stretch' spacing={4}>
         <Alert status='warning' borderRadius='md' variant='left-accent'>
           <AlertIcon />
           <AlertDescription fontSize='sm'>
-            Generating files below only prepares the configuration. It does not
-            mean distribution works: a verified rollout does.
+            The commands below only prepare the configuration. Distribution
+            works once a rollout has been verified.
           </AlertDescription>
         </Alert>
         {backlogMessage ? (
@@ -348,291 +435,454 @@ export function VaultStep({ ctx }) {
             </Text>
           ) : null}
         </HStack>
-        <Text fontSize='sm'>
-          1. Create the publish job. It is held for approval, so you can set up
-          Vault and the issuer first. A workspace manager other than the person
-          who creates it must approve it (Certificate Management, Jobs): you
-          cannot approve your own job. Only then does the issuer order the
-          certificate and publish it to Vault. The group id appears on the job
-          and is filled in below.
-        </Text>
-        <FormControl>
-          <FormLabel fontSize='sm'>Issuing agent</FormLabel>
-          <Select
-            size='sm'
-            value={issuerId}
-            onChange={e => setIssuerPick(e.target.value)}
-            isDisabled={Boolean(publishJobId)}
-            placeholder={agentItems.length ? undefined : 'No agent registered'}
-          >
-            {agentItems.map(a => (
-              <option key={a.id} value={a.id}>
-                {a.name || a.hostname || 'agent'} ({a.wireAgentId})
-              </option>
-            ))}
-          </Select>
-        </FormControl>
-        <FormControl>
-          <FormLabel fontSize='sm'>Consumer agent</FormLabel>
-          <Select
-            size='sm'
-            value={consumerId}
-            onChange={e => setConsumerPick(e.target.value)}
-            placeholder={
-              consumerChoices.length
-                ? undefined
-                : 'Register the consumer agent first'
-            }
-          >
-            {consumerChoices.map(a => (
-              <option key={a.id} value={a.id}>
-                {a.name || a.hostname || 'agent'} ({a.wireAgentId})
-              </option>
-            ))}
-          </Select>
-        </FormControl>
-        <HStack align='center' spacing={3} flexWrap='wrap'>
-          <DashboardActionButton
-            variant='outline'
-            onClick={createPublishJob}
-            isLoading={pub.busy}
-            isDisabled={
-              Boolean(publishJobId) ||
-              !issuerId ||
-              names.length === 0 ||
-              !saved.zone
-            }
-          >
-            Create the publish job
-          </DashboardActionButton>
-          {publishJobId ? (
-            <Text fontSize='sm' data-testid='vault-publish-job'>
-              Publish job {publishJobId}
-              {pub.job?.status ? (
-                <>
-                  {' '}
-                  <Badge>{pub.job.status}</Badge>
-                </>
-              ) : null}
+
+        <Part
+          n={1}
+          title='Create the publish job'
+          who='You, in this dashboard (workspace manager)'
+        >
+          <Text fontSize='sm'>
+            The job is held for approval, so you can set up Vault and the issuer
+            first. A workspace manager other than the person who creates it must
+            approve it (Certificate Management, Jobs): you cannot approve your
+            own job. Only then does the issuer order the certificate and publish
+            it to Vault. The group id appears on the job and is filled in below.
+          </Text>
+          <FormControl>
+            <FormLabel fontSize='sm'>Issuing agent</FormLabel>
+            <Select
+              size='sm'
+              value={issuerId}
+              onChange={e => setIssuerPick(e.target.value)}
+              isDisabled={Boolean(publishJobId)}
+              placeholder={
+                agentItems.length ? undefined : 'No agent registered'
+              }
+            >
+              {agentItems.map(a => (
+                <option key={a.id} value={a.id}>
+                  {a.name || a.hostname || 'agent'} ({a.wireAgentId})
+                </option>
+              ))}
+            </Select>
+          </FormControl>
+          <FormControl>
+            <FormLabel fontSize='sm'>Consumer agent</FormLabel>
+            <Select
+              size='sm'
+              value={consumerId}
+              onChange={e => setConsumerPick(e.target.value)}
+              placeholder={
+                consumerChoices.length
+                  ? undefined
+                  : 'Register the consumer agent first'
+              }
+            >
+              {consumerChoices.map(a => (
+                <option key={a.id} value={a.id}>
+                  {a.name || a.hostname || 'agent'} ({a.wireAgentId})
+                </option>
+              ))}
+            </Select>
+          </FormControl>
+          <HStack align='center' spacing={3} flexWrap='wrap'>
+            <DashboardActionButton
+              variant='outline'
+              onClick={createPublishJob}
+              isLoading={pub.busy}
+              isDisabled={
+                Boolean(publishJobId) ||
+                !issuerId ||
+                names.length === 0 ||
+                !saved.zone
+              }
+            >
+              Create the publish job
+            </DashboardActionButton>
+            {publishJobId ? (
+              <Text fontSize='sm' data-testid='vault-publish-job'>
+                Publish job {publishJobId}
+                {pub.job?.status ? (
+                  <>
+                    {' '}
+                    <Badge>{pub.job.status}</Badge>
+                  </>
+                ) : null}
+              </Text>
+            ) : null}
+          </HStack>
+          {pub.error ? <ErrorText>{pub.error}</ErrorText> : null}
+          {pub.job?.status === 'pending_approval' ? (
+            <Text fontSize='xs' color={muted}>
+              Waiting for approval by another workspace manager. After approval
+              the issuing agent must be online and out of dry run.
             </Text>
           ) : null}
-        </HStack>
-        {pub.error ? (
-          <Text fontSize='xs' color='red.400'>
-            {pub.error}
-          </Text>
-        ) : null}
-        {pub.job?.status === 'pending_approval' ? (
-          <Text fontSize='xs' color={muted}>
-            Waiting for approval by another workspace manager. After approval
-            the issuing agent must be online and out of dry run.
-          </Text>
-        ) : null}
-        <CopyBlock
-          label='The same job through the API (POST /certops/jobs)'
-          text={JSON.stringify(publishJob, null, 2)}
-          language='json'
-        />
-        <HStack align='start' spacing={3} flexWrap='wrap'>
-          <FormControl flex='2 1 240px'>
-            <FormLabel fontSize='sm'>Vault address</FormLabel>
+          <Box as='details'>
+            <Box as='summary' fontSize='xs' cursor='pointer'>
+              Create the same job from the API instead
+            </Box>
+            <Box mt={2}>
+              <CopyBlock
+                label='Publish job (uses the sign-in from part 6)'
+                text={buildApiCall({
+                  method: 'POST',
+                  path: 'certops/jobs',
+                  body: publishJob,
+                })}
+              />
+            </Box>
+          </Box>
+        </Part>
+
+        <Part
+          n={2}
+          title='Enter your Vault details'
+          who='You, in this dashboard'
+        >
+          {['names', 'zone'].some(k => out.fieldErrors?.[k]) ? (
+            <ErrorText>
+              Go back to the configuration step: the names and the DNS zone must
+              be valid.
+            </ErrorText>
+          ) : null}
+          <HStack align='start' spacing={3} flexWrap='wrap'>
+            <FormControl
+              flex='2 1 240px'
+              isInvalid={shownErrors('vaultAddress').length > 0}
+            >
+              <FormLabel fontSize='sm'>Vault address</FormLabel>
+              <Input
+                size='sm'
+                value={form.vaultAddress}
+                onChange={set('vaultAddress')}
+                onBlur={blur('vaultAddress')}
+                placeholder='https://vault.example.com:8200'
+              />
+              <FormErrorMessage fontSize='xs'>
+                {shownErrors('vaultAddress').map(m => (
+                  <ErrorText key={m} as='span' display='block'>
+                    {m}
+                  </ErrorText>
+                ))}
+              </FormErrorMessage>
+            </FormControl>
+            <FormControl flex='1 1 120px'>
+              <FormLabel fontSize='sm'>KV v2 mount</FormLabel>
+              <Input size='sm' value={form.mount} onChange={set('mount')} />
+            </FormControl>
+          </HStack>
+          <FormControl isInvalid={shownErrors('groupId').length > 0}>
+            <FormLabel fontSize='sm'>Group id</FormLabel>
             <Input
               size='sm'
-              value={form.vaultAddress}
-              onChange={set('vaultAddress')}
-              placeholder='https://vault.example.com:8200'
+              value={form.groupId}
+              onChange={set('groupId')}
+              onBlur={blur('groupId')}
+              placeholder='from publication.groupId'
             />
+            <FormErrorMessage fontSize='xs'>
+              {shownErrors('groupId').map(m => (
+                <ErrorText key={m} as='span' display='block'>
+                  {m}
+                </ErrorText>
+              ))}
+            </FormErrorMessage>
+            <Text fontSize='xs' mt={1} color={muted}>
+              Filled in for you once the publish job in part 1 exists.
+            </Text>
           </FormControl>
-          <FormControl flex='1 1 120px'>
-            <FormLabel fontSize='sm'>KV v2 mount</FormLabel>
-            <Input size='sm' value={form.mount} onChange={set('mount')} />
+          <FormControl isInvalid={shownErrors('caFile').length > 0}>
+            <FormLabel fontSize='sm'>Vault CA file (optional)</FormLabel>
+            <Input
+              size='sm'
+              value={form.caFile}
+              onChange={set('caFile')}
+              onBlur={blur('caFile')}
+              placeholder='/etc/tokentimer-agent/vault-ca.pem'
+            />
+            <FormErrorMessage fontSize='xs'>
+              {shownErrors('caFile').map(m => (
+                <ErrorText key={m} as='span' display='block'>
+                  {m}
+                </ErrorText>
+              ))}
+            </FormErrorMessage>
+            <Text fontSize='xs' mt={1} color={muted}>
+              Needed when Vault uses a private CA. The file stays on each host.
+            </Text>
           </FormControl>
-        </HStack>
-        <FormControl>
-          <FormLabel fontSize='sm'>Group id</FormLabel>
-          <Input
-            size='sm'
-            value={form.groupId}
-            onChange={set('groupId')}
-            placeholder='from publication.groupId'
-          />
-        </FormControl>
-        <FormControl>
-          <FormLabel fontSize='sm'>Vault CA file (optional)</FormLabel>
-          <Input
-            size='sm'
-            value={form.caFile}
-            onChange={set('caFile')}
-            placeholder='/etc/tokentimer-agent/vault-ca.pem'
-          />
-          <Text fontSize='xs' mt={1} color={muted}>
-            Needed when Vault uses a private CA. The file stays on each host.
+          <FormControl isInvalid={shownErrors('probeCa').length > 0}>
+            <FormLabel fontSize='sm'>
+              CA file for the consumer&apos;s served-certificate check
+              (optional)
+            </FormLabel>
+            <Input
+              size='sm'
+              value={form.probeCa}
+              onChange={set('probeCa')}
+              onBlur={blur('probeCa')}
+              placeholder='/etc/tokentimer-agent/issuing-ca.pem'
+            />
+            <FormErrorMessage fontSize='xs'>
+              {shownErrors('probeCa').map(m => (
+                <ErrorText key={m} as='span' display='block'>
+                  {m}
+                </ErrorText>
+              ))}
+            </FormErrorMessage>
+            <Text fontSize='xs' mt={1} color={muted}>
+              Needed when the certificate comes from a private CA or a test CA
+              such as the Let&apos;s Encrypt staging CA: the consumer&apos;s
+              trust check validates the chain against this file and fails
+              without it. Use the root of the issuing CA, readable by
+              tokentimer-agent on the consumer host.
+            </Text>
+          </FormControl>
+          <Text fontSize='xs' color={muted}>
+            Consumer binding id (generated, keep it): {form.bindingId}
           </Text>
-        </FormControl>
-        <FormControl>
-          <FormLabel fontSize='sm'>
-            CA file for the consumer&apos;s served-certificate check (optional)
-          </FormLabel>
-          <Input
-            size='sm'
-            value={form.probeCa}
-            onChange={set('probeCa')}
-            placeholder='/etc/tokentimer-agent/issuing-ca.pem'
-          />
-          <Text fontSize='xs' mt={1} color={muted}>
-            Needed when the certificate comes from a private CA or a test CA
-            such as the Let&apos;s Encrypt staging CA: the consumer&apos;s trust
-            check validates the chain against this file and fails without it.
-            Use the root of the issuing CA, readable by tokentimer-agent on the
-            consumer host.
-          </Text>
-        </FormControl>
-        <Text fontSize='xs' color={muted}>
-          Consumer binding id (generated, keep it): {form.bindingId}
-        </Text>
-        {!out.ok
-          ? (out.problems || []).map(p => (
-              <Text key={p} fontSize='xs' color='red.400'>
-                {p}
-              </Text>
-            ))
-          : null}
-        {policies ? (
-          <>
-            <CopyBlock
-              label='Vault policy: issuer (separate policy)'
-              text={policies.issuer}
-            />
-            <CopyBlock
-              label='Vault policy: consumer (separate policy)'
-              text={policies.consumer}
-            />
-            <CopyBlock
-              label='Vault policy: scanner (mandatory deny)'
-              text={policies.scanner}
-            />
-          </>
-        ) : null}
+          {!out.ok ? (
+            <Text fontSize='xs' color={muted}>
+              The commands and files in parts 3 to 6 appear once these values
+              are valid.
+            </Text>
+          ) : null}
+        </Part>
+
         {out.ok ? (
           <>
-            <CopyBlock
-              label='Issuer agent config.json'
-              text={JSON.stringify(out.issuer, null, 2)}
-              language='json'
-            />
-            <CopyBlock
-              label='Consumer agent config.json'
-              text={JSON.stringify(out.consumer, null, 2)}
-              language='json'
-            />
-            <Text fontSize='xs' color={muted}>
-              Both configs name an agent by its wire id (agentId, and the
-              consumer repeats it in materialBindings). Choose each id before
-              the agent registers by setting agentId in its config.json, or read
-              it from the registered agent&apos;s config.json and merge these
-              keys into that file instead of replacing it. No Vault token is
-              ever entered here. Both agents start in dry run: after a signed
-              dry run passes, set execution.dryRun to false in each config and
-              restart it.
-            </Text>
-            <Text fontSize='xs' color={muted} data-testid='vault-auth-note'>
-              Authentication to Vault: each agent reads a Vault token from a
-              file (tokenFile) and has no login of its own, so AppRole,
-              Kubernetes or other auth methods are handled by Vault Agent, which
-              keeps that file fresh. The file must be owned by the agent user
-              with mode 0600. The example uses AppRole: create the role with the
-              policy above, put its role id and secret id in two files readable
-              only by the user that runs Vault Agent, and run Vault Agent as the
-              agent user.
-            </Text>
-            <CopyBlock
-              label='Vault Agent config (AppRole, writes the issuer token file)'
-              text={buildVaultAgentConfig({
-                vaultAddress: form.vaultAddress,
-                caFile: form.caFile.trim(),
-              })}
-            />
-            <CopyBlock
-              label='Vault Agent config for the consumer (writes the consumer token file)'
-              text={buildVaultAgentConfig({
-                vaultAddress: form.vaultAddress,
-                caFile: form.caFile.trim(),
-                tokenFile: '/run/tokentimer-vault/consumer-token',
-              })}
-            />
-            <CopyBlock
-              label='Vault administrator: AppRoles (save the two policies above as issuer.hcl and consumer.hcl)'
-              text={buildVaultRoleCommands()}
-            />
-            <CopyBlock
-              label='On each agent host: Vault Agent folders and start (needs the Vault binary)'
-              text={buildVaultAgentHostSetup()}
-            />
-            <Text fontSize='sm'>
-              2. Set up the consumer host. Install nginx and the Vault binary
-              first, then run the install command. Its --write-path makes the
-              installer create {CONSUMER_DEPLOY_PATH} owned by tokentimer-agent
-              with mode 0750. That folder is the only place the agent writes for
-              this rollout: fullchain.pem and privkey.pem (mode 0600, replaced
-              in place) and a .bak copy of the previous pair after each change.
-              The Vault CA file and the CA file for the check above only need to
-              be readable by tokentimer-agent.
-            </Text>
-            <CopyBlock
-              label='Consumer install command'
-              text={consumerInstall}
-            />
-            <Text fontSize='sm'>
-              Then create a placeholder pair as the agent user, so nginx can
-              start its TLS listener before the first rollout. Do not create
-              these files as root: the agent reads the files it replaces, and a
-              root-owned placeholder makes the rollout fail with
-              material_install_failed. nginx reads the files as root, so it
-              needs nothing else.
-            </Text>
-            <CopyBlock
-              label='Placeholder certificate (consumer host, as the agent user)'
-              text={buildConsumerPlaceholderCommand({
-                host: probeHostFor(names) || undefined,
-              })}
-            />
-            <CopyBlock
-              label='nginx server block (consumer host)'
-              text={buildConsumerNginxServer({ names })}
-            />
-            <Text fontSize='xs' color={muted}>
-              The stock nginx unit does not test its configuration on reload, so
-              run the one-time setup below as well.
-            </Text>
-            <CopyBlock
-              label='One-time nginx setup (consumer host)'
-              text={NGINX_RELOAD_DROPIN}
-            />
-            <Text fontSize='xs' color={muted} data-testid='vault-dry-run-note'>
-              A signed dry run proves that an agent receives and verifies jobs.
-              Run it once for each agent before you set execution.dryRun to
-              false. A rollout itself has no dry run: the first one installs the
-              certificate for real, and a later rollout with verificationOnly
-              true only checks what is installed.
-            </Text>
-            <CopyBlock
-              label='Signed dry run (POST .../certops/jobs, once per agent)'
-              text={JSON.stringify(
-                buildDryRunJob({
-                  assignedAgentId: 'AGENT_ID_FROM_AGENTS',
-                  idempotencyKey: 'vault-dry-run-AGENT_ID',
-                }),
-                null,
-                2
-              )}
-              language='json'
-            />
-            <Box as='details' data-testid='vault-uncertain-note'>
+            <Part
+              n={3}
+              title='Create the Vault policies and roles'
+              who='Vault administrator, with the vault CLI'
+            >
+              {policies ? (
+                <>
+                  <CopyBlock
+                    label='Vault policy: issuer (separate policy)'
+                    text={policies.issuer}
+                  />
+                  <CopyBlock
+                    label='Vault policy: consumer (separate policy)'
+                    text={policies.consumer}
+                  />
+                  <CopyBlock
+                    label='Vault policy: scanner (mandatory deny)'
+                    text={policies.scanner}
+                  />
+                </>
+              ) : null}
+              <CopyBlock
+                label='Vault administrator: AppRoles (save the two policies above as issuer.hcl and consumer.hcl)'
+                text={buildVaultRoleCommands()}
+              />
+            </Part>
+
+            <Part
+              n={4}
+              title='Prepare the issuing server'
+              who='root (sudo) on the issuing server, then the agent user'
+            >
+              <Text fontSize='xs' color={muted}>
+                Both configs name an agent by its wire id (agentId, and the
+                consumer repeats it in materialBindings). Choose each id before
+                the agent registers by setting agentId in its config.json, or
+                read it from the registered agent&apos;s config.json and merge
+                these keys into that file instead of replacing it. No Vault
+                token is ever entered here. Both agents start in dry run.
+              </Text>
+              <CopyBlock
+                label='Issuer agent config.json (merge into the existing file)'
+                text={JSON.stringify(out.issuer, null, 2)}
+                language='json'
+              />
+              <Text fontSize='xs' color={muted} data-testid='vault-auth-note'>
+                Authentication to Vault: each agent reads a Vault token from a
+                file (tokenFile) and has no login of its own, so AppRole,
+                Kubernetes or other auth methods are handled by Vault Agent,
+                which keeps that file fresh. The file must be owned by the agent
+                user with mode 0600. The example uses AppRole: create the role
+                with the policy above, put its role id and secret id in two
+                files readable only by the user that runs Vault Agent, and run
+                Vault Agent as the agent user.
+              </Text>
+              <CopyBlock
+                label='Vault Agent config (AppRole, writes the issuer token file)'
+                text={buildVaultAgentConfig({
+                  vaultAddress: form.vaultAddress,
+                  caFile: form.caFile.trim(),
+                })}
+              />
+              <CopyBlock
+                label='On each agent host: Vault Agent folders and start (needs the Vault binary)'
+                text={buildVaultAgentHostSetup()}
+              />
+            </Part>
+
+            <Part
+              n={5}
+              title='Prepare the consumer server'
+              who='root (sudo) on the consumer server, then the agent user'
+            >
+              <Text fontSize='sm'>
+                Install nginx and the Vault binary first, then run the install
+                command. Its --write-path makes the installer create{' '}
+                {CONSUMER_DEPLOY_PATH} owned by tokentimer-agent with mode 0750.
+                That folder is the only place the agent writes for this rollout:
+                fullchain.pem and privkey.pem (mode 0600, replaced in place) and
+                a .bak copy of the previous pair after each change. The Vault CA
+                file and the CA file for the check above only need to be
+                readable by tokentimer-agent.
+              </Text>
+              <CopyBlock
+                label='Consumer install command'
+                text={consumerInstall}
+              />
+              <Text fontSize='sm'>
+                Then create a placeholder pair as the agent user, so nginx can
+                start its TLS listener before the first rollout. Do not create
+                these files as root: the agent reads the files it replaces, and
+                root-owned placeholders make the first rollout fail (see the
+                troubleshooting panel at the end). nginx reads the files as
+                root, so it needs nothing else.
+              </Text>
+              <CopyBlock
+                label='Placeholder certificate (consumer host, as the agent user)'
+                text={buildConsumerPlaceholderCommand({
+                  host: probeHostFor(names) || undefined,
+                })}
+              />
+              <CopyBlock
+                label='nginx server block (consumer host)'
+                text={buildConsumerNginxServer({ names })}
+              />
+              <Text fontSize='xs' color={muted}>
+                The stock nginx unit does not test its configuration on reload,
+                so run the one-time setup below as well.
+              </Text>
+              <CopyBlock
+                label='One-time nginx setup (consumer host)'
+                text={NGINX_RELOAD_DROPIN}
+              />
+              <CopyBlock
+                label='Consumer agent config.json (merge into the existing file)'
+                text={JSON.stringify(out.consumer, null, 2)}
+                language='json'
+              />
+              <CopyBlock
+                label='Vault Agent config for the consumer (writes the consumer token file)'
+                text={buildVaultAgentConfig({
+                  vaultAddress: form.vaultAddress,
+                  caFile: form.caFile.trim(),
+                  tokenFile: '/run/tokentimer-vault/consumer-token',
+                })}
+              />
+            </Part>
+
+            <Part
+              n={6}
+              title='Test, assign and roll out'
+              who='You, with the API (a different workspace manager approves)'
+            >
+              <Text fontSize='sm'>
+                These calls need a signed-in workspace manager, not a machine
+                token. Run this once in a bash shell on any computer with curl.
+                It asks for your TokenTimer email and password and keeps the
+                session in a temporary file. API is this TokenTimer address and
+                WS is your workspace id; both are filled in for you.
+              </Text>
+              <CopyBlock label='Sign in for the API calls' text={apiSignIn} />
+              <Text
+                fontSize='xs'
+                color={muted}
+                data-testid='vault-dry-run-note'
+              >
+                A signed dry run proves that an agent receives and verifies
+                jobs. Run it once for each agent before you set execution.dryRun
+                to false in its config and restart it. A rollout itself has no
+                dry run: the first one installs the certificate for real, and a
+                later check-only rollout (verificationOnly: true) just compares
+                what is installed.
+              </Text>
+              <CopyBlock
+                label='Signed dry run for the issuing agent'
+                text={buildApiCall({
+                  method: 'POST',
+                  path: 'certops/jobs',
+                  body: buildDryRunJob({
+                    assignedAgentId: agentRef(issuerId),
+                    idempotencyKey: `vault-dry-run-${agentRef(issuerId)}`,
+                  }),
+                })}
+              />
+              <CopyBlock
+                label='Signed dry run for the consumer agent'
+                text={buildApiCall({
+                  method: 'POST',
+                  path: 'certops/jobs',
+                  body: buildDryRunJob({
+                    assignedAgentId: agentRef(consumerId),
+                    idempotencyKey: `vault-dry-run-${agentRef(consumerId)}`,
+                  }),
+                })}
+              />
+              <Text fontSize='sm'>
+                Once both agents are registered, assign the consumer and request
+                a rollout. A rollout needs approval from a different user and a
+                running CertOps worker (the worker-certops service in Compose,
+                the certops cron job in Helm). Without the worker an approved
+                rollout stays pending and nothing is deployed, and renewals are
+                never scheduled.
+              </Text>
+              <CopyBlock
+                label={`Assign the consumer to group ${groupPath}`}
+                text={buildApiCall({
+                  method: 'PUT',
+                  path: `certops/distribution-groups/${groupPath}/consumers/${bindingId}`,
+                  body: buildVaultConsumerAssignment({
+                    agentRowId: agentRef(consumerId),
+                  }),
+                })}
+              />
+              <Text fontSize='xs' color={muted}>
+                When the publish job has succeeded, read the version id (the id
+                of the newest entry in versions) and put it in the rollout below
+                in place of VERSION_ID_FROM_GROUP_VERSIONS.
+              </Text>
+              <CopyBlock
+                label='Find the published version id'
+                text={buildApiRead(
+                  `certops/distribution-groups/${groupPath}/versions`
+                )}
+              />
+              <CopyBlock
+                label='Request the rollout'
+                text={buildApiCall({
+                  method: 'POST',
+                  path: `certops/distribution-groups/${groupPath}/rollouts`,
+                  idempotencyKey: 'wizard-vault-rollout-1',
+                  body: buildVaultRollout({
+                    materialVersionId: 'VERSION_ID_FROM_GROUP_VERSIONS',
+                  }),
+                })}
+              />
+            </Part>
+
+            <Box
+              as='details'
+              data-testid='vault-uncertain-note'
+              borderTop='1px solid'
+              pt={3}
+            >
               <Box as='summary' fontSize='sm' cursor='pointer'>
-                If a rollout reports orphaned_unknown_effect or
-                material_binding_uncertain
+                If a rollout fails or reports an uncertain result
               </Box>
               <VStack align='stretch' spacing={2} mt={2}>
+                <Text fontSize='xs' color={muted}>
+                  A root-owned placeholder or a file the agent cannot overwrite
+                  makes the first rollout fail with material_install_failed.
+                </Text>
                 <Text fontSize='xs' color={muted}>
                   Before the consumer agent touches a file it records an
                   uncertain marker for the binding in {AGENT_STATE_DIR}
@@ -668,56 +918,8 @@ export function VaultStep({ ctx }) {
                 </Text>
               </VStack>
             </Box>
-            <Text fontSize='sm'>
-              3. Once both agents are registered, assign the consumer and
-              request a rollout. Both are API calls too, and a rollout needs
-              approval from a different user and a running CertOps worker (the
-              worker-certops service in Compose, the certops cron job in Helm).
-              Without the worker an approved rollout stays pending and nothing
-              is deployed, and renewals are never scheduled.
-            </Text>
-            <CopyBlock
-              label={`PUT .../certops/distribution-groups/${form.groupId || 'GROUP_ID'}/consumers/${bindingId}`}
-              text={JSON.stringify(
-                buildVaultConsumerAssignment({
-                  agentRowId: consumerId || 'CONSUMER_AGENT_ID_FROM_AGENTS',
-                }),
-                null,
-                2
-              )}
-              language='json'
-            />
-            <CopyBlock
-              label={`POST .../certops/distribution-groups/${form.groupId || 'GROUP_ID'}/rollouts (Idempotency-Key header)`}
-              text={JSON.stringify(
-                buildVaultRollout({
-                  materialVersionId: 'VERSION_ID_FROM_GROUP_VERSIONS',
-                }),
-                null,
-                2
-              )}
-              language='json'
-            />
           </>
         ) : null}
-        <DashboardActionButton
-          alignSelf='flex-start'
-          variant='outline'
-          onClick={() =>
-            saveCertops(ctx, {
-              vaultAddress: form.vaultAddress,
-              vaultMount: form.mount,
-              vaultCaFile: form.caFile.trim(),
-              vaultProbeCa: form.probeCa.trim(),
-              vaultBindingId: form.bindingId,
-              groupId: form.groupId,
-              configReviewed: true,
-            })
-          }
-          isDisabled={!out.ok}
-        >
-          Save these settings
-        </DashboardActionButton>
       </VStack>
     </StepFrame>
   );
