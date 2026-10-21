@@ -83,6 +83,13 @@ function certopsDone(stepId, { reality, progress, objective }) {
       );
     case 'certops_agent': {
       const agents = certops?.agents;
+      // The Kubernetes controller is not an agent: it counts once it has
+      // reported from a cluster (the one named in the guide, when it names one).
+      if (saved.infrastructure === 'kubernetes') {
+        return (certops?.controllers?.clusters || []).some(
+          c => !saved.clusterId || c.clusterId === saved.clusterId
+        );
+      }
       if ((agents?.live || 0) === 0) return false;
       // AD CS enrolls only through an agent that declared the capability.
       if (objective === 'adcs') {
@@ -107,10 +114,15 @@ function certopsDone(stepId, { reality, progress, objective }) {
       );
     }
     case 'certops_config':
-      return saved.configReviewed === true;
+      // The Kubernetes controller has no agent configuration file.
+      return (
+        saved.configReviewed === true || saved.infrastructure === 'kubernetes'
+      );
     case 'certops_execution':
       // Observe-only goals never enable execution, so they acknowledge instead.
+      // The Kubernetes controller has no execution switch to acknowledge.
       if (saved.executionAcknowledged === true) return true;
+      if (saved.infrastructure === 'kubernetes') return true;
       // Stage 3 is a signed dry run that ended as dry_run_complete. The job
       // id is stored, but whether it passed is read from the server.
       return (

@@ -141,6 +141,26 @@ async function loadAdcsReality(pool, workspaceId) {
   };
 }
 
+async function loadControllerReality(pool, workspaceId) {
+  const { rows } = await pool.query(
+    `SELECT controller_cluster_id AS cluster_id, MAX(created_at) AS last_reported_at
+       FROM certificate_controller_observations
+      WHERE workspace_id = $1
+      GROUP BY controller_cluster_id
+      ORDER BY MAX(created_at) DESC
+      LIMIT 10`,
+    [workspaceId],
+  );
+  return {
+    clusters: rows.map((row) => ({
+      clusterId: row.cluster_id,
+      lastReportedAt: row.last_reported_at
+        ? new Date(row.last_reported_at).toISOString()
+        : null,
+    })),
+  };
+}
+
 async function loadCertopsReality(
   pool,
   { workspaceId, role, enabled, since, dryRunJobId, issueJobId },
@@ -164,8 +184,10 @@ async function loadCertopsReality(
   const dryRun = await loadJobStatus(pool, workspaceId, dryRunJobId);
   const issueJob = await loadJobStatus(pool, workspaceId, issueJobId);
   const adcs = await loadAdcsReality(pool, workspaceId);
+  const controllers = await loadControllerReality(pool, workspaceId);
   return {
     adcs,
+    controllers,
     agents: summarizeAgents(agents.items, { since }),
     distribution,
     dryRun,
@@ -182,6 +204,7 @@ module.exports = {
   summarizeAgents,
   loadCertopsReality,
   loadAdcsReality,
+  loadControllerReality,
   loadDistributionReality,
   loadJobStatus,
   EXECUTION_OPERATIONS,

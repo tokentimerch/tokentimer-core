@@ -88,6 +88,7 @@ export function evaluateVerification({
   unlistedMonitors = 0,
   token,
   summary,
+  infrastructure,
 }) {
   const checks = [];
 
@@ -205,21 +206,41 @@ export function evaluateVerification({
       );
     } else {
       const live = certops.agents?.live || 0;
-      checks.push(
-        live > 0
-          ? check(
-              'agent',
-              CHECK_STATUS.PASS,
-              'An agent is connected',
-              `${live} live`
-            )
-          : check(
-              'agent',
-              CHECK_STATUS.FAIL,
-              'An agent is connected',
-              'No agent has checked in recently. Check the service on the server.'
-            )
-      );
+      const clusters = certops.controllers?.clusters || [];
+      if (goal === 'certops_observe' && infrastructure === 'kubernetes') {
+        // The controller is not an agent: it is connected once it has reported.
+        checks.push(
+          clusters.length > 0
+            ? check(
+                'controller',
+                CHECK_STATUS.PASS,
+                'The Kubernetes controller is reporting',
+                `Cluster ${clusters[0].clusterId}`
+              )
+            : check(
+                'controller',
+                CHECK_STATUS.FAIL,
+                'The Kubernetes controller is reporting',
+                'No cluster has reported yet. Check the controller pod logs and that the token matches the cluster id.'
+              )
+        );
+      } else {
+        checks.push(
+          live > 0
+            ? check(
+                'agent',
+                CHECK_STATUS.PASS,
+                'An agent is connected',
+                `${live} live`
+              )
+            : check(
+                'agent',
+                CHECK_STATUS.FAIL,
+                'An agent is connected',
+                'No agent has checked in recently. Check the service on the server.'
+              )
+        );
+      }
       const certs = certops.certificates?.total || 0;
       checks.push(
         certs > 0

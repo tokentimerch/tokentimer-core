@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const {
   summarizeAgents,
   loadCertopsReality,
+  loadControllerReality,
 } = require("../../apps/api/services/onboarding/certopsReality");
 
 const agent = (over = {}) => ({
@@ -74,6 +75,23 @@ describe("summarizeAgents", () => {
 });
 
 describe("loadCertopsReality", () => {
+  it("lists the clusters whose controller has reported", async () => {
+    const pool = {
+      query: async () => ({
+        rows: [
+          {
+            cluster_id: "prod-eu",
+            last_reported_at: "2026-10-19T10:00:00.000Z",
+          },
+        ],
+      }),
+    };
+    assert.deepEqual(await loadControllerReality(pool, "w"), {
+      clusters: [
+        { clusterId: "prod-eu", lastReportedAt: "2026-10-19T10:00:00.000Z" },
+      ],
+    });
+  });
   it("returns null (unknown) when CertOps is not enabled", async () => {
     assert.equal(
       await loadCertopsReality(null, {

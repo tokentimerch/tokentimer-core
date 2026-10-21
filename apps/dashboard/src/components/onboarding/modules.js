@@ -89,10 +89,13 @@ export const GOALS = {
     label: 'Discover certificates on my servers',
     description:
       'Install an agent that finds certificates and reports them, without changing anything.',
+    // The prepared configuration comes first: the installer keeps an existing
+    // config.json, and replacing it after registration would drop the agent's
+    // identity.
     steps: [
       'certops_objective',
-      'certops_agent',
       'certops_config',
+      'certops_agent',
       'certops_execution',
       'certops_first',
       'recipients',

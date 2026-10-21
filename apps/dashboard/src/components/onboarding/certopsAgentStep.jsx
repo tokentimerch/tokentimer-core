@@ -5,7 +5,10 @@ import {
   AlertDescription,
   AlertIcon,
   Badge,
+  FormControl,
+  FormLabel,
   HStack,
+  Input,
   Text,
   VStack,
 } from '@chakra-ui/react';
@@ -25,8 +28,11 @@ import {
 import {
   REGISTRATION_NOTES,
   buildControllerSecretCommand,
+  buildControllerUpgradeCommand,
   buildControllerValues,
   buildInstallCommand,
+  certDirectoryFor,
+  isLoopbackHttp,
 } from './certopsConfig.js';
 import {
   certopsObjectiveFor,
@@ -36,6 +42,11 @@ import {
 import { createBootstrapToken } from '../certops/certopsAgentsApi.js';
 
 const POLL_MS = 5000;
+
+function agentsSummaryControllers(ctx) {
+  const certops = ctx.summary?.certops;
+  return certops && certops !== 'unknown' ? certops.controllers?.clusters : [];
+}
 
 /** Plain-language reading of one agent row, with the reason when unhealthy. */
 export function describeAgent(agent, gap = []) {
@@ -116,11 +127,16 @@ export function AgentStep({ ctx }) {
           a.livenessState === 'live' &&
           (a.commandProfiles || []).includes(wantedProfile)
       ));
+  const clusterReported = (agentsSummaryControllers(ctx) || []).some(
+    c => !clusterId || c.clusterId === clusterId
+  );
   useEffect(() => {
-    if (infra === 'kubernetes' || usableAgent) return undefined;
+    // The controller is not an agent: keep watching until it has reported.
+    const settled = infra === 'kubernetes' ? clusterReported : usableAgent;
+    if (settled) return undefined;
     timer.current = setInterval(poll, POLL_MS);
     return () => clearInterval(timer.current);
-  }, [poll, infra, usableAgent]);
+  }, [poll, infra, usableAgent, clusterReported]);
 
   if (ctx.summary?.certops === 'unknown' || ctx.summary?.certops == null) {
     return (
@@ -178,26 +194,65 @@ export function AgentStep({ ctx }) {
         }
       >
         <VStack align='stretch' spacing={3}>
-          <Text fontSize='sm'>
-            Create a machine token in Certificate Management, Settings, with the
-            observations scope and a cluster id, then store it in the cluster:
-          </Text>
-          <CopyBlock
-            label='Create the secret (token read from stdin)'
-            text={buildControllerSecretCommand({})}
-          />
-          <input
-            aria-label='Cluster id'
-            placeholder='prod-eu'
-            value={clusterId}
-            onChange={e => setClusterId(e.target.value)}
-          />
+          <FormControl>
+            <FormLabel fontSize='sm'>1. Choose a cluster id</FormLabel>
+            <Input
+              size='sm'
+              aria-label='Cluster id'
+              placeholder='prod-eu'
+              value={clusterId}
+              onChange={e => setClusterId(e.target.value)}
+            />
+          </FormControl>
           {valuesError ? (
             <Text color='red.400' fontSize='xs'>
               {valuesError}
             </Text>
           ) : null}
-          {values ? <CopyBlock label='Helm values' text={values} /> : null}
+          <Text fontSize='sm'>
+            2. Create a machine token in Certificate Management, Settings, with
+            the observations:write scope and that same cluster id (the token is
+            bound to it), then store it in the cluster:
+          </Text>
+          <CopyBlock
+            label='Create the secret (token read from stdin)'
+            text={buildControllerSecretCommand({})}
+          />
+          {values ? (
+            <>
+              <Text fontSize='sm'>
+                3. Save these values as controller-values.yaml, then upgrade
+                your TokenTimer Helm release with them, in the same namespace.
+                cert-manager must already be installed in the cluster.
+              </Text>
+              <CopyBlock label='Helm values' text={values} />
+              <CopyBlock
+                label='Apply the values'
+                text={buildControllerUpgradeCommand({})}
+              />
+              {isLoopbackHttp(ctx.apiUrl) ? (
+                <Text fontSize='xs' color={muted}>
+                  This API address is localhost, which a pod cannot reach. Use
+                  an address the cluster can resolve for api.url.
+                </Text>
+              ) : null}
+            </>
+          ) : null}
+          <HStack>
+            <Text fontSize='sm' fontWeight='semibold'>
+              Controller status
+            </Text>
+            {clusterReported ? (
+              <Badge colorScheme='green'>Reporting</Badge>
+            ) : (
+              <Badge>Waiting for the controller</Badge>
+            )}
+          </HStack>
+          <Text fontSize='xs' color={muted}>
+            {clusterReported
+              ? 'The controller has reported certificates from this cluster.'
+              : 'This page checks every few seconds. If it stays empty, read the controller pod logs and confirm the token is bound to this cluster id.'}
+          </Text>
         </VStack>
       </StepFrame>
     );
@@ -205,11 +260,21 @@ export function AgentStep({ ctx }) {
 
   let command = '';
   let commandError = '';
+  // The hardened service can only write where --write-path says and reload
+  // only what --reload-service allows, so the choices made in the
+  // configuration step have to reach the installer.
+  const linuxIssuing =
+    os === 'linux' &&
+    (saved.objective === 'automate' || saved.objective === 'vault');
+  const certDirectory = linuxIssuing ? certDirectoryFor(saved.certPath) : '';
   try {
     command = buildInstallCommand({
       os,
       apiUrl: ctx.apiUrl,
       workspaceId: ctx.workspaceId,
+      writePaths: certDirectory ? [certDirectory] : [],
+      reloadServices:
+        linuxIssuing && saved.reloadService ? [saved.reloadService] : [],
     });
   } catch (e) {
     commandError = e.message;

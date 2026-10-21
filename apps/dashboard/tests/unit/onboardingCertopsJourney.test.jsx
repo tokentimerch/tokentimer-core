@@ -172,6 +172,52 @@ describe('CertOps journey', () => {
     );
   });
 
+  it('treats a reporting Kubernetes controller as the installed component', () => {
+    const base = {
+      intent: { goal: 'certops_observe' },
+      capabilities: caps,
+    };
+    const progress = {
+      certops: {
+        objective: 'observe',
+        infrastructure: 'kubernetes',
+        clusterId: 'wiz-k8s',
+      },
+    };
+    const reality = clusters => ({
+      alerts: { smtpConfigured: true },
+      certops: {
+        agents: { live: 0 },
+        controllers: { clusters },
+        certificates: { observed: 1, total: 1 },
+      },
+    });
+    const waiting = planJourney({
+      ...base,
+      progress,
+      reality: reality([]),
+    });
+    const status = plan =>
+      Object.fromEntries(plan.steps.map(s => [s.id, s.status]));
+    // No agent configuration or execution switch exists for the controller.
+    expect(status(waiting).certops_config).toBe('done');
+    expect(status(waiting).certops_execution).toBe('done');
+    expect(waiting.currentStepId).toBe('certops_agent');
+    const other = planJourney({
+      ...base,
+      progress,
+      reality: reality([{ clusterId: 'elsewhere' }]),
+    });
+    expect(other.currentStepId).toBe('certops_agent');
+    const reporting = planJourney({
+      ...base,
+      progress,
+      reality: reality([{ clusterId: 'wiz-k8s' }]),
+    });
+    expect(status(reporting).certops_agent).toBe('done');
+    expect(status(reporting).certops_first).toBe('done');
+  });
+
   it('reopens the agent step if the agent disappears', () => {
     const plan = planJourney({
       intent: { goal: 'certops_observe' },

@@ -87,6 +87,7 @@ export function VerifyStep({ ctx }) {
           unlistedMonitors,
           token,
           summary,
+          infrastructure: ctx.session.progress?.certops?.infrastructure,
         }),
       });
     } catch (e) {

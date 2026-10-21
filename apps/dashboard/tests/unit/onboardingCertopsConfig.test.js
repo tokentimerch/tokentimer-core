@@ -18,6 +18,9 @@ import {
   nameInZone,
   SENSITIVE_PATTERN,
   STAGING_CA,
+  AGENT_KEYS_DIR,
+  certDirectoryFor,
+  mergeInstallerFields,
 } from '../../src/components/onboarding/certopsConfig.js';
 import {
   capabilityGap,
@@ -69,6 +72,37 @@ describe('support matrix', () => {
 });
 
 describe('install command', () => {
+  it('runs the installer from the scripts folder of the agent package', () => {
+    const cmd = buildInstallCommand({
+      os: 'linux',
+      apiUrl: 'https://tt.example.com',
+      workspaceId: WS,
+    });
+    expect(cmd).toMatch(/^sudo \.\/scripts\/install-agent\.sh/);
+  });
+
+  it('derives the write folder from the certificate file', () => {
+    expect(certDirectoryFor('/etc/ssl/tokentimer/a.pem')).toBe(
+      '/etc/ssl/tokentimer'
+    );
+    expect(certDirectoryFor('relative.pem')).toBe('');
+    expect(certDirectoryFor('/a.pem')).toBe('');
+    expect(certDirectoryFor('')).toBe('');
+  });
+
+  it('adds the loopback opt-in to a prepared config only for http loopback', () => {
+    const local = mergeInstallerFields(
+      { execution: { enabled: false } },
+      { apiUrl: 'http://localhost:4010', workspaceId: WS }
+    );
+    expect(local.allowInsecureLocalHttp).toBe(true);
+    expect(local.serverUrl).toBe('http://localhost:4010');
+    const remote = mergeInstallerFields(
+      { execution: { enabled: false } },
+      { apiUrl: 'https://tt.example.com', workspaceId: WS }
+    );
+    expect(remote.allowInsecureLocalHttp).toBeUndefined();
+  });
   it('never contains a bootstrap token and quotes values', () => {
     const cmd = buildInstallCommand({
       os: 'linux',
@@ -204,6 +238,17 @@ describe('automate config', () => {
   it('turns execution on, because the dry-run stage needs it', () => {
     const { config } = buildAutomateConfig(base);
     expect(config.execution.enabled).toBe(true);
+  });
+
+  it('keeps keys in the state directory and allows exactly that and the certificate folder', () => {
+    const { config } = buildAutomateConfig(base);
+    expect(config.execution.keysDir).toBe(AGENT_KEYS_DIR);
+    expect(AGENT_KEYS_DIR).toBe('/opt/tokentimer-agent/state/keys');
+    // A deploy also names the key path, so both folders must be allowed.
+    expect(config.policy.allowedPaths).toEqual([
+      '/etc/ssl/example',
+      AGENT_KEYS_DIR,
+    ]);
   });
 
   it('declares the names and command profile the control plane routes on', () => {

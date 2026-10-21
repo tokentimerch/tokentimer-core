@@ -113,6 +113,32 @@ describe('evaluateVerification for every goal', () => {
     );
   });
 
+  it('Kubernetes observe checks the controller, not an agent', () => {
+    const run = clusters =>
+      evaluateVerification({
+        goal: 'certops_observe',
+        infrastructure: 'kubernetes',
+        token: routed,
+        summary: {
+          ...smtp,
+          certops: {
+            agents: { live: 0 },
+            controllers: { clusters },
+            certificates: { total: 1 },
+          },
+        },
+      });
+    const silent = run([]);
+    expect(silent.ok).toBe(false);
+    expect(silent.checks.find(c => c.id === 'controller').status).toBe('fail');
+    expect(silent.checks.find(c => c.id === 'agent')).toBeUndefined();
+    const reporting = run([{ clusterId: 'prod-eu' }]);
+    expect(reporting.ok).toBe(true);
+    expect(reporting.checks.find(c => c.id === 'controller').detail).toBe(
+      'Cluster prod-eu'
+    );
+  });
+
   it('unreadable CertOps state is a warning, never a pass', () => {
     const r = evaluateVerification({
       goal: 'certops_observe',

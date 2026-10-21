@@ -3163,6 +3163,25 @@ paths:
                                   observed:
                                     type: integer
                                 additionalProperties: true
+                              controllers:
+                                type: object
+                                description: >-
+                                  Kubernetes controllers that have reported
+                                  observations, newest first (up to 10
+                                  clusters).
+                                properties:
+                                  clusters:
+                                    type: array
+                                    items:
+                                      type: object
+                                      properties:
+                                        clusterId:
+                                          type: string
+                                        lastReportedAt:
+                                          type: string
+                                          format: date-time
+                                          nullable: true
+                                additionalProperties: true
                               distribution:
                                 type: object
                                 description: >-

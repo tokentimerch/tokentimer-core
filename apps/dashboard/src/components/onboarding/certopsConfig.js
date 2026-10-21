@@ -14,6 +14,11 @@ const LETS_ENCRYPT_STAGING =
 const LETS_ENCRYPT_PRODUCTION =
   'https://acme-v02.api.letsencrypt.org/directory';
 
+// Where the Linux installer puts the agent state. Keys live under it because
+// it is the one writable location of the hardened service.
+export const AGENT_STATE_DIR = '/opt/tokentimer-agent/state';
+export const AGENT_KEYS_DIR = `${AGENT_STATE_DIR}/keys`;
+
 export const DNS_PROVIDERS = {
   cloudflare: {
     label: 'Cloudflare',
@@ -134,7 +139,19 @@ export function buildInstallCommand({
   // The docs advise opting out of the trust store on hosts that will not
   // receive a trust anchor, so it is explicit rather than assumed.
   flags.push(trustStore ? '--trust-store' : '--no-trust-store');
-  return `sudo ./install-agent.sh \\\n  ${flags.join(' \\\n  ')}`;
+  // The script lives under scripts/ in the agent package, like the Windows one.
+  return `sudo ./scripts/install-agent.sh \\\n  ${flags.join(' \\\n  ')}`;
+}
+
+/**
+ * The directory a Linux install grants write access to, derived from the
+ * chosen certificate file. Nothing is granted when the path is not absolute.
+ */
+export function certDirectoryFor(certPath) {
+  const text = String(certPath || '');
+  if (!text.startsWith('/')) return '';
+  const dir = text.replace(/\/[^/]*$/, '');
+  return dir && dir !== '/' ? dir : '';
 }
 
 export const REGISTRATION_NOTES = [
@@ -270,14 +287,16 @@ export function buildAutomateConfig({
     execution: {
       enabled: true,
       dryRun,
-      keysDir: os === 'windows' ? undefined : '/var/lib/tokentimer-agent/keys',
+      keysDir: os === 'windows' ? undefined : AGENT_KEYS_DIR,
     },
     policy: {
       allowedTargetSelectors: list,
+      // Deploying also names the private key in its keys directory, so that
+      // directory has to be allowed next to the certificate directory.
       allowedPaths:
         os === 'windows'
           ? []
-          : [certPath.replace(/\/[^/]+$/, ''), '/var/lib/tokentimer-agent'],
+          : [certPath.replace(/\/[^/]+$/, ''), AGENT_KEYS_DIR],
       allowedCaEndpoints: [caEndpoint],
       allowedDnsZones: [zone],
       allowedDnsProviders: [dnsProvider],
@@ -489,6 +508,20 @@ export function buildControllerValues({
     '    apiToken:',
     '      existingSecret: tokentimer-controller-token',
     '      key: token',
+  ].join('\n');
+}
+
+/**
+ * Upgrade of the TokenTimer chart release that carries the controller. The
+ * release keeps its other values; only the controller block is added.
+ */
+export function buildControllerUpgradeCommand({
+  namespace = 'tokentimer',
+  release = 'tokentimer',
+}) {
+  return [
+    `helm upgrade --install ${release} oci://ghcr.io/tokentimerch/charts/tokentimer \\`,
+    `  --namespace ${namespace} --reuse-values -f controller-values.yaml`,
   ].join('\n');
 }
 
@@ -707,7 +740,16 @@ export function buildPreseedSteps({ os, config }) {
   };
 }
 
-/** serverUrl and workspaceId are normally written by the installer. */
+/**
+ * serverUrl and workspaceId are normally written by the installer. The
+ * installer keeps a prepared file untouched, so a loopback http address also
+ * needs the matching opt-in here or the agent refuses to start.
+ */
 export function mergeInstallerFields(config, { apiUrl, workspaceId }) {
-  return { serverUrl: apiUrl, workspaceId, ...config };
+  return {
+    serverUrl: apiUrl,
+    workspaceId,
+    ...(isLoopbackHttp(apiUrl) ? { allowInsecureLocalHttp: true } : {}),
+    ...config,
+  };
 }
