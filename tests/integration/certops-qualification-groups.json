@@ -8,6 +8,10 @@
     "requiredTests": [
       {
         "file": "certops-adcs-enrollments.test.js",
+        "name": "claims the continuation of a first enrollment that has no certificate identity yet"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
         "name": "decodes a BIGINT RequestId and schedules reconciliation"
       },
       {

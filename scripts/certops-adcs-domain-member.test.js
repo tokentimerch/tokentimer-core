@@ -57,6 +57,7 @@ $ast=[System.Management.Automation.Language.Parser]::ParseFile($env:CERTOPS_PROV
 $blocks=@($ast.FindAll({param($node) $node -is [System.Management.Automation.Language.TryStatementAst] -and $node.Extent.Text.Contains('# The focused CA oracle')},$true)|Sort-Object {$_.Extent.Text.Length})
 if($blocks.Count -eq 0){throw 'Native execution block missing'}
 $nativeExecutionFailure=$null
+$QualificationScope='comprehensive';$runAcceptance=$true;$Shard='all'
 $IssuerReassignment='0';$PendingElapsedQualification='0';$HierarchyRole='root';$WindowsVersion='2022';$Language='en-US';$ResponseLossExperiment='0';$JournalPhaseExperiment='none';$ResourceGroup='tt-certops-1-1';$testParameters=@();$password='unused'
 function Invoke-Stage {
  param($Machine,$Script,$Marker,$Parameters)

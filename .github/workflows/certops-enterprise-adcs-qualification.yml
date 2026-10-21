@@ -26,7 +26,7 @@ on:
         description: Maximum resource lifetime in hours
         type: choice
         options: ['4', '8']
-        default: '4'
+        default: '8'
       windows_version:
         description: Domain member Windows Server image to qualify
         type: choice
@@ -81,7 +81,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: certops-adcs-lab
-    timeout-minutes: 150
+    timeout-minutes: 300
     permissions:
       contents: read
       id-token: write

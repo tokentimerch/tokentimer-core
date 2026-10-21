@@ -1355,7 +1355,7 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
   }
 
   // [0]=state, [1]=heartbeat millis (worker ticks while held)
-  const sab = new SharedArrayBuffer(8);
+  const sab = new SharedArrayBuffer(16);
   const state = new Int32Array(sab);
   Atomics.store(state, 0, EXCLUSIVE_LOCK_STATE_PENDING);
   Atomics.store(state, 1, 0);
@@ -1394,6 +1394,7 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
     );
   }
 
+  const heartbeat = new BigInt64Array(sab, 8, 1);
   const ownerToken = crypto.randomBytes(16).toString("hex");
   // Marker is best-effort and never consulted for exclusion. Writing it
   // after the listen succeeds means a crash between listen and write leaves
@@ -1411,8 +1412,6 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
   let released = false;
   let lost = false;
   let lostReason = "lock worker exited unexpectedly";
-  let lastBeat = 0;
-  let lastBeatChangedAt = process.hrtime.bigint();
 
   function buildLostError() {
     return buildError(
@@ -1434,27 +1433,19 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
 
   /**
    * The worker bumps the beat every 50ms. Staleness is judged on a monotonic
-   * clock by "has the beat changed", not by comparing wall-clock stamps, so a
-   * clock step or a VM pause cannot fake a lost lock. A stale-looking beat
+   * clock using the worker's publication time, not its observation time. A
+   * delayed parent cannot renew authority from a dead worker's old beat. A stale beat
    * gets one short grace wait for a descheduled-but-alive worker to tick; a
    * dead worker never does.
    */
   function heartbeatIsFresh() {
-    const beat = Atomics.load(state, 1);
-    if (beat === 0) return false;
-    const nowMono = process.hrtime.bigint();
-    if (beat !== lastBeat) {
-      lastBeat = beat;
-      lastBeatChangedAt = nowMono;
-      return true;
-    }
-    const quietMs = Number((nowMono - lastBeatChangedAt) / 1_000_000n);
+    const beat = Atomics.load(heartbeat, 0);
+    if (beat === 0n) return false;
+    const quietMs = Number((process.hrtime.bigint() - beat) / 1_000_000n);
     if (quietMs <= EXCLUSIVE_LOCK_HEARTBEAT_STALE_MS) return true;
-    Atomics.wait(state, 1, beat, EXCLUSIVE_LOCK_HEARTBEAT_GRACE_MS);
-    const after = Atomics.load(state, 1);
+    Atomics.wait(heartbeat, 0, beat, EXCLUSIVE_LOCK_HEARTBEAT_GRACE_MS);
+    const after = Atomics.load(heartbeat, 0);
     if (after !== beat) {
-      lastBeat = after;
-      lastBeatChangedAt = process.hrtime.bigint();
       return true;
     }
     if (!lost) lostReason = `lock worker heartbeat stalled for ${quietMs}ms`;
