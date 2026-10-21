@@ -13,6 +13,31 @@ import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { SENSITIVE_PATTERN } from './certopsConfig.js';
 
 /**
+ * Error and warning lines. The theme gives every Text a fixed light-mode
+ * colour that beats a plain color prop, so these set the colour through the
+ * light-mode override as well and read right in both themes.
+ */
+export function ErrorText({ children, ...props }) {
+  const { dashboard } = useDashboardTheme();
+  const color = dashboard.state.danger;
+  return (
+    <Text fontSize='xs' color={color} _light={{ color }} {...props}>
+      {children}
+    </Text>
+  );
+}
+
+export function WarnText({ children, ...props }) {
+  const { dashboard } = useDashboardTheme();
+  const color = dashboard.state.warning;
+  return (
+    <Text fontSize='xs' color={color} _light={{ color }} {...props}>
+      {children}
+    </Text>
+  );
+}
+
+/**
  * A command or config the operator copies and runs on their host. By default
  * it refuses to render anything that looks like a credential so a bug upstream
  * can never put a secret on screen or in the clipboard. Only the one-time
@@ -29,10 +54,11 @@ export function CopyBlock({
   const [copied, setCopied] = useState(false);
   if (!allowSecret && SENSITIVE_PATTERN.test(String(text))) {
     return (
-      <Text fontSize='sm' color='red.400'>
-        This content contained something that looks like a credential and was
-        not displayed.
-      </Text>
+      <ErrorText fontSize='sm' data-testid='copy-refused'>
+        {label ? `${label}: ` : ''}this content contained something that looks
+        like a credential, so it is not shown. Remove any token or key you
+        pasted into a field above, and this block comes back.
+      </ErrorText>
     );
   }
   const copy = async () => {

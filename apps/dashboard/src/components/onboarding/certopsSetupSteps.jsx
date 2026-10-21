@@ -6,19 +6,21 @@ import {
   FormLabel,
   HStack,
   Input,
+  ListItem,
   Radio,
   RadioGroup,
   Select,
   Stack,
   Text,
   Textarea,
+  UnorderedList,
   VStack,
 } from '@chakra-ui/react';
 import { DashboardErrorAlert } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
-import { CopyBlock } from './blocks.jsx';
+import { CopyBlock, ErrorText } from './blocks.jsx';
 import { GOALS } from './modules.js';
 import { ADCS_DRY_RUN_NOTE, buildAdcsConfig } from './adcsModel.js';
 import { mergeCertops, scopeCertops } from './certopsScope.js';
@@ -38,6 +40,7 @@ import {
   AGENT_KEYS_DIR,
   buildObserveConfig,
   buildPreseedSteps,
+  buildLinuxCredentialPrep,
   dnsCredentialsExample,
   mergeInstallerFields,
   windowsCredentialAclCommand,
@@ -46,17 +49,67 @@ import {
 // acme.sh is a shell script, so Windows needs a shell to run it. Git for
 // Windows ships one, which the Windows guide uses.
 const DEFAULT_WINDOWS_SHELL = 'C:\\Program Files\\Git\\bin\\bash.exe';
+// The Vault issuer writes no certificate file; the config builder still
+// wants a path, and it is dropped from the allowed paths below.
+const VAULT_UNUSED_CERT_PATH = '/etc/ssl/tokentimer/unused.pem';
 
 // The agent binds a certificate to an existing TLS listener; it never
 // creates the site, and the binding on that port is replaced.
 const BINDING_NOTE =
   'Issuing replaces the certificate currently bound to this port. A TLS listener (for example an IIS site) must already exist, because the agent does not create sites.';
 
+// Field names for the "To continue" line, in the words the form uses.
+const FIELD_NAMES = {
+  names: 'the names',
+  zone: 'the DNS zone',
+  dnsProvider: 'the DNS provider',
+  caEndpoint: 'the ACME directory URL',
+  certPath: 'the certificate file path',
+  acmeClientPath: 'the ACME client path',
+  acmeShellPath: 'the shell path',
+  reloadService: 'the web server to reload',
+  caHost: 'the CA server',
+  caName: 'the CA name',
+  template: 'the template',
+  dnsScopes: 'the allowed DNS scopes',
+};
+
+const STAGING_WARNING =
+  'The first order uses the Let’s Encrypt staging CA, so its test certificate is not trusted by browsers. That is intended for a first run.';
+const DNS_PREREQUISITES = [
+  'A domain you control, with its DNS zone at a provider that has an API.',
+  'An API credential for that DNS provider, limited to that zone. It stays on the server and is never entered here.',
+];
+
+// Prerequisites the operator must have before the first step, by objective.
+const BEFORE_YOU_START = {
+  automate: [
+    ...DNS_PREREQUISITES,
+    'A web server on the host that will use the certificate (nginx, Apache or HAProxy on Linux, an IIS site on Windows) if you want it reloaded for you.',
+    STAGING_WARNING,
+  ],
+  vault: [
+    ...DNS_PREREQUISITES,
+    'A HashiCorp Vault server with a KV v2 mount, and two Linux servers: one that issues the certificate and one that installs it.',
+    STAGING_WARNING,
+  ],
+  adcs: [
+    'A Windows Server that is joined to your domain and is not a domain controller.',
+    'Enroll permission on the certificate template for that server’s computer account.',
+    'A network route from that server to your Certification Authority.',
+  ],
+};
+
+const IIS_SITE_HELPER =
+  'The name of an existing IIS site, as shown in IIS Manager. The certificate is bound to its HTTPS binding on the port beside it.';
+
+// Errors use the theme-safe red from ErrorText: the theme pins Text to a dark
+// grey in the light theme, which made plain red text read as body text there.
 function errorLines(messages) {
   return messages.map(m => (
-    <Text key={m} as='span' display='block'>
+    <ErrorText key={m} as='span' display='block'>
       {m}
-    </Text>
+    </ErrorText>
   ));
 }
 
@@ -119,6 +172,18 @@ export function ObjectiveStep({ ctx }) {
     >
       <VStack align='stretch' spacing={3}>
         {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
+        {BEFORE_YOU_START[objective] ? (
+          <Box data-testid='before-you-start'>
+            <Text fontSize='sm' fontWeight='semibold'>
+              Before you start
+            </Text>
+            <UnorderedList fontSize='sm' spacing={1} ml={5} mt={1}>
+              {BEFORE_YOU_START[objective].map(item => (
+                <ListItem key={item}>{item}</ListItem>
+              ))}
+            </UnorderedList>
+          </Box>
+        ) : null}
         {picks.some(o => o.candidate) ? <CandidateNote /> : null}
         <RadioGroup value={infra} onChange={setInfra}>
           <Stack spacing={3}>
@@ -176,6 +241,7 @@ export function ObjectiveStep({ ctx }) {
 }
 
 export function ConfigStep({ ctx }) {
+  const { muted } = useDashboardTheme();
   const saved = certopsProgress(ctx);
   const goal = GOALS[ctx.session.intent?.goal];
   const objective = goal?.certopsObjective || saved.objective || 'observe';
@@ -185,7 +251,9 @@ export function ConfigStep({ ctx }) {
     names: saved.names || '',
     zone: saved.zone || '',
     dnsProvider: saved.dnsProvider || 'cloudflare',
-    certPath: saved.certPath || '/etc/ssl/tokentimer/example.pem',
+    // No default on purpose: a pre-filled example path looks real and would
+    // be requested as typed. Vault issues no file, so it uses a fixed value.
+    certPath: saved.certPath || '',
     caEndpoint: saved.caEndpoint || STAGING_CA,
     reloadService: saved.reloadService || '',
     acmeClientPath: saved.acmeClientPath || '',
@@ -262,7 +330,7 @@ export function ConfigStep({ ctx }) {
       acmeShellPath: form.acmeShellPath,
       zone: form.zone,
       dnsProvider: form.dnsProvider,
-      certPath: form.certPath,
+      certPath: objective === 'vault' ? VAULT_UNUSED_CERT_PATH : form.certPath,
       caEndpoint: form.caEndpoint,
       reloadService: objective === 'vault' ? '' : form.reloadService,
     });
@@ -272,8 +340,11 @@ export function ConfigStep({ ctx }) {
       result.config.policy.allowedPaths = [AGENT_KEYS_DIR];
     }
   }
-  const adcsErrors = objective === 'adcs' ? result.fieldErrors || {} : {};
-  const shown = key => (touched[key] ? adcsErrors[key] || [] : []);
+  const fieldErrors = result.fieldErrors || {};
+  const shown = key => (touched[key] ? fieldErrors[key] || [] : []);
+  // Why the main button is off, said once and without red until the person
+  // has started typing, so a blank form does not open with errors.
+  const missing = Object.keys(fieldErrors).map(k => FIELD_NAMES[k] || k);
   const preseed = result.ok
     ? buildPreseedSteps({
         os,
@@ -284,6 +355,9 @@ export function ConfigStep({ ctx }) {
       })
     : null;
 
+  const credentialsFile = result.ok
+    ? result.config.dnsProviders?.[form.dnsProvider]?.credentialsFile || ''
+    : '';
   const confirm = async () => {
     try {
       await saveCertops(ctx, {
@@ -314,7 +388,7 @@ export function ConfigStep({ ctx }) {
     <StepFrame
       kind='runbook'
       title='Prepare the agent configuration'
-      description='Created on the server before the agent registers, because command profiles are reported only at registration.'
+      description='You save a settings file on the server before you install the agent, so the agent starts with it. The installer keeps this file as it is.'
       docs={[
         ...ctx.docs('certops.agentConfig', 'Agent configuration'),
         ...(objective === 'adcs' || objective === 'observe'
@@ -416,6 +490,10 @@ export function ConfigStep({ ctx }) {
                 <FormErrorMessage fontSize='xs'>
                   {errorLines(shown('template'))}
                 </FormErrorMessage>
+                <Text fontSize='xs' mt={1} data-testid='template-helper'>
+                  The template&apos;s common name from the CA console, with no
+                  spaces. For example WebServer.
+                </Text>
               </FormControl>
               <FormControl
                 flex='1 1 240px'
@@ -433,6 +511,10 @@ export function ConfigStep({ ctx }) {
                 <FormErrorMessage fontSize='xs'>
                   {errorLines(shown('dnsScopes'))}
                 </FormErrorMessage>
+                <Text fontSize='xs' mt={1} data-testid='dns-scopes-helper'>
+                  The names this host may request certificates for. A scope such
+                  as corp.example.com also covers web.corp.example.com.
+                </Text>
               </FormControl>
             </HStack>
             <Text fontSize='xs'>
@@ -449,6 +531,9 @@ export function ConfigStep({ ctx }) {
                   value={form.iisSite}
                   onChange={set('iisSite')}
                 />
+                <Text fontSize='xs' mt={1} data-testid='iis-site-helper'>
+                  {IIS_SITE_HELPER}
+                </Text>
               </FormControl>
               <FormControl flex='0 1 110px'>
                 <FormLabel fontSize='sm'>Port</FormLabel>
@@ -466,24 +551,36 @@ export function ConfigStep({ ctx }) {
           </>
         ) : (
           <>
-            <FormControl isRequired>
+            <FormControl isRequired isInvalid={shown('names').length > 0}>
               <FormLabel fontSize='sm'>Names (comma separated)</FormLabel>
               <Input
                 size='sm'
                 value={form.names}
                 onChange={set('names')}
+                onBlur={blur('names')}
                 placeholder='www.example.com'
               />
+              <FormErrorMessage fontSize='xs'>
+                {errorLines(shown('names'))}
+              </FormErrorMessage>
             </FormControl>
             <HStack align='start' spacing={3} flexWrap='wrap'>
-              <FormControl flex='1 1 200px' isRequired>
+              <FormControl
+                flex='1 1 200px'
+                isRequired
+                isInvalid={shown('zone').length > 0}
+              >
                 <FormLabel fontSize='sm'>DNS zone</FormLabel>
                 <Input
                   size='sm'
                   value={form.zone}
                   onChange={set('zone')}
+                  onBlur={blur('zone')}
                   placeholder='example.com'
                 />
+                <FormErrorMessage fontSize='xs'>
+                  {errorLines(shown('zone'))}
+                </FormErrorMessage>
               </FormControl>
               <FormControl flex='1 1 200px'>
                 <FormLabel fontSize='sm'>DNS provider</FormLabel>
@@ -505,7 +602,10 @@ export function ConfigStep({ ctx }) {
             </HStack>
             {os === 'windows' ? (
               <>
-                <FormControl isRequired>
+                <FormControl
+                  isRequired
+                  isInvalid={shown('acmeClientPath').length > 0}
+                >
                   <FormLabel fontSize='sm'>
                     ACME client on the Windows host
                   </FormLabel>
@@ -513,8 +613,12 @@ export function ConfigStep({ ctx }) {
                     size='sm'
                     value={form.acmeClientPath}
                     onChange={set('acmeClientPath')}
+                    onBlur={blur('acmeClientPath')}
                     placeholder='C:\acme\acme.sh.exe'
                   />
+                  <FormErrorMessage fontSize='xs'>
+                    {errorLines(shown('acmeClientPath'))}
+                  </FormErrorMessage>
                   <Text fontSize='xs' mt={1}>
                     Full path of the ACME client the agent may run. acme.sh is a
                     shell script, so it needs the shell below. Certbot is not
@@ -522,7 +626,7 @@ export function ConfigStep({ ctx }) {
                     this command.
                   </Text>
                 </FormControl>
-                <FormControl>
+                <FormControl isInvalid={shown('acmeShellPath').length > 0}>
                   <FormLabel fontSize='sm'>
                     Shell that runs the ACME client (optional)
                   </FormLabel>
@@ -530,10 +634,15 @@ export function ConfigStep({ ctx }) {
                     size='sm'
                     value={form.acmeShellPath}
                     onChange={set('acmeShellPath')}
+                    onBlur={blur('acmeShellPath')}
                     placeholder='C:\Program Files\Git\bin\bash.exe'
                   />
-                  <Text fontSize='xs' mt={1}>
-                    Git for Windows ships bash.exe. Leave it empty only when the
+                  <FormErrorMessage fontSize='xs'>
+                    {errorLines(shown('acmeShellPath'))}
+                  </FormErrorMessage>
+                  <Text fontSize='xs' mt={1} data-testid='git-for-windows-note'>
+                    Install Git for Windows on this server first: it provides
+                    bash.exe, which runs acme.sh. Leave this empty only when the
                     ACME client above is a native program.
                   </Text>
                 </FormControl>
@@ -547,6 +656,9 @@ export function ConfigStep({ ctx }) {
                       value={form.iisSite}
                       onChange={set('iisSite')}
                     />
+                    <Text fontSize='xs' mt={1} data-testid='iis-site-helper'>
+                      {IIS_SITE_HELPER}
+                    </Text>
                   </FormControl>
                   <FormControl flex='0 1 110px'>
                     <FormLabel fontSize='sm'>Port</FormLabel>
@@ -564,6 +676,10 @@ export function ConfigStep({ ctx }) {
                       value={form.sniHost}
                       onChange={set('sniHost')}
                     />
+                    <Text fontSize='xs' mt={1} data-testid='sni-helper'>
+                      The hostname clients ask for when several sites share this
+                      IP address and port. Leave it empty if unsure.
+                    </Text>
                   </FormControl>
                 </HStack>
                 <Text fontSize='xs' data-testid='binding-note'>
@@ -572,22 +688,36 @@ export function ConfigStep({ ctx }) {
               </>
             ) : null}
             {os === 'linux' && objective !== 'vault' ? (
-              <FormControl>
+              <FormControl isRequired isInvalid={shown('certPath').length > 0}>
                 <FormLabel fontSize='sm'>Certificate file path</FormLabel>
                 <Input
                   size='sm'
                   value={form.certPath}
                   onChange={set('certPath')}
+                  onBlur={blur('certPath')}
+                  placeholder='/etc/ssl/tokentimer/www.example.com.pem'
                 />
+                <FormErrorMessage fontSize='xs'>
+                  {errorLines(shown('certPath'))}
+                </FormErrorMessage>
+                <Text fontSize='xs' mt={1} data-testid='cert-path-helper'>
+                  Where the agent writes the certificate. Choose a new file name
+                  in a folder your web server can read. The key goes next to it
+                  with .key added.
+                </Text>
               </FormControl>
             ) : null}
-            <FormControl>
+            <FormControl isInvalid={shown('caEndpoint').length > 0}>
               <FormLabel fontSize='sm'>ACME directory URL</FormLabel>
               <Input
                 size='sm'
                 value={form.caEndpoint}
                 onChange={set('caEndpoint')}
+                onBlur={blur('caEndpoint')}
               />
+              <FormErrorMessage fontSize='xs'>
+                {errorLines(shown('caEndpoint'))}
+              </FormErrorMessage>
               <Text fontSize='xs' mt={1}>
                 Defaults to the Let&apos;s Encrypt staging CA. Use your own
                 private ACME CA address if you have one.
@@ -621,21 +751,32 @@ export function ConfigStep({ ctx }) {
                   request step shows the exact lines for your server.
                 </Text>
                 {form.reloadService === 'nginx' ? (
-                  <VStack align='stretch' spacing={2} mt={1}>
-                    <Text fontSize='xs' data-testid='reload-nginx-note'>
-                      nginx cannot test its own configuration as an unprivileged
-                      user (nginx -t has to write /run/nginx.pid and its error
-                      log), so for nginx the agent only checks that the service
-                      is running. The stock nginx unit does not test the
-                      configuration on reload either, so run this once on the
-                      server. It makes every reload test the configuration as
-                      root first and fail when the test fails.
-                    </Text>
-                    <CopyBlock
-                      label='One-time nginx setup'
-                      text={NGINX_RELOAD_DROPIN}
-                    />
-                  </VStack>
+                  <Box as='details' mt={1} data-testid='reload-nginx-panel'>
+                    <Box
+                      as='summary'
+                      fontSize='xs'
+                      cursor='pointer'
+                      fontWeight='semibold'
+                    >
+                      One-time nginx setup, so a reload tests the configuration
+                    </Box>
+                    <VStack align='stretch' spacing={2} mt={2}>
+                      <Text fontSize='xs' data-testid='reload-nginx-note'>
+                        nginx cannot test its own configuration as an
+                        unprivileged user (nginx -t has to write /run/nginx.pid
+                        and its error log), so for nginx the agent only checks
+                        that the service is running. The stock nginx unit does
+                        not test the configuration on reload either, so run this
+                        once on the server. It makes every reload test the
+                        configuration as root first and fail when the test
+                        fails.
+                      </Text>
+                      <CopyBlock
+                        label='One-time nginx setup'
+                        text={NGINX_RELOAD_DROPIN}
+                      />
+                    </VStack>
+                  </Box>
                 ) : null}
                 {form.reloadService === 'apache' ? (
                   <Text fontSize='xs' mt={1} data-testid='reload-apache-note'>
@@ -662,13 +803,12 @@ export function ConfigStep({ ctx }) {
             ) : null}
           </>
         )}
-        {!result.ok && objective !== 'adcs'
-          ? (result.problems || []).map(p => (
-              <Text key={p} fontSize='xs' color='red.400'>
-                {p}
-              </Text>
-            ))
-          : null}
+        {!result.ok ? (
+          <Text fontSize='xs' color={muted} data-testid='config-missing'>
+            The button below stays disabled until these are filled in correctly:{' '}
+            {missing.join(', ')}.
+          </Text>
+        ) : null}
         {preseed ? (
           <>
             {preseed.steps.map((s, i) => (
@@ -689,16 +829,23 @@ export function ConfigStep({ ctx }) {
               <Text fontSize='xs' data-testid='dns-credentials-note'>
                 The DNS credential stays on the host in a file readable only by
                 the agent. It is never entered here. Create it yourself at{' '}
-                {result.config.dnsProviders?.[form.dnsProvider]
-                  ?.credentialsFile || 'the path in the file above'}{' '}
+                {credentialsFile || 'the path in the file above'}{' '}
                 {os === 'windows'
                   ? '(then lock it down so only SYSTEM and Administrators can read it, see below)'
-                  : '(mode 0600; once the installer has created the service user, make that user the owner)'}{' '}
+                  : '(mode 0600, owned by the agent user once the installer has created it, see below)'}{' '}
                 with these fields:{' '}
                 {(DNS_PROVIDERS[form.dnsProvider]?.fields || []).join(', ')}.
                 The DNS providers page shows the exact file format. The CA is
                 the Let&apos;s Encrypt staging endpoint until you change it.
               </Text>
+            ) : null}
+            {objective !== 'observe' &&
+            objective !== 'adcs' &&
+            os === 'linux' ? (
+              <CopyBlock
+                label='Create the folder now, set the owner after the installer has run'
+                text={buildLinuxCredentialPrep(credentialsFile)}
+              />
             ) : null}
             {objective === 'automate' &&
             dnsCredentialsExample(form.dnsProvider) ? (
@@ -711,10 +858,10 @@ export function ConfigStep({ ctx }) {
             {objective === 'automate' ? (
               <Text fontSize='xs' data-testid='dns-propagation-note'>
                 After publishing the challenge record, the agent waits until it
-                can see it. If your DNS is split-horizon or the zone is not
-                publicly delegated, the agent may not see the record in time;
-                see dnsPropagation (resolvers, timeoutMs, checkAuthoritative) in
-                the DNS providers documentation.
+                can see it. Some DNS setups, such as split-horizon or private
+                zones, need the DNS propagation settings (which resolvers to
+                ask, how long to wait, whether to check the authoritative
+                servers); see the DNS propagation page.
               </Text>
             ) : null}
             {objective === 'automate' && os === 'windows' ? (

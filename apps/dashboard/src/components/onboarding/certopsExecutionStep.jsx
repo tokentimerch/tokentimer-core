@@ -4,7 +4,7 @@ import { DashboardErrorAlert } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
-import { CopyBlock } from './blocks.jsx';
+import { CopyBlock, WarnText } from './blocks.jsx';
 import { GOALS } from './modules.js';
 import {
   agentConfigPathFor,
@@ -218,10 +218,10 @@ export function ExecutionStep({ ctx }) {
           </>
         ) : null}
         {job && job.status !== 'dry_run_complete' ? (
-          <Text fontSize='xs' color='orange.400'>
+          <WarnText>
             The test job is {job.status}. A passing dry run ends as
             dry_run_complete, not as succeeded.
-          </Text>
+          </WarnText>
         ) : null}
         {state.done.includes('dryrun') ? (
           <Text fontSize='sm'>

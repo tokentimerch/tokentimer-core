@@ -155,6 +155,24 @@ function shQuote(value) {
 }
 
 /**
+ * Linux DNS credential file preparation. The installer does not create
+ * /etc/tokentimer-agent, and the agent user only exists after it has run, so
+ * the owner is set afterwards.
+ */
+export function buildLinuxCredentialPrep(credentialsFile) {
+  const file = String(credentialsFile || '');
+  const dir = file.startsWith('/') ? file.replace(/\/[^/]*$/, '') : '';
+  if (!dir) return '';
+  const quote = p => (/^[\w./-]+$/.test(p) ? p : shQuote(p));
+  return [
+    `sudo install -d -m 0755 ${quote(dir)}`,
+    `# create ${file} with the credential fields, then after the installer has run:`,
+    `sudo chown ${AGENT_USER}:${AGENT_USER} ${quote(file)}`,
+    `sudo chmod 0600 ${quote(file)}`,
+  ].join('\n');
+}
+
+/**
  * The agent refuses a DNS credential file whose access list is wider than
  * SYSTEM and Administrators, so the file must be locked down after it is
  * created. *S-1-5-32-544 is the built-in Administrators group.
@@ -395,8 +413,16 @@ export function buildAutomateConfig({
   dryRun = true,
 }) {
   const problems = [];
+  // The same messages, grouped by the field they belong to so the form can
+  // show each one next to its input.
+  const fieldErrors = {};
+  const problem = (field, message) => {
+    problems.push(message);
+    (fieldErrors[field] ||= []).push(message);
+  };
   if (os === 'windows' && !WINDOWS_PATH.test(String(acmeClientPath || '')))
-    problems.push(
+    problem(
+      'acmeClientPath',
       'Enter the full path of the ACME client on the Windows host, for example C:\\acme\\acme.sh.'
     );
   if (
@@ -404,28 +430,31 @@ export function buildAutomateConfig({
     String(acmeShellPath || '').trim() &&
     !WINDOWS_PATH.test(String(acmeShellPath).trim())
   )
-    problems.push(
+    problem(
+      'acmeShellPath',
       'Enter the full path of the shell that runs the ACME client, for example C:\\Program Files\\Git\\bin\\bash.exe, or leave it empty for a native program.'
     );
   if (reloadService && os === 'windows')
-    problems.push('Reloading a web server is for Linux hosts.');
+    problem('reloadService', 'Reloading a web server is for Linux hosts.');
   if (reloadService && !RELOAD_SERVICES[reloadService])
-    problems.push('Choose nginx, Apache or HAProxy, or no reload.');
+    problem('reloadService', 'Choose nginx, Apache or HAProxy, or no reload.');
   const list = (names || []).map(n => String(n).trim()).filter(Boolean);
-  if (list.length === 0) problems.push('Enter at least one name.');
+  if (list.length === 0) problem('names', 'Enter at least one name.');
   for (const n of list) {
-    if (!isValidHostname(n)) problems.push(`"${n}" is not a valid hostname.`);
+    if (!isValidHostname(n))
+      problem('names', `"${n}" is not a valid hostname.`);
     else if (!nameInZone(n, zone))
-      problems.push(`"${n}" is not inside ${zone}.`);
+      problem('names', `"${n}" is not inside ${zone}.`);
   }
-  if (!isValidZone(zone)) problems.push('Enter a valid DNS zone.');
-  if (!DNS_PROVIDERS[dnsProvider]) problems.push('Choose a DNS provider.');
+  if (!isValidZone(zone)) problem('zone', 'Enter a valid DNS zone.');
+  if (!DNS_PROVIDERS[dnsProvider])
+    problem('dnsProvider', 'Choose a DNS provider.');
   if (!/^https:\/\//.test(caEndpoint || ''))
-    problems.push('The CA address must use https.');
+    problem('caEndpoint', 'The CA address must use https.');
   if (os !== 'windows' && !String(certPath || '').startsWith('/')) {
-    problems.push('The certificate path must be an absolute file path.');
+    problem('certPath', 'The certificate path must be an absolute file path.');
   }
-  if (problems.length) return { ok: false, problems };
+  if (problems.length) return { ok: false, problems, fieldErrors };
 
   // Windows uses an operator-supplied ACME client under a name the job refers
   // to; Linux uses certbot. acme.sh is a shell script, so on Windows the
@@ -1169,7 +1198,7 @@ export function buildPreseedSteps({ os, config }) {
         'Create the state folder if it does not exist: C:\\ProgramData\\TokenTimerAgent\\state',
         'Save the JSON below as config.json in that folder, as UTF-8 without a byte order mark. Notepad does this by default. In Windows PowerShell 5.1, Set-Content -Encoding utf8 adds a mark and the agent then refuses the file; use [IO.File]::WriteAllText with a UTF8Encoding($false) instead.',
         'If an agent is already installed on this server, a config.json exists and holds an agentId line. Keep that line when you replace the file, or the service refuses to start.',
-        'Run the installer. It keeps your config.json and adds the server address.',
+        'Next page: you install the agent. The installer keeps this config.json as it is.',
       ],
       json,
     };
@@ -1180,7 +1209,7 @@ export function buildPreseedSteps({ os, config }) {
       'Create the state directory: sudo mkdir -p /opt/tokentimer-agent/state && sudo chmod 0700 /opt/tokentimer-agent/state',
       'Save the JSON below as /opt/tokentimer-agent/state/config.json with mode 0600.',
       'If an agent is already installed on this server, the existing config.json holds an agentId line. Keep that line when you replace the file, or the service refuses to start.',
-      'Run the installer. It logs "Existing config.json found; leaving it untouched" and keeps your file.',
+      'Next page: you install the agent. The installer then logs "Existing config.json found; leaving it untouched" and keeps your file.',
       'The installer adds the service user and fixes ownership. Check the file is readable by it with: sudo -u tokentimer-agent test -r /opt/tokentimer-agent/state/config.json',
     ],
     json,

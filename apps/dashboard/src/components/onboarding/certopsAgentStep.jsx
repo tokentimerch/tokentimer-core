@@ -20,7 +20,7 @@ import {
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
-import { CopyBlock } from './blocks.jsx';
+import { CopyBlock, ErrorText, WarnText } from './blocks.jsx';
 import {
   INFRASTRUCTURES,
   capabilityGap,
@@ -35,6 +35,7 @@ import {
   buildInstallCommand,
   buildPackageCommand,
   agentConfigPathFor,
+  agentRestartCommandFor,
   certDirectoryFor,
   isLoopbackHttp,
 } from './certopsConfig.js';
@@ -229,11 +230,7 @@ export function AgentStep({ ctx }) {
               onChange={e => setClusterId(e.target.value)}
             />
           </FormControl>
-          {valuesError ? (
-            <Text color='red.400' fontSize='xs'>
-              {valuesError}
-            </Text>
-          ) : null}
+          {valuesError ? <ErrorText>{valuesError}</ErrorText> : null}
           <Text fontSize='sm'>
             2. Create a machine token: in Certificate Management, open Settings
             and add a token with the scope{' '}
@@ -473,29 +470,21 @@ export function AgentStep({ ctx }) {
               {target.hostname || target.name} ({target.platform}, version{' '}
               {target.agentVersion})
             </Text>
-            {lacksProfile && os === 'windows' ? (
-              <Text fontSize='xs' color='orange.400'>
+            {lacksProfile ? (
+              <WarnText data-testid='lacks-profile-note'>
                 This agent has not reported the {wantedProfileName} command
                 profile yet, usually because it was set up for discovery only.
                 Save the configuration above on the server, keeping the agentId
-                line already in config.json, then run Restart-Service
-                TokenTimerAgent. The agent publishes its command profiles on its
-                next heartbeat, so it does not need to register again.
-              </Text>
-            ) : lacksProfile ? (
-              <Text fontSize='xs' color='orange.400'>
-                This agent was registered without the {wantedProfileName}{' '}
-                command profile, usually because it was set up for discovery
-                only. Profiles are reported only when an agent registers, so it
-                cannot place orders. Save the configuration above, create a
-                one-time token and register the agent again, then retire the old
-                entry in Certificate Management.
-              </Text>
+                line already in config.json, then restart the agent with{' '}
+                {agentRestartCommandFor(os)}. The agent publishes its command
+                profiles when it checks in, so it does not need to register
+                again. An older agent build reports them only when it registers:
+                upgrade it, or create a one-time token, register it again and
+                retire the old entry in Certificate Management.
+              </WarnText>
             ) : null}
             {verdict.problems.map(p => (
-              <Text key={p} fontSize='xs' color='orange.400'>
-                {p}
-              </Text>
+              <WarnText key={p}>{p}</WarnText>
             ))}
           </VStack>
         ) : (
