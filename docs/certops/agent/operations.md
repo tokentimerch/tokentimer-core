@@ -250,7 +250,7 @@ components in still matters:
 
 ## Upgrade and uninstall
 
-Upgrade the control plane before agents when the compatibility table requires it. Download and verify the new package, then re-run the platform installer using the same settings. Preserve config, credentials, signing pins, keys, and journals. Confirm a fresh heartbeat and compatibility before dispatching real work.
+Upgrade the control plane before agents when the compatibility table requires it. Download and verify the new package, then re-run the platform installer using the same settings. The installer still asks for a bootstrap token on an upgrade: a registered agent keeps its credential and does not use it, so paste any value that starts with `ttboot_` (or set `TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_unused`). Preserve config, credentials, signing pins, keys, and journals. Confirm a fresh heartbeat and compatibility before dispatching real work.
 
 Retire the agent in the fleet panel after its jobs finish. `install-agent.sh --uninstall` or `install-agent.ps1 --uninstall` removes the service and app while preserving state. Review and back up custody and recovery state before any manual deletion.
 

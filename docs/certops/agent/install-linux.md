@@ -2,13 +2,17 @@
 
 Install on the host that holds the certificate keys. Use Node.js 22 or 24 and a systemd Linux host with outbound HTTPS to the TokenTimer API. Enable CertOps and provide its signing/registration encryption keys on the control plane first.
 
-1. In the workspace's Agent fleet panel, create a bootstrap token and copy the generated deployment command. Tokens are single-use and shown once.
+1. In the workspace's Agent fleet panel, create a bootstrap token and copy the generated deployment command. Tokens are single-use and shown once. A token expires 24 hours after creation by default (maximum 30 days); create a new one if it expires.
 2. Download the matching released agent package and verify its checksum against the release before extracting it. Use the package installer, not an unreviewed copy of a script.
 3. Run the generated command as root. Prefer the hidden bootstrap-token prompt. Keep initial execution disabled while you configure [local policy](configuration.md).
 4. Check `systemctl status tokentimer-agent` and `journalctl -u tokentimer-agent -n 50 --no-pager`. Confirm registration and a fresh heartbeat in the fleet panel.
 5. Prepare the command, path, CA, and DNS allowlists before requesting work. Set `execution.enabled: true` with `execution.dryRun: true`, restart, and verify a signed job with `mode: "dry_run"`. Its signed payload must retain `dry_run` and its terminal status must be `dry_run_complete`, never `succeeded`. The local `dryRun` switch refuses real jobs; it does not convert them into previews. After checking its plan, set `execution.dryRun: false` and restart to allow real work. The complete [public Linux walkthrough](https://tokentimer.ch/docs/self-hosted/runbooks/certops-agent-install) includes package and policy examples.
 
 For a private API CA, configure `caBundlePath` (or install with `--ca-bundle`). This configures API trust only. If the ACME server uses a private CA, configure the host or ACME client trust store before starting certbot; do not disable TLS verification.
+
+Write your policy first, then run the installer: it keeps an existing `config.json` and only creates one when absent. Command profile names and target selectors are read when the agent starts, so prepare them before the first registration. With a loopback `http` API address, also add `"allowInsecureLocalHttp": true` to a hand-written `config.json`. For ACME hosts install `certbot` (at `/usr/bin/certbot`) first.
+
+On an upgrade the installer still asks for a token. A registered agent keeps its credential and does not use it, so paste any value that starts with `ttboot_` or set `TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_unused`.
 
 For an API-created preview, list `GET /api/v1/workspaces/{workspaceId}/certops/agents`, match `items[].agentId` to the local configuration's `agentId`, and use that row's `items[].id` as `assignedAgentId`. Send `POST /api/v1/workspaces/{workspaceId}/certops/jobs` with `{"operation":"noop","mode":"dry_run","assignedAgentId":"REPLACE_WITH_FLEET_AGENT_ROW_UUID"}`; approve it if required by workspace policy, then poll its job endpoint for `dry_run_complete`.
 
@@ -81,6 +85,42 @@ the systemd sandbox *reach* the directory; the `tokentimer-agent` user must
 still be able to write there, for example
 `setfacl -m u:tokentimer-agent:rwx /etc/nginx/certs`. Without that, deploy
 jobs fail with a permission error even though the path is allowlisted.
+
+The installer creates every `--write-path` directory, gives it to
+`tokentimer-agent` and sets mode 0750. Files you place there yourself must also
+belong to that user, or deploys cannot replace them.
+
+<a id="nginx-reload"></a>
+
+#### nginx reload
+
+`nginx -t` fails for the unprivileged agent user (it cannot open `/run/nginx.pid`),
+so the agent cannot validate nginx itself. Use these two profiles instead, with
+`--reload-service nginx` on the installer:
+
+```json
+"allowedCommands": {
+  "nginx-validate": { "argv": ["/usr/bin/systemctl", "is-active", "--quiet", "nginx"] },
+  "nginx-reload": { "argv": ["/usr/bin/systemctl", "reload", "nginx"] }
+}
+```
+
+The validate profile only checks that the unit is running. The stock nginx unit
+reloads without testing the configuration, so add a one-time drop-in that tests
+it as root first (and pauses one second so the new workers serve before a
+served-certificate check):
+
+```sh
+sudo mkdir -p /etc/systemd/system/nginx.service.d
+sudo tee /etc/systemd/system/nginx.service.d/tokentimer-reload.conf <<'EOF'
+[Service]
+ExecReload=
+ExecReload=/usr/sbin/nginx -t -q -g "daemon on; master_process on;"
+ExecReload=/usr/sbin/nginx -g "daemon on; master_process on;" -s reload
+ExecReload=/usr/bin/sleep 1
+EOF
+sudo systemctl daemon-reload
+```
 
 `--trust-store` is applied automatically on every tested Linux family when
 the OS trust-store tools are present: Ubuntu 22.04/24.04/26.04

@@ -100,6 +100,8 @@ CA config is `DNS host\CA name`. The host is the CA computer's DNS name. The CA 
 
 Example: `ca01.corp.example.com\Corp Issuing CA`.
 
+The CA name may use letters, digits, spaces and `. _ ( ) -`, up to 64 characters. It is the part after the backslash, so it carries neither the server name nor a backslash. The template is the template common name, not its display name: letters, digits and `. _ -`, up to 64 characters, no spaces. The agent rejects a `config.json` rule that breaks these patterns at start.
+
 ## Enrollment rules
 
 <a id="enrollment-rules"></a>
@@ -121,7 +123,7 @@ On the agent, `config.json` lists the only CA and template pairs that host may c
 }
 ```
 
-`caConfig` is `host\CA name`. `template` is the template common name. The pair must match the issuer exactly. A preflight or enrollment whose pair is not in this list is rejected with `issuer_not_allowlisted` and does not contact the CA. Separate CA and template allowlists are not used, because the cross product would allow pairs nobody chose.
+`caConfig` is `host\CA name`. `template` is the template common name. The pair must match the issuer exactly. A preflight or enrollment whose pair is not in this list is rejected with `issuer_not_allowlisted` (the check shows this reason, for example when the rule does not name this exact CA and template) and does not contact the CA. Separate CA and template allowlists are not used, because the cross product would allow pairs nobody chose.
 
 Enrollment additionally requires `dnsScopes` and `keyAlgorithms` on one matching rule. Every requested SAN, the target name and any SNI name must equal a DNS scope or be beneath it at a dot boundary: `corp.example.com` covers `web.corp.example.com`, but not `evilcorp.example.com`. Use DNS zones without `*.` prefixes. `dnsScopes` accepts 1–32 unique ASCII zones; names are matched case-insensitively. `keyAlgorithms` accepts one or both of `rsa` and `ecdsa`; template key-size and curve constraints still apply separately. DNS permission on one rule cannot combine with key permission on another. Empty or malformed explicit lists prevent agent startup. A CA/template-only rule can perform read-only issuer preflight but cannot authorize enrollment.
 
@@ -137,7 +139,7 @@ In **Renewals**, open **AD CS issuers**, then **New issuer**.
 2. **Check the CA.** Choose the Windows agent that will enroll the certificate. Enter the CA config and the template common name, then **Run check**. The check reads the template and the CA certificates, and it stores the CA certificate and the template OID on that agent. It does not issue a certificate. A different agent cannot enroll until it has run the same check.
 3. **Choose a certificate.** When both checks are safe, choose the newest CA certificate with **Use this certificate**. Enrollment accepts only the certificate you pin. Closing the wizard before the check finishes, or closing a safe check without pinning, discards the draft.
 
-The issuer is ready when it shows a chosen certificate. A later CA renewal that keeps the same key needs no action. A check that comes back unsafe is not pinned. That issuer stays hidden until **Show N unsafe issuers** is checked.
+The issuer is ready when it shows a chosen certificate. After you pin the CA certificate, choose **Check again** on the issuer once more: renewal starts only from a CA check taken after the pin. A later CA renewal that keeps the same key needs no action. A check that comes back unsafe is not pinned. That issuer stays hidden until **Show N unsafe issuers** is checked.
 
 ## Renewal profile
 
