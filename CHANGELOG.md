@@ -21,7 +21,7 @@ Target: **0.18.0**.
   - Progress is saved per user and workspace in a new `onboarding_sessions` table, created by migration 77 when the API starts.
   - Subdomain discovery needs `subfinder` (`SUBFINDER_BIN`). When it is not installed, `POST /api/v1/workspaces/{id}/domain-checker/lookup` returns `503 DOMAIN_CHECKER_TOOL_MISSING`.
   - Requesting a certificate for a file path that another managed certificate already uses returns `409 CERTOPS_CERTIFICATE_PATH_IN_USE` instead of a generic server error.
-  - CertOps setups for Windows IIS, AD CS and Vault are labelled **Candidate** where their guided path has not yet been verified end to end. The features themselves are unchanged.
+  - The guided CertOps setups for Windows, Linux ACME automation (real DNS provider and production ACME CA untested), AD CS and Vault are labelled **Candidate** until their guided path has been verified end to end. The features themselves are unchanged.
 
 ### Changed
 
