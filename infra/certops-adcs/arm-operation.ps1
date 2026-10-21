@@ -18,10 +18,21 @@ function Invoke-CertOpsArmRequest {
   try {
     $request=@{Uri=$Uri;Method=$Method;Headers=@{Authorization="Bearer $token"};TimeoutSec=60;MaximumRedirection=0;ErrorAction='Stop';UseBasicParsing=$true}
     if($Body){$request.Body=$Body;$request.ContentType='application/json'}
-    try { Invoke-WebRequest @request } catch {
-      $httpStatus=if($_.Exception.Response){[int]$_.Exception.Response.StatusCode}else{0}
-      if($httpStatus -ge 100 -and $httpStatus -le 599){Write-Host ("CERTOPS_ARM_HTTP_FAILURE={0}:{1}" -f $Method,$httpStatus)}
-      throw 'Lab ARM request failed; private response withheld'
+    # Read-only polls are idempotent: a transient network timeout or 5xx/429 must not
+    # abandon a guest action that is still running. Submissions (POST/PUT) are never replayed.
+    $maxAttempts=if($Method -eq 'GET'){8}else{1}
+    for($attempt=1;$attempt -le $maxAttempts;$attempt++){
+      try { return (Invoke-WebRequest @request) } catch {
+        $httpStatus=if($_.Exception.Response){[int]$_.Exception.Response.StatusCode}else{0}
+        $transient=($httpStatus -eq 0 -or $httpStatus -eq 408 -or $httpStatus -eq 429 -or $httpStatus -ge 500)
+        if($attempt -lt $maxAttempts -and $transient){
+          Write-Host ("CERTOPS_ARM_POLL_RETRY={0}:{1}" -f $attempt,$httpStatus)
+          Start-Sleep -Seconds ([Math]::Min(30,5*$attempt))
+          continue
+        }
+        if($httpStatus -ge 100 -and $httpStatus -le 599){Write-Host ("CERTOPS_ARM_HTTP_FAILURE={0}:{1}" -f $Method,$httpStatus)}
+        throw 'Lab ARM request failed; private response withheld'
+      }
     }
   } finally { $token=$null }
 }

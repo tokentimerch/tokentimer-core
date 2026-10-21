@@ -68,7 +68,10 @@ function command(file, args) {
     const output=typeof result.stdout==="string" ? result.stdout : "";
     const officerStep=output.match(/^CERTOPS_OFFICER_FAILURE=(not-found|foreign-identity|ambiguous|not-pending|serial|revoke|decision|remoting)\r?$/m)?.[1];
     const officerExit=output.match(/^CERTOPS_OFFICER_EXIT=(-?\d{1,11})\r?$/m)?.[1];
-    error.qualificationCommand={executable:path.basename(file).toLowerCase(),exitStatus:result.status,powerShellCode:fqid?.[1].trim(),officerStep,officerExit:officerExit===undefined?undefined:Number(officerExit)};
+    // Fixed script-template heads only (never output): identifies which cleanup/native step failed.
+    const scriptArg=Array.isArray(args)?String(args[args.length-1]??""):"";
+    const scriptHead=/^[a-z]{3,}\.exe$/i.test(path.basename(file))&&/powershell/i.test(file)?scriptArg.replace(/^\$ErrorActionPreference='Stop';\s*/,"").replace(/[^\x20-\x7e]/g," ").slice(0,90):undefined;
+    error.qualificationCommand={executable:path.basename(file).toLowerCase(),exitStatus:result.status,powerShellCode:fqid?.[1].trim(),officerStep,officerExit:officerExit===undefined?undefined:Number(officerExit),scriptHead};
     throw error;
   }
   return result.stdout.trim();
@@ -688,8 +691,8 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
       requiredTemplateAttributesJourney.assertCleanupSafe(ownedTemplateAttributeRestorations);
       const nativeCleanupGuard=require("./helpers/certops-adcs-native-cleanup-guard").createNativeCleanupGuard();
       const assertPendingCaResolved=()=>{assert.ok(!ownedBackgroundStoreCertificates.some(receipt=>receipt.ocspPendingVerification===true),"Preserve native state while Microsoft OCSP recovery remains unresolved");assert.ok(!ownedBackgroundStoreCertificates.some(receipt=>receipt.httpLeafCrlPendingVerification===true),"Preserve native state while HTTP leaf CRL recovery remains unresolved");assert.ok(!ownedBackgroundStoreCertificates.some(receipt=>receipt.machineAclPendingVerification===true),"Preserve native state while live machine Enroll ACL recovery remains unresolved");assert.ok(!ownedBackgroundStoreCertificates.some(receipt=>receipt.workerPendingVerification===true),"Preserve native and durable ownership while background renewal remains unresolved");assert.ok(!ownedCapacityStoreCertificates.some(receipt=>receipt.pendingCaRenewalUnresolved===true),"Preserve native and durable ownership while pending CA renewal remains unresolved");};
-      const errors = []; const clean = async (action) => { try { await action(); } catch (error) { errors.push(error); } };
-      const cleanNative=action=>clean(()=>nativeCleanupGuard.run(()=>{assertPendingCaResolved();return action();}));
+      const errors = []; const retryNativeCommand = async (action) => { try { return await action(); } catch (error) { if (error?.code !== "CERTOPS_NATIVE_COMMAND_FAILED") throw error; await new Promise((resolve) => setTimeout(resolve, 3000)); return await action(); } }; const clean = async (action) => { try { await retryNativeCommand(action); } catch (error) { errors.push(error); } }; const cleanOnce = async (action) => { try { await action(); } catch (error) { errors.push(error); } };
+      const cleanNative=action=>cleanOnce(()=>nativeCleanupGuard.run(()=>{assertPendingCaResolved();return retryNativeCommand(action);}));
       for(const probes of ownedTlsProbes)await clean(()=>probes.drain());
       assert.ok(ownedTlsProbes.every(probes=>probes.isDrained()),"Preserve native fixtures while owned TLS probe close is unproven");
       for(const observer of ownedPhaseObservers)await clean(()=>observer.stopAndDrain());

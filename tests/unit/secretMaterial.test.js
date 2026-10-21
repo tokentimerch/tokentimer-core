@@ -822,6 +822,14 @@ describe("secretMaterial compressed-input detection (C1)", () => {
     assert.strictEqual(containsPrivateKeyMaterial(corrupt), true);
   });
 
+  it("does not false-reject random identifiers that merely start with a valid zlib header", () => {
+    const fake = Buffer.concat([Buffer.from([0x78, 0x9c]), Buffer.alloc(30, 0xff)]);
+    assert.equal(classifyCompressedBuffer(fake).classification, COMPRESSION_CLASSIFICATION.NOT_COMPRESSED);
+    assert.strictEqual(containsPrivateKeyMaterial(fake.toString("base64")), false);
+    const truncated = zlib.deflateSync(Buffer.from(pem("RSA PRIVATE KEY"))).subarray(0, 40);
+    assert.strictEqual(containsPrivateKeyMaterial(truncated), true);
+  });
+
   it("rejects compressed input over the 1 MiB bound without attempting decompression", () => {
     const over = Buffer.concat([
       Buffer.from([0x1f, 0x8b]),

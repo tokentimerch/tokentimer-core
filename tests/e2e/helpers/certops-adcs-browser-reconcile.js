@@ -60,7 +60,7 @@ function createBrowserReconcileActor(context) {
           // Exercise the actual supported form's numeric boundary before the
           // owned valid ID. Native state and route responses remain untouched.
           await input.fill("0"); await button.click();
-          await page.getByText("RequestId must be an integer from 1 to 4294967295.", { exact: true }).first().waitFor(); assert.equal(posts, 0);
+          await page.getByText("RequestId must be an integer from 1 to 2147483647.", { exact: true }).first().waitFor(); assert.equal(posts, 0);
           await input.fill(selectedRequestId);
           const [response] = await Promise.all([page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).origin === origin && new URL(response.url()).pathname === prefix + enrollmentId + "/reconcile"), button.click()]);
           assert.equal(response.status(), 204); verifyRequest(response.request(), expected); assert.equal(posts, 1); assert.equal(wrongRequest, false);
