@@ -198,9 +198,43 @@ describe('shipped register', () => {
     const verifiedKeys = Object.keys(GUIDED_SETUP_STATUS)
       .filter(k => GUIDED_SETUP_STATUS[k].verified)
       .sort();
-    expect(verifiedKeys).toEqual(['monitor_https', 'track_asset']);
+    expect(verifiedKeys).toEqual([
+      'alerting',
+      'certops_observe:kubernetes',
+      'certops_observe:linux',
+      'import_file',
+      'import_integration',
+      'monitor_https',
+      'track_asset',
+    ]);
     for (const k of verifiedKeys) {
       expect(GUIDED_SETUP_STATUS[k].untested.length, k).toBeGreaterThan(0);
+    }
+  });
+
+  it('keeps the other CertOps picks as Candidate', () => {
+    for (const key of [
+      'certops_observe',
+      'certops_observe:windows',
+      'certops_automate',
+      'certops_automate:linux',
+      'certops_automate:windows',
+      'certops_adcs',
+      'certops_adcs:windows',
+      'certops_vault',
+      'certops_vault:linux',
+    ]) {
+      expect(isCandidatePick(key), key).toBe(true);
+    }
+  });
+
+  it('keeps a goal row Candidate while any of its cards is', () => {
+    for (const [id, goal] of Object.entries(GOALS)) {
+      if (!goal.certopsObjective) continue;
+      const cards = infrastructuresFor(goal.certopsObjective).map(infra =>
+        isCandidatePick(pickKey(id, infra.id))
+      );
+      expect(isCandidatePick(id), id).toBe(cards.some(Boolean));
     }
   });
 
@@ -209,15 +243,15 @@ describe('shipped register', () => {
     for (const name of [
       /Monitor a website certificate/,
       /Track an API key, secret or license/,
+      /Import many assets/,
+      /Import from GitHub/,
+      /Set up alert notifications/,
     ]) {
       expect(describedText(screen.getByRole('radio', { name }))).not.toContain(
         'Candidate'
       );
     }
     for (const name of [
-      /Set up alert notifications/,
-      /Import many assets/,
-      /Import from GitHub/,
       /Discover certificates/,
       /Issue and renew/,
       /Microsoft CA/,
@@ -227,21 +261,30 @@ describe('shipped register', () => {
         'Candidate'
       );
     }
-    expect(screen.getAllByText('Candidate')).toHaveLength(7);
+    expect(screen.getAllByText('Candidate')).toHaveLength(4);
     expect(screen.getAllByText(CANDIDATE_NOTE)).toHaveLength(1);
   });
 
-  it('marks Linux, Windows and Kubernetes observe', () => {
+  it('observe cards: only Windows is marked, Linux and Kubernetes are clean', () => {
     wrap(<ObjectiveStep ctx={makeCtx('certops_observe')} />);
     const text = name => describedText(screen.getByRole('radio', { name }));
-    expect(text(/Linux server/)).toContain('Candidate');
+    expect(text(/Linux server/)).not.toContain('Candidate');
+    expect(text(/Kubernetes/)).not.toContain('Candidate');
     expect(text(/Windows Server/)).toContain('Candidate');
-    expect(text(/Kubernetes/)).toContain('Candidate');
-    expect(screen.getAllByText('Candidate')).toHaveLength(3);
+    expect(screen.getAllByText('Candidate')).toHaveLength(1);
     expect(screen.getAllByText(CANDIDATE_NOTE)).toHaveLength(1);
   });
-});
 
+  it('marks every automate, AD CS and Vault card', () => {
+    for (const goal of ['certops_automate', 'certops_adcs', 'certops_vault']) {
+      const view = wrap(<ObjectiveStep ctx={makeCtx(goal)} />);
+      for (const card of screen.getAllByRole('radio')) {
+        expect(describedText(card), goal).toContain('Candidate');
+      }
+      view.unmount();
+    }
+  });
+});
 describe('note appears only above a list with a marked row', () => {
   it('a verified row carries no badge and no extra description', () => {
     withRegister(['monitor_https'], () => {
