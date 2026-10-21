@@ -23,6 +23,8 @@ const {
   readCertificateTemplateOid,
 } = require("../../../packages/agent/src/issuers/der-extensions");
 const SHA256_RSA = Buffer.from("300d06092a864886f70d01010b0500", "hex");
+const NULL_RESPONSE_OID = "1.3.6.1.5.5.7.48.1.9";
+const MS_NEXT_CRL_PUBLISH_OID = "1.3.6.1.4.1.311.21.4";
 const hash = (name, bytes) => crypto.createHash(name).update(bytes).digest();
 
 function encode(tag, ...parts) {
@@ -174,15 +176,22 @@ function noncriticalExtensions(node, tag) {
     );
     assert.equal(fields[0].tag, 0x06);
     const oid = decodeOid(fields[0].value);
-    assert.equal(
-      oid,
-      "1.3.6.1.5.5.7.48.1.9",
+    assert.ok(
+      [NULL_RESPONSE_OID, MS_NEXT_CRL_PUBLISH_OID].includes(oid),
       "Unexpected OCSP extension refused",
     );
     assert.equal(seen.has(oid), false);
     seen.add(oid);
     assert.equal(fields[1].tag, 0x04);
-    assert.ok(fields[1].value.equals(Buffer.from([0x05, 0x00])));
+    if (oid === NULL_RESPONSE_OID) {
+      assert.ok(fields[1].value.equals(Buffer.from([0x05, 0x00])));
+    } else {
+      // The Microsoft Online Responder always adds Next CRL Publish
+      // (a GeneralizedTime) to its single responses.
+      const published = item(fields[1].value);
+      assert.equal(published.end, fields[1].value.length);
+      timestamp(published);
+    }
   }
 }
 
