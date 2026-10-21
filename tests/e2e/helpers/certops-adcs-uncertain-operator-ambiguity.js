@@ -97,7 +97,7 @@ async function runOperatorCreatedAmbiguity(session) {
     const selected = requests[0];
     if(context.reconcileActor)await context.reconcileActor.reconcileEnrollment(id, selected.requestId);
     else assert.equal((await fixture.request(`${api}/enrollments/${id}/reconcile`, "POST", { requestId: Number(selected.requestId) })).status, 204);
-    explicit = (await scheduler.scheduleDueEnrollments({ client: fixture.pool })).find(row => row.enrollmentId === id); assert.ok(explicit); await jobFinished(explicit.jobId);
+    const dueNow = (await query("SELECT clock_timestamp() AS now")).rows[0].now; explicit = (await scheduler.scheduleDueEnrollments({ client: fixture.pool, now: dueNow })).find(row => row.enrollmentId === id); assert.ok(explicit); await jobFinished(explicit.jobId);
     const installed = await enrollment(); assert.equal(installed.state, "installed"); assert.equal(String(installed.request_id), selected.requestId);
     const final = readEnrollmentJournal(configDir, id); assert.equal(final.kind, "valid"); assert.equal(final.journal.state, "installed");
     for (const field of ["containerName", "csrSha256", "csrSpkiSha256", "snapshotSha256"]) assert.equal(final.journal[field], original.journal[field]);
