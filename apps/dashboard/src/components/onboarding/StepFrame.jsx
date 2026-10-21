@@ -43,6 +43,7 @@ export default function StepFrame({
   kind,
   title,
   description,
+  kindLabel,
   docs = [],
   blockers = [],
   actions,
@@ -63,7 +64,7 @@ export default function StepFrame({
         mb={hasBody ? 3 : 4}
         action={
           <Badge colorScheme={badge.colorScheme} data-testid='step-kind'>
-            {badge.label}
+            {kindLabel || badge.label}
           </Badge>
         }
       />

@@ -195,8 +195,10 @@ export function NotificationsStep({ ctx }) {
           />
         </HStack>
         <Text fontSize='xs' color={muted}>
-          Slack, Teams and other webhooks, WhatsApp, delivery windows and weekly
-          digests are in workspace preferences when you need them.
+          Slack, Teams and other webhooks and WhatsApp are in workspace
+          preferences when you need them. There you can also set a delivery
+          window (the hours when alerts may be sent) and a weekly digest (one
+          summary of what expires soon).
         </Text>
       </VStack>
     </StepFrame>
@@ -326,6 +328,7 @@ export function SmtpStep({ ctx }) {
       <StepFrame
         kind='verify'
         title='Email delivery'
+        kindLabel='Already set up'
         description='Email is already set up on this deployment.'
       >
         <Text fontSize='sm'>Nothing to do here.</Text>
@@ -337,7 +340,7 @@ export function SmtpStep({ ctx }) {
     return (
       <StepFrame
         kind='handoff'
-        title='Email delivery needs an administrator'
+        title='Email delivery'
         description='Alerts are routed, but they cannot be emailed until a system administrator configures SMTP.'
         docs={[
           ...ctx.docs('smtp.setup', 'Setting up email'),
@@ -385,8 +388,8 @@ export function SmtpStep({ ctx }) {
   return (
     <StepFrame
       kind='ui'
-      title='Set up email delivery'
-      description='Alerts are sent through your mail server. These settings apply to the whole installation.'
+      title='Email delivery'
+      description='Alerts are sent through your mail server.'
       docs={[
         ...ctx.docs('smtp.setup', 'Setting up email'),
         ...ctx.docs('alerts.troubleshooting', 'If alerts do not arrive'),
@@ -435,6 +438,13 @@ export function SmtpStep({ ctx }) {
           <DashboardErrorAlert>{state.error}</DashboardErrorAlert>
         ) : null}
         {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
+        <Alert status='warning' borderRadius='md' variant='left-accent'>
+          <AlertIcon />
+          <AlertDescription fontSize='sm'>
+            These settings are server-wide. Saving them changes email delivery
+            for every workspace on this installation.
+          </AlertDescription>
+        </Alert>
         {message ? (
           <Alert status='success' borderRadius='md' variant='left-accent'>
             <AlertIcon />
@@ -560,6 +570,11 @@ export function SmtpStep({ ctx }) {
             value={testTo}
             onChange={e => setTestTo(e.target.value)}
           />
+          {saved ? null : (
+            <FormHelperText fontSize='xs' data-testid='test-needs-save'>
+              Save first. The test email uses the saved settings.
+            </FormHelperText>
+          )}
         </FormControl>
         <Text fontSize='xs' color='gray.500'>
           The test checks that the server accepts the message, not that it is
