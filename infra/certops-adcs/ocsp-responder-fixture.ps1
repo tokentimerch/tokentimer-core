@@ -1672,13 +1672,14 @@ function Get-OwnedOcspConfigurationObservation(
  [byte[]]$OwnedSignerDer,
  [byte[]]$CurrentSignedCrlDer
 ) {
- # The responder loads a changed configuration asynchronously and reports
- # RevocationErrorCode only after it has fetched the CRL source. Re-read
- # briefly before declaring the provider not ready.
+ # The responder applies a changed configuration asynchronously: the entry,
+ # its signer and the provider properties can read back empty or partial before
+ # the service reloads. The read is side-effect free and every field is still
+ # compared exactly, so retry any mismatch and fail with the last cause.
  for($attempt=1;;$attempt++) {
   try { return Get-OwnedOcspConfigurationObservationOnce $Identifier $OriginalCaDer $OwnedSignerDer $CurrentSignedCrlDer }
   catch {
-   if($attempt -ge 20 -or $_.Exception.Message -cnotmatch ' is not ready') { throw }
+   if($attempt -ge 20) { throw ('{0} (after {1} observations)' -f $_.Exception.Message,$attempt) }
    Start-Sleep -Seconds 3
   }
  }

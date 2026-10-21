@@ -116,6 +116,18 @@ function sameOwned(file, original, maximum) {
   );
   return now;
 }
+function readBrokerFailure(output) {
+  const file = output + ".error";
+  try {
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.size > 2048) return "unreadable broker failure";
+    const text = fs.readFileSync(file, "utf8");
+    fs.unlinkSync(file);
+    return text.replace(/[^\x20-\x7e]+/g, " ").trim().slice(0, 1024);
+  } catch {
+    return "no broker failure detail";
+  }
+}
 function verifyOperationDrain(value) {
   assert.equal(value.rootExitCode, 0);
   assert.equal(value.activeNativeProcesses, 0);
@@ -314,7 +326,16 @@ async function qualifyOcsp(c) {
         clearTimeout(timer);
       }
       const drained = await resource.stopAndDrain();
-      assert.equal(drained.rootExitCode, 0);
+      if (drained.rootExitCode !== 0) {
+        // The broker writes one bounded, redacted failure line next to its
+        // output; surface it so a lab failure is diagnosable from the report.
+        throw new assert.AssertionError({
+          message: `Owned OCSP ${action} broker exited ${drained.rootExitCode}: ${readBrokerFailure(output)}`,
+          actual: drained.rootExitCode,
+          expected: 0,
+          operator: "strictEqual",
+        });
+      }
       assert.equal(drained.activeNativeProcesses, 0);
       verifyOperationDrain(drained);
       const bytes = ownedBytes(output, 65536);

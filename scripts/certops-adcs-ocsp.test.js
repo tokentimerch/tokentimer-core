@@ -72,6 +72,8 @@ test("remote broker admits only fixed actions/candidate tools and gates before r
   assert.doesNotMatch(source, /Invoke-Expression|taskkill|Stop-Process/);
   assert.match(source, /\$request\.helperPath -cnotin \$helperPaths/);
   assert.match(source, /\$request\.action -cnotin \$actions/);
+  assert.match(source, /OutputPath\+'\.error'/);
+  assert.match(source, /Replace\(\$env:CERTOPS_ADCS_OFFICER_PASSWORD/);
 });
 test("operation drain uses actual shared nativeHandlesClosed contract and refuses invented or incomplete proof", () => {
   const closed = {
