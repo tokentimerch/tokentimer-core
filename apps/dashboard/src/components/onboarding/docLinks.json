@@ -118,6 +118,11 @@
     "anchor": "checklist",
     "cloud": null
   },
+  "certops.worker": {
+    "path": "/runbooks/certops-renewal",
+    "anchor": "worker",
+    "cloud": null
+  },
   "certops.installLinux": {
     "path": "/runbooks/certops-agent-install",
     "anchor": "install"

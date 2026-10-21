@@ -1,6 +1,11 @@
 // Verifies that what the wizard set up is actually monitored. Inputs are live
 // reads (summary, the asset, its alert state), never session flags.
 
+import {
+  overdueEnrollmentsMessage,
+  outboxBacklogMessage,
+} from './certopsWorkerMessages.js';
+
 export const CHECK_STATUS = { PASS: 'pass', FAIL: 'fail', WARN: 'warn' };
 
 function check(id, status, label, detail) {
@@ -298,6 +303,22 @@ export function evaluateVerification({
                 'Distribution is not verified',
                 'Configuration may be prepared, but no rollout has been verified yet.'
               )
+        );
+      }
+      // Waiting work with nobody processing it is the one visible sign that
+      // the CertOps worker is down.
+      const waiting = [
+        overdueEnrollmentsMessage(certops),
+        outboxBacklogMessage(certops),
+      ].filter(Boolean);
+      if (waiting.length > 0) {
+        checks.push(
+          check(
+            'worker',
+            CHECK_STATUS.WARN,
+            'The CertOps worker may not be running',
+            waiting.join(' ')
+          )
         );
       }
     }

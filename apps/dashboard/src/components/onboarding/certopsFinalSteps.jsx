@@ -32,6 +32,8 @@ import {
 } from './certopsConfig.js';
 import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
 import IssueStep from './certopsIssueStep.jsx';
+import { outboxBacklogMessage } from './certopsWorkerMessages.js';
+import WorkerWarning from './WorkerWarning.jsx';
 
 /** A UUID the operator uses for the consumer binding (not secret). */
 function newBindingId() {
@@ -163,6 +165,7 @@ export function VaultStep({ ctx }) {
     distribution: ctx.summary?.certops?.distribution,
   });
   const gap = capabilityGap('vault', 'linux', declared);
+  const backlogMessage = outboxBacklogMessage(ctx.summary?.certops);
   const [pub, setPub] = useState({ job: null, busy: false, error: '' });
   const publishJobId = saved.vaultPublishJobId || '';
   const publishKey = vaultPublishIdempotencyKey({
@@ -264,6 +267,7 @@ export function VaultStep({ ctx }) {
       docs={[
         ...ctx.docs('certops.vault', 'Shared certificate runbook'),
         ...ctx.docs('certops.vaultAuth', 'Vault Agent authentication'),
+        ...ctx.docs('certops.worker', 'Check the CertOps worker'),
       ]}
     >
       <VStack align='stretch' spacing={3}>
@@ -274,6 +278,11 @@ export function VaultStep({ ctx }) {
             mean distribution works: a verified rollout does.
           </AlertDescription>
         </Alert>
+        {backlogMessage ? (
+          <WorkerWarning testId='vault-backlog-warning'>
+            {backlogMessage}
+          </WorkerWarning>
+        ) : null}
         <HStack>
           <Badge
             colorScheme={outcome.level === 'verified' ? 'green' : 'orange'}
@@ -490,9 +499,10 @@ export function VaultStep({ ctx }) {
             <Text fontSize='sm'>
               3. Once both agents are registered, assign the consumer and
               request a rollout. Both are API calls too, and a rollout needs
-              approval from a different user and a running CertOps worker.
+              approval from a different user and a running CertOps worker (the
+              worker-certops service in Compose, the certops cron job in Helm).
               Without the worker an approved rollout stays pending and nothing
-              is deployed.
+              is deployed, and renewals are never scheduled.
             </Text>
             <CopyBlock
               label={`PUT .../certops/distribution-groups/${form.groupId || 'GROUP_ID'}/consumers/${bindingId}`}

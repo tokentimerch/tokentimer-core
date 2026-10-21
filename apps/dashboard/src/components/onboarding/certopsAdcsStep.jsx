@@ -16,6 +16,11 @@ import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import { certopsProgress } from './certopsSetupSteps.jsx';
 import { ADCS_REMAINING_STEPS, buildCaConfig } from './adcsModel.js';
+import {
+  WORKER_NOTE,
+  overdueEnrollmentsMessage,
+} from './certopsWorkerMessages.js';
+import WorkerWarning from './WorkerWarning.jsx';
 
 /**
  * Status of the part of AD CS setup the server can see. Enrollment itself
@@ -66,6 +71,7 @@ export default function AdcsStep({ ctx }) {
   });
   const [checking, setChecking] = useState(false);
   const ca = buildCaConfig(saved.caHost, saved.caName);
+  const overdueMessage = overdueEnrollmentsMessage(certops);
 
   const check = async () => {
     setChecking(true);
@@ -81,7 +87,10 @@ export default function AdcsStep({ ctx }) {
       kind='runbook'
       title='Connect your Microsoft CA'
       description='The agent authenticates as its computer account. TokenTimer never stores CA credentials.'
-      docs={ctx.docs('certops.adcs', 'Microsoft AD CS guide')}
+      docs={[
+        ...ctx.docs('certops.adcs', 'Microsoft AD CS guide'),
+        ...ctx.docs('certops.worker', 'Check the CertOps worker'),
+      ]}
       actions={
         <DashboardActionButton
           leftIcon={<FiRefreshCw />}
@@ -102,6 +111,11 @@ export default function AdcsStep({ ctx }) {
             guided setup has not been verified through a real enrollment yet.
           </AlertDescription>
         </Alert>
+        {overdueMessage ? (
+          <WorkerWarning testId='adcs-overdue-warning'>
+            {overdueMessage}
+          </WorkerWarning>
+        ) : null}
         <Row
           done={status.agent}
           label='Agent connected and able to enroll'
@@ -139,6 +153,9 @@ export default function AdcsStep({ ctx }) {
         <Text fontSize='xs' color={muted}>
           Attaching the profile to a certificate and the first enrollment happen
           in Certificate Management, where the real result is shown.
+        </Text>
+        <Text fontSize='xs' color={muted} data-testid='adcs-worker-note'>
+          {WORKER_NOTE}
         </Text>
       </VStack>
     </StepFrame>
