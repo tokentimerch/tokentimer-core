@@ -468,10 +468,15 @@ async function parseFile(file) {
   );
 }
 
+// Files are parsed and previewed in the browser and created one request per
+// row, so both limits protect the page. Split bigger inventories into files.
+const MAX_IMPORT_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_IMPORT_ROWS = 5000;
+
 // Keeps rows with all four required fields. Each kept row carries `line`, its
 // spreadsheet line in the file, so errors point at the right row even when
 // earlier rows were left out. Left-out rows are returned with what is missing.
-function splitParsedRows(parsed) {
+function splitParsedRows(parsed, firstLine = 2) {
   const rows = [];
   const skipped = [];
   (parsed || []).forEach((raw, idx) => {
@@ -479,8 +484,8 @@ function splitParsedRows(parsed) {
     const missing = ['name', 'category', 'type', 'expiresAt'].filter(
       k => !(row && row[k])
     );
-    if (missing.length === 0) rows.push({ ...row, line: idx + 2 });
-    else skipped.push({ line: idx + 2, missing });
+    if (missing.length === 0) rows.push({ ...row, line: idx + firstLine });
+    else skipped.push({ line: idx + firstLine, missing });
   });
   return { rows, skipped };
 }
@@ -1950,10 +1955,26 @@ function ImportTokensModalContent({
     } catch (_) {
       setFileName('');
     }
+    if (f.size > MAX_IMPORT_FILE_BYTES) {
+      setError(
+        `This file is ${(f.size / 1048576).toFixed(1)} MB. The limit is ${MAX_IMPORT_FILE_BYTES / 1048576} MB. Split it into smaller files and import them one at a time.`
+      );
+      return;
+    }
     setParsing(true);
     try {
       const parsed = await parseFile(f);
-      const { rows: normalized, skipped } = splitParsedRows(parsed);
+      if (parsed && parsed.length > MAX_IMPORT_ROWS) {
+        setError(
+          `This file has ${parsed.length} rows. The limit is ${MAX_IMPORT_ROWS} rows per file. Split it into smaller files and import them one at a time.`
+        );
+        return;
+      }
+      const { rows: normalized, skipped } = splitParsedRows(
+        parsed,
+        // Spreadsheet-style files have a header row; JSON and YAML do not.
+        /\.(csv|xlsx|xls)$/i.test(f.name || '') ? 2 : 1
+      );
       setRows(normalized);
       setSkippedRows(skipped);
       setNoRowsRead(normalized.length === 0);

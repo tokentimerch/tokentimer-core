@@ -584,6 +584,60 @@ describe('ImportTokensModal file preview', () => {
     expect(note).toHaveTextContent('row 4 (expiresAt)');
   });
 
+  it('numbers rows of a JSON file from 1 because it has no header row', async () => {
+    render(renderModal(null));
+    await screen.findByText(/Upload a file in/);
+    upload(
+      JSON.stringify([
+        {
+          name: '',
+          category: 'cert',
+          type: 'ssl_cert',
+          expiresAt: '2030-01-01',
+        },
+        {
+          name: 'ok',
+          category: 'cert',
+          type: 'ssl_cert',
+          expiresAt: '2030-01-01',
+        },
+      ]),
+      'items.json'
+    );
+    expect(
+      await screen.findByText('Detected 1 valid rows')
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('skipped-rows-note')).toHaveTextContent(
+      'row 1 (name)'
+    );
+  });
+
+  it('refuses a file with more than 5000 rows and says why', async () => {
+    render(renderModal(null));
+    await screen.findByText(/Upload a file in/);
+    const lines = ['name,category,type,expiresAt'];
+    for (let i = 0; i < 5001; i += 1) {
+      lines.push(`a${i},cert,ssl_cert,2030-01-01`);
+    }
+    upload(lines.join('\n'), 'big.csv');
+    expect(
+      await screen.findByText(/This file has 5001 rows\. The limit is 5000/)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Detected/)).toBeNull();
+  });
+
+  it('refuses a file over 5 MB before reading it', async () => {
+    render(renderModal(null));
+    await screen.findByText(/Upload a file in/);
+    const input = document.querySelector('input[type="file"]');
+    const file = new File(['x'], 'huge.csv', { type: 'text/csv' });
+    Object.defineProperty(file, 'size', { value: 6 * 1024 * 1024 });
+    fireEvent.change(input, { target: { files: [file] } });
+    expect(
+      await screen.findByText(/This file is 6\.0 MB\. The limit is 5 MB/)
+    ).toBeInTheDocument();
+  });
+
   it('reports a failed row by its line in the file, not its position among kept rows', async () => {
     tokenAPI.createToken.mockRejectedValueOnce(new Error('Invalid date'));
     window.history.pushState({}, '', '/?workspace=ws-1');

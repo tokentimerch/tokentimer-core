@@ -125,10 +125,10 @@ export function FileImportStep({ ctx, reviewing = false }) {
         ) : null}
         <Text fontSize='sm'>
           Required fields per row: name, category, type, expiresAt. Dates look
-          like 2030-01-31. Rows missing any of them are left out of the preview,
-          so compare the preview count with your file. Importing the same file
-          again updates existing rows instead of duplicating them when a
-          location is present.
+          like 2030-01-31. Rows missing any of them are listed in the preview
+          and left out. A file can have up to 5000 rows and 5 MB, so split
+          larger inventories. Importing the same file again updates existing
+          rows instead of duplicating them when a location is present.
         </Text>
         <Box>
           <Text fontSize='xs' color={muted} mb={1}>
