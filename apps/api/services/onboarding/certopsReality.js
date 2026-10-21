@@ -128,6 +128,12 @@ async function loadAdcsReality(pool, workspaceId) {
       WHERE p.workspace_id = $1 AND i.kind = 'adcs'`,
     [workspaceId],
   );
+  const enrollments = await pool.query(
+    `SELECT COUNT(*) FILTER (WHERE state = 'installed')::int AS installed
+       FROM certificate_enrollments
+      WHERE workspace_id = $1`,
+    [workspaceId],
+  );
   return {
     issuers: issuers.rows.map((row) => ({
       id: row.id,
@@ -138,6 +144,7 @@ async function loadAdcsReality(pool, workspaceId) {
         row.last_preflight?.caCheck?.verdict === "safe",
     })),
     profiles: profiles.rows[0]?.n || 0,
+    installedEnrollments: enrollments.rows[0]?.installed || 0,
   };
 }
 

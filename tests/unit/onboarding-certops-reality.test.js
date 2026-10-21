@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const {
   summarizeAgents,
   loadCertopsReality,
+  loadAdcsReality,
   loadControllerReality,
 } = require("../../apps/api/services/onboarding/certopsReality");
 
@@ -71,6 +72,20 @@ describe("summarizeAgents", () => {
     assert.equal(item.pinnedSigningKeyId, undefined);
     assert.equal(item.credential, undefined);
     assert.equal(item.hostname, "web-01");
+  });
+});
+
+describe("loadAdcsReality", () => {
+  it("counts only enrollments that reached the install step", async () => {
+    const answers = [
+      { rows: [] },
+      { rows: [{ n: 1 }] },
+      { rows: [{ installed: 2 }] },
+    ];
+    const pool = { query: async () => answers.shift() };
+    const adcs = await loadAdcsReality(pool, "w");
+    assert.equal(adcs.profiles, 1);
+    assert.equal(adcs.installedEnrollments, 2);
   });
 });
 

@@ -251,4 +251,41 @@ describe('evaluateVerification', () => {
     expect(result.ok).toBe(false);
     expect(result.checks.find(c => c.id === 'asset').status).toBe('fail');
   });
+
+  describe('AD CS goal', () => {
+    const adcsSummary = adcs => ({
+      alerts: { smtpConfigured: true },
+      certops: {
+        agents: { live: 1, items: [] },
+        certificates: { total: 3 },
+        adcs: {
+          issuers: [{ id: 'i1', confirmed: true, safe: true }],
+          profiles: 1,
+          ...adcs,
+        },
+      },
+    });
+
+    it('keeps the follow-up warning until an enrollment is installed', () => {
+      const result = evaluateVerification({
+        goal: 'certops_adcs',
+        token: routed,
+        summary: adcsSummary({ installedEnrollments: 0 }),
+      });
+      const adcs = result.checks.find(c => c.id === 'adcs');
+      expect(adcs.status).toBe('warn');
+      expect(adcs.label).toMatch(/enrollment is not verified/);
+    });
+
+    it('passes once a certificate from the CA is installed', () => {
+      const result = evaluateVerification({
+        goal: 'certops_adcs',
+        token: routed,
+        summary: adcsSummary({ installedEnrollments: 1 }),
+      });
+      const adcs = result.checks.find(c => c.id === 'adcs');
+      expect(adcs.status).toBe('pass');
+      expect(adcs.label).toMatch(/installed/);
+    });
+  });
 });

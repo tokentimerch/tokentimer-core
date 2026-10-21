@@ -262,16 +262,25 @@ export function evaluateVerification({
         const ready =
           (adcs?.issuers || []).some(i => i.confirmed && i.safe) &&
           (adcs?.profiles || 0) > 0;
-        // The server sees the issuer and profile, never an enrollment.
+        // The server sees the issuer, the profile and whether a CA-signed
+        // certificate reached the install step.
+        const installed = (adcs?.installedEnrollments || 0) > 0;
         checks.push(
-          check(
-            'adcs',
-            CHECK_STATUS.WARN,
-            ready
-              ? 'Issuer and profile exist, enrollment is not verified'
-              : 'The AD CS issuer or profile is missing',
-            'Attach the profile to a certificate and confirm the first enrollment in Certificate Management. This guided setup has not been verified through a real enrollment yet.'
-          )
+          installed
+            ? check(
+                'adcs',
+                CHECK_STATUS.PASS,
+                'A certificate from your CA is installed',
+                'An enrollment finished and the certificate is bound to the HTTPS listener.'
+              )
+            : check(
+                'adcs',
+                CHECK_STATUS.WARN,
+                ready
+                  ? 'Issuer and profile exist, enrollment is not verified'
+                  : 'The AD CS issuer or profile is missing',
+                'Attach the profile to a certificate and confirm the first enrollment in Certificate Management. This guided setup has not been verified through a real enrollment yet.'
+              )
         );
       }
       if (goal === 'certops_vault') {
