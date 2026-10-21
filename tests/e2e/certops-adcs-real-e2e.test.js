@@ -85,7 +85,7 @@ function tlsAuthority(authority) {
 }
 async function freePort() { return new Promise((resolve, reject) => { const server = net.createServer(); server.on("error", reject); server.listen(0, "127.0.0.1", () => { const port = server.address().port; server.close(() => resolve(port)); }); }); }
 
-test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CERTOPS_ADCS_PENDING_ELAPSED === "1" ? 4800000 : 3300000 }, async () => {
+test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CERTOPS_ADCS_PENDING_ELAPSED === "1" ? 4800000 : process.env.CERTOPS_ADCS_SHARD && process.env.CERTOPS_ADCS_SHARD !== "all" ? 3300000 : 10800000 }, async () => {
   assert.equal(process.platform, "win32", "requires disposable Windows domain member");
   assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB, "1");
   assert.equal(ps("(Get-CimInstance Win32_ComputerSystem).Domain"), "lab.certops.test");

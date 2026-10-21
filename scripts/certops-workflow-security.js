@@ -18,7 +18,7 @@ function validateWorkflow(workflow,name="workflow"){
     const scopedApi = name === "certops-qualification.yml" && id === "integration" && job.if === "github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.lane != 'tooling'";
     const scopedAggregate = name === "certops-distribution-qualification.yml" && id === "functional-summary" && JSON.stringify(job.needs) === JSON.stringify(["postgres", "agent-lab"]) && job.if === "${{ always() && github.ref == 'refs/heads/main' }}";
     if(job.if!=="github.ref == 'refs/heads/main'"&&!scopedApi&&!scopedAggregate&&!require("./certops-azure-scope-policy").allowedCondition(name,job.if))fail(`${id} must enforce the exact trusted main reference`);
-    if(!Number.isInteger(job["timeout-minutes"])||job["timeout-minutes"]<1||job["timeout-minutes"]>180)fail(`${id} requires a bounded timeout`);
+    if(!Number.isInteger(job["timeout-minutes"])||job["timeout-minutes"]<1||job["timeout-minutes"]>(name==="certops-enterprise-adcs-qualification.yml"&&id==="lab"?300:180))fail(`${id} requires a bounded timeout`);
     if(job.permissions)for(const [key,value] of Object.entries(job.permissions))if(!(["contents","actions"].includes(key)&&value==="read")&&!(key==="id-token"&&value==="write"))fail(`${id} expands token permissions`);
     if((permissions["id-token"]==="write"||job.permissions?.["id-token"]==="write")&&!job.environment)fail(`${id} OIDC requires a protected qualification environment`);
     const steps=job.steps||[],runs=steps.map(step=>step.run||"").join("\n");

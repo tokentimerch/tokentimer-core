@@ -1084,6 +1084,26 @@ describe("acquireStoreLock", () => {
     }
   });
 
+  it("rejects an unobserved old heartbeat after worker death and successor acquisition", () => {
+    const stateDir = makeTempDir();
+    const lock = acquireStoreLock(stateDir, "My");
+    const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    let next;
+    try {
+      lock.assertHeld();
+      // Let the worker publish a beat that the parent has never observed.
+      pause(150);
+      void lock._workerForTests.terminate();
+      // Deliberately do not yield: the exit callback must remain queued.
+      pause(700);
+      next = acquireStoreLock(stateDir, "My");
+      assert.throws(() => lock.assertHeld(), { code: "STORE_LOCK_LOST" });
+    } finally {
+      next?.release();
+      lock.release();
+    }
+  });
+
   it("assertHeld fails after the lock worker dies while the parent still thinks it owns the lock", async () => {
     const stateDir = makeTempDir();
     const lock = acquireStoreLock(stateDir, "My");

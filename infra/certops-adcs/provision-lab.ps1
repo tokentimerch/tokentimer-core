@@ -75,7 +75,12 @@ function New-TemplateStageScript([string]$TemplatePath, [string]$DescriptorPath,
 }
 function Invoke-Stage([string]$Machine, [string]$Script, [string]$Marker, [string[]]$Parameters = @()) {
   $stageTimeout=if([IO.Path]::GetFileName($Script) -ceq 'domain-ca.ps1'){900}else{3600}
+  if($Marker -eq 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed' -and $Shard -eq 'all'){
+    . (Join-Path $PSScriptRoot 'managed-campaign.ps1')
+    $response=Invoke-CertOpsManagedCampaign -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -ResourceGroup $ResourceGroup -Location $Location -Script ([IO.File]::ReadAllText($Script)) -Parameters $Parameters -RefreshAuthentication ${function:Refresh-LabAuthentication}
+  }else{
   $response=Invoke-CertOpsVmRunCommand -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -ResourceGroup $ResourceGroup -Machine $Machine -Script ([IO.File]::ReadAllText($Script)) -Parameters $Parameters -TimeoutSeconds $stageTimeout -RefreshAuthentication ${function:Refresh-LabAuthentication}
+  }
   $message = ($response.value | ForEach-Object message) -join "`n"
   if (-not $message.Contains($Marker)) {
     $toolsDiagnostic=[regex]::Match($message,'(?m)^CERTOPS_TOOLS_FAILURE=(membership|workspace|node-metadata|node-checksum-metadata|node-download|node-verify|node-extract|go-metadata|go-download|go-verify|go-extract|pnpm-install|source-download|source-extract|source-layout|dependencies|service-host|chain-helper|cmc-helper|verifier-helper|helper-readiness|capability-build|api-trust|package-build|package-verify|runtime-receipt):(RuntimeException|WebException|IOException|UnauthorizedAccessException|ArgumentException|InvalidOperationException|MethodInvocationException|FileNotFoundException|HttpResponseException|TaskCanceledException|TimeoutException|ParameterBindingException|ActionPreferenceStopException|Exception):(WebCmdletWebResponseException|WebCmdletIEDomNotSupportedException|NameResolutionFailure|ConnectFailure|RequestCanceled|Timeout|CommandNotFoundException|NamedParameterNotFound|ParameterArgumentValidationError|PathNotFound|InvokeMethodOnNull|InvalidArchiveFile|ExpandArchiveInvalidParameterSet|InvalidArgument|Unclassified):(0|[1-5][0-9]{2})[\t ]*\r?$')
