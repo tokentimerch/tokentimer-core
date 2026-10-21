@@ -88,7 +88,7 @@ export default function SetupBanner({
           maxW='full'
           ml={{ base: 0, md: 2 }}
         >
-          {/* Same theme button as "Create New Token", not the wizard's darker one. */}
+          {/* Same theme button as "Create New Token", not the setup guide's darker one. */}
           <DashboardActionButton
             colorScheme='blue'
             onClick={onAction}

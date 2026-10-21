@@ -391,7 +391,7 @@ export default function UserPreferences({
                 {!viewerOnly ? (
                   <DisplayActionRow
                     label='Setup guide'
-                    description='Configure assets, alerts and certificate management step by step. Restarting keeps everything already created.'
+                    description='Configure assets, alerts and Certificate Management step by step. Starting over keeps everything already created.'
                     text={text}
                     bodySecondary={bodySecondary}
                     showDivider

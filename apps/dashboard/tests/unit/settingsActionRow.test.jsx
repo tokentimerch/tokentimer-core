@@ -66,9 +66,9 @@ describe('SetupBanner', () => {
   it('lets its actions wrap, so a long label cannot push Hide off the edge', () => {
     wrap(
       <SetupBanner
-        title='Certificate management is not set up yet.'
+        title='Certificate Management is not set up yet.'
         message='Nothing is reporting certificates here.'
-        actionLabel='Start the CertOps quickstart'
+        actionLabel='Start the setup guide'
         onAction={() => {}}
         onHide={() => {}}
       />

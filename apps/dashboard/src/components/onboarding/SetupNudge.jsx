@@ -176,8 +176,10 @@ export default function SetupNudge({
         <ModalBody {...bodyProps}>
           <VStack spacing={2} textAlign='center'>
             <Text fontSize='sm' color={modalTokens.text}>
-              The setup guide gets you to something working in a few minutes:
-              monitor a site or add assets, then choose who gets alerted.
+              The setup guide gets you to something working in minutes: monitor
+              a site or add assets, then choose who gets alerted. Connecting
+              servers for Certificate Management takes longer and needs a server
+              you can reach.
             </Text>
             <Text fontSize='xs' color={modalTokens.muted}>
               Closing this keeps a reminder on the dashboard. Not now hides it

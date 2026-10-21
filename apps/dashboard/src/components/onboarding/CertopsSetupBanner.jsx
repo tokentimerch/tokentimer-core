@@ -85,9 +85,9 @@ export default function CertopsSetupBanner({
   return (
     <SetupBanner
       testId='certops-setup-banner'
-      title='Certificate management is not set up yet.'
-      message='Nothing is reporting certificates here. The quickstart connects an agent and shows your first certificates.'
-      actionLabel='Start the CertOps quickstart'
+      title='Certificate Management is not set up yet.'
+      message='Nothing is reporting certificates here. The setup guide connects an agent and shows your first certificates.'
+      actionLabel='Start the setup guide'
       onAction={() => navigate('/onboarding?area=certops')}
       onHide={hide}
     />

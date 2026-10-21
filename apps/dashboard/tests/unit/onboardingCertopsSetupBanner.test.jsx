@@ -79,9 +79,9 @@ describe('CertopsSetupBanner', () => {
     expect(api.getSummary).toHaveBeenCalledWith('ws-1', 'certops');
   });
 
-  it('opens the quickstart on the certificate management goals', async () => {
+  it('opens the setup guide on the Certificate Management goals', async () => {
     show(makeApi());
-    fireEvent.click(await screen.findByText('Start the CertOps quickstart'));
+    fireEvent.click(await screen.findByText('Start the setup guide'));
     expect(screen.getByTestId('where').textContent).toBe(
       '/onboarding?area=certops'
     );

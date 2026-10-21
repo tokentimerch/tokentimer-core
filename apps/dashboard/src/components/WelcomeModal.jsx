@@ -133,8 +133,8 @@ function WelcomeModal({
                 {showSetupAction ? (
                   <>
                     <Text fontSize='xs' color={modalTokens.muted}>
-                      A short guided setup that leaves you with something
-                      working:
+                      A guided setup that leaves you with something working.
+                      Websites, assets and alerts take about 2 minutes:
                     </Text>
                     <Text fontSize='xs' color={modalTokens.muted}>
                       Monitor a website certificate or track a key, secret or
@@ -147,7 +147,8 @@ function WelcomeModal({
                       Choose who gets alerted, by email or webhook
                     </Text>
                     <Text fontSize='xs' color={modalTokens.muted}>
-                      Discover and renew certificates on your servers
+                      Discover and renew certificates on your servers (needs a
+                      server, about 20 minutes)
                     </Text>
                     <Text fontSize='xs' color={modalTokens.muted}>
                       Progress is saved. Reopen the guide any time from
