@@ -23,8 +23,17 @@ function run(args, options = {}) {
     maxBuffer: 16 * 1024 * 1024,
     ...options,
   });
-  if (r.status !== 0 || r.error)
-    throw new Error("Owned Vault qualification command failed");
+  if (r.status !== 0 || r.error) {
+    // Fixture-only output; keep a short tail so a CI failure is diagnosable.
+    const tail = (s) =>
+      String(s || "").trim().split("\n").slice(-15).map((l) => l.slice(0, 200)).join("\n");
+    // Report a fixed subcommand label, never a value derived from the argument list or the environment.
+    const subcommand =
+      ["build", "run", "exec", "inspect", "rm"].find((name) => name === args[0]) || "other";
+    throw new Error(
+      `Owned Vault qualification command failed: docker ${subcommand} exit=${Number(r.status)} signal=${r.signal ? "set" : "none"} code=${r.error ? "set" : "none"}\n${tail(r.stderr)}\n${tail(r.stdout)}`,
+    );
+  }
   return r.stdout;
 }
 async function main() {
@@ -177,9 +186,10 @@ async function main() {
   }
 }
 if (require.main === module)
-  main().catch(() => {
+  main().catch((error) => {
     console.error(
       "Owned Vault qualification failed; inspect its bounded execution report",
     );
+    console.error(String((error && error.message) || error).slice(0, 4000));
     process.exitCode = 1;
   });

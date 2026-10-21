@@ -56,7 +56,7 @@ $env:CERTOPS_QUALIFICATION_DEBUG=if($Scope -eq 'focused' -and $DebugDetail -eq '
 $env:CERTOPS_ADCS_HIERARCHY_ROOT_CERT=$RootCertificateBase64
 Set-Location $runtime.source
 try {
-  if($Scope -eq 'experiment'){ & $runtime.node tests/e2e/certops-adcs-focused-experiment.cjs }elseif($Scope -eq 'acceptance'){ & $runtime.node --test tests/e2e/certops-adcs-package-acceptance.test.js }else{ & $runtime.node --test tests/e2e/certops-adcs-real-e2e.test.js }
+  if($Scope -eq 'experiment'){ & $runtime.node tests/e2e/certops-adcs-focused-experiment.cjs }elseif($Scope -eq 'acceptance'){ & $runtime.node --test tests/e2e/certops-adcs-package-acceptance.test.js }else{ & $runtime.node --test --test-force-exit tests/e2e/certops-adcs-real-e2e.test.js }
   $testExitCode=$LASTEXITCODE
 } finally {
   $env:CERTOPS_ADCS_OFFICER_PASSWORD=$null

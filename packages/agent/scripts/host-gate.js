@@ -45,10 +45,11 @@ function measuredEnvironment() {
 }
 
 /** Named runtime evidence. Capability probes must observe the host, not flags. */
-function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = async () => ({}), strict = process.env.CERTOPS_QUALIFICATION_STRICT === "1", reportPath = process.env.CERTOPS_QUALIFICATION_REPORT, candidateSha = process.env.GITHUB_SHA || null, evidenceLevel = "real-host", fixtureSource, continueOnFailure = process.env.CERTOPS_QUALIFICATION_CONTINUE === "1", maxFailures = Number(process.env.CERTOPS_QUALIFICATION_MAX_FAILURES || 8), debugDetail = process.env.CERTOPS_QUALIFICATION_DEBUG === "1" } = {}) {
+function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = async () => ({}), strict = process.env.CERTOPS_QUALIFICATION_STRICT === "1", reportPath = process.env.CERTOPS_QUALIFICATION_REPORT, candidateSha = process.env.GITHUB_SHA || null, evidenceLevel = "real-host", fixtureSource, continueOnFailure = process.env.CERTOPS_QUALIFICATION_CONTINUE === "1", maxFailures = Number(process.env.CERTOPS_QUALIFICATION_MAX_FAILURES || 8), debugDetail = process.env.CERTOPS_QUALIFICATION_DEBUG === "1", scenarioTimeoutMs = 0 } = {}) {
   if (!suite) throw new Error("A qualification suite name is required");
   if (!Number.isInteger(maxFailures) || maxFailures < 1 || maxFailures > 1000) throw new Error("Invalid qualification failure budget");
   const report = { schemaVersion: 1, suite, strict, platform: process.platform, architecture: process.arch, nodeVersion: process.version, startedAt: new Date().toISOString(), requiredCapabilities: [...requiredCapabilities], capabilities: {}, scenarios: [], status: "running" };
+  if (!Number.isInteger(scenarioTimeoutMs) || scenarioTimeoutMs < 0 || scenarioTimeoutMs > 7200000) throw new Error("Invalid scenario timeout");
   let ready = false;
   // Diagnostic modes are never release evidence: the validator refuses reports carrying these markers.
   if (continueOnFailure) report.continueOnFailure = true;
@@ -74,6 +75,8 @@ function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = 
   // Failure triage metadata. Release evidence keeps only the error class, a fixed-shape code and the
   // source location; debug mode adds the (secret-redacted) message and top stack frames.
   let failureCount = 0;
+  let guardedCount = 0;
+  let lastGuardedFailure;
   function describeFailure(error) {
     const detail = {};
     if (typeof error?.constructor?.name === "string" && /^[A-Za-z0-9_]{1,64}$/.test(error.constructor.name)) detail.errorClass = error.constructor.name;
@@ -124,7 +127,16 @@ function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = 
       add(id, "running", { startedAt: new Date().toISOString(), evidenceLevel: level, ...(metadata.oracle ? { oracle: bounded(metadata.oracle) } : {}), ...(metadata.catalogId ? { catalogId: bounded(metadata.catalogId) } : {}) });
       const entry = report.scenarios.at(-1);
       await save();
-      try { await execute(); entry.status = "passed"; }
+      let timer;
+      // A scenario stuck on an unbounded await would burn the whole run; fail it by id instead.
+      const bound = scenarioTimeoutMs ? new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error(`Scenario exceeded ${Math.round(scenarioTimeoutMs / 1000)}s: ${id}`), { code: "CERTOPS_SCENARIO_TIMEOUT" })), scenarioTimeoutMs); }) : null;
+      const guardedBefore = guardedCount;
+      try {
+        await (bound ? Promise.race([execute(), bound]) : execute());
+        // A swallowed journey failure must not leave its scenario reported as passed.
+        if (guardedCount > guardedBefore) { entry.status = "failed"; entry.failure = lastGuardedFailure; }
+        else entry.status = "passed";
+      }
       catch (error) {
         entry.status = "failed"; report.status = "failed";
         if (!continueOnFailure) throw error;
@@ -132,7 +144,7 @@ function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = 
         entry.failure = noteFailure(error);
         if (report.failureBudgetExhausted) throw error;
       }
-      finally { entry.finishedAt = new Date().toISOString(); await save(); }
+      finally { clearTimeout(timer); entry.finishedAt = new Date().toISOString(); await save(); }
     },
     /** Record a failure raised outside a named scenario (for example scratch cleanup) and keep going. */
     async guard(label, execute) {
@@ -140,7 +152,9 @@ function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = 
       try { return await execute(); }
       catch (error) {
         report.guardedFailures ??= [];
-        report.guardedFailures.push({ label: bounded(label).slice(0, 128), ...noteFailure(error) });
+        lastGuardedFailure = noteFailure(error);
+        guardedCount += 1;
+        report.guardedFailures.push({ label: bounded(label).slice(0, 128), ...lastGuardedFailure });
         await save();
         if (report.failureBudgetExhausted) throw error;
         return undefined;
