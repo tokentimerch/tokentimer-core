@@ -575,6 +575,10 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
                   as='aside'
                   aria-label='Setup progress'
                   w={{ base: 'full', lg: '320px' }}
+                  display={{
+                    base: plan.steps.length > 1 ? 'block' : 'none',
+                    lg: 'block',
+                  }}
                   flexShrink={0}
                 >
                   <Text
