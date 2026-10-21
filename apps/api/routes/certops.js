@@ -460,6 +460,7 @@ function handleCertOpsError(res, err) {
     });
   }
   if (err?.code === CERTOPS_CERTIFICATE_NOT_RENEWABLE ||
+      err?.code === "CERTOPS_CERTIFICATE_PATH_IN_USE" ||
       err?.code === "CERTOPS_CERTIFICATE_RETIRED" ||
       err?.code === "CERTOPS_MUTATION_RUNNING" ||
       err?.code === "CERTOPS_LIFECYCLE_DOWNGRADE") {
