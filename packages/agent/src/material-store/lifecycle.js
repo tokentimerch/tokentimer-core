@@ -33,6 +33,16 @@ function intentFromJob(job) {
   return { ...destination, workspaceId: job.workspaceId };
 }
 
+// A deploy that stops before touching the destination files leaves nothing
+// ambiguous behind. A failed write is only clean once the rollback restored the
+// previous pair; otherwise the host state cannot be proven.
+const DEPLOY_STAGES_BEFORE_WRITE = new Set(["validate", "realpath", "realpath-policy",
+  "read-key", "read-existing", "backup", "permissions"]);
+function deployWroteNothing(result) {
+  return DEPLOY_STAGES_BEFORE_WRITE.has(result?.stage) ||
+    (result?.stage === "write" && result.rolledBack === true);
+}
+
 function publicationSession({ job, stores, stateDir, keysDir, fixtureLoopbackHttp = false }) {
   // Both directories are authoritative customer-local execution configuration.
   // Never resolve custody paths from control-plane payload fields.
@@ -221,7 +231,15 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
         certificatePem: binding.target.chainPath ? `${blocks[0]}\n` : bundle.certificatePem,
         chainPem: binding.target.chainPath ? `${blocks.slice(1).join("\n")}\n` : undefined,
         privateKeyPath, retainPrivateKeyStaging: true, checkPath: (file) => policyEngine.checkPath(file) });
-      if (!deployed.deployed && !(deployed.skipped && deployed.reason === "idempotent")) throw failure("material_install_failed");
+      if (!deployed.deployed && !(deployed.skipped && deployed.reason === "idempotent")) {
+        // Nothing was written: drop the marker so the next job is not refused.
+        if (deployWroteNothing(deployed)) {
+          if (previous) writeProtectedJson(record, previous);
+          else fs.rmSync(record, { force: true });
+          mutated = false;
+        }
+        throw failure("material_install_failed");
+      }
       receipt.installed = true;
       await checkLease();
       if (typeof reload !== "function" || !(await reload(binding.reloadService, binding.reloadCommandRefs))) throw failure("material_reload_failed");
@@ -263,4 +281,4 @@ async function reconcilePinnedDeployment({ job,bindings,stateDir,policyEngine })
   });
 }
 
-module.exports = { withMaterialLock, publicationSession, resolveBindingPolicy, executePinnedDeployment, reconcilePinnedDeployment, probeListener };
+module.exports = { withMaterialLock, publicationSession, resolveBindingPolicy, executePinnedDeployment, reconcilePinnedDeployment, probeListener, deployWroteNothing };
