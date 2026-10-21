@@ -98,6 +98,15 @@ function shQuote(value) {
 }
 
 /**
+ * The agent refuses a DNS credential file whose access list is wider than
+ * SYSTEM and Administrators, so the file must be locked down after it is
+ * created. *S-1-5-32-544 is the built-in Administrators group.
+ */
+export function windowsCredentialAclCommand(credentialsFile) {
+  return `icacls ${psQuote(credentialsFile)} /inheritance:r /grant:r 'SYSTEM:(F)' '*S-1-5-32-544:(F)'`;
+}
+
+/**
  * Install command without the bootstrap token. The installer prompts for the
  * token, so it never lands in shell history or in this app's state.
  */
@@ -159,6 +168,18 @@ export const REGISTRATION_NOTES = [
   'Run it once with --dry-run first to see what it will change.',
   'Every --write-path directory must already exist, or the service fails to start.',
 ];
+
+// --write-path only applies to the Linux service sandbox. The Windows
+// installer takes the flag for parity but does not use it.
+export const WINDOWS_REGISTRATION_NOTES = [
+  'Run it from an elevated PowerShell, in the folder where you extracted the agent package (the one that contains scripts\\install-agent.ps1). Node.js 22 or 24 must be installed on the server.',
+  'The installer asks for the bootstrap token with a hidden prompt. Do not put it on the command line.',
+  'Run it once with --dry-run first to see what it will change.',
+];
+
+export function registrationNotesFor(os) {
+  return os === 'windows' ? WINDOWS_REGISTRATION_NOTES : REGISTRATION_NOTES;
+}
 
 /**
  * Observe-only agent configuration: it registers and reports discovery, and
@@ -234,6 +255,7 @@ export function buildAutomateConfig({
   credentialsFile,
   reloadService = '',
   acmeClientPath = '',
+  acmeShellPath = '',
   acmeProfile = WINDOWS_ACME_PROFILE,
   dryRun = true,
 }) {
@@ -241,6 +263,14 @@ export function buildAutomateConfig({
   if (os === 'windows' && !WINDOWS_PATH.test(String(acmeClientPath || '')))
     problems.push(
       'Enter the full path of the ACME client on the Windows host, for example C:\\acme\\acme.sh.'
+    );
+  if (
+    os === 'windows' &&
+    String(acmeShellPath || '').trim() &&
+    !WINDOWS_PATH.test(String(acmeShellPath).trim())
+  )
+    problems.push(
+      'Enter the full path of the shell that runs the ACME client, for example C:\\Program Files\\Git\\bin\\bash.exe, or leave it empty for a native program.'
     );
   if (reloadService && os === 'windows')
     problems.push('Reloading a web server is for Linux hosts.');
@@ -263,9 +293,19 @@ export function buildAutomateConfig({
   if (problems.length) return { ok: false, problems };
 
   // Windows uses an operator-supplied ACME client under a name the job refers
-  // to; Linux uses certbot.
+  // to; Linux uses certbot. acme.sh is a shell script, so on Windows the
+  // allowed command is the shell followed by the script.
   const windowsAcme =
-    os === 'windows' ? { argv: [String(acmeClientPath).trim()] } : undefined;
+    os === 'windows'
+      ? {
+          argv: [
+            ...(String(acmeShellPath || '').trim()
+              ? [String(acmeShellPath).trim()]
+              : []),
+            String(acmeClientPath).trim(),
+          ],
+        }
+      : undefined;
   const certbot =
     os === 'windows'
       ? undefined
@@ -315,7 +355,7 @@ export function buildAutomateConfig({
         credentialsFile:
           credentialsFile ||
           (os === 'windows'
-            ? `C:\\ProgramData\\TokenTimerAgent\\${dnsProvider}.json`
+            ? `C:\\ProgramData\\TokenTimerAgent\\state\\dns-${dnsProvider}-credentials.json`
             : `/etc/tokentimer-agent/${dnsProvider}.json`),
       },
       zoneProviderMap: { [zone]: dnsProvider },
@@ -726,7 +766,7 @@ export function buildPreseedSteps({ os, config }) {
       location: 'C:\\ProgramData\\TokenTimerAgent\\state\\config.json',
       steps: [
         'Create the state folder if it does not exist: C:\\ProgramData\\TokenTimerAgent\\state',
-        'Save the JSON below as config.json in that folder.',
+        'Save the JSON below as config.json in that folder, as UTF-8 without a byte order mark. Notepad does this by default. In Windows PowerShell 5.1, Set-Content -Encoding utf8 adds a mark and the agent then refuses the file; use [IO.File]::WriteAllText with a UTF8Encoding($false) instead.',
         'Run the installer. It keeps your config.json and adds the server address.',
       ],
       json,

@@ -26,7 +26,7 @@ import {
   commandProfileFor,
 } from './certopsMatrix.js';
 import {
-  REGISTRATION_NOTES,
+  registrationNotesFor,
   buildControllerSecretCommand,
   buildControllerUpgradeCommand,
   buildControllerValues,
@@ -354,11 +354,18 @@ export function AgentStep({ ctx }) {
             </AlertDescription>
           </Alert>
         ) : null}
-        {REGISTRATION_NOTES.map(n => (
+        {registrationNotesFor(os).map(n => (
           <Text key={n} fontSize='xs' color={muted}>
             {n}
           </Text>
         ))}
+        {isLoopbackHttp(ctx.apiUrl) ? (
+          <Text fontSize='xs' color={muted} data-testid='loopback-note'>
+            This API address is localhost, so it only works when the agent runs
+            on this same machine. For a server elsewhere, open the dashboard
+            through the address that server can reach.
+          </Text>
+        ) : null}
         {token ? (
           <>
             <Text fontSize='sm' fontWeight='semibold'>

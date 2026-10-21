@@ -79,9 +79,33 @@ describe('Windows configuration copy', () => {
         windows({ objective: 'observe', directories: 'C:\\certs' })
       )
     );
-    expect(container.textContent).toMatch(/Folders to scan/);
+    expect(container.textContent).toMatch(/no folder to choose/);
+    expect(container.textContent).not.toMatch(/Folders to scan/);
     expect(container.textContent).not.toMatch(/iis/i);
     expect(screen.queryByText(/HTTPS binding/)).toBeNull();
+  });
+
+  it('asks for the shell and the credential lock-down on Windows automate', () => {
+    const { container } = mount(
+      ConfigStep,
+      makeCtx(
+        'certops_automate',
+        windows({
+          names: 'wiz.example.com',
+          zone: 'example.com',
+          acmeClientPath: 'C:\\acme\\acme.sh',
+        })
+      )
+    );
+    expect(container.textContent).toMatch(/Shell that runs the ACME client/);
+    expect(container.textContent).toMatch(
+      /Program Files\\\\Git\\\\bin\\\\bash\.exe/
+    );
+    expect(container.textContent).toMatch(/icacls/);
+    expect(container.textContent).toMatch(
+      /state\\\\dns-cloudflare-credentials\.json/
+    );
+    expect(container.textContent).not.toMatch(/mode 0600/);
   });
 
   it('labels the automate binding and warns that it is replaced', () => {

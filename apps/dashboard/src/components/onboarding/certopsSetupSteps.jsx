@@ -37,7 +37,12 @@ import {
   buildObserveConfig,
   buildPreseedSteps,
   mergeInstallerFields,
+  windowsCredentialAclCommand,
 } from './certopsConfig.js';
+
+// acme.sh is a shell script, so Windows needs a shell to run it. Git for
+// Windows ships one, which the Windows guide uses.
+const DEFAULT_WINDOWS_SHELL = 'C:\\Program Files\\Git\\bin\\bash.exe';
 
 // The agent binds a certificate to an existing TLS listener; it never
 // creates the site, and the binding on that port is replaced.
@@ -181,6 +186,7 @@ export function ConfigStep({ ctx }) {
     caEndpoint: saved.caEndpoint || STAGING_CA,
     reloadService: saved.reloadService || '',
     acmeClientPath: saved.acmeClientPath || '',
+    acmeShellPath: saved.acmeShellPath ?? DEFAULT_WINDOWS_SHELL,
     iisSite: saved.iisSite || 'Default Web Site',
     iisPort: saved.iisPort || '443',
     sniHost: saved.sniHost || '',
@@ -234,6 +240,7 @@ export function ConfigStep({ ctx }) {
       os,
       names,
       acmeClientPath: form.acmeClientPath,
+      acmeShellPath: form.acmeShellPath,
       zone: form.zone,
       dnsProvider: form.dnsProvider,
       certPath: form.certPath,
@@ -263,6 +270,7 @@ export function ConfigStep({ ctx }) {
         caEndpoint: form.caEndpoint,
         reloadService: form.reloadService,
         acmeClientPath: form.acmeClientPath,
+        acmeShellPath: form.acmeShellPath,
         iisSite: form.iisSite,
         iisPort: form.iisPort,
         sniHost: form.sniHost,
@@ -285,7 +293,7 @@ export function ConfigStep({ ctx }) {
       description='Created on the server before the agent registers, because command profiles are reported only at registration.'
       docs={[
         ...ctx.docs('certops.agentConfig', 'Agent configuration'),
-        ...(objective === 'adcs'
+        ...(objective === 'adcs' || objective === 'observe'
           ? []
           : ctx.docs('certops.dns', 'DNS providers')),
       ]}
@@ -297,7 +305,12 @@ export function ConfigStep({ ctx }) {
     >
       <VStack align='stretch' spacing={3}>
         {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
-        {objective === 'observe' ? (
+        {objective === 'observe' && os === 'windows' ? (
+          <Text fontSize='sm'>
+            The agent reads the machine certificate store (LocalMachine\My) and
+            the site bindings on its own, so there is no folder to choose.
+          </Text>
+        ) : objective === 'observe' ? (
           <FormControl>
             <FormLabel fontSize='sm'>
               Folders to scan for certificates
@@ -476,9 +489,25 @@ export function ConfigStep({ ctx }) {
                     placeholder='C:\acme\acme.sh.exe'
                   />
                   <Text fontSize='xs' mt={1}>
-                    Full path of the ACME client the agent may run (acme.sh or a
-                    compatible tool). Certbot is not supported on Windows. The
-                    agent is allowed to run exactly this file.
+                    Full path of the ACME client the agent may run. acme.sh is a
+                    shell script, so it needs the shell below. Certbot is not
+                    supported on Windows. The agent is allowed to run exactly
+                    this command.
+                  </Text>
+                </FormControl>
+                <FormControl>
+                  <FormLabel fontSize='sm'>
+                    Shell that runs the ACME client (optional)
+                  </FormLabel>
+                  <Input
+                    size='sm'
+                    value={form.acmeShellPath}
+                    onChange={set('acmeShellPath')}
+                    placeholder='C:\Program Files\Git\bin\bash.exe'
+                  />
+                  <Text fontSize='xs' mt={1}>
+                    Git for Windows ships bash.exe. Leave it empty only when the
+                    ACME client above is a native program.
                   </Text>
                 </FormControl>
                 <HStack align='start' spacing={3} flexWrap='wrap'>
@@ -601,11 +630,23 @@ export function ConfigStep({ ctx }) {
                 the agent. It is never entered here. Create it yourself at{' '}
                 {result.config.dnsProviders?.[form.dnsProvider]
                   ?.credentialsFile || 'the path in the file above'}{' '}
-                (mode 0600, owned by the agent user) with these fields:{' '}
+                {os === 'windows'
+                  ? '(then lock it down so only SYSTEM and Administrators can read it, see below)'
+                  : '(mode 0600, owned by the agent user)'}{' '}
+                with these fields:{' '}
                 {(DNS_PROVIDERS[form.dnsProvider]?.fields || []).join(', ')}.
                 The DNS providers page shows the exact file format. The CA is
                 the Let&apos;s Encrypt staging endpoint until you change it.
               </Text>
+            ) : null}
+            {objective === 'automate' && os === 'windows' ? (
+              <CopyBlock
+                label='Lock down the DNS credential file (elevated PowerShell)'
+                text={windowsCredentialAclCommand(
+                  result.config.dnsProviders?.[form.dnsProvider]
+                    ?.credentialsFile || ''
+                )}
+              />
             ) : null}
           </>
         ) : null}

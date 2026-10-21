@@ -62,9 +62,9 @@ export function FirstCertificateStep({ ctx }) {
         </HStack>
         {total === 0 ? (
           <Text fontSize='xs' color={muted}>
-            Discovery runs about once an hour by default. Make sure the folders
-            you listed contain a PEM certificate and that the agent user can
-            read them. Private keys are never read.
+            {saved.infrastructure === 'windows'
+              ? 'Discovery on Windows runs about every 30 minutes by default and reads the machine certificate store. Check that the agent service is running and that certificates exist in LocalMachine\\My. Private keys are never read.'
+              : 'Discovery runs about once an hour by default. Make sure the folders you listed contain a PEM certificate and that the agent user can read them. Private keys are never read.'}
           </Text>
         ) : (
           <Text fontSize='sm'>

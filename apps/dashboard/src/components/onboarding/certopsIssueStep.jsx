@@ -163,7 +163,11 @@ export default function IssueStep({ ctx }) {
     <StepFrame
       kind='verify'
       title='Request your first certificate'
-      description='The agent places one test order with the Let’s Encrypt staging CA and writes the result to the path you chose.'
+      description={
+        windows
+          ? 'The agent places one test order with the Let’s Encrypt staging CA, stores the result in the machine certificate store and binds it to your HTTPS listener.'
+          : 'The agent places one test order with the Let’s Encrypt staging CA and writes the result to the path you chose.'
+      }
       docs={[
         ...ctx.docs('certops.dns', 'DNS providers'),
         ...ctx.docs('certops.agentConfig', 'Agent configuration'),

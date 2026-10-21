@@ -21,6 +21,8 @@ import {
   AGENT_KEYS_DIR,
   certDirectoryFor,
   mergeInstallerFields,
+  registrationNotesFor,
+  windowsCredentialAclCommand,
 } from '../../src/components/onboarding/certopsConfig.js';
 import {
   capabilityGap,
@@ -702,5 +704,38 @@ describe('windows ACME configuration', () => {
         acmeClientPath: '\\\\fileserver\\tools\\acme.exe',
       }).ok
     ).toBe(true);
+  });
+
+  it('runs a script client through the shell the operator names', () => {
+    const shell = 'C:\\Program Files\\Git\\bin\\bash.exe';
+    const { config } = buildAutomateConfig({
+      ...base,
+      acmeClientPath: 'C:\\tools\\acme.sh\\acme.sh',
+      acmeShellPath: shell,
+    });
+    expect(config.policy.allowedCommands[WINDOWS_ACME_PROFILE].argv).toEqual([
+      shell,
+      'C:\\tools\\acme.sh\\acme.sh',
+    ]);
+    expect(buildAutomateConfig({ ...base, acmeShellPath: 'bash' }).ok).toBe(
+      false
+    );
+  });
+
+  it('keeps the credential file in the state folder and locks it with icacls', () => {
+    const { config } = buildAutomateConfig(base);
+    const { credentialsFile: file } = config.dnsProviders.cloudflare;
+    expect(file).toBe(
+      'C:\\ProgramData\\TokenTimerAgent\\state\\dns-cloudflare-credentials.json'
+    );
+    const cmd = windowsCredentialAclCommand(file);
+    expect(cmd).toContain('/inheritance:r');
+    expect(cmd).toContain("'*S-1-5-32-544:(F)'");
+    expect(cmd).toContain("'SYSTEM:(F)'");
+  });
+
+  it('gives Windows its own registration notes without --write-path', () => {
+    expect(registrationNotesFor('windows').join(' ')).not.toMatch(/write-path/);
+    expect(registrationNotesFor('linux').join(' ')).toMatch(/write-path/);
   });
 });
