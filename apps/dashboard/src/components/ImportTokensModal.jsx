@@ -468,6 +468,102 @@ async function parseFile(file) {
   );
 }
 
+// Keeps rows with all four required fields. Each kept row carries `line`, its
+// spreadsheet line in the file, so errors point at the right row even when
+// earlier rows were left out. Left-out rows are returned with what is missing.
+function splitParsedRows(parsed) {
+  const rows = [];
+  const skipped = [];
+  (parsed || []).forEach((raw, idx) => {
+    const row = normalizeRow(raw);
+    const missing = ['name', 'category', 'type', 'expiresAt'].filter(
+      k => !(row && row[k])
+    );
+    if (missing.length === 0) rows.push({ ...row, line: idx + 2 });
+    else skipped.push({ line: idx + 2, missing });
+  });
+  return { rows, skipped };
+}
+
+// Memoized so a progress tick during a large import does not re-render
+// every row of the preview.
+const FilePreviewRow = React.memo(function FilePreviewRow({
+  row,
+  index,
+  checked,
+  duplicate,
+  onToggle,
+}) {
+  return (
+    <Tr>
+      <Td>
+        <HStack spacing={1}>
+          <Checkbox isChecked={checked} onChange={() => onToggle(index)} />
+          {duplicate && (
+            <Tooltip
+              label='This token already exists in this workspace. Importing will update the existing token with the new data.'
+              hasArrow
+              placement='top'
+            >
+              <Box as='span' color='orange.500' cursor='help'>
+                <FiAlertTriangle size={14} />
+              </Box>
+            </Tooltip>
+          )}
+        </HStack>
+      </Td>
+      <Td>{row.name}</Td>
+      <Td>{row.category}</Td>
+      <Td>{row.type}</Td>
+      <Td>{row.expiresAt}</Td>
+      <Td>{formatSection(row.section)}</Td>
+    </Tr>
+  );
+});
+
+const FilePreviewTable = React.memo(function FilePreviewTable({
+  rows,
+  selected,
+  duplicates,
+  onToggle,
+  borderColor,
+}) {
+  return (
+    <Box
+      maxH='260px'
+      overflowY='auto'
+      border='1px solid'
+      borderColor={borderColor}
+      borderRadius='md'
+    >
+      <Table size='sm' variant='simple'>
+        <Thead>
+          <Tr>
+            <Th w='36px'></Th>
+            <Th>Name</Th>
+            <Th>Category</Th>
+            <Th>Type</Th>
+            <Th>Expires</Th>
+            <Th>Section</Th>
+          </Tr>
+        </Thead>
+        <Tbody>
+          {rows.map((r, i) => (
+            <FilePreviewRow
+              key={i}
+              row={r}
+              index={i}
+              checked={selected.has(i)}
+              duplicate={duplicates.has(i)}
+              onToggle={onToggle}
+            />
+          ))}
+        </Tbody>
+      </Table>
+    </Box>
+  );
+});
+
 async function importWithConcurrency(
   rows,
   workspaceId,
@@ -903,7 +999,14 @@ function ImportTokensModalContent({
   const certPemFormRef = React.useRef(null);
   const [fileName, setFileName] = React.useState('');
   const [noRowsRead, setNoRowsRead] = React.useState(false);
-
+  const [skippedRows, setSkippedRows] = React.useState([]);
+  const toggleFileRow = React.useCallback(i => {
+    setSelectedRowsFile(prev => {
+      const n = new Set(prev);
+      n.has(i) ? n.delete(i) : n.add(i);
+      return n;
+    });
+  }, []);
   // Vault integration state
   const [vaultAddress, setVaultAddress] = React.useState(() => {
     try {
@@ -1787,6 +1890,7 @@ function ImportTokensModalContent({
     setParsing(false);
     setError(null);
     setFailedRows([]);
+    setSkippedRows([]);
     setIsImporting(false);
     setProgress({ done: 0, total: 0 });
     abortRef.current = null;
@@ -1835,6 +1939,8 @@ function ImportTokensModalContent({
     setError(null);
     setNoRowsRead(false);
     setRows([]);
+    setSkippedRows([]);
+    setFailedRows([]);
     setSelectedRowsFile(new Set());
     setFileDuplicates(new Set());
     if (!f) return;
@@ -1847,10 +1953,9 @@ function ImportTokensModalContent({
     setParsing(true);
     try {
       const parsed = await parseFile(f);
-      const normalized = (parsed || [])
-        .map(normalizeRow)
-        .filter(r => r && r.name && r.category && r.type && r.expiresAt);
+      const { rows: normalized, skipped } = splitParsedRows(parsed);
       setRows(normalized);
+      setSkippedRows(skipped);
       setNoRowsRead(normalized.length === 0);
       // Auto-select all rows
       setSelectedRowsFile(new Set(normalized.map((_, i) => i)));
@@ -1931,6 +2036,7 @@ function ImportTokensModalContent({
         // Keep a sanitized, concise preview of errors
         const safeErrors = errors.map(e => ({
           index: e.index,
+          line: selectedRows[e.index]?.line ?? e.index + 2,
           error: String(e.error || 'Unknown error').slice(0, 200),
         }));
         setFailedRows(safeErrors);
@@ -2453,7 +2559,7 @@ function ImportTokensModalContent({
                 <Tbody>
                   {failedRows.slice(0, 10).map(fr => (
                     <Tr key={fr.index}>
-                      <Td>{fr.index + 2}</Td>
+                      <Td>{fr.line ?? fr.index + 2}</Td>
                       <Td>{fr.error}</Td>
                     </Tr>
                   ))}
@@ -2474,7 +2580,7 @@ function ImportTokensModalContent({
                       const rows = [
                         ['row', 'error'],
                         ...failedRows.map(fr => [
-                          String(fr.index + 2),
+                          String(fr.line ?? fr.index + 2),
                           String(fr.error),
                         ]),
                       ];
@@ -3527,6 +3633,25 @@ function ImportTokensModalContent({
                 ? renderErrorAlert()
                 : null}
 
+              {source === 'file' && skippedRows.length > 0 ? (
+                <Alert status='warning' borderRadius='md' py={2}>
+                  <AlertIcon />
+                  <Text fontSize='sm' data-testid='skipped-rows-note'>
+                    {skippedRows.length} row
+                    {skippedRows.length === 1 ? '' : 's'} left out because a
+                    required field is empty:{' '}
+                    {skippedRows
+                      .slice(0, 5)
+                      .map(s => `row ${s.line} (${s.missing.join(', ')})`)
+                      .join('; ')}
+                    {skippedRows.length > 5
+                      ? `; and ${skippedRows.length - 5} more`
+                      : ''}
+                    . Add the missing values to the file to import them.
+                  </Text>
+                </Alert>
+              ) : null}
+
               {source === 'file' && rows.length > 0 ? (
                 <Box>
                   <HStack justify='space-between' mb={2}>
@@ -3564,66 +3689,13 @@ function ImportTokensModalContent({
                         </Text>
                       </Alert>
                     )}
-                  <Box
-                    maxH='260px'
-                    overflowY='auto'
-                    border='1px solid'
+                  <FilePreviewTable
+                    rows={rows}
+                    selected={selectedRowsFile}
+                    duplicates={fileDuplicates}
+                    onToggle={toggleFileRow}
                     borderColor={border}
-                    borderRadius='md'
-                  >
-                    <Table size='sm' variant='simple'>
-                      <Thead>
-                        <Tr>
-                          <Th w='36px'></Th>
-                          <Th>Name</Th>
-                          <Th>Category</Th>
-                          <Th>Type</Th>
-                          <Th>Expires</Th>
-                          <Th>Section</Th>
-                        </Tr>
-                      </Thead>
-                      <Tbody>
-                        {rows.map((r, i) => (
-                          <Tr key={i}>
-                            <Td>
-                              <HStack spacing={1}>
-                                <Checkbox
-                                  isChecked={selectedRowsFile.has(i)}
-                                  onChange={() =>
-                                    setSelectedRowsFile(prev => {
-                                      const n = new Set(prev);
-                                      n.has(i) ? n.delete(i) : n.add(i);
-                                      return n;
-                                    })
-                                  }
-                                />
-                                {fileDuplicates.has(i) && (
-                                  <Tooltip
-                                    label='This token already exists in this workspace. Importing will update the existing token with the new data.'
-                                    hasArrow
-                                    placement='top'
-                                  >
-                                    <Box
-                                      as='span'
-                                      color='orange.500'
-                                      cursor='help'
-                                    >
-                                      <FiAlertTriangle size={14} />
-                                    </Box>
-                                  </Tooltip>
-                                )}
-                              </HStack>
-                            </Td>
-                            <Td>{r.name}</Td>
-                            <Td>{r.category}</Td>
-                            <Td>{r.type}</Td>
-                            <Td>{r.expiresAt}</Td>
-                            <Td>{formatSection(r.section)}</Td>
-                          </Tr>
-                        ))}
-                      </Tbody>
-                    </Table>
-                  </Box>
+                  />
                 </Box>
               ) : null}
 
