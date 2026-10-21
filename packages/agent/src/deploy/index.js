@@ -1566,6 +1566,7 @@ async function deployCertificateAndKey({
     // standalone deploy cannot find a permitted local key reference.
     const normalizedPrivateKeyPath = path.normalize(path.resolve(privateKeyPath));
     let custodyPromotionFailed = false;
+    let custodyPromotedPath = null;
     if (
       retainPrivateKeyStaging !== true &&
       isRotationStagingKeyPath(normalizedPrivateKeyPath) &&
@@ -1595,6 +1596,7 @@ async function deployCertificateAndKey({
             throw new Error("custody key promotion verification failed");
           }
           canRemoveStaging = true;
+          custodyPromotedPath = custodyResolved;
           try {
             await fspImpl.unlink(custodyQuarantineMarkerPath(custodyResolved));
           } catch (_unlinkErr) {
@@ -1709,8 +1711,62 @@ async function deployCertificateAndKey({
       firstDeploy:
         existingCert === null && existingKey === null && existingChain === null,
       ...(custodyPromotionFailed ? { custodyPromotionFailed: true } : {}),
+      // Lets a later rollback put the previous key back into custody.
+      ...(custodyPromotedPath ? { custodyKeyPath: custodyPromotedPath } : {}),
     };
   });
+}
+
+/**
+ * Puts the previous private key back into agent custody after a rotation was
+ * rolled back. The rotation already promoted its new key over the live custody
+ * file, so without this the custody key no longer matches the restored
+ * certificate and the path cannot be renewed.
+ *
+ * The key is written only when it provably belongs to `certificatePem`, so a
+ * mismatched or unreadable key never lands in custody. Any refusal leaves the
+ * custody file untouched and the lookup keeps failing closed.
+ *
+ * @param {{
+ *   custodyKeyPath: string,
+ *   keyPath: string,          // restored production key holding the previous key
+ *   certificatePem: string,   // restored (previous) certificate
+ * }} params
+ * @param {{ _fsOverrides?: object }} [options]
+ * @returns {Promise<{ restored: boolean, reason?: string }>}
+ */
+async function restoreCustodyKey(
+  { custodyKeyPath, keyPath, certificatePem } = {},
+  { _fsOverrides } = {},
+) {
+  const fspImpl = { ...fsp, ..._fsOverrides };
+  if (typeof custodyKeyPath !== "string" || typeof keyPath !== "string") {
+    return { restored: false, reason: "custody or key path missing" };
+  }
+  let keyBytes = null;
+  try {
+    keyBytes = await fspImpl.readFile(keyPath);
+    const keyPem = keyBytes.toString("utf8");
+    if (!PRIVATE_KEY_PEM_HEADER_PATTERN.test(keyPem)) {
+      return { restored: false, reason: "restored key is not a private key" };
+    }
+    if (privateKeyMatchesCertificate(keyPem, certificatePem) !== true) {
+      return { restored: false, reason: "restored key does not match the certificate" };
+    }
+    await atomicWrite(fspImpl, path.normalize(path.resolve(custodyKeyPath)), keyBytes, {
+      privateMaterial: true,
+      mode: DEPLOYED_KEY_DEFAULT_MODE,
+    });
+    const written = await fspImpl.readFile(custodyKeyPath);
+    if (!Buffer.from(written).equals(keyBytes)) {
+      return { restored: false, reason: "custody key verification failed" };
+    }
+    return { restored: true };
+  } catch (err) {
+    return { restored: false, reason: err?.message || String(err) };
+  } finally {
+    if (Buffer.isBuffer(keyBytes)) keyBytes.fill(0);
+  }
 }
 
 /**
@@ -1800,6 +1856,7 @@ module.exports = {
   deployCertificate,
   deployCertificateAndKey,
   resolveAgentCustodyKey,
+  restoreCustodyKey,
   discardDeployBackups,
   removeDeployedArtifacts,
   pruneDeployBackups,

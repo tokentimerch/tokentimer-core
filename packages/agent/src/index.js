@@ -134,6 +134,7 @@ const {
   deployCertificate,
   deployCertificateAndKey,
   resolveAgentCustodyKey,
+  restoreCustodyKey,
   discardDeployBackups,
   removeDeployedArtifacts,
   getDeployMetrics,
@@ -1034,6 +1035,30 @@ function isValidCertificateId(candidate) {
     candidate.length > 0 &&
     candidate.length <= 128 &&
     /^[A-Za-z0-9_.:-]+$/.test(candidate)
+  );
+}
+
+/**
+ * Error text for a custody key that cannot be used and has no staging key to
+ * fall back on. A quarantine marker means a promotion outcome is unknown; no
+ * marker means the key simply no longer matches the deployed certificate.
+ * Both end the same way: drop the key and the next renewal issues a new one.
+ *
+ * @param {string} keyPath live custody key path for the certificate
+ * @returns {string}
+ */
+function custodyUnavailableMessage(keyPath) {
+  const marker = `${keyPath}.custody-quarantine`;
+  if (fs.existsSync(marker)) {
+    return (
+      "agent custody key is quarantined after a failed promotion and no rotation staging key remains. " +
+      `Recovery: delete ${keyPath} and ${marker}; the next renewal issues a new key.`
+    );
+  }
+  return (
+    "agent custody key does not match the deployed certificate and no rotation staging key remains. " +
+    `Recovery: delete ${keyPath} (or restore the key that matches the deployed certificate there); ` +
+    "the next renewal issues a new key."
   );
 }
 
@@ -3118,9 +3143,7 @@ async function executeRenewJob({
   if (custodyChoice.quarantined && !custodyChoice.path) {
     return {
       status: "failed",
-      errorMessage: boundErrorMessage(
-        "agent custody key is quarantined after a failed promotion and no rotation staging key remains",
-      ),
+      errorMessage: boundErrorMessage(custodyUnavailableMessage(keyPath)),
       keyRotated: false,
     };
   }
@@ -5118,6 +5141,28 @@ async function rollbackAfterFailedTail({
     mirrorToJobConsole("warn", custodyWarnMsg);
   }
 
+  // The rotation promoted its new key over the live custody file before this
+  // rollback ran. With the previous pair back in production, custody has to
+  // follow, otherwise no custody key matches the deployed certificate.
+  if (
+    restored &&
+    keyBackupPath &&
+    liveKeyPath &&
+    typeof deployResult.custodyKeyPath === "string"
+  ) {
+    const custodyRestore = await restoreCustodyKey({
+      custodyKeyPath: deployResult.custodyKeyPath,
+      keyPath: liveKeyPath,
+      certificatePem: previousPem,
+    });
+    if (!custodyRestore.restored) {
+      const custodyRestoreMsg =
+        `job ${jobId}: previous certificate restored but the agent custody key could not be ` +
+        `restored (${custodyRestore.reason}); this path needs the custody recovery step`;
+      defaultAgentLogger.warn(custodyRestoreMsg);
+      mirrorToJobConsole("warn", custodyRestoreMsg);
+    }
+  }
   // Best-effort re-reload so the service serves the restored content again.
   let reloadNote = "not requested";
   if (restored && typeof job.reloadService === "string" && job.reloadService.length > 0) {
