@@ -48,6 +48,7 @@ import {
   discoveryNotices,
   filterHostnames,
   hostToUrl,
+  mergeRefs,
   normalizeRootDomain,
   paginate,
   selectableHosts,
@@ -57,9 +58,6 @@ import {
   validateMonitorSettings,
 } from './monitorModel.js';
 import { onboardingActions } from '../../utils/onboardingActions.js';
-
-const union = (a, b) =>
-  Array.from(new Set([...(a || []), ...b.filter(Boolean)]));
 
 /**
  * The checks the product runs on a website: how often, and whether to alert
@@ -580,6 +578,21 @@ export function MonitorStep({ ctx }) {
   const [defaultGroupId, setDefaultGroupId] = useState('');
   const [contactGroupIds, setContactGroupIds] = useState([]);
   const pickerRef = useRef(null);
+  // The setup summary lists only the newest few monitors, so the full list is
+  // read here for the "Already monitored" marks and the count.
+  const [allMonitored, setAllMonitored] = useState([]);
+  useEffect(() => {
+    let live = true;
+    Promise.resolve()
+      .then(() => onboardingActions.listMonitors(ctx.workspaceId))
+      .then(list => {
+        if (live) setAllMonitored(list.map(m => m?.url).filter(Boolean));
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [ctx.workspaceId, attempt]);
   useEffect(() => {
     let live = true;
     Promise.resolve()
@@ -602,9 +615,12 @@ export function MonitorStep({ ctx }) {
     };
   }, [ctx.workspaceId]);
 
-  const monitored = (ctx.summary?.monitors?.items || [])
-    .map(m => m?.url)
-    .filter(Boolean);
+  const monitored = Array.from(
+    new Set([
+      ...allMonitored,
+      ...(ctx.summary?.monitors?.items || []).map(m => m?.url).filter(Boolean),
+    ])
+  );
   const defaultGroup = defaultGroupId
     ? groups.find(g => String(g.id) === defaultGroupId)
     : null;
@@ -738,11 +754,11 @@ export function MonitorStep({ ctx }) {
           operation_refs: {
             ...session.operationRefs,
             ...(failedUrls.length ? {} : { monitorUrl: list[0] }),
-            monitorIds: union(
+            monitorIds: mergeRefs(
               session.operationRefs?.monitorIds,
               created.map(c => c.id)
             ),
-            tokenIds: union(
+            tokenIds: mergeRefs(
               session.operationRefs?.tokenIds,
               created.map(c => c.token_id)
             ),

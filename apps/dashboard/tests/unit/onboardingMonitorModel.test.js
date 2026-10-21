@@ -5,11 +5,14 @@ import {
   DEFAULT_MONITOR_SETTINGS,
   DISCOVERY_PAGE_SIZE,
   MAX_STAGED_WEBSITES,
+  MAX_SAVED_REFS,
+  MAX_WEBSITE_LENGTH,
   discoveredHostnames,
   discoveryErrorMessage,
   discoveryNotices,
   filterHostnames,
   hostToUrl,
+  mergeRefs,
   normalizeRootDomain,
   paginate,
   parseSections,
@@ -95,6 +98,37 @@ describe('stageWebsite', () => {
     const r = stageWebsite(full, 'https://more.example.com');
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/up to 50/);
+  });
+
+  it('refuses an address too long to be saved with the setup progress', () => {
+    const long = `https://example.com/${'a'.repeat(MAX_WEBSITE_LENGTH)}`;
+    const r = stageWebsite([], long);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/too long/);
+    const edge = `https://example.com/${'a'.repeat(MAX_WEBSITE_LENGTH - 20)}`;
+    expect(edge.length).toBe(MAX_WEBSITE_LENGTH);
+    expect(stageWebsite([], edge).ok).toBe(true);
+  });
+});
+
+describe('mergeRefs', () => {
+  it('adds new ids without repeats and ignores empty ones', () => {
+    expect(mergeRefs(['a', 'b'], ['b', null, 'c', undefined])).toEqual([
+      'a',
+      'b',
+      'c',
+    ]);
+    expect(mergeRefs(undefined, ['a'])).toEqual(['a']);
+  });
+
+  it('keeps the newest ids within what the saved progress can hold', () => {
+    const old = Array.from({ length: 90 }, (_, i) => `old-${i}`);
+    const added = Array.from({ length: 50 }, (_, i) => `new-${i}`);
+    const merged = mergeRefs(old, added);
+    expect(merged).toHaveLength(MAX_SAVED_REFS);
+    expect(merged.at(-1)).toBe('new-49');
+    expect(merged).not.toContain('old-0');
+    expect(merged).toContain('old-40');
   });
 });
 

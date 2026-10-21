@@ -29,6 +29,24 @@ export const DEFAULT_MONITOR_SETTINGS = Object.freeze({
  */
 export const MAX_STAGED_WEBSITES = 50;
 
+/**
+ * The saved setup progress keeps each address in a text field of at most 512
+ * characters, with a few more for its wrapper. Longer ones could be created
+ * but never recorded, so they are refused up front.
+ */
+export const MAX_WEBSITE_LENGTH = 500;
+
+/** The saved setup progress holds at most 100 ids per list. */
+export const MAX_SAVED_REFS = 100;
+
+/** Newest ids first kept: merges ids and drops the oldest past the limit. */
+export function mergeRefs(existing, added, max = MAX_SAVED_REFS) {
+  const merged = Array.from(
+    new Set([...(existing || []), ...(added || [])].filter(Boolean))
+  );
+  return merged.slice(-max);
+}
+
 export const MAX_SECTION_LABELS = 50;
 
 /** Comma-separated section labels, trimmed and de-duplicated. */
@@ -122,6 +140,13 @@ export function stageWebsite(list, input) {
       list,
       duplicate: true,
       error: `${url} is already in the list.`,
+    };
+  }
+  if (url.length > MAX_WEBSITE_LENGTH) {
+    return {
+      ok: false,
+      list,
+      error: `That address is too long. Use one of up to ${MAX_WEBSITE_LENGTH} characters.`,
     };
   }
   if (list.length >= MAX_STAGED_WEBSITES) {

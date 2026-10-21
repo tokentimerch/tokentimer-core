@@ -460,6 +460,46 @@ describe('MonitorStep partial failure', () => {
   });
 });
 
+describe('MonitorStep limits', () => {
+  it('counts every existing website, not only the newest few in the summary', async () => {
+    actions.listMonitors.mockResolvedValue(
+      Array.from({ length: 52 }, (_, i) => ({
+        id: `m${i}`,
+        url: `https://s${i}.example.com`,
+      }))
+    );
+    mount(
+      makeCtx({
+        summary: { monitors: { items: [{ url: 'https://s0.example.com' }] } },
+      })
+    );
+    expect(
+      await screen.findByText(/Already monitoring 52 websites/)
+    ).toBeTruthy();
+  });
+
+  it('keeps the saved ids within what the saved progress accepts', async () => {
+    const ids = Array.from({ length: 99 }, (_, i) => `old-${i}`);
+    const ctx = makeCtx({}, { monitorIds: ids });
+    mount(ctx);
+    stage('a.example.com');
+    stage('b.example.com');
+    stage('c.example.com');
+    fireEvent.click(screen.getByRole('button', { name: 'Monitor 3 websites' }));
+    await waitFor(() => expect(ctx.refresh).toHaveBeenCalled());
+    const saved = ctx.controller.session.operationRefs.monitorIds;
+    expect(saved).toHaveLength(100);
+    expect(saved.at(-1)).toBe('m-https://c.example.com');
+  });
+
+  it('refuses an address too long to be saved, in plain words', () => {
+    mount(makeCtx());
+    stage(`example.com/${'a'.repeat(600)}`);
+    expect(screen.getByText(/That address is too long/)).toBeTruthy();
+    expect(screen.queryAllByRole('listitem')).toHaveLength(0);
+  });
+});
+
 describe('MonitorStep domain discovery', () => {
   const open = () =>
     fireEvent.click(screen.getByText('Find the websites on my domain'));
