@@ -39,6 +39,23 @@ export function WarnText({ children, ...props }) {
   );
 }
 
+/** One line under a disabled main button saying what is missing. */
+export function ContinueHint({ children, ...props }) {
+  const { muted } = useDashboardTheme();
+  return (
+    <Text
+      fontSize='xs'
+      color={muted}
+      w='100%'
+      textAlign='right'
+      data-testid='continue-hint'
+      {...props}
+    >
+      To continue: {children}
+    </Text>
+  );
+}
+
 /**
  * A command or config the operator copies and runs on their host. By default
  * it refuses to render anything that looks like a credential so a bug upstream

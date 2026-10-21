@@ -30,6 +30,7 @@ import {
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
+import { ContinueHint, ErrorText } from './blocks.jsx';
 import { runIdempotent } from './operations.js';
 import { withAssetTokenId } from './assetRefs.js';
 import {
@@ -341,6 +342,11 @@ export function AssetStep({ ctx }) {
             : 'Create asset'}
         </PrimaryButton>
       }
+      actionHint={
+        staged.length === 0 && !asset.name.trim() ? (
+          <ContinueHint>give the asset a name.</ContinueHint>
+        ) : null
+      }
     >
       <VStack align='stretch' spacing={4}>
         {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
@@ -387,9 +393,7 @@ export function AssetStep({ ctx }) {
                       {d.detail}
                     </Text>
                     {rowErrors[s.id] ? (
-                      <Text fontSize='xs' color='red.400'>
-                        {rowErrors[s.id]}
-                      </Text>
+                      <ErrorText>{rowErrors[s.id]}</ErrorText>
                     ) : null}
                   </Box>
                   <IconButton

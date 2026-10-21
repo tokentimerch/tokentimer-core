@@ -47,6 +47,7 @@ export default function StepFrame({
   docs = [],
   blockers = [],
   actions,
+  actionHint,
   children,
 }) {
   assertStepKind(kind);
@@ -99,6 +100,7 @@ export default function StepFrame({
             {actions}
           </HStack>
         ) : null}
+        {actions && actionHint ? actionHint : null}
       </VStack>
     </DashboardPanel>
   );

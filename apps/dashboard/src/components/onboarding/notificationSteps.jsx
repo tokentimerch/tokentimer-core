@@ -24,7 +24,7 @@ import {
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
-import { CopyBlock } from './blocks.jsx';
+import { ContinueHint, CopyBlock, ErrorText } from './blocks.jsx';
 import { onboardingActions } from '../../utils/onboardingActions.js';
 import {
   THRESHOLD_PRESETS,
@@ -132,6 +132,13 @@ export function NotificationsStep({ ctx }) {
           </PrimaryButton>
         </>
       }
+      actionHint={
+        invalid ? (
+          <ContinueHint>
+            fix the custom thresholds above (days separated by commas).
+          </ContinueHint>
+        ) : null
+      }
     >
       <VStack align='stretch' spacing={4}>
         {state.error ? (
@@ -174,9 +181,7 @@ export function NotificationsStep({ ctx }) {
                 negative numbers fire after expiry.
               </FormHelperText>
               {parsed.problems.map(p => (
-                <Text key={p} fontSize='xs' color='red.400'>
-                  {p}
-                </Text>
+                <ErrorText key={p}>{p}</ErrorText>
               ))}
             </>
           ) : null}
@@ -432,6 +437,15 @@ export function SmtpStep({ ctx }) {
           )}
         </>
       }
+      actionHint={
+        !saved || !testTo ? (
+          <ContinueHint data-testid='test-needs-save'>
+            {saved
+              ? 'enter the address that should receive the test email.'
+              : 'save the email settings first (the test email uses the saved settings).'}
+          </ContinueHint>
+        ) : null
+      }
     >
       <VStack align='stretch' spacing={3}>
         {state.error ? (
@@ -570,11 +584,6 @@ export function SmtpStep({ ctx }) {
             value={testTo}
             onChange={e => setTestTo(e.target.value)}
           />
-          {saved ? null : (
-            <FormHelperText fontSize='xs' data-testid='test-needs-save'>
-              Save first. The test email uses the saved settings.
-            </FormHelperText>
-          )}
         </FormControl>
         <Text fontSize='xs' color='gray.500'>
           The test checks that the server accepts the message, not that it is

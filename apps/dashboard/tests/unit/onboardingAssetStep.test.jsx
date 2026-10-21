@@ -401,3 +401,15 @@ describe('AssetStep contact group hint', () => {
     );
   });
 });
+
+describe('AssetStep disabled button', () => {
+  it('says what is missing until the asset has a name', () => {
+    mount(makeCtx());
+    expect(screen.getByRole('button', { name: 'Create asset' })).toBeDisabled();
+    expect(screen.getByTestId('continue-hint').textContent).toBe(
+      'To continue: give the asset a name.'
+    );
+    setName('Payments API key');
+    expect(screen.queryByTestId('continue-hint')).toBeNull();
+  });
+});

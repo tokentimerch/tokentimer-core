@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -92,7 +92,7 @@ describe('SmtpStep wording', () => {
     const test = await screen.findByRole('button', { name: 'Send test email' });
     expect(test).toBeDisabled();
     expect(screen.getByTestId('test-needs-save').textContent).toMatch(
-      /^Save first\./
+      /^To continue: save the email settings first/
     );
   });
 });
@@ -104,5 +104,19 @@ describe('NotificationsStep footnote', () => {
       expect(screen.getByText(/delivery window \(the hours/)).toBeVisible()
     );
     expect(screen.getByText(/weekly digest \(one summary/)).toBeVisible();
+  });
+});
+
+describe('NotificationsStep custom thresholds', () => {
+  it('names the problem and why Save is off', async () => {
+    wrap(<NotificationsStep ctx={{ ...ctxOf(), workspaceId: 'ws' }} />);
+    fireEvent.click(await screen.findByRole('radio', { name: /Custom/ }));
+    fireEvent.change(screen.getByLabelText('Custom thresholds in days'), {
+      target: { value: 'soon' },
+    });
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByTestId('continue-hint').textContent).toMatch(
+      /^To continue: fix the custom thresholds/
+    );
   });
 });

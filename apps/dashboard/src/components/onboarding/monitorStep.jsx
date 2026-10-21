@@ -33,6 +33,7 @@ import {
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
+import { ContinueHint, ErrorText } from './blocks.jsx';
 import ContactGroupCheckboxGroup from '../ContactGroupCheckboxGroup.jsx';
 import { AlertsGoTo } from './alertsGoTo.jsx';
 import { runIdempotent } from './operations.js';
@@ -810,6 +811,13 @@ export function MonitorStep({ ctx }) {
           {label}
         </PrimaryButton>
       }
+      actionHint={
+        count === 0 ? (
+          <ContinueHint>
+            enter a website address, for example https://example.com.
+          </ContinueHint>
+        ) : null
+      }
     >
       <VStack align='stretch' spacing={4}>
         {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
@@ -870,9 +878,7 @@ export function MonitorStep({ ctx }) {
                     {url}
                   </Text>
                   {rowErrors[url] ? (
-                    <Text fontSize='xs' color='red.400'>
-                      {rowErrors[url]}
-                    </Text>
+                    <ErrorText>{rowErrors[url]}</ErrorText>
                   ) : null}
                 </Box>
                 <IconButton

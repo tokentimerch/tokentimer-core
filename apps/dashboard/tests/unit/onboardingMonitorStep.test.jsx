@@ -1019,3 +1019,17 @@ describe('MonitorStep leave warning', () => {
     expect(leave().defaultPrevented).toBe(false);
   });
 });
+
+describe('MonitorStep disabled button', () => {
+  it('says what is missing until an address is entered', () => {
+    mount(makeCtx());
+    expect(
+      screen.getByRole('button', { name: 'Monitor this website' })
+    ).toBeDisabled();
+    expect(screen.getByTestId('continue-hint').textContent).toMatch(
+      /^To continue: enter a website address/
+    );
+    stage('a.example.com');
+    expect(screen.queryByTestId('continue-hint')).toBeNull();
+  });
+});
