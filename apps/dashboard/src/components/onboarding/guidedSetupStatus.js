@@ -1,11 +1,11 @@
 // Which guided setups have been verified end to end with every option tried.
-// "Candidate" in the wizard is a statement about this register, not about
-// whether the underlying feature is qualified.
+// "Not fully tested" in the setup guide is a statement about this register,
+// not about whether the underlying feature is qualified.
 //
 // To clear a badge, set `verified: true` on its entry. Keep any remaining
 // caveats in `untested`. Nothing else needs to change.
 // Keys are goal ids, plus "goal:infrastructure" for the CertOps cards.
-// A goal row stays a Candidate while any of its infrastructure cards is.
+// A goal row stays marked while any of its infrastructure cards is.
 
 const entry = (untested, hint = '') => ({ verified: false, untested, hint });
 const verified = untested => ({ verified: true, untested, hint: '' });
@@ -28,7 +28,7 @@ const VAULT_UNTESTED = [
 ];
 
 const OBSERVE_WINDOWS_UNTESTED = [
-  'The install-agent.ps1 command from the wizard and the Windows service path were never run (the development machine is not elevated)',
+  'The install-agent.ps1 command from the setup guide and the Windows service path were never run (the development machine is not elevated)',
   'A lab Windows Server (discovery was verified with an agent run on a Windows 11 development machine only: 4 certificates from LocalMachine\\My)',
 ];
 
@@ -41,7 +41,7 @@ const AUTOMATE_LINUX_UNTESTED = [
 ];
 
 const AUTOMATE_WINDOWS_UNTESTED = [
-  'A real order: the wizard flow and a signed dry run worked, but the real order failed because the development machine is not elevated and has no IIS or ACME client',
+  'A real order: the setup guide flow and a signed dry run worked, but the real order failed because the development machine is not elevated and has no IIS or ACME client',
   'The certificate store and HTTPS binding on a Windows Server, TLS verification and renewal (no lab VM could reach the development API)',
 ];
 
@@ -59,7 +59,7 @@ export const GUIDED_SETUP_STATUS = {
   ]),
   import_file: verified(['The 1100-row file (no limit is documented)']),
   import_integration: verified([
-    'Real scans for AWS, Azure Key Vault, GCP, Vault and GitHub from the wizard (call parity with the standalone import modal was proven identical for all seven providers, and a real GitLab import worked)',
+    'Real scans for AWS, Azure Key Vault, GCP, Vault and GitHub from the setup guide (call parity with the standalone import modal was proven identical for all seven providers, and a real GitLab import worked)',
   ]),
   alerting: verified([
     'Delivery of a real email to a production SMTP server (a local Mailpit received the test email)',
@@ -94,8 +94,8 @@ export const pickKey = (goalId, infrastructureId) =>
   infrastructureId ? `${goalId}:${infrastructureId}` : goalId;
 
 /**
- * A pick is a Candidate when its guided setup is not verified in the register
- * (or has no entry), or when the module or matrix flags it on its own.
+ * A pick is marked Not fully tested when its guided setup is not verified in
+ * the register (or has no entry), or when the module or matrix flags it.
  */
 export function isCandidatePick(key, flagged = false) {
   return Boolean(flagged) || GUIDED_SETUP_STATUS[key]?.verified !== true;
@@ -106,11 +106,29 @@ export function pickHint(key) {
   return GUIDED_SETUP_STATUS[key]?.hint || '';
 }
 
-export const CANDIDATE_BADGE = 'Candidate';
+export const CANDIDATE_BADGE = 'Not fully tested';
 
 export const CANDIDATE_NOTE =
-  'Options marked Candidate have not been fully tested end to end yet. Tell us what you find.';
+  'Marked Not fully tested: the feature itself may be fully supported, but this guided setup has not been run end to end on every option yet.';
 
-// What Candidate means, for the accessible description of each marked pick.
+export const CANDIDATE_REPORT_LABEL = 'Report a problem';
+export const CANDIDATE_REPORT_URL =
+  'https://github.com/tokentimerch/tokentimer-core/issues';
+
+// What the badge means, for the accessible description of each marked pick.
 export const CANDIDATE_EXPLANATION =
-  'Candidate: this guided setup has not been fully tested end to end yet. The feature itself may be fully supported.';
+  'Not fully tested: this guided setup has not been run end to end on every option yet. The feature itself may be fully supported.';
+
+/**
+ * For a goal row built from its platform cards: which platforms are the
+ * untested ones, or an empty string when every card (or none) is marked.
+ * `cards` are { id, label, status } as infrastructuresFor returns them.
+ */
+export function untestedPlatformsNote(goalId, cards) {
+  const marked = (cards || []).filter(c =>
+    isCandidatePick(pickKey(goalId, c.id), c.status === 'candidate')
+  );
+  if (marked.length === 0 || marked.length === cards.length) return '';
+  const names = marked.map(c => String(c.label).split(' ')[0]);
+  return `${names.join(' and ')} not fully tested`;
+}

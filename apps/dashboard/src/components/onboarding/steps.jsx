@@ -19,7 +19,12 @@ import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import { availableGoals } from './journeyPlanner.js';
 import { GOAL_AREAS } from './modules.js';
-import { isCandidatePick, pickHint } from './guidedSetupStatus.js';
+import {
+  isCandidatePick,
+  pickHint,
+  untestedPlatformsNote,
+} from './guidedSetupStatus.js';
+import { infrastructuresFor } from './certopsMatrix.js';
 import {
   CANDIDATE_NOTE_ID,
   CandidateBadge,
@@ -109,13 +114,24 @@ export function GoalStep({ ctx }) {
                         goal.candidate
                       );
                       const hint = pickHint(goal.id);
+                      const scope = candidate
+                        ? untestedPlatformsNote(
+                            goal.id,
+                            goal.certopsObjective
+                              ? infrastructuresFor(goal.certopsObjective)
+                              : []
+                          )
+                        : '';
                       const badgeId = `goal-${goal.id}-badge`;
                       const hintId = `goal-${goal.id}-hint`;
+                      const scopeId = `goal-${goal.id}-scope`;
                       // Screen readers hear the badge and any extra context.
                       const describedBy = [
                         `goal-${goal.id}-desc`,
+                        `goal-${goal.id}-meta`,
                         candidate ? badgeId : '',
                         candidate ? CANDIDATE_NOTE_ID : '',
+                        scope ? scopeId : '',
                         candidate && hint ? hintId : '',
                       ]
                         .filter(Boolean)
@@ -142,6 +158,30 @@ export function GoalStep({ ctx }) {
                           >
                             {goal.blocker?.remediation || goal.description}
                           </Text>
+                          <Text
+                            id={`goal-${goal.id}-meta`}
+                            fontSize='xs'
+                            color={muted}
+                            ml={6}
+                          >
+                            {[
+                              goal.needs ? `Requires: ${goal.needs}` : '',
+                              goal.time,
+                            ]
+                              .filter(Boolean)
+                              .join(' ')}
+                          </Text>
+                          {scope ? (
+                            <Text
+                              id={scopeId}
+                              fontSize='xs'
+                              fontWeight='semibold'
+                              color={muted}
+                              ml={6}
+                            >
+                              {scope}
+                            </Text>
+                          ) : null}
                           {candidate && hint ? (
                             <Text
                               id={hintId}

@@ -7,11 +7,15 @@ import { ObjectiveStep } from '../../src/components/onboarding/certopsSetupSteps
 import { GOALS } from '../../src/components/onboarding/modules.js';
 import { infrastructuresFor } from '../../src/components/onboarding/certopsMatrix.js';
 import {
+  CANDIDATE_BADGE,
   CANDIDATE_EXPLANATION,
   CANDIDATE_NOTE,
+  CANDIDATE_REPORT_LABEL,
+  CANDIDATE_REPORT_URL,
   GUIDED_SETUP_STATUS,
   isCandidatePick,
   pickKey,
+  untestedPlatformsNote,
 } from '../../src/components/onboarding/guidedSetupStatus.js';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
@@ -102,7 +106,7 @@ describe('guided setup register', () => {
   it('keeps the wording about the guided setup, not the feature', () => {
     expect(CANDIDATE_EXPLANATION).toMatch(/guided setup/);
     expect(CANDIDATE_EXPLANATION).toMatch(/feature itself may be fully/);
-    expect(CANDIDATE_NOTE).toMatch(/Candidate/);
+    expect(CANDIDATE_NOTE).toMatch(/Not fully tested/);
   });
 });
 
@@ -113,10 +117,10 @@ describe('goal picker badges', () => {
       const radios = screen.getAllByRole('radio');
       expect(radios).toHaveLength(Object.keys(GOALS).length);
       for (const radio of radios) {
-        expect(describedText(radio)).toContain('Candidate');
+        expect(describedText(radio)).toContain(CANDIDATE_BADGE);
         expect(describedText(radio)).toContain(CANDIDATE_NOTE);
       }
-      expect(screen.getAllByText('Candidate')).toHaveLength(radios.length);
+      expect(screen.getAllByText(CANDIDATE_BADGE)).toHaveLength(radios.length);
       expect(screen.getAllByText(CANDIDATE_NOTE)).toHaveLength(1);
     });
   });
@@ -129,12 +133,12 @@ describe('goal picker badges', () => {
         /Track an API key/,
       ]) {
         const text = describedText(screen.getByRole('radio', { name }));
-        expect(text).not.toContain('Candidate');
+        expect(text).not.toContain(CANDIDATE_BADGE);
         expect(text).not.toContain(CANDIDATE_NOTE);
       }
       const other = screen.getByRole('radio', { name: /Import many assets/ });
-      expect(describedText(other)).toContain('Candidate');
-      expect(screen.getAllByText('Candidate')).toHaveLength(
+      expect(describedText(other)).toContain(CANDIDATE_BADGE);
+      expect(screen.getAllByText(CANDIDATE_BADGE)).toHaveLength(
         Object.keys(GOALS).length - 2
       );
       expect(screen.getAllByText(CANDIDATE_NOTE)).toHaveLength(1);
@@ -149,7 +153,7 @@ describe('goal picker badges', () => {
         expect(screen.getAllByRole('radio')).toHaveLength(
           Object.keys(GOALS).length
         );
-        expect(screen.queryByText('Candidate')).toBeNull();
+        expect(screen.queryByText(CANDIDATE_BADGE)).toBeNull();
         expect(screen.queryByText(CANDIDATE_NOTE)).toBeNull();
         expect(screen.queryByText(/qualified in 0.18.0/)).toBeNull();
       },
@@ -160,10 +164,10 @@ describe('goal picker badges', () => {
   it('a module candidate flag still marks a verified goal', () => {
     withRegister(Object.keys(GUIDED_SETUP_STATUS), () => {
       wrap(<GoalStep ctx={makeCtx()} />);
-      expect(screen.getAllByText('Candidate')).toHaveLength(1);
+      expect(screen.getAllByText(CANDIDATE_BADGE)).toHaveLength(1);
       expect(
         describedText(screen.getByRole('radio', { name: /Microsoft CA/ }))
-      ).toContain('Candidate');
+      ).toContain(CANDIDATE_BADGE);
     });
   });
 
@@ -248,7 +252,7 @@ describe('shipped register', () => {
       /Set up alert notifications/,
     ]) {
       expect(describedText(screen.getByRole('radio', { name }))).not.toContain(
-        'Candidate'
+        CANDIDATE_BADGE
       );
     }
     for (const name of [
@@ -258,20 +262,20 @@ describe('shipped register', () => {
       /Share one certificate/,
     ]) {
       expect(describedText(screen.getByRole('radio', { name }))).toContain(
-        'Candidate'
+        CANDIDATE_BADGE
       );
     }
-    expect(screen.getAllByText('Candidate')).toHaveLength(4);
+    expect(screen.getAllByText(CANDIDATE_BADGE)).toHaveLength(4);
     expect(screen.getAllByText(CANDIDATE_NOTE)).toHaveLength(1);
   });
 
   it('observe cards: only Windows is marked, Linux and Kubernetes are clean', () => {
     wrap(<ObjectiveStep ctx={makeCtx('certops_observe')} />);
     const text = name => describedText(screen.getByRole('radio', { name }));
-    expect(text(/Linux server/)).not.toContain('Candidate');
-    expect(text(/Kubernetes/)).not.toContain('Candidate');
-    expect(text(/Windows Server/)).toContain('Candidate');
-    expect(screen.getAllByText('Candidate')).toHaveLength(1);
+    expect(text(/Linux server/)).not.toContain(CANDIDATE_BADGE);
+    expect(text(/Kubernetes/)).not.toContain(CANDIDATE_BADGE);
+    expect(text(/Windows Server/)).toContain(CANDIDATE_BADGE);
+    expect(screen.getAllByText(CANDIDATE_BADGE)).toHaveLength(1);
     expect(screen.getAllByText(CANDIDATE_NOTE)).toHaveLength(1);
   });
 
@@ -279,7 +283,7 @@ describe('shipped register', () => {
     for (const goal of ['certops_automate', 'certops_adcs', 'certops_vault']) {
       const view = wrap(<ObjectiveStep ctx={makeCtx(goal)} />);
       for (const card of screen.getAllByRole('radio')) {
-        expect(describedText(card), goal).toContain('Candidate');
+        expect(describedText(card), goal).toContain(CANDIDATE_BADGE);
       }
       view.unmount();
     }
@@ -293,7 +297,7 @@ describe('note appears only above a list with a marked row', () => {
         screen.getByRole('radio', { name: /Monitor a website certificate/ })
       );
       expect(text).toBe(
-        'Track the HTTPS certificate of a site and get alerted before it expires.'
+        'Track the HTTPS certificate of a site and get alerted before it expires. About 2 min'
       );
     });
   });
@@ -313,7 +317,7 @@ describe('note appears only above a list with a marked row', () => {
         );
         expect(screen.getAllByRole('radio')).toHaveLength(4);
         expect(screen.queryByText(CANDIDATE_NOTE)).toBeNull();
-        expect(screen.queryByText('Candidate')).toBeNull();
+        expect(screen.queryByText(CANDIDATE_BADGE)).toBeNull();
       }
     );
   });
@@ -330,10 +334,100 @@ describe('note appears only above a list with a marked row', () => {
         </ChakraProvider>
       );
       expect(screen.getAllByText(CANDIDATE_NOTE)).toHaveLength(1);
-      expect(screen.getAllByText('Candidate')).toHaveLength(2);
+      expect(screen.getAllByText(CANDIDATE_BADGE)).toHaveLength(2);
     });
   });
 });
+describe('Not fully tested wording', () => {
+  it('links the shared note to the public issue tracker', () => {
+    withRegister([], () => {
+      wrap(<GoalStep ctx={makeCtx()} />);
+      const link = screen.getByRole('link', { name: CANDIDATE_REPORT_LABEL });
+      expect(link.getAttribute('href')).toBe(CANDIDATE_REPORT_URL);
+      expect(CANDIDATE_REPORT_URL).toBe(
+        'https://github.com/tokentimerch/tokentimer-core/issues'
+      );
+    });
+  });
+
+  it('never says Candidate to the person', () => {
+    withRegister([], () => {
+      wrap(<GoalStep ctx={makeCtx()} />);
+      expect(document.body.textContent).not.toMatch(/Candidate/);
+    });
+  });
+
+  it('names the untested platform on a goal row built from its cards', () => {
+    withRegister(
+      ['certops_observe:linux', 'certops_observe:kubernetes'],
+      () => {
+        wrap(<GoalStep ctx={makeCtx()} />);
+        const row = screen.getByRole('radio', {
+          name: /Discover certificates/,
+        });
+        expect(describedText(row)).toContain('Windows not fully tested');
+      }
+    );
+  });
+
+  it('adds no platform line when every card is marked', () => {
+    withRegister([], () => {
+      wrap(<GoalStep ctx={makeCtx()} />);
+      const row = screen.getByRole('radio', { name: /Issue and renew/ });
+      expect(describedText(row)).not.toMatch(/ not fully tested/);
+    });
+  });
+
+  it('builds the platform note from the register only', () => {
+    const cards = [
+      { id: 'linux', label: 'Linux server', status: 'qualified' },
+      { id: 'windows', label: 'Windows Server', status: 'qualified' },
+    ];
+    withRegister(['certops_automate:linux'], () => {
+      expect(untestedPlatformsNote('certops_automate', cards)).toBe(
+        'Windows not fully tested'
+      );
+    });
+    withRegister([], () => {
+      expect(untestedPlatformsNote('certops_automate', cards)).toBe('');
+    });
+    withRegister(['certops_automate:linux', 'certops_automate:windows'], () => {
+      expect(untestedPlatformsNote('certops_automate', cards)).toBe('');
+    });
+  });
+});
+
+describe('time and requirement hints', () => {
+  it('shows a rough time for every goal', () => {
+    wrap(<GoalStep ctx={makeCtx()} />);
+    for (const goal of Object.values(GOALS)) {
+      expect(goal.time, goal.label).toBeTruthy();
+    }
+    expect(
+      describedText(screen.getByRole('radio', { name: /Monitor a website/ }))
+    ).toContain('About 2 min');
+    expect(
+      describedText(
+        screen.getByRole('radio', { name: /Discover certificates/ })
+      )
+    ).toContain('Needs a server, about 20 min');
+  });
+
+  it('states what ACME and AD CS need up front', () => {
+    wrap(<GoalStep ctx={makeCtx()} />);
+    const acme = describedText(
+      screen.getByRole('radio', { name: /Issue and renew/ })
+    );
+    expect(acme).toContain('Requires: a domain you control');
+    expect(acme).toContain('DNS provider API token');
+    const adcs = describedText(
+      screen.getByRole('radio', { name: /Microsoft CA/ })
+    );
+    expect(adcs).toContain('Requires: a domain-joined Windows Server');
+    expect(adcs).toContain('Enroll rights');
+  });
+});
+
 describe('infrastructure card badges', () => {
   it('marks every infrastructure card for every CertOps goal', () => {
     withRegister([], () => {
@@ -345,7 +439,7 @@ describe('infrastructure card badges', () => {
           infrastructuresFor(goal.certopsObjective).length
         );
         for (const card of cards) {
-          expect(describedText(card), id).toContain('Candidate');
+          expect(describedText(card), id).toContain(CANDIDATE_BADGE);
         }
         expect(screen.getAllByText(CANDIDATE_NOTE)).toHaveLength(1);
         view.unmount();
@@ -358,8 +452,8 @@ describe('infrastructure card badges', () => {
       wrap(<ObjectiveStep ctx={makeCtx('certops_observe')} />);
       const linux = screen.getByRole('radio', { name: /Linux server/ });
       const windows = screen.getByRole('radio', { name: /Windows Server/ });
-      expect(describedText(linux)).not.toContain('Candidate');
-      expect(describedText(windows)).toContain('Candidate');
+      expect(describedText(linux)).not.toContain(CANDIDATE_BADGE);
+      expect(describedText(windows)).toContain(CANDIDATE_BADGE);
       expect(screen.getAllByText(CANDIDATE_NOTE)).toHaveLength(1);
     });
   });
@@ -369,7 +463,7 @@ describe('infrastructure card badges', () => {
       // Observe cards are qualified in the matrix, so only the register marks them.
       wrap(<ObjectiveStep ctx={makeCtx('certops_observe')} />);
       expect(screen.getAllByRole('radio')).toHaveLength(3);
-      expect(screen.queryByText('Candidate')).toBeNull();
+      expect(screen.queryByText(CANDIDATE_BADGE)).toBeNull();
       expect(screen.queryByText(CANDIDATE_NOTE)).toBeNull();
     });
   });
