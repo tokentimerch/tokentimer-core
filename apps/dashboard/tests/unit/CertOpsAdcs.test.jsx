@@ -23,6 +23,7 @@ const {
   discardIssuerMock,
   proposeEnrollmentRequestIdMock,
   confirmIssuerKeyMock,
+  getJobMock,
   showSuccessMock,
   showErrorMock,
 } = vi.hoisted(() => ({
@@ -35,6 +36,7 @@ const {
   discardIssuerMock: vi.fn(),
   proposeEnrollmentRequestIdMock: vi.fn(),
   confirmIssuerKeyMock: vi.fn(),
+  getJobMock: vi.fn(),
   showSuccessMock: vi.fn(),
   showErrorMock: vi.fn(),
 }));
@@ -59,6 +61,10 @@ vi.mock('../../src/components/certops/useCertOps.js', () => ({
 
 vi.mock('../../src/components/certops/certopsAgentsApi.js', () => ({
   listAgents: listAgentsMock,
+}));
+
+vi.mock('../../src/components/certops/certopsJobsApi.js', () => ({
+  getJob: getJobMock,
 }));
 
 vi.mock('../../src/components/certops/certopsEnrollmentsApi.js', async () => {
@@ -122,6 +128,7 @@ beforeEach(() => {
   listAgentsMock.mockReset();
   createIssuerMock.mockReset();
   dispatchIssuerPreflightMock.mockReset();
+  getJobMock.mockReset().mockResolvedValue({ job: { status: 'running' } });
   discardIssuerMock.mockReset();
   proposeEnrollmentRequestIdMock.mockReset();
   showErrorMock.mockReset();
@@ -754,5 +761,63 @@ describe('CertOpsAdcs', () => {
         { timeout: 6000 }
       )
     ).toBeInTheDocument();
+  }, 15000);
+  async function runCheck() {
+    isAdminMock.mockReturnValue(true);
+    listAgentsMock.mockResolvedValue({
+      items: [{ id: 'agent-1', name: 'member-1' }],
+    });
+    createIssuerMock.mockResolvedValue({ issuer: { id: 'issuer-new' } });
+    dispatchIssuerPreflightMock.mockResolvedValue({ job: { id: 'job-r' } });
+    listIssuersMock.mockResolvedValue({
+      items: [issuer({ id: 'issuer-new', currentVersion: 0 })],
+      pagination: { total: 1 },
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'New issuer' }));
+    fireEvent.change(screen.getByLabelText('Issuer name'), {
+      target: { value: 'Corp CA' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.change(screen.getByLabelText('Preflight agent'), {
+      target: { value: 'agent-1' },
+    });
+    fireEvent.change(screen.getByLabelText('CA config'), {
+      target: { value: 'ca01.corp.example.com\\Corp Issuing CA' },
+    });
+    fireEvent.change(screen.getByLabelText('Template'), {
+      target: { value: 'WebServer' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Run check' }));
+    await waitFor(() => expect(dispatchIssuerPreflightMock).toHaveBeenCalled());
+  }
+
+  it('says why the agent refused a check instead of waiting for a verdict', async () => {
+    getJobMock.mockResolvedValue({
+      job: { status: 'rejected', errorCode: 'issuer_not_allowlisted' },
+    });
+    await runCheck();
+    expect(
+      await screen.findByText(
+        /refused the check before it contacted the CA/,
+        {},
+        {
+          timeout: 6000,
+        }
+      )
+    ).toBeInTheDocument();
+  }, 15000);
+
+  it('keeps waiting for the verdict when the job cannot be read', async () => {
+    getJobMock.mockRejectedValue(
+      new Error('Request failed with status code 404')
+    );
+    await runCheck();
+    await waitFor(() => expect(getJobMock).toHaveBeenCalled(), {
+      timeout: 6000,
+    });
+    expect(
+      screen.queryByText(/Could not refresh the preflight verdict/)
+    ).not.toBeInTheDocument();
   }, 15000);
 });

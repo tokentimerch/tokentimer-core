@@ -189,11 +189,17 @@ export default function AdcsIssuerWizard({
         if (cancelled) return;
         if (current) setIssuer(current);
         // An agent refusal never updates the issuer, so read the job itself.
+        // A job that cannot be read must not stop the wait for the verdict.
         const jobId = preflightJobIdRef.current;
         if (jobId) {
-          const failure = failedPreflightMessage(
-            (await getJob(workspaceId, jobId))?.job
-          );
+          let failure = '';
+          try {
+            failure = failedPreflightMessage(
+              (await getJob(workspaceId, jobId))?.job
+            );
+          } catch {
+            failure = '';
+          }
           if (cancelled) return;
           if (failure) {
             setWaiting(false);
