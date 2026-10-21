@@ -54,11 +54,13 @@ describe("signed operator enrollment reconciliation", () => {
       assert.equal(result.requestId, undefined);
     }
   });
-  it("rejects invalid unsigned-size ids before any CA call", async () => {
-    for (const requestId of [0, -1, 1.5, 4294967296, "77"]) {
+  it("rejects ids outside the signed 32-bit range before any CA call", async () => {
+    let calls = 0;
+    for (const requestId of [0, -1, 1.5, 2147483648, 4294967295, "77"]) {
       const result = await retrieveProposedEnrollmentCandidate({ requestId, csrSpkiSha256,
-        assertIssuanceOutcome, issuer: { retrieve: async () => { assert.fail("no invalid CA call"); } } });
+        assertIssuanceOutcome, issuer: { retrieve: async () => { calls += 1; return { outcome: "pending", requestId: 77 }; } } });
       assert.equal(result.status, "error");
+      assert.equal(calls, 0, String(requestId));
     }
   });
 });
@@ -353,6 +355,42 @@ describe("adcs-enrollment-reconcile", () => {
     assert.equal(result.status, "unresolved");
     assert.equal(result.nextSearchFrom, 3);
     assert.equal(result.probed, 3);
+  });
+
+  it("skips the CA's own signed success-without-leaf row when scanning from RequestId 1", async () => {
+    const issuer = {
+      async retrieve(requestId) {
+        if (requestId === 1) {
+          return { outcome: "uncertain", caHresult: "0x00000000",
+            detail: "ADCS_DISPOSITION_UNKNOWN: success status without issued certificate (0x00000000)" };
+        }
+        return { outcome: "uncertain", caHresult: "0x00000000", detail: "some other unknown success" };
+      },
+    };
+    const result = await tryReconcileUncertainSubmission({ issuer, stateDir, caConfig: "CA\\Lab",
+      csrSpkiSha256: "a".repeat(64), reconcileSearchFrom: 1, windowSize: 2, assertIssuanceOutcome: (v) => v });
+    assert.equal(result.status, "unresolved");
+    assert.equal(result.nextSearchFrom, 2);
+  });
+
+  it("treats template and key-length policy denials on retrieve as final, not open", async () => {
+    const issuer = {
+      async retrieve(requestId) {
+        const caHresult = { 1: "0x80094012", 2: "0x80094800", 3: "0x80094811" }[requestId];
+        return { outcome: "uncertain", detail: "retrieve of denied row", caHresult };
+      },
+    };
+    const result = await tryReconcileUncertainSubmission({
+      issuer,
+      stateDir,
+      caConfig: "CA\\Lab",
+      csrSpkiSha256: "a".repeat(64),
+      reconcileSearchFrom: 1,
+      windowSize: 3,
+      assertIssuanceOutcome: (v) => v,
+    });
+    assert.equal(result.status, "unresolved");
+    assert.equal(result.nextSearchFrom, 4);
   });
 
   it("skips E_ACCESSDENIED and denied probes so a later unique match can attach", async (t) => {

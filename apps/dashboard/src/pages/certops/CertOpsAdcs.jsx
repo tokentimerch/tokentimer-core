@@ -800,7 +800,7 @@ function EnrollmentRow({
                 placeholder='RequestId'
                 inputMode='numeric'
                 min={1}
-                max={4294967295}
+                max={2147483647}
                 required
               />
               <DashboardActionButton
@@ -1138,9 +1138,9 @@ export default function CertOpsAdcs() {
       !/^[0-9]+$/.test(raw) ||
       !Number.isInteger(requestId) ||
       requestId < 1 ||
-      requestId > 4294967295
+      requestId > 2147483647
     ) {
-      showError('RequestId must be an integer from 1 to 4294967295.');
+      showError('RequestId must be an integer from 1 to 2147483647.');
       return;
     }
     setBusyKey(`reconcile:${enrollmentId}`);

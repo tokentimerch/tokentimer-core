@@ -44,7 +44,7 @@ const {
 } = require("../../../packages/agent/src/windows-key-survivors");
 const {
   startContainedNativeProcess,
-  assertContainedProcessesDrained,
+  assertCleanupSafe: assertContainedProcessesDrained,
 } = require("./certops-windows-contained-process");
 const execute = promisify(execFile);
 const active = new Map();
@@ -406,7 +406,7 @@ async function qualifyOcsp(c) {
   const custody = () => custodyFor(leaf, accepted.enrollmentId);
   const binding = () =>
     ps(
-      `Import-Module WebAdministration;$b=@(Get-WebBinding -Name '${current.site}' -Protocol https|Where-Object bindingInformation -eq '*:${current.port}:${current.item.domain}');$s=@(Get-ChildItem -LiteralPath 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\HTTP\\Parameters\\SslSniBindingInfo'|Where-Object {[string]$_.GetValue('HostnamePort') -ieq '${current.item.domain}:${current.port}'});if($b.Count -ne 1 -or $s.Count -ne 1 -or [int]$b[0].sslFlags -ne 1 -or [string]$b[0].certificateStoreName -ine 'My' -or ([BitConverter]::ToString([byte[]]$b[0].certificateHash).Replace('-','')) -cne '${leaf.fingerprint.replace(/:/g, "").toUpperCase()}' -or [string]$s[0].GetValue('SslCertStoreName') -ine 'My' -or [BitConverter]::ToString([byte[]]$s[0].GetValue('SslCertHash')).Replace('-','') -cne '${leaf.fingerprint.replace(/:/g, "").toUpperCase()}'){throw 'Owned OCSP native SNI binding changed'};@{coordinates=[string]$b[0].bindingInformation;flags=[int]$b[0].sslFlags;iisHash=[BitConverter]::ToString([byte[]]$b[0].certificateHash).Replace('-','');iisStore=[string]$b[0].certificateStoreName;settings=@($s[0].GetValueNames()|Sort-Object|ForEach-Object {@{name=$_;kind=$s[0].GetValueKind($_).ToString();value=$s[0].GetValue($_)}})}|ConvertTo-Json -Depth 8 -Compress`,
+      `Import-Module WebAdministration;$b=@(Get-WebBinding -Name '${current.site}' -Protocol https|Where-Object bindingInformation -eq '*:${current.port}:${current.item.domain}');$s=@(Get-ChildItem -LiteralPath 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\HTTP\\Parameters\\SslSniBindingInfo'|Where-Object {[string]$_.GetValue('HostnamePort') -ieq '${current.item.domain}:${current.port}'});if($b.Count -ne 1 -or $s.Count -ne 1){throw 'Owned OCSP native SNI binding changed'};$ih=$b[0].certificateHash;if($ih -is [byte[]]){$ih=[BitConverter]::ToString($ih).Replace('-','')};$ih=([string]$ih).ToUpperInvariant();if([int]$b[0].sslFlags -ne 1 -or [string]$b[0].certificateStoreName -ine 'My' -or $ih -cne '${leaf.fingerprint.replace(/:/g, "").toUpperCase()}' -or [string]$s[0].GetValue('SslCertStoreName') -ine 'My' -or [BitConverter]::ToString([byte[]]$s[0].GetValue('SslCertHash')).Replace('-','') -cne '${leaf.fingerprint.replace(/:/g, "").toUpperCase()}'){throw 'Owned OCSP native SNI binding changed'};@{coordinates=[string]$b[0].bindingInformation;flags=[int]$b[0].sslFlags;iisHash=$ih;iisStore=[string]$b[0].certificateStoreName;settings=@($s[0].GetValueNames()|Sort-Object|ForEach-Object {@{name=$_;kind=$s[0].GetValueKind($_).ToString();value=$s[0].GetValue($_)}})}|ConvertTo-Json -Depth 8 -Compress`,
     );
   let deferredRecovery;
   async function renew(ocspOnly) {
@@ -491,8 +491,22 @@ async function qualifyOcsp(c) {
             true,
             "Actual deferred CNG key must sign for its issued public leaf",
           );
+          // certreq -new leaves one REQUEST-store placeholder for the key until
+          // -accept consumes it; an unaccepted leaf may be referenced by only that.
+          const placeholders = JSON.parse(
+            ps(
+              `$m=@();foreach($c in Get-ChildItem 'Cert:\\LocalMachine\\REQUEST'){$k=$null;try{$k=[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c);if($k -and $k.Key.KeyName -ceq '${q(container)}'){$m+=$c.Thumbprint}}catch{}finally{if($k){$k.Dispose()}}};ConvertTo-Json -Compress -InputObject @($m)`,
+            ),
+          );
+          assert.equal(
+            placeholders.length,
+            1,
+            "Deferred OCSP key must hold exactly its pending request",
+          );
           const survivors = await inspectMachineKeySurvivors({
             containerName: container,
+            store: "REQUEST",
+            thumbprint: placeholders[0],
             helperPath,
           });
           assert.equal(survivors.ok, true);
@@ -740,6 +754,15 @@ async function qualifyOcsp(c) {
         execute(file, args, { ...options, env: nativeEnvironment() }),
     });
   }
+  // Each publication change restarts the CA and republishes its base CRL.
+  // The responder reads that file by URL, so track the CRL it now serves.
+  async function refreshCrl() {
+    const published = await operation("ReadCrl");
+    const latest = Buffer.from(published.crlDerBase64, "base64");
+    verifyCrl(latest, caBytes, current.authority.keySha256);
+    crl = latest;
+    payload = { ...payload, crlDerBase64: latest.toString("base64") };
+  }
   async function cleanup() {
     if (!prepared || !payload)
       throw new Error(
@@ -750,6 +773,7 @@ async function qualifyOcsp(c) {
     if (publicationAttempted && !publicationRestored) {
       await operation("RestorePublication");
       publicationRestored = true;
+      await refreshCrl();
     }
     requireNativeFlags(await operation("RemoveConfiguration", payload), [
       "nativeConfigurationAbsent",
@@ -833,6 +857,7 @@ async function qualifyOcsp(c) {
       async () => {
         publicationAttempted = true;
         await operation("ApplyPublication");
+        await refreshCrl();
         ps(
           `$k=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('${cacheKey}');try{$s=@{exists=[bool]($k -and @($k.GetValueNames()) -contains 'ChainCacheResyncFiletime')};if($s.exists){$s.kind=$k.GetValueKind('ChainCacheResyncFiletime').ToString();if($s.kind -notin @('QWord','Binary')){throw 'Unsupported OCSP cache policy'};$s.value=$k.GetValue('ChainCacheResyncFiletime')};$s|Export-Clixml -LiteralPath '${q(cachePath)}' -NoClobber -Encoding UTF8}finally{if($k){$k.Dispose()}}`,
         );
@@ -848,6 +873,7 @@ async function qualifyOcsp(c) {
         await renew(true);
         await operation("RestorePublication");
         publicationRestored = true;
+        await refreshCrl();
       },
       {
         evidenceLevel: "real-host",

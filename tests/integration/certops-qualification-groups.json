@@ -24,7 +24,8 @@
           "stops uncertain retrieval at the frozen deadline without a cleanup job",
           "blocks install continuation and deploy-from-store after retirement while cleanup still claims",
           "fences recovery and claims of every non-terminal continuation after retirement",
-          "retirement covers running and queued install-capable work and spares key cleanup"
+          "retirement covers running and queued install-capable work and spares key cleanup",
+          "claims the continuation of a first enrollment that has no certificate identity yet"
         ]
       },
       {
@@ -379,7 +380,15 @@
           "source detail retains every historical period beyond the list summary limit",
           "identity and legacy retirement helpers preserve a caller-owned PostgreSQL transaction",
           "fingerprint-only instance changes create normalized identities without moving management",
-          "v63 reruns after workspace erasure without attributing orphaned audit fingerprints"
+          "v63 reruns after workspace erasure without attributing orphaned audit fingerprints",
+          "(a) no open period and no periodId starts a new period",
+          "(b) open period and no periodId: 409 code kept, body names the open period",
+          "(c) a stale periodId is refused with the current open period",
+          "(c) another certificate's periodId is a mismatch that still names this certificate's period",
+          "(c) an unknown periodId stays a not-found refusal without details",
+          "(d) the correct open periodId ends it and starts the replacement",
+          "does not disclose another workspace's periods, even by id",
+          "plain re-add of a managed certificate reports the open period too"
         ]
       },
       {

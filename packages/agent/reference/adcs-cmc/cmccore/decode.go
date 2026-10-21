@@ -45,6 +45,9 @@ type Result struct {
 	Error             string  `json:"error,omitempty"`
 }
 
+// Exact text matched by the agent (adcs-disposition.js) to detect a CA rekey.
+var errSignerKeyMismatch = fmt.Errorf("CMS signer key does not match caKeySha256")
+
 // Decode parses and verifies a CMC response. caKeySHA256 is the enrollment
 // snapshot pin (hex SHA-256 of the CA SubjectPublicKeyInfo). caCerts are the
 // preflight CA certificates used when the response names the signer by
@@ -89,7 +92,7 @@ func Decode(response []byte, caKeySHA256 string, caCerts ...*x509.Certificate) (
 		}
 	}
 	if spkiSHA256Hex(signer) != pin {
-		return Result{}, fmt.Errorf("CMS signer key does not match caKeySha256")
+		return Result{}, errSignerKeyMismatch
 	}
 
 	content := sd.Content
@@ -229,7 +232,13 @@ func verifyCMS(sd *pkcs7.PKCS7, caCerts []*x509.Certificate) error {
 	if len(caCerts) == 0 {
 		return fmt.Errorf("CMS signature verify failed: no signer certificates")
 	}
-	return verifyWithExternalSigners(sd, caCerts)
+	err := verifyWithExternalSigners(sd, caCerts)
+	// A pending/denied response from a rekeyed CA names a signer that is not
+	// the pinned certificate. Report it as a key mismatch, not a decode error.
+	if err != nil && strings.Contains(err.Error(), "No certificate for signer") {
+		return errSignerKeyMismatch
+	}
+	return err
 }
 
 func matchSigner(sd *pkcs7.PKCS7, caCerts []*x509.Certificate) (*x509.Certificate, error) {

@@ -12,6 +12,8 @@ Set `CERTOPS_WINDOWS_LANGUAGE_ASSETS` to a JSON object keyed by OS/language, for
 
 ## Results and cleanup
 
+**Shards.** The `shard` input defaults to `all`: one serial lab, the only mode that produces release evidence. `parallel` provisions four labs at once (`issuance`, `renewals`, `pending-and-ca`, `templates-and-uncertain`; 24 vCPUs, so check regional quota) and a failure in one shard cannot hide the scenarios of another. Shards are diagnostic: their reports are `not-qualified`/`experimental`, each is checked only for completing every scenario it owns, and none can fill a native release slot. Shards apply to the plain comprehensive scope only; `issuance` also carries the production worker and package acceptance. The scenario-to-shard map is `tests/e2e/helpers/certops-adcs-shards.js`, and a unit test fails if a mandatory scenario has no owner.
+
 Read the run summary and sanitized JSON artifacts. Missing prerequisites or mandatory scenarios fail the run. Fixture results never substitute for native evidence. Collect completed core native runs using `certops-release-qualification.yml` with the exact main candidate SHA and run IDs. Its verdict lists omitted environments and cannot claim full coverage.
 
 Lab teardown runs with `always()`. Keep scheduled `certops-adcs-lab-janitor.yml` enabled and its separate `certops-adcs-cleanup` environment able to authenticate without human approval. It deletes only expired, owned labs; verify both normal teardown and cancellation cleanup before relying on this infrastructure.

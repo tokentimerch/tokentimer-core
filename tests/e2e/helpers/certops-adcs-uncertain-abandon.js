@@ -10,6 +10,7 @@ const fs = require("node:fs");
 const net = require("node:net");
 const dns = require("node:dns/promises");
 const path = require("node:path");
+const { DEFAULT_JOB_LEASE_SECONDS } = require("../../../apps/api/services/certops/leaseTiming");
 const { pathToFileURL } = require("node:url");
 const { readEnrollmentJournal } = require("../../../packages/agent/src/issuers/adcs-enrollment");
 const startObserver = require("./certops-adcs-journal-phase");
@@ -49,12 +50,14 @@ function validateDisposableCaAddress(caConfig, addresses) {
   assert.equal(unique[0], "10.64.0.4", "Resolved address must match the provisioned domain-ca VM");
   return unique[0];
 }
+// Default claim lease plus the reaper hard grace (60s) and a 30s margin; the lab keeps the product default lease.
+const MAX_RECOVERY_WAIT_MS = (DEFAULT_JOB_LEASE_SECONDS + 90) * 1000;
 function recoveryWaitBudget(leaseExpiresAt, measuredAt) {
   const expiry = new Date(leaseExpiresAt).getTime(), measured = new Date(measuredAt).getTime();
   assert.ok(Number.isFinite(expiry) && Number.isFinite(measured), "Actual persisted lease measurement required");
   const leaseRemainingAtFaultMs = Math.max(0, expiry - measured);
   const recoveryWaitBudgetMs = leaseRemainingAtFaultMs + 60000 + 30000;
-  assert.ok(recoveryWaitBudgetMs <= 900000, "Persisted lease exceeds the reviewed fifteen-minute recovery budget");
+  assert.ok(recoveryWaitBudgetMs <= MAX_RECOVERY_WAIT_MS, "Persisted lease exceeds the reviewed recovery budget (default lease + 90s)");
   return { leaseRemainingAtFaultMs, recoveryWaitBudgetMs };
 }
 
@@ -92,7 +95,7 @@ function assertProof(value) {
   assert.equal(value.caRequestsAtFault, 0);
   assert.equal(value.caRequestsAfterRecovery, 0);
   assert.equal(value.caRequestsAfterAbandon, 0);
-  for (const key of ["leaseRemainingAtFaultMs", "recoveryWaitBudgetMs", "actualLeaseWaitMs"]) assert.ok(Number.isInteger(value[key]) && value[key] >= 0 && value[key] <= 900000, key);
+  for (const key of ["leaseRemainingAtFaultMs", "recoveryWaitBudgetMs", "actualLeaseWaitMs"]) assert.ok(Number.isInteger(value[key]) && value[key] >= 0 && value[key] <= MAX_RECOVERY_WAIT_MS, key);
   assert.equal(value.recoveryWaitBudgetMs, value.leaseRemainingAtFaultMs + 90000);
   assert.ok(value.actualLeaseWaitMs + 1000 >= value.leaseRemainingAtFaultMs);
   return true;
@@ -153,7 +156,7 @@ async function qualifyUncertainScenario(context, mode = "abandon") {
     ownedSites.push(site);
     ps(`Import-Module WebAdministration;New-Website -Name '${site}' -PhysicalPath '${directory.replace(/'/g, "''")}' -IPAddress '*' -Port ${port} -HostHeader '${domain}' -Ssl|Out-Null;Set-WebBinding -Name '${site}' -BindingInformation '*:${port}:${domain}' -PropertyName sslFlags -Value 1`);
     ownedFirewallRules.push(rule);
-    ps(`New-NetFirewallRule -Name '${rule}' -DisplayName '${rule}' -Group '${rule}' -Direction Outbound -Action Block -Enabled True -Profile Any -Program "$env:SystemRoot\\System32\\certreq.exe" -RemoteAddress '${caAddress}'|Out-Null;$r=Get-NetFirewallRule -Name '${rule}';$p=$r|Get-NetFirewallApplicationFilter;$a=$r|Get-NetFirewallAddressFilter;if($r.Action -ne 'Block' -or $r.Direction -ne 'Outbound' -or $r.Enabled -ne 'True' -or $p.Program -ine "$env:SystemRoot\\System32\\certreq.exe" -or @($a.RemoteAddress).Count -ne 1 -or [string]$a.RemoteAddress[0] -ne '${caAddress}'){throw 'Transport fault scope invalid'}`);
+    ps(`New-NetFirewallRule -Name '${rule}' -DisplayName '${rule}' -Group '${rule}' -Direction Outbound -Action Block -Enabled True -Profile Any -Program "$env:SystemRoot\\System32\\certreq.exe" -RemoteAddress '${caAddress}'|Out-Null;$r=Get-NetFirewallRule -Name '${rule}';$p=$r|Get-NetFirewallApplicationFilter;$a=$r|Get-NetFirewallAddressFilter;if($r.Action -ne 'Block' -or $r.Direction -ne 'Outbound' -or $r.Enabled -ne 'True' -or $p.Program -ine "$env:SystemRoot\\System32\\certreq.exe" -or @($a.RemoteAddress).Count -ne 1 -or [string]@($a.RemoteAddress)[0] -ne '${caAddress}'){throw 'Transport fault scope invalid'}`);
     proof.ownedTransportBlock = true;
     recoverySuspension.suspend();
     observer = startObserver({ ownedDirectory: workDir, configDirectory: configDir, repositoryRoot: root, phase: "submitting" });
@@ -235,6 +238,6 @@ async function qualifyUncertainScenario(context, mode = "abandon") {
   else { assertProof(proof); gate.report.nativeUncertainAbandon = proof; }
 }
 function qualifyUncertainAbandon(context) { return qualifyUncertainScenario(context, "abandon"); }
-module.exports = { qualifyUncertainScenario, qualifyUncertainAbandon, assertProof, validateDisposableCaAddress, recoveryWaitBudget, createOwnedRecoverySuspension, REQUIRED_SOURCES };
+module.exports = { MAX_RECOVERY_WAIT_MS, qualifyUncertainScenario, qualifyUncertainAbandon, assertProof, validateDisposableCaAddress, recoveryWaitBudget, createOwnedRecoverySuspension, REQUIRED_SOURCES };
 // Local fail-closed abandon contract. This file remains the forest journey.
 module.exports.localContract = require("../../../scripts/certops-adcs-uncertain-abandon");

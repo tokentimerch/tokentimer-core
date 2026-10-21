@@ -318,11 +318,11 @@ function createAdcsIssuer({
 
   async function retrieve(requestId) {
     return withEnrollmentLock(enrollmentId, async () => {
-      if (!Number.isInteger(requestId) || requestId < 1 || requestId > 0xffffffff) {
+      if (!Number.isInteger(requestId) || requestId < 1 || requestId > 0x7fffffff) {
         const refused = {
           outcome: "refused",
           rejectionReason: "invalid_request_id",
-          detail: "retrieve requires a 32-bit unsigned RequestId",
+          detail: "retrieve requires a RequestId from 1 to 2147483647",
         };
         logAdcsResult(info, jobId, "retrieve", refused);
         return refused;

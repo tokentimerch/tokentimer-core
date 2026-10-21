@@ -130,7 +130,7 @@ public static class HttpLeafCrlFile {
   if(!(Test-Path -LiteralPath $directory)){$null=New-Item -Path $directory -ItemType Directory;PrivateAcl $directory $true}
   PrivateDirectory $directory
   $receipt=Join-Path $directory "$ExpectedCaThumbprint.json"
-  $httpUrl="http://10.64.0.6:$HttpPort/TTQualificationRoot.crl"
+  $httpUrl="http://10.64.0.5:$HttpPort/TTQualificationRoot.crl"
   $applied=[string[]]@("1:$env:SystemRoot\System32\CertSrv\CertEnroll\%3%8%9.crl","2:$httpUrl")
   if($Action -eq 'Apply'){
    if(Test-Path -LiteralPath $receipt){throw 'Never adopt an existing CA publication receipt'}
@@ -159,8 +159,12 @@ public static class HttpLeafCrlFile {
   $key.Flush()
   Restart-Service CertSvc -ErrorAction Stop
   (Get-Service CertSvc).WaitForStatus([ServiceProcess.ServiceControllerStatus]::Running,[TimeSpan]::FromSeconds(60))
-  & certutil.exe -config 'tt-ca.lab.certops.test\TTQualificationRoot' -ping | Out-Null
-  if($LASTEXITCODE -ne 0){throw 'Owned CA did not become ready after publication change'}
+   # CertSvc reports Running before its RPC endpoint answers, so poll the ping.
+   $pingDeadline=[DateTime]::UtcNow.AddSeconds(60);$pinged=$false
+   while(-not $pinged){
+    & certutil.exe -config 'tt-ca.lab.certops.test\TTQualificationRoot' -ping | Out-Null
+    if($LASTEXITCODE -eq 0){$pinged=$true}elseif([DateTime]::UtcNow -gt $pingDeadline){throw 'Owned CA did not become ready after publication change'}else{Start-Sleep -Seconds 2}
+   }
   & certutil.exe -crl | Out-Null
   if($LASTEXITCODE -ne 0){throw 'Actual issuing CA CRL publication failed'}
   $check=CheckCa;$check.Dispose()

@@ -15,7 +15,7 @@ const {
 const { ownedBytes } = require("./certops-adcs-http-intermediate-crl");
 const { verifyCrl } = require("./certops-adcs-http-leaf-crl-der");
 const active = new Map();
-const HOST = "10.64.0.6";
+const HOST = "10.64.0.5";
 const ROUTE = "/TTQualificationRoot.crl";
 const digest = (bytes) =>
   crypto.createHash("sha256").update(bytes).digest("hex");

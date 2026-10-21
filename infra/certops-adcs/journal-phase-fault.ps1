@@ -73,8 +73,11 @@ $descendants=@($processes | Where-Object {IsOwnedDescendant $_})
 function KillUnchanged($process){
   $fresh=Get-CimInstance Win32_Process -Filter "ProcessId=$($process.ProcessId)"
   if(-not $fresh){return}
-  if($fresh.CreationDate -ne $process.CreationDate -or $fresh.ParentProcessId -ne $process.ParentProcessId -or $fresh.ExecutablePath -ine $process.ExecutablePath){throw 'Refusing reused process identity'}
-  Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+  # A descendant already tearing down (its parent was just killed) reports no image path; PID plus
+  # creation time still proves it is the same process, so only a non-empty differing path is a mismatch.
+  $pathChanged=$fresh.ExecutablePath -and $process.ExecutablePath -and ($fresh.ExecutablePath -ine $process.ExecutablePath)
+  if($fresh.CreationDate -ne $process.CreationDate -or $fresh.ParentProcessId -ne $process.ParentProcessId -or $pathChanged){throw "Refusing reused process identity pid=$($process.ProcessId) created=$($fresh.CreationDate -ne $process.CreationDate) parent=$($fresh.ParentProcessId -ne $process.ParentProcessId) path=$pathChanged"}
+  try{Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop}catch{if(Get-Process -Id $process.ProcessId -ErrorAction SilentlyContinue){throw}}
 }
 # Stop the verified Node first so child termination cannot trigger another
 # callback/journal transition. Then stop only the captured owned descendants

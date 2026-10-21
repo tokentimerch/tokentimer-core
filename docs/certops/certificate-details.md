@@ -57,6 +57,21 @@ period remains in the audit history. This is another management period, not
 another certificate. A deleted endpoint must be recreated through endpoint
 monitoring rather than restarted from its historical registration.
 
+**Replace management (API and AD CS wizard).** `POST .../certops/sources/{managedCertificateId}/replace-management`
+ends the open period and starts the new one in one transaction. When the
+certificate already has an open period (for example after an automatic
+renewal rotated it), pass that period's id as `periodId`. Without it, or with
+an ended period's id, the call fails with `409 CERTOPS_MANAGEMENT_ALREADY_OPEN`
+and nothing changes. The body says what is managing the certificate and gives
+`reason` (`period_id_required` or `period_id_stale`) and `currentPeriod`
+(`periodId`, `startedAt`, `managementMode`, `renewalProfile`, `source`), so
+the caller can retry with that `periodId`. A `periodId` that belongs to another
+certificate returns `409 CERTOPS_MANAGEMENT_PERIOD_MISMATCH` with the same
+`currentPeriod` for the requested certificate; an unknown id or one from
+another workspace returns `404` and discloses nothing. The AD CS profile wizard
+shows this message and offers a **Replace the current management with this
+profile** button that retries with the named period.
+
 The default table shows current registrations and the latest stopped
 registrations that can be restarted. **Show ended periods** reveals older
 periods, deleted registrations, and previous certificate associations. Their

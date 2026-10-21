@@ -448,18 +448,27 @@ function handleCertOpsError(res, err) {
       locations: Array.isArray(err.details?.locations) ? err.details.locations : [],
     });
   }
+  if (err?.code === "CERTOPS_MANAGEMENT_ALREADY_OPEN" ||
+      err?.code === "CERTOPS_MANAGEMENT_PERIOD_MISMATCH") {
+    // Machine-readable context so a client can retry with the open period.
+    // Always workspace-scoped by the service; never key material.
+    return res.status(409).json({
+      error: err.message,
+      code: err.code,
+      reason: err.details?.reason,
+      currentPeriod: err.details?.currentPeriod ?? null,
+    });
+  }
   if (err?.code === CERTOPS_CERTIFICATE_NOT_RENEWABLE ||
       err?.code === "CERTOPS_CERTIFICATE_RETIRED" ||
       err?.code === "CERTOPS_MUTATION_RUNNING" ||
-      err?.code === "CERTOPS_LIFECYCLE_DOWNGRADE" ||
-      err?.code === "CERTOPS_MANAGEMENT_ALREADY_OPEN") {
+      err?.code === "CERTOPS_LIFECYCLE_DOWNGRADE") {
     return res.status(409).json({ error: err.message, code: err.code });
   }
   if (err?.code === "CERTOPS_VISIBILITY_ACK_REQUIRED") {
     return res.status(428).json({ error: err.message, code: err.code });
   }
-  if (err?.code === "CERTOPS_MANAGEMENT_SOURCE_UNAVAILABLE" ||
-      err?.code === "CERTOPS_MANAGEMENT_PERIOD_MISMATCH") {
+  if (err?.code === "CERTOPS_MANAGEMENT_SOURCE_UNAVAILABLE") {
     return res.status(409).json({ error: err.message, code: err.code });
   }
   if (err?.code === "CERTOPS_MANAGEMENT_PERIOD_NOT_FOUND") {

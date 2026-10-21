@@ -700,7 +700,7 @@ async function proposeReconcileRequestId({
   const parsedRequestId = parseRequestId(requestId);
   if (parsedRequestId == null) {
     throw serviceError(
-      "RequestId must be an integer from 1 to 4294967295",
+      "RequestId must be an integer from 1 to 2147483647",
       "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
     );
   }

@@ -115,7 +115,7 @@
         "reconcileRequestId": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 4294967295,
+          "maximum": 2147483647,
           "description": "Operator-proposed CA RequestId, attached from the durable enrollment row at signed dispatch. The agent retrieves it but validates its SPKI and frozen issuer constraints before attaching it to this enrollment."
         },
         "snapshotSha256": {

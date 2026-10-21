@@ -136,7 +136,9 @@ async function qualifyLocalRules({gate,fixture,api,agentRowId,renewalFixture,con
    if(pending)try{
     command("powershell.exe",["-NoProfile","-NonInteractive","-File",path.join(root,"infra/certops-adcs/officer-action.ps1"),"-RequestId",String(pending.request_id),"-Action","deny","-CommonName",item.domain]);
     assert.equal((await fixture.request(`${api}/enrollments/${pending.id}/cancel`,"POST",{})).status,204);
-    const cleanup=(await require("../../../apps/api/services/certops/certificateEnrollments").scheduleDueEnrollments({client:fixture.pool})).find(row=>row.enrollmentId===pending.id);assert.ok(cleanup);
+    // Cancel stamps next_poll_at with the API host clock; the guest clock can lag it, so schedule against database time.
+    const dbNow=new Date((await fixture.pool.query("SELECT NOW() AS now")).rows[0].now.getTime()+1000);
+    const cleanup=(await require("../../../apps/api/services/certops/certificateEnrollments").scheduleDueEnrollments({client:fixture.pool,now:dbNow})).find(row=>row.enrollmentId===pending.id);assert.ok(cleanup);
     await until(async()=>{const row=(await fixture.pool.query("SELECT state FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,pending.id])).rows[0];const job=(await fixture.pool.query("SELECT status,claim_id,assigned_agent_id FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,cleanup.jobId])).rows[0];assert.ok(!["failed","rejected"].includes(job.status));if(row.state!=="cancelled"||job.status!=="succeeded")return false;assert.ok(job.claim_id);assert.equal(job.assigned_agent_id,agentRowId);return true;});
     assert.equal(ps(`[Security.Cryptography.CngKey]::Exists('${buildEnrollmentContainerName(pending.id)}',[Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider,[Security.Cryptography.CngKeyOpenOptions]::MachineKey)`),"False");if(proof)proof.explicitTerminalCleanupAfterDenial=true;
    }catch(error){cleanupErrors.push(error);}
@@ -186,7 +188,7 @@ async function qualifyLocalRules({gate,fixture,api,agentRowId,renewalFixture,con
    const first=(await require("../../../apps/api/services/certops/certificateEnrollments").scheduleDueEnrollments({client:fixture.pool,now:new Date(Date.parse(pending.next_poll_at)+1000)})).find(r=>r.enrollmentId===id);assert.ok(first);
    const completed=await until(async()=>{const j=(await fixture.pool.query("SELECT status,claim_id,assigned_agent_id FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,first.jobId])).rows[0];assert.ok(!["failed","rejected"].includes(j.status));return j.status==="succeeded"?j:null;});assert.ok(completed.claim_id);assert.equal(completed.assigned_agent_id,agentRowId);
    const final=journals.readEnrollmentJournal(configDir,id);assert.equal(final.kind,"valid");assert.equal(final.journal.state,"installed");assert.equal((await row()).state,"installed");
-   for(const key of ["containerName","csrSha256","csrSpkiSha256","snapshotSha256","requestId","caConfig","template"])assert.equal(final.journal[key],originalJournal.journal[key]);
+   for(const key of ["containerName","csrSha256","csrSpkiSha256","snapshotSha256","requestId"])assert.equal(final.journal[key],originalJournal.journal[key]);assert.equal(final.journal.caConfig,caConfig);assert.equal(final.journal.template,"TTQualificationPending");
    assert.equal(crypto.createHash("sha256").update(new crypto.X509Certificate(final.artifacts.leafPem).raw).digest("hex"),fingerprint);
    const installed=association("My");assert.equal(installed.container,container);assert.equal(crypto.verify("sha256",nonce,leaf.publicKey,Buffer.from(installed.signature,"base64")),true);
    const binding=await require("../../../packages/agent/src/windows-iis").queryCurrentBinding({binding:{site:survivorSite,port:survivorPort,sniHost:item.domain}});assert.equal(binding.ok,true);assert.equal(binding.thumbprint.toUpperCase(),thumbprint);
