@@ -17,11 +17,10 @@ Target: **0.18.0**.
 
 - **Shared certificate distribution through customer Vault.** Publish immutable certificate versions to assigned Linux consumers, including ordinary, SAN and wildcard certificates. Private keys and credentials remain customer-local. Management is API-first, with status on Renewals. The agent build in this release advertises the distribution and AD CS capabilities; Vault distribution runs on Linux consumers and AD CS enrollment on Windows/IIS hosts, as independent paths.
 - **Agent output console.** Managers and admins can follow secret-filtered job output; viewers see stream status only. Console failures do not change job results. **Operator action:** apply migration 69 and keep the `certops` worker scheduled for log cleanup. Configure retention and quotas with `CERTOPS_AGENT_LOG_RETENTION_DAYS` (default `30`; `0` disables storage) and `CERTOPS_AGENT_LOG_DAILY_BYTES` (default `0`, unlimited). `TT_AGENT_LOG_STREAM=off` disables streaming per agent. See [configuration](docs/CONFIGURATION.md#certops-maintenance-sweeps-worker).
-- **Guided setup at `/onboarding`.** A step-by-step wizard, opened from the welcome modal, a setup banner or Preferences, with goals for monitoring several websites at once (check interval, down alerts, optional subdomain discovery), adding several assets at a time, importing, alerts, CertOps observe and automate, and AD CS and Vault setups.
+- **Guided setup at `/onboarding`.** A step-by-step setup guide, opened from the welcome modal, a setup banner or Preferences, with goals for monitoring several websites at once (check interval, down alerts, optional subdomain discovery), adding several assets at a time, importing, alerts, CertOps observe and automate, and AD CS and Vault setups.
   - Progress is saved per user and workspace in a new `onboarding_sessions` table, created by migration 77 when the API starts.
   - Subdomain discovery needs `subfinder` (`SUBFINDER_BIN`). When it is not installed, `POST /api/v1/workspaces/{id}/domain-checker/lookup` returns `503 DOMAIN_CHECKER_TOOL_MISSING`.
   - Requesting a certificate for a file path that another managed certificate already uses returns `409 CERTOPS_CERTIFICATE_PATH_IN_USE` instead of a generic server error.
-  - The guided CertOps setups for Windows, Linux ACME automation (real DNS provider and production ACME CA untested), AD CS and Vault are labelled **Candidate** until their guided path has been verified end to end. The features themselves are unchanged.
 
 ### Changed
 
