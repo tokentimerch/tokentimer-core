@@ -269,7 +269,7 @@ export function AgentStep({ ctx }) {
           <Text fontSize='xs' color={muted}>
             {clusterReported
               ? 'The controller has reported certificates from this cluster.'
-              : 'This page checks every few seconds. If it stays empty, read the controller pod logs and confirm the token is bound to this cluster id.'}
+              : 'This page checks every few seconds and turns to Reporting once the controller sends its first cert-manager Certificate, so the cluster needs at least one. If it stays empty, read the controller pod logs and confirm the token is bound to this cluster id.'}
           </Text>
         </VStack>
       </StepFrame>
