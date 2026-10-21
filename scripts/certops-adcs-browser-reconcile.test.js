@@ -1,4 +1,21 @@
 "use strict";
+/**
+ * Qualification notes: browser RequestId selection
+ *
+ * Reuse native zero-request uncertainty plus two operator-submitted same-CSR CA rows, already
+ * refused as ambiguous. This is deliberate ambiguity, not deterministic lost response. Genuine
+ * manager uses exact enrollment RequestId input/button: zero form error/zero writes, selected
+ * observed ID -> exactly one same-origin 204 numeric-RequestId-only POST; count all CertOps
+ * mutations, no mocking. Locked candidate/browser digest and trusted API; drain session before
+ * exact receipt release, released owner cannot remove later reuse; no traces/storage/raw bodies.
+ * Native real-now signed continuation installs selected leaf/original key with
+ * IIS/TLS/claim/audit, keeps unknown job, proves unused leaf all-store absence before exact
+ * revoke. Optional reconcileActor callback in uncertain-operator-ambiguity preserves API-only
+ * default; observeNativeCompletion only after complete native proof/fault restoration.
+ * Root/hierarchy source/cell binding remains required.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 // Controlled HTTP/native-proof adversaries only; no browser, CA, certificate,
 // service or enrollment operation occurs, and no native qualification is claimed.
 const test = require("node:test"), assert = require("node:assert/strict");

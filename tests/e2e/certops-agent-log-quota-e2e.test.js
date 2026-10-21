@@ -1,4 +1,15 @@
 /**
+ * Qualification notes: Fleet execution-log quota qualification
+ * `agent-log-quota-api` uses registered noop claims and production PostgreSQL log ingestion with a
+ * fixture 1000-byte daily budget. Racing streams share one budget; replay does not charge again,
+ * workspaces remain independent, disabled storage does not charge, and telemetry finalization
+ * preserves job state. Native fleet load and elapsed retention remain separate.
+ *
+ * Runner and report settings: `CERTOPS_LOG_QUOTA_REPORT`.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Supporting fleet-log quota integration against actual PostgreSQL and registered API claims.
  * Run through the API qualification runner with an explicitly disposable stack. Ingestion uses
  * the production service with a supplied small quota/disabled-storage environment; diagnostic

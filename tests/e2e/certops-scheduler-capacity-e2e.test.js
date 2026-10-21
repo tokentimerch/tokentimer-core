@@ -1,4 +1,22 @@
 /**
+ * Qualification notes: Scheduler and public admission capacity
+ * The separate manual `certops-scheduler-capacity-qualification.yml` workflow creates a fresh
+ * API/PostgreSQL stack, runs six mandatory supporting integration scenarios, verifies the report and
+ * destroys the stack even after failure. It is deliberately separate from concurrent API suites: the
+ * production scheduler scans globally. The test requires `CERTOPS_SCHEDULER_EXCLUSIVE_STACK=1` and
+ * refuses any foreign active automation period before creating its own.
+ *
+ * Scopes: `renewal-toggle-scheduler-api`.
+ *
+ * Automatic renewal toggle boundaries
+ *
+ * The same exclusive workflow runs `renewal-toggle-scheduler-api` after the capacity suite has cleaned
+ * its fixture. Seven mandatory supporting integration scenarios use actual public certificate imports,
+ * public profile edits, real PostgreSQL and production SQL-NOW scheduler/admission code:
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Supporting scheduler/admission qualification against an isolated API/PostgreSQL stack.
  * certops-scheduler-capacity-qualification.yml owns the database because sweeping the scheduler
  * can affect every eligible row. Public admission, actual scheduler calls and persisted

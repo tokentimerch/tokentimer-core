@@ -1,4 +1,54 @@
 /**
+ * Qualification: native ACME fixture execution
+ *
+ * Use trusted-main manual certops-real-acme.yml with disposable migrated API/Postgres,
+ * actual foreground agent, pinned Pebble 2.8/challenge server and native clients. Local:
+ * install pinned tools/dependencies, start migrated test Compose stack, then
+ * node scripts/certops-real-acme.js. Refuse occupied loopback ports; drain exact owned
+ * CA, DNS and agent resources and always destroy stack. Private keys/bootstrap
+ * credentials remain temporary/local. Fixture ACME-client TLS override is explicitly
+ * loopback-only; consumer TLS independently verifies fresh CA/hostname, no global root
+ * installation. Public file discovery checks adjacent key presence while rejecting
+ * raw/base64/mixed private material and oversized decoys. Authenticated public issue and
+ * signed-agent claim must generate real CSR, key, CA issuance, filesystem deploy and
+ * persisted facts; independent X509/key/trusted TLS oracles bind actual results.
+ * Naturally due genuine expiry must derive a profile/active period and support real
+ * scheduler renewals. Final lease-loss control holds the actual owned client before
+ * exec, observes current claim and PID and retires the agent publicly WITHOUT releasing
+ * barrier: production abort must preserve deployed pair, TLS and authoritative DNS.
+ * Benign process controls are supporting evidence only; no Windows/IIS, domain ADCS or
+ * service-installation claim.
+ */
+/**
+ * Qualification: client/account matrix and public ACME renewal
+ *
+ * The four Ubuntu 24.04 cells independently use certbot 4.2.0 or acme.sh 3.1.2 at
+ * verified 40290ad42a37aba57eb246e507c11944a52c0f68, each without and with required EAB.
+ * Keep client scopes/artifacts distinct. Real directory gateway HTTP 503, 429
+ * rateLimited/Retry-After: 0 and malformed HTTP 200 must cause bounded public-job
+ * failure before install/identity promotion; independent counters and live authoritative
+ * TXT absence are mandatory. Restore forwarding for genuine issuance; this is not CA
+ * crash/order throttle proof. Issue exact apex+wildcard+additional SAN; CA directory
+ * must advertise EAB mode. Required-EAB cells refuse missing local account/invalid HMAC
+ * before valid issuance; opaque account reference only in public dispatch/profile, never
+ * HMAC persistence. Use real SQL eligibility and two actual successive scheduler
+ * renewals with advancing CA expiry, distinct serial/SPKI, matching private keys,
+ * trusted TLS, current-claim facts. Pause only owned agent while two sweeps race once;
+ * exactly one job per expiry and finally resume. Do not edit clock/profile/journal
+ * timestamps. Then public manual renew containing only identity/idempotency must reuse
+ * stored settings and replay same job, change leaf/key/serial, keep profile unchanged
+ * and clear real TXT records. Trust only public /roots/0 from explicitly trusted fixture
+ * management TLS; never retrieve CA keys or install roots globally. Dead resolver cannot
+ * prove cleanup. The separate Alpine workflow pins Node 24/Alpine 3.23.6, musl and
+ * distribution/container measurements; same foreground assertions apply to both clients,
+ * no EAB-on-Alpine or OpenRC/systemd claim. Direct sweeps do not qualify unattended
+ * worker/service timing. Reports require all protocol/native cases, current
+ * source/candidate and complete cleanup; no keys, credentials, raw agent/ACME logs. Keep
+ * the 12-minute journey inside 14 minutes process bound; extended certbot/noEAB bulk
+ * lane has its separately declared bounds.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+/**
  * Full agent/API/filesystem certificate journey against the owned Pebble ACME CA.
  * scripts/certops-real-acme.js provisions the local CA/challenge server and selected
  * ACME client. Public discovery/claims, actual issuance/renewal, trusted served TLS and

@@ -1,3 +1,21 @@
+/**
+ * Qualification: native consuming-daemon coordinator rollback
+ *
+ * After trusted cutover to B in each nginx/Apache/HAProxy fixture, append an owned
+ * invalid directive and run production runDeployReloadVerify with staged A/key and
+ * genuine native validation/reload profiles. At deployment.updated a read-only recorder
+ * observes actual A files while fresh trusted TLS still serves B. Native validation must
+ * fail BEFORE reload; paired rollback must report restored:true at reload and restore
+ * exact B bytes/ownership/modes, matching key/DNS and trusted TLS. Do not claim replaced
+ * inode identity. Restore configuration only when original inode plus exact appended
+ * fault still match; actual successful validation/reload and trusted B must precede
+ * guard release. Keep both staging files exact. Unknown mutations retain a durable
+ * guard: parent drains its owned daemon/port, then refuses recursive private cleanup
+ * until resolved. Proof excludes private bytes, paths/raw commands. All six slots
+ * require closed proof/current critical sources; this direct coordinator recorder does
+ * not qualify signed dispatch/API ingestion.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Native consuming-daemon rollback source. A read-only local evidence recorder
  * observes the production coordinator; native validate/reload implementations

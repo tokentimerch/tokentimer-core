@@ -1,4 +1,16 @@
 "use strict";
+/**
+ * Qualification notes: browser enrollment integration contract
+ *
+ * Local contract orders preflight -> confirmation -> enrollment and requires confirmation before
+ * submit; it launches no browser/forest. Missing browser/lab fails closed;
+ * nativeExecutionQualified and hostCapabilityAbsentIsPass stay false. Separate comprehensive
+ * Server2022/en-US root run exports enterprise-adcs-browser-enrollment.json only after native
+ * existing-inventory renewal and parent cleanup; that report is not produced by these local
+ * contract checks.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 
 const test = require("node:test");
 const assert = require("node:assert/strict");

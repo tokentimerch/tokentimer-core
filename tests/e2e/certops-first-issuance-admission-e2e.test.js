@@ -1,4 +1,15 @@
 /**
+ * Qualification notes: Issuance admission and workspace pause qualification
+ * Authenticated API/PostgreSQL fixtures verify signed issuance admission, pause/resume, passive
+ * discovery during pause and refusal to derive incomplete renewal profiles. Pausing blocks new claims
+ * and issuance while preserving heartbeats, existing results and factual observations. These are
+ * supporting integration scopes; no issuer or native certificate store executes.
+ *
+ * Scopes: `first-issuance-admission-api`, `pause-ingestion-api`, `derivation-failure-api`.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Supporting API/PostgreSQL qualification: public first issuance retains period and fresh execution admission fences.
  * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
  * The registered fixture sends genuine machine-protocol requests; it does not run

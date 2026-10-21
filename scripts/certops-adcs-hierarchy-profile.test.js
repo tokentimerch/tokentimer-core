@@ -1,4 +1,17 @@
 "use strict";
+/**
+ * Qualification notes: hierarchy environment cells
+ *
+ * Manual dispatch selects one four-VM lab: member Windows 2019/2022/2025 with actual
+ * en-US/de-DE/fr-FR UI, default 2022/en-US,four/eight-hour lifetime/owned teardown; never
+ * automatically nine labs. Nine release cells need separately measured member build/server
+ * product/display language + source digests through offline-root/subordinate
+ * SYSTEM/CNG/IIS/TLS/safety/HTTP/browser suite. Root/CA appliances stay Server2022; selected UI
+ * installs on member+CA. Input labels cannot qualify environments or independent root/CA OS
+ * cross-products; protected native runs remain required.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 // Environment inventory and actual workflow contract only; no lab execution.
 const test = require("node:test");
 const assert = require("node:assert/strict");

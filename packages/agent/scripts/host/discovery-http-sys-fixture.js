@@ -1,3 +1,19 @@
+/*
+ * Qualification notes: native-discovery-qualification
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * windows-discovery-http-sys-selectors owns2 CNG certificates/3 bindings:IPv4ipport,IPv6ipport,non-IIS
+ * hostnameport. Move one certificate toWebHosting while configuring productionMy-only:referenced store
+ * must auto-include. Native registry/publicDER SHA256 bind
+ * selector,AppID,store,thumbprint,address/hostname/port,LocalMachine/key-presence without invented
+ * IIS. Cleanup compares original coordinates/AppIDs/hashes/stores/flags;changedAppID/hash forbids
+ * deletion. CCS enumeration and realTLS listener/remote deployment outside this case.
+ * Run elevated disposable host native discovery with independent certutil/HTTP.sys registry/TLS
+ * oracles. Compare exact machine-store boundaries, certificate/provider/key identity and known binding
+ * settings; malformed/unknown/incomplete native metadata or missing/incompatible PowerShell must fail
+ * before mutation rather than become empty inventory. Preserve owned endpoint hash/TLS while injecting
+ * supported metadata faults and restore exact originals in cleanup. Actual configured runtime
+ * execution is required; portable decoder/source tests are supporting only.
+ */
 "use strict";
 /* Native discovery coverage for the protected disposable Windows host lane.
  * Owns three HTTP.sys selectors and two certificate receipts, compares production

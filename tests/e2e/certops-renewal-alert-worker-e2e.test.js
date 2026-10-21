@@ -1,4 +1,17 @@
 /**
+ * Qualification notes: Renewal outbox and SMTP qualification
+ * The separate manual `certops-renewal-alert-qualification.yml` workflow executes eight mandatory
+ * supporting integration scenarios against only an isolated API, PostgreSQL and MailHog. The source
+ * admits a renewal through the production job service, claims it using a genuinely registered protocol
+ * client, reports a fixture failure through the real authenticated result endpoint, drains the
+ * production outbox resolver and starts the actual delivery-worker process. An independent MailHog
+ * receipt must match the run-owned recipient and MIME-decoded renewal subject. Terminal replay, public
+ * first-issuance failure, requester approval rejection and a completed dry run must leave one owned
+ * renewal alert.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Qualify genuine renewal outbox processing and captured SMTP delivery in a disposable stack.
  * certops-renewal-alert-qualification.yml supplies the API/database and owned mail receiver.
  * Authenticated protocol fixtures trigger the server outcomes; worker delivery and

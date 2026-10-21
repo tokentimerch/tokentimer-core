@@ -1,3 +1,30 @@
+/**
+ * Qualification: direct native Linux trust executor
+ *
+ * Use trusted-main manual certops-linux-trust-qualification.yml on disposable Ubuntu
+ * 22.04/24.04 and digest-pinned AlmaLinux 9.6 container. Elevated Linux,
+ * GITHUB_ACTIONS/github-hosted and CERTOPS_LINUX_TRUST_DISPOSABLE_HOST=1 are required.
+ * Measure os-release and VM/container surface; Alma container does not qualify systemd,
+ * SELinux or full RHEL installation. Call actual trust executor/update-ca-certificates
+ * or update-ca-trust extract; Debian revoke explicitly uses --fresh. Require
+ * root/intermediate install, fresh-process receipt replay, pre-existing-identical
+ * protection, invalid/nonCA refusal, missing-real- refresh executable recovery,
+ * corrupt-receipt refusal, owned revoke, renewal-only policy refusal,
+ * OS-success/receipt-finalization conflict recovery and cleanup. Fresh genuine chains
+ * must fail default OS verification before/after and succeed after install WITHOUT
+ * CAfile; preserve unrelated trust, receipt owner/modes. Missing refresh must retain
+ * incomplete receipt, no success from source presence. Corrupt only owned receipt and
+ * restore original bytes. Real renewal-only executor must refuse distribute/revoke
+ * before native inventory/receipt change. Finalization fault runs real refresh, then
+ * replaces owned receipt path with empty dir: require installed trust plus
+ * receipt_finalize_conflict/intent_written; restore pending receipt, refuse revoke,
+ * repair with redistribute, then genuinely revoke. Finally restore held receipt.
+ * Register exact anchors, attempt every owned cleanup despite failures, refresh and
+ * prove absence. Keys/receipts remain private; only sanitized named reports upload.
+ * Direct native executor tests do not qualify signed API authorization/dispatch or
+ * services.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 // Native executor qualification; signed dispatch and control-plane authorization
 // are separate suites. No filesystem, platform or command implementations are mocked.

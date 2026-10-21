@@ -1,3 +1,16 @@
+/*
+ * Qualification notes: standalone-adcs-feasibility
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Experimental certops-standalone-adcs-smoke.yml uses elevated fresh Server2022,refuses existing
+ * CA/reboot requests. Require actual standalone pending request,officer resubmit/retrieve/accept using
+ * nonexportable CNG,and unique IIS SNI trustedTLS with DNS SAN/serverAuth. No product AD CS capability
+ * enablement. Cleanup only owned leaf/key/site/binding/unique CA certs/authority/new roles; preserve
+ * preexisting IIS. Verifier requires candidate/current hashes/measured OS/SID/CA type,3 nonduplicate
+ * named cases and cleanup,never qualified label. Stable-host promotion needs3 consecutive
+ * same-candidate/image successes<=25min,no skips/reboot and repeat after image/tooling changes.
+ * Excluded from release collector; not domain
+ * Kerberos/templates/continuations/renewal/revocation/CA-key/localization matrix.
+ */
 "use strict";
 
 // Windows host checks for the two release gaps that can run on a runner:

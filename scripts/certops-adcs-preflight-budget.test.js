@@ -1,4 +1,16 @@
 "use strict";
+/**
+ * Qualification notes: native preflight cohort containment
+ *
+ * Additional genuine CLI checks start suspended in retained Windows Job; verify original root
+ * native identity/SYSTEM SID before resume. Bootstrap private inherited env, protocol args/owner
+ * receipts never artifact. Close requires empty Job/root exit/native+protocol handle closure/
+ * wrapper close; unknown drain preserves cohort/state, no numeric-PID kill fallback. Shared
+ * mechanical support proves no ADCS/installed service. Keep primary budget 18, roll idle cohort at
+ * actual 45min before one-hour deadline; drain old job before local-rule rewrite/new CLI.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Source budget audit, not native execution. Count the actual descriptor sets
  * and pin every primary dispatch/cache boundary so adding a new caller requires
  * explicit budget review rather than silently producing an impossible lane. */

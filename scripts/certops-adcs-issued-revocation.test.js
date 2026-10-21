@@ -1,4 +1,22 @@
 "use strict";
+/**
+ * Qualification notes: issued revoked leaf before acceptance
+ *
+ * Reuse genuine installed pending-cancel successor, not cancelled enrollment; register new
+ * unaccepted ownership before POST. Officer approves exact pending request, independently verify
+ * CA signature/RequestId/CSR-SPKI/template/CN/SAN and initially valid online chain. Revoke exact
+ * row/publish CRL: disposition 21 and actual Revoked (not unknown/offline) before continuation.
+ * Before approval/dispatch require unchanged future poll eligibility/one awaiting_issuer job/
+ * pending journal/no retrieved or accepted new leaf and live predecessor. Reuse parent
+ * invalidateOwnedRevocationCache receipt, scheduler-now=next_poll_at+1s is eligibility only.
+ * Actual signed continuation retrieves same real leaf and
+ * rejected_invalid/ADCS_CERTIFICATE_INVALID with 'certificate is revoked'; generic retrieve
+ * failure cannot pass. No My/WebHosting accept, exact key absent, rejected identity retained, same
+ * CA count/predecessor CNG/IIS/TLS. Survivor guard preserves unknown acceptance/cleanup; no new
+ * preflight/officer primitive.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Pure bounded proof and native-source ordering checks; no CA/native action. */
 const { test } = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path");
 const h = require("../tests/e2e/helpers/certops-adcs-issued-revocation");

@@ -1,3 +1,24 @@
+/*
+ * Qualification notes: installer-second-rename-restoration
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * windows-activation-second-rename is RSA2048 Server2022/2025 function-only support, not full CLI.
+ * Parent independently measures gated driver PID,parent,PowerShell,argv,creation; extracts only actual
+ * copy/activation AST. Hold genuine staging directory GENERIC_READ with read/write sharing but no
+ * delete sharing; require first rename succeeded, second refused, exact predecessor restored and
+ * original service/config/credential/pin/TLS unchanged. Release/drain measured holder/driver before
+ * exact stage cleanup and preserve unknown ownership. Native handle/identity evidence, not receipt
+ * parsing, owns processes. Complete CLI rollback has its own oplock journey; neither proof substitutes
+ * for the other.
+ */
+/*
+ * Qualification notes: second-rename
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Pure full-installer contract restores original directory after second rename failure while
+ * preserving in-use binary/CNG key. Owned run manifest names original/staging/previous; refuse their
+ * live binary/key deletion and blanket reset.
+ * nativeExecutionQualified/powerLossDurabilityQualified/realRebootQualified=false; missing host fails.
+ * Not function-only restoration or completed native rollback.
+ */
 "use strict";
 /** Deterministic second-rename activation-function qualification. The child
  * executes only the candidate's real copy/swap functions, not installer CLI
@@ -602,7 +623,6 @@ const LOCAL_REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-windows-second-rename.js",
   "scripts/certops-windows-second-rename.js",
   "scripts/certops-windows-second-rename.test.js",
-  "docs/certops/windows/second-rename.md",
   LOCAL_WORKFLOW,
 ]);
 const LOCAL_PROOF_KEYS = Object.freeze([

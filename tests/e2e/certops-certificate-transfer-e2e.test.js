@@ -1,4 +1,13 @@
 /**
+ * Qualification notes: Certificate transfer qualification
+ * The central `scripts/certops-api-qualification.js` runner executes
+ * `tests/e2e/certops-certificate-transfer-e2e.test.js` against the explicitly disposable
+ * API/PostgreSQL stack. The `certificate-transfer-api` report requires every committed named scenario
+ * and the current test source digest. It is supporting control-plane integration evidence.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Supporting API/PostgreSQL qualification: public token transfer preserves certificate/CSR lineage, target association, immutable audit history and workspace authority.
  * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
  * Public requests and persisted rows are the oracle; prerequisite state is isolated.

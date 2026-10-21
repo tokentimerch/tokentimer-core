@@ -1,3 +1,14 @@
+/*
+ * Qualification notes: credential-startup-refusals
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * An already registered service must explicitly refuse empty or malformed present credentials before
+ * registration/polling, rather than silently replacing identity. Retain original credential privately
+ * and require exact production reader errors. Reuse stopped SYSTEM retained-file startup engine with
+ * original-file guard and fresh child drainage; config/pin/server jobs/CNG/binding/TLS remain
+ * unchanged. Restore exact credential and require repaired authenticated SYSTEM child before guard
+ * release. Supporting temporary reader tests and ten-cell native source do not qualify missing-file
+ * registration, bootstrap replacement, in-flight work or automatic recovery from compromise.
+ */
 "use strict";
 /** Installed credential-reader startup refusal prerequisites. Only the owned
  * credential file is changed; original secret bytes stay in the private fixture

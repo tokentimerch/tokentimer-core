@@ -1,3 +1,26 @@
+/**
+ * Qualification: public bulk renewal with two native results
+ *
+ * Existing Ubuntu 24.04/certbot/noEAB after background/key-reuse controls must first
+ * prove original worker stopped/waited/drained. Publicly issue two extra genuine
+ * certificates to distinct owned targets/profiles with rotation enabled; real dynamic
+ * TLS listeners serve each while original primary pair/profile remain unchanged. One
+ * bulk request contains both identities plus independently absent UUID: require two
+ * exact jobs and not-found item, idempotent replay and exactly those DB subjects/jobs
+ * for request key. Both original-agent current claims/attempt 1 must complete with
+ * changed serial/leaf/ SPKI, advanced expiry, matching protected key,
+ * inventory/current-claim evidence, trusted TLS, unchanged profiles and authoritative
+ * TXT cleanup. No seeded rows/results/clocks. Publicly stop both exact management
+ * periods afterward to prevent stray scheduling; this does not qualify automatic bulk
+ * execution. Register resources before listener/ admission; close all accepted/probe
+ * sockets and exact retained listeners before guard release. Unknown admission/drain
+ * preserves root/public rows; private material stays restricted. UI wrappers reuse base
+ * dependencies but cannot replace its real-acme stack report. The certbot/noEAB test and
+ * runner have 30/32-minute bounds; other clients use 20/22 minutes, and workflows allow
+ * 45/55 minutes. These are failure limits, not measured duration or every bulk fault
+ * qualification.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Public bulk admission followed by genuine candidate-agent/Pebble executions.
  * Runs only in the existing disposable Ubuntu certbot/no-EAB native journey.

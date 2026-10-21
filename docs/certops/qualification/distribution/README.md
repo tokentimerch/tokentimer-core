@@ -1,11 +1,10 @@
 # Certificate distribution qualification
 
-This extends PR #358 after merging main's PR #329 (`6fc0c44a`). Existing
-qualification suites and their obligations remain mandatory. Distribution is
-still outside the shipped agent capability manifest. Passing a source-mounted
-lab is supporting E2E evidence, not a production capability release approval.
+Distribution remains outside the shipped agent capability manifest. Passing a
+source-mounted lab is supporting E2E evidence, not production release approval.
+Shared policy: [certificate lifecycle qualification](../../e2e-qualification.md).
 
-The workflow runs only through manual dispatch on main; pushes and pull requests do not start it. Core product CI remains separate.
+Use the trusted workflow inputs to select disposable supporting runs. Core product CI remains separate.
 
 ## Reproduce the supporting runs
 
@@ -45,7 +44,7 @@ lab; hosted workflow cleanup runs independently with `always()`.
 
 ## Evidence and scope
 
-The `distribution-agent-lab` suite requires all thirteen phases. It cannot
+The `distribution-agent-lab` suite requires every committed mandatory phase. It cannot
 resume a partial run or reuse a completed state. Missing Chromium, a candidate
 identity, a phase, a required capability, or fresh ownership fails the strict
 report. Report verification also binds all causal fixture sources by SHA-256.
@@ -92,12 +91,11 @@ release qualification blocked until actual candidate artifact/native evidence
 exists; source-only declarations cannot enable capabilities.
 Supplying credentials alone cannot make this experimental suite qualify a
 release: a reviewed native runner/collector contract must replace these blocked
-obligations with exact artifact evidence. Remaining native campaign source and
-execution gaps are explicitly listed in the feature matrix.
+obligations with exact artifact evidence. Remaining native obligations are listed below.
 
 ## Remaining native obligations
 
-See [the feature matrix](coverage-matrix.md). The lab has independent agents and
+The lab has independent agents and
 TLS processes on one disposable container host. It does not qualify separate
 native VMs, a released package, customer ACME/Vault AppRole/DNS providers,
 default lease/grace crash timing, retention elapsed windows, or all security
@@ -108,8 +106,7 @@ and cannot substitute for the enrolled-agent journey.
 Native qualification requires protected, explicitly owned issuer and consumer
 hosts, exact candidate archives and hashes, a customer-controlled Vault KV v2,
 an authorized ACME/DNS zone, real nginx/HAProxy, independent external probes,
-and cleanup/reconciliation evidence. These prerequisites were not available in
-this task. No workflow provisions or spends on such infrastructure implicitly.
+and cleanup/reconciliation evidence. No workflow provisions or spends on such infrastructure implicitly.
 
 The additional mandatory `security` and `runtime-controls` phases exercise
 revoked consumer credentials, genuinely signed dispatch replay/misdelivery and
@@ -141,36 +138,3 @@ tooling reliability; it does not provision a native CertOps qualification host.
 Timeouts, signals, empty inventories and failed tests return failure; none
 count as qualification evidence. Subprocess regressions exercise real failure
 and timeout behavior, including isolation from a parent Node test context.
-
-## Defect reproduced by the real journey
-
-A genuine failed reload produced an agent outbox result with public nonce
-`OMuMIxYIpFYikkNjwQ-eEldCLnuFEPc_`. Its decoded prefix resembles a zlib
-container, so the unchanged private-material detector rejects it. The agent's
-actual result POST returned `PRIVATE_KEY_MATERIAL_REJECTED`, leaving the Core
-job running while the real reload had already failed. Reproduce deterministically:
-
-```powershell
-node --test tests/unit/certops-distribution-nonce.test.js
-```
-
-The narrow fix resamples only generated public dispatch nonces rejected by the
-same detector, with a finite attempt bound. It preserves 24-byte cryptographic
-randomness, signing, nonce ownership/replay and the custody rejection policy.
-The failed source-mounted run remains failed; it is never rewritten as a pass.
-
-A second real journey reproduced dispatch starvation after retiring an
-unstarted rollback: with `maxJobs=1`, the old pending deployment repeatedly
-occupied the SQL selection limit, then failed authoritative intent validation;
-the newer approved verification job was never selected. The narrow SQL
-prefilter now excludes paused/retired/superseded distribution rollouts before
-the limit, while retaining the locked authoritative check. It does not mutate
-historical jobs or receipts. A real PostgreSQL regression in
-`pr329-review.test.cjs` reproduces two approved rollouts and proves that the
-newer signed claim is returned without rewriting the old pending job. The
-enrolled-agent retirement/recovery journey tests the complete execution path.
-
-Main integration also needed both renewal-schema `allOf` conditions combined:
-Windows key-reuse refusal and publication-only deployment-target rules. The
-distribution contract generator now preserves unrelated existing conditions.
-The scheduler's Windows test fixture now requests its required fresh key.

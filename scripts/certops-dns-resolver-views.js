@@ -1,3 +1,22 @@
+/**
+ * Qualification: two native DNS resolver views
+ *
+ * The Linux routing fixture needs Python/kernel pidfd support, the pinned native
+ * pebble-challtestsrv, existing ports 8053/8055 and disposable-host authorization.
+ * Create a second owned instance on ports 18054/18055; 18053 stays reserved for
+ * unreachable-resolver coverage. UDP forwarders preserve bytes. Write only the first
+ * view: production all must refuse a reachable negative second view after repeated
+ * queries. Populate both and require all success; a fresh record proves quorum count 1
+ * with one negative view. Both resolvers must answer; there is no early-return or
+ * public-cache claim. Retain a pidfd before executable entry and verify process
+ * birth/executable/argv before provider access. Random labels must be absent initially.
+ * The native clear operation removes a whole label, so refuse unexpected values. Require
+ * both views empty, UDP sockets closed, exact child waited and pidfd/controller closed
+ * before removing ownership. Never use numeric-PID fallback; uncertain cleanup preserves
+ * the parent directory. Public evidence is bounded flags/counts, not DNS packets, record
+ * values or argv. Parser checks do not qualify the mandatory native lane.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Actual production DNS-hook all/quorum qualification against two owned DNS
  * views. Each loopback forwarder passes native challtestsrv datagrams unchanged;

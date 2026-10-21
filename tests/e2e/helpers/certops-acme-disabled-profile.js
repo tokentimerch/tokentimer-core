@@ -1,3 +1,21 @@
+/**
+ * Qualification: manual renewal while automation disabled
+ *
+ * In Ubuntu 24.04/certbot/noEAB after result-outbox restart, reopen the second exact
+ * bulk certificate's own management period with its real stored profile. Production
+ * SQL-NOW/default-threshold/terminal-status selector must include it, then exclude it
+ * after public autoRenewEnabled:false. Real public manual renewal must still get current
+ * signed claim, actual CA leaf/new serial+SPKI, matching protected key, trusted TLS and
+ * claim-bound evidence while stored profile stays disabled. Public re-enable must make
+ * the same row selectable again; stop only the newly opened period. Do not inject
+ * clocks/expiry/query/scheduler or fabricate inventory. No sweep or background worker
+ * runs; keep those proof flags false. Preserve primary pair/TLS/ policy. Register sticky
+ * ownership before mutation; exact receipt bytes/identity, listener/socket drain and
+ * period closure precede release, otherwise preserve DB and private root. Sidecar
+ * acme-disabled-profile-proof.json binds second bulk item and generation. No scheduler
+ * zero-job, archived-profile or concurrency claim.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Actual owned native manual renewal while automatic renewal is disabled.
  * Only the production SQL-NOW selector is invoked; no scheduler/worker claim. */

@@ -1,4 +1,15 @@
 /**
+ * Qualification notes: Native signing key rotation qualification
+ * The manual `certops-signing-rotation-qualification.yml` workflow runs nine mandatory scenarios
+ * against a fresh disposable API and PostgreSQL stack on Ubuntu 24.04. It starts two unmodified native
+ * Node agents, observes actual signed public noop jobs, and invokes the production operator CLI for
+ * status, begin and completion. A stopped agent prevents completion until its actual heartbeat adopts
+ * and acknowledges the new pin. Restarted agents must retain credentials and execute a new-key signed
+ * job exactly once.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Exercise signing-key rotation with real agent processes and a disposable API database.
  * certops-signing-rotation-qualification.yml owns the agents, signing keys and temporary credential
  * directories. Persisted key pins and actual signed claims survive process restart;

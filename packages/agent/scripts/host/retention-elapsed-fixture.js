@@ -1,3 +1,15 @@
+/*
+ * Qualification notes: retention-two-cutover-expiry-grace
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * windows-retention-real-expiry-grace owns short-lived nonexportableA/B and long-livedC,actual IIS
+ * cutoversA->B->C,immutable rows and independent native/TLS checks. First default-clock sweep
+ * preserves both; one genuine wait reaches later expiry+300s with>=300s monotonic elapsed,unchanged24h
+ * policy. Not full24h retention. Interrupted native delete exits after first actual cert deletion
+ * before key/ledger; ordinary sweep reclaims dead-owner lock and removes both through removed
+ * intermediary history. Require native absence+immutable rows and unchangedC binding/key/TLS. Own
+ * unique site/endpoint/two pairs/ledger; cleanup every owned resource,neverC. Elevated disposable
+ * Windows,IIS,OpenSSL,candidate deps; no synthetic dates/queries/clock.
+ */
 "use strict";
 /* Actual elapsed native retention qualification invoked by windows-host.test.js. Uses owned
  * certificates/ledger state and the supported short grace period, retaining real clock semantics;

@@ -1,4 +1,13 @@
 /**
+ * Qualification notes: Mixed eligible bulk renewal admission
+ * The central API qualification runner executes six mandatory `bulk-eligible-api` scenarios against a
+ * disposable API/PostgreSQL fixture with OpenSSL. Genuine public certificate imports have complete
+ * linked renewal profiles and agent-local admission metadata seeded as explicit prerequisites. No CA
+ * or native agent executes these jobs.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Supporting API/PostgreSQL qualification: mixed eligible bulk renewal shares issuance capacity and conserves replay.
  * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
  * Public requests and persisted rows are the oracle; prerequisite state is isolated.

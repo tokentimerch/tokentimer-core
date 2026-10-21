@@ -1,3 +1,15 @@
+/*
+ * Qualification notes: installed-service-controls
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Actual SCM Interrogate must succeed; unsupported Pause/Continue must return
+ * ERROR_INVALID_SERVICE_CONTROL1052, not permission/state errors. Before each independently decode SCM
+ * argv and observe original SYSTEM host+Node identity. Require unchanged config/credential/pin, CNG
+ * association/export policy, HTTP.sys metadata/TLS and job claims; authenticated heartbeat-only uptime
+ * must increase, not merely last-seen from polling. Sticky original-root guard clears only after every
+ * observation; unknown controls preserve fixture. Ten-cell source does not qualify forced shutdown or
+ * in-flight interruption. Native contract:
+ * https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-controlservice .
+ */
 "use strict";
 /** Installed production SCM control qualification. Interrogate and unsupported
  * Pause/Continue controls use the existing owned service; no service, key or

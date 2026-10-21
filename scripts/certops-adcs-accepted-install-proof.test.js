@@ -1,4 +1,18 @@
 "use strict";
+/**
+ * Qualification notes: accepted before bind experiment
+ *
+ * accepted-before-bind observes real certreq acceptance at installing/bind before IIS cutover.
+ * Freeze exact SYSTEM tree/config/receipt, drain captured children (later ambiguity fails), then
+ * verify My leaf, Software-KSP nonexportable RSA custody and unchanged old IIS/HTTP.sys/TLS.
+ * Missed/completed window fails. Actual lease+grace recovery (<=15min) preserves RequestId/CSR/
+ * key/container/leaf, unknown-effect job and CA count, audits recovery and finishes installation;
+ * acceptance timestamp alone may advance. Parent owns cleanup; undrained observer guard blocks
+ * delete/restart, no SCM recovery change. Optional manual proof remains not-qualified, not an
+ * arbitrary crash, worker interval or elapsed-day qualification.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Synthetic proof/lifecycle refusal controls, never native qualification. */
 const test = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto"), { EventEmitter } = require("node:events");
 const helper = require("../tests/e2e/helpers/certops-adcs-accepted-install-recovery");

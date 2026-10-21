@@ -1,3 +1,15 @@
+/*
+ * Qualification notes: retention-ledger-atomic-replace
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * windows-retention-atomic-replace-refusal uses owned synthetic public ledger only. Independently
+ * measured PowerShell5.1 child holds actual row no-delete-share; atomic receipt matches
+ * PID/creation,nonce and fileID. Production writeLedgerRow must fail specifically at rename,
+ * preserving bytes/ID and leaving no failed temps. After handle closure+clean child exit same writer
+ * replaces; fresh Node production reader verifies row and restrictive native ACLs on directory/file.
+ * Exact temporary absence mandatory; no recursive cleanup of live/unidentified child.
+ * nativeRetentionAtomicReplace contains12 booleans/current hashes; local12-oracle execution is
+ * supporting,not hosted Server pass,power-loss/torn-write or native cert deletion.
+ */
 "use strict";
 /**
  * Real Windows filesystem refusal at the retention ledger's atomic replacement.

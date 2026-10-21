@@ -1,3 +1,15 @@
+/*
+ * Qualification notes: certificate-dry-run
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * After genuine installed CNG/IIS issuance and trusted TLS, require signed deploy and renew
+ * dry_run_complete with respectively3 and6 persisted authenticated plan steps. Generic public jobs
+ * cannot select execution mode: explicitly use production createCertificateJob(mode="dry_run"),
+ * preserving actual signing/claim/lease/evidence/result. Independently compare private My inventory,
+ * CNG file metadata/identity/export policy, HTTP.sys/TLS, config/credential/pin and unchanged owned
+ * DNS proxy count. Never read/hash key-file contents or publish inventories. This qualifies observed
+ * state/owned DNS traffic, not ETW transient tracing, absence of arbitrary children or direct CA
+ * requests. Helper creates no extra native resource; parent owns all cleanup.
+ */
 "use strict";
 /** Installed LocalSystem certificate dry-run qualification. Genuine prior
  * issuance establishes a capable CNG/IIS/TLS fixture; signed deploy/renew plans

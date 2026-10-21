@@ -1,4 +1,17 @@
 "use strict";
+/**
+ * Qualification notes: exact local CA and template identity
+ *
+ * Three signed refusals change only CA host, authority on same host, or template on exact CA;
+ * configured identities, not case/DNS/trailing-dot aliases. Retain DNS/RSA permission/confirmed
+ * issuer; only local rules change. Refuse before CA/keygen: independent unchanged CA count, null
+ * RequestId, no key/journal/receipt, unchanged positive DER/CNG metadata/trusted TLS. Stop service
+ * before config rewrite, fresh authenticated post-stop heartbeat/original credential on restart,
+ * restore exact bytes and recheck. nativeLocalRulePairs is exactly three cases/eight booleans, no
+ * added preflight; pure matcher/adversary tests run no native service.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Offline exact-pair/proof checks. Native installed-agent refusal remains host gated. */
 const {test}=require("node:test"),assert=require("node:assert/strict");
 const helper=require("../tests/e2e/helpers/certops-adcs-local-rules");

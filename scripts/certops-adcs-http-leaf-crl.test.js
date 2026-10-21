@@ -1,4 +1,23 @@
 "use strict";
+/**
+ * Qualification notes: HTTP-only leaf CRL availability
+ *
+ * Existing RSA2048 public renewal/SYSTEM target, idle lab, CA mutex+original/applied receipt
+ * before exact leaf-CDP mutation. Retained listener at 10.64.0.6 on an ephemeral port listener
+ * serves only verified current signed base CRL DER/path. Leaf has single HTTP CDP/no LDAP;
+ * register before acceptance, bind actual RequestId/claim/result/My-CNG/IIS/HTTP.sys/TLS, compare
+ * reported IDs only when present. HTTP 503 admission advances listener count and leaves actual
+ * validation_deferred leaf/unaccepted signing-capable key with all-store absence. Restore HTTP
+ * 200, distinct signed continuation installs same CSR/key/leaf/request with zero extra CA
+ * requests; scheduler-now only reaches poll eligibility. Restore CA publication; fresh helper
+ * probes contact listener with valid/unknown/valid for 200/503/200, evict only unique URL
+ * cache/restore original resync. Second original-publication renewal installs fresh leaf/key
+ * without endpoint contact: total two requests. Drain sockets before receipt release; uncertain
+ * publication/acceptance/drain preserves guard. Direct probe and
+ * installedAgentFaultRecoveryQualified signed recovery separate, no OCSP/CMC/resident timer.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 // Real in-memory software signatures validate public DER safety only. These
 // fixtures are not native AD CS requests, Windows CRL observations or CA proof.
 const test = require("node:test"),

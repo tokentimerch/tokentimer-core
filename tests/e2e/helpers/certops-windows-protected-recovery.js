@@ -1,3 +1,10 @@
+/*
+ * Qualification notes: protected-recovery
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Orphan journal,weak ACL and unreadable journal fail closed. Query only owned service;
+ * protectedKeyDeleted/inUseKeyDeleted/nativeExecutionQualified remain false. Missing journal host
+ * fails,blanket netsh reset refused; no retention/journal catalog promotion.
+ */
 "use strict";
 const {assessHostProbe} = require("../../../scripts/certops-qualification-report");
 
@@ -19,7 +26,6 @@ const REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-windows-protected-recovery.js",
   "scripts/certops-windows-protected-recovery.js",
   "scripts/certops-windows-protected-recovery.test.js",
-  "docs/certops/windows/protected-recovery.md",
   WORKFLOW,
 ]);
 const DEFECTS = Object.freeze(["orphan-journal", "weak-acl", "unreadable-journal"]);

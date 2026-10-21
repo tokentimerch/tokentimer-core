@@ -1,3 +1,24 @@
+/**
+ * Qualification: native certificate result outbox restart
+ *
+ * In the Ubuntu 24.04/certbot/noEAB journey, retain a loopback gateway that forwards
+ * unaltered protocol/signatures. Pause a real public renewal at the command barrier,
+ * independently bind current claim, then return HTTP 503 only for that job/claim's
+ * terminal result; evidence still passes, new claims are refused and foreign result IDs
+ * fail closed. Require production succeeded-outbox persistence plus genuine changed CA
+ * leaf, matching protected key/trusted TLS/clean TXT while public job stays nonterminal.
+ * Record actual claim, nonce, attempt; do not manufacture acknowledgement or CA output.
+ * Pin agent pidfd then verify original parent/birth/executable/argv/no children;
+ * descriptor-only SIGTERM, real child/controller close with code 0 and closed receipt
+ * precede restart. No PID tree fallback/atomic-containment claim. Restart same config,
+ * credential and signing pin without bootstrap. Real outbox backoff/time must deliver
+ * same job/claim/attempt with one leaf fact, no dead letter/additional CA order, and
+ * unchanged deployed bytes/key/TLS. Never rewrite retry timestamps or promise new SPKI.
+ * Cross-bind bulk/adoption generations. Keep gateway until native process/socket drain;
+ * unknown ownership preserves private root/public rows. Proof excludes private state,
+ * credentials, signatures, envelopes; benign controls cannot qualify native execution.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Genuine completed certificate mutation, transient result delivery outage,
  * exact original agent restart and production outbox retry. No clock rewrites. */

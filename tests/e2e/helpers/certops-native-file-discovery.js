@@ -1,3 +1,23 @@
+/**
+ * Qualification: foreground unprivileged discovery refusals
+ *
+ * The dedicated Ubuntu native browser-lifecycle lane requires real-native-unprivileged-
+ * file-discovery-refusals. Verify all four UID/GID fields and zero effective caps for
+ * fixture AND retained foreground agent; root-readable files are not permission proof.
+ * Use only public cert bytes: one owned unreadable regular file plus file/directory
+ * symlinks to separately owned outside cert. Independent OS read must get EACCES before
+ * agent startup. Two distinct post-setup authenticated scans plus complete public
+ * inventory must contain regular-file positive leaf; negative fingerprint is different
+ * and absent from evidence/inventory. Keep all fileIDs, modes, link targets/outside
+ * bytes unchanged. Register sticky ownership BEFORE setup; keep unreadable file until
+ * exact agent child close, then verify/remove owned inputs. Partial setup, changed
+ * identity or unknown drain preserves root/DB rows. Missing scans, pagination or sidecar
+ * fail. Supporting: node --test scripts/certops-native-file-discovery.test.js. Native
+ * execution uses certops-acme-browser-lifecycle.yml; acme-browser-lifecycle.json needs
+ * closed nativeFileDiscoveryRefusals proof/current source hashes. This is not
+ * installed-service, Windows or arbitrary remote-filesystem qualification.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Native Ubuntu discovery refusal fixture. Only public certificates enter this
  * fixture. The real foreground agent and public API remain owned by the caller.

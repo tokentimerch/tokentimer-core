@@ -1,3 +1,21 @@
+/**
+ * Qualification: same-process paired filesystem rotation
+ *
+ * Install a distinct genuine baseline, then start two production deployCertificateAndKey
+ * calls for the SAME certificate/key/chain before awaiting either. Use default backups,
+ * real filesystem/clock and no injected delay. Destination mutex must preserve call
+ * order: both mutate, final disk pair equals second contender, first contender backups
+ * equal baseline, second contender backups equal first contender, all six backup paths
+ * distinct/exact. Native ACL/ mode oracle, original staged keys and outside sentinel
+ * must remain valid. One retained TLS listener reads disk for baseline and settled-final
+ * connections; both require exact CA/hostname and final fingerprint. These checkpoints
+ * do not claim uninterrupted file-write availability, cross-process locking, API
+ * dispatch, ACME issuance or daemon reload. Await every deploy promise and all retained
+ * sockets/ listener close before cleanup. Unknown drain/ownership retains durable guard;
+ * keys/private hashes/receipt paths never enter public proof. Ubuntu 22.04/24.04 and
+ * Windows Server 2022/2025 require their own native report/current source fingerprints.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Native direct-deployer concurrency qualification. Two real same-process calls
  * target one certificate/key/chain set, using the unmodified default backup directory alongside the target.

@@ -1,4 +1,18 @@
 "use strict";
+/**
+ * Qualification notes: production interval renewals
+ *
+ * Parent runs node apps/worker/src/runner.js certops after renewal controls/before pending cases:
+ * unmodified 60s default interval, no startup run or competing profiles/jobs/continuations. Two
+ * natural ticks on unchanged six-day/30-day profile must create distinct requests/keys, actual
+ * claim evidence and IIS/HTTP.sys/TLS cutovers; existing jobs unchanged. Only allowlisted env, no
+ * root .env/raw logs/credentials. Nonce IPC calls production SIGTERM handler, proving requested
+ * graceful drainage, not native signal delivery. Start suspended in retained Job, register My
+ * ownership before admission/new IDs before waits; require empty Job/exact process absence, never
+ * numeric-PID kill. Unknown acceptance/drain preserves root/journals/keys; not retention.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /* Supporting evidence-contract checks only. The real CA, CNG, IIS and scheduler
  * observations must come from the protected disposable Windows forest. */
 const assert = require("node:assert/strict");

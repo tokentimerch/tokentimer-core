@@ -1,4 +1,14 @@
 /**
+ * Qualification notes: Unmanaged discovery qualification
+ * `unmanaged-discovery-api` invokes the production filesystem collector against an actual temporary
+ * public certificate file, then sends its observations through a registered protocol agent to the real
+ * API and PostgreSQL database. OpenSSL generates the certificate; its public fingerprint is
+ * independently calculated before collection. The private key lives outside the scanned directory, and
+ * the fixture never advertises Windows CNG or machine-store custody.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Supporting API/PostgreSQL qualification: quota-blocked real filesystem discovery preserves unmanaged visibility.
  * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
  * The registered fixture sends genuine machine-protocol requests; it does not run

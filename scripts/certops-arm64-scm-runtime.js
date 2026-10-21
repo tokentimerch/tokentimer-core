@@ -1,3 +1,17 @@
+/*
+ * Qualification notes: arm64-packaged-scm
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * On fresh elevated Windows11 ARM64 with native Node/PowerShell, require canonical service/registry
+ * absent and verify actual candidate archive checksum/PE/digests. Run the packaged SYSTEM host with
+ * controlled mock child: start/stop/fresh restart, exit17 recovery and exit86 no-respawn for>=5
+ * monotonic seconds. Capture native process creation/executable/argv/SID and original
+ * volume/inode/birth identities for every owned root/file. Durable receipt updates preserve inode;
+ * copied bytes/nonce do not transfer ownership. Read-only digest-bound validator checks each
+ * mutation/cleanup; require absent captured descendants and exact service/registry absence before
+ * deleting the root. Do not adopt/kill a PID or clean while original owner lives. This proves packaged
+ * SCM behavior, not installed product registration, installer CLI, certificates/IIS/Server or full
+ * ARM64 host qualification.
+ */
 "use strict";
 /** Native-only packaged ARM64 SCM/mock-child qualification. Merely importing
  * this module performs no native mutation. Persistent receipts refuse cleanup

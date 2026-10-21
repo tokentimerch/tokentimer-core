@@ -1,3 +1,19 @@
+/*
+ * Qualification notes: installed-state-handoff
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * CLI registers only without credential; existing credential wins over bootstrap and installer
+ * preserves state. After real retirement/SCM stop preserve original bytes, copy allowlisted
+ * keys/receipts/retention/trust/completed journals/replay/pin to new protected owned state, refusing
+ * links/reparse. Never copy credential/bootstrap/registration/outbound queue/sequence or export
+ * machine CNG. Public-created bootstrap and same retired identity must conflict without consuming
+ * token; old credential HTTP410. Fresh identity registers via byte-identical CLI contained suspended
+ * in retained JobObject; independently verify launcher/native identity/gate and require zero
+ * members/closed root+wrapper before handing state to same SCM account/path. Replacement disables
+ * execution/discovery, heartbeats after DB marker, preserves custody/TLS/jobs. Retire it, restore
+ * original registry, revoke unused bootstrap, then remove owned state. Unknown process/registry
+ * ownership blocks cleanup. Explicit operator state handoff is not automatic credential migration, AD
+ * CS job transfer or replacement issuance.
+ */
 "use strict";
 /** Explicit operator-owned SCM state handoff, not automatic in-place re-registration.
  * Runs only after actual predecessor retirement on the disposable installed-agent

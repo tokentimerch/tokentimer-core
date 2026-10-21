@@ -1,4 +1,13 @@
 /**
+ * Qualification notes: Certificate import metadata preservation
+ * `import-metadata-api` checks that repeated and concurrent public reimports preserve
+ * certificate/token identity, provenance, operator name, contacts, description and group memberships.
+ * Invalid group/contact edits fail atomically. OpenSSL and real API/PostgreSQL persistence support
+ * these controls; provider delivery and native host concurrency are not qualified.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Supporting API/PostgreSQL qualification: public reimport preserves operator contacts and group assignments.
  * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
  * Public requests and persisted rows are the oracle; prerequisite state is isolated.

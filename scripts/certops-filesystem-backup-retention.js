@@ -1,3 +1,21 @@
+/**
+ * Qualification: native destination-scoped backup retention
+ *
+ * Use production filesystem deployment with backupRetentionCount:1, three genuine pairs
+ * and real clock. Two destinations share basenames and an explicit backup directory;
+ * deploy+rotate both, then rotate only the first twice more. Each step must retain that
+ * destination's newest three rollback files and delete its older generation while
+ * preserving the other's exact backups, inodes, modes, legacy timestamp backup, operator
+ * file and outside sentinel. Independently verify predecessor leaf,
+ * key/chain/CA/DNS/permissions plus final target/staging pairs; public proof keeps only
+ * public fingerprints, fixed counts/flags. Legacy files remain operator-owned. Register
+ * durable receipt before mutations; unresolved ownership blocks recursive cleanup.
+ * Recheck original directory/receipt/sentinel identities before release. This proves
+ * generation-count retention, not elapsed-age expiry or cross-process locking. All four
+ * host slots require strict proof/current critical sources; pure temporary-file/proof
+ * checks are not protected native execution.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Native source for bounded destination-scoped backup retention. Called by a
  * disposable host harness with three genuine matching certificate/key fixtures.

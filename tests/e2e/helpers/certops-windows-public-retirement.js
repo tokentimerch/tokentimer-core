@@ -1,3 +1,14 @@
+/*
+ * Qualification notes: public-idle-retirement
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Exercise real public retirement with zero leased jobs: anonymous401,owned viewer role refusal,then
+ * manager success with correct actor,one append-only audit,force=false; repeat keeps terminal row
+ * without another audit. Require new native retirement86 log,SCM exit0,original host/Node absence
+ * and>=5s monotonic no-respawn while CNG/HTTP.sys/TLS/config/credential/pin/jobs remain fixed. Sticky
+ * original-file guard precedes mutation; restore temporary owned actor roles and retain unknown
+ * outcomes before parent cleanup. Bounded idle-control evidence does not qualify in-flight
+ * cancellation/CA cancellation/atomic process containment or every recovery interval.
+ */
 "use strict";
 /** Public idle retirement of the existing installed Windows agent. Real HTTP
  * authorization/idempotency and native SCM exit/custody observations are needed;

@@ -1,3 +1,13 @@
+/**
+ * Qualification: local browser and audit controls
+ *
+ * Strip private-key blocks, bearer tokens and password fields before persistence; refuse
+ * anonymous completed-console replay. Check the fixture labels Issue certificate, Renew
+ * certificate, Audit history and Job evidence. No browser starts: owner/admin
+ * authorization and label fixtures leave browserQualified false, missing browsers fail
+ * closed, and catalog mappings remain supporting annotations.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 
 /** Local browser, audit, and diagnostic contract. Secrets are removed before
@@ -40,7 +50,6 @@ const REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-browser-audit-redaction.js",
   "scripts/certops-browser-audit-redaction.js",
   "scripts/certops-browser-audit-redaction.test.js",
-  "docs/certops/cross/browser-audit-redaction.md",
   "scripts/_registration/cross-coverage.json",
   ".github/workflows/certops-cross-coverage-variants.yml",
 ]);

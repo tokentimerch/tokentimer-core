@@ -1,4 +1,18 @@
 "use strict";
+/**
+ * Qualification notes: required native template descriptors
+ *
+ * Zero msPKI-Minimal-Key-Size and absent msPKI-Certificate-Name-Flag are unreadable descriptors,
+ * not new supported templates (missing minimum separate). Genuine safe TTQualificationRSAShort,
+ * restoration guard before LDAP mutation, actual unreadable/template_unreadable with zero/null,
+ * public confirmation refused and signed existing-issuer ADCS_TEMPLATE_UNSAFE before CA/keygen;
+ * serving CNG/IIS/TLS/config/credential unchanged. Restore exact attributes then fresh safe native
+ * preflight; unresolved guard blocks native/public/state teardown. Six safe/mutated/restored
+ * checks use isolated cohorts/unchanged primary limit. Wrong-typed algorithm directory rendering
+ * is outside established scope; pure proof cannot qualify native restoration.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Pure descriptor/parser/proof controls, never native LDAP or CA evidence. */
 const test = require("node:test"),
   assert = require("node:assert/strict"),

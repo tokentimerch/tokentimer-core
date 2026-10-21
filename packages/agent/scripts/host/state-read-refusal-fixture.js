@@ -1,3 +1,14 @@
+/*
+ * Qualification notes: state-read-refusals
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Supporting windows-state-config-read-denied,credential-read-denied,signing-pin-read-denied operate
+ * only owned public temporary files. First production reader returns exact identity; then real native
+ * ReadData denial must independently produce EACCES/EPERM before production refusal counts. Original
+ * ACL restore in finally,unchanged bytes/native ID and recovered reader required; guard durable before
+ * mutation prevents broad cleanup if restoration unknown. Delete only original owned directory
+ * identity. Public proof omits paths/ACLs/contents/generated credential; pin is public Ed25519. Not
+ * SCM/startup/registry/CNG/server qualification; pure proofs do not execute ACL changes.
+ */
 "use strict";
 /** Supporting native Windows file-access refusals on run-owned temporary state.
  * Real ReadData deny ACEs exercise production readers with successful before/

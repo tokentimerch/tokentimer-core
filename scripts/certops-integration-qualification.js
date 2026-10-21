@@ -1,3 +1,14 @@
+/**
+ * Qualification notes: Supporting database integration
+ * Run node scripts/certops-integration-qualification.js with CERTOPS_INTEGRATION_GROUP, NODE_ENV=test,
+ * CERTOPS_ENABLED=true, DB_* and TEST_API_URL for a disposable migrated stack. The eleven named groups
+ * default to adcs; all selection permits at most two concurrent stack jobs. A ten-minute deadline and
+ * bounded reporter reject missing, skipped or failed required cases without emitting raw assertion
+ * payloads or secrets. Real PostgreSQL and service execution remain supporting evidence, not native
+ * host qualification.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
 "use strict";
 /**
  * Executes one committed integration test group against a disposable API/PostgreSQL fixture.

@@ -1,3 +1,13 @@
+/*
+ * Qualification notes: native-credential-weak-acl
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Use actual protected credential reader against owned public temporary control files with real weak
+ * Windows ACLs. Independently observe inappropriate access, require exact production refusal instead
+ * of accepting unreadable/weak state, restore original DACL/bytes/native identity and reader recovery.
+ * Suspended retained holder plus bounded ownership/drain guard confines mutation/cleanup; never
+ * publish credential/control contents or raw ACLs. Not installed credential compromise recovery or SCM
+ * qualification.
+ */
 "use strict";
 /** Supporting real Windows ACL admission. The credential is a public synthetic
  * control by default. An owned disposable installed journey may supply its

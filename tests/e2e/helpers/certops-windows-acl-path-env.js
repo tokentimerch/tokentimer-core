@@ -1,3 +1,12 @@
+/*
+ * Qualification notes: acl-path-env
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Script refusals cover Everyone-read/unprotected DACL,unquoted spaced binary path and missing
+ * LocalSystem environment. Each proof remains
+ * nativeExecutionQualified=false/hostCapabilityAbsentIsPass=false; missing host fails. Spaces in owned
+ * site path are allowed; exact hostname selector only,never blanket netsh reset. Catalog scope is
+ * state ACL,path quoting,system environment without promotion.
+ */
 "use strict";
 const {assessHostProbe} = require("../../../scripts/certops-qualification-report");
 
@@ -19,7 +28,6 @@ const REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-windows-acl-path-env.js",
   "scripts/certops-windows-acl-path-env.js",
   "scripts/certops-windows-acl-path-env.test.js",
-  "docs/certops/windows/acl-path-env.md",
   WORKFLOW,
 ]);
 const REFUSALS = Object.freeze([

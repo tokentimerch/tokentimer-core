@@ -1,3 +1,13 @@
+/**
+ * Qualification: local Linux upgrade rollback
+ *
+ * Write the next unit only inside the owned root, restore the previous unit bytes and
+ * preserve an in-use key. A missing systemd lab must fail before unit creation. This
+ * host-integration proof belongs to an integration suite: realRebootQualified and
+ * hostCapabilityAbsentIsPass remain false; service/reboot catalog mappings are
+ * annotations rather than native reboot or installer qualification.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 
 /** Local Linux unit upgrade contract. Reboot is not claimed. Rollback restores
@@ -32,7 +42,6 @@ const REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-linux-reboot-upgrade.js",
   "scripts/certops-linux-reboot-upgrade.js",
   "scripts/certops-linux-reboot-upgrade.test.js",
-  "docs/certops/cross/linux-reboot-upgrade.md",
   "scripts/_registration/cross-coverage.json",
   ".github/workflows/certops-cross-coverage-variants.yml",
 ]);

@@ -1,4 +1,27 @@
 "use strict";
+/**
+ * Qualification notes: native Microsoft OCSP responder availability
+ *
+ * Explicit root/hierarchy lab reuses CA VM, refuses preexisting responder/IIS/WAS/config/port 80/
+ * private contents. Enterprise admin, CA mutex and immutable file-ID receipt precede owned
+ * OCSP-only template/nonexportable RSA signer key/one officer request. Node crypto independently
+ * checks CA pin/signature/validity/signing usage/OCSP EKU/templateOID/no-check before acceptance;
+ * grant only observed service account read to exact key. Cross-bind COM/CA/leaf/key identities.
+ * Block exact helper before public renewal -> real validation_deferred leaf + unaccepted signing
+ * key, all-store absence, fixed predecessor. Unblock -> distinct signed continuation same CSR/
+ * key/leaf/request, no new request, actual nonces/claims/evidence; scheduler-now eligibility only.
+ * Actual OCSP-only leaf/no CRL fallback, restore publication before helper-program->CA:80 fault;
+ * independent signed good response reachable while helper valid/unknown/valid, unchanged
+ * CNG/IIS/TLS. Second original-publication renewal installs fresh key/leaf:three total requests,
+ * signer+two renewals. Restore exact key ACL then remove owned config/template/signer only after
+ * all-store survivor check; ordinary responder/IIS stops drain retained handles and fresh
+ * stopped/disabled/process/port checks. Inert installed roles remain for lab destruction. Contain
+ * member brokers in native Job; fresh WinRM per action, uncertain remote completion forbids later
+ * actions including restore retries. No private exchanges/ACL/key/credentials in artifacts. No
+ * authoritative revoked/unknown, agent revoked refusal, CMC or alternate signer claim.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");

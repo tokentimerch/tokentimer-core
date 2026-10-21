@@ -1,3 +1,38 @@
+/*
+ * Qualification notes: README
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Run from repository root: CERTOPS_HOST_TESTS=1 CERTOPS_QUALIFICATION_STRICT=1 node --test
+ * packages/agent/scripts/host/windows-host.test.js (set these env variables natively in PowerShell on
+ * Windows). Set CERTOPS_QUALIFICATION_REPORT JSON path and CERTOPS_HOST_ARTIFACTS diagnostics
+ * directory. Elevated disposable Windows requires Go,OpenSSL onPATH,IIS Web-Server/Web-Scripting-Tools
+ * without pending reboot,candidate dependencies. Native host evidence includes actual My/WebHosting
+ * five-profile CNG CSR/accept/sign/nonexportability,certutil DER hashes,chain CryptoAPI
+ * pin/time/revocation-unavailable,real IIS/SNI replacement+rollback/trustedTLS,owned root trust
+ * install/replay/revoke,private reference guards and real expiry+300s retention. Temporary OpenSSLCA
+ * remains private and removed; no domain issuance claim. All four Go
+ * modules(service-host,ADCSchain,ADCSCMC,reference verifier)go test-json must execute nonempty
+ * selected inventory with every started test passing,no skips/failures; upload bounded counts. Native
+ * helper package architecture/digests/checksum/extracted dependency-free runtime and tampered archive
+ * refusal prove unsigned candidate package only. Unique renamed-dispatcher SCM fixture qualifies real
+ * start/stop/restart,exit17 recovery/exit86 no recovery,exact bootstrap registry scrub incl literal
+ * backslash-zero PATH preservation,foreign config query-only and owned uninstall/state-marker
+ * preservation; not registered production-agent upgrade. Source overlay changes only dispatcher label;
+ * released-target installed journey separate. Malformed CLI config/repaired child and seven AST
+ * build-floor numeric cases are supporting unit/host evidence,not unsupportedOS boot. Real store IPC
+ * lock child/Worker death must abort+drain,propagateSTORE_LOCK_LOST,allow successor and preserve its
+ * marker; noncooperative child measures actual5s drain timeout and must be explicitly killed/drained
+ * in teardown. Actual owner death leaves stale diagnostic marker untouched while successor acquires;
+ * neither rewrites heartbeat/time nor proves certificate lease recovery. LinuxNode24
+ * read-only/network-off IPC executions do not qualify CNG/IIS/service. CurrentUser
+ * boundary,missing/incompatible runtime and unknown HTTP.sys metadata must fail rather than empty
+ * inventory/mutate. Supporting fixture scopes remain narrow: explicit-time retention does not prove
+ * elapsed windows; direct executor multi-target/standalone refusal and failed rollback do not prove
+ * API reconciliation. Generic host suite remains AMD64-specific; narrow native ARM64 desktop workflows
+ * cannot satisfy Server2022/2025 release slots or be inferred from packaging PE. Every native mutation
+ * has exact owned receipt and finally cleanup attempt; report failure if any owned resource survives.
+ * No domain ADCS enrollment,installed API registration,signed release provenance,elapsed24h/default6h
+ * cadence,power-loss or crash-dump containment may be inferred from these supporting controls.
+ */
 "use strict";
 /* Strict supporting Windows host suite, invoked by the protected Windows host workflow. Opted-in
  * disposable runners own temporary CNG/store/IIS/process fixtures; each native oracle and cleanup

@@ -1,4 +1,23 @@
 "use strict";
+/**
+ * Qualification notes: native per-issuer capacity
+ *
+ * Fresh public issuer requires preflight/observed-key confirmation/post-confirmation preflight,
+ * reservePrimaryPreflights(2); declare all six domains(run) before SYSTEM service, before rollover
+ * with TTQualificationRSAShort. Snapshot/require approval;six concurrent subjects/sites under
+ * unchanged cap five  yield five pending_approval and one 409 CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED.
+ * Initially no subject CA row/container/journal, unchanged in-memory KSP digest; refused subject
+ * no SQL job/enrollment/outbox/leaf. Distinct manager public approval -> real request/protected
+ * key/ IIS/TLS/claim install frees slot; originally refused subject admits/approves/installs
+ * second independent generation. Reject remaining four and restore exact approval boolean even on
+ * failure. registerOwnedStoreCertificate(My/domain/certificateId) before POST returns guarded
+ * empty IDs/thumbprints; append immediately before waits, reconcile partial acceptance from exact
+ * durable store/key/container receipts after drainage. Unknown custody preserves parent state.
+ * Register separate approver fixture before manager membership, clean users after primary
+ * workspace. No cross-issuer physical-CA, pending-continuation occupancy or worker-timer claim.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 // Pure proof refusals only. Actual API/CA/CNG/IIS execution belongs to the
 // disposable native helper; these checks do not qualify those observations.
 const test = require("node:test"), assert = require("node:assert/strict");

@@ -1,4 +1,25 @@
 /**
+ * Qualification: native paired filesystem deployment
+ *
+ * Run trusted-main manual certops-filesystem-qualification.yml separately on Ubuntu
+ * 22.04/24.04 and Windows Server 2022/2025 with native OpenSSL, real filesystem/POSIX or
+ * Windows ACLs and real symlink/junction. Require first cert/key/chain deploy,
+ * fresh-process idempotent replay, rotation/exact predecessor backups, escape-link
+ * refusal, input/policy no-mutation, explicit backup finalization and cleanup.
+ * Independently parse genuine CA leaves, match keys, DNS and deployed chain with
+ * OpenSSL. Keys/backups need mode 0600 or protected ACLs restricted to current user,
+ * SYSTEM, Administrators; reject unexpected trustees. Mismatched key, missing explicit
+ * key destination, private material as public cert and outside-allowlist paths must
+ * preserve current deployment/outside sentinel. Retain staging keys for replay and pass
+ * actual local policy. This is direct native executor coverage, not signed dispatch,
+ * service identity, reload, TLS cutover, multi-target rollback, rename interruption or
+ * disk-failure proof. Remove links without traversal, validate absolute parents/prefixes
+ * before recursive deletion, attempt both owned roots even after one cleanup failure and
+ * prove absence. Only sanitized named JSON uploads; no private bytes/hashes, replay
+ * inputs, native command output or backup files.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+/**
  * Qualify the production filesystem certificate coordinator on an explicitly disposable host.
  * certops-filesystem-qualification.yml selects the native distribution. This harness
  * owns its temporary keys, certificate paths and receipts, verifies real file/lock

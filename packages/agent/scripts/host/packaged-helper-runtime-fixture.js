@@ -1,3 +1,16 @@
+/*
+ * Qualification notes: packaged-chain-runtime
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Copy actual candidate package to owned spaces/Unicode/bracket path and independently verify helper
+ * digests against fresh builds. Production resolver/metadata-only survivor bridge must return complete
+ * machine-store metadata+zero matches for random nonexistent container without creating key. Replace
+ * only copied chain helper with genuine service-host PE: valid structure/wrong protocol must be
+ * refused with restricted PATH/owned logdir and absent invalid child. Exact ChildProcess close then
+ * original fileID,size,digest restoration precedes fresh positive query; uncertainty blocks cleanup.
+ * Not ARM64 execution, installed helper replacement, release signature or CRL/OCSP. CMC remains
+ * reference/adcs-cmc/dist, outside default package binary allowlist; adcs-enroll-v1 stays unqualified
+ * pending packaging. Go verifier is reference; production verifier is JS.
+ */
 "use strict";
 /** Read-only native packaged chain/store-query integration. Only disposable host
  * qualification invokes these executables. The wrong-protocol control is the

@@ -1,4 +1,22 @@
 "use strict";
+/**
+ * Qualification notes: native browser existing-inventory renewal
+ *
+ * Flow creates issuer -> actual agent preflight -> observed CA pin -> fresh post-confirmation
+ * preflight -> profile -> attach existing RSA2048 inventory/enable automation; no browser first
+ * issuance/generic manual ADCS renewal exists. Observe six real mutations and both preflight jobs,
+ * never intercept. Parent provides SYSTEM/IIS/PG/ownership. Temporarily disable only fixture
+ * workspace other profiles, restore exact policy, invoke full production sweep using SQL NOW/
+ * actual expiry -> exactly one enrollment. Require new CA leaf/SPKI/request, CNG/journal/receipt,
+ * IIS/HTTP.sys/trusted TLS/claim evidence and matching installed dashboard row. Sweep!=timer.
+ * Candidate dashboard is loopback behind private HTTPS; frozen pnpm/Playwright tools. Receipt
+ * before exact SYSTEM CurrentUser Root API trust; preserve preexisting trust. Drain Chromium
+ * before owned-trust removal/profile restore; preserve state on unknown child/receipt. No
+ * traces/screenshots/cookies/raw bodies. Missing selected full-lane browser fails; elapsed lane
+ * separate and experimental base-suite evidence cannot qualify release.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Pure native-browser proof checks; no browser/domain/certificate mutation. */
 const { test } = require("node:test"),
   assert = require("node:assert/strict"),

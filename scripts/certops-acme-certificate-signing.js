@@ -1,3 +1,21 @@
+/**
+ * Qualification: native certificate signing-key rotation
+ *
+ * Use only manual certops-acme-certificate-signing.yml with a separate disposable
+ * Ubuntu/certbot/noEAB API/Postgres/Pebble stack; refuse repository .env or shared API
+ * DB container. Never rotate a shared database. After real predecessor issuance, hold
+ * public renewal only after the agent verified its original v2 signed claim. The
+ * observer reads job/key IDs without claiming signature verification; consumed
+ * nonce/current claim establish admission. Operator begin, real heartbeat pin ack and
+ * completion WITHOUT force must precede command release. Both original and
+ * replacement-key-signed renewals need actual CA leaves, matching keys/trusted TLS,
+ * current-claim evidence and one attempt; record execution key policy and actual custody
+ * change. Keep config/credentials unchanged and require replacement pin adoption.
+ * Original command drain/exact receipt identities/sticky guards protect private and DB
+ * cleanup. The separate noop pin-adoption suite does not qualify this certificate
+ * execution composition; source/proof checks cannot establish native runs.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Manual Azure-free Ubuntu one-agent rotation producer. A passed artifact is
  * written only after the real native child, strict public projection and owned

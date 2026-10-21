@@ -1,3 +1,11 @@
+/*
+ * Qualification notes: operation-interruption
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Record keygen/submit/install/bind point then restart same owned service/image after exact PID
+ * interruption; never delete in-use key. This host-integration proof/integration suite does not
+ * qualify native execution,power loss or real reboot; all flags false. Missing host fails; catalog
+ * stages do not promote execution.
+ */
 "use strict";
 const {assessHostProbe} = require("../../../scripts/certops-qualification-report");
 
@@ -24,7 +32,6 @@ const REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-windows-operation-interruption.js",
   "scripts/certops-windows-operation-interruption.js",
   "scripts/certops-windows-operation-interruption.test.js",
-  "docs/certops/windows/operation-interruption.md",
   WORKFLOW,
 ]);
 const STAGES = Object.freeze(["key-generation", "submit", "install", "bind"]);

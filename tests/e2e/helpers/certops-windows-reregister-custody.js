@@ -1,3 +1,10 @@
+/*
+ * Qualification notes: reregister-custody
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Re-registration contract starts same owned service and preserves same CNG container/in-use key.
+ * Different/multiple/ambiguous container selectors fail closed without deletion; missing custody host
+ * fails. nativeExecutionQualified=false,blanket reset refused,no reregister catalog promotion.
+ */
 "use strict";
 const {assessHostProbe} = require("../../../scripts/certops-qualification-report");
 
@@ -19,7 +26,6 @@ const REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-windows-reregister-custody.js",
   "scripts/certops-windows-reregister-custody.js",
   "scripts/certops-windows-reregister-custody.test.js",
-  "docs/certops/windows/reregister-custody.md",
   WORKFLOW,
 ]);
 const PROOF_KEYS = Object.freeze([

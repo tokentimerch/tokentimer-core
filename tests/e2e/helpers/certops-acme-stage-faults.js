@@ -1,3 +1,21 @@
+/**
+ * Qualification: owned ACME stage transport refusal
+ *
+ * The proxy forwards only bounded pinned-Pebble 2.8 public ACME routes to loopback port
+ * 14000, validating its actual CA certificate and preserving Host, path and signed
+ * bodies. Do not rewrite directory/JWS URLs or expose management/root-key routes,
+ * foreign authorities, escaped paths, queries or fragments. Refuse newOrder and
+ * finalization before forwarding, then restore actual CA issuance. Finalization refusal
+ * needs independent upstream account/order acceptance and valid authorization/ready
+ * state. This is an owned transport fault, never a claim that the CA emitted that
+ * response. Each public fault job must fail without installation/active state and pass
+ * native TXT cleanup. Use a separate owned proxy certificate with IP SAN; consumer TLS
+ * still validates issuer root and hostname. Only after genuine later issuance/TLS may
+ * the client-bound sidecar close. Unknown drain preserves ownership rows/private files.
+ * Keep signed bodies, account material and TLS keys out of artifacts; all five native
+ * slots require both named cases, closed proof and current causal sources.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Real public issue jobs with owned HTTPS refusal before CA order/finalization.
  * Genuine native clients, signed production admission, CA observations and DNS

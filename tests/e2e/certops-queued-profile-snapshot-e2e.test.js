@@ -1,4 +1,16 @@
 /**
+ * Qualification notes: Queued renewal profile snapshot qualification
+ * Six mandatory supporting integration cases exercise real public manual-renew admission, operator
+ * profile editing, independent approval and authenticated signed dispatch. The initial request waits
+ * for approval with its original RSA 2048 profile. Editing the live profile to RSA 4096 must preserve
+ * every queued payload field. Approval binds the original canonical payload hash, and the actual
+ * signed claim must cryptographically verify against the registration public key while retaining the
+ * original profile digest. A subsequent request uses the edited RSA 4096 policy without changing the
+ * first job.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Supporting API/PostgreSQL qualification: public queued renewal freezes profile across operator edits approval and signed claim.
  * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
  * The registered fixture sends genuine machine-protocol requests; it does not run

@@ -1,3 +1,15 @@
+/*
+ * Qualification notes: http-sys-client-policy
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Independently read native IP-binding registry:
+ * NO_REVOCATION=1,CACHED_CLIENT_CERT_ONLY=2,FRESHNESS_TIME=4,NO_USAGE_CHECK=0x10000. Two owned
+ * combinations include nonzero freshness/retrieval timers. Deploy A->B, prove missing requested
+ * certificate across machine stores, force actual bind failure/rollback toB, then restoreA. After
+ * every change require identical raw check-mode/timer DWORDs/DefaultFlags and trusted TLS; unrelated
+ * endpoint metadata/TLS stays fixed. nativeHttpSysClientSettings distinguishes absent-cert
+ * precondition from successful rollback. Parent owns exact cleanup. This is policy preservation, not
+ * mTLS authentication or real CRL/OCSP retrieval.
+ */
 "use strict";
 /** Disposable IP-binding policy preservation. All writes target the parent
  * fixture's exact owned endpoint; the parent retains certificate/site cleanup.

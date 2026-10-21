@@ -1,3 +1,15 @@
+/*
+ * Qualification notes: acme-key-rotation-policy
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Windows ACME requires rotateOnRenew=true; omitted inventory-derived policy defaults true, while
+ * explicit false remains refused with WINDOWS_ACME_KEY_REUSE_UNSUPPORTED until an operator edits it.
+ * Signed keyRotation=false is rejected before native work/CA allocation even for dry runs; legacy
+ * omission still creates fresh keys. Exercise public invalid profile admission against the genuinely
+ * issued installed certificate, independently preserving stored profile, job inventory, custody,
+ * HTTP.sys/TLS and observed DNS traffic. This is admission refusal, not invalid signed dispatch. Linux
+ * reuse and AD CS frozen enrollment remain separate. Require windows-acme-public-key-reuse-refusal in
+ * all ten normal cells.
+ */
 "use strict";
 /** Public Windows reuse-policy refusal on a genuinely issued installed CNG/IIS
  * fixture. The parent owns native cleanup; this helper only observes native

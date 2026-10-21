@@ -1,3 +1,12 @@
+/**
+ * Qualification: local filesystem rollback boundary
+ *
+ * Stop on symlinks/junctions escaping the owned root before any read/write; do not
+ * follow the link. Permission denial fails closed. Restore predecessor bytes only to a
+ * regular owned file. followedSymlink remains false; missing filesystem labs fail closed
+ * and catalog mappings do not establish native execution.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 
 /** Local filesystem containment contract. A symlink that leaves the owned
@@ -31,7 +40,6 @@ const REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-fs-symlink-rollback.js",
   "scripts/certops-fs-symlink-rollback.js",
   "scripts/certops-fs-symlink-rollback.test.js",
-  "docs/certops/cross/fs-symlink-rollback.md",
   "scripts/_registration/cross-coverage.json",
   ".github/workflows/certops-cross-coverage-variants.yml",
 ]);

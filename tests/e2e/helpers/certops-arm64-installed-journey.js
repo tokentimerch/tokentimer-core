@@ -1,3 +1,26 @@
+/*
+ * Qualification notes: arm64-installed-agent-api
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * PostgreSQL records originalroot/marker beforedownload;listener must belong to captured native root
+ * andSQL report exactowned datadir. Always-run stop/drain retainsDB files after incomplete
+ * journey;only successfulcurrent-candidate nativecleanup permitsdeletion. Exactservice
+ * argv/account/binary/state/process identities and unchangedARM64 helperinventory must prove zero
+ * survivingkeyreferences outside exactMycertificate before deletion. Unknownprocess/custody or
+ * failedouterAPI/workspacecleanup preservesDB/state;taskdriver stops onlynonce-ownedtask,never
+ * unrelatedPIDs/service/certificates.
+ * Run certops-windows-arm64-agent.yml on disposable windows-11-arm with native ARM64 Node24,
+ * PowerShell and freshly packaged host. Prove canonical root/service absent, then use unchanged SYSTEM
+ * installer. Verify bootstrap/registration/heartbeat, public signed noop, production-admitted signed
+ * file-path certificate dry-run, actual My/CNG discovery and restart/custody preservation before
+ * original uninstall. Native RSA2048 Software-KSP leaf must prove nonexportability, signature
+ * possession and unchanged DER/container; dry-run is not deployment/adoption/ACME/AD CS/IIS/Server
+ * qualification. Hosted inventory does not supply PostgreSQL: scripts/certops-arm64-postgres-lock.json
+ * pins official EDB17.11-5 x64
+ * archive381531864bytes/SHA25680379b2c04d51c30225532e0ae04509899141e9957ed096fe749d7fd9df8f82f. This
+ * is independently measured HTTPS provenance, not EDB signature/checksum attestation. Inspect PE tools
+ * and actually start/migrate/query the owned emulated x64 cluster; do not label PostgreSQL native
+ * ARM64. Preserve nonce-bound native process/listener/data-directory ownership and cleanup receipts.
+ */
 "use strict";
 /** Bounded desktop ARM64 installed-agent journey. The product installer stays
  * byte-identical at its canonical root. Real public machine routes transport

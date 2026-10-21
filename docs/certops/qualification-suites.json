@@ -2258,7 +2258,6 @@
       "requiredSources": [
         "tests/e2e/helpers/certops-adcs-install-interruption.js",
         "scripts/certops-adcs-install-interruption.js",
-        "docs/certops/adcs/install-interruption.md",
         ".github/workflows/certops-adcs-coverage-variants.yml",
         "scripts/certops-adcs-lab-contract.js"
       ],
@@ -2272,7 +2271,6 @@
       "requiredSources": [
         "tests/e2e/helpers/certops-adcs-lost-submit.js",
         "scripts/certops-adcs-lost-submit.js",
-        "docs/certops/adcs/lost-submit.md",
         ".github/workflows/certops-adcs-coverage-variants.yml",
         "scripts/certops-adcs-lab-contract.js"
       ],
@@ -2326,7 +2324,6 @@
       "requiredSources": [
         "tests/e2e/helpers/certops-adcs-cmc-renewal.js",
         "scripts/certops-adcs-cmc-renewal.js",
-        "docs/certops/adcs/cmc-renewal.md",
         ".github/workflows/certops-adcs-coverage-variants.yml",
         "scripts/certops-adcs-lab-contract.js"
       ],
@@ -2340,7 +2337,6 @@
       "requiredSources": [
         "tests/e2e/helpers/certops-adcs-safety-variants.js",
         "scripts/certops-adcs-safety-variants.js",
-        "docs/certops/adcs/safety-variants.md",
         ".github/workflows/certops-adcs-coverage-variants.yml",
         "tests/e2e/helpers/certops-adcs-ocsp-revoked.js",
         "scripts/certops-adcs-lab-contract.js"
@@ -2355,7 +2351,6 @@
       "requiredSources": [
         "tests/e2e/helpers/certops-adcs-crash-experiments.js",
         "scripts/certops-adcs-crash-experiments.js",
-        "docs/certops/adcs/crash-experiments.md",
         ".github/workflows/certops-adcs-coverage-variants.yml",
         "scripts/certops-adcs-lab-contract.js"
       ],
@@ -2370,7 +2365,6 @@
         "tests/e2e/helpers/certops-acme-key-reuse.js",
         "scripts/certops-acme-key-reuse.js",
         "scripts/certops-acme-key-reuse.test.js",
-        "docs/certops/cross/acme-key-reuse.md",
         "scripts/_registration/cross-coverage.json",
         ".github/workflows/certops-cross-coverage-variants.yml"
       ],
@@ -2385,7 +2379,6 @@
         "tests/e2e/helpers/certops-dns-interruption.js",
         "scripts/certops-dns-interruption.js",
         "scripts/certops-dns-interruption.test.js",
-        "docs/certops/cross/dns-interruption.md",
         "scripts/_registration/cross-coverage.json",
         ".github/workflows/certops-cross-coverage-variants.yml",
         "scripts/certops-qualification-report.js"
@@ -2401,7 +2394,6 @@
         "tests/e2e/helpers/certops-issuer-adoption-capacity.js",
         "scripts/certops-issuer-adoption-capacity.js",
         "scripts/certops-issuer-adoption-capacity.test.js",
-        "docs/certops/cross/issuer-adoption-capacity.md",
         "scripts/_registration/cross-coverage.json",
         ".github/workflows/certops-cross-coverage-variants.yml",
         "scripts/certops-qualification-report.js"
@@ -2417,7 +2409,6 @@
         "tests/e2e/helpers/certops-linux-reboot-upgrade.js",
         "scripts/certops-linux-reboot-upgrade.js",
         "scripts/certops-linux-reboot-upgrade.test.js",
-        "docs/certops/cross/linux-reboot-upgrade.md",
         "scripts/_registration/cross-coverage.json",
         ".github/workflows/certops-cross-coverage-variants.yml",
         "scripts/certops-qualification-report.js"
@@ -2433,7 +2424,6 @@
         "tests/e2e/helpers/certops-fs-symlink-rollback.js",
         "scripts/certops-fs-symlink-rollback.js",
         "scripts/certops-fs-symlink-rollback.test.js",
-        "docs/certops/cross/fs-symlink-rollback.md",
         "scripts/_registration/cross-coverage.json",
         ".github/workflows/certops-cross-coverage-variants.yml",
         "scripts/certops-qualification-report.js"
@@ -2449,7 +2439,6 @@
         "tests/e2e/helpers/certops-trust-concurrency.js",
         "scripts/certops-trust-concurrency.js",
         "scripts/certops-trust-concurrency.test.js",
-        "docs/certops/cross/trust-concurrency.md",
         "scripts/_registration/cross-coverage.json",
         ".github/workflows/certops-cross-coverage-variants.yml",
         "scripts/certops-qualification-report.js"
@@ -2465,7 +2454,6 @@
         "tests/e2e/helpers/certops-k8s-rbac-outage.js",
         "scripts/certops-k8s-rbac-outage.js",
         "scripts/certops-k8s-rbac-outage.test.js",
-        "docs/certops/cross/k8s-rbac-outage.md",
         "scripts/_registration/cross-coverage.json",
         ".github/workflows/certops-cross-coverage-variants.yml",
         "scripts/certops-qualification-report.js"
@@ -2481,7 +2469,6 @@
         "tests/e2e/helpers/certops-browser-audit-redaction.js",
         "scripts/certops-browser-audit-redaction.js",
         "scripts/certops-browser-audit-redaction.test.js",
-        "docs/certops/cross/browser-audit-redaction.md",
         "scripts/_registration/cross-coverage.json",
         ".github/workflows/certops-cross-coverage-variants.yml",
         "scripts/certops-qualification-report.js"
@@ -2497,7 +2484,6 @@
         "tests/e2e/helpers/certops-windows-fixed-root.js",
         "scripts/certops-windows-fixed-root.js",
         "scripts/certops-windows-fixed-root.test.js",
-        "docs/certops/windows/fixed-root.md",
         ".github/workflows/certops-windows-coverage-variants.yml"
       ],
       "environmentGroup": "adcs-install-interruption-environment"
@@ -2511,7 +2497,6 @@
         "tests/e2e/helpers/certops-windows-second-rename.js",
         "scripts/certops-windows-second-rename.js",
         "scripts/certops-windows-second-rename.test.js",
-        "docs/certops/windows/second-rename.md",
         ".github/workflows/certops-windows-coverage-variants.yml",
         "scripts/certops-qualification-report.js"
       ],
@@ -2526,7 +2511,6 @@
         "tests/e2e/helpers/certops-windows-published-upgrade.js",
         "scripts/certops-windows-published-upgrade.js",
         "scripts/certops-windows-published-upgrade.test.js",
-        "docs/certops/windows/published-upgrade.md",
         ".github/workflows/certops-windows-coverage-variants.yml",
         "scripts/certops-qualification-report.js"
       ],
@@ -2541,7 +2525,6 @@
         "tests/e2e/helpers/certops-windows-arm64-execution.js",
         "scripts/certops-windows-arm64-execution.js",
         "scripts/certops-windows-arm64-execution.test.js",
-        "docs/certops/windows/arm64-execution.md",
         ".github/workflows/certops-windows-coverage-variants.yml",
         "scripts/certops-qualification-report.js"
       ],
@@ -2556,7 +2539,6 @@
         "tests/e2e/helpers/certops-windows-acl-path-env.js",
         "scripts/certops-windows-acl-path-env.js",
         "scripts/certops-windows-acl-path-env.test.js",
-        "docs/certops/windows/acl-path-env.md",
         ".github/workflows/certops-windows-coverage-variants.yml",
         "scripts/certops-qualification-report.js"
       ],
@@ -2571,7 +2553,6 @@
         "tests/e2e/helpers/certops-windows-operation-interruption.js",
         "scripts/certops-windows-operation-interruption.js",
         "scripts/certops-windows-operation-interruption.test.js",
-        "docs/certops/windows/operation-interruption.md",
         ".github/workflows/certops-windows-coverage-variants.yml",
         "scripts/certops-qualification-report.js"
       ],
@@ -2586,7 +2567,6 @@
         "tests/e2e/helpers/certops-windows-reregister-custody.js",
         "scripts/certops-windows-reregister-custody.js",
         "scripts/certops-windows-reregister-custody.test.js",
-        "docs/certops/windows/reregister-custody.md",
         ".github/workflows/certops-windows-coverage-variants.yml",
         "scripts/certops-qualification-report.js"
       ],
@@ -2601,7 +2581,6 @@
         "tests/e2e/helpers/certops-windows-retention-boundaries.js",
         "scripts/certops-windows-retention-boundaries.js",
         "scripts/certops-windows-retention-boundaries.test.js",
-        "docs/certops/windows/retention-boundaries.md",
         ".github/workflows/certops-windows-coverage-variants.yml"
       ],
       "environmentGroup": "adcs-install-interruption-environment"
@@ -2615,7 +2594,6 @@
         "tests/e2e/helpers/certops-windows-protected-recovery.js",
         "scripts/certops-windows-protected-recovery.js",
         "scripts/certops-windows-protected-recovery.test.js",
-        "docs/certops/windows/protected-recovery.md",
         ".github/workflows/certops-windows-coverage-variants.yml",
         "scripts/certops-qualification-report.js"
       ],
@@ -2630,7 +2608,6 @@
         "tests/e2e/helpers/certops-windows-crash-dump.js",
         "scripts/certops-windows-crash-dump.js",
         "scripts/certops-windows-crash-dump.test.js",
-        "docs/certops/windows/crash-dump.md",
         ".github/workflows/certops-windows-coverage-variants.yml",
         "scripts/certops-qualification-report.js"
       ],
@@ -4796,7 +4773,7 @@
       "requiredEnvironments": [
         "cloud-exact-pin-native-acme-pro-team"
       ],
-      "implementation": "docs/certops/qualification/editions/downstream-qualification.md",
+      "implementation": "docs/certops/e2e-qualification.md",
       "remainingCoverage": "This is a downstream qualification requirement, not executable evidence in this Core checkout. The edition must supply its own candidate and exact Core composition identity, mandatory scenario inventory, measured environment, public API policy assertions and owned cleanup report. Separate edition reports cannot satisfy a current Core release slot. Full native certificate lifecycle, browser, packaging and entitlement transition variants require independently verifiable downstream execution."
     },
     {
@@ -4807,7 +4784,7 @@
       "requiredEnvironments": [
         "cloud-exact-pin-disposable-api-postgres"
       ],
-      "implementation": "docs/certops/qualification/editions/downstream-qualification.md",
+      "implementation": "docs/certops/e2e-qualification.md",
       "remainingCoverage": "This is a downstream qualification requirement, not executable evidence in this Core checkout. The edition must supply its own candidate and exact Core composition identity, mandatory scenario inventory, measured environment, public API policy assertions and owned cleanup report. Separate edition reports cannot satisfy a current Core release slot. Full native certificate lifecycle, browser, packaging and entitlement transition variants require independently verifiable downstream execution."
     },
     {
@@ -4818,7 +4795,7 @@
       "requiredEnvironments": [
         "enterprise-exact-pin-source-built-api-postgres"
       ],
-      "implementation": "docs/certops/qualification/editions/downstream-qualification.md",
+      "implementation": "docs/certops/e2e-qualification.md",
       "remainingCoverage": "This is a downstream qualification requirement, not executable evidence in this Core checkout. The edition must supply its own candidate and exact Core composition identity, mandatory scenario inventory, measured environment, public API policy assertions and owned cleanup report. Separate edition reports cannot satisfy a current Core release slot. Full native certificate lifecycle, browser, packaging and entitlement transition variants require independently verifiable downstream execution."
     },
     {

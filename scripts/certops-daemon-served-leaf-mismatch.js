@@ -1,3 +1,21 @@
+/**
+ * Qualification: native daemon served-leaf mismatch
+ *
+ * Use distinct predecessor/candidate pairs. Exclusive mode 0600 predecessor copies
+ * become actual daemon inputs; genuine validation/reload plus hostname/CA-trusted TLS
+ * must serve the predecessor. Production coordinator then deploys candidate at normal
+ * paths and genuinely validates/reloads; daemon still consumes separate predecessor, so
+ * fingerprint verification must fail and paired rollback restore original target
+ * bytes/owner/modes. A read-only recorder observes candidate disk pair, reload success,
+ * trusted predecessor, exact refusal and recovery without changing outcomes. Restore
+ * only exact owned alternate config, validate/reload and verify trusted
+ * predecessor/staging files before deleting unchanged copies/guard. Unknown config,
+ * identity or drain preserves sticky root; parent checks guard AFTER native daemon drain
+ * and BEFORE recursive cleanup. No private bytes/paths in proof. This direct executor
+ * case does not qualify signed API admission, reload outage, uninterrupted availability
+ * or cross-process coordination; pure controls are not native evidence.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Native consuming-daemon served-leaf mismatch source. A read-only local evidence recorder
  * observes the production coordinator; native validate/reload implementations

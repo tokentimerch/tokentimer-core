@@ -1,3 +1,19 @@
+/*
+ * Qualification notes: installer-cli-second-rename
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Canonical-root Server2022/2025 lane requires
+ * windows-cli-second-rename-owned-fixture,preserves-installed-service,owned-cleanup. Original packed
+ * CLI runs byte-identically: measured same-process launcher waits for holder acknowledgment; real
+ * source-file oplock holds copy until holder opens staging without delete sharing. Observe actual
+ * predecessor rename/restoration after activation fails and explicit incomplete-stage cleanup while
+ * handle held. Preserve directory/file identities,running service
+ * PID/creation/config/credential/pin,fresh heartbeat and trusted owned self-signed CNG/IIS endpoint;
+ * no agent issuance claim. Active guards block uninstall/root deletion until retained exact installer
+ * handle exits, holder releases and both children close; timeout10s keeps custody until exit, never
+ * kill by name. Public windows-cli-second-rename.json holds3 cases/bounded facts/hashes. IIS reboot
+ * request fails; exclude private receipts and native inventories. Separate from function-only
+ * mechanics/published upgrades/ARM64/dump containment.
+ */
 "use strict";
 /** Genuine, byte-identical installer CLI at the canonical owned root. A source
  * oplock establishes the staging handle before actual copy resumes. The native

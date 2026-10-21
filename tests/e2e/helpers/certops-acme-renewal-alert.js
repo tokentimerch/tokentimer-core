@@ -1,4 +1,16 @@
 "use strict";
+/**
+ * Qualification: native renewal proxy refusal
+ *
+ * In the Ubuntu certbot bulk lane, admit one real public renewal after a genuine
+ * certificate already serves. Refuse new-order only on the owned proxy and count only
+ * actual observed requests NOT forwarded. Require current-claim failure, one consumed
+ * nonce, no additional issuance response and exact predecessor certificate/private
+ * key/trusted TLS. This controlled proxy fault cannot stand in for a native CA failure
+ * or issuance. Retain the actual outbox/delivery path;
+ * CERTOPS_NATIVE_RENEWAL_MAILHOG_URL and CERTOPS_NATIVE_RENEWAL_SMTP_PORT select the
+ * disposable mail observer. Shared policy: docs/certops/e2e-qualification.md.
+ */
 /** Native renewal failure through actual SMTP. The parent owns the disposable
  * API, agent, CA proxy and MailHog. No result, claim, nonce or due date is forged.
  * The fault is an explicitly observed proxy refusal, recorded before forwarding.

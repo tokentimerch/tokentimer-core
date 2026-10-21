@@ -1,4 +1,30 @@
 /**
+ * Qualification: installed systemd lifecycle and write-path sandbox
+ *
+ * Use trusted-main certops-linux-systemd.yml on fresh Ubuntu 22.04/24.04 with migrated
+ * API/Postgres, root, GITHUB_ACTIONS=true, CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST=1,
+ * CERTOPS_PROTOCOL_DISPOSABLE_STACK=1 and live systemd. Refuse existing account/group,
+ * install/unit/drop-in/polkit state. Real install-agent.sh consumes one actual token;
+ * check registration, bootstrap.env removal, private config/credentials, nonroot UID and
+ * soft/hard core limits in /proc/MainPID/limits. Candidate-Node ExecStart drop-in keeps
+ * product sandbox/restart policy. Same service requires installed discovery sidecar. The
+ * installer grants one owned /var/lib write-path. Benign ExecStartPre under unit
+ * identity/mount namespace writes allowed path but gets EROFS on mode 0777 peer; host
+ * runuser must independently write both. systemctl must show ProtectSystem=strict, exact
+ * ReadWritePaths/no peer grant. This fixture probe is not an agent certificate write.
+ * linux-systemd-writepath.json binds exact paths/receipt/probe+fixture hashes. Real
+ * restart preserves credential/advances authenticated heartbeat; measured SIGKILL must
+ * recover with new authenticated PID. retireAgent must yield exit86 and suppress restart
+ * for more than two real restart intervals. Product uninstall removes app/ unit but
+ * preserves state; fixture removes only its own preserved resources. A root-owned
+ * mode-0600 receipt precedes installation; independent always cleanup validates source
+ * hash, uninstalls and deletes exact owned paths/account/group ONLY after service/cgroup
+ * drain. Unknown discovery/config restoration preserves host and DB state. Upload
+ * sanitized execution/writepath reports, never tokens, state, environment/raw journals.
+ * This lifecycle lane does not qualify certificates, browser, released package or ARM64.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+/**
  * Installed Linux agent journey, invoked through certops-linux-systemd.js on an owned VM.
  * Exercise the shipped installer, actual systemd identity/sandbox, restart recovery and
  * retirement. Unit/process ownership receipts constrain destructive cleanup; the host

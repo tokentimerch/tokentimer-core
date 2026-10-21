@@ -1,3 +1,20 @@
+/**
+ * Qualification: native DNS hook routing
+ *
+ * Run trusted-main manual certops-dns-routing-qualification.yml on disposable Ubuntu
+ * 24.04 with pinned pebble-challtestsrv2.8 and separate native production hook
+ * processes. Require longest-child mapping, denied parent before absent credential
+ * access, dot-boundary suffixes, zone-policy refusal, actual propagation failure after a
+ * genuine write, owned cleanup and two native all/quorum resolver views. The unreachable
+ * fault changes only the hook resolver; an independent live resolver must observe the
+ * write. No DNS/platform/provider answers are substituted; no external CA/provider is
+ * contacted. Use production restrictive-permissions helpers for private config. Cleanup
+ * uses the real provider, independently proves TXT absence, drains exact owned DNS
+ * children, proves DNS/management ports closed and only then removes private
+ * configuration. A prior local Windows hook run is a worktree baseline, not
+ * hosted-Ubuntu or release qualification; real external IAM/errors stay separate.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /**
  * Runs the real DNS hook subprocess against an owned local authoritative DNS/API fixture.

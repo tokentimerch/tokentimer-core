@@ -1,4 +1,14 @@
 /**
+ * Qualification notes: CSR observation qualification
+ * The authenticated API runner requires `csr-observation-api` and `csr-bound-observation-api`, using
+ * real TLS endpoints and OpenSSL certificates. A matching observed leaf can complete a reviewed CSR; a
+ * replacement observed during pending name review must preserve the selected identity and token expiry
+ * until acknowledgement. Replay retains observation provenance; observation does not become manual
+ * installation attestation.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Supporting API/PostgreSQL qualification: real TLS CSR observation preserves selected active identity and expiry until name review.
  * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
  * Public requests and persisted rows are the oracle; prerequisite state is isolated.

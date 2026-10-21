@@ -5,10 +5,19 @@
   "promotesCatalogRows": false,
   "claimsQualification": false,
   "hostCapabilityAbsentIsPass": false,
-  "allowedSuiteLevels": ["integration", "real-host", "e2e"],
-  "allowedProofEvidenceLevels": ["script", "host-integration"],
+  "allowedSuiteLevels": [
+    "integration",
+    "real-host",
+    "e2e"
+  ],
+  "allowedProofEvidenceLevels": [
+    "script",
+    "host-integration"
+  ],
   "workflow": ".github/workflows/certops-cross-coverage-variants.yml",
-  "workflowTriggers": ["workflow_dispatch"],
+  "workflowTriggers": [
+    "workflow_dispatch"
+  ],
   "suites": [
     {
       "id": "acme-key-reuse-variants",
@@ -38,7 +47,6 @@
         "tests/e2e/helpers/certops-acme-key-reuse.js",
         "scripts/certops-acme-key-reuse.js",
         "scripts/certops-acme-key-reuse.test.js",
-        "docs/certops/cross/acme-key-reuse.md",
         "scripts/_registration/cross-coverage.json",
         ".github/workflows/certops-cross-coverage-variants.yml"
       ],
@@ -75,7 +83,6 @@
         "tests/e2e/helpers/certops-dns-interruption.js",
         "scripts/certops-dns-interruption.js",
         "scripts/certops-dns-interruption.test.js",
-        "docs/certops/cross/dns-interruption.md",
         "scripts/_registration/cross-coverage.json",
         ".github/workflows/certops-cross-coverage-variants.yml"
       ],
@@ -111,7 +118,6 @@
         "tests/e2e/helpers/certops-issuer-adoption-capacity.js",
         "scripts/certops-issuer-adoption-capacity.js",
         "scripts/certops-issuer-adoption-capacity.test.js",
-        "docs/certops/cross/issuer-adoption-capacity.md",
         "scripts/_registration/cross-coverage.json",
         ".github/workflows/certops-cross-coverage-variants.yml"
       ],
@@ -146,7 +152,6 @@
         "tests/e2e/helpers/certops-linux-reboot-upgrade.js",
         "scripts/certops-linux-reboot-upgrade.js",
         "scripts/certops-linux-reboot-upgrade.test.js",
-        "docs/certops/cross/linux-reboot-upgrade.md",
         "scripts/_registration/cross-coverage.json",
         ".github/workflows/certops-cross-coverage-variants.yml"
       ],
@@ -184,7 +189,6 @@
         "tests/e2e/helpers/certops-fs-symlink-rollback.js",
         "scripts/certops-fs-symlink-rollback.js",
         "scripts/certops-fs-symlink-rollback.test.js",
-        "docs/certops/cross/fs-symlink-rollback.md",
         "scripts/_registration/cross-coverage.json",
         ".github/workflows/certops-cross-coverage-variants.yml"
       ],
@@ -220,7 +224,6 @@
         "tests/e2e/helpers/certops-trust-concurrency.js",
         "scripts/certops-trust-concurrency.js",
         "scripts/certops-trust-concurrency.test.js",
-        "docs/certops/cross/trust-concurrency.md",
         "scripts/_registration/cross-coverage.json",
         ".github/workflows/certops-cross-coverage-variants.yml"
       ],
@@ -259,7 +262,6 @@
         "tests/e2e/helpers/certops-k8s-rbac-outage.js",
         "scripts/certops-k8s-rbac-outage.js",
         "scripts/certops-k8s-rbac-outage.test.js",
-        "docs/certops/cross/k8s-rbac-outage.md",
         "scripts/_registration/cross-coverage.json",
         ".github/workflows/certops-cross-coverage-variants.yml"
       ],
@@ -296,7 +298,6 @@
         "tests/e2e/helpers/certops-browser-audit-redaction.js",
         "scripts/certops-browser-audit-redaction.js",
         "scripts/certops-browser-audit-redaction.test.js",
-        "docs/certops/cross/browser-audit-redaction.md",
         "scripts/_registration/cross-coverage.json",
         ".github/workflows/certops-cross-coverage-variants.yml"
       ],

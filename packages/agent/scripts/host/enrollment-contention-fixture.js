@@ -1,3 +1,16 @@
+/*
+ * Qualification notes: enrollment-contention-qualification
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Opt into disposable elevated Server2022/2025 host with CNG, PowerShell/OpenSSL; no CA/IIS needed.
+ * Three actual contained children share state/enrollmentUUID: winner holds production lock after
+ * RSA2048 CSR; loser gets ENROLLMENT_LOCKED with zero native commands; released retry acquires lock
+ * but existing-container probe prevents certreq. Native KSP metadata, owned public CSR/SPKI and
+ * verified signatures prove unchanged nonexportable winner key; original INF/REQ temps must be gone.
+ * Raw generator alone is not atomic concurrency. Launch suspended in retained JobObject, measure
+ * SID/PID/parent/image/argv/creation before gate; bounded nonce-file protocol and clean root exit/zero
+ * members/wrapper closure authorize deletion. Unknown/forced drainage preserves key and durable guard
+ * for host disposal. Public reports omit CSR/nonces/signatures/PIDs/key names.
+ */
 "use strict";
 /* Supporting disposable Windows CNG enrollment contention fixture. Starts
  * exact owned Node children, proves a real lock loser makes zero native calls,

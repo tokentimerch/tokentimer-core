@@ -20,7 +20,6 @@ const REQUIRED_SOURCES = Object.freeze([
   "scripts/certops-adcs-lab-contract.js",
   SOURCE,
   "tests/e2e/helpers/certops-adcs-uncertain-abandon.js",
-  "docs/certops/adcs/uncertain-abandon.md",
   ".github/workflows/certops-adcs-coverage-variants.yml",
 ]);
 const PROOF_KEYS = Object.freeze([

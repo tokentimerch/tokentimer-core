@@ -1,4 +1,19 @@
 /**
+ * Qualification notes: Public certificate import and private container refusal
+ * `tests/e2e/certops-public-import-e2e.test.js` runs twelve mandatory supporting scenarios against an
+ * authenticated disposable API and PostgreSQL stack. It verifies public PEM identity facts against
+ * OpenSSL and Node's independent X509 parser, repeated and concurrent identity conservation, PEM
+ * bundles, malformed/oversized input, source-reference restrictions and private material refusal.
+ * Exact DER parsing is explicitly classified as supporting unit evidence rather than a binary HTTP
+ * upload.
+ *
+ * Scopes: `public-import-api`.
+ *
+ * Runner and report settings: `CERTOPS_PUBLIC_IMPORT_REPORT`.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Supporting API/PostgreSQL qualification: public certificate import parsing, refusal and identity conservation.
  * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
  * Public requests and persisted rows are the oracle; prerequisite state is isolated.

@@ -1,3 +1,15 @@
+/*
+ * Qualification notes: installer-first-rename-refusal
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * RSA2048 Server2022/2025 only: native no-delete-share directory holder forces actual candidate
+ * installer first rename refusal and exact stage removal. Preserve installed
+ * hashes/config/credential,service PID,new authenticated heartbeat and trusted IIS leaf. Twelve public
+ * booleans/current helper+installer+journey digests require both Server slots. Supporting AST
+ * activation test uses disposable dirs and proves release permits activation; not second-rename
+ * restoration or published upgrade. Holder launches suspended in retained JobObject, measured
+ * image/creation/SID then actual argv; durable original-file guard and zero members/closed wrapper
+ * gate parent cleanup. Emergency drainage remains failed evidence; no PID-only fallback.
+ */
 "use strict";
 /** Real first-rename refusal in the owned installed Windows journey. A verified
  * native directory handle excludes delete sharing while the genuine installer

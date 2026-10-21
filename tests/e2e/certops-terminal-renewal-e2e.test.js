@@ -1,4 +1,14 @@
 /**
+ * Qualification notes: Terminal certificate renewal admission
+ * `terminal-renewal-admission-api` verifies that public manual and bulk renewal cannot revive an
+ * operator-retired identity. Seven mandatory scenarios use real authenticated API requests,
+ * PostgreSQL, public certificate imports and independently trusted loopback TLS. Complete linked
+ * agent-local renewal profiles/key mode are explicit SQL prerequisites. No jobs, certificate expiry or
+ * observations are seeded.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Public renewal admission for terminal identities with complete stored profiles.
  * Uses real public imports/retirement/TLS rediscovery and PostgreSQL oracles. Complete
  * linked agent-local profiles/key mode are explicitly seeded prerequisites; no job,

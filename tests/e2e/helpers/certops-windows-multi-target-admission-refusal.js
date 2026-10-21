@@ -1,3 +1,13 @@
+/*
+ * Qualification notes: multi-target-admission-refusal
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Against genuine installed CNG/IIS certificate submit public multi-target renewal/profile request and
+ * require specific unsupported admission refusal before job/CA allocation. Independently preserve
+ * profile, job inventory, certificate/key identity/export policy, bindings/trusted TLS and protected
+ * config/credential/pin; observe unchanged owned ACME/DNS traffic. This does not claim arbitrary
+ * multi-binding deployment support or invalid signed-dispatch execution. Parent retains cleanup
+ * ownership; portable contracts alone do not qualify native execution.
+ */
 "use strict";
 /** Real public refusal on an installed Windows fixture. Multi-target profiles
  * cannot be introduced through these APIs: target paths are immutable and

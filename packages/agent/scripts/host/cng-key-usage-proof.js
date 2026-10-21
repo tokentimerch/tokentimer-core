@@ -1,3 +1,19 @@
+/*
+ * Qualification notes: native-key-usage
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Parse actual accepted DER X509KeyUsageExtension: RSA exactly160/0xa0 (signature+key encipherment),EC
+ * exactly128/0x80(signature);missing/extra bits fail. Certificate KeyUsage differs from NCrypt
+ * KeyUsageProperty. Request sets no exact operation mask:require signing,accept known
+ * decrypt/sign/agreement combinations and documentedAllUsages0x00ffffff,reject unknown bits. No exact
+ * default mask or EC decryption claim. nativeKeyUsage requires10 profile/store identities/current
+ * hashes.
+ * For every supported RSA/EC profile independently require actual requested key size/curve, machine
+ * Software-KSP identity, nonexportability and fresh native signing verified against public
+ * CSR/certificate. Encryption/key-usage controls must observe actual native behavior rather than
+ * accept capability metadata alone; keep private material/native inventories out of public proof.
+ * Owned keys/controls are recorded before creation and absence checked after cleanup. Portable
+ * signature/proof checks do not qualify native CNG/architecture/provider execution.
+ */
 "use strict";
 /* Pure validation of independently read native certificate/KSP usage metadata.
  * X.509 KeyUsage flags differ from the private-key NCrypt operations bitmask.

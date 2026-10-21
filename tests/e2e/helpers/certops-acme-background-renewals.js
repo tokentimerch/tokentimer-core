@@ -1,3 +1,21 @@
+/**
+ * Qualification: production default-cron ACME renewal
+ *
+ * Start unmodified apps/worker/src/runner.js certops without cron/interval/startup/
+ * one-shot overrides: the real default is a minute cron. Require one naturally due
+ * global profile/active period and zero active certificate jobs before startup. Two real
+ * ticks must admit agent-executed renewals with distinct CA serials/SPKIs, advanced
+ * expiry, protected matching keys, trusted served TLS, current-claim leaf evidence and
+ * production scheduler audit. The local observer counts starts, maintenance summaries
+ * and graceful shutdown, never supplies a sweep/result. Retain the controller in a fresh
+ * process group and pin its child pidfd before exec; check
+ * executable/parent/session/group/birth before descriptor-only SIGTERM. Reap the child,
+ * close pidfd/controller and prove group absence before private/DB cleanup. Unknown
+ * descendants/birth/closure preserve sticky ownership; no numeric PID kill fallback.
+ * Both clients need their own native execution; direct sweeps and pure observer checks
+ * do not qualify unattended worker timing.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Two actual CA renewals admitted by the unmodified production worker's
  * default minute cron. No scheduler call, clock override, inventory-date write

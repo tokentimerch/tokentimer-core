@@ -1,3 +1,14 @@
+/**
+ * Qualification notes: Automatic renewal after identity retirement
+ * The trusted manual `certops-scheduler-capacity-qualification.yml` workflow runs
+ * `certops-retired-scheduler-e2e.test.js` sequentially after the existing capacity and toggle fixtures
+ * have removed their resources. It requires an exclusive API/PostgreSQL database, OpenSSL and
+ * `CERTOPS_SCHEDULER_EXCLUSIVE_STACK=1`.
+ *
+ * Expected refusal: `CERTOPS_CERTIFICATE_NOT_RENEWABLE`.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
 /** Exclusive real API/PostgreSQL scheduler retirement qualification.
  * Imports real short-lived certificates, provisions explicit complete local
  * execution profiles, then uses public management/retirement routes. Owned row

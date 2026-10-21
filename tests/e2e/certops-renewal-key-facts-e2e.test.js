@@ -1,3 +1,12 @@
+/**
+ * Qualification notes: Renewal public-key metadata correctness
+ * The `renewal-key-facts-api` suite exercises seven mandatory named scenarios against a disposable
+ * authenticated API/PostgreSQL fixture and actual OpenSSL RSA/EC public certificates. Signed agent
+ * claims, evidence and result requests exercise the production renewal completion path. Complete
+ * execution-profile and key-mode rows are explicit fixture prerequisites.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
 /** Real API/PostgreSQL renewal evidence cannot retain predecessor public-key facts.
  * Uses actual OpenSSL certificates and registered signed-claim/evidence/result
  * requests; complete local execution profile/key mode are explicit SQL prerequisites.

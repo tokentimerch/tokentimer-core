@@ -1,3 +1,13 @@
+/*
+ * Qualification notes: installed-crash-ownership
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Bind every destructive crash action to the exact measured owned service child tree and original
+ * process handle/creation identity; receipts describe observations, never confer PID ownership.
+ * Unknown descendants, changed image/argv/SID or incomplete drain retain sticky native/private-state
+ * guards and block certificate/key/database/root cleanup. Hard-crash fixture interruption is not
+ * graceful shutdown, power loss, reboot or atomic containment of every privileged fork; report the
+ * actual boundary and original claim/journal/custody facts.
+ */
 "use strict";
 /** Existing installed-process interruption with native handles retained only in
  * ONE PowerShell invocation. The earlier CIM snapshot is an ownership receipt,

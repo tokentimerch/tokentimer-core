@@ -1,3 +1,13 @@
+/*
+ * Qualification notes: ipv6-wildcard-shadow-rollback
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Actual [::] wildcard shadow must produce independently observed trusted-TLS precedence and
+ * production rollback while preserving unrelated binding and original CNG custody. Require IPv6
+ * availability and exact native tuple ownership, remove only explicit fixture
+ * selector/site/certificate resources and independently confirm absence. It does not permit broad
+ * wildcard cleanup, substitute IPv4 proof, or qualify installed public multi-target behavior; portable
+ * negative proofs remain supporting only.
+ */
 "use strict";
 /** Separate IPv6-wildcard supporting scope over the reviewed owned lifecycle.
  * Both IP stacks must have no target-port listener, every native selector on

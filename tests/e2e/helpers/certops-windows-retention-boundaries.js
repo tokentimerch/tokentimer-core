@@ -1,3 +1,11 @@
+/*
+ * Qualification notes: retention-boundaries
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Classify zero/negative/below24,min24,default168,through720,above720 policies and before/exact/after
+ * deadline. A wait<24h fails elapsed gate; even>=24h script contract never claims actual elapsed run.
+ * twentyFourHourElapsedQualified/nativeExecutionQualified remain false; configuration classification
+ * is not deletion/native qualification.
+ */
 "use strict";
 
 /** Script contract for retention boundaries. A full 24 hour elapsed
@@ -19,7 +27,6 @@ const REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-windows-retention-boundaries.js",
   "scripts/certops-windows-retention-boundaries.js",
   "scripts/certops-windows-retention-boundaries.test.js",
-  "docs/certops/windows/retention-boundaries.md",
   WORKFLOW,
 ]);
 const MIN_RETENTION_HOURS = 24;

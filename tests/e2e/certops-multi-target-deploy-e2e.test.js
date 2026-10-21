@@ -1,4 +1,14 @@
 /**
+ * Qualification notes: Multi-target filesystem deployment qualification
+ * `multi-target-deploy-api` runs the production deployment coordinator against actual temporary
+ * filesystem destinations and independently generated end-entity certificates and keys. A registered
+ * protocol agent owns a genuine noop claim. The coordinator's step evidence travels through
+ * authenticated API ingestion under that claim; the fixture adapter assigns evidence identifiers and
+ * does not replace filesystem operations or return fabricated API responses.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Supporting API/PostgreSQL qualification: production multi-target coordinator preserves files and exposes uncertain rollback.
  * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
  * The registered fixture sends genuine machine-protocol requests; it does not run

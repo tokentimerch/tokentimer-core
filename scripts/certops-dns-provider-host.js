@@ -1,3 +1,32 @@
+/**
+ * Qualification: enrolled live DNS provider fixtures
+ *
+ * Use trusted-main manual certops-dns-provider-qualification.yml for one explicitly
+ * enrolled adapter or all enrolled adapters (max two jobs). Configure matching
+ * certops-dns-<provider> and unattended certops-dns-cleanup-<provider> environments:
+ * CERTOPS_DNS_CREDENTIALS_JSON, CERTOPS_DNS_ZONE, CERTOPS_DNS_RESOLVERS_JSON. Restrict
+ * credentials to dedicated fixture operations, require trusted main, and keep the
+ * cleanup environment free of human approval. These are configuration prerequisites, not
+ * an independent IAM audit. Set CERTOPS_DNS_ENROLLED_PROVIDERS_JSON only after cleanup
+ * works; absence means none, and drain owned records before unenrollment. Reserve
+ * _acme-challenge.certops-qualification.<zone>; preflight refuses foreign TXT values.
+ * acme-dns requires its own account and the exact CNAME; never share a production
+ * account. Resolvers must actually reach that zone/CNAME. Two native Node processes use
+ * production solvers/shared-host locks for fresh TXT, coexistence, selective removal and
+ * complete owned cleanup; an independent native resolver measures propagation. No
+ * provider transport/replies are replaced. Require GITHUB_ACTIONS/github-hosted
+ * provenance and CERTOPS_DNS_DEDICATED_FIXTURE=1. Write atomic receipts before uncertain
+ * mutation. Always retry exact-value cleanup; the hourly certops-dns-fixture-janitor.yml
+ * uses the separate cleanup identity and the same per-provider concurrency group to
+ * remove only valid fixture values older than two hours. Keep foreign values. acme-dns
+ * rotates two slots, has no deletion, reports not-applicable-two-slot-provider and gets
+ * no deletion janitor. Credentials stay in environment/memory, never argv, receipts or
+ * artifacts. Publish only sanitized outcomes, not DNS values, raw errors or HTTP bodies.
+ * This integration lane does not qualify CA/EAB issuance, all provider fault branches,
+ * uncertain committed-mutation recovery or multi-host RRset coordination; it creates no
+ * VM lab.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /**
  * Qualifies one explicitly configured isolated DNS provider zone using production solvers and

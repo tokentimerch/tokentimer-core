@@ -1,3 +1,25 @@
+/**
+ * Qualification: native backup-directory DAC refusal
+ *
+ * The disposable GitHub-hosted Linux/root fixture resolves actual nobody UID/GID,
+ * executes original production deployer under that identity and independently checks
+ * zero effective capabilities. First deploy+rotate must match cert/key/DNS/chain, native
+ * OpenSSL verification, owner/group/mode 0600. Set only owned backup directory to mode
+ * 0500; independent exclusive write must return real EACCES and rotation refuse at
+ * backup before live replacement. Preserve predecessor bytes/inodes/modes/owner, outside
+ * sentinel and both staging keys. Restore exact directory identity/mode and require
+ * genuine same-identity success. This is pre-mutation refusal, not rollback.
+ * qualifyBackupDirectoryDac({first, second}) needs distinct genuine fixtures.
+ * Standalone:
+ * node scripts/certops-linux-filesystem-permission.js --report qualification-results/filesystem-linux-dac.json.
+ * The filesystem workflow runs selected absolute Node 24 under sudo with only its four
+ * declared nonsecret environment variables; verify/upload this separate report alongside
+ * original filesystem JSON only. Ubuntu 22.04/24.04 require their own proofs. Child
+ * input travels stdin; key files 0600. Raw errors/private bytes/local hashes are never
+ * artifacts. Failed permission restoration preserves private root; pure checks do not
+ * qualify signed API, installed service, daemon reload or serving cutover.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Direct production deployer qualification on a disposable root-owned Linux
  * host. Drops to an independently resolved nonroot account with no effective

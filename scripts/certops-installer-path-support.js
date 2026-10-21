@@ -1,3 +1,16 @@
+/*
+ * Qualification notes: installer-path-controls
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Run actual AST-extracted Copy-PackageTree/Activate-StagedPackage on owned public temp files only.
+ * Three spaces/Unicode/bracket positives verify activation+predecessor bytes/native IDs;6 copy
+ * junction cases cover source/root/nested/ancestor and destination equivalents with no outside
+ * writes/stage on source refusal;4 activation cases cover linked app/stage/previous/parent. Excluded
+ * node_modules/.git junctions are neither copied nor followed. Exact SHA256/native IDs protect owned
+ * outside markers; remove junctions individually before guarded root cleanup. Not top-level
+ * installer/service/registry/CNG qualification or atomic path-race defense. Pre-activation PE
+ * validation has its separate focused fixture; never present archive inspection as actual runtime
+ * loader proof.
+ */
 "use strict";
 /** Supporting native Windows copy/activation controls on temporary public files.
  * This wrapper requires actual command success and closed bounded proof; it

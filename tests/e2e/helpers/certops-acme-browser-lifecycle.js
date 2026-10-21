@@ -1,3 +1,23 @@
+/**
+ * Qualification: browser-admitted native ACME lifecycle
+ *
+ * The dedicated certops-acme-browser-lifecycle.yml uses Ubuntu 24.04/certbot/noEAB, real
+ * dashboard/API/CA/agent and the actual Jobs/Create manual job dialog. Cancel once with
+ * zero writes and unchanged inventory, then confirm one exact public issuance; register
+ * its returned job immediately and bind actual actor/agent/current claim,
+ * operation/source/identity, stored active leaf and verification evidence. Renewal sends
+ * only reason and takes execution settings from the existing profile. It must retain
+ * certificate ID but change leaf/serial/SPKI with matching protected key and trusted
+ * TLS. UI issue is generation 1; UI renewal follows the parent's intervening automation
+ * and must differ from both its immediate predecessor and original leaf. Retain
+ * BrowserServer and sticky native-operation ownership before launch; release only after
+ * both native generations and actual browser close. Form cancellation is not
+ * executing-job cancellation. The separate console lane stays read-only. Require the
+ * additional unprivileged discovery-refusal sidecar with actual nonroot zero-cap
+ * scans/public inventory; this foreground lane does not qualify installed discovery.
+ * Strict source-bound report only, no screenshots/intercepts/fake executor outcomes.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Source-only native ACME UI actor. The disposable parent owns the real agent,
  * CA, files and TLS service; this actor independently observes their identities.

@@ -1,3 +1,18 @@
+/*
+ * Qualification notes: windows-adoption-qualification
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Trusted installed Windows workflow covers5 profiles onServer2022/2025 within real
+ * API/Postgres/Pebble/SYSTEM fixture. Own operator CNG nonexportable self-signed certificate/IIS SNI;
+ * actual agent discovery persists it. Public renewal setup dry-run must create no profile/derivation
+ * and preserve old binding/key; second request performs real installed ACME rotation with
+ * trustedTLS/native requested-size custody. Actual harness outbox drain derives profile (not
+ * autonomous worker scheduling). Ledger marks predecessor preexisting; fresh process reads same
+ * row,incomplete owned .tmp ignored,real sweep defers ownership_unrecorded while replacementTLS
+ * remains. Require5 cases/current hashes/measured build/service/cleanup. Detach automation before
+ * exact owned target/native receipts deletion and independently prove key absence; stop failed service
+ * only after executable-path ownership. Not every inventory gate/private-export or elapsed retention
+ * qualification.
+ */
 /**
  * Installed Windows adoption/retention journey invoked by the dedicated owned host harness.
  * Public agent execution drives native certificate and binding operations; exact resource

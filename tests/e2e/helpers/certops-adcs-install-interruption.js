@@ -30,7 +30,6 @@ const REQUIRED_SOURCES = Object.freeze([
   "scripts/certops-adcs-lab-contract.js",
   SOURCE,
   "scripts/certops-adcs-install-interruption.js",
-  "docs/certops/adcs/install-interruption.md",
   ".github/workflows/certops-adcs-coverage-variants.yml",
 ]);
 const PROOF_KEYS = Object.freeze([

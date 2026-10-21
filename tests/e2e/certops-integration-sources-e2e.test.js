@@ -1,4 +1,21 @@
 /**
+ * Qualification notes: Certificate-producing integration source qualification
+ * The source inventory covers AWS ACM, Azure Key Vault, Google Certificate Manager/Compute SSL and
+ * Vault KV/PKI. Production scanners use SDK/HTTP fixtures; real API/PostgreSQL tests enforce persisted
+ * source provenance, authorization, incomplete-scan preservation and newer-observation fences. This
+ * does not contact live providers or establish issuance, deployment or custody. Run `node
+ * scripts/certops-integration-source-inventory.js` to check mappings.
+ *
+ * Runner and report settings: `CERTOPS_CSR_API_URL`, `CERTOPS_API_WORKER_FIXTURE_KEY`,
+ * `CERTOPS_INTEGRATION_SOURCES_REPORT`, `node --test
+ * tests/e2e/certops-integration-sources-e2e.test.js`, `node scripts/certops-qualification-report.js
+ * <report.json>`.
+ *
+ * Run prerequisites: `CERTOPS_CSR_DISPOSABLE_STACK=1`, `DB_*`, `CERTOPS_E2E_REQUIRED=1`.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Supporting API/PostgreSQL qualification: certificate-producing integration source provenance survives authenticated import and replay.
  * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
  * Public requests and persisted rows are the oracle; prerequisite state is isolated.

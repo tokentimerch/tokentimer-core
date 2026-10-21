@@ -1,3 +1,21 @@
+/**
+ * Qualification: independent native trust ownership
+ *
+ * Generate two unrelated roots/leaves. Default OS OpenSSL rejects both before native
+ * production distribution/finalized receipt, accepts both after; never bypass inventory
+ * with -CAfile/-untrusted. Revoke only first root:first leaf untrusted, second leaf
+ * still trusted, second root source/receipt bytes/identity/modes exact. Ubuntu
+ * independently checks derived /etc/ssl/certs source-link names/targets still resolve
+ * second root; Alma checks derived directory. Refresh may regenerate link inodes, so do
+ * not require those unchanged. Finally revoke second root and prove both untrusted.
+ * Register exact source before mutation; durable guard blocks parent recursion after
+ * uncertain state/ownership. Keep public CA inputs for parent's independent absence
+ * checks before private root removal. Proof excludes keys, PEM, paths/store inventory.
+ * Sequential selective ownership is not simultaneous refresh, cross-process
+ * serialization or signed API/service dispatch; all Ubuntu/Alma slots need native closed
+ * proof/current source fingerprints.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Native source only: selective receipt-owned root removal must preserve an
  * independently installed root and its actual default OS-derived leaf trust.

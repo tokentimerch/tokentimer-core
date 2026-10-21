@@ -1,4 +1,14 @@
 "use strict";
+/**
+ * Qualification notes: safety variant contract
+ *
+ * Template/allowlist/algorithm/foreign-request/revocation-OCSP disagreement refusals fail closed.
+ * Disagreement never promotes authoritativeRevokedStatusQualified; historical-revoked OCSP keeps
+ * its separate closed scope. Local integration checks execute no forest and cannot count absent
+ * native capability as a pass.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 
 const test = require("node:test");
 const assert = require("node:assert/strict");

@@ -1,4 +1,25 @@
 "use strict";
+/**
+ * Qualification notes: same-boot default TTL day
+ *
+ * Same Server2022 SYSTEM VM/boot measures monotonic 24h with untouched 86400s defaults. Prepare
+ * public pin/post-confirmation preflight + predecessor; scoped CRL outage creates deferred leaf,
+ * register before POST, drain sole service/restore fault, freeze cache/journal/CA/CNG/IIS/TLS.
+ * Independent sealed prepare/handoff binds original candidate/VM/task, extends 4h only to 32h:
+ * certops-native-adcs-ttl24h, TokenTimer-AdcsTtl24h-<nonce>, artifacts 7 days. Verify only owned
+ * API/ PG/mail/no scheduler; deallocate/resume same CA/control VMs/containers, TLS covers hard
+ * lease. Resolve all three native CA IDs from real leaves/CSR even if API/journal IDs absent,
+ * never populate fields. Postday stale caches/owned restart/auth heartbeat/public
+ * attachment/default-clock due zero-dispatch -> fresh preflight/original deadline/key cleanup
+ * preserving predecessor -> fresh default-clock native renewal/cutover. Exclusive
+ * postday-started.json before changes, incomplete attempts no blind retry. Same-VM SYSTEM DPAPI
+ * binds candidate/nonce/VM; resume secrets never args/env/logs/artifacts, initial one-use officer
+ * env cleared. Finalizer 60min, Azure 3min/native 20min bounds, require 45min hard lease headroom
+ * initially and 40min before mutation. Uncertainty/time fails with independently owned teardown;
+ * timing alone is not full controller/release proof.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Pure resident admission/source controls; no native execution or elapsed claim. */
 const { test } = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), { spawnSync } = require("node:child_process");
 const contract = require("./certops-adcs-ttl24h-contract"), resident = require("./certops-adcs-ttl24h-resident"), credential = require("./certops-adcs-ttl24h-resume-credential");

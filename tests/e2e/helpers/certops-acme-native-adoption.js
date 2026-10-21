@@ -1,3 +1,24 @@
+/**
+ * Qualification: public re-setup for owned native certificate
+ *
+ * After Ubuntu 24.04/certbot/noEAB bulk renewal has stopped both periods, reopen FIRST
+ * exact certificate via public sources/:id/readd with no profile,
+ * automationEnabled:false. Never import an unknown key or seed custody/DB/clock state.
+ * Signed renewal-setup dry run+idempotent replay must be dry_run_complete, retain
+ * pair/trusted TLS, empty profile association and no adoption intent. Real setup+replay
+ * must produce one new job, current claim, genuine CA leaf/changed serial+SPKI, matching
+ * key, trusted TLS/evidence. Only after native success call actual
+ * drainCertOpsOutbox({dbPool, env:process.env}) without clock/resolver/derivation
+ * overrides. Exactly its authentic pending intent must finish attempt 1 and public
+ * detail show same setup job configured. Explicit drain does not qualify unattended
+ * worker or parked-intent retry. Compare preserved operator/execution policy, not
+ * derivation timestamps: production may reuse profile and replace derivation metadata.
+ * Manual period stays manual; stop exact period later. Keep primary private
+ * bytes/TLS/profile unchanged. Retained listener/all sockets close before guard release;
+ * unknown mutation/ownership/drain preserves private and public state. Private-key
+ * material AND hashes never enter closed proof.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Mandatory native source; actual protected host execution remains pending.
  * Real public renewal

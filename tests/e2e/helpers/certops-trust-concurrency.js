@@ -1,3 +1,13 @@
+/**
+ * Qualification: local trust-store concurrency
+ *
+ * An exclusive lock permits one writer and refuses the second without replacement.
+ * Partial-write recovery removes only the owned partial file, restores predecessor bytes
+ * and preserves unrelated neighbors. Missing labs fail closed. Keep
+ * publicSignedTrustQualified false: bundle/recovery annotations do not qualify the
+ * separate public signed-trust lifecycle.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 
 /** Local trust-store concurrency and partial-write recovery. Two writers
@@ -30,7 +40,6 @@ const REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-trust-concurrency.js",
   "scripts/certops-trust-concurrency.js",
   "scripts/certops-trust-concurrency.test.js",
-  "docs/certops/cross/trust-concurrency.md",
   "scripts/_registration/cross-coverage.json",
   ".github/workflows/certops-cross-coverage-variants.yml",
 ]);

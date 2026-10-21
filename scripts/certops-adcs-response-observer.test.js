@@ -1,4 +1,16 @@
 "use strict";
+/**
+ * Qualification notes: response observer lifecycle
+ *
+ * Optional real CA-observed owned submit interruption remains not-qualified. Parse bounded receipt
+ * after process AND both output streams close: exit may precede final bytes. Positive 32-bit
+ * RequestId, actual CA observation and owned-tree interruption mandatory. Register before
+ * readiness; await exact returned observer's close. Oversized/malformed/missing receipt or bounded
+ * drain failure preserves cert/key/site/state; outer lab teardown separate. Controlled emitters
+ * here start no PowerShell and do not prove deterministic native timing/recovery.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Controlled child/stdio lifecycle regressions. These tests launch no native
  * process and never qualify response-loss timing or native AD CS recovery. */
 const test = require("node:test");

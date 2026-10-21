@@ -1,4 +1,13 @@
 "use strict";
+/**
+ * Qualification notes: crash experiment contract
+ *
+ * Response-loss/journal/keygen crash proofs require releaseQualificationSatisfied=false;
+ * verifyProof refuses promotion. These local contracts execute no forest, never treat absent host
+ * as pass, and the manual workflow's failed report cannot become release evidence.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 
 const test = require("node:test");
 const assert = require("node:assert/strict");

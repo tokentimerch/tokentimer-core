@@ -1,3 +1,11 @@
+/*
+ * Qualification notes: published-upgrade
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Published0.17.2/0.17.3 archives lack amd64/arm64service hosts; refuse any supplied member pretending
+ * those existed,never synthesize current binary or successful migration.
+ * publishedPackageMigrationQualified/upgradeSynthesized/nativeExecutionQualified=false,missing archive
+ * host fails. Suite real-host differs from script evidence; no upgrade rollback status promotion.
+ */
 "use strict";
 
 /** Script contract for an authenticated published-package upgrade.
@@ -19,7 +27,6 @@ const REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-windows-published-upgrade.js",
   "scripts/certops-windows-published-upgrade.js",
   "scripts/certops-windows-published-upgrade.test.js",
-  "docs/certops/windows/published-upgrade.md",
   WORKFLOW,
 ]);
 const PREDECESSORS = Object.freeze([

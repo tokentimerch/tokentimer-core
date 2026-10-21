@@ -29,7 +29,6 @@ const REQUIRED_SOURCES = Object.freeze([
   "scripts/certops-adcs-lab-contract.js",
   SOURCE,
   "scripts/certops-adcs-safety-variants.js",
-  "docs/certops/adcs/safety-variants.md",
   ".github/workflows/certops-adcs-coverage-variants.yml",
   "tests/e2e/helpers/certops-adcs-ocsp-revoked.js",
 ]);

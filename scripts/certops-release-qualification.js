@@ -1,3 +1,19 @@
+/**
+ * Qualification notes: Release collection
+ * Run node scripts/certops-release-qualification.js <40-character-candidate-sha> <report.json>
+ * <report.jsonl> ... after downloading every required report. The manual collector accepts explicit
+ * successful trusted-main run IDs for one exact candidate; local reports cannot fill release slots.
+ * Full is the default; standard-hosted, adcs and extended-adcs require every selected cell and report
+ * omitted slots with fullMatrixQualified=false. standard-hosted still needs live DNS credentials and
+ * published-package evidence. Bounds: 512 matrix slots, 1024 collection items, 20 MiB per archive, 2
+ * MiB per report, 512 MiB total download, 100 artifacts per run and 128 unique supporting source
+ * files. Failed/skipped/missing/duplicate/stale-source/wrong-environment reports fail. Catalog
+ * implementation is distinct from observed execution; even a complete committed matrix retains
+ * allFeaturesQualified=false. The collector verifies evidence only and never enables a production
+ * capability.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
 "use strict";
 /**
  * Validates collected reports against the committed release matrix and candidate/source identity.

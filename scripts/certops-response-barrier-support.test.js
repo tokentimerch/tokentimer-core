@@ -1,4 +1,27 @@
 "use strict";
+/**
+ * Qualification notes: explicit response file barrier support
+ *
+ * Explicit Windows supporting run (no credentials/network/product mutation):
+ *   $env:CERTOPS_RESPONSE_BARRIER_SUPPORT = '1'
+ *   node scripts/certops-response-barrier-support.js
+ * Three cases first-write zero-length issued.cer/chain.p7b/submit-response.rsp placeholders, never
+ * CA response material. Arm acknowledged level-1 input+all output oplocks before authorized child
+ * read; bind retained PID/creation/executable/script hash/parent. Observe input then selected
+ * output break, unchanged identities/empty lengths; terminate exact retained writer handle, prove
+ * absence/input+guard hashes before releasing output holders. All 36 flags/graceful holder+
+ * active-guard/registered-worker/drained private receipts required; nativeAdcsQualified and
+ * sourceAcquisitionRaceQualified false. Unknown reader/receipt/live child/missed break preserves
+ * root; timeout uses owned cancellation, never kill holder to force pass. Selected trusted Windows
+ * 2022/2025 or manual windows/all runs support, no ADCS matrix slot. Microsoft level-1 oplock
+ * needs ACK; directory FSCTL_REQUEST_OPLOCK notifications are advisory. Real client creates fresh
+ * CSR just before launch: reliable actual input-barrier acquisition remains unimplemented, polling
+ * not proof. Future real timing must bind client/SYSTEM/requester/CSR/RequestId/leaf and drain
+ * producers before placeholder removal; no journal/date/response substitution. Deliberate same-CSR
+ * ambiguity remains separate even after real response-loss timing becomes proven.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Controlled proof and cleanup refusal checks only. Native supporting execution
  * is a separate explicit command and never runs from these tooling regressions. */
 const test = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), os = require("node:os"), crypto = require("node:crypto");

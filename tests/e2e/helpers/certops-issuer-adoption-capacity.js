@@ -1,3 +1,12 @@
+/**
+ * Qualification: local issuer capacity and adoption
+ *
+ * Refuse a sixth shared-cap reservation without eviction and adoption outside the owned
+ * issuer set. Missing forests fail closed with hostCapabilityAbsentIsPass false.
+ * nativeCell remains pending; native-adcs-issuer-reassignment is the separate forest
+ * journey, and these catalog annotations cannot qualify that native cell.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 
 /** Adoption and capacity remainder for issuer switch. The native forest
@@ -29,7 +38,6 @@ const REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-issuer-adoption-capacity.js",
   "scripts/certops-issuer-adoption-capacity.js",
   "scripts/certops-issuer-adoption-capacity.test.js",
-  "docs/certops/cross/issuer-adoption-capacity.md",
   "scripts/_registration/cross-coverage.json",
   ".github/workflows/certops-cross-coverage-variants.yml",
 ]);

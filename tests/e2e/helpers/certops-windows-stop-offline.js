@@ -1,3 +1,21 @@
+/*
+ * Qualification notes: stopped-offline-renewal-recovery
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Separate Azure-free certops-windows-stop-offline.yml Server2022/2025 RSA2048 lane holds real public
+ * renewal DNS after signed claim/CNG/journal; owned result gateway may hold exact outcome before API
+ * forwarding. Stop installed service; actual persisted900s lease+600s offline threshold must pass with
+ * default-clock reaper (unchanged1h alive grace not measured). Original attempt stays
+ * orphaned_unknown_effect/reconciliation_required even after fresh successful renewal/new protected
+ * leaf/trustedTLS. Genuine durable queued result is distinct from unresolved journal; later key
+ * absence alone does not attribute startup cleanup. Read-only observer pins native query/synchronize
+ * handles for measured host/descendants,never signals; require exit handles,fresh inventory,closed
+ * handles/child before broad cleanup. Periodic observation is not atomic containment; report forced
+ * timeout honestly. Nonce PostgreSQL cluster cleanup authority needs exact process/listener/argv/SQL
+ * datadir; retain process handle,unlock PID receipt immediately before graceful stop so PG can update
+ * it. Never adopt foreign cluster; keep uncertain private state. SIGBREAK Go mock is not SCM
+ * session0/full renewal. Strict report requires original source/candidate/native SYSTEM/Server and
+ * cleanup.
+ */
 "use strict";
 /** Genuine public renewal interrupted by an owned installed-service stop.
  * The separate parent must await native/database cleanup before publishing

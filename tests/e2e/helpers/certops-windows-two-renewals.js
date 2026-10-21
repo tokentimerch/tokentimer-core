@@ -1,3 +1,18 @@
+/*
+ * Qualification notes: two-unattended-renewals
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Require windows-two-unattended-renewals in every normal cell: actual worker maintenance/default
+ * SQLNOW,signed installed claims and pinned Pebble6day leaves naturally within30day window. Wait
+ * real1.1s between issuance seconds; derive distinct next idempotency from actual persisted expiry,no
+ * existing job,unchanged profile/management. Both automation cycles succeed with3 distinct
+ * fingerprint/SPKI/serials and correct requested nonexportable machine keys/accepted receipts; native
+ * IIS/HTTP.sys and claim-bound verification/audits/inventory/profile/history match. ImmutableA->B,B->C
+ * retention rows retain predecessor custody/expiry/cutover/completed refs inside real rollback
+ * windows. Sidecar windows-two-renewals-<key-profile>.json keeps expiryCleanupQualified=false; no
+ * eventual deletion claim. Next crash generation usesC actual expiry/TLS/identity baseline without
+ * altering separate reaper prerequisites. Parent owns extra jobs/keys/database cleanup; portable proof
+ * does not qualify native cycles.
+ */
 "use strict";
 /** Two genuine unattended generations in the existing installed Windows fixture.
  * This adds one real worker sweep after the first successful renewal, using the

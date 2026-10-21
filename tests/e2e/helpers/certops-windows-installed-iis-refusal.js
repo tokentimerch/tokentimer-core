@@ -1,3 +1,15 @@
+/*
+ * Qualification notes: installed-public-iis-refusal
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Submit real public standalone deploy for genuinely installed CNG/IIS certificate: signed dispatch
+ * must fail with specific unsupported Windows IIS deploy error. Early branch emits no certificate
+ * failure evidence; require exactly matching CERTOPS_JOB_FAILED audit(job/claim/agent/operation), no
+ * issuance/deploy/validation success evidence. Borrow same leaf/key for uniquely owned secondary SNI
+ * site/port; both trusted TLS endpoints/native metadata/config/credential/pin and ACME receipt/DNS
+ * counts remain fixed. Not direct CA database observation or multi-target admission. Register
+ * unresolved shadow before mutation; assertCleanupSafe blocks uncertain public/native state. Remove
+ * only exact secondary site/endpoint after association readback and recheck primary TLS.
+ */
 "use strict";
 /** Installed-agent standalone IIS deploy refusal. A second exact owned SNI site
  * reuses the genuine existing leaf/key; public admission, signed execution and

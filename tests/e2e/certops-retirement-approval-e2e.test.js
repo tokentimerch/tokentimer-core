@@ -1,4 +1,14 @@
 /**
+ * Qualification notes: Retirement, approval and dispatch races
+ * `retirement-approval-api` exercises public renewal approval against operator retirement with real
+ * PostgreSQL and authenticated registered-agent claims. Complete linked agent-local renewal
+ * profiles/key mode are explicitly seeded prerequisites. Public OpenSSL certificate imports create
+ * identities; public endpoints create every job, approval and retirement. No job, observation, expiry
+ * or claim timestamp is seeded.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Approval/retirement race qualification through real public API and registered claims.
  * Complete linked agent-local profiles are explicit SQL prerequisites; all certificates,
  * jobs, approvals and retirement transitions use public routes. A protocol-only active

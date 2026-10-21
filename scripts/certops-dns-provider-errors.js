@@ -1,3 +1,20 @@
+/**
+ * Qualification: DNS provider error fixtures
+ *
+ * Run node scripts/certops-dns-provider-errors.js, then independently verify with
+ * node scripts/certops-dns-provider-errors-report.js qualification-results/dns-provider-errors.json.
+ * The trusted manual certops-dns-provider-errors.yml needs no provider credentials. Its
+ * committed named scenarios and exact adapter/shared test inventory must stay
+ * exhaustive; missing/duplicate/skipped/failed/stale-source evidence fails closed.
+ * PowerDNS/acme-dns use owned loopback HTTP; RFC2136 uses native loopback UDP refusal
+ * and timeout. Fixed endpoints inject upstream faults (unit evidence), and retry
+ * controls use virtual backoff. These do not qualify external IAM, propagation or
+ * provider availability. Cover OAuth/static-secret redaction and malformed lookup, auth,
+ * conflict, throttle, network and pagination boundaries without publishing raw bodies,
+ * keys or child output. acme-dns accepts status-only acknowledgements and has no
+ * deletion API: never invent deletion evidence.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /**
  * Exercises production DNS solvers under deterministic upstream faults. The manual DNS error

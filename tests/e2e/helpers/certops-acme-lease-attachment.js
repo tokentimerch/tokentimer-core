@@ -1,3 +1,22 @@
+/**
+ * Qualification: retained ACME lease-loss command
+ *
+ * Attach to the actual production-launched command blocked before ACME exec, then retire
+ * its agent through the public API. Production lease abort must terminate without
+ * releasing the arm while certificate/key/TLS/DNS remain unchanged. Pin the root with a
+ * Linux pidfd and independently verify birth, parent, group, Node executable, exact
+ * wrapper argv and original arm/receipt identities; initial group contains only that
+ * root. Never replace production launch or signal a numeric PID/PGID. Natural-success
+ * drainage needs readable descriptor, empty group, unchanged public ownership files and
+ * controller close with code 0. Emergency signaling is separately recorded and cannot
+ * qualify genuine lease cancellation. Unknown descendants, lost receipts,
+ * attachment/closure failures preserve durable AND in-memory cleanup authority. Parent
+ * must observe its original agent ChildProcess close before DB/private cleanup. Benign
+ * capability-free UID/GID 65534 Node 22 controls verify adapter drainage and lost
+ * receipt refusal only: no native Node 24 certificate, agent, CA, service or network
+ * execution is implied, nor atomic process-tree containment.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 
 /** External observer for an actual production-launched, still-armed command.

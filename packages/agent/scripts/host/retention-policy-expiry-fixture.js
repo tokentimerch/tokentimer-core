@@ -1,3 +1,17 @@
+/*
+ * Qualification notes: native-retention-policy-expiry
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * For explicit168h/720h policies independently own2 cutovers,short-lived CNG leaves,IIS and immutable
+ * ledger. Actual expiry+300s grace wins before policy deadline: preserve before due, real
+ * wall/monotonic wait<10min/policy, interrupt after native cert deletion before key deletion, then
+ * default-clock retry. Require both old certs/keys absent and unchanged history/replacement
+ * custody/TLS. Each interrupt child starts suspended in retained JobObject, actual runner
+ * SID/gate,exit86,zero members/closed handles+wrapper before cleanup; exact CngKey.Exists observes
+ * absence. Four policy/interruption cases required per Server.
+ * installedServiceTimerQualified/fullRetentionWindowQualified=false: direct collector and explicit168h
+ * are not omitted-loader/default6h cadence or168/720hour passage. Actual timer jitter4.8-7.2h after
+ * completion would need same process/boot evidence.
+ */
 "use strict";
 /** Native host adapter: run the existing genuine short-leaf cutover fixture
  * under the default and maximum retention policies. Each run owns its own

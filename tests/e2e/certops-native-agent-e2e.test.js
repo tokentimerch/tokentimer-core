@@ -1,4 +1,52 @@
 /**
+ * Qualification: native Linux certificate dry-run
+ *
+ * Four certificate operations augment the signed noop dry-run using the actual Linux
+ * agent/API/Postgres, genuine CA-signed fixtures, restrictive custody files, a retained
+ * TLS listener and independent command/gateway counters. Positive controls must prove
+ * the configured path could mutate before refusal is useful. The generic public job
+ * route does not expose mode: call production createCertificateJob with mode: "dry_run"
+ * while retaining public certificate import, real signing, native claim/lease/result
+ * processing and persisted evidence. Never fabricate jobs, dispatches, nonces, success
+ * or evidence rows. These are native certificate-operation refusal checks, not public
+ * mode-selection coverage.
+ */
+/**
+ * Qualification: foreground native agent faults
+ *
+ * Run separate trusted-main certops-native-agent-qualification.yml against migrated
+ * API/Postgres on disposable Ubuntu 24.04; retain actual 300 seconds test bound rather
+ * than central API timeout. Real candidate process/signing/lease/state cover
+ * registration/private credentials, signed noop/dry-run, command-policy refusal, restart
+ * with pin/credential, tampered payload/signature/unknown key, cross-agent valid-claim
+ * misdelivery, initial lease loss, outbox retry, replay refusal, real logs across
+ * restart, corrupt pin, observe-only and cleanup. Follow advertised wire capabilities;
+ * do not claim v2 from this source. Public admission is normal noop; dry-run uses
+ * production creator because public generic jobs lack that mode. Harmless operations do
+ * not qualify native cert/service. Loopback HTTP 503, HTTP 429 and connection-reset
+ * faults, lost committed-ack, recursive HTTP 413 splitting and one permanently rejected
+ * split line must preserve ordered unique real log sequences, one attempt, completed
+ * streams and successful jobs. Require cached exact original ack/no duplicate storage;
+ * single-line rejection means one agent gap, zero server drops/no double count. Never
+ * inject diagnostic lines. One-second polling and three-second heartbeats respect
+ * production machine-token budget; observe-only waits for real 200 heartbeat and
+ * persisted empty operation declaration. Genuine allowlisted validate/reload children
+ * emit generated secret sentinels to both streams; private receipts prove emission while
+ * public logs, DB evidence/results and parent console contain neither sentinels nor raw
+ * child markers. This tests output withholding, not child-output streaming or
+ * certificate execution. Short-expiry control re-signs actual claimed job/agent/attempt
+ * with production nonceTtlSeconds: 2, holds response >=5 monotonic seconds, uses fresh
+ * actual HTTP Date and temporary1ms local tolerance then exact restoration. No
+ * clocks/journal/expiry rows are rewritten. Agent must refuse before first
+ * lease/success; real 409 result nonce may leave original job claimed, so require exact
+ * rejection in dead-letter outbox, not invented server rejection. Fresh claim must
+ * succeed with same pin/credential. This is shortened signing-fixture expiry, not
+ * stock-window or Windows SCM proof. Source-bound sanitized report only; drain owned
+ * children/temp/workspace and always destroy stack. Local baseline runs/pure checks
+ * cannot qualify hosted release cells.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+/**
  * Run the production Linux agent against the real API/PostgreSQL disposable stack.
  * certops-native-agent-qualification.yml supplies an isolated runtime. Actual child restart, lease
  * loss, credential handling and log transport faults are observed with persisted

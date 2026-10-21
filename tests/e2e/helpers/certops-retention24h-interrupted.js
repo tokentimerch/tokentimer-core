@@ -1,3 +1,15 @@
+/*
+ * Qualification notes: resident-retention24h-interrupted-delete
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * After actual resident monotonic24h on original AD CS VM, gate contained native fault child using
+ * same protected state/source/config/deadline. Delegate real native commands unchanged; exit86 only
+ * after certutil -delstore My <thumbprint> succeeds and before key deletion/ledger completion. Drain
+ * retained Job, prove old cert absent across machine stores,old nonexportable key still signs,ledger
+ * exact bytes/file identity unchanged and replacement custody/IIS/TLS intact. Default-clock sweep
+ * reacquires real lock,removes retained key/completes original row. Unknown drainage/ownership
+ * preserves private receipts for owned Azure teardown. No ledger aging/clock injection/CA fabrication;
+ * not168/720h passage,installed6h cadence or power-loss durability.
+ */
 "use strict";
 /** Real-day fault composition only. The parent must first measure a genuine day
  * in one resident process. No clock, ledger, transport or key deletion is faked.

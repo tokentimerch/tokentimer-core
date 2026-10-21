@@ -1,3 +1,15 @@
+/*
+ * Qualification notes: configuration-encoding-refusals
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Encode unchanged valid operator configuration as UTF8-BOM, UTF16LE-BOM and UTF16BE-BOM; require the
+ * actual production UTF8 JSON reader parse error, unchanged bytes/state and successful repair.
+ * Installed lane disables SCM recovery and requires fresh startup failure+drained child for each,
+ * unchanged identity/custody/binding/TLS, then exact original configuration, new SYSTEM child and
+ * authenticated heartbeat before guard release. Writes use retained original descriptor with pre/post
+ * namespace checks; foreign identical-byte replacement is refused. Preserve private backup/sticky
+ * guard on uncertainty. Pin bytes stay fixed though normal startup may replace its file object.
+ * Required in all ten cells; portable reader evidence alone is not native startup qualification.
+ */
 "use strict";
 /** Public encoding prerequisites for real installed-agent startup refusals.
  * Only fixture-owned copies of the original UTF-8 operator configuration are

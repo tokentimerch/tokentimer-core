@@ -1,3 +1,18 @@
+/*
+ * Qualification notes: installed-public-verify-rollback
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * With real public manual renewal/installed SYSTEM agent, own concrete127.0.0.1 IP selector on primary
+ * port using predecessor plus separate-port sibling. Refuse foreign selectors; native tuple/file
+ * identity/AppID gates exact removal. Renewal must persist current-claim iis-bind VERIFY_FAILED
+ * rolledBack=true with authentic accepted-container receipt and native private-signature
+ * possession/chain/SAN. Do not claim independent observation of fleeting new SNI binding or primary
+ * AppID preservation (product regenerates GUID). Require restored predecessor binding/TLS/settings,
+ * remove exact shadow, then fresh public renewal changes leaf/SPKI/serial/key and succeeds. Borrowed
+ * predecessor/failed accepted key stay for parent cleanup. Sticky nonce/private ownership guards
+ * preserve unknown states. Required in ten cells;2 extra renewal waits<=180s each;
+ * native32m/producer34m/receipt37m/task38m/job51m. Not bind-failure, failed-rollback, expiry,
+ * IPv6/CCS/multi-target scope.
+ */
 "use strict";
 /** Real installed/public renewal with an owned HTTP.sys precedence fault.
  * The shadow initially serves the SAME predecessor. A real accepted new leaf

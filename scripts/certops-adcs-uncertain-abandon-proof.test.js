@@ -1,4 +1,21 @@
 "use strict";
+/**
+ * Qualification notes: native zero-request uncertain abandonment
+ *
+ * Block only certreq outbound to uniquely resolved CA IPv4 matching provisioned domain-ca lab VM,
+ * never offline root. Observe durable submitting/exact owned SYSTEM tree, drain; missed phase
+ * fails. CA subject count zero every checkpoint; restore transport while stopped before
+ * acknowledged public recovery so no-resubmit proof has working CA. Actual persisted
+ * lease+ordinary 60s grace+ 30s observation, <=15min prerequisite, measured monotonic timing/no
+ * shortened experiment lease. Reconciliation retains CSR/frozen identity/CNG public
+ * blob/nonexportability/unknown-effect job. Public abandon schedules normal terminal cleanup:
+ * audit/abandoned DB+journal/exact key absent/ no leaf/CA count zero . No journal/state/lease/time
+ * fabrication. No SCM failure actions, policy fixed; exact observer closes/drains before
+ * receipt/rule release/restart, failed drain preserves state. Three mandatory scenarios separate
+ * from pending abandon refusal/crash/survivor qualifications.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /* Supporting proof-contract checks, without native host operations. Actual
  * submitting/recovery/abandon qualification requires the disposable forest. */
 const assert = require("node:assert/strict");

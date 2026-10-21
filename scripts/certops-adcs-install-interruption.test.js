@@ -1,4 +1,14 @@
 "use strict";
+/**
+ * Qualification notes: installation interruption contract
+ *
+ * Local contract restarts same owned target across role install, CA config, template publish, ACL
+ * grant and IIS enroll-site phases. In-use key deletion and blanket netsh reset are refused. It
+ * proves no real reboot, power-loss durability or native execution; absent lab fails closed, and
+ * the manual failed report is not a release artifact.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 
 const test = require("node:test");
 const assert = require("node:assert/strict");

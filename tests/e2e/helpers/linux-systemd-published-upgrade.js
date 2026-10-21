@@ -1,3 +1,24 @@
+/**
+ * Qualification: authenticated published Linux predecessor upgrade
+ *
+ * Use trusted-main certops-linux-published-upgrade.yml separately on Ubuntu 22.04/24.04.
+ * Install actual public v0.17.2 asset 612562598, tokentimer-agent-0.17.2.tgz, 410054
+ * bytes, SHA256 c602fe36825c74d423c2c9b89680df3b1ac76542f71804de14dc5e2ec5aa85bf;
+ * validate official release metadata/checksum/archive version/runtime. Reject links,
+ * special/duplicate/unsafe members before owned extraction. Build candidate with real
+ * pack-release.js/required Go Windows payload; version must be later, never inject
+ * candidate runtime into historical package. This is hash provenance, not code signing.
+ * Compare every regular extracted/installed package filename, size, digest before/after;
+ * only installer root node_modules exclusion is permitted. Historical real signed noop
+ * must complete; upgrade preserves exact config/credential/private modes/API
+ * registration, job/evidence history and still-valid historical replay-cache entry.
+ * Remove bootstrap then fresh restart/authenticated heartbeat must execute candidate
+ * noop without consuming spare token. Fail expired replay window rather than fake it.
+ * Restore only owned config, revoke spare token, never delete unexpected bootstrap.
+ * Upload linux-systemd-published-upgrade.json only; receipt-bound teardown always runs.
+ * No certificate custody/renewal, schema-upgrade or automatic version-rollback claim.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /* Install/execute an immutable public Linux predecessor, then upgrade the owned
  * service with the candidate's real release archive. Production job creation and

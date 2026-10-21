@@ -139,7 +139,7 @@
     {
       "id": "4d3605ce26faa1d8bbfb",
       "file": "packages/agent/scripts/host/windows-host.test.js",
-      "line": 56,
+      "line": 91,
       "name": "Windows real-host discovery and service-host qualification",
       "environment": "windows-elevated"
     },
@@ -673,7 +673,7 @@
     {
       "id": "ef2af40c8d26df183310",
       "file": "tests/e2e/certops-agent-log-quota-e2e.test.js",
-      "line": 21,
+      "line": 32,
       "name": "production fleet-log quota concurrency and workspace isolation",
       "environment": "core-certificate-api"
     },
@@ -687,7 +687,7 @@
     {
       "id": "51c6442f8e20e0e34017",
       "file": "tests/e2e/certops-audit-history-e2e.test.js",
-      "line": 14,
+      "line": 22,
       "name": "certificate profile audit history remains searchable scoped and role restricted",
       "environment": "core-certificate-api"
     },
@@ -701,21 +701,21 @@
     {
       "id": "28e392f09cd33762a2ea",
       "file": "tests/e2e/certops-bulk-eligible-e2e.test.js",
-      "line": 13,
+      "line": 22,
       "name": "mixed eligible bulk renewal shares issuance capacity and conserves replay",
       "environment": "core-certificate-api"
     },
     {
       "id": "29bd8f4cf84d755d5542",
       "file": "tests/e2e/certops-ca-capacity-e2e.test.js",
-      "line": 13,
+      "line": 24,
       "name": "public issuance shares race-safe CA admission and terminal release",
       "environment": "core-certificate-api"
     },
     {
       "id": "523141a2d8d7ef6c0f50",
       "file": "tests/e2e/certops-certificate-transfer-e2e.test.js",
-      "line": 16,
+      "line": 25,
       "name": "public certificate token transfer preserves workspace authority and atomic identity conflicts",
       "environment": "core-certificate-api"
     },
@@ -736,7 +736,7 @@
     {
       "id": "d5a62574778d6f00e618",
       "file": "tests/e2e/certops-csr-bound-observation-e2e.test.js",
-      "line": 17,
+      "line": 27,
       "name": "real TLS CSR observation preserves selected active identity and expiry until name review",
       "environment": "core-certificate-api"
     },
@@ -771,14 +771,14 @@
     {
       "id": "6272ef5cd1943f6dac4d",
       "file": "tests/e2e/certops-csr-provisional-e2e.test.js",
-      "line": 37,
+      "line": 58,
       "name": "shared CSR ownership, cancellation and truthful installation evidence",
       "environment": "core-certificate-api"
     },
     {
       "id": "4b826855e7e701db890e",
       "file": "tests/e2e/certops-decommission-e2e.test.js",
-      "line": 27,
+      "line": 41,
       "name": "decommission acknowledgement and factual rediscovery preserve operator lifecycle",
       "environment": "core-certificate-api"
     },
@@ -813,7 +813,7 @@
     {
       "id": "0b87720d6ce348c52a69",
       "file": "tests/e2e/certops-first-issuance-admission-e2e.test.js",
-      "line": 19,
+      "line": 30,
       "name": "public first issuance retains period and fresh execution admission fences",
       "environment": "core-certificate-api"
     },
@@ -827,14 +827,14 @@
     {
       "id": "add1fc960c094070ef71",
       "file": "tests/e2e/certops-import-metadata-e2e.test.js",
-      "line": 13,
+      "line": 22,
       "name": "public reimport preserves operator contacts and group assignments",
       "environment": "core-certificate-api"
     },
     {
       "id": "afef16116dc15fbe3ee4",
       "file": "tests/e2e/certops-integration-sources-e2e.test.js",
-      "line": 22,
+      "line": 39,
       "name": "certificate-producing integration source provenance survives authenticated import and replay",
       "environment": "core-certificate-api"
     },
@@ -869,7 +869,7 @@
     {
       "id": "2f9f7531658946706268",
       "file": "tests/e2e/certops-log-maintenance-e2e.test.js",
-      "line": 27,
+      "line": 44,
       "name": "actual log upload grace, abandoned stream and worker retention",
       "environment": "prerequisite-review",
       "workflow": null,
@@ -892,14 +892,14 @@
     {
       "id": "7c3e0675067d51867663",
       "file": "tests/e2e/certops-multi-target-deploy-e2e.test.js",
-      "line": 21,
+      "line": 31,
       "name": "production multi-target coordinator preserves files and exposes uncertain rollback",
       "environment": "core-certificate-api"
     },
     {
       "id": "6bd9e1c9d0000f95ba08",
       "file": "tests/e2e/certops-native-agent-e2e.test.js",
-      "line": 33,
+      "line": 81,
       "name": "real native agent signed gates durable outbox restart and observe-only behavior",
       "environment": "prerequisite-review",
       "workflow": null,
@@ -922,7 +922,7 @@
     {
       "id": "29acf249784019f0683d",
       "file": "tests/e2e/certops-profile-issuer-switch-e2e.test.js",
-      "line": 13,
+      "line": 24,
       "name": "public renewal issuer changes retain runnable policy and atomic audit",
       "environment": "core-certificate-api"
     },
@@ -943,14 +943,14 @@
     {
       "id": "e041894ee3c906686378",
       "file": "tests/e2e/certops-public-import-e2e.test.js",
-      "line": 21,
+      "line": 36,
       "name": "public certificate import parsing, refusal and identity conservation",
       "environment": "core-certificate-api"
     },
     {
       "id": "96e36a1542fcb65ffeb3",
       "file": "tests/e2e/certops-queued-profile-snapshot-e2e.test.js",
-      "line": 13,
+      "line": 25,
       "name": "public queued renewal freezes profile across operator edits approval and signed claim",
       "environment": "core-certificate-api"
     },
@@ -964,7 +964,7 @@
     {
       "id": "93f33e2b94e60d82ca75",
       "file": "tests/e2e/certops-renewal-alert-worker-e2e.test.js",
-      "line": 15,
+      "line": 28,
       "name": "owned renewal failure outbox reaches actual delivery worker SMTP receipt",
       "environment": "prerequisite-review",
       "workflow": null,
@@ -973,7 +973,7 @@
     {
       "id": "f1f402c8d2654796d4a3",
       "file": "tests/e2e/certops-renewal-key-facts-e2e.test.js",
-      "line": 42,
+      "line": 51,
       "name": "renewal certificate changes invalidate unproven predecessor key facts",
       "environment": "core-certificate-api"
     },
@@ -995,14 +995,14 @@
     {
       "id": "644f3a4a7edadc0b7bab",
       "file": "tests/e2e/certops-retired-observation-e2e.test.js",
-      "line": 22,
+      "line": 31,
       "name": "fresh TLS observation cannot reactivate a retired identity",
       "environment": "core-certificate-api"
     },
     {
       "id": "75423f2b138644a6bf37",
       "file": "tests/e2e/certops-retired-scheduler-e2e.test.js",
-      "line": 38,
+      "line": 49,
       "name": "automatic renewal cannot revive an authoritative retired identity behind a stale source",
       "environment": "core-exclusive-scheduler-api",
       "workflow": ".github/workflows/certops-scheduler-capacity-qualification.yml"
@@ -1010,14 +1010,14 @@
     {
       "id": "326c960757b083e31001",
       "file": "tests/e2e/certops-retirement-approval-e2e.test.js",
-      "line": 36,
+      "line": 46,
       "name": "operator retirement fences concurrent approvals and actual registered-agent dispatch",
       "environment": "core-certificate-api"
     },
     {
       "id": "95a3a1ef54582e6edf86",
       "file": "tests/e2e/certops-scheduler-capacity-e2e.test.js",
-      "line": 13,
+      "line": 31,
       "name": "SQL clock scheduler shares public issuance capacity and pause fences",
       "environment": "core-exclusive-scheduler-api",
       "workflow": ".github/workflows/certops-scheduler-capacity-qualification.yml"
@@ -1032,7 +1032,7 @@
     {
       "id": "94e2bcb0b5057a56afe7",
       "file": "tests/e2e/certops-signing-rotation-native-e2e.test.js",
-      "line": 67,
+      "line": 78,
       "name": "isolated operator signing rotation adopts native pins and fences incomplete fleet completion",
       "environment": "prerequisite-review",
       "workflow": null,
@@ -1041,7 +1041,7 @@
     {
       "id": "21e91652de4520082f93",
       "file": "tests/e2e/certops-terminal-renewal-e2e.test.js",
-      "line": 39,
+      "line": 49,
       "name": "public renew cannot revive retired fully profiled certificates after real rediscovery",
       "environment": "core-certificate-api"
     },
@@ -1069,7 +1069,7 @@
     {
       "id": "9255a15020b9b0ea070c",
       "file": "tests/e2e/certops-unmanaged-discovery-e2e.test.js",
-      "line": 20,
+      "line": 30,
       "name": "quota-blocked real filesystem discovery preserves unmanaged visibility",
       "environment": "core-certificate-api"
     },

@@ -1,4 +1,23 @@
 "use strict";
+/**
+ * Qualification notes: native issuer reassignment
+ *
+ * Confirm two different CA keys/configs with four real preflight/confirm/post-confirm dispatches,
+ * reservePrimaryPreflights(4). Declare domain(run),10 lowercase hex, before service, register
+ * My/domain/certificateId receipt before POST/IDs before waits. Install origin short template;
+ * public profile update changes only issuerId,one CERTOPS_RENEWAL_PROFILE_UPDATED audit. Manual
+ * renew 409 CERTOPS_ADCS_RENEWAL_NOT_MANUAL creates no job. Actual SQL-NOW sweep uses stored 6-day
+ * expiry/30-day window, freezes destination config/key, leaf verifies destination not origin, same
+ * IIS/HTTP.sys/TLS cutover with predecessor/key preserved. Gate is
+ * native-adcs-issuer-reassignment/real-host. Without forest:
+ *   node tests/e2e/helpers/certops-native-issuer-reassignment.js
+ * writes failed qualification-results/native-issuer-reassignment.json, cleanup failed, nativeCell
+ * pending, exit 1; lab markers alone cannot invoke qualifier. Even completed host proof keeps
+ * nativeCell pending until catalog registration; API cases alone do not qualify. Parent retains
+ * unresolved ownership/lab; reverse migration/rollback/second cycle/timer not covered.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 // Pure proof refusals and the closed manual report. These checks do not
 // qualify native CA, CNG, or IIS observations.
 const test = require("node:test");

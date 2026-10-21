@@ -1,4 +1,24 @@
 /**
+ * Qualification: native consuming server reload
+ *
+ * Trusted-main certops-nginx-qualification.yml runs nginx, Apache, HAProxy separately on
+ * Ubuntu 22.04/24.04 via CERTOPS_RELOAD_SERVICE. Own fresh native process, private
+ * config, random loopback port, temp destinations; never edit ordinary system service
+ * config. Record actual server/OpenSSL versions. Require trusted initial TLS, real
+ * production deploy+ validate/reload cutover, invalid-config refusal, missing-reload
+ * executable and cleanup. Fresh CA/hostname-trusted probes must see predecessor until
+ * actual reload, new leaf afterward. nginx uses -t/-s reload; Apache -t/-k graceful with
+ * explicit owned PID/ config and nonroot workers; HAProxy -c/master-worker verified
+ * master SIGUSR2 and ssl-load-extra-files key for separate key file. Invalid validation
+ * leaves old TLS; missing executable fails reload, never report either as successful
+ * cutover. Independently enumerate original /proc process group, refuse unexpected
+ * executables, gracefully then forcibly drain exact owned master/workers even if master
+ * exited; prove group absence and port rebind before checked-prefix cleanup. Keys,
+ * configs, backups/native logs stay local; named sanitized results only. No API/systemd,
+ * released-package, multi-target transaction or failed-rollback claim.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+/**
  * Qualify real certificate deployment/reload in the selected native consuming server.
  * certops-nginx-qualification.yml provisions the disposable nginx/Apache/HAProxy host.
  * Owned keys and configuration feed the production coordinator; trusted TLS probes

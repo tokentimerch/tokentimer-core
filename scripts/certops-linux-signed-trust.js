@@ -1,3 +1,34 @@
+/**
+ * Qualification: public signed native Linux trust lifecycle
+ *
+ * Use only certops-linux-signed-trust.yml on separate disposable root Ubuntu 24.04 with
+ * isolated API/Postgres/registered foreground agent, Node 24, embedded
+ * trust-anchor-deploy-v1 and local trust-store:update-ca-certificates argv explicitly
+ * ["/usr/sbin/update-ca-certificates","--fresh"]. Do not broaden nonroot ACME lane,
+ * rewrite operator profile or modify capability manifest to satisfy fixture. Signed
+ * executor does not forward direct-call fresh seam. Admin creates trust-anchors then
+ * manual distribute-trust/revoke-trust jobs with subjectType: trust_anchor, subjectId,
+ * agentId, owner, idempotency; managers must receive HTTP 403. Creator binds
+ * installation transaction; real executor receipts/evidence/authenticated results apply.
+ * Own root, issued intermediate, intermediate-required leaf and direct-root leaf in
+ * 0700/0600 state with sticky ownership before first mutation. Default OS OpenSSL
+ * -purpose sslserver/exact hostname must initially reject both WITHOUT CAfile/chain.
+ * Public signed root install must make direct leaf trusted; intermediate install must
+ * make intermediate leaf trusted without supplying chain. Revoke only intermediate: its
+ * leaf fails while direct leaf/root source+receipt unchanged. Revoke root:both fail,
+ * owned sources/derived refs absent, installation rows match actual results. Bind four
+ * distinct current claims/nonces/one dispatch, original agent/workspace/fingerprints/
+ * typed intents. Public statuses alone are insufficient; observe actual field schema.
+ * Drain retained agent before any DB/private cleanup. Recovery touches only verified
+ * original receipt-owned source then refreshes OS store;
+ * missing/replaced/corrupt/ambiguous receipt preserves fixture and fails. Require
+ * independent distrust/owned-ref absence before deleting recovery/public rows. Unknown
+ * cleanup blocks DB-volume teardown; host disposal is separate, not measured recovery.
+ * linux-signed-trust.json must pass strict source/Node/Python proofs before upload. No
+ * installed-service/background or automated reconciliation claim; pure
+ * route/proof/directory tests are supporting.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Public signed Ubuntu trust jobs. Manual workflow_dispatch on a disposable host only. */
 const assert = require("node:assert/strict"),

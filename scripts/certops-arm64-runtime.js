@@ -1,3 +1,27 @@
+/*
+ * Qualification notes: arm64-native-cng-runtime
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Six mandatory cases measure OS product type,native ARM64 CPU/Node/PowerShell/Go,current
+ * helperPE/source. ARM64EC/ARM64X remain distinct/refused. RSA2048 AND ECP256 use actual
+ * productionCSR/acceptance inMy. In-memory ephemeral.NET signer verifiesPKCS10,rejects corrupted
+ * signature;independently check SPKI/SAN/exact usage/leaf signature. CA private key never leaves
+ * memory;export controls require zeroed private buffers. Actual helper returns
+ * revocation_unknown(noCDP),ca_key_changed(wrongpin),invalid(malformedleaf) and complete native store
+ * references;exact exclusion removes sole reference. This is not successful revocation/networkCA.
+ * Register absent-container/exactDER receipt+active-child guard before mutation;only childclose clears
+ * guard. Unknowncreation/key identity,remaining
+ * references,changedhelper,liveproducer,linked/out-of-boundsworkdir preserve state;never adopt/kill
+ * process/key. Upload only qualification-results/windows-arm64-cng-runtime.json,exclude private
+ * receipts/workdir/rawinventory;always-run cleanup checks same guards.
+ * Separate Windows11 ARM64 desktop lane requires native ARM64 CPU/process, Node24/PowerShell and
+ * genuine candidate-packaged chain/store helper. Qualify actual RSA2048 machine Software-KSP
+ * CSR/acceptance, private signing/nonexportability and native metadata/runtime, never inferred from
+ * compiling or parsing ARM64 PE. Preserve exact certificate/container/public DER and observed native
+ * identity; delete only recorded owned fixture resources. Source/proof controls are supporting
+ * evidence; this narrow lane does not qualify the full AMD64 host suite, Server cells, installed
+ * API/ACME/IIS, or signed release provenance. Historical certops-windows-arm64-host.yml fails with
+ * explicit narrower workflow directions rather than skipping AMD64-specific oracles.
+ */
 "use strict";
 /** Manual Windows 11 ARM64 CNG producer. Production certreq/store/chain bridges
  * run against two owned local public leaves. This is not domain CA issuance,

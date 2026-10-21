@@ -1,4 +1,19 @@
 "use strict";
+/**
+ * Qualification notes: default-day release evidence
+ *
+ * windows-domain-adcs-default-ttl24h has one Server 2022/en-US/SYSTEM/x64 cell, not native24h
+ * retention. Real preparation/cache/journal/CA/CNG freeze + same-boot monotonic day; require
+ * stale-cache refusal, public attachment/waiting_for_fresh_preflight, actual due SQL-NOW zero
+ * dispatch, original deadline expiry/exact unaccepted-key cleanup preserving predecessor/TLS, then
+ * fresh preflight/default-clock native renewal. Five real-host scenarios bind ttl24h-sources
+ * inventory. Native-only stage lacks independent CA counts/scheduler isolation, cannot pass
+ * complete proof. Authenticate immutable prepare/handoff owner run/attempt and original candidate
+ * under later finalizer; independently prove resource-group absence/cleanup. Hash/timing alone is
+ * not proof.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Actual release verifier over parsed synthetic reports, not native execution. */
 const test=require("node:test"),assert=require("node:assert/strict"),{artifact,candidateSha}=require("./test-support/adcs-ttl24h-artifact.cjs"),h=require("./certops-adcs-ttl24h-proof"),{verifyMatrix}=require("./certops-release-qualification");
 const slot=require("./certops-qualification-manifest").slots.find(row=>row.suite===h.suite),options={candidateSha,specification:{schemaVersion:1,slots:[slot]}};

@@ -1,3 +1,14 @@
+/*
+ * Qualification notes: installed-bind-failure
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Script contract plans owned BIND_FAILED injection and predecessor restoration on exact primary
+ * selector, preserving sibling. Manifest names two run-specific sites/hostnameport selectors with
+ * distinct run-derived ports. Cleanup accepts only exact netsh http delete sslcert selector and site
+ * delete; refuse blanket reset, wildcard0.0.0.0/[::], selectorless delete or foreign binding sharing
+ * the port. Preserve conflicted state. This source is distinct from actual installed
+ * verification-failure/failed-rollback qualification and must keep nativeExecutionQualified=false when
+ * no host executes; missing host fails.
+ */
 "use strict";
 const {assessHostProbe} = require("../../../scripts/certops-qualification-report");
 

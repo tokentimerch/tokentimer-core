@@ -1,4 +1,25 @@
 /**
+ * Qualification notes: Shared CSR ownership and truthful installation evidence
+ * `csr-provisional-api` exercises shared provisional ownership, last-reference cancellation races,
+ * manual confirmation without invented physical instances, and real TLS observation. A sibling
+ * cancellation must preserve an active or observed identity. Conflicting ownership cannot transfer
+ * identity, expiry or audit provenance. OpenSSL keys stay in the owned fixture; these controls do not
+ * qualify native key custody.
+ *
+ * Scopes: `csr-provisional-api`.
+ *
+ * Runner and report settings: `CERTOPS_CSR_PROVISIONAL_REPORT`, `CERTOPS_CSR_API_URL`, `GITHUB_SHA`.
+ *
+ * $env:CERTOPS_CSR_PROVISIONAL_REPORT = "qualification-results/csr-provisional.json" node --test
+ * tests/e2e/certops-csr-provisional-e2e.test.js node scripts/certops-qualification-report.js
+ * $env:CERTOPS_CSR_PROVISIONAL_REPORT
+ *
+ * Run prerequisites: `CERTOPS_CSR_DISPOSABLE_STACK=1`, `CERTOPS_E2E_REQUIRED=1`,
+ * `CERTOPS_QUALIFICATION_STRICT=1`.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Qualify shared CSR provisional ownership and truthful manual attestation through
  * a disposable authenticated API/PostgreSQL stack. OpenSSL owns the local keys;
  * only public requests create, import, cancel or complete workflows. An owned TLS

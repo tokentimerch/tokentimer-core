@@ -1,3 +1,19 @@
+/**
+ * Qualification notes: Browser certificate audit qualification
+ * Chromium exercises real public retirement audits, literal percent/underscore search, action filters,
+ * stable pagination and foreign-workspace refusal against PostgreSQL. Browser results must match
+ * independently queried event identities. Cleanup removes only the owned fixture; reports exclude
+ * cookies, private keys and raw audit rows.
+ *
+ * Runner and report settings: `node scripts/certops-browser-audit.js`, `CERTOPS_CSR_API_URL`,
+ * `CERTOPS_BROWSER_URL`, `CERTOPS_BROWSER_AUDIT_REPORT`.
+ *
+ * Run prerequisites: `CERTOPS_CSR_DISPOSABLE_STACK=1`.
+ *
+ * Scopes: `browser-certificate-audit`.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
 /** Real Chromium audit filtering over genuine public certificate retirements.
  * Run in the manual dashboard qualification lane with disposable API/PostgreSQL.
  * Exact authenticated response IDs and independently ordered persisted events

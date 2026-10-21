@@ -1,3 +1,16 @@
+/*
+ * Qualification notes: webhosting-expiry-reclamation
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Separate Azure-free certops-windows-webhosting-retention.yml manually on trusted
+ * main,Server2022/2025. Actual two-cutover short-leaf collector uses LocalMachine
+ * WebHosting,unchanged24h policy,real expiry+300s. Independent WebHosting custody/IIS-store receipt
+ * required; reject My-only engine before work. Contained post-cert/pre-key interruption/default retry
+ * completes immutable ledger and preserves replacement trustedTLS/key. Explicit replacement mirror
+ * into WebHosting borrows originalMy key; remove mirror only after original inventory/possession
+ * preservation,then owned final cleanup. One real wait/native15m/job20m keeps comprehensive
+ * host3wait/40m budget intact. Not full24h or service cadence; supporting proofs do not qualify
+ * native.
+ */
 "use strict";
 /** Closed non-default-store retention evidence. Native expiry/grace timing is
  * shared with the established collector fixture; changing a label on its My

@@ -1,4 +1,17 @@
 "use strict";
+/**
+ * Qualification notes: bound before durable completion experiment
+ *
+ * bound-before-complete observes new native SNI/TLS while journal remains installing/bind; no
+ * post-bind/pre-verification marker exists, and verify/retention may already have run. Capture/
+ * drain exact SYSTEM tree, refuse later ambiguity; verify accepted key signature with actual leaf
+ * and unchanged artifacts. Real-lease/grace recovery rechecks same CSR/key/leaf/RequestId, no
+ * extra CA request, finishes claim evidence. Final exactly-one predecessor retention row; existing
+ * row/original cutover time unchanged, predecessor key/cert retained. Optional observed window
+ * remains experimental/not-qualified, not arbitrary crash timing.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Synthetic refusal controls; actual post-bind crash recovery remains pending. */
 const test = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto");
 const helper = require("../tests/e2e/helpers/certops-adcs-bound-install-recovery");

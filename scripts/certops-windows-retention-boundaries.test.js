@@ -1,3 +1,20 @@
+/*
+ * Qualification notes: retention-replacement-lineage
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * ForA->B->C keep immutableA->B row/expiry/cutover/references; sweep follows<=64 valid same-store
+ * owned chronological links to currently bound trusted-TLS descendant.
+ * Missing/malformed/cyclic/future/unrelated/overlong history fails closed; filename/thumbprint
+ * mismatch LEDGER_IDENTITY_MISMATCH before native deletion. Removed intermediate history persists.
+ * Same ordered My->target mutex spans reread/store check,native inventory/TLS/deadline/delete/issuance
+ * cleanup/final ledger; cancellation/lost authority writes no outcome. External admins do not share
+ * lock. Supporting regressions cover lineage,active refs at acquisition,store changes,authority
+ * loss,persistence before release and competing real mutex. Metadata-only Crypt32 survivor scans all
+ * LocalMachine logical stores incl archived; exclude only exact predecessor store+thumbprint for
+ * retention,none for startup/abandoned cleanup. Mirrored/other-store survivor protects key. Missing
+ * helper/incomplete query/cancel fails closed; no private-key opening/sign/export. Native report
+ * requires5 facts for WebHosting survivor/mirror/key/TLS/owned public cleanup; unit checks are not
+ * elapsed/native qualification.
+ */
 "use strict";
 
 /** Retention boundary proof. A wait under 24 hours cannot qualify the elapsed

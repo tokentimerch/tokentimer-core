@@ -1,4 +1,17 @@
 "use strict";
+/**
+ * Qualification notes: browser uncertain abandonment
+ *
+ * Supported UI has RequestId and two-step Abandon, no unknown-effect recovery or arbitrary pending
+ * continuation button. Owner Abandon/Keep writes zero, then Free the key writes one public POST
+ * returning 204 on genuine zero-request uncertainty. Parent measures ordinary terminal cleanup,
+ * abandoned DB/journal, exact key absence/no accepted leaf/CA count zero /audit/fenced original
+ * unknown job; API actor remains. Register retained BrowserServer/trust before launch, drain
+ * before exact trust removal, refuse later reused receipts. Full root/hierarchy require proof;
+ * elapsed lane separate. Pure controls execute no Chromium/native abandonment.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Bounded proof, native-observation refusal and retained-owner lifecycle only.
  * These checks never launch Chromium, mutate trust or execute native AD CS. */
 const test = require("node:test"),

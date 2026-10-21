@@ -1,3 +1,15 @@
+/*
+ * Qualification notes: retention-reference-guards
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Actual owned CNG predecessor ledger gets2 explicit supporting recovery references; close one then
+ * both with production APIs, unknown ref cannot close known. Fresh child reads after each. Native
+ * sweep defers active_reference_present until all closed,then deadline_not_reached under unchanged24h
+ * real clock. Preserve key/provider/None export,DER,cutover/expiry/store/ownership and replacement
+ * trusted TLS. These are fixture references,not real AD CS/rollback journal history. Loader matrix
+ * separately checks default/min24/max720hours and positive integer intervals; invalid
+ * types/fractions/range fail without config/custody mutation. Six bounded facts keep
+ * elapsed24HourQualified=false; no elapsed deletion/background cadence claim.
+ */
 "use strict";
 /** Supporting native retention-reference qualification on the existing owned
  * collector fixture. Ledger references are explicit supporting prerequisites,

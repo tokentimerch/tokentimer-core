@@ -1,3 +1,30 @@
+/**
+ * Qualification: local ACME key policy
+ *
+ * The local gate refuses client paths outside the owned root, a second order using the
+ * same SPKI, in-use key deletion and blanket netsh resets. Its catalog mappings remain
+ * annotations: nativeExecutionQualified/sharedFleetQualified stay false and missing labs
+ * fail closed. This gate is separate from this helper's real CSR-reuse journey; neither
+ * fixture results nor a probe object qualify live certbot.
+ */
+/**
+ * Qualification: real Linux CSR key reuse
+ *
+ * After rotated positive generations and before agent retirement, reuse the parent's
+ * owned API/DB/Pebble/agent/TLS/paths; do not launch another service or public CA.
+ * certbot --csr and acme.sh --signcsr reuse the local certificate key, independently of
+ * account-key persistence. Public profile PATCH changes only keyRotation policy. Manual
+ * renewal and direct production SQL-NOW scheduler sweep must each succeed with
+ * keyRotation/keyRotated false and claim-bound evidence, unchanged restrictive private
+ * bytes/SPKI/profile snapshot, distinct DER/serials, advanced real expiry, exact SANs,
+ * matching key, trusted TLS and clean authoritative TXT records. Wait actual wall time
+ * for second-resolution CA expiry; never rewrite clocks/journals. Register every
+ * admitted job even if a sweep later errors; parent owns all drainage. This does not
+ * qualify unattended worker intervals, 24h runtime or Windows CNG reuse. The Windows
+ * profile flag does not itself establish native reuse: its executor may generate a new
+ * CNG CSR/container regardless. Keep that policy boundary separate.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Real Linux CSR-based ACME key reuse. Run after rotation controls and before
  * agent retirement. The parent owns the agent, TLS listener, jobs and all local
@@ -177,7 +204,6 @@ const REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-acme-key-reuse.js",
   "scripts/certops-acme-key-reuse.js",
   "scripts/certops-acme-key-reuse.test.js",
-  "docs/certops/cross/acme-key-reuse.md",
   "scripts/_registration/cross-coverage.json",
   ".github/workflows/certops-cross-coverage-variants.yml",
 ]);

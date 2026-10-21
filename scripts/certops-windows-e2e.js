@@ -1,3 +1,43 @@
+/*
+ * Qualification notes: windows-real-journey
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Run node scripts/certops-windows-e2e.js only on disposable elevated Windows with
+ * CERTOPS_WINDOWS_BASH/CERTOPS_WINDOWS_ACMESH,loopback native PostgreSQL migrations,pinned
+ * Pebble2.8.0/acme.sh3.1.2/DNS and checked candidate native helpers. certops-windows-e2e.yml uses
+ * trusted main: windows_server=all,key_profile=all yields10Server2022/2025
+ * RSA2048/3072/4096,ECP256/P384 cells,max2 concurrent; defaultsRSA2048 is partial. SYSTEM bounded
+ * ScheduledTask owns launcher/exit receipt,restrictive ACL config/DNS creds and process-scoped git
+ * trust. Poll2s,heartbeat/discovery5s preserve real machine-token policy. Use original candidate
+ * pack/checksum/architecture/install CLI with only root selector redirected; independent native
+ * CNG/HTTP.sys/trustedTLS and claim evidence bind genuine public issue/renewal. Actual
+ * anonymous/viewer refusal,manager issue idempotency/source=api/requester/os-store-managed facts are
+ * required; fixture SQL only provisions actors. Privacy sidecar windows-output-privacy-<profile>.json
+ * delegates unchanged real ACME after random stdout/stderr sentinels; require genuine success marker
+ * and no leakage in upload observer/DB/SCM,not child-line streaming. Native execution pending,not
+ * browser/domain AD CS or signed asset provenance. historical_upgrade=true adds2RSA2048 Server
+ * source-migration slots from signed v0.17.2 commit6c902405c7b5d229e2f47b4d5436d780e91c5e17,compiled
+ * solely historical helpers+original JS/installer. Preserve real
+ * noop,identity/config/credential/pin/operator fixture key/IIS/TLS and report
+ * windows-source-upgrade.json provenance=historical-source-build; false means partial matrix.
+ * Published v0.17.3 SHA256ec74ed8e1026b7a76b50e0ddc843ee8dc42d1283923ff01be11603069f94c6bb lacks both
+ * service-host executables: published-baseline preflight must remain blocked,never add current
+ * binaries/rebuild-source substitution. Exact release/asset IDs,size,URL,digest required; not
+ * executable signature. Candidate reapply/restart plus real ACL copy refusal/structurally valid
+ * wrong-protocol health rollback preserve service bytes/credential; original uninstall preserves
+ * operator state. Retirement86 requiresSCMexit0/norespawn5configured recovery intervals. WERDumpType0
+ * is custom dump,not suppression: optional unique benign-copy wer_probe first observes+deletes real
+ * dump then experimental debugger,never touches real node.exe sink or claims product containment.
+ * Between jobs malformed-config/missing-agentId-with-credential startups drain,retain identity/key/TLS
+ * and repair with heartbeat. Crash next actual automation at DNS/CNG journal boundary kills only owned
+ * tree; this baseline deliberately changes only owned lease deadline/short offline input,therefore
+ * does not claim real elapsed lease. Default-clock elapsed lanes separate. API logs need persisted
+ * issuance rows/no bootstrap/privatePEM. Replacement CLI registration uses fresh state: retired
+ * identity409 preserves token/no credential/log leak;fresh identity heartbeats without migrating
+ * automation/custody. Parent owns precise service/site/bindings/cert/key receipts/new trust
+ * anchors/jobs/temp cleanup; protocol fixture owns workspace/registration/bootstrap. Upload only
+ * sanitized execution/candidate digest/provenance facts,never state/logs/credentials/dumps/raw
+ * inventories.
+ */
 "use strict";
 /* Windows journey producer invoked by the trusted manual Windows workflow. Starts only owned
  * Pebble processes and forwards the candidate environment to the public protocol/API suite;

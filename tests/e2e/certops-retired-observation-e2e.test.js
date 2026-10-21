@@ -1,4 +1,13 @@
 /**
+ * Qualification notes: Retirement and fresh observation qualification
+ * The seven mandatory `retired-observation-lifecycle` cases run through the actual authenticated API
+ * and PostgreSQL with an owned HTTPS endpoint. OpenSSL generates two public leaves and their local
+ * private keys. An independent TLS client trusts only those fixture certificates and verifies the
+ * exact served fingerprint before each rotation.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Supporting API/PostgreSQL qualification: fresh TLS observation cannot reactivate a retired identity.
  * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
  * Public requests and persisted rows are the oracle; prerequisite state is isolated.

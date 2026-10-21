@@ -1,3 +1,14 @@
+/*
+ * Qualification notes: installed-signing-pin-refusal
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Corrupt present pin with malformed JSON and invalid required fields; real stopped/drained SYSTEM
+ * startup must expose specific reader error without unsigned startup or replacement identity. Retained
+ * original descriptor owns exact writes/repair; preserve config/credential/service
+ * paths/CNG/binding/TLS. New actual SYSTEM child plus authenticated heartbeat and exact original bytes
+ * precede releasing private backup/sticky guard. Idle present-file corruption only: no missing-pin
+ * bootstrap, key rotation or in-flight recovery. Supporting reader/proof tests do not establish native
+ * ten-cell execution.
+ */
 "use strict";
 /** Present corrupt signing pins must fail actual installed-agent startup rather
  * than silently become unsigned. Only the fixture-owned public pin changes;

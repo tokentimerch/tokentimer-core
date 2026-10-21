@@ -1,3 +1,12 @@
+/**
+ * Qualification notes: Renewal path topology qualification
+ * The mandatory `renewal-health` supporting integration group executes fifteen existing production
+ * resolver cases against actual PostgreSQL. It covers pinned and open-claim execution paths, redundant
+ * executors, partial/all-location outage forecasts, retired agents, missing target/profile/custody,
+ * disabled profiles, retired certificates and dependency counts. No SQL query or resolver is mocked.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
 "use strict";
 
 const crypto = require("crypto");

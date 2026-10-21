@@ -1,4 +1,12 @@
 /**
+ * Qualification notes: Certificate audit history qualification
+ * `certificate-audit-api` runs eight strict named scenarios through actual authenticated API routes
+ * and PostgreSQL. The central API qualification runner includes it automatically;
+ * `CERTOPS_AUDIT_REPORT` selects its sanitized report.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Supporting API/PostgreSQL qualification: certificate profile audit history remains searchable scoped and role restricted.
  * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
  * The registered fixture sends genuine machine-protocol requests; it does not run

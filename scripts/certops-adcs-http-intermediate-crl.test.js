@@ -1,4 +1,18 @@
 "use strict";
+/**
+ * Qualification notes: hierarchy intermediate HTTP CRL
+ *
+ * Existing offline-root intermediate CDP must be exact HTTP/no LDAP alternative, bounded signed
+ * DER and valid fresh native end-entity+intermediate chain after cache clear. Owned rule blocks
+ * only exact helper->root HTTP; independent HTTP and CA LDAP stay reachable. Fresh helper
+ * revocation_unknown -> valid after matching executable/address/direction/action/protocol/port
+ * rule restoration and identity-bound cache-policy restore. Predecessor CNG/IIS/HTTP.sys/TLS stay
+ * unchanged. Register guard before mutation; unresolved rule/policy retains private receipt and
+ * blocks teardown. Hierarchy-only nativeHttpIntermediateCrl cannot be replaced by root suite or
+ * claim leaf HTTP/OCSP/signed deferred continuation.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 // Supporting protocol and bounded-file tests; no native chain, firewall or CA.
 const test = require("node:test");
 const assert = require("node:assert/strict");

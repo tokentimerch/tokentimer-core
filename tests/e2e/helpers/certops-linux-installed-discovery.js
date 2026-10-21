@@ -1,3 +1,33 @@
+/**
+ * Qualification: installed nonroot file discovery and restoration
+ *
+ * The Ubuntu 22.04/24.04 systemd and published-upgrade workflows require a separate
+ * linux-installed-file-discovery report after installation, reapplication or upgrade,
+ * using the original service and registration. All real, effective, saved and filesystem
+ * UID/GID values must match the nonroot account, with zero effective capabilities and
+ * the candidate discovery module. Create an owned public certificate and genuine
+ * private-key decoys within the existing installer write path. Change only discovery
+ * configuration. Retain the original mode-0600 configuration descriptor and bytes, plus
+ * a root-owned local backup. Two distinct authenticated post-start scans and a complete
+ * public inventory page must identify the exact public leaf, path, agent and host,
+ * report adjacent-key presence and contain no private decoy material. To restore, stop
+ * the exact unit and prove its cgroup empty and original process birth absent before
+ * deleting unchanged inputs or restoring configuration. The restarted original
+ * configuration must authenticate after an independent database cutoff with changed
+ * heartbeat uptime; polling alone is insufficient. Credential and signing-pin bytes must
+ * remain unchanged. The installation receipt binds mandatory discovery, a fresh nonce
+ * and completion path. Cleanup requires the matching closed receipt, original
+ * configuration identity and restored digest, proven process drainage and input absence.
+ * A missing or deleted guard never grants cleanup. Unknown setup or restoration
+ * preserves host and database ownership. Independent always-run host cleanup must
+ * succeed, and the original receipt (including dangling links) must be absent before
+ * volume destruction. Run only on disposable hosts. Published upgrade still requires its
+ * authenticated predecessor and separate upgrade report. Supporting checks:
+ * node --test scripts/certops-linux-installed-discovery.test.js scripts/certops-linux-installed-discovery-release.test.js
+ * python scripts/certops-linux-installed-discovery-collector.test.py
+ * Configuration, keys, backups, credentials and raw process output are not artifacts.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Installed-systemd discovery qualification. Private configuration stays on the
  * disposable VM. Retained descriptors refuse replacement instead of adopting a

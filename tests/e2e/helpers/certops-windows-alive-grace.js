@@ -1,3 +1,19 @@
+/*
+ * Qualification notes: alive-agent-default-hard-grace
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Use the separate Azure-free Server2022/2025 RSA2048 lane. Hold the exact successful signed renewal
+ * result behind HTTP503 before forwarding, with claim polling held and healthy authenticated
+ * heartbeats; do not alter ACME results or clocks. A genuine pre-ACME command barrier follows CNG
+ * creation. Persisted lease900s and unchanged hard grace3600s must actually elapse before the
+ * default-clock reaper changes the original attempt to orphaned_unknown_effect; heartbeat-only uptime
+ * must advance at both observations. Wait for a stable real lease before freezing its timestamps
+ * because an in-flight request can finish. Preserve reconciliation after any later renewal. Production
+ * outbox backoff starts15s, caps base30min with20% jitter; polling is not retry cadence. Periodic
+ * discovery is disabled to observe child absence, so simultaneous discovery/deployed worker scheduling
+ * remain outside scope. Cleanup retains original native handles before SCM stop and requires
+ * descendant drainage, closed handles and stopped service; this is bounded ownership, not atomic
+ * containment.
+ */
 "use strict";
 /** Source-only composition for a separate manual alive/default-grace lane.
  * A completed genuine native mutation remains an unresolved API orphan; this

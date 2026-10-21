@@ -1,3 +1,17 @@
+/*
+ * Qualification notes: resident-domain-retention24h
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Dedicated Server2022 domain campaign uses real public AD CS A->B cutover and six-day template so24h
+ * retention wins. Stop/drain agent; one SYSTEM task/resident Node/boot invokes real-clock production
+ * sweep with native custody/TLS. Require>=86400000 monotonic ms,sweep gaps<=65min,predeadline retained
+ * observation,wall disagreement<=5s,start within10min cutover,resident bound25h/task26h. Final due
+ * sweep removes onlyA, preservesB and immutable ledger. No fabricated dates/rows/keys. Initial4h lease
+ * extends once to original32h only from authenticated immutable owning artifact,exact
+ * run/attempt/nonce/VM/task/hash/native readiness. CA/control plane may deallocate after frozen facts;
+ * finalizer rechecks same process/task/boot,absence/custody/TLS and exact lab teardown before report.
+ * Not default7day policy,installed background cadence,other language/OS or guaranteed cloud billing
+ * cutoff. Interrupted measurement/cleanup cannot qualify.
+ */
 "use strict";
 /** Resident timing primitive for the explicit 24-hour disposable Windows lane.
  * This module supplies no certificate proof and never fabricates a collector

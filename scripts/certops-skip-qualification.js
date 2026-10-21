@@ -1,3 +1,11 @@
+/**
+ * Qualification notes: Skip inventory maintenance
+ * After reviewing skip conditions, run node scripts/certops-skip-qualification.js --write and inspect
+ * the diff. This is a heuristic mapping of skipped cases to intended qualification paths; regeneration
+ * is neither test execution nor proof that any skipped behavior qualified.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
 "use strict";
 /**
  * Maps discovered test skip sites to prerequisite ownership and candidate execution environments.

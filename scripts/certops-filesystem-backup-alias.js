@@ -1,3 +1,21 @@
+/**
+ * Qualification: native backup-directory alias refusal
+ *
+ * On all Ubuntu 22.04/24.04 and Windows Server 2022/2025 filesystem slots, create a real
+ * symlink or junction below an allowlist pointing to a separately owned outside
+ * directory. After genuine initial install, production rotation with explicit backupDir
+ * must return realpath-policy before backup creation or any predecessor mutation.
+ * Preserve outside sentinel, staged keys and exact predecessor bytes/inode/owner/modes;
+ * native key-permission oracle checks predecessor AND subsequent successful replacement.
+ * Remove only verified exact alias, create real allowed backup directory and retry.
+ * Require all three exact predecessor backups and replacement DNS/key/CA signature.
+ * Register durable receipt before deployment. Uncertain ownership retains private state
+ * and blocks parent cleanup; successful cleanup rechecks directory/receipt IDs. Missing
+ * prerequisites must fail rather than skip. Refusal/recovery does not imply rollback,
+ * API/service admission or uninterrupted serving. Local hashes/private bytes stay out of
+ * reports.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Real native filesystem qualification for an explicit backup directory alias.
  * Called only by the disposable filesystem host harness with genuine matching

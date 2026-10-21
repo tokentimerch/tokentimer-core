@@ -1,4 +1,15 @@
 /**
+ * Qualification notes: Public CA capacity admission qualification
+ * `ca-capacity-api` covers concurrent public issuance admission. Six simultaneous public issuance
+ * requests admit exactly five pending approval jobs under the default per-CA cap; the sixth receives
+ * the documented capacity conflict. Idempotency still resolves the existing job at capacity. Canonical
+ * endpoint variations cannot split one bucket, a different CA remains independently eligible, and an
+ * actual requester rejection releases capacity for another request. Failed reservations preserve job,
+ * certificate and outbox counts.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Supporting API/PostgreSQL qualification: public issuance shares race-safe CA admission and terminal release.
  * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
  * Public requests and persisted rows are the oracle; prerequisite state is isolated.

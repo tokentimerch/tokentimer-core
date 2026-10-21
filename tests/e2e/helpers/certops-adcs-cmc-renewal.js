@@ -24,7 +24,6 @@ const REQUIRED_SOURCES = Object.freeze([
   "scripts/certops-adcs-lab-contract.js",
   SOURCE,
   "scripts/certops-adcs-cmc-renewal.js",
-  "docs/certops/adcs/cmc-renewal.md",
   ".github/workflows/certops-adcs-coverage-variants.yml",
 ]);
 const PROOF_KEYS = Object.freeze([

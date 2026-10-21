@@ -1,4 +1,24 @@
 /**
+ * Qualification notes: Browser execution-console qualification
+ * The `browser-agent-console` suite runs Chromium against the real dashboard, API and PostgreSQL using
+ * registered protocol agents and signed noop claims. It checks live console authorization, reconnect
+ * behavior and secret-sentinel exclusion. It does not execute an installed certificate operation.
+ *
+ * Runner and report settings: `CERTOPS_BROWSER_CONSOLE_REPORT`.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
+ * Qualification notes: Completed console authorization
+ * The `browser-agent-console` suite verifies that stream finalization leaves a noop claimed until its
+ * real result arrives. Completed consoles revalidate authorization every 15 seconds; status-only or
+ * HTTP 401/403 responses clear cached text and cursor. Restored permission reloads retained history
+ * once, and unmounting cancels polling. Foreground qualification permits a 30-second observation
+ * bound, not instantaneous revocation.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Exercise the real dashboard console against authenticated API/PostgreSQL fixtures.
  * The browser workflow invokes this after the main UI suite. Diagnostic lines come
  * from a registered protocol agent, not an installed native process. Real offline

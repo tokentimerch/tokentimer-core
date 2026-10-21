@@ -1,7 +1,0 @@
-# Installed Windows retention configuration refusals
-
-The supported agent retention policy accepts integer `windows.supersededRetentionHours` values from 24 through 720 and a positive integer `windows.sweepIntervalMs`. This source selects three genuine invalid configurations: 23 hours, 721 hours and a zero sweep interval. The original UTF-8 configuration is copied without changing identity, credentials, targets or other policy fields.
-
-The native journey uses the existing retained-file configuration startup engine: the exact owned LocalSystem service is stopped, automatic recovery is disabled, each actual start must fail with its specific production validation error, and the failed child must drain. Protected CNG custody, native binding, trusted TLS and registered API state must remain unchanged. Exact original configuration restoration and a repaired SYSTEM child with authenticated heartbeat precede release of the sticky ownership guard.
-
-Supporting tests execute the actual production configuration reader against temporary public files and require the specific validation error for each case. They do not execute SCM, certificate/key operations or retention collection. The native engine, parent lifecycle and mandatory report checks are wired across all five Windows key profiles on both Server versions; native Windows execution is deferred. This scope does not qualify the default six-hour timer, full retention windows or deletion.

@@ -1,3 +1,16 @@
+/*
+ * Qualification notes: cng-export-refusal-qualification
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Require windows-cng-private-export-refusal on Server2022/2025 for all10 owned accepted
+ * RSA2048/3072/4096 and ECP256/P384 certificates in My/WebHosting. Reopen exact
+ * provider/container/size/machine identity and None export policy; verify fresh nonce signatures
+ * before/after with public certificate (EC IEEE-P1363). Same-provider/profile exportable control must
+ * successfully export PKCS8, while protected key must throw native cryptographic exception; retain
+ * bounded HRESULT without inventing error classification. Private arrays remain inside native process,
+ * are zeroed/verified in finally, never printed/written/reported; workdir unchanged. Register each
+ * control before creation, retry exact cleanup and independently require native absence. Portable
+ * checks are not provider/architecture/enterprise qualification.
+ */
 "use strict";
 /* Verify native CNG custody for already owned accepted host certificates.
  * Every profile/store gets an exact disposable exportable control. Exported

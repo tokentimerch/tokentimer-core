@@ -1,3 +1,14 @@
+/**
+ * Qualification notes: Trusted CI selection
+ * Trusted main pushes select cheap tooling, disposable API stacks and Windows controls by changed
+ * paths; the default manual lane is tooling, and all explicitly selects the three standard lanes.
+ * Selection never launches paid domain labs or establishes release qualification. Frontend
+ * audit/console and ARM64 source changes retain cheap tooling coverage; desktop host execution remains
+ * explicit. Validate workflow semantics with checksum-pinned Actionlint 1.7.12, including the
+ * committed input schema.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
 "use strict";
 // Select only the trusted push's affected qualification lanes. This never
 // dispatches paid labs; manual requests choose one bounded lane or all three.

@@ -1,3 +1,12 @@
+/*
+ * Qualification notes: arm64-execution
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Require both actual arm64 process and real native probe; other architecture/missing host fails,never
+ * capability-absent pass. This script contract keeps
+ * nativeArm64ExecutionQualified/nativeExecutionQualified/hostCapabilityAbsentIsPass=false until actual
+ * supported probe executes. Suite real-host and proof evidence script are distinct; no release-package
+ * status promotion.
+ */
 "use strict";
 
 /** Script contract for native ARM64 execution. A pass requires process
@@ -19,7 +28,6 @@ const REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-windows-arm64-execution.js",
   "scripts/certops-windows-arm64-execution.js",
   "scripts/certops-windows-arm64-execution.test.js",
-  "docs/certops/windows/arm64-execution.md",
   WORKFLOW,
 ]);
 const PROOF_KEYS = Object.freeze([

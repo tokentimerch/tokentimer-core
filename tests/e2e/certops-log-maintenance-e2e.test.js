@@ -1,4 +1,21 @@
 /**
+ * Qualification notes: Actual elapsed log abandonment and production worker retention
+ * The manual `certops-log-maintenance-qualification.yml` workflow requires an exclusive disposable
+ * API/PostgreSQL stack because purge is global. A real registered noop result starts the production
+ * 300,000-millisecond grace. The unchanged maintenance sweep must observe the actual deadline, refuse
+ * foreign fixture data, and preserve owned cleanup; database dates are not rewritten. No push starts
+ * the five-minute wait.
+ *
+ * Runner and report settings: `CERTOPS_LOG_MAINTENANCE_REPORT`.
+ *
+ * Run prerequisites: `CERTOPS_AGENT_LOG_RETENTION_DAYS=0`,
+ * `CERTOPS_LOG_MAINTENANCE_EXCLUSIVE_STACK=1`, `CERTOPS_CSR_DISPOSABLE_STACK=1`.
+ *
+ * Scopes: `agent-log-maintenance-worker`.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Real five-minute upload grace and production worker retention qualification.
  * The manual workflow owns an EXCLUSIVE disposable API/PostgreSQL stack because
  * log purge is global. A registered protocol fixture supplies diagnostic lines

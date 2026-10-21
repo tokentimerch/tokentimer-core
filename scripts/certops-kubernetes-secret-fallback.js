@@ -1,3 +1,17 @@
+/**
+ * Qualification: native public Secret fallback
+ *
+ * controller-secret-fallback runs the actual candidate in-cluster client in a
+ * production-image pod whose ServiceAccount gets only three exact Secret names in its
+ * random namespace. Independently match parsed public tls.crt fingerprint and validity;
+ * the destination alone owns the private key. Require actual 403 on a foreign namespace,
+ * refusal of genuine malformed public data and a real 70 KiB decoded field, and
+ * inability to read an unallowlisted Secret. Grant no Secret list/mutation or
+ * certificate mutation. Emit only bounded passed/failed sentinel, never Secret bytes,
+ * tokens or raw errors. This host case does not prove full API publication, external
+ * issuers or every fallback-policy combination; parser checks are not cluster evidence.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 // Run inside the production controller image with its scoped mounted identity;
 // verify the bounded public-only Secret reader and real native RBAC refusals.

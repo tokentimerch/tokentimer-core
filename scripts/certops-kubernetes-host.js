@@ -1,3 +1,36 @@
+/**
+ * Qualification: disposable native controller and watch recovery
+ *
+ * Run trusted-main manual certops-kubernetes-qualification.yml on Ubuntu 24.04, one
+ * owned kind cluster, pinned cert-manager and candidate production controller image.
+ * Match official SHA256-checked kubectl 1.35.0 to pinned server 1.35.0; never target a
+ * customer cluster. Native host cases require real issuance, ownership/namespaces,
+ * idempotence, independent public parsing, in-cluster list/watch/patch and actual HTTP
+ * 403 create/patch refusals with unchanged existing resources and absent refused
+ * resources. The companion controller E2E uses migrated API/Postgres and real admin
+ * admission, scoped machine tokens, actual cert-manager issuance and persisted
+ * fingerprints; no agent registration may exist. Only the consuming destination reads
+ * its key. Secret fallback gets only named destination Secrets, never mutation/deletion
+ * rights. Pause blocks new resources while observation continues. Suspend only the
+ * retained private TLS bridge during an API outage; changed intent must leave
+ * destination unchanged until recovery/reissue, then served TLS and history must
+ * advance. Restart the production deployment without changing Certificate UID or
+ * completed-job count. Bridge requests stay unchanged and path-restricted, trust via
+ * NODE_EXTRA_CA_CERTS, with no delivery TLS bypass/body logging. Drain
+ * bridge/port-forward, delete only random namespaces and owned accounts/private
+ * material; always destroy cluster and Compose volumes. Publish sanitized results, not
+ * tokens, DB files, keys or pod logs. The loopback Status/410 control proves
+ * transport/relist behavior only. Native compaction additionally pins the single owned
+ * control-plane Docker container ID, node name and ownership labels, records a real list
+ * cursor in a production-image read-only pod, advances revision with eight owned
+ * annotations, compacts via etcdctl, then restarts only the verified running
+ * kube-apiserver and requires changed container ID and restored readiness. Actual
+ * numeric HTTP 410 must trigger production relist and subsequent same-UID update with
+ * measured cursor; cache hits/timeouts are failures. Keep helper hashes/closed public
+ * facts. External issuers, HTTP-01 and full renewal timing require their separate native
+ * lanes.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 // Qualify production controller adapters against one disposable kind cluster;
 // each scenario owns only its random namespace and emits strict public evidence.

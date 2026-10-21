@@ -1,3 +1,13 @@
+/*
+ * Qualification notes: retention-configuration-refusals
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Production accepts integer retentionHours24..720 and positive integer sweepIntervalMs. Fault
+ * only23,721hours and0interval in unchanged original UTF8 config. Stopped SYSTEM retained-file startup
+ * with recovery disabled must fail each exact reader validation and drain child while
+ * CNG/binding/TLS/API state remain fixed. Exact restore,new SYSTEM child and authenticated heartbeat
+ * precede sticky guard release. Portable loader tests do not execute SCM/collector or qualify
+ * default6h timer,elapsed windows/deletion; native source required in ten cells.
+ */
 "use strict";
 /** Real installed startup boundary variants. These owned JSON copies alter only
  * the supported retention policy; the native startup/preservation engine is

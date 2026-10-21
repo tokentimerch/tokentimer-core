@@ -1,4 +1,19 @@
 "use strict";
+/**
+ * Qualification notes: authoritative historical revoked OCSP
+ *
+ * Separate historical unserved leaf, nativeOcspRevoked binds enrollment/request/fingerprint/
+ * signer/issuer/original CRL/final CA count to signed-good proof. Require signed CRL adds exactly
+ * historical serial/advances number/leaves current successor unrevoked, full IIS/HTTP.sys excludes
+ * old thumbprint, delegated signed revoked response/time and independent CryptoAPI Revoked. Agent
+ * revoked-refusal/authoritative unknown promotions stay false. qualifyHistoricalRevoked requires
+ * Windows + CERTOPS_ADCS_DISPOSABLE_LAB=1 (missing fails). Revoke exact historical row, publish
+ * base CRL/replace owned BaseCrl, never unrevoke; existing responder drainage cleans. Pure
+ * in-memory/collector proof executes no native revoke/responder; catalog/matrix projection is
+ * separate from local proof scope.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 // Proves fixture parsing, revoked OCSP response shape, and separation from
 // signed-good availability. Native lab execution is still pending. No
 // Microsoft responder, CA request, service, certificate store, or native verdict.

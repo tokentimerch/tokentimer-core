@@ -1,4 +1,20 @@
 "use strict";
+/**
+ * Qualification notes: WebHosting two-generation renewal
+ *
+ * Confirmed short RSA issuer/authority, exact allowlisted domain/IIS site, discovery
+ * My+WebHosting. Two public enrollments/same certificate ID install fresh LocalMachine/WebHosting
+ * keys/leaves; actual CA/CNG/IIS/HTTP.sys store/hash/SNI/trusted TLS agree. Register
+ * store-qualified cleanup before POST/IDs before waits. Parent freezes SYSTEM service
+ * path/state/tree, drains captured+ late children before public-store cleanup; match exact durable
+ * accepted-container/certificate/ key/store/thumbprint before public removal then keys. Reconcile
+ * partial acceptance even before thumbprint observed; foreign replacement refused.
+ * Discovery=latest persisted inventory, both receipts WebHosting, untouched predecessor retention
+ * store/key/replacement. No expiry deletion/ other stores/interval/CMC. Unresolved public cleanup
+ * blocks key/state deletion; before rollover.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /** Public projection adversaries only. Native WebHosting enrollment is never
  * executed by these checks and remains pending its protected disposable lane. */
 const test = require("node:test"),

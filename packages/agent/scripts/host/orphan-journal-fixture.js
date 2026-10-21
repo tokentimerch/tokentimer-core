@@ -1,3 +1,15 @@
+/*
+ * Qualification notes: native-orphan-journal-protection
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Three real CNG RSA controls use explicit owned local job/prepared-enrollment prerequisites, never
+ * synthetic signed claims/CA requests. Unaccepted orphan must disappear; open-enrollment key and
+ * untracked control must retain verified private possession. Malformed journal defers cleanup,
+ * preserves original bytes/file identity, then exact repair+explicit closure permits removal.
+ * Deterministic production names do not themselves grant ownership. Restrictive guard precedes
+ * creation and blocks parent erasure on unknown native state. nativeOrphanJournalProtection explicitly
+ * keeps installedServiceQualified,caEnrollmentQualified,orphanAgePolicyQualified=false; no rewritten
+ * age/clock claim.
+ */
 "use strict";
 /** Supporting native CNG orphan safety controls. Prepared and unresolved journal
  * entries are explicit local prerequisites, not claimed CA requests or installed

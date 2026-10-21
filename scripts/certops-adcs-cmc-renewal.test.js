@@ -1,4 +1,14 @@
 "use strict";
+/**
+ * Qualification notes: CMC contract scope
+ *
+ * Owned CMC requires a signature; unsigned/foreign CMC fail. Repeated-renewal contract keeps the
+ * template but cannot reuse consumed RequestId. Native/absent-host-as-pass flags stay false;
+ * missing lab fails closed. This is integration semantics, not implemented same-key native CMC
+ * renewal. Supported ADCS renewal uses fresh key/CSR under ADR-0014.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 
 const test = require("node:test");
 const assert = require("node:assert/strict");

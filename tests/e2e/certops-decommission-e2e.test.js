@@ -1,4 +1,18 @@
 /**
+ * Qualification notes: Decommission acknowledgement and factual rediscovery
+ * `decommission-lifecycle-api` requires explicit uncertainty acknowledgement (`428
+ * CERTOPS_VISIBILITY_ACK_REQUIRED`) before terminal decommissioning. Registered filesystem
+ * observations and later real TLS rescans remain factual evidence without reactivation, duplicate
+ * identities or additional retirement audits. No installed agent removal is claimed.
+ *
+ * Runner and report settings: `node --test tests/e2e/certops-decommission-e2e.test.js`,
+ * `CERTOPS_DECOMMISSION_REPORT`.
+ *
+ * Run prerequisites: `CERTOPS_E2E_REQUIRED=1`, `CERTOPS_CSR_DISPOSABLE_STACK=1`.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Public decommission lifecycle through a disposable authenticated API/PostgreSQL stack.
  * Independent OpenSSL files, native discovery and trusted loopback TLS provide factual
  * observations. No observation rows are seeded and no Windows removal/CA claim is made.

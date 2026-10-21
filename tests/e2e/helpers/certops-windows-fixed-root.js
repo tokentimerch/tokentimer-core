@@ -1,3 +1,26 @@
+/*
+ * Qualification notes: canonical-root-lifecycle
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Run certops-windows-fixed-root.yml on fresh Server2022/2025 only after proving TokenTimerAgent and
+ * C:\ProgramData\TokenTimerAgent absent. Execute original packed install-agent.ps1 CLI byte-for-byte.
+ * Seven cases require installation, authenticated registration/bootstrap registry scrub, fresh SYSTEM
+ * process+heartbeat after restart, same-candidate reapply preserving config/credential/pin, original
+ * uninstall and operator-state preservation. Internal/external nonce receipts plus canonical resolved
+ * path/native directory identity govern cleanup; surviving service path must belong to that app.
+ * Public sidecar has17 booleans/current source hashes; API/protocol suite must also pass.
+ * Second-rename CLI sidecar is separate mandatory evidence. Same-version reapply does not qualify
+ * published/distinct-version migration, dump containment, redirected-root certificate journey or
+ * ARM64.
+ */
+/*
+ * Qualification notes: fixed-root
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Pure contract preserves preexisting C:\ProgramData\TokenTimerAgent: owned manifest is elsewhere
+ * under runID and may read but never copy/rename/delete existing root.
+ * existingRootPreserved=true,installerRewroteFixedRoot=false,nativeExecutionQualified=false. Missing
+ * host fails; exact owned hostname cleanup only,never reset. Not fresh canonical install,published
+ * upgrade or Server2022/2025 execution.
+ */
 "use strict";
 /** Canonical-root lifecycle on a fresh disposable hosted Windows Server.
  * Executes the byte-identical packed installer CLI, not extracted functions or
@@ -172,7 +195,6 @@ const LOCAL_REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-windows-fixed-root.js",
   "scripts/certops-windows-fixed-root.js",
   "scripts/certops-windows-fixed-root.test.js",
-  "docs/certops/windows/fixed-root.md",
   LOCAL_WORKFLOW,
 ]);
 const LOCAL_PROOF_KEYS = Object.freeze([

@@ -1,4 +1,20 @@
 "use strict";
+/**
+ * Qualification notes: two natural scheduler renewal generations
+ *
+ * Managed RSA2048 short template actual six -day validity/unchanged 30-day window stays naturally
+ * due. Two full production default SQL-NOW sweeps, no custom creator/clock/selected payload/direct
+ * service; public profile/adoption authority yields automation/real jobs. Wait actual discovery
+ * fingerprint+expiry and monotonic CA second boundary; normal expiry dedup/open job/enrollment/
+ * safe preflight gates retained, unchanged expiry fails. All three generations bind native
+ * RequestId/ disposition/serial, exactly one additional request per cycle, distinct
+ * leaf/serial/SPKI/container/KSP name, nonexportable Software KSP, IIS/SNI/HTTP.sys/trusted
+ * TLS/claim evidence/audits. Profile/management fixed/latest inventory, both
+ * predecessors/keys/receipts retained. Register IDs/thumbprints before waits, parent cleans. Sweep
+ * execution not worker interval/retention24h; fresh-key ADR-0014 not CMC.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /* Supporting evidence-contract checks only. The real CA, CNG, IIS and scheduler
  * observations must come from the protected disposable Windows forest. */
 const assert = require("node:assert/strict");

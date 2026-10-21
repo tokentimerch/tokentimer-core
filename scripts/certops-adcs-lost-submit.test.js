@@ -1,4 +1,14 @@
 "use strict";
+/**
+ * Qualification notes: lost submit parser contract
+ *
+ * Zero candidates is a clean miss without invented RequestId; multiple candidates remain ambiguous
+ * without selection. One owned candidate permits only local parser reconciliation. No
+ * forest/deterministic native loss executes; native/absent-host-as-pass flags remain false and
+ * missing lab fails closed.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 
 const test = require("node:test");
 const assert = require("node:assert/strict");

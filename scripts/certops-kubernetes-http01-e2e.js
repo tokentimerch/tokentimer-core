@@ -1,3 +1,23 @@
+/**
+ * Qualification: external controller HTTP-01
+ *
+ * Use trusted-main manual certops-kubernetes-http01-qualification.yml with one owned
+ * kind cluster, migrated API/Postgres, actual cert-manager and candidate controller. Pin
+ * Kubernetes client/server 1.35.0 and verify the official client SHA256 before use.
+ * Pinned Pebble 2.8 validates real HTTP-01 through Traefik 3.7.14/chart 41.7.1 on node
+ * 80; DNS-only certops.invalid fixtures must resolve to that node. No fake challenge
+ * server or Pebble validation bypass: observe an actually presented HTTP-01 Challenge.
+ * Require public/idempotent admission, presentation/issuance, persisted observation,
+ * CA-root-trusted consumer TLS, paused admission with continued observation, genuine API
+ * outage/reissue recovery, controller restart and cleanup. Only the destination pod
+ * reads its local private key. This external-controller lane does not qualify
+ * native-agent HTTP-01 or a public CA; it is separate from self-signed controller tests.
+ * Restore original CoreDNS and drain owned ingress/CA/DNS processes, Helm release,
+ * namespaces, private bridge, API rows and temporary state. Workflow always destroys
+ * kind and Compose volumes; incomplete cleanup fails. Artifact only bounded named
+ * results/public cert facts, never keys, pod logs or service-account credentials.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 // Qualify real cert-manager HTTP01 through the public API and owned ingress;
 // observed native challenges, served TLS and cleanup are mandatory evidence.

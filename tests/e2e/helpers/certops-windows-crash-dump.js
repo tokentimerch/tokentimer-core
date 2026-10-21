@@ -1,3 +1,10 @@
+/*
+ * Qualification notes: crash-dump
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Crash containment remains explicitly unqualified: rejectReport must reject
+ * crashDumpContainmentQualified=true even otherwise closed proof. nativeExecutionQualified=false;
+ * missing host/dispatch reports failure. No crash-recovery catalog promotion.
+ */
 "use strict";
 
 /** Script contract that keeps crash-dump containment explicitly unqualified.
@@ -18,7 +25,6 @@ const REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-windows-crash-dump.js",
   "scripts/certops-windows-crash-dump.js",
   "scripts/certops-windows-crash-dump.test.js",
-  "docs/certops/windows/crash-dump.md",
   WORKFLOW,
 ]);
 const PROOF_KEYS = Object.freeze([

@@ -1,3 +1,13 @@
+/*
+ * Qualification notes: ipv6-sni-shadow-rollback
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Use actual IPv6 loopback/SNI and independently trusted TLS to exercise concrete-IP shadow
+ * precedence, failed verification and rollback. Preserve exact native binding/certificate/private-key
+ * association and unrelated endpoint, record real supported IPv6 prerequisites rather than relabel
+ * IPv4. Own exact selector/site/resource receipts and refuse unknown cleanup. This is native
+ * supporting HTTP.sys behavior, not public multi-target installed-agent or all IPv6 platform
+ * qualification.
+ */
 "use strict";
 /** Shared supporting native IP HTTP.sys precedence/rollback controls. The
  * original IPv6 variants and explicit IPv4 wildcard retain distinct proof scopes.

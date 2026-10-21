@@ -1,3 +1,12 @@
+/*
+ * Qualification notes: native-iis-public-only-association
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Exercise actual native IIS certificate lookup when a public store context lacks its expected
+ * private-key association. Independently prove original protected key/certificate and trusted endpoint
+ * facts; production must refuse unsafe deployment rather than infer possession from public bytes.
+ * Exact owned public copy cleanup preserves genuine key and unrelated endpoint. This narrow supporting
+ * association control is not installed issuance, export-policy qualification or a CA journey.
+ */
 "use strict";
 /** Supporting native IIS association refusal, not an installed/API journey.
  * Reuses a fixture leaf only AFTER its original key is genuinely absent. Owns

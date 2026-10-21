@@ -1,3 +1,18 @@
+/**
+ * Qualification notes: Hosted starting sequence
+ * Run node scripts/certops-qualification-start.js [--candidate <40-character-main-sha>] [--json], or
+ * --profiles to print current selected/omitted slot IDs. This read-only entrypoint never dispatches
+ * workflows or configures credentials. Start with tooling, stack and windows lanes, then installed
+ * Windows, Linux systemd, local ACME, browser, DNS fixtures and kind workflows. The generated plan is
+ * a smoke sequence, not exhaustive matrix qualification. Only trusted main refs may dispatch protected
+ * qualification. Domain AD CS is separately opted in; enable authenticated ownership-aware cleanup
+ * before preparation, retain cleanup authorization and janitors until independent Azure teardown is
+ * verified, then disable the lab opt-in. If opt-in must be disabled early, scheduled controllers stop;
+ * dispatch ownership-aware cleanup manually. Never shorten elapsed deadlines or transfer machine-bound
+ * CNG keys.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
 "use strict";
 /** Read-only starting plan for hosted qualification. Prints reviewed commands;
  * never dispatches Actions, configures credentials, provisions or deletes a lab.
@@ -191,7 +206,7 @@ function main(args = process.argv.slice(2)) {
     console.log("");
   }
   console.log(
-    "Then expand hosted profiles using docs/certops/qualification/reporting/first-qualification.md.\n" +
+    "Then expand hosted profiles using docs/certops/e2e-qualification.md.\n" +
       plan.collection.warning,
   );
 }

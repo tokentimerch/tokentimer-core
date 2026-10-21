@@ -1,3 +1,12 @@
+/**
+ * Qualification: local Kubernetes outage contract
+ *
+ * API timeout, missed watches and missing RBAC fail closed without opening a socket. A
+ * supplied cluster probe cannot set kubernetesQualified. The real-host suite stays
+ * pending until a live cluster executes; absent capabilities are not passes and
+ * controller catalog mappings remain annotations.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 
 /** Local Kubernetes outage, watch, and RBAC contract. Each fault fails
@@ -30,7 +39,6 @@ const REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-k8s-rbac-outage.js",
   "scripts/certops-k8s-rbac-outage.js",
   "scripts/certops-k8s-rbac-outage.test.js",
-  "docs/certops/cross/k8s-rbac-outage.md",
   "scripts/_registration/cross-coverage.json",
   ".github/workflows/certops-cross-coverage-variants.yml",
 ]);

@@ -1,3 +1,22 @@
+/**
+ * Qualification: same-candidate installed reapplication
+ *
+ * Run three linux-systemd-reapply cases inside owned Ubuntu 22.04/24.04 journey after
+ * crash recovery, before retirement. Stop service, set supported operator
+ * poll/heartbeat/ execution settings, capture exact config/credential/runtime-drop-in,
+ * then rerun same candidate installer with existing write-path and fresh spare bootstrap
+ * token. Installed package must match candidate; config/credential/drop-in/private
+ * modes/ effective write paths stay exact, no staging/previous tree remains. Fresh
+ * service scrubs spare bootstrap without replacing/creating registration. After SECOND
+ * real restart inspect native environment for no bootstrap, advance authenticated
+ * heartbeat, and prove spare token still unconsumed in Postgres. Restore original
+ * config/restart and revoke only unused token; never remove unexpected bootstrap. Parent
+ * independent receipt-bound teardown survives failure. Keep the 10-minute test inside 12
+ * minutes producer, 25 minutes workflow. Public booleans/PIDs/source hashes only. No
+ * historical package upgrade, rollback or ARM64 qualification is implied by candidate
+ * reapplication.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /* Native same-candidate installer reapplication inside the already owned Linux
  * systemd journey. Requires a disposable hosted VM, existing registration and

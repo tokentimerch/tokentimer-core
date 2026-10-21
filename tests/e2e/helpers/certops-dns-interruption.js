@@ -1,3 +1,13 @@
+/**
+ * Qualification: local DNS cancellation ownership
+ *
+ * Cancellation/interrupted cleanup may remove only one owned TXT identity and must
+ * preserve unrelated records. Refuse wildcard selectors and blanket netsh resets. No DNS
+ * query or propagation is qualified; even a caller-supplied probe leaves
+ * liveDnsQualified false. The real-host suite stays pending without a live provider;
+ * catalog mappings are annotations, not native execution evidence.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 
 /** Local DNS cancellation and interrupted-cleanup contract. Propagation is
@@ -31,7 +41,6 @@ const REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-dns-interruption.js",
   "scripts/certops-dns-interruption.js",
   "scripts/certops-dns-interruption.test.js",
-  "docs/certops/cross/dns-interruption.md",
   "scripts/_registration/cross-coverage.json",
   ".github/workflows/certops-cross-coverage-variants.yml",
 ]);

@@ -1,3 +1,16 @@
+/*
+ * Qualification notes: retention-ledger-access-refusal
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Create real production ledger with explicit local prerequisites,no cert/key/service/CA. Suspended
+ * current-token retained-Job holder opens exact volume/file identity with
+ * READ_CONTROL/WRITE_DAC/metadata and no delete share,refusing reparse. Deny and restore via same
+ * handle GetSecurityInfo/SetSecurityInfo,never reopen unverified name; no data/list rights.
+ * Independently require actual EACCES/EPERM before production file/directory reader must throw,not
+ * treat as missing. Restore original SDDL/bytes/IDs and successful reads,normal holder exit/zero
+ * members; bounded nonce receipts guard every failure. Privileged bypass cannot pass. Unknown
+ * restore/drain retains durable+memory guard and blocks broad cleanup. Offline proof/C# compile do not
+ * qualify actual ACL denial/deletion/retention.
+ */
 "use strict";
 /** Native temporary-ledger permission controls, not installed retention evidence.
  * A retained no-delete-sharing ACL handle and contained child own each deny and

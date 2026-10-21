@@ -1,4 +1,15 @@
 /**
+ * Qualification notes: Public renewal issuer switch policy
+ * The `profile-issuer-switch-api` suite contains six mandatory cases executed through the real
+ * authenticated API and PostgreSQL database. A valid confirmed AD CS issuer reassignment preserves the
+ * immutable deployment/key policy and writes its audit event. Unconfirmed, foreign-workspace and
+ * incomplete reverse-to-ACME switches atomically preserve every profile field and audit count.
+ * Repeating the same issuer produces the documented no-change response without jobs or additional
+ * audit writes.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
+/**
  * Supporting API/PostgreSQL qualification: public renewal issuer changes retain runnable policy and atomic audit.
  * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
  * Public requests and persisted rows are the oracle; prerequisite state is isolated.

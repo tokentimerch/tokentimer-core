@@ -1,3 +1,28 @@
+/**
+ * Qualification: read-only native ACME browser console
+ *
+ * The dedicated Ubuntu 24.04/certbot/noEAB manual console lane runs a foreground
+ * candidate agent, not an installed service. Authenticate pinned Chromium through
+ * retained BrowserServer, preparePage before the command barrier's 120-second bound,
+ * then admit the real public issue immediately. The wrapper pauses before certbot after
+ * genuine signed claim and persisted starting line. Bind actual
+ * job/certificate/claim/agent, wrapper birth/parent/group/argv and exact arm/receipt
+ * before observeAndRelease. Dashboard filtered-job response and rendered starting line
+ * must both be visible while nonterminal, at independently supplied UI/API origins;
+ * count CertOps writes across ALL origins/workspaces and require zero. After native
+ * issuance/trusted TLS, finish requires same claim success, actual completion line,
+ * finalized gap-free stream with DB-matching count and leaf evidence matching the TLS
+ * fingerprint. Register ownedBrowserResources before launch. Unknown launch/native
+ * completion, changed receipts or incomplete drain keep an exclusive guard. Drain
+ * browser AND agent/client then assertCleanupSafe before deleting API rows/private
+ * files; browser closure alone is insufficient. Only successful native completion and
+ * real browser close release ownership. The wrapper serves real built UI with retained
+ * Vite HTTP. Upload only acme-native-console.json: UUIDs, public/curated-line hashes,
+ * counts/flags; no raw logs, argv, endpoints, credentials, screenshots, traces. No
+ * secret-injection or uninterrupted-delivery claim; other ACME/Alpine lanes gain no
+ * browser prerequisite.
+ */
+// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
 "use strict";
 /** Read-only dashboard observation of one real foreground Linux agent job.
  * The existing external command wrapper pauses the actual ACME client after

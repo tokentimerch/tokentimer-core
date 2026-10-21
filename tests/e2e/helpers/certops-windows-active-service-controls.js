@@ -1,3 +1,13 @@
+/*
+ * Qualification notes: active-certificate-service-controls
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Hold the real automatic renewal at its actual DNS POST barrier after CNG creation and durable
+ * journaling; independently check SYSTEM command/output-wrapper argv and ancestry. Interrogate and
+ * unsupported Pause/Continue must preserve exact claim/attempt, journal bytes/identity, key custody,
+ * host/Node identities, configuration/credential/pin, HTTP.sys/TLS and the held DNS request. A durable
+ * unresolved-ownership receipt blocks native/database cleanup. This is noninterrupting SCM control,
+ * not forced retirement, shutdown or lease-grace recovery.
+ */
 "use strict";
 /** Nonmutating SCM controls during an actual installed-agent DNS operation.
  * The owning journey holds its real DNS POST after CNG generation. This fixture

@@ -1,4 +1,20 @@
 "use strict";
+/**
+ * Qualification notes: live machine Enroll ACL restoration
+ *
+ * Verify actual machineSID/TTQualificationRSAShort GUID/OID/schema/revision; GUID mutex/private
+ * receipt before LDAP noninherited Enroll deny for only memberSID. Refresh owned CA/ping; retain
+ * other DACL/owner/group/SACL/publication. Public enrollment fails with 0x80094012, rejected-key
+ * absence, denied journal and predecessor CNG/IIS/TLS fixed. Measure zero or onedenied CA row,
+ * never invent ID or pre-submit refusal. Restore only original DACL with exact
+ * token/original-or-owned current ACL, refresh CA, require distinct real
+ * leaf/serial/SPKI/key/My/IIS/TLS+claim proof. Compare reported IDs only when present. Register My
+ * receipt/IDs before waits; machineAclPendingVerification/ guard blocks native/public/state
+ * cleanup even after restore. Runs after worker renewals; private DACL stays CA-local for lab
+ * teardown. Static unsafe-template preflight is separate.
+ *
+ * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ */
 /* Supporting contract/source controls only. The protected disposable AD CS lab
  * must execute the helper to qualify actual machine permissions and issuance.
  */

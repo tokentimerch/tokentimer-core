@@ -1,3 +1,12 @@
+/*
+ * Qualification notes: journal-read-refusals
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Deny actual native read/list access to owned journal prerequisites, independently require
+ * EACCES/EPERM before asserting production refusal, and preserve bytes/native file identity/key
+ * custody. Retained identity-bound ACL holder restores exact original DACL before reader recovery and
+ * guarded cleanup; unknown restoration/drain keeps durable state. Supporting host filesystem refusal
+ * does not qualify installed startup, CA request, full recovery or elapsed retention.
+ */
 "use strict";
 /** Supporting native Windows ACL controls for production AD CS journal readers.
  * Uses only an owned temporary software CSR/journal. No machine key, certificate,

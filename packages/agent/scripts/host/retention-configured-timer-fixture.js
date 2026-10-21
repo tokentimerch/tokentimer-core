@@ -1,3 +1,20 @@
+/*
+ * Qualification notes: installed-default-retention-timer
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Hosted supporting case checks actual omitted defaults168hours/21600000ms then runs production poll
+ * loop at explicit100ms, real jitter, immediate plus2 delayed collector callbacks against owned empty
+ * ledger; drain cancellation. This cannot qualify installed service default6hour passage/deletion.
+ * Dedicated optional domain campaign uses two genuine enrollments, trusted replacement, pending
+ * predecessor ledger and read-only SYSTEM observer; after restart distinguish immediate
+ * pending->deferred atomic rewrite from same-process timer rewrite. Omit both retention config fields:
+ * base6h/default168h, jitter4.8-7.2h after callback,5minute observation margin and wall/monotonic
+ * agreement<=5s. Retain boot/process/config/ledger file identities, CNG custody, pinned API TLS/health
+ * and no other jobs/profiles. Original4h artifact may authorize one16h hard lease only after
+ * authenticated immutable receipt+fresh VM/task readback; final ownership/observer drainage/resource
+ * absence required. It measures deferral timer, not168h/720h retention, deletion, power loss or
+ * resident stopped-agent day. Ordinary6h hosted job cannot reliably contain7.2h jitter; no
+ * shortened-default claim.
+ */
 "use strict";
 /** Azure-free supporting timer wiring. The real production polling loop uses
  * an explicitly configured100ms interval and real monotonic time; its actual

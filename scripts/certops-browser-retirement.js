@@ -1,3 +1,17 @@
+/**
+ * Qualification notes: Retired certificate visibility in the dashboard
+ * The `browser-retirement-visibility` suite runs actual Chromium against a disposable dashboard, API
+ * and PostgreSQL stack. Two owned TLS endpoints provide independently trusted public certificate
+ * fingerprints. Public monitoring and retirement requests establish revoked and decommissioned
+ * identities; no observation rows or successful jobs are seeded.
+ *
+ * Runner and report settings: `CERTOPS_CSR_API_URL`, `CERTOPS_BROWSER_URL`,
+ * `CERTOPS_BROWSER_RETIREMENT_REPORT`, `node scripts/certops-browser-retirement.js`.
+ *
+ * Run prerequisites: `CERTOPS_CSR_DISPOSABLE_STACK=1`.
+ *
+ * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ */
 /** Real Chromium retirement filters and factual observation details.
  * Invoked by the manual dashboard qualification lane against disposable API/PG.
  * Actual public retirement and trusted TLS rescans are independent UI oracles;

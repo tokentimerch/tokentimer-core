@@ -1,3 +1,18 @@
+/*
+ * Qualification notes: installed-failed-rollback
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Separate certops-windows-failed-rollback.yml Server2022/2025 RSA2048 lane requires real installed
+ * issue/trusted TLS/sibling. Suspended retained-Job SYSTEM holder keeps predecessor cert context and
+ * nonexportable key, signs challenge and removes only public My entry; exact concrete-IP
+ * shadow/sibling must still serve predecessor. Genuine public renewal accepts distinct leaf/key then
+ * persists current-claim validation.failed step=iis-bind code=VERIFY_FAILED rolledBack=false;
+ * independently require predecessor SNI not restored. Holder restores same cert
+ * context/DER/container/provider/possession, naturally exits and drains before shadow removal;
+ * distinct fresh renewal succeeds with third leaf. Preserve process/config/credential/pin/sibling.
+ * Unknown protocol/native ownership blocks all broad cleanup; publish only after parent and Pebble
+ * cleanup. Bounds native20m/producer22m/receipt27m/task28m/job40m. Not automatic reconciliation, bind
+ * failure, transient-bind observation or AppID preservation.
+ */
 "use strict";
 /** Closed supporting contract for the separate manual installed failed-rollback
  * journey. Native facts must come from the actual engine/holder; this module

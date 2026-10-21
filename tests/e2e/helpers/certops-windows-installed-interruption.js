@@ -1,3 +1,12 @@
+/*
+ * Qualification notes: installed-interruption-recovery
+ * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Record ledger/CNG digest, stop exact tt-int-<run> service or kill only measured owned PID, then
+ * start same service/image and require identical recorded bytes before recovery. No machine shutdown,
+ * reboot, in-use key deletion or blanket reset. Portable planner/startup tests and dispatch-only Node
+ * workflow do not execute native interruption; missing host exits1. Keep power-loss/reboot/native
+ * qualification false; preserve point on mismatch or in-use key.
+ */
 "use strict";
 const {assessHostProbe} = require("../../../scripts/certops-qualification-report");
 
