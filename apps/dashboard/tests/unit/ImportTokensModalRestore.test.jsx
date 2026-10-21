@@ -11,7 +11,7 @@ import {
 import { ChakraProvider } from '@chakra-ui/react';
 
 import ImportTokensModal from '../../src/components/ImportTokensModal.jsx';
-import { tokenAPI } from '../../src/utils/apiClient';
+import { tokenAPI, integrationAPI } from '../../src/utils/apiClient';
 import { IMPORT_DOCS } from '../../src/utils/docsUrls.js';
 
 const { apiGetMock, apiDeleteMock, gitlabFormProps, githubFormProps } =
@@ -636,6 +636,36 @@ describe('ImportTokensModal file preview', () => {
     expect(
       await screen.findByText(/This file is 6\.0 MB\. The limit is 5 MB/)
     ).toBeInTheDocument();
+  });
+
+  it('sends rows the preview flagged as existing straight to update', async () => {
+    tokenAPI.createToken.mockReset().mockResolvedValue({ id: 1 });
+    integrationAPI.checkDuplicates.mockResolvedValueOnce({
+      duplicate_count: 1,
+      duplicates: [{ name: 'dup', location: null }],
+    });
+    window.history.pushState({}, '', '/?workspace=ws-1');
+    render(renderModal(null));
+    await screen.findByText(/Upload a file in/);
+    upload(
+      [
+        'name,category,type,expiresAt',
+        'dup,cert,ssl_cert,2030-01-01',
+        'fresh,cert,ssl_cert,2030-01-01',
+      ].join('\n'),
+      'dups.csv'
+    );
+    expect(
+      await screen.findByText(/1 token already exists/)
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Import 2 selected/ }));
+    await waitFor(() => expect(tokenAPI.createToken).toHaveBeenCalledTimes(2));
+    const calls = tokenAPI.createToken.mock.calls.map(c => c[0]);
+    expect(calls.find(c => c.name === 'dup').confirm_duplicate).toBe(true);
+    expect(
+      calls.find(c => c.name === 'fresh').confirm_duplicate
+    ).toBeUndefined();
+    window.history.pushState({}, '', '/');
   });
 
   it('reports a failed row by its line in the file, not its position among kept rows', async () => {

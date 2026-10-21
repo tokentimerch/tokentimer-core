@@ -599,14 +599,15 @@ async function importWithConcurrency(
         }
 
         running++;
+        // Rows the preview already flagged as existing skip the 409 round trip,
+        // which halves requests and keeps big re-imports under API rate limits.
+        const knownDuplicate = raw.knownDuplicate === true;
+        if (knownDuplicate) payload.confirm_duplicate = true;
         tokenAPI
           .createToken(payload)
           .then(tok => {
-            // Check if token was updated (status 200) or created (status 201)
-            // The API returns 200 for updates, 201 for creates
-            // We can't distinguish from the response, so we'll track all as created
-            // and let the backend handle it
-            created.push(tok);
+            if (knownDuplicate) updated.push(tok);
+            else created.push(tok);
             onProgress &&
               onProgress({
                 done: created.length + updated.length + errors.length,
@@ -2026,7 +2027,9 @@ function ImportTokensModalContent({
     try {
       setError(null);
       setIsImporting(true);
-      const selectedRows = rows.filter((_, i) => selectedRowsFile.has(i));
+      const selectedRows = rows
+        .map((r, i) => ({ ...r, knownDuplicate: fileDuplicates.has(i) }))
+        .filter((_, i) => selectedRowsFile.has(i));
       setProgress({ done: 0, total: selectedRows.length });
       const params = new URLSearchParams(window.location.search);
       const workspaceId = params.get('workspace');
