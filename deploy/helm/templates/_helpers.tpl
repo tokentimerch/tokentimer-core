@@ -267,6 +267,9 @@ CSRF_TOKEN_RATE_LIMIT_MAX: {{ .Values.config.csrfTokenRateLimitMax | int64 | quo
 {{- if .Values.config.webhookAllowPrivateIps }}
 WEBHOOK_ALLOW_PRIVATE_IPS: "true"
 {{- end }}
+{{- if .Values.config.integrationAllowPrivateIps }}
+INTEGRATION_ALLOW_PRIVATE_IPS: "true"
+{{- end }}
 {{- if .Values.config.webhookProviderHosts }}
 WEBHOOK_PROVIDER_HOSTS: {{ .Values.config.webhookProviderHosts | quote }}
 {{- end }}
