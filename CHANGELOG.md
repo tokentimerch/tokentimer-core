@@ -27,6 +27,7 @@ Target: **0.18.0**.
 - Revoked and decommissioned certificates remain visible when observed, but are excluded from active counts and renewal. Retirement does not revoke at the CA or remove installed copies. Manual renewal returns `409 CERTOPS_CERTIFICATE_NOT_RENEWABLE`. A retired certificate's AD CS enrollment can no longer be recovered or continued toward installation from any state, and decommissioning is refused with `CERTOPS_MUTATION_RUNNING` while an install-capable AD CS or store deployment job is running; key cleanup is unaffected.
 - Renewals now separates CA-capacity waits from job status and shows each profile's issuer. AD CS issuers are managed on the Renewals tab.
 - IIS renewal preserves binding settings or refuses the change with `UNSUPPORTED_BINDING_SETTINGS`. **Operator guidance:** remove the named unsupported setting or rebind manually.
+- Token create and edit now share one type and category rule set. `oauth_token` and `jwt_token` return `400` instead of a database `500`, tokens created through the API can be re-saved from the dashboard, and `domain_registration` under the license category is accepted on edit.
 
 ### Fixed
 
@@ -40,6 +41,7 @@ Target: **0.18.0**.
 
 ### Security
 
+- **Integration base URLs are checked for private addresses.** Vault, GitLab, GitHub and Azure Key Vault scans refuse base URLs that point at private, loopback or link-local addresses (including names that resolve to them) with `400 INTEGRATION_PRIVATE_ADDRESS_BLOCKED`. **Operator action:** if you scan a self-hosted instance on your own network, set `INTEGRATION_ALLOW_PRIVATE_IPS=true` (Helm `config.integrationAllowPrivateIps`) on the API.
 - Certificate backups cannot escape allowed paths through symlinks or junctions. Windows installation rejects linked staging paths and invalid native helpers. **Operator guidance:** unpack releases into an ordinary directory.
 - Windows private-key deployment protects staging, backup and custody files with restricted ACLs. **Operator action:** redeploy existing filesystem certificate/key pairs to repair permissions and review older private-key backups.
 - Windows installation preserves Error Reporting policy; crash-dump containment remains unqualified. **Operator guidance:** review older `LocalDumps\node.exe` settings: `DumpType=0` selects a custom dump, not suppression.
