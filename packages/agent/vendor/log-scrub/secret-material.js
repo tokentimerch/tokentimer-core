@@ -638,7 +638,31 @@ function classifyCompressedBuffer(buffer) {
       return { classification: COMPRESSION_CLASSIFICATION.REJECTED, decoded: null };
     }
     return { classification: COMPRESSION_CLASSIFICATION.DECOMPRESSED, decoded };
-  } catch (_err) {
+  } catch (err) {
+    // A two-byte zlib header is trivially matched by ~0.1% of arbitrary
+    // base64/hex-looking identifiers (thumbprints, ids), so a zlib-shaped
+    // blob that is not a real stream must not hard-fail. Truncated streams
+    // are still decoded up to the truncation point and scanned; only data
+    // that no inflater could decode at all is treated as ordinary input.
+    if (
+      isZlib &&
+      (err?.code === "Z_BUF_ERROR" || err?.code === "Z_DATA_ERROR")
+    ) {
+      try {
+        const partial = zlib.inflateSync(buffer, {
+          maxOutputLength,
+          finishFlush: zlib.constants.Z_SYNC_FLUSH,
+        });
+        if (looksGzipHeader(partial) || looksZlibHeader(partial)) {
+          return { classification: COMPRESSION_CLASSIFICATION.REJECTED, decoded: null };
+        }
+        return { classification: COMPRESSION_CLASSIFICATION.DECOMPRESSED, decoded: partial };
+      } catch (partialErr) {
+        if (partialErr?.code === "Z_DATA_ERROR" || partialErr?.code === "Z_BUF_ERROR") {
+          return { classification: COMPRESSION_CLASSIFICATION.NOT_COMPRESSED, decoded: null };
+        }
+      }
+    }
     // Covers both a corrupt/truncated stream and the library refusing to
     // exceed maxOutputLength while decompressing: both are "claims to be
     // compressed, cannot be safely materialized," the same inconclusive
