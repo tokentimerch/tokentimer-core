@@ -19,7 +19,7 @@ if(!$self -or !$owner -or $self.ParentProcessId -ne $OwnerProcessId){throw 'Exac
 $contextItem=Get-Item -LiteralPath $ContextFile
 if($contextItem.PSIsContainer -or ($contextItem.Attributes-band[IO.FileAttributes]::ReparsePoint) -or $contextItem.Length -lt 1 -or $contextItem.Length -gt 65536){throw 'Bounded regular observer context required'}
 $contextStream=[IO.File]::Open($ContextFile,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
-$handles=@();$ownerHandle=$null;$result=$null
+$handles=[Collections.ArrayList]::new();$ownerHandle=$null;$result=$null;$stats=@{adopted=0}
 try{
  $bytes=New-Object byte[] ([int]$contextStream.Length)
  if($contextStream.Read($bytes,0,$bytes.Length) -ne $bytes.Length -or $contextStream.ReadByte() -ne -1){throw 'Complete private observer context required'}
@@ -64,47 +64,80 @@ public sealed class StopObservationHandle : IDisposable {
  if($ownerHandle.Exited -or $ownerHandle.Image -ine $owner.ExecutablePath -or $ownerHandle.Sid -cne 'S-1-5-18' -or $ownerHandle.CreatedMicroseconds -cne $owner.CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.ffffffZ')){throw 'Native observer owner binding failed'}
  $before=Inventory;$roots=@($before|Where-Object ProcessId -eq $context.identity.pid)
  if($roots.Count -ne 1 -or !(Same (Identity $roots[0]) $context.identity)){throw 'Original installed host identity mismatch'}
- $known=@{([int]$roots[0].ProcessId)=$true};$targets=@($roots[0])
- for($depth=0;$depth -lt 16;$depth++){
-  $added=$false
-  foreach($p in $before){if(!$known.ContainsKey([int]$p.ProcessId) -and $known.ContainsKey([int]$p.ParentProcessId)){
-   $parents=@($targets|Where-Object ProcessId -eq $p.ParentProcessId)
-   if($parents.Count -ne 1 -or $p.CreationDate -lt $parents[0].CreationDate){throw 'Native immediate-parent chronology changed'}
-   $known[[int]$p.ProcessId]=$true;$targets+=,$p;$added=$true
-   if($targets.Count -gt 128){throw 'Observer descendant bound exceeded'}
-  }}
-  if(!$added){break}
+ # Process creation time pins each captured pid, so a recycled pid is never mistaken for captured lineage.
+ $known=@{}
+ function Capture([object]$p,[bool]$strict){
+  $procId=[int]$p.ProcessId;$created=$p.CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.ffffffZ')
+  try{$handle=[StopObservationHandle]::new([uint32]$procId)}catch{
+   # A short-lived helper may exit between the inventory and the open; only the host and Node must be captured.
+   if($strict -or @(Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction SilentlyContinue|Where-Object {$_.CreationDate -eq $p.CreationDate}).Count -gt 0){throw}
+   $known[$procId]=$p.CreationDate;return
+  }
+  $disposeHandle=$true
+  try{
+   if($handle.CreatedMicroseconds -cne $created){throw 'Captured native handle identity mismatch'}
+   if($strict){
+    $identity=Identity $p;$fresh=Identity (Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction Stop)
+    if(!(Same $identity $fresh) -or $handle.Exited -or $handle.Image -ine $identity.executable -or $handle.Sid -cne 'S-1-5-18'){throw 'Captured native handle identity mismatch'}
+   }else{
+    $identity=@{pid=$procId}
+    if(!$handle.Exited){
+     try{$sid=$handle.Sid}catch{if(!$handle.Exited){throw};$sid='S-1-5-18'}
+     if($sid -cne 'S-1-5-18'){throw 'Captured native handle identity mismatch'}
+    }
+   }
+   $known[$procId]=$p.CreationDate;$null=$handles.Add(@{identity=$identity;handle=$handle;strict=$strict});$disposeHandle=$false
+  }finally{if($disposeHandle){$handle.Dispose()}}
  }
- if($targets.Count -lt 2){throw 'Installed host and actual Node required'}
- $nodeTargets=@($targets|Where-Object ProcessId -eq $context.nodeIdentity.pid)
- if($nodeTargets.Count -ne 1 -or $context.nodeIdentity.parentPid -ne $context.identity.pid -or !(Same (Identity $nodeTargets[0]) $context.nodeIdentity)){throw 'Original installed Node identity mismatch'}
- foreach($p in $targets){
-  $identity=Identity $p;$handle=[StopObservationHandle]::new([uint32]$p.ProcessId)
-  $entry=@{identity=$identity;handle=$handle};$handles+=,$entry
-  $fresh=Identity (Get-CimInstance Win32_Process -Filter "ProcessId=$($identity.pid)" -ErrorAction Stop)
-  if(!(Same $identity $fresh) -or $handle.Exited -or $handle.Image -ine $identity.executable -or $handle.Sid -cne 'S-1-5-18' -or $handle.CreatedMicroseconds -cne $p.CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.ffffffZ')){throw 'Captured native handle identity mismatch'}
+ # Every descendant seen while the service is stopping is adopted by creation-time-checked lineage. The agent legitimately
+ # spawns short-lived discovery helpers, so a new child is tracked until it exits instead of failing the observation.
+ function Adopt($rows){
+  do{
+   $added=$false
+   foreach($p in $rows){
+    $procId=[int]$p.ProcessId;$parentId=[int]$p.ParentProcessId
+    if($procId -eq $PID -or $procId -eq $OwnerProcessId -or !$known.ContainsKey($parentId)){continue}
+    if($known.ContainsKey($procId) -and $known[$procId] -eq $p.CreationDate){continue}
+    if($p.CreationDate -lt $known[$parentId]){continue}
+    if($handles.Count -ge 128){throw 'Observer descendant bound exceeded'}
+    Capture $p $false;$added=$true
+   }
+  }while($added)
  }
- # A new descendant after capture is never adopted by PID or terminated.
- foreach($p in (Inventory)){if($known.ContainsKey([int]$p.ParentProcessId) -and !$known.ContainsKey([int]$p.ProcessId)){throw 'Uncaptured descendant; preserve fixture'}}
- $ready=@{schemaVersion=1;token=$context.token;observerPid=$PID;capturedProcessCount=$handles.Count;retainedReadOnlyHandles=$true}|ConvertTo-Json -Compress
+ function Prune(){
+  # Short-lived helpers keep their pid+creation lineage marker but release their handle once exited.
+  for($i=$handles.Count-1;$i -ge 2;$i--){if(!$handles[$i].strict -and $handles[$i].handle.Exited){$handles[$i].handle.Dispose();$handles.RemoveAt($i)}}
+ }
+ Capture $roots[0] $true
+ $nodeRows=@($before|Where-Object {$_.ProcessId -eq $context.nodeIdentity.pid})
+ if($nodeRows.Count -ne 1 -or $context.nodeIdentity.parentPid -ne $context.identity.pid -or $nodeRows[0].ParentProcessId -ne $context.identity.pid -or $nodeRows[0].CreationDate -lt $roots[0].CreationDate -or !(Same (Identity $nodeRows[0]) $context.nodeIdentity)){throw 'Original installed Node identity mismatch'}
+ Capture $nodeRows[0] $true
+ Adopt (Inventory)
+ if($handles.Count -lt 2){throw 'Installed host and actual Node required'}
+ $readyCount=$handles.Count
+ $ready=@{schemaVersion=1;token=$context.token;observerPid=$PID;capturedProcessCount=$readyCount;retainedReadOnlyHandles=$true}|ConvertTo-Json -Compress
  $readyBytes=[Text.UTF8Encoding]::new($false).GetBytes($ready)
  $readyStream=[IO.File]::Open($ReadyFile,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
  try{$readyStream.Write($readyBytes,0,$readyBytes.Length);$readyStream.Flush($true)}finally{$readyStream.Dispose()}
  $clock=[Diagnostics.Stopwatch]::StartNew()
- while(@($handles|Where-Object {!$_.handle.Exited}).Count -gt 0){
+ while($true){
   if($ownerHandle.Exited){throw 'Original owner exited before observed stop'}
-  foreach($p in (Inventory)){if($known.ContainsKey([int]$p.ParentProcessId) -and !$known.ContainsKey([int]$p.ProcessId)){throw 'New descendant during stop; preserve fixture'}}
+  Adopt (Inventory);Prune
+  if(@($handles|Where-Object {!$_.handle.Exited}).Count -eq 0){
+   # One more inventory after everything exited catches an orphan whose parent just died.
+   Adopt (Inventory);Prune
+   if(@($handles|Where-Object {!$_.handle.Exited}).Count -eq 0){break}
+  }
   if($clock.ElapsedMilliseconds -ge $context.maxWaitMs){throw 'Original native handles did not exit within bounded stop observation'}
   Start-Sleep -Milliseconds 100
  }
  foreach($p in (Inventory)){
   if($p.ProcessId -eq $PID -or $p.ProcessId -eq $OwnerProcessId){continue}
-  if($known.ContainsKey([int]$p.ProcessId) -or $known.ContainsKey([int]$p.ParentProcessId)){throw 'Unresolved captured lineage after stop'}
+  if(($known.ContainsKey([int]$p.ProcessId) -and $known[[int]$p.ProcessId] -eq $p.CreationDate) -or ($known.ContainsKey([int]$p.ParentProcessId) -and $p.CreationDate -ge $known[[int]$p.ParentProcessId])){throw 'Unresolved captured lineage after stop'}
   foreach($root in $context.commandRoots){if(($p.CommandLine -and ([string]$p.CommandLine).IndexOf([string]$root,[StringComparison]::OrdinalIgnoreCase) -ge 0) -or ($p.ExecutablePath -and ([string]$p.ExecutablePath).Equals([string]$root,[StringComparison]::OrdinalIgnoreCase))){throw 'Owned fixture command remains live'}}
- }
- $nodeHandles=@($handles|Where-Object {$_.identity.pid -eq $context.nodeIdentity.pid})
+ } $nodeHandles=@($handles|Where-Object {$_.identity.pid -eq $context.nodeIdentity.pid})
  if($nodeHandles.Count -ne 1){throw 'Original Node retained handle missing'}
- $result=@{schemaVersion=1;token=$context.token;capturedProcessCount=$handles.Count;rootExitCode=$handles[0].handle.ExitCode;nodeExitCode=$nodeHandles[0].handle.ExitCode;allCapturedHandlesExited=$true;capturedLineageAbsent=$true;fixtureCommandPathsAbsent=$true;readOnlyObservation=$true;atomicTreeContainmentQualified=$false}
+ $result=@{schemaVersion=1;token=$context.token;capturedProcessCount=$readyCount;rootExitCode=$handles[0].handle.ExitCode;nodeExitCode=$nodeHandles[0].handle.ExitCode;allCapturedHandlesExited=$true;capturedLineageAbsent=$true;fixtureCommandPathsAbsent=$true;readOnlyObservation=$true;atomicTreeContainmentQualified=$false}
 }finally{
  $closeFailed=$false
  foreach($entry in $handles){try{$entry.handle.Dispose()}catch{$closeFailed=$true}}

@@ -146,6 +146,38 @@ describe("CertOps AD CS enrollments (real database)", function () {
     assert.equal(job.status,"claimed");assert.ok(job.claim_id);assert.equal(job.subject_id,certificateId);
   });
 
+  it("claims the continuation of a first enrollment that has no certificate identity yet", async () => {
+    const assert = require("node:assert/strict");
+    const { provisionSurvivorSource } = require("../e2e/helpers/certops-adcs-local-rules");
+    const { claimJobs, _test: dispatchCaps } = require("../../apps/api/services/certops/agentDispatch");
+    const domain = "first-enrollment.example.test";
+    const certificateId = await provisionSurvivorSource({
+      fixture: { workspaceId, pool, request: async () => { throw new Error("Unexpected readd of an open source"); } },
+      agentRowId, domain, site: "FirstEnrollment", port: 8443, ownedCertificateIds: [],
+    });
+    const target = { type: "windows-iis", reference: domain, store: "My", binding: { site: "FirstEnrollment", port: 8443, sniHost: domain } };
+    const enrollment = await createEnrollment(enrollmentInput({ certificateId, authorizedDnsNames: [domain], target }));
+    // Leave the initial renew job alone so only the continuation is offered.
+    await pool.query("UPDATE certificate_jobs SET status='succeeded' WHERE workspace_id=$1 AND id=$2", [workspaceId, enrollment.jobId]);
+    await pool.query("UPDATE certops_agents SET agent_version='0.18.0', declared_capabilities=$2::jsonb, capabilities_updated_at=NOW(), declared_target_selectors=$3::jsonb WHERE id=$1",
+      [agentRowId, JSON.stringify(["adcs-enroll-v1", dispatchCaps.EVIDENCE_CLAIM_BINDING_CAPABILITY, dispatchCaps.SIGNED_PAYLOAD_B64_CAPABILITY]), JSON.stringify([domain])]);
+    const job = await createCertificateJob({
+      client: pool, workspaceId, operation: "continue-enrollment", allowEnrollmentContinuation: true,
+      subjectType: "managed_certificate", subjectId: certificateId, assignedAgentId: agentRowId, enrollmentId: enrollment.enrollmentId,
+      payload: storedAdcsPayload({ certificateId, target }),
+    });
+    await pool.query("UPDATE certificate_enrollments SET current_job_id=$3 WHERE workspace_id=$1 AND id=$2", [workspaceId, enrollment.enrollmentId, job.id]);
+    const agentId = (await pool.query("SELECT agent_id FROM certops_agents WHERE id=$1", [agentRowId])).rows[0].agent_id;
+    const claimed = await claimJobs({
+      dbPool: pool,
+      agent: { id: agentRowId, workspaceId, agentId, agentVersion: "0.18.0", protocolVersion: "1.0.0", status: "active" },
+      envelope: { agentId, protocolVersion: "1.0.0" },
+      body: { supportedActions: ["continue-enrollment"], maxJobs: 16 },
+      deps: { enforceAgentSequence: async () => ({ sequence: 1 }), signJobForDispatch: async ({ job: row, envelopeVersion }) => ({ ...row, envelopeVersion }) },
+    });
+    assert.ok(claimed.jobs.some((row) => String(row.id ?? row.jobId) === String(job.id)));
+  });
+
   function enrollmentInput(overrides = {}) {
     return {
       client: pool,
