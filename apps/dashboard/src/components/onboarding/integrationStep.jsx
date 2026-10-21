@@ -17,6 +17,7 @@ import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import ImportTokensModal from '../ImportTokensModal.jsx';
+import { ImportSourceLogo } from '../imports/importSources.jsx';
 import { INTEGRATIONS } from './modules.js';
 import {
   MODE_COPY,
@@ -26,6 +27,9 @@ import {
   providerModes,
   syncFor,
 } from './integrationModes.js';
+
+// Only integration sources; file and PEM import belong to other goals.
+const INTEGRATION_SOURCES = Object.keys(INTEGRATIONS);
 
 const POLL_MS = 4000;
 const POLL_LIMIT_MS = 5 * 60 * 1000;
@@ -311,19 +315,41 @@ export function IntegrationStep({ ctx }) {
                   aria-pressed={selected}
                   aria-label={INTEGRATIONS[id].label}
                 >
-                  <HStack justify='space-between'>
-                    <Text fontSize='sm' fontWeight='semibold'>
-                      {INTEGRATIONS[id].label}
-                    </Text>
-                    {m.sync ? (
-                      <Badge colorScheme='purple'>Can sync</Badge>
-                    ) : (
-                      <Badge>Import only</Badge>
-                    )}
+                  <HStack spacing={3} align='center'>
+                    <Box
+                      flexShrink={0}
+                      w='40px'
+                      h='40px'
+                      p='6px'
+                      borderRadius='md'
+                      bg='white'
+                      borderWidth='1px'
+                      borderColor='gray.200'
+                      display='flex'
+                      alignItems='center'
+                      justifyContent='center'
+                      data-testid={`provider-logo-${id}`}
+                    >
+                      <ImportSourceLogo sourceKey={id} maxH='28px' />
+                    </Box>
+                    <Box flex='1' minW={0}>
+                      <HStack justify='space-between' align='start'>
+                        <Text fontSize='sm' fontWeight='semibold'>
+                          {INTEGRATIONS[id].label}
+                        </Text>
+                        {m.sync ? (
+                          <Badge colorScheme='purple' flexShrink={0}>
+                            Can sync
+                          </Badge>
+                        ) : (
+                          <Badge flexShrink={0}>Import only</Badge>
+                        )}
+                      </HStack>
+                      <Text fontSize='xs' color={muted}>
+                        {INTEGRATIONS[id].hint}
+                      </Text>
+                    </Box>
                   </HStack>
-                  <Text fontSize='xs' color={muted}>
-                    {INTEGRATIONS[id].hint}
-                  </Text>
                 </Box>
               );
             })}
@@ -376,6 +402,7 @@ export function IntegrationStep({ ctx }) {
 
       <ImportTokensModal
         hideDocs
+        sourceChoices={INTEGRATION_SOURCES}
         isOpen={host.open}
         onClose={host.close}
         onImported={() => {}}

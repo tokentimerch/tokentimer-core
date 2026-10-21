@@ -1,3 +1,4 @@
+import { useContext } from 'react';
 import {
   Box,
   VStack,
@@ -7,6 +8,10 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react';
 import ContactGroupCheckboxGroup from './ContactGroupCheckboxGroup.jsx';
+import {
+  EMBEDDED_GROUPS_NOTE,
+  EmbeddedImportContext,
+} from './imports/embeddedImportContext.js';
 
 /**
  * Reusable component for bulk assignment of section and contact groups
@@ -24,6 +29,7 @@ export default function BulkIntegrationAssignment({
   const panelBg = useColorModeValue('blue.50', 'blue.900');
   const inputBg = useColorModeValue('white', 'gray.800');
   const helperTextColor = useColorModeValue('gray.600', 'gray.400');
+  const embedded = useContext(EmbeddedImportContext);
   if (selectedCount === 0) return null;
 
   return (
@@ -80,6 +86,16 @@ export default function BulkIntegrationAssignment({
             <Text fontSize='2xs' color={helperTextColor} mt={1}>
               Override alert recipients. Leave as workspace default when empty.
             </Text>
+            {embedded ? (
+              <Text
+                fontSize='2xs'
+                color={helperTextColor}
+                mt={1}
+                data-testid='embedded-groups-note'
+              >
+                {EMBEDDED_GROUPS_NOTE}
+              </Text>
+            ) : null}
           </Box>
         </HStack>
       </VStack>

@@ -24,7 +24,6 @@ import {
   Td,
   Input,
   Switch,
-  Image,
   Badge,
   Checkbox,
   Tooltip,
@@ -51,15 +50,11 @@ import apiClient, {
 import { showWarning } from '../utils/toast.js';
 import { showAutoSyncEnableError } from '../utils/autoSyncActivation.jsx';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
-import {
-  FiDownload,
-  FiShield,
-  FiKey,
-  FiUsers,
-  FiAlertTriangle,
-} from 'react-icons/fi';
+import { FiDownload, FiShield, FiAlertTriangle } from 'react-icons/fi';
 import IntegrationImportTable from './IntegrationImportTable';
 import BulkIntegrationAssignment from './BulkIntegrationAssignment';
+import { ImportSourceLogo } from './imports/importSources.jsx';
+import { EmbeddedImportContext } from './imports/embeddedImportContext.js';
 import {
   canonicalContactGroupFields,
   contactGroupFieldsForImportDefaults,
@@ -801,7 +796,7 @@ async function pollAutoSyncAfterRun({
   return 'timeout';
 }
 
-export default function ImportTokensModal({
+function ImportTokensModalContent({
   isOpen,
   onClose,
   onImported,
@@ -809,6 +804,8 @@ export default function ImportTokensModal({
   onOpenRequestHandled,
   // The onboarding step already shows its own Learn more panel.
   hideDocs = false,
+  // Source keys the dialog may show. Unset means every source.
+  sourceChoices = null,
 }) {
   const { workspaceId } = useWorkspace();
   const {
@@ -2496,18 +2493,24 @@ export default function ImportTokensModal({
               </HStack>
             </Box>
           ) : null}
-          <Text fontSize='xs'>
-            Need help? See{' '}
-            <ChakraLink
-              href={IMPORT_DOCS.integrations}
-              textDecoration='underline'
-              color='blue.500'
-              isExternal
-            >
-              import docs
-            </ChakraLink>
-            .
-          </Text>
+          {hideDocs ? null : (
+            <Text fontSize='xs'>
+              Need help? See{' '}
+              <ChakraLink
+                href={
+                  source === 'file'
+                    ? IMPORT_DOCS.file
+                    : IMPORT_DOCS.integrations
+                }
+                textDecoration='underline'
+                color='blue.500'
+                isExternal
+              >
+                import docs
+              </ChakraLink>
+              .
+            </Text>
+          )}
         </VStack>
       </Alert>
     ) : null;
@@ -2557,43 +2560,36 @@ export default function ImportTokensModal({
                       key: 'vault',
                       label: 'HashiCorp Vault',
                       alt: 'HashiCorp Vault',
-                      src: '/Branding/vendor-logos/hashicorp.png',
                     },
                     {
                       key: 'gitlab',
                       label: 'GitLab',
                       alt: 'GitLab',
-                      src: '/Branding/vendor-logos/gitlab.png',
                     },
                     {
                       key: 'github',
                       label: 'GitHub',
                       alt: 'GitHub',
-                      src: '/Branding/vendor-logos/github.png',
                     },
                     {
                       key: 'aws',
                       label: 'AWS',
                       alt: 'AWS',
-                      src: '/Branding/vendor-logos/aws.png',
                     },
                     {
                       key: 'azure',
                       label: 'Azure KV',
                       alt: 'Azure Key Vault',
-                      src: '/Branding/vendor-logos/azure.svg',
                     },
                     {
                       key: 'azure-ad',
                       label: 'Azure AD',
                       alt: 'Azure Active Directory',
-                      src: '/Branding/vendor-logos/azure.svg',
                     },
                     {
                       key: 'gcp',
                       label: 'GCP',
                       alt: 'Google Cloud',
-                      src: '/Branding/vendor-logos/google-cloud-icon.png',
                     },
                     {
                       key: 'cert-pem',
@@ -2602,196 +2598,151 @@ export default function ImportTokensModal({
                       type: 'icon',
                       icon: 'shield',
                     },
-                  ].map(card => {
-                    const isCertPemCard = card.key === 'cert-pem';
-                    const isIntegration = card.key !== 'file' && !isCertPemCard;
-                    const hasQuotaRemaining =
-                      integrationQuota.remaining === null ||
-                      integrationQuota.remaining > 0;
-                    const isCertPemDisabled =
-                      isCertPemCard && certOpsReady && certOpsEnabled === false;
-                    const isLocked = isCertPemCard
-                      ? isViewer ||
-                        !certOpsReady ||
-                        isCertPemDisabled ||
-                        certOpsAvailabilityError
-                      : isIntegration && (isViewer || !hasQuotaRemaining);
-                    const lockReason = isCertPemCard
-                      ? isViewer
-                        ? 'Viewers cannot import certificates'
-                        : !certOpsReady
-                          ? 'Checking certificate operations availability...'
-                          : certOpsAvailabilityError
-                            ? certOpsAvailabilityError
-                            : certOpsEnabled === false
-                              ? 'Certificate operations are not enabled for this workspace'
-                              : ''
-                      : isIntegration
+                  ]
+                    .filter(
+                      card => !sourceChoices || sourceChoices.includes(card.key)
+                    )
+                    .map(card => {
+                      const isCertPemCard = card.key === 'cert-pem';
+                      const isIntegration =
+                        card.key !== 'file' && !isCertPemCard;
+                      const hasQuotaRemaining =
+                        integrationQuota.remaining === null ||
+                        integrationQuota.remaining > 0;
+                      const isCertPemDisabled =
+                        isCertPemCard &&
+                        certOpsReady &&
+                        certOpsEnabled === false;
+                      const isLocked = isCertPemCard
+                        ? isViewer ||
+                          !certOpsReady ||
+                          isCertPemDisabled ||
+                          certOpsAvailabilityError
+                        : isIntegration && (isViewer || !hasQuotaRemaining);
+                      const lockReason = isCertPemCard
                         ? isViewer
-                          ? 'Viewers cannot use integrations'
-                          : integrationQuota.remaining === 0
-                            ? `Monthly scan limit reached (${integrationQuota.limit}/month).`
-                            : ''
-                        : '';
-                    const selectCard = () => {
-                      if (!isLocked) setSource(card.key);
-                    };
+                          ? 'Viewers cannot import certificates'
+                          : !certOpsReady
+                            ? 'Checking certificate operations availability...'
+                            : certOpsAvailabilityError
+                              ? certOpsAvailabilityError
+                              : certOpsEnabled === false
+                                ? 'Certificate operations are not enabled for this workspace'
+                                : ''
+                        : isIntegration
+                          ? isViewer
+                            ? 'Viewers cannot use integrations'
+                            : integrationQuota.remaining === 0
+                              ? `Monthly scan limit reached (${integrationQuota.limit}/month).`
+                              : ''
+                          : '';
+                      const selectCard = () => {
+                        if (!isLocked) setSource(card.key);
+                      };
 
-                    const cardContent = (
-                      <VStack
-                        spacing={2}
-                        align='center'
-                        justify='center'
-                        p={3}
-                        minH={{ base: '116px', md: '132px' }}
-                        w='100%'
-                        bg={modalTokens.fieldBg}
-                        border='1px solid'
-                        borderColor={
-                          source === card.key
-                            ? modalTokens.focusBorder
-                            : modalTokens.border
-                        }
-                        borderRadius='12px'
-                        boxShadow={
-                          source === card.key
-                            ? '0 0 0 1px rgba(59, 130, 246, 0.35)'
-                            : 'none'
-                        }
-                        cursor={isLocked ? 'not-allowed' : 'pointer'}
-                        opacity={isLocked ? 0.6 : 1}
-                        onClick={selectCard}
-                        onKeyDown={e => {
-                          if (
-                            !isLocked &&
-                            (e.key === 'Enter' || e.key === ' ')
-                          ) {
-                            e.preventDefault();
-                            selectCard();
+                      const cardContent = (
+                        <VStack
+                          spacing={2}
+                          align='center'
+                          justify='center'
+                          p={3}
+                          minH={{ base: '116px', md: '132px' }}
+                          w='100%'
+                          bg={modalTokens.fieldBg}
+                          border='1px solid'
+                          borderColor={
+                            source === card.key
+                              ? modalTokens.focusBorder
+                              : modalTokens.border
                           }
-                        }}
-                        tabIndex={isLocked ? -1 : 0}
-                        role='button'
-                        aria-label={card.alt}
-                        aria-disabled={isLocked}
-                        aria-pressed={source === card.key}
-                        transition='border-color 0.15s ease, box-shadow 0.15s ease'
-                        _hover={
-                          isLocked
-                            ? undefined
-                            : {
-                                borderColor: modalTokens.focusBorder,
-                                bg: modalTokens.fieldBg,
-                              }
-                        }
-                        _focusVisible={{
-                          outline: '2px solid',
-                          outlineColor: modalTokens.focusBorder,
-                          outlineOffset: '2px',
-                        }}
-                      >
-                        <HStack spacing={1}>
-                          <Text
-                            fontSize='sm'
-                            fontWeight='semibold'
-                            color={modalTokens.text}
-                          >
-                            {card.label}
-                          </Text>
-                          {isLocked ? (
-                            <Tooltip label={lockReason} fontSize='xs'>
-                              <Badge colorScheme='orange'>
-                                {isViewer ? 'ADMIN' : 'LIMIT'}
-                              </Badge>
-                            </Tooltip>
-                          ) : null}
-                        </HStack>
-                        {card.type === 'icon' ? (
-                          <Box p={2}>
-                            <Box
-                              as={
-                                card.icon === 'shield' ? FiShield : FiDownload
-                              }
-                              boxSize={{ base: '40px', md: '56px' }}
-                              color={
-                                source === card.key
-                                  ? modalTokens.focusBorder
-                                  : modalTokens.muted
-                              }
-                            />
-                          </Box>
-                        ) : (
-                          <Box position='relative'>
-                            <Image
-                              src={card.src}
-                              alt=''
-                              aria-hidden
-                              maxH={{ base: '56px', md: '72px' }}
-                              maxW='100%'
-                              objectFit='contain'
-                              opacity={isLocked ? 0.4 : 1}
-                              filter={isLocked ? 'grayscale(100%)' : 'none'}
-                            />
-                            {/* Icon badge to differentiate Azure services */}
-                            {card.key === 'azure' && (
-                              <Tooltip label='Azure Key Vault' fontSize='xs'>
-                                <Box
-                                  position='absolute'
-                                  top='-6px'
-                                  right='-6px'
-                                  bg='blue.500'
-                                  borderRadius='full'
-                                  p={1.5}
-                                  boxShadow='md'
-                                  border='2px solid white'
-                                >
-                                  <Box
-                                    as={FiKey}
-                                    boxSize='14px'
-                                    color='white'
-                                  />
-                                </Box>
+                          borderRadius='12px'
+                          boxShadow={
+                            source === card.key
+                              ? '0 0 0 1px rgba(59, 130, 246, 0.35)'
+                              : 'none'
+                          }
+                          cursor={isLocked ? 'not-allowed' : 'pointer'}
+                          opacity={isLocked ? 0.6 : 1}
+                          onClick={selectCard}
+                          onKeyDown={e => {
+                            if (
+                              !isLocked &&
+                              (e.key === 'Enter' || e.key === ' ')
+                            ) {
+                              e.preventDefault();
+                              selectCard();
+                            }
+                          }}
+                          tabIndex={isLocked ? -1 : 0}
+                          role='button'
+                          aria-label={card.alt}
+                          aria-disabled={isLocked}
+                          aria-pressed={source === card.key}
+                          transition='border-color 0.15s ease, box-shadow 0.15s ease'
+                          _hover={
+                            isLocked
+                              ? undefined
+                              : {
+                                  borderColor: modalTokens.focusBorder,
+                                  bg: modalTokens.fieldBg,
+                                }
+                          }
+                          _focusVisible={{
+                            outline: '2px solid',
+                            outlineColor: modalTokens.focusBorder,
+                            outlineOffset: '2px',
+                          }}
+                        >
+                          <HStack spacing={1}>
+                            <Text
+                              fontSize='sm'
+                              fontWeight='semibold'
+                              color={modalTokens.text}
+                            >
+                              {card.label}
+                            </Text>
+                            {isLocked ? (
+                              <Tooltip label={lockReason} fontSize='xs'>
+                                <Badge colorScheme='orange'>
+                                  {isViewer ? 'ADMIN' : 'LIMIT'}
+                                </Badge>
                               </Tooltip>
-                            )}
-                            {card.key === 'azure-ad' && (
-                              <Tooltip
-                                label='Azure Active Directory'
-                                fontSize='xs'
-                              >
-                                <Box
-                                  position='absolute'
-                                  top='-6px'
-                                  right='-6px'
-                                  bg='purple.500'
-                                  borderRadius='full'
-                                  p={1.5}
-                                  boxShadow='md'
-                                  border='2px solid white'
-                                >
-                                  <Box
-                                    as={FiUsers}
-                                    boxSize='14px'
-                                    color='white'
-                                  />
-                                </Box>
-                              </Tooltip>
-                            )}
-                          </Box>
-                        )}
-                      </VStack>
-                    );
+                            ) : null}
+                          </HStack>
+                          {card.type === 'icon' ? (
+                            <Box p={2}>
+                              <Box
+                                as={
+                                  card.icon === 'shield' ? FiShield : FiDownload
+                                }
+                                boxSize={{ base: '40px', md: '56px' }}
+                                color={
+                                  source === card.key
+                                    ? modalTokens.focusBorder
+                                    : modalTokens.muted
+                                }
+                              />
+                            </Box>
+                          ) : (
+                            <ImportSourceLogo
+                              sourceKey={card.key}
+                              dimmed={isLocked}
+                            />
+                          )}
+                        </VStack>
+                      );
 
-                    return (
-                      <Tooltip
-                        key={card.key}
-                        label={lockReason}
-                        fontSize='xs'
-                        isDisabled={!isLocked || !lockReason}
-                      >
-                        {cardContent}
-                      </Tooltip>
-                    );
-                  })}
+                      return (
+                        <Tooltip
+                          key={card.key}
+                          label={lockReason}
+                          fontSize='xs'
+                          isDisabled={!isLocked || !lockReason}
+                        >
+                          {cardContent}
+                        </Tooltip>
+                      );
+                    })}
                 </Box>
               </Box>
 
@@ -4062,5 +4013,15 @@ export default function ImportTokensModal({
         </DashboardModalFrame>
       </Modal>
     </>
+  );
+}
+
+// The setup guide opens this dialog with hideDocs. Fields that overlap with a
+// later guide step read that flag through context to explain themselves.
+export default function ImportTokensModal(props) {
+  return (
+    <EmbeddedImportContext.Provider value={Boolean(props.hideDocs)}>
+      <ImportTokensModalContent {...props} />
+    </EmbeddedImportContext.Provider>
   );
 }

@@ -86,6 +86,9 @@ function ImportOutcome({ outcome }) {
   );
 }
 
+// The file goal stays on the file source; other sources belong to other goals.
+const FILE_SOURCES = ['file'];
+
 export function FileImportStep({ ctx }) {
   const host = useImportHost(ctx, 'file_import', null);
   return (
@@ -123,6 +126,7 @@ export function FileImportStep({ ctx }) {
       </VStack>
       <ImportTokensModal
         hideDocs
+        sourceChoices={FILE_SOURCES}
         isOpen={host.open}
         onClose={host.close}
         onImported={() => {}}

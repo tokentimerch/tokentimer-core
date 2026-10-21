@@ -1,4 +1,3 @@
-import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
@@ -130,5 +129,37 @@ describe('Import forms embedded in an onboarding step', () => {
     );
 
     expect(allPanels()).toHaveLength(1);
+  });
+
+  it('keeps the file goal on the file source', async () => {
+    mount(<FileImportStep ctx={makeCtx()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Choose a file' }));
+    await screen.findByText(/Upload a file in/);
+
+    expect(
+      screen.getByRole('button', { name: 'File import', hidden: true })
+    ).toBeInTheDocument();
+    ['HashiCorp Vault', 'Public certificate PEM import', 'GitHub'].forEach(
+      name =>
+        expect(screen.queryByRole('button', { name, hidden: true })).toBeNull()
+    );
+  });
+
+  it('offers only services, not file or PEM, for the service goal', async () => {
+    const ctx = makeCtx();
+    ctx.session.intent = { provider: 'github' };
+    mount(<IntegrationStep ctx={ctx} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Scan and import' }));
+    await waitFor(() =>
+      expect(screen.getAllByText(/Scans GitHub for tokens/).length).toBe(1)
+    );
+
+    ['File import', 'Public certificate PEM import'].forEach(name =>
+      expect(screen.queryByRole('button', { name, hidden: true })).toBeNull()
+    );
+    // One card in the guide, one in the dialog.
+    expect(
+      screen.getAllByRole('button', { name: 'Google Cloud', hidden: true })
+    ).toHaveLength(2);
   });
 });
