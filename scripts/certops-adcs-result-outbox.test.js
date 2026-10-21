@@ -109,10 +109,31 @@ test("native admission and broad parent cleanup are fenced by the same sticky ow
 
 test("result outbox journey reads the enrollment journal with positional arguments", () => {
   const source = fs.readFileSync(
-    path.resolve(__dirname, "../tests/e2e/helpers/certops-adcs-result-outbox.js"),
+    path.resolve(
+      __dirname,
+      "../tests/e2e/helpers/certops-adcs-result-outbox.js",
+    ),
     "utf8",
   );
   const calls = source.match(/readEnrollmentJournal\([^)]*\)/g) || [];
   assert.ok(calls.length >= 2);
-  for (const call of calls) assert.match(call, /^readEnrollmentJournal\(configDir, enrollmentId\)$/);
+  for (const call of calls)
+    assert.match(call, /^readEnrollmentJournal\(configDir, enrollmentId\)$/);
+});
+test("live outbox polling skips a torn snapshot but surfaces real read errors", () => {
+  const os = require("node:os");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-outbox-live-"));
+  try {
+    const file = path.join(dir, "outbox-" + "b".repeat(24) + ".json");
+    fs.writeFileSync(file, "{}");
+    assert.equal(subject.readOutboxEntryWhileLive(file).bytes.toString(), "{}");
+    // A non-regular entry fails the snapshot assertions, which the poll retries.
+    assert.deepEqual(subject.readOutboxEntryWhileLive(dir), {});
+    assert.throws(
+      () => subject.readOutboxEntryWhileLive(path.join(dir, "missing.json")),
+      { code: "ENOENT" },
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

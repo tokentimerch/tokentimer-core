@@ -117,3 +117,9 @@ test("expected signed refusal is awaited as a failed job, not thrown as a job er
   await assert.rejects(run("succeeded"), /expected failed/);
   await assert.rejects(run("cancelled"), /expected failed/);
 });
+
+test("officer-denied pending request is a terminal denied/failed CA disposition, never pending or issued", () => {
+  for (const ok of [30, 31]) assert.equal(h.isDeniedDisposition(ok), true);
+  for (const bad of [9, 20, 21, null, undefined])
+    assert.equal(h.isDeniedDisposition(bad), false);
+});

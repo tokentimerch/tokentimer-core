@@ -332,6 +332,20 @@ function verifyRevokedResponse(bytes, options, nativeVerdict) {
   );
   return verified;
 }
+// The sanitized report keeps only an error code, so encode what the responder
+// kept answering: a replayed pre-revocation response means a stale cache, a
+// fresh "good" means the revoked CRL was not loaded, "unknown" a provider fault.
+function revokedTimeoutCode(last, knownDigests = []) {
+  if (!last) return "CERTOPS_OCSP_REVOKED_SIGNED_TIMEOUT_NO_ANSWER";
+  if (last.status === "good")
+    return knownDigests.includes(last.responseSha256)
+      ? "CERTOPS_OCSP_REVOKED_SIGNED_TIMEOUT_STALE_GOOD"
+      : "CERTOPS_OCSP_REVOKED_SIGNED_TIMEOUT_FRESH_GOOD";
+  const status = String(last.status)
+    .replace(/[^a-z]/gi, "")
+    .toUpperCase();
+  return `CERTOPS_OCSP_REVOKED_SIGNED_TIMEOUT_${status.slice(0, 16) || "OTHER"}`;
+}
 async function qualifyHistoricalRevoked(c) {
   assert.equal(process.platform, "win32");
   assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB, "1");
@@ -444,6 +458,7 @@ async function qualifyHistoricalRevoked(c) {
   };
 }
 module.exports = {
+  revokedTimeoutCode,
   SCENARIO,
   SCOPE,
   FLAGS,

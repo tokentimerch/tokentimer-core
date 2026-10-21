@@ -216,6 +216,17 @@ function readOriginalFile(file, expectedIdentity, maximum = 524288) {
   }
 }
 
+// The live agent rewrites an entry per retry (rename, then ACL, which moves
+// ctime). A torn snapshot is not a defect: skip it and let the poll re-read.
+function readOutboxEntryWhileLive(file) {
+  try {
+    return readOriginalFile(file);
+  } catch (error) {
+    if (error instanceof assert.AssertionError) return {};
+    throw error;
+  }
+}
+
 async function qualifyResultOutbox(c) {
   assert.equal(process.platform, "win32");
   assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB, "1");
@@ -491,7 +502,11 @@ async function qualifyResultOutbox(c) {
       const values = fs
         .readdirSync(outbox)
         .filter((name) => /^outbox-[a-f0-9]{24}\.json$/.test(name))
-        .map((name) => ({ name, ...readOriginalFile(path.join(outbox, name)) }))
+        .map((name) => ({
+          name,
+          ...readOutboxEntryWhileLive(path.join(outbox, name)),
+        }))
+        .filter((v) => v.bytes)
         .map((v) => ({ ...v, entry: JSON.parse(v.bytes) }))
         .filter((v) => v.entry.result?.jobId === jobId);
       assert.ok(values.length <= 1);
@@ -696,6 +711,7 @@ module.exports = {
   verifyPersisted,
   verifyProof,
   readOriginalFile,
+  readOutboxEntryWhileLive,
   assertCleanupSafe,
   qualifyResultOutbox,
 };

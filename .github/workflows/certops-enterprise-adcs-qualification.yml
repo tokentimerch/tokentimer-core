@@ -48,7 +48,7 @@ on:
       shard:
         description: 'all = one serial lab (the only release evidence). parallel = four labs at once (diagnostic, not release evidence). Or one named shard (diagnostic).'
         type: choice
-        options: ['all', 'parallel', 'issuance', 'renewals', 'pending-and-ca', 'templates-and-uncertain']
+        options: ['all', 'parallel', 'issuance', 'renewals', 'pending-and-ca', 'templates-and-uncertain', 'uncertain-recovery']
         default: all
 permissions:
   contents: read

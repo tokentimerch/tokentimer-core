@@ -216,9 +216,7 @@ test("delegated revoked response shape requires an independent revoked verdict",
           seq(Buffer.from("06082b06010505070309", "hex")),
         ),
       );
-      extensions.push(
-        extension("06092b0601050507300105", Buffer.from([5, 0])),
-      );
+      extensions.push(extension("06092b0601050507300105", Buffer.from([5, 0])));
     }
     return signed(
       seq(
@@ -257,10 +255,7 @@ test("delegated revoked response shape requires an independent revoked verdict",
     const id = seq(
       Buffer.from("300906052b0e03021a0500", "hex"),
       der(4, crypto.createHash("sha1").update(issuerParts.subject).digest()),
-      der(
-        4,
-        crypto.createHash("sha1").update(issuerParts.publicBits).digest(),
-      ),
+      der(4, crypto.createHash("sha1").update(issuerParts.publicBits).digest()),
       der(2, Buffer.from([3])),
     );
     const state =
@@ -276,9 +271,7 @@ test("delegated revoked response shape requires an independent revoked verdict",
     const data = seq(
       der(0xa2, der(4, crypto.createHash("sha1").update(signerBits).digest())),
       time(now - 1000),
-      seq(
-        seq(id, state, time(now - 30000), der(0xa0, time(now + 3600000))),
-      ),
+      seq(seq(id, state, time(now - 30000), der(0xa0, time(now + 3600000)))),
     );
     const basic = seq(
       data,
@@ -305,9 +298,13 @@ test("delegated revoked response shape requires an independent revoked verdict",
   );
   assert.equal(admitted.status, "revoked");
   assert.equal(admitted.serialNumber, "3");
-  assert.match(admitted.revocationTime, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+  assert.match(
+    admitted.revocationTime,
+    /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/,
+  );
   assert.equal(
-    subject.verifyRevokedResponse(ocsp("revoked", 1), options, "revoked").status,
+    subject.verifyRevokedResponse(ocsp("revoked", 1), options, "revoked")
+      .status,
     "revoked",
   );
   assert.throws(() =>
@@ -372,4 +369,26 @@ test("actual managed native-provider fingerprint preserves ordering, variant typ
     "Managed provider policy must execute without native constructors",
   );
   assert.equal(result.stdout.trim(), "passed");
+});
+test("revoked signed-status timeout code names what the responder kept answering", () => {
+  const code = subject.revokedTimeoutCode;
+  const pattern = /^[A-Z0-9_]{1,64}$/;
+  assert.equal(
+    code(undefined),
+    "CERTOPS_OCSP_REVOKED_SIGNED_TIMEOUT_NO_ANSWER",
+  );
+  assert.equal(
+    code({ status: "good", responseSha256: "a" }, ["a"]),
+    "CERTOPS_OCSP_REVOKED_SIGNED_TIMEOUT_STALE_GOOD",
+  );
+  assert.equal(
+    code({ status: "good", responseSha256: "b" }, ["a"]),
+    "CERTOPS_OCSP_REVOKED_SIGNED_TIMEOUT_FRESH_GOOD",
+  );
+  assert.equal(
+    code({ status: "unknown" }, []),
+    "CERTOPS_OCSP_REVOKED_SIGNED_TIMEOUT_UNKNOWN",
+  );
+  for (const status of ["good", "unknown", "x".repeat(200), "???"])
+    assert.match(code({ status, responseSha256: "z" }, []), pattern);
 });
