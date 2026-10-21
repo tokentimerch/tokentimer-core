@@ -23,8 +23,14 @@ function run(args, options = {}) {
     maxBuffer: 16 * 1024 * 1024,
     ...options,
   });
-  if (r.status !== 0 || r.error)
-    throw new Error("Owned Vault qualification command failed");
+  if (r.status !== 0 || r.error) {
+    // Fixture-only output; keep a short tail so a CI failure is diagnosable.
+    const tail = (s) =>
+      String(s || "").trim().split("\n").slice(-15).map((l) => l.slice(0, 200)).join("\n");
+    throw new Error(
+      `Owned Vault qualification command failed: docker ${args[0]} exit=${r.status} signal=${r.signal || "none"} code=${r.error ? r.error.code : "none"}\n${tail(r.stderr)}\n${tail(r.stdout)}`,
+    );
+  }
   return r.stdout;
 }
 async function main() {
@@ -177,9 +183,10 @@ async function main() {
   }
 }
 if (require.main === module)
-  main().catch(() => {
+  main().catch((error) => {
     console.error(
       "Owned Vault qualification failed; inspect its bounded execution report",
     );
+    console.error(String((error && error.message) || error).slice(0, 4000));
     process.exitCode = 1;
   });
