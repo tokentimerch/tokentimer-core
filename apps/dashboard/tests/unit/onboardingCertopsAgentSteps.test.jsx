@@ -4,6 +4,7 @@ import {
   screen,
   waitFor,
   within,
+  cleanup,
 } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 import { describe, expect, it, vi } from 'vitest';
@@ -20,6 +21,8 @@ import {
   agentConfigPathFor,
   agentRestartCommandFor,
   buildPackageCommand,
+  installerOptionsFor,
+  installerOptionsKey,
   registrationNotesFor,
 } from '../../src/components/onboarding/certopsConfig.js';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
@@ -192,6 +195,91 @@ describe('Kubernetes configuration step', () => {
     await waitFor(() =>
       expect(ctx.session.progress.certops.configReviewed).toBe(true)
     );
+  });
+});
+
+describe('installer options after the agent registered', () => {
+  const automate = {
+    objective: 'automate',
+    infrastructure: 'linux',
+    certPath: '/etc/ssl/tokentimer/a.pem',
+    reloadService: 'haproxy',
+  };
+  const agent = {
+    id: 'a1',
+    platform: 'linux',
+    livenessState: 'live',
+    commandProfiles: ['certbot'],
+  };
+  const registered = {
+    certops: { agents: { live: 1, total: 1, items: [agent] } },
+  };
+  const key = installerOptionsKey(installerOptionsFor(automate));
+
+  it('tells the operator to run the installer again when the goal needs other options', () => {
+    mount(AgentStep, makeCtx('certops_automate', automate, registered));
+    const prompt = screen.getByTestId('reinstall-needed').textContent;
+    expect(prompt).toMatch(
+      /This goal needs different installer options\. Run the command below again on the server\./
+    );
+    expect(prompt).toMatch(/bootstrap token again/);
+    const steps = screen.getByTestId('install-steps').textContent;
+    expect(steps).toContain("--write-path '/etc/ssl/tokentimer'");
+    expect(steps).toContain('--reload-service haproxy');
+  });
+
+  it('does not ask on a first install, and not once the options match', () => {
+    mount(AgentStep, makeCtx('certops_automate', automate, noAgents));
+    expect(screen.queryByTestId('reinstall-needed')).toBeNull();
+    cleanup();
+    mount(
+      AgentStep,
+      makeCtx(
+        'certops_automate',
+        { ...automate, installerKey: key },
+        registered
+      )
+    );
+    expect(screen.queryByTestId('reinstall-needed')).toBeNull();
+  });
+
+  it('does not ask for a goal that needs no installer options', () => {
+    mount(AgentStep, makeCtx('certops_observe', linux, registered));
+    expect(screen.queryByTestId('reinstall-needed')).toBeNull();
+  });
+
+  it('records the second run only when the operator confirms it', async () => {
+    const ctx = makeCtx('certops_automate', automate, registered);
+    mount(AgentStep, ctx);
+    expect(ctx.session.progress.certops.installerKey).toBeUndefined();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'I ran the command again' })
+    );
+    await waitFor(() =>
+      expect(ctx.session.progress.certops.installerKey).toBe(key)
+    );
+  });
+
+  it('records the options with the token of a first install, not of a second run', async () => {
+    createToken.mockReset().mockResolvedValue({ plaintextToken: 'ttboot_x' });
+    const first = makeCtx('certops_automate', automate, noAgents);
+    mount(AgentStep, first);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create a one-time token' })
+    );
+    await waitFor(() =>
+      expect(first.session.progress.certops.installerKey).toBe(key)
+    );
+    cleanup();
+    const again = makeCtx('certops_automate', automate, registered);
+    mount(AgentStep, again);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create a one-time token' })
+    );
+    await waitFor(() =>
+      expect(again.session.progress.certops.tokenCreatedAt).toBeTruthy()
+    );
+    expect(again.session.progress.certops.installerKey).toBeUndefined();
   });
 });
 

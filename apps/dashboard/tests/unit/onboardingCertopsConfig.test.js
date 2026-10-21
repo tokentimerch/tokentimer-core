@@ -26,6 +26,8 @@ import {
   STAGING_CA,
   AGENT_KEYS_DIR,
   certDirectoryFor,
+  installerOptionsFor,
+  installerOptionsKey,
   dnsCredentialsExample,
   vaultPublishIdempotencyKey,
   buildVaultAgentConfig,
@@ -84,13 +86,14 @@ describe('support matrix', () => {
 });
 
 describe('install command', () => {
-  it('runs the installer from the scripts folder of the agent package', () => {
+  it('runs the installer from the scripts folder of the agent package, through bash', () => {
     const cmd = buildInstallCommand({
       os: 'linux',
       apiUrl: 'https://tt.example.com',
       workspaceId: WS,
     });
-    expect(cmd).toMatch(/^sudo \.\/scripts\/install-agent\.sh/);
+    // The release tarball does not mark the script executable.
+    expect(cmd).toMatch(/^sudo bash \.\/scripts\/install-agent\.sh/);
   });
 
   it('derives the write folder from the certificate file', () => {
@@ -208,6 +211,57 @@ describe('install command', () => {
     });
     // The quote is escaped, so the payload stays inside one quoted argument.
     expect(cmd).toContain(`'\\''`);
+  });
+});
+
+describe('installer options for a goal', () => {
+  const base = {
+    objective: 'automate',
+    infrastructure: 'linux',
+    certPath: '/etc/ssl/tokentimer/a.pem',
+    reloadService: 'apache',
+  };
+
+  it('asks for the write folder and the chosen reload grant on Linux issuing', () => {
+    expect(installerOptionsFor(base)).toEqual({
+      writePaths: ['/etc/ssl/tokentimer'],
+      reloadServices: ['apache'],
+    });
+    expect(
+      installerOptionsFor({ ...base, reloadService: '' }).reloadServices
+    ).toEqual([]);
+  });
+
+  it('asks for nothing for discovery, Vault, Windows or a relative path', () => {
+    const none = { writePaths: [], reloadServices: [] };
+    expect(installerOptionsFor({ ...base, objective: 'observe' })).toEqual(
+      none
+    );
+    expect(installerOptionsFor({ ...base, objective: 'vault' })).toEqual(none);
+    expect(installerOptionsFor({ ...base, infrastructure: 'windows' })).toEqual(
+      none
+    );
+    expect(installerOptionsFor({ ...base, certPath: 'a.pem' })).toEqual({
+      writePaths: [],
+      reloadServices: ['apache'],
+    });
+  });
+
+  it('gives a key that changes with either option and is empty when none is needed', () => {
+    const key = installerOptionsKey(installerOptionsFor(base));
+    expect(key).not.toBe('');
+    expect(
+      installerOptionsKey(
+        installerOptionsFor({ ...base, reloadService: 'nginx' })
+      )
+    ).not.toBe(key);
+    expect(
+      installerOptionsKey(
+        installerOptionsFor({ ...base, certPath: '/srv/tls/a.pem' })
+      )
+    ).not.toBe(key);
+    expect(installerOptionsKey(installerOptionsFor({}))).toBe('');
+    expect(installerOptionsKey(undefined)).toBe('');
   });
 });
 
@@ -683,16 +737,19 @@ describe('optional web server reload', () => {
     }
   });
 
-  it('runs a check before the reload, and tests the config as root for nginx', () => {
-    for (const def of Object.values(RELOAD_SERVICES)) {
-      expect(def.validate.join(' ')).toMatch(
-        /-t$|configtest$|-c |is-active --quiet nginx$/
-      );
+  it('checks the unit is running before the reload, and tests the config as root', () => {
+    for (const [id, def] of Object.entries(RELOAD_SERVICES)) {
+      // No configuration test as the unprivileged user: nginx -t needs write
+      // access, and apachectl configtest or haproxy -c fail on any root-only
+      // key or PEM that the configuration loads.
+      expect(def.validate).toEqual([
+        '/usr/bin/systemctl',
+        'is-active',
+        '--quiet',
+        id === 'apache' ? 'apache2' : id,
+      ]);
       expect(def.reload[1]).toBe('reload');
     }
-    // nginx -t needs write access the unprivileged service user lacks, so the
-    // config test moves into the unit's reload, which runs as root.
-    expect(RELOAD_SERVICES.nginx.validate).not.toContain('-t');
     expect(NGINX_RELOAD_DROPIN).toContain('ExecReload=/usr/sbin/nginx -t');
     expect(NGINX_RELOAD_DROPIN).toContain(
       '/etc/systemd/system/nginx.service.d/'

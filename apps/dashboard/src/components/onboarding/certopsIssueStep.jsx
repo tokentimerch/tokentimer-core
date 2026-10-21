@@ -377,7 +377,7 @@ export default function IssueStep({ ctx }) {
           {windows
             ? `The agent stores the certificate in the ${saved.iisStore || 'My'} machine store and binds it to the HTTPS binding ${saved.iisSite || 'Default Web Site'} (usually an IIS site) on port ${saved.iisPort || 443}, replacing the certificate currently bound there.`
             : saved.reloadService
-              ? `After writing the certificate, the agent checks ${reloadLabel} and then reloads it with systemctl. The configuration test happens in that check (Apache, HAProxy) or in the unit's own reload (nginx, Apache, HAProxy), so a broken configuration is not loaded.`
+              ? `After writing the certificate, the agent checks that ${reloadLabel} is running and then reloads it with systemctl. The unit's own reload tests the configuration as root, so a broken configuration is not loaded.`
               : 'The certificate is written to the path above. Nothing is reloaded; you can choose a web server to reload in the configuration step.'}
         </Text>
         {!windows && saved.reloadService ? (

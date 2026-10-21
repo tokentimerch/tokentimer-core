@@ -5,6 +5,7 @@
 
 import { existingAssetStepIds } from './assetRefs.js';
 import { commandProfileFor, reportedCertificates } from './certopsMatrix.js';
+import { installerOptionsFor, installerOptionsKey } from './certopsConfig.js';
 import { GOALS, STEP_DEFS } from './modules.js';
 import { scopeCertops } from './certopsScope.js';
 
@@ -99,6 +100,18 @@ function certopsDone(stepId, { reality, progress, objective }) {
             (a.declaredCapabilities || []).includes('adcs-enroll-v1')
         );
       }
+      // An agent keeps the write path and reload grant it was installed with.
+      // When this setup needs others, the installer has to run again, so the
+      // step stays open until the operator says it did.
+      const neededKey = installerOptionsKey(
+        installerOptionsFor({
+          objective,
+          infrastructure: saved.infrastructure || 'linux',
+          certPath: saved.certPath,
+          reloadService: saved.reloadService,
+        })
+      );
+      if (neededKey && saved.installerKey !== neededKey) return false;
       // An agent registered for discovery declares no command profile, so it
       // can never claim an issuance order. Command profiles are only reported
       // at registration, which makes it a different agent setup, not a setting.

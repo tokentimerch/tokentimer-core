@@ -784,17 +784,22 @@ export function ConfigStep({ ctx }) {
                 ) : null}
                 {form.reloadService === 'apache' ? (
                   <Text fontSize='xs' mt={1} data-testid='reload-apache-note'>
-                    <code>apachectl configtest</code> runs without privileges
-                    while Apache is running. The unit&apos;s own reload (
-                    <code>apachectl graceful</code>) tests the configuration
-                    again as root and refuses a broken one.
+                    The agent only checks that Apache is running. The
+                    unit&apos;s own reload (<code>apachectl graceful</code>)
+                    tests the configuration as root, so a broken one is refused
+                    and Apache keeps its old certificate. A test run by the
+                    agent itself would fail whenever any site loads a key only
+                    root can read, such as the default-ssl site.
                   </Text>
                 ) : null}
                 {form.reloadService === 'haproxy' ? (
                   <Text fontSize='xs' mt={1} data-testid='reload-haproxy-note'>
-                    <code>haproxy -c</code> reads /etc/haproxy/haproxy.cfg
-                    without privileges. The unit&apos;s own reload tests the
-                    configuration again as root first.
+                    The agent only checks that HAProxy is running. The
+                    unit&apos;s own reload (<code>haproxy -c -q</code>) tests
+                    the configuration as root, so a broken one is refused and
+                    HAProxy keeps its old certificate. A test run by the agent
+                    itself would fail whenever the configuration loads a PEM
+                    only root can read.
                   </Text>
                 ) : null}
                 {form.reloadService ? (

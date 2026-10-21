@@ -199,6 +199,24 @@ describe('ACME configuration form', () => {
     expect(panel.hasAttribute('open')).toBe(false);
   });
 
+  it('says Apache and HAProxy are tested by the unit reload, not by the agent', () => {
+    for (const [reloadService, id, grant] of [
+      ['apache', 'reload-apache-note', /apachectl graceful/],
+      ['haproxy', 'reload-haproxy-note', /haproxy -c -q/],
+    ]) {
+      const { unmount } = mount(
+        <ConfigStep
+          ctx={makeCtx('certops_automate', { ...linuxAcme, reloadService })}
+        />
+      );
+      const note = screen.getByTestId(id).textContent;
+      expect(note).toMatch(/only checks that .* is running/);
+      expect(note).toMatch(grant);
+      expect(note).toMatch(/as root/);
+      unmount();
+    }
+  });
+
   it('shows the folder command next to the credential path and keeps the wizard path', () => {
     mount(
       <ConfigStep

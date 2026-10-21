@@ -224,7 +224,8 @@ export function buildInstallCommand({
   // receive a trust anchor, so it is explicit rather than assumed.
   flags.push(trustStore ? '--trust-store' : '--no-trust-store');
   // The script lives under scripts/ in the agent package, like the Windows one.
-  return `sudo ./scripts/install-agent.sh \\\n  ${flags.join(' \\\n  ')}`;
+  // Run through bash: the release tarball does not mark it executable.
+  return `sudo bash ./scripts/install-agent.sh \\\n  ${flags.join(' \\\n  ')}`;
 }
 
 /**
@@ -236,6 +237,34 @@ export function certDirectoryFor(certPath) {
   if (!text.startsWith('/')) return '';
   const dir = text.replace(/\/[^/]*$/, '');
   return dir && dir !== '/' ? dir : '';
+}
+
+/**
+ * What the Linux installer has to be given for this setup: the folder the
+ * agent writes to and the web server it may reload. A registered agent keeps
+ * the options it was installed with, so a change needs the installer again.
+ */
+export function installerOptionsFor({
+  objective,
+  infrastructure = 'linux',
+  certPath = '',
+  reloadService = '',
+} = {}) {
+  if (infrastructure !== 'linux' || objective !== 'automate') {
+    return { writePaths: [], reloadServices: [] };
+  }
+  const dir = certDirectoryFor(certPath);
+  return {
+    writePaths: dir ? [dir] : [],
+    reloadServices: RELOAD_SERVICES[reloadService] ? [reloadService] : [],
+  };
+}
+
+/** Stable text for the options above, empty when the installer needs none. */
+export function installerOptionsKey(options) {
+  const { writePaths = [], reloadServices = [] } = options || {};
+  if (!writePaths.length && !reloadServices.length) return '';
+  return JSON.stringify([writePaths, reloadServices]);
 }
 
 // Same four points on both systems, in the order an operator does them.
@@ -334,12 +363,15 @@ export function buildObserveConfig({ os, directories = [] }) {
 /**
  * Web servers the agent can reload after it writes a certificate. The agent
  * always runs a "validate" command before the reload and both run as its
- * unprivileged service user. Apache and HAProxy can test their configuration
- * that way; nginx cannot (nginx -t must open /run/nginx.pid and its error log
- * for writing, which stock packages only allow for root). For nginx the
- * validate step therefore only checks that the unit is running, and the
- * configuration test is done as root by the unit's own reload (see
- * NGINX_RELOAD_DROPIN). argv is exact: policy refuses anything else.
+ * unprivileged service user. A configuration test cannot run reliably as that
+ * user: nginx -t needs /run/nginx.pid and its error log, and apachectl
+ * configtest or haproxy -c fail as soon as any site loads a key or PEM that
+ * only root can read (Debian's default-ssl site, most HAProxy PEM folders).
+ * The validate step therefore only checks that the unit is running, and the
+ * configuration test is done as root by the unit's own reload: apachectl
+ * graceful and haproxy -c -q already refuse a broken configuration, and
+ * NGINX_RELOAD_DROPIN adds the same to nginx. argv is exact: policy refuses
+ * anything else.
  */
 /** Name the Windows job and policy use for the operator's ACME client. */
 export { WINDOWS_ACME_PROFILE };
@@ -353,12 +385,12 @@ export const RELOAD_SERVICES = {
   },
   apache: {
     label: 'Apache (apache2)',
-    validate: ['/usr/sbin/apachectl', 'configtest'],
+    validate: ['/usr/bin/systemctl', 'is-active', '--quiet', 'apache2'],
     reload: ['/usr/bin/systemctl', 'reload', 'apache2'],
   },
   haproxy: {
     label: 'HAProxy',
-    validate: ['/usr/sbin/haproxy', '-c', '-f', '/etc/haproxy/haproxy.cfg'],
+    validate: ['/usr/bin/systemctl', 'is-active', '--quiet', 'haproxy'],
     reload: ['/usr/bin/systemctl', 'reload', 'haproxy'],
   },
 };

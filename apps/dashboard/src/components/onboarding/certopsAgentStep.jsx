@@ -35,7 +35,8 @@ import {
   buildPackageCommand,
   agentConfigPathFor,
   agentRestartCommandFor,
-  certDirectoryFor,
+  installerOptionsFor,
+  installerOptionsKey,
   isLoopbackHttp,
 } from './certopsConfig.js';
 import {
@@ -109,6 +110,20 @@ export function AgentStep({ ctx }) {
     items.find(a => a.platform === (os === 'windows' ? 'win32' : 'linux')) ||
     items[0];
 
+  // Only Linux issuing needs installer options (the Vault issuer publishes to
+  // Vault and writes no certificate file).
+  const installerOptions = installerOptionsFor({
+    objective: saved.objective,
+    infrastructure: infra,
+    certPath: saved.certPath,
+    reloadService: saved.reloadService,
+  });
+  const neededKey = installerOptionsKey(installerOptions);
+  // The agent was installed with other options than this setup needs: the
+  // installer has to run again, and only the operator can say it did.
+  const needsRerun =
+    Boolean(target) && Boolean(neededKey) && saved.installerKey !== neededKey;
+
   const issueToken = async () => {
     setBusy(true);
     setError('');
@@ -119,7 +134,12 @@ export function AgentStep({ ctx }) {
         expiresAt,
       });
       setToken({ plaintext: res.plaintextToken, expiresAt });
-      await saveCertops(ctx, { tokenCreatedAt: new Date().toISOString() });
+      await saveCertops(ctx, {
+        tokenCreatedAt: new Date().toISOString(),
+        // A first install runs the command shown here. With an agent already
+        // registered, the operator confirms the second run explicitly.
+        ...(target ? {} : { installerKey: neededKey }),
+      });
     } catch (e) {
       setError(
         e?.response?.data?.error || e.message || 'Could not create a token.'
@@ -136,6 +156,15 @@ export function AgentStep({ ctx }) {
     try {
       await saveCertops(ctx, { agentLaterAt: new Date().toISOString() });
       setDeferred(true);
+    } catch (e) {
+      setError(e.message || 'Could not save your progress.');
+    }
+  };
+
+  const confirmRerun = async () => {
+    setError('');
+    try {
+      await saveCertops(ctx, { installerKey: neededKey });
     } catch (e) {
       setError(e.message || 'Could not save your progress.');
     }
@@ -295,17 +324,13 @@ export function AgentStep({ ctx }) {
   // The hardened service can only write where --write-path says and reload
   // only what --reload-service allows, so the choices made in the
   // configuration step have to reach the installer.
-  // The Vault issuer publishes to Vault and writes no certificate file.
-  const linuxIssuing = os === 'linux' && saved.objective === 'automate';
-  const certDirectory = linuxIssuing ? certDirectoryFor(saved.certPath) : '';
   try {
     command = buildInstallCommand({
       os,
       apiUrl: ctx.apiUrl,
       workspaceId: ctx.workspaceId,
-      writePaths: certDirectory ? [certDirectory] : [],
-      reloadServices:
-        linuxIssuing && saved.reloadService ? [saved.reloadService] : [],
+      writePaths: installerOptions.writePaths,
+      reloadServices: installerOptions.reloadServices,
     });
   } catch (e) {
     commandError = e.message;
@@ -374,6 +399,27 @@ export function AgentStep({ ctx }) {
           <Text fontSize='xs' color={muted}>
             You paused here earlier. This page keeps watching for the agent.
           </Text>
+        ) : null}
+        {needsRerun ? (
+          <Alert
+            status='warning'
+            borderRadius='md'
+            alignItems='flex-start'
+            data-testid='reinstall-needed'
+          >
+            <AlertIcon />
+            <VStack align='start' spacing={2}>
+              <AlertDescription fontSize='sm'>
+                This goal needs different installer options. Run the command
+                below again on the server. The installer asks for a bootstrap
+                token again: create another one with the button at the bottom of
+                this card.
+              </AlertDescription>
+              <DashboardActionButton size='sm' onClick={confirmRerun}>
+                I ran the command again
+              </DashboardActionButton>
+            </VStack>
+          </Alert>
         ) : null}
         {certopsObjectiveFor(ctx) === 'adcs' ? (
           <Alert status='info' borderRadius='md' data-testid='adcs-host-note'>

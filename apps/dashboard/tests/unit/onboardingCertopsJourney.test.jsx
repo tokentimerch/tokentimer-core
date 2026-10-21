@@ -3,6 +3,10 @@ import { vaultOutcome } from '../../src/components/onboarding/certopsFinalSteps.
 import { executionStage } from '../../src/components/onboarding/certopsExecutionStep.jsx';
 import { describeAgent } from '../../src/components/onboarding/certopsAgentStep.jsx';
 import { planJourney } from '../../src/components/onboarding/journeyPlanner.js';
+import {
+  installerOptionsFor,
+  installerOptionsKey,
+} from '../../src/components/onboarding/certopsConfig.js';
 
 const VAULT_CAPS = [
   'material-store-vault-kv2-v1',
@@ -216,6 +220,47 @@ describe('CertOps journey', () => {
     });
     expect(status(reporting).certops_agent).toBe('done');
     expect(status(reporting).certops_first).toBe('done');
+  });
+
+  it('reopens the agent step when the goal needs installer options the agent was installed without', () => {
+    const certops = {
+      objective: 'automate',
+      infrastructure: 'linux',
+      configReviewed: true,
+      certPath: '/etc/ssl/tokentimer/a.pem',
+      reloadService: 'apache',
+    };
+    const reality = {
+      alerts: { smtpConfigured: true },
+      certops: {
+        agents: {
+          live: 1,
+          items: [{ livenessState: 'live', commandProfiles: ['certbot'] }],
+        },
+      },
+    };
+    const agentStatus = progress =>
+      planJourney({
+        intent: { goal: 'certops_automate' },
+        progress: { certops: progress },
+        capabilities: caps,
+        reality,
+      }).steps.find(s => s.id === 'certops_agent').status;
+    // Registered for another goal: the installer has to run again.
+    expect(agentStatus(certops)).toBe('current');
+    // The operator confirmed the run for these exact options.
+    const key = installerOptionsKey(
+      installerOptionsFor({ ...certops, certPath: certops.certPath })
+    );
+    expect(agentStatus({ ...certops, installerKey: key })).toBe('done');
+    // A later change of server or folder asks again.
+    expect(
+      agentStatus({ ...certops, installerKey: key, reloadService: 'haproxy' })
+    ).toBe('current');
+    // Without a reload or a folder to grant, nothing needs re-running.
+    expect(
+      agentStatus({ ...certops, certPath: 'relative.pem', reloadService: '' })
+    ).toBe('done');
   });
 
   it('reopens the agent step if the agent disappears', () => {
