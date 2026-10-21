@@ -5,6 +5,7 @@ import {
   AlertDescription,
   AlertIcon,
   Badge,
+  Box,
   FormControl,
   FormLabel,
   HStack,
@@ -28,11 +29,21 @@ import {
   buildInstallCommand,
   NGINX_RELOAD_DROPIN,
   buildVaultAgentConfig,
+  buildVaultAgentHostSetup,
+  buildVaultRoleCommands,
+  buildConsumerNginxServer,
+  buildConsumerPlaceholderCommand,
+  buildDryRunJob,
+  buildReconcileCommand,
+  AGENT_STATE_DIR,
+  CONSUMER_DEPLOY_PATH,
+  probeHostFor,
   vaultPublishIdempotencyKey,
 } from './certopsConfig.js';
 import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
 import IssueStep from './certopsIssueStep.jsx';
 import { outboxBacklogMessage } from './certopsWorkerMessages.js';
+import { useSummaryPolling, vaultNeedsPolling } from './useSummaryPolling.js';
 import WorkerWarning from './WorkerWarning.jsx';
 
 /** A UUID the operator uses for the consumer binding (not secret). */
@@ -133,8 +144,14 @@ export function VaultStep({ ctx }) {
   const issuerId = issuerPick || agentItems[0]?.id || '';
   const issuerWireId =
     agentItems.find(a => a.id === issuerId)?.wireAgentId || undefined;
+  const [consumerPick, setConsumerPick] = useState('');
+  const consumerChoices = agentItems.filter(a => a.id !== issuerId);
+  const consumerId = consumerPick || consumerChoices[0]?.id || '';
+  const consumerWireId =
+    consumerChoices.find(a => a.id === consumerId)?.wireAgentId || undefined;
   const out = buildVaultConfigs({
     issuerAgentId: issuerWireId,
+    consumerAgentId: consumerWireId,
     vaultAddress: form.vaultAddress,
     mount: form.mount,
     workspaceId: ctx.workspaceId,
@@ -218,6 +235,17 @@ export function VaultStep({ ctx }) {
     };
   }, [publishJobId, workspaceId, publishSettled]);
 
+  // The backlog warning and the rollout state change on the server, so the
+  // summary is re-read while either could still move.
+  useSummaryPolling(
+    refresh,
+    vaultNeedsPolling({
+      backlogMessage,
+      distribution: ctx.summary?.certops?.distribution,
+      publishActive: Boolean(publishJobId) && !publishSettled,
+    })
+  );
+
   const createPublishJob = async () => {
     setPub(p => ({ ...p, busy: true, error: '' }));
     try {
@@ -252,7 +280,7 @@ export function VaultStep({ ctx }) {
       os: 'linux',
       apiUrl: ctx.apiUrl,
       workspaceId: ctx.workspaceId,
-      writePaths: ['/etc/nginx/tokentimer'],
+      writePaths: [CONSUMER_DEPLOY_PATH],
       reloadServices: ['nginx'],
     });
   } catch (e) {
@@ -317,6 +345,25 @@ export function VaultStep({ ctx }) {
             placeholder={agentItems.length ? undefined : 'No agent registered'}
           >
             {agentItems.map(a => (
+              <option key={a.id} value={a.id}>
+                {a.name || a.hostname || 'agent'} ({a.wireAgentId})
+              </option>
+            ))}
+          </Select>
+        </FormControl>
+        <FormControl>
+          <FormLabel fontSize='sm'>Consumer agent</FormLabel>
+          <Select
+            size='sm'
+            value={consumerId}
+            onChange={e => setConsumerPick(e.target.value)}
+            placeholder={
+              consumerChoices.length
+                ? undefined
+                : 'Register the consumer agent first'
+            }
+          >
+            {consumerChoices.map(a => (
               <option key={a.id} value={a.id}>
                 {a.name || a.hostname || 'agent'} ({a.wireAgentId})
               </option>
@@ -412,9 +459,11 @@ export function VaultStep({ ctx }) {
             placeholder='/etc/tokentimer-agent/issuing-ca.pem'
           />
           <Text fontSize='xs' mt={1} color={muted}>
-            Needed when the certificate comes from a private CA: the
-            consumer&apos;s trust check validates the chain against this file
-            and fails without it.
+            Needed when the certificate comes from a private CA or a test CA
+            such as the Let&apos;s Encrypt staging CA: the consumer&apos;s trust
+            check validates the chain against this file and fails without it.
+            Use the root of the issuing CA, readable by tokentimer-agent on the
+            consumer host.
           </Text>
         </FormControl>
         <Text fontSize='xs' color={muted}>
@@ -482,20 +531,122 @@ export function VaultStep({ ctx }) {
                 caFile: form.caFile.trim(),
               })}
             />
+            <CopyBlock
+              label='Vault Agent config for the consumer (writes the consumer token file)'
+              text={buildVaultAgentConfig({
+                vaultAddress: form.vaultAddress,
+                caFile: form.caFile.trim(),
+                tokenFile: '/run/tokentimer-vault/consumer-token',
+              })}
+            />
+            <CopyBlock
+              label='Vault administrator: AppRoles (save the two policies above as issuer.hcl and consumer.hcl)'
+              text={buildVaultRoleCommands()}
+            />
+            <CopyBlock
+              label='On each agent host: Vault Agent folders and start (needs the Vault binary)'
+              text={buildVaultAgentHostSetup()}
+            />
             <Text fontSize='sm'>
-              2. Install the consumer agent on its own host with the same
-              installer. It needs its deploy folder and the right to reload the
-              server. The stock nginx unit does not test its configuration on
-              reload, so run the one-time nginx setup there as well.
+              2. Set up the consumer host. Install nginx and the Vault binary
+              first, then run the install command. Its --write-path makes the
+              installer create {CONSUMER_DEPLOY_PATH} owned by tokentimer-agent
+              with mode 0750. That folder is the only place the agent writes for
+              this rollout: fullchain.pem and privkey.pem (mode 0600, replaced
+              in place) and a .bak copy of the previous pair after each change.
+              The Vault CA file and the CA file for the check above only need to
+              be readable by tokentimer-agent.
             </Text>
             <CopyBlock
               label='Consumer install command'
               text={consumerInstall}
             />
+            <Text fontSize='sm'>
+              Then create a placeholder pair as the agent user, so nginx can
+              start its TLS listener before the first rollout. Do not create
+              these files as root: the agent reads the files it replaces, and a
+              root-owned placeholder makes the rollout fail with
+              material_install_failed. nginx reads the files as root, so it
+              needs nothing else.
+            </Text>
+            <CopyBlock
+              label='Placeholder certificate (consumer host, as the agent user)'
+              text={buildConsumerPlaceholderCommand({
+                host: probeHostFor(names) || undefined,
+              })}
+            />
+            <CopyBlock
+              label='nginx server block (consumer host)'
+              text={buildConsumerNginxServer({ names })}
+            />
+            <Text fontSize='xs' color={muted}>
+              The stock nginx unit does not test its configuration on reload, so
+              run the one-time setup below as well.
+            </Text>
             <CopyBlock
               label='One-time nginx setup (consumer host)'
               text={NGINX_RELOAD_DROPIN}
             />
+            <Text fontSize='xs' color={muted} data-testid='vault-dry-run-note'>
+              A signed dry run proves that an agent receives and verifies jobs.
+              Run it once for each agent before you set execution.dryRun to
+              false. A rollout itself has no dry run: the first one installs the
+              certificate for real, and a later rollout with verificationOnly
+              true only checks what is installed.
+            </Text>
+            <CopyBlock
+              label='Signed dry run (POST .../certops/jobs, once per agent)'
+              text={JSON.stringify(
+                buildDryRunJob({
+                  assignedAgentId: 'AGENT_ID_FROM_AGENTS',
+                  idempotencyKey: 'vault-dry-run-AGENT_ID',
+                }),
+                null,
+                2
+              )}
+              language='json'
+            />
+            <Box as='details' data-testid='vault-uncertain-note'>
+              <Box as='summary' fontSize='sm' cursor='pointer'>
+                If a rollout reports orphaned_unknown_effect or
+                material_binding_uncertain
+              </Box>
+              <VStack align='stretch' spacing={2} mt={2}>
+                <Text fontSize='xs' color={muted}>
+                  Before the consumer agent touches a file it records an
+                  uncertain marker for the binding in {AGENT_STATE_DIR}
+                  /material-bindings. It clears the marker only after the files
+                  are installed, nginx is reloaded and every probe serves the
+                  new certificate. If any of that fails (for example a file the
+                  agent cannot overwrite, or a CA file the check cannot read or
+                  does not trust, reported as
+                  material_service_verification_failed), the rollout ends as
+                  orphaned_unknown_effect and every later attempt for this
+                  binding fails with material_binding_uncertain until the marker
+                  is cleared.
+                </Text>
+                <Text fontSize='xs' color={muted}>
+                  Repair the cause on the host first. Then run this as the agent
+                  user. It installs and reloads nothing: it only checks that the
+                  installed certificate and key are the ones being rolled out
+                  and that every probe serves them, then clears the marker.
+                </Text>
+                <CopyBlock
+                  label='Clear the marker (consumer host)'
+                  text={buildReconcileCommand(bindingId)}
+                />
+                <Text fontSize='xs' color={muted}>
+                  Then retry the same consumer job (POST
+                  .../certops/distribution-jobs/JOB_ID/retry) and resume the
+                  rollout. If no file was replaced, the check reports
+                  material_reconciliation_mismatch and the marker stays: there
+                  is no other supported command, so prepare the folder as
+                  described above before the first rollout. Do not delete the
+                  files under material-bindings or material-locks to force a
+                  retry.
+                </Text>
+              </VStack>
+            </Box>
             <Text fontSize='sm'>
               3. Once both agents are registered, assign the consumer and
               request a rollout. Both are API calls too, and a rollout needs
@@ -508,7 +659,7 @@ export function VaultStep({ ctx }) {
               label={`PUT .../certops/distribution-groups/${form.groupId || 'GROUP_ID'}/consumers/${bindingId}`}
               text={JSON.stringify(
                 buildVaultConsumerAssignment({
-                  agentRowId: 'CONSUMER_AGENT_ID_FROM_AGENTS',
+                  agentRowId: consumerId || 'CONSUMER_AGENT_ID_FROM_AGENTS',
                 }),
                 null,
                 2

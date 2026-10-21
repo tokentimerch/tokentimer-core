@@ -62,9 +62,13 @@ const FLOW = 'mega';
 
 // Follow-ups are suggestions, never incomplete items, and never repeat what
 // the user just did.
-export function nextSteps(goalId) {
+export function nextSteps(goalId, certops) {
   const thresholds =
     'Adjust alert thresholds and the delivery window in workspace preferences.';
+  // A real order that finished means the staging run is already done.
+  const issued =
+    certops?.issueJob?.status === 'succeeded' &&
+    certops?.issueJob?.mode === 'real';
   switch (goalId) {
     case 'monitor_https':
     case 'track_asset':
@@ -92,9 +96,14 @@ export function nextSteps(goalId) {
       ];
     case 'certops_automate':
       return [
-        'Issue your first certificate with the staging CA, then switch to the production CA.',
+        issued
+          ? 'Add a real DNS provider for your own domain and switch to the production CA. The staging certificate is not trusted by browsers.'
+          : 'Issue your first certificate with the staging CA, then switch to the production CA.',
+        issued
+          ? 'Check renewals in the Certificates page: the issued certificate is listed there.'
+          : null,
         'Set up renewal-failure alerts for the contact group.',
-      ];
+      ].filter(Boolean);
     case 'certops_adcs':
       return [
         'Attach the profile to your certificate in Certificate Management and watch the first enrollment there.',
@@ -102,7 +111,9 @@ export function nextSteps(goalId) {
       ];
     case 'certops_vault':
       return [
-        'Run a verified rollout once your agents declare the distribution capabilities.',
+        certops?.distribution?.verified === true
+          ? 'Assign more consumers and request a rollout for each, or request a rollout with verificationOnly true to check for drift.'
+          : 'Run a verified rollout once your agents declare the distribution capabilities.',
       ];
     default:
       return [thresholds];
@@ -369,7 +380,7 @@ function DoneCard({ ctx }) {
             so alerts can be emailed.
           </Text>
         ) : null}
-        {nextSteps(ctx.session.intent?.goal).map(text => (
+        {nextSteps(ctx.session.intent?.goal, ctx.summary?.certops).map(text => (
           <Text key={text} fontSize='sm'>
             {text}
           </Text>

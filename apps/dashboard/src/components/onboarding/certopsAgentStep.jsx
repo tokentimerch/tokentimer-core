@@ -376,6 +376,12 @@ export function AgentStep({ ctx }) {
             {n}
           </Text>
         ))}
+        {os === 'linux' && ['automate', 'vault'].includes(saved.objective) ? (
+          <Text fontSize='xs' color={muted} data-testid='certbot-note'>
+            The agent places orders with /usr/bin/certbot on the issuing server,
+            so install it first (for example sudo apt install certbot).
+          </Text>
+        ) : null}
         {isLoopbackHttp(ctx.apiUrl) ? (
           <Text fontSize='xs' color={muted} data-testid='loopback-note'>
             This API address is localhost, so it only works when the agent runs

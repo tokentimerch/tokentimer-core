@@ -11,12 +11,16 @@ import {
 } from '@chakra-ui/react';
 import { DashboardActionButton } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
-import { createJob } from '../certops/certopsJobsApi.js';
+import { createJob, getJob } from '../certops/certopsJobsApi.js';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
+import { CopyBlock } from './blocks.jsx';
 import {
+  AGENT_KEYS_DIR,
   buildIssueJob,
+  buildServerSnippet,
   issueIdempotencyKey,
+  keyPathFor,
   RELOAD_SERVICES,
   STAGING_CA,
 } from './certopsConfig.js';
@@ -29,6 +33,23 @@ const ACTIVE = new Set([
   'claimed',
   'running',
 ]);
+
+export const NO_CLAIM_AFTER_MS = 3 * 60 * 1000;
+
+/**
+ * Said once a request has been queued for a while and no agent has claimed
+ * it. The API cannot cancel an approved request, so the text says that
+ * instead of offering a button that would do nothing.
+ */
+export function issueWaitNotice({ status, since, now = Date.now() }) {
+  if (status !== 'pending' || !since) return null;
+  const waited = now - Date.parse(since);
+  if (!(waited >= NO_CLAIM_AFTER_MS)) return null;
+  return (
+    'No agent has taken this request. Check that the agent is online and that its config lists the DNS provider (dnsProviders), the target names and the command profiles this request needs, then restart it. ' +
+    'This request cannot be cancelled from here and it keeps the certificate path reserved, so asking again is not possible until it ends. Once the agent declares what it needs, it takes this same request.'
+  );
+}
 
 /**
  * What the user should see for the issuance job, from server state only.
@@ -103,6 +124,28 @@ export default function IssueStep({ ctx }) {
   const jobReloadLabel = RELOAD_SERVICES[jobReloadService]?.label || '';
   const { refresh } = ctx;
 
+  // The summary has no queue time, so the job itself is read to know how
+  // long a request has been waiting for an agent.
+  const [queuedAt, setQueuedAt] = useState(null);
+  const pendingJobId = job?.status === 'pending' ? job.id : null;
+  useEffect(() => {
+    if (!pendingJobId) {
+      setQueuedAt(null);
+      return undefined;
+    }
+    let cancelled = false;
+    getJob(ctx.workspaceId, pendingJobId)
+      .then(res => {
+        const detail = res.job || res;
+        if (!cancelled)
+          setQueuedAt(detail.queuedAt || detail.createdAt || null);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingJobId, ctx.workspaceId]);
+  const waitNotice = issueWaitNotice({ status: job?.status, since: queuedAt });
   useEffect(() => {
     if (!view.active) return undefined;
     const t = setInterval(() => refresh(), 5000);
@@ -236,6 +279,12 @@ export default function IssueStep({ ctx }) {
             control plane cannot see that setting.
           </Text>
         ) : null}
+        {waitNotice ? (
+          <Alert status='warning' borderRadius='md' data-testid='issue-wait'>
+            <AlertIcon />
+            <AlertDescription fontSize='sm'>{waitNotice}</AlertDescription>
+          </Alert>
+        ) : null}
         {job?.errorCode === 'AGENT_RESULT_BLOCKED' ? (
           <Text fontSize='sm'>
             The agent refused the order. Set <code>execution.dryRun</code> to{' '}
@@ -291,11 +340,31 @@ export default function IssueStep({ ctx }) {
               ? `After writing the certificate, the agent checks ${reloadLabel} and then reloads it with systemctl. The configuration test happens in that check (Apache, HAProxy) or in the unit's own reload (nginx, Apache, HAProxy), so a broken configuration is not loaded.`
               : 'The certificate is written to the path above. Nothing is reloaded; you can choose a web server to reload in the configuration step.'}
         </Text>
+        {!windows && keyPathFor(saved.certPath) ? (
+          <>
+            <Text fontSize='sm' data-testid='key-note'>
+              The private key is written next to the certificate, to{' '}
+              <code>{keyPathFor(saved.certPath)}</code> (mode 0600, owned by the
+              agent user tokentimer-agent). A copy also stays in the agent key
+              store under <code>{AGENT_KEYS_DIR}</code>. A web server reads its
+              certificate files as root when it starts or reloads, so it can
+              read the key. Leave the owner and mode alone, or the next renewal
+              cannot replace the file.
+            </Text>
+            <CopyBlock
+              label='Point your web server at these files'
+              text={buildServerSnippet({
+                reloadService: saved.reloadService,
+                certPath: saved.certPath,
+              })}
+            />
+          </>
+        ) : null}
         {view.done ? (
           <Text fontSize='sm'>
             {windows
               ? `The certificate was issued and bound to the HTTPS binding ${saved.iisSite || 'Default Web Site'}.`
-              : `The certificate was issued and written to ${saved.certPath}.`}{' '}
+              : `The certificate was issued and written to ${saved.certPath}, with its key in ${keyPathFor(saved.certPath)}.`}{' '}
             Installing it into a web server and renewal are separate steps.
           </Text>
         ) : null}

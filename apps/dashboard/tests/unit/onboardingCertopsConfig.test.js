@@ -358,7 +358,9 @@ describe('jobs', () => {
     expect(job.assignedAgentId).toBe('row-1');
     expect(job.payload.verifyPort).toBe(443);
     expect(JSON.stringify(job)).not.toMatch(SENSITIVE_PATTERN);
-    expect(JSON.stringify(job)).not.toMatch(/keyPath|privateKey/);
+    expect(JSON.stringify(job)).not.toMatch(/privateKey|BEGIN/);
+    // Only a destination path next to the certificate, never key content.
+    expect(job.payload.keyPath).toBe('/etc/ssl/example/example.com.pem.key');
   });
 
   it('builds a Windows IIS issue job with a store and binding, never a path', () => {

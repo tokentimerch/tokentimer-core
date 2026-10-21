@@ -600,7 +600,9 @@ export function ConfigStep({ ctx }) {
                   user. The installer command in the next step grants only that
                   reload for the server you choose. It is allowed to run exactly
                   those two commands, nothing else. Your server must already be
-                  set up to read the certificate path above.
+                  set up to read the certificate path above and the key the
+                  agent writes next to it (the same path with .key added). The
+                  request step shows the exact lines for your server.
                 </Text>
                 {form.reloadService === 'nginx' ? (
                   <VStack align='stretch' spacing={2} mt={1}>

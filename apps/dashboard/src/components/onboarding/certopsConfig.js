@@ -18,6 +18,27 @@ const LETS_ENCRYPT_PRODUCTION =
 // it is the one writable location of the hardened service.
 export const AGENT_STATE_DIR = '/opt/tokentimer-agent/state';
 export const AGENT_KEYS_DIR = `${AGENT_STATE_DIR}/keys`;
+export const AGENT_USER = 'tokentimer-agent';
+
+// Where a Vault consumer installs the shared certificate and key. The install
+// command creates it with --write-path, owned by the agent user.
+export const CONSUMER_DEPLOY_PATH = '/etc/nginx/tokentimer';
+
+/**
+ * Where a Linux order leaves the private key: a file next to the certificate
+ * with .key appended. HAProxy loads exactly that name on its own when the
+ * certificate file holds no key, and nginx and Apache name it explicitly.
+ */
+export function keyPathFor(certPath) {
+  const text = String(certPath || '');
+  return text.startsWith('/') ? `${text}.key` : '';
+}
+
+/** Host name the consumer's own served-certificate check asks for. */
+export function probeHostFor(names) {
+  const first = String((names || [])[0] || '');
+  return first.replace(/^\*\./, 'www.');
+}
 
 export const DNS_PROVIDERS = {
   cloudflare: {
@@ -202,7 +223,7 @@ export function certDirectoryFor(certPath) {
 export const REGISTRATION_NOTES = [
   'The installer asks for the bootstrap token with a hidden prompt. Do not put it on the command line.',
   'Run it once with --dry-run first to see what it will change.',
-  'Every --write-path directory must already exist, or the service fails to start.',
+  'The installer creates every --write-path directory and hands it to the agent user (mode 0750). Files you place there yourself must belong to that user too, or the agent cannot replace them.',
 ];
 
 // --write-path only applies to the Linux service sandbox. The Windows
@@ -518,6 +539,9 @@ export function buildIssueJob({
     dnsZone: zone,
     dnsProvider,
     certPath,
+    // The key is installed next to the certificate so the web server can be
+    // pointed at it. Without this it stays in the agent's private key store.
+    ...(keyPathFor(certPath) ? { keyPath: keyPathFor(certPath) } : {}),
   };
   if (verifyHost) {
     payload.verifyHost = verifyHost;
@@ -537,6 +561,116 @@ export function buildIssueJob({
     idempotencyKey,
     ...(assignedAgentId ? { assignedAgentId } : {}),
   };
+}
+
+/**
+ * The lines that point a web server at the files a Linux order writes. The
+ * key is a separate 0600 file owned by the agent user: nginx, Apache and
+ * HAProxy read their key as root when they start or reload, so nothing else
+ * needs access, and the owner and mode should be left alone so the next
+ * renewal can replace the file.
+ */
+export function buildServerSnippet({ reloadService = '', certPath }) {
+  const key = keyPathFor(certPath);
+  if (!key) return '';
+  if (reloadService === 'apache') {
+    return [
+      `SSLCertificateFile ${certPath}`,
+      `SSLCertificateKeyFile ${key}`,
+    ].join('\n');
+  }
+  if (reloadService === 'haproxy') {
+    // HAProxy loads <crt>.key by itself when the certificate file holds no key.
+    return `bind :443 ssl crt ${certPath}\n# HAProxy reads the key from ${key} next to it.`;
+  }
+  return [
+    `ssl_certificate     ${certPath};`,
+    `ssl_certificate_key ${key};`,
+  ].join('\n');
+}
+
+/**
+ * Placeholder pair that lets nginx start its TLS listener before the first
+ * rollout. It must be created as the agent user: the agent reads the existing
+ * files before it replaces them, and files owned by root with mode 0600 make
+ * the first rollout fail with material_install_failed.
+ */
+export function buildConsumerPlaceholderCommand({
+  deployPath = CONSUMER_DEPLOY_PATH,
+  host = 'placeholder.invalid',
+} = {}) {
+  return [
+    `sudo -u ${AGENT_USER} openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 1 \\`,
+    `  -subj ${shQuote(`/CN=${host}`)} \\`,
+    `  -keyout ${deployPath}/privkey.pem -out ${deployPath}/fullchain.pem`,
+  ].join('\n');
+}
+
+/** nginx server block for the consumer, using the files the agent replaces. */
+export function buildConsumerNginxServer({
+  names,
+  deployPath = CONSUMER_DEPLOY_PATH,
+}) {
+  const hosts = (names || []).filter(Boolean).join(' ') || 'example.com';
+  return [
+    "sudo tee /etc/nginx/conf.d/tokentimer.conf <<'EOF'",
+    'server {',
+    '    listen 443 ssl;',
+    `    server_name ${hosts};`,
+    `    ssl_certificate     ${deployPath}/fullchain.pem;`,
+    `    ssl_certificate_key ${deployPath}/privkey.pem;`,
+    '    location / { return 200 "ok\\n"; }',
+    '}',
+    'EOF',
+    'sudo nginx -t && sudo systemctl reload nginx',
+  ].join('\n');
+}
+
+/**
+ * Local recovery after a consumer rollout left an uncertain marker. The
+ * command is the agent's own certops-reconcile-binding, run as the agent user
+ * with its normal configuration directory.
+ */
+export function buildReconcileCommand(bindingId) {
+  return [
+    `sudo -u ${AGENT_USER} env TOKENTIMER_AGENT_CONFIG_DIR=${AGENT_STATE_DIR} \\`,
+    `  node /opt/tokentimer-agent/app/bin/reconcile-material-binding.js ${bindingId || 'BINDING_ID'}`,
+  ].join('\n');
+}
+
+/**
+ * Vault administrator commands for the two AppRoles. The policies are the
+ * ones printed above, saved as issuer.hcl and consumer.hcl.
+ */
+export function buildVaultRoleCommands() {
+  return [
+    '# Needs the Vault CLI and an administrative login (VAULT_ADDR, VAULT_CACERT).',
+    'vault auth enable approle   # skip when AppRole is already enabled',
+    'vault policy write tt-issuer issuer.hcl',
+    'vault policy write tt-consumer consumer.hcl',
+    'for role in tt-issuer tt-consumer; do',
+    '  vault write auth/approle/role/$role token_policies=$role \\',
+    '    token_period=20m secret_id_ttl=24h',
+    'done',
+    '# Per host: print the two values to place in role-id and secret-id.',
+    'vault read -field=role_id auth/approle/role/tt-issuer/role-id',
+    'vault write -f -field=secret_id auth/approle/role/tt-issuer/secret-id',
+    '# Repeat with tt-consumer for the consumer host.',
+  ].join('\n');
+}
+
+/** Host side of Vault Agent: protected directories and how to start it. */
+export function buildVaultAgentHostSetup({
+  configPath = '/etc/tokentimer-vault-agent/agent.hcl',
+} = {}) {
+  return [
+    `sudo install -d -o ${AGENT_USER} -g ${AGENT_USER} -m 0700 /etc/tokentimer-vault-agent /run/tokentimer-vault`,
+    '# As the agent user, save role-id and secret-id in /etc/tokentimer-vault-agent (mode 0600)',
+    `# and the Vault Agent config above as ${configPath}. Then:`,
+    `sudo -u ${AGENT_USER} HOME=${AGENT_STATE_DIR} vault agent -config=${configPath}`,
+    '# Run it under your service manager. /run is emptied at reboot, so recreate',
+    '# /run/tokentimer-vault with the same owner and mode before it starts.',
+  ].join('\n');
 }
 
 /**
@@ -738,7 +872,7 @@ export function buildVaultConfigs({
   issuerAgentId,
   consumerAgentId,
   consumerBindingId,
-  deployPath = '/etc/nginx/tokentimer',
+  deployPath = CONSUMER_DEPLOY_PATH,
   caFile = '',
   probeTrustCaFile = '',
 }) {
@@ -868,7 +1002,7 @@ export function buildVaultConfigs({
           {
             dialAddress: '127.0.0.1',
             port: 443,
-            sni: names[0].replace(/^\*\./, 'www.'),
+            sni: probeHostFor(names),
             // Needed when the certificate comes from a private CA: the
             // "trust" check validates the chain against this file.
             ...(probeTrustCaFile ? { trustCaFile: probeTrustCaFile } : {}),
