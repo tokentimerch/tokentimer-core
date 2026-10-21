@@ -120,6 +120,19 @@ describe("mapAdcsDisposition", () => {
     assert.equal(m.outcome, "not_submitted");
   });
 
+  it("maps a DCOM activation failure without artefacts to not_submitted on submit", () => {
+    const base = {
+      phase: "submit",
+      responsePresent: false,
+      certificatePresent: false,
+      chainPresent: false,
+      exitCode: -2147467235,
+      cmc: null,
+    };
+    assert.equal(mapAdcsDisposition(base).outcome, "not_submitted");
+    assert.equal(mapAdcsDisposition({ ...base, responsePresent: true }).outcome, "uncertain");
+  });
+
   it("maps RPC unavailable with a chain artefact to uncertain", () => {
     const m = mapAdcsDisposition({
       phase: "submit",

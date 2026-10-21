@@ -434,6 +434,7 @@ describe("AD CS enrollment result contract", () => {
       result({ state: "denied", requestId: 4242, caHresult: "0x80094012" }),
       result({ state: "submitting", errorCode: "ADCS_CA_UNREACHABLE" }),
       result({ state: "submission_uncertain", errorCode: "ADCS_DISPOSITION_UNKNOWN" }),
+      result({ state: "pending_issuance", requestId: 4242, errorCode: "ADCS_DISPOSITION_UNKNOWN" }),
       result({ state: "refused", errorCode: "ADCS_TEMPLATE_UNSAFE" }),
       result({ state: "refused", errorCode: "ADCS_CA_CONFIG_UNSAFE" }),
       result({ state: "refused", errorCode: "ADCS_CA_KEY_UNPINNED" }),
@@ -462,7 +463,8 @@ describe("AD CS enrollment result contract", () => {
     assert.equal(check(result({ state: "submitting", errorCode: "ADCS_TEMPLATE_UNSAFE" })), false);
     assert.equal(check(result({ state: "refused", errorCode: "ADCS_CERTIFICATE_INVALID" })), false);
     assert.equal(check(result({ state: "prepared", errorCode: "ADCS_CA_UNREACHABLE" })), false);
-    assert.equal(check(result({ state: "pending_issuance", requestId: 1, errorCode: "ADCS_DISPOSITION_UNKNOWN" })), false);
+    assert.equal(check(result({ state: "installed", errorCode: "ADCS_DISPOSITION_UNKNOWN" })), false);
+    assert.equal(check(result({ state: "pending_issuance", errorCode: "ADCS_DISPOSITION_UNKNOWN" })), false);
     assert.equal(check(result({ errorCode: "ADCS_SOMETHING_ELSE" })), false);
   });
 

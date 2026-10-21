@@ -2070,7 +2070,14 @@ function createAdcsWindowsIisExecutors(deps) {
       }
 
       // Terminal receipts: return recorded outcome without repeating CA contact.
-      if (decoded.reconcileRequestId !== undefined &&
+      // A pending journal already owns its RequestId. When the control plane
+      // gave up on it (bounded retrieval), the operator re-proposes that same id
+      // to resume retrieval; any other id would contradict the journal.
+      const reconcilesKnownPending =
+        decoded.reconcileRequestId !== undefined &&
+        ["pending", "pending_issuance"].includes(journal.state) &&
+        journal.requestId === decoded.reconcileRequestId;
+      if (decoded.reconcileRequestId !== undefined && !reconcilesKnownPending &&
           (!['submission_uncertain', 'submitting'].includes(journal.state) || journal.attempt > decoded.attempt)) {
         return { status: "rejected", rejectionReason: "invalid_reconcile_state", keyRotated: null,
           errorMessage: "Proposed RequestId requires a current uncertain submission journal" };

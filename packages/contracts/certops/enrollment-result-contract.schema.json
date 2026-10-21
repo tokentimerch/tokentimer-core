@@ -138,7 +138,10 @@
         "properties": { "errorCode": { "const": "ADCS_DISPOSITION_UNKNOWN" } }
       },
       "then": {
-        "properties": { "state": { "const": "submission_uncertain" } }
+        "description": "An unclassified retrieve of a known RequestId keeps the enrollment pending_issuance (requestId required there); an unclassified submit is submission_uncertain.",
+        "properties": {
+          "state": { "enum": ["submission_uncertain", "pending_issuance"] }
+        }
       }
     }
   ]
