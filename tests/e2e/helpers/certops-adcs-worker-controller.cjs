@@ -65,6 +65,9 @@ function save() {
     target = path.join(directory, "observed.json");
   if (fs.existsSync(target))
     assert.equal(fs.lstatSync(target).isSymbolicLink(), false);
+  // A failed rename on Windows (target briefly held by the polling reader)
+  // used to leave this tmp behind and make every later save fail on "wx".
+  fs.rmSync(temporary, { force: true });
   fs.writeFileSync(
     temporary,
     JSON.stringify({
@@ -75,7 +78,18 @@ function save() {
     }),
     { flag: "wx", mode: 0o600 },
   );
-  fs.renameSync(temporary, target);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fs.renameSync(temporary, target);
+      return;
+    } catch (error) {
+      if (attempt >= 40 || !["EPERM", "EBUSY", "EACCES"].includes(error.code)) {
+        fs.rmSync(temporary, { force: true });
+        throw error;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
 }
 function data(name, chunk) {
   try {
