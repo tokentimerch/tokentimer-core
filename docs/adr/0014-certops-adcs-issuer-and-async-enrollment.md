@@ -6,6 +6,9 @@
 kind before every case in "Release gate" has passing tests and real-host
 evidence.
 
+Release gate status: passed for 0.18.0. `adcs-enroll-v1` is listed in the
+shipped qualified capabilities.
+
 History: proposed on 2026-10-08 with the architecture approved for a Windows
 real-host proof of concept, then amended the same day with its findings and
 accepted after review of the amendment. The findings changed decisions 5 to
