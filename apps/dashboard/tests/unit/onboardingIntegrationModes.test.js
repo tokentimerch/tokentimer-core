@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  MODE_COPY,
   defaultMode,
   describeSync,
   diffImport,
@@ -48,10 +49,17 @@ describe('providerModes', () => {
 });
 
 describe('defaultMode', () => {
-  it('prefers sync only when it is usable', () => {
-    expect(defaultMode({ once: {}, sync: { available: true } })).toBe('sync');
+  it('never preselects the mode that stores a token', () => {
+    expect(defaultMode({ once: {}, sync: { available: true } })).toBe('once');
     expect(defaultMode({ once: {}, sync: { available: false } })).toBe('once');
     expect(defaultMode({ once: {}, sync: null })).toBe('once');
+  });
+
+  it('says plainly that Keep in sync stores the token', () => {
+    expect(MODE_COPY.sync.needs).toMatch(
+      /Keep in sync saves your token on this server \(encrypted\)/
+    );
+    expect(MODE_COPY.once.summary).toMatch(/no credentials are saved/);
   });
 });
 

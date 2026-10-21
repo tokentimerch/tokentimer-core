@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { Text, VStack } from '@chakra-ui/react';
+import { Box, Code, Text, VStack } from '@chakra-ui/react';
 import {
   DashboardActionButton,
   DashboardErrorAlert,
@@ -89,7 +89,12 @@ function ImportOutcome({ outcome }) {
 // The file goal stays on the file source; other sources belong to other goals.
 const FILE_SOURCES = ['file'];
 
-export function FileImportStep({ ctx }) {
+// The repo ships no sample file, so the header row is shown inline.
+const FILE_EXAMPLE =
+  'name,category,type,expiresAt,location\nProduction API key,key_secret,api_key,2030-01-31,vault/prod';
+
+export function FileImportStep({ ctx, reviewing = false }) {
+  const { muted } = useDashboardTheme();
   const host = useImportHost(ctx, 'file_import', null);
   return (
     <StepFrame
@@ -102,12 +107,14 @@ export function FileImportStep({ ctx }) {
       ]}
       actions={
         <>
-          <DashboardActionButton
-            variant='outline'
-            onClick={() => ctx.skip('file_import')}
-          >
-            Skip for now
-          </DashboardActionButton>
+          {reviewing ? null : (
+            <DashboardActionButton
+              variant='outline'
+              onClick={() => ctx.skip('file_import')}
+            >
+              Skip for now
+            </DashboardActionButton>
+          )}
           <PrimaryButton onClick={host.start}>Choose a file</PrimaryButton>
         </>
       }
@@ -117,11 +124,29 @@ export function FileImportStep({ ctx }) {
           <DashboardErrorAlert>{host.error}</DashboardErrorAlert>
         ) : null}
         <Text fontSize='sm'>
-          Rows without a name, category, type and expiry date are left out of
-          the preview, so compare the preview count with your file. Importing
-          the same file again updates existing rows instead of duplicating them
-          when a location is present.
+          Required fields per row: name, category, type, expiresAt. Dates look
+          like 2030-01-31. Rows missing any of them are left out of the preview,
+          so compare the preview count with your file. Importing the same file
+          again updates existing rows instead of duplicating them when a
+          location is present.
         </Text>
+        <Box>
+          <Text fontSize='xs' color={muted} mb={1}>
+            Example CSV (header row, then one asset). Category is cert,
+            key_secret, license or general.
+          </Text>
+          <Code
+            display='block'
+            whiteSpace='pre'
+            overflowX='auto'
+            p={2}
+            borderRadius='md'
+            fontSize='xs'
+            data-testid='csv-example'
+          >
+            {FILE_EXAMPLE}
+          </Code>
+        </Box>
         <ImportOutcome outcome={host.outcome} />
       </VStack>
       <ImportTokensModal

@@ -232,7 +232,7 @@ function Outcome({ result, mode, watching, muted }) {
   );
 }
 
-export function IntegrationStep({ ctx }) {
+export function IntegrationStep({ ctx, reviewing = false }) {
   const { muted } = useDashboardTheme();
   const [provider, setProvider] = useState(ctx.session.intent?.provider || '');
   const [mode, setMode] = useState('');
@@ -240,7 +240,7 @@ export function IntegrationStep({ ctx }) {
 
   const modes = provider ? providerModes(ctx.capabilities, provider) : null;
   useEffect(() => {
-    if (modes && !mode) setMode(defaultMode(modes));
+    if (modes && !mode) setMode(defaultMode());
   }, [modes, mode]);
 
   const choose = id => {
@@ -275,12 +275,14 @@ export function IntegrationStep({ ctx }) {
       ]}
       actions={
         <>
-          <DashboardActionButton
-            variant='outline'
-            onClick={() => ctx.skip('integration')}
-          >
-            Skip for now
-          </DashboardActionButton>
+          {reviewing ? null : (
+            <DashboardActionButton
+              variant='outline'
+              onClick={() => ctx.skip('integration')}
+            >
+              Skip for now
+            </DashboardActionButton>
+          )}
           <PrimaryButton onClick={begin} isDisabled={!provider || !usable}>
             {mode === 'sync' ? 'Connect and keep in sync' : 'Scan and import'}
           </PrimaryButton>

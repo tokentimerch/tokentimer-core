@@ -45,13 +45,15 @@ export const MODE_COPY = {
     summary:
       'Save the connection and rescan on a schedule. New items are added, changed ones updated, and you can choose to remove items that disappeared.',
     needs:
-      'A token with read access, stored encrypted so scheduled scans can run.',
+      'A token with read access. Keep in sync saves your token on this server (encrypted) so scheduled scans can run.',
   },
 };
 
-/** Which mode a provider should be offered first. */
-export function defaultMode(modes) {
-  if (modes.sync?.available) return 'sync';
+/**
+ * Which mode a provider should be offered first. Always "once": nothing is
+ * stored, and saving a token on the server needs an explicit choice.
+ */
+export function defaultMode() {
   return 'once';
 }
 

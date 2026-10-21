@@ -2538,7 +2538,7 @@ function ImportTokensModalContent({
         <DashboardModalFrame maxW='960px'>
           <ModalHeader {...headerProps}>
             <DashboardModalTitle color={modalTokens.text}>
-              Import tokens
+              {hideDocs ? 'Import assets' : 'Import tokens'}
             </DashboardModalTitle>
             <DashboardModalDescription>
               Import assets from files or connected infrastructure providers.
