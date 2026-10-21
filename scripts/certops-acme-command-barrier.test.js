@@ -15,7 +15,9 @@ function fixture() {
     tick,
     expire;
   const root = path.resolve(".build", "barrier-unit"),
-    arm = path.join(root, "armed.json");
+    arm = path.join(root, "armed.json"),
+    receipt = path.join(root, "process.json"),
+    receipts = new Map();
   const fakeFs = {
     existsSync: (file) => file === arm && armed,
     lstatSync: () => ({ isFile: () => true, isSymbolicLink: () => false }),
@@ -32,7 +34,28 @@ function fixture() {
           "-" +
           "a".repeat(12),
       }),
-    writeFileSync: () => events.push("receipt"),
+    writeFileSync: (file, bytes, options) => {
+      assert.equal(path.dirname(file), root);
+      assert.ok(file.startsWith(receipt + ".") && file.endsWith(".tmp"));
+      assert.deepEqual(Object.keys(options).sort(), ["flag", "mode"]);
+      assert.equal(options.flag, "wx");
+      assert.equal(options.mode, 0o600);
+      assert.equal(receipts.has(file), false);
+      receipts.set(file, bytes);
+      events.push("receipt");
+    },
+    linkSync: (temporary, destination) => {
+      assert.equal(destination, receipt);
+      assert.equal(receipts.has(temporary), true);
+      assert.equal(receipts.has(destination), false);
+      receipts.set(destination, receipts.get(temporary));
+      events.push("publishReceipt");
+    },
+    unlinkSync: (temporary) => {
+      assert.notEqual(temporary, receipt);
+      assert.equal(receipts.delete(temporary), true);
+      events.push("removeTemporaryReceipt");
+    },
   };
   const process = {
     argv: ["node", "wrapper", root, "certbot"],
@@ -55,17 +78,18 @@ function fixture() {
     ),
     {
       process,
-      require: (name) =>
-        name === "node:fs"
-          ? fakeFs
-          : name === "node:path"
-            ? path
-            : {
-                spawn: () => {
-                  events.push("spawn");
-                  return child;
-                },
-              },
+      require: (name) => {
+        if (name === "node:fs") return fakeFs;
+        if (name === "node:path") return path;
+        if (name === "node:crypto") return require("node:crypto");
+        if (name === "node:child_process") return {
+          spawn: () => {
+            events.push("spawn");
+            return child;
+          },
+        };
+        assert.fail("Unexpected wrapper dependency: " + name);
+      },
       setInterval: (fn) => {
         tick = fn;
         return "interval";
@@ -84,6 +108,8 @@ function fixture() {
   return {
     events,
     signals,
+    receipt: JSON.parse(receipts.get(receipt)),
+    receiptFiles: [...receipts.keys()],
     expire,
     release: () => {
       armed = false;
@@ -93,6 +119,14 @@ function fixture() {
 }
 test("actual wrapper disarms hold deadline BEFORE starting a legitimate native client", () => {
   const f = fixture();
+  assert.deepEqual(f.events.slice(0, 3), [
+    "receipt", "publishReceipt", "removeTemporaryReceipt",
+  ]);
+  assert.equal(f.receiptFiles.length, 1);
+  assert.ok(f.receiptFiles[0].endsWith(path.sep + "process.json"));
+  assert.equal(f.receipt.pid, 42);
+  assert.equal(f.receipt.parentPid, 41);
+  assert.equal(f.receipt.binary, "certbot");
   assert.equal(f.events.includes("spawn"), false);
   f.release();
   assert.ok(f.events.indexOf("clearDeadline") < f.events.indexOf("spawn"));
