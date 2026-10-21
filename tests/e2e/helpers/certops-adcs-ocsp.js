@@ -50,8 +50,16 @@ const execute = promisify(execFile);
 const active = new Map();
 const hash = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
 // The sanitized report keeps only an error code, so name which poll timed out.
-const tagTimeout = (error, code) =>
-  error && !error.code ? Object.assign(error, { code }) : error;
+// Other errors (bad signature, HTTP fault) keep their own class and get a
+// distinct code so they are not mistaken for a plain timeout.
+const DEADLINE_MESSAGE = "Domain-backed AD CS journey exceeded its deadline";
+const tagTimeout = (error, code) => {
+  if (!error || error.code) return error;
+  const timedOut = error.message === DEADLINE_MESSAGE;
+  return Object.assign(error, {
+    code: timedOut ? code : code.replace(/_TIMEOUT.*$/, "_FAULT"),
+  });
+};
 const fingerprint = (certificate) =>
   certificate.fingerprint256.replace(/:/g, "").toLowerCase();
 const q = (text) => text.replace(/'/g, "''");
@@ -958,6 +966,7 @@ async function qualifyOcsp(c) {
                   ...payload,
                   crlDerBase64: verifiedCrl.toString("base64"),
                 };
+                let lastSeen;
                 return await c
                   .until(async () => {
                     const observed = await signedStatus(
@@ -965,10 +974,17 @@ async function qualifyOcsp(c) {
                       false,
                       null,
                     );
+                    lastSeen = observed;
                     return observed.status === "revoked" ? observed : null;
                   }, 60000)
                   .catch((error) => {
-                    throw tagTimeout(error, "CERTOPS_OCSP_REVOKED_SIGNED_TIMEOUT");
+                    throw tagTimeout(
+                      error,
+                      historicalRevoked.revokedTimeoutCode(
+                        lastSeen,
+                        responseDigests,
+                      ),
+                    );
                   });
               },
               probeRevoked: async (certificate) => {
@@ -987,7 +1003,10 @@ async function qualifyOcsp(c) {
                     return null;
                   }, 60000)
                   .catch((error) => {
-                    throw tagTimeout(error, "CERTOPS_OCSP_REVOKED_NATIVE_TIMEOUT");
+                    throw tagTimeout(
+                      error,
+                      "CERTOPS_OCSP_REVOKED_NATIVE_TIMEOUT",
+                    );
                   });
               },
             });
@@ -1039,10 +1058,7 @@ async function qualifyOcsp(c) {
             proofContract.FALSE_FLAGS.map((flag) => [flag, false]),
           ),
         });
-        assert.ok(
-          revokedResult,
-          "Historical revoked journey did not complete",
-        );
+        assert.ok(revokedResult, "Historical revoked journey did not complete");
         gate.report.nativeOcspRevoked = historicalRevoked.verifyCrossProof(
           {
             ...revokedResult.facts,
