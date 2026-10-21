@@ -25,5 +25,6 @@ export function docUrl(key, baseUrl) {
   const { edition, base } = editionOf(baseUrl);
   const target = edition === 'cloud' && 'cloud' in entry ? entry.cloud : entry;
   if (!target) return null;
+  if (target.url) return target.url;
   return `${base}${target.path}${target.anchor ? `#${target.anchor}` : ''}`;
 }

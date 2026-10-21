@@ -17,6 +17,14 @@ describe("onboarding doc link registry", () => {
     for (const [key, entry] of entries) {
       for (const variant of [entry, entry.cloud].filter((v) => v !== undefined)) {
         if (variant === null) continue;
+        if (variant.url) {
+          assert.match(
+            variant.url,
+            /^https:\/\/github\.com\/tokentimerch\/tokentimer-core\/blob\/main\/docs\/[A-Za-z0-9/._-]+\.md$/,
+            `${key} url`,
+          );
+          continue;
+        }
         assert.match(variant.path, /^\/[a-z0-9/-]+$/, `${key} path`);
         assert.match(variant.anchor, /^[a-z0-9-]+$/, `${key} anchor`);
       }
@@ -68,6 +76,19 @@ describe("onboarding doc link validator", () => {
     assert.match(problems.join("\n"), /moved \(selfHosted\): #renamed/);
     assert.match(problems.join("\n"), /moved \(cloud\): #renamed/);
     assert.match(problems.join("\n"), /cloudOnlyBroken \(cloud\): #bad/);
+  });
+
+  it("does not look up absolute core-docs links in the docs tree", () => {
+    const entries = [
+      [
+        "v",
+        {
+          url: "https://github.com/tokentimerch/tokentimer-core/blob/main/docs/x.md",
+          cloud: { path: "/alerts", anchor: "thresholds" },
+        },
+      ],
+    ];
+    assert.deepEqual(validateRegistry(entries, root), []);
   });
 
   it("matches the docs slug rule", () => {

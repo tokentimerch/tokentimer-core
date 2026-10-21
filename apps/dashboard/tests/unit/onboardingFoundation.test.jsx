@@ -163,6 +163,38 @@ describe('docUrl', () => {
     expect(docUrl('nope', 'https://tokentimer.ch/docs/cloud')).toBeNull();
     expect(docUrl('alerts.thresholds', undefined)).toBeNull();
   });
+
+  it('sends self-hosted Vault readers to the public core docs, keeps cloud', () => {
+    const github =
+      'https://github.com/tokentimerch/tokentimer-core/blob/main/docs/certops/';
+    for (const base of [
+      'https://tokentimer.ch/docs/self-hosted',
+      'https://tokentimer.ch/docs/enterprise',
+    ]) {
+      expect(docUrl('certops.vault', base)).toBe(
+        `${github}wildcard-vault-operations.md`
+      );
+      expect(docUrl('certops.vaultAuth', base)).toBe(
+        `${github}vault-agent-authentication.md`
+      );
+    }
+    expect(docUrl('certops.vault', 'https://tokentimer.ch/docs/cloud')).toBe(
+      'https://tokentimer.ch/docs/cloud/runbooks/certops-shared-certificate-distribution#setup'
+    );
+  });
+
+  it('keeps one permissions page per integration provider', async () => {
+    const { docKeys } =
+      await import('../../src/components/onboarding/docLinks.js');
+    const { INTEGRATIONS } =
+      await import('../../src/components/onboarding/modules.js');
+    // The integration step builds these keys from the provider id.
+    for (const id of Object.keys(INTEGRATIONS)) {
+      expect(docKeys(), id).toContain(`integrations.${id}`);
+    }
+    expect(docKeys()).not.toContain('monitoring.health');
+    expect(docKeys()).not.toContain('alerts.controlCenter');
+  });
 });
 
 describe('tourStorage', () => {

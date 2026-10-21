@@ -66,6 +66,8 @@ function validateRegistry(entries, docsRoot) {
       variants.push(["cloud", entry.cloud === undefined ? entry : entry.cloud]);
     }
     for (const [edition, variant] of variants) {
+      // Absolute links to the public core docs cannot be checked here.
+      if (variant.url) continue;
       const text = readPage(docsRoot, EDITION_DIRS[edition], variant.path);
       if (text === null) {
         problems.push(`${key} (${edition}): page ${variant.path} not found`);

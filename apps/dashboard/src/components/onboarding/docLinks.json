@@ -1,5 +1,5 @@
 {
-  "_comment": "Every entry is validated against the docs sources by tests/unit/onboarding-doc-links.test.js (set TT_DOCS_ROOT to tokentimer-cloud/apps/docs). A variant of null means the page does not exist in that edition and the link is hidden.",
+  "_comment": "Every entry is validated against the docs sources by tests/unit/onboarding-doc-links.test.js (set TT_DOCS_ROOT to tokentimer-cloud/apps/docs). A variant of null means the page does not exist in that edition and the link is hidden. A url entry is an absolute link to the public core docs, used where an edition has no page yet.",
   "tokens.fields": {
     "path": "/tokens",
     "anchor": "fields"
@@ -36,10 +36,6 @@
     "path": "/monitoring/endpoint-monitoring",
     "anchor": "ssl-tokens"
   },
-  "monitoring.health": {
-    "path": "/monitoring/endpoint-monitoring",
-    "anchor": "health"
-  },
   "monitoring.network": {
     "path": "/monitoring/endpoint-monitoring",
     "anchor": "network"
@@ -51,10 +47,6 @@
   "alerts.thresholds": {
     "path": "/alerts",
     "anchor": "thresholds"
-  },
-  "alerts.controlCenter": {
-    "path": "/alerts/delivery",
-    "anchor": "control-center"
   },
   "alerts.troubleshooting": {
     "path": "/alerts/delivery",
@@ -127,6 +119,10 @@
     "path": "/runbooks/certops-agent-install",
     "anchor": "install"
   },
+  "certops.agentPackage": {
+    "path": "/runbooks/certops-agent-install",
+    "anchor": "get-package"
+  },
   "certops.installWindows": {
     "path": "/runbooks/certops-agent-install-windows",
     "anchor": "windows-install"
@@ -164,16 +160,14 @@
     "anchor": "reporting"
   },
   "certops.vault": {
-    "path": "/runbooks/certops-troubleshoot-policy-and-verify",
-    "anchor": "local-policy",
+    "url": "https://github.com/tokentimerch/tokentimer-core/blob/main/docs/certops/wildcard-vault-operations.md",
     "cloud": {
       "path": "/runbooks/certops-shared-certificate-distribution",
       "anchor": "setup"
     }
   },
   "certops.vaultAuth": {
-    "path": "/runbooks/certops-troubleshoot-policy-and-verify",
-    "anchor": "local-policy",
+    "url": "https://github.com/tokentimerch/tokentimer-core/blob/main/docs/certops/vault-agent-authentication.md",
     "cloud": {
       "path": "/runbooks/certops-vault-agent-authentication",
       "anchor": "1-create-narrowly-scoped-roles-as-a-vault-administrator"
