@@ -431,6 +431,140 @@ describe('CertificateDetailsModal', () => {
     expect(screen.queryByText('Technical details')).not.toBeInTheDocument();
   });
 
+  it('places the advanced certificate diagnostics inside Certificate operations', () => {
+    renderModal();
+
+    const operations = screen
+      .getByRole('heading', { name: 'Certificate operations' })
+      .closest('section');
+    const diagnostics = screen.getByTestId('certificate-diagnostics');
+    expect(operations).toContainElement(diagnostics);
+    expect(
+      screen.getAllByText('Advanced certificate diagnostics')
+    ).toHaveLength(1);
+    // Collapsed by default, rendered after the operations rows.
+    expect(diagnostics).not.toHaveAttribute('open');
+    const lastRow = [...operations.querySelectorAll('[data-detail-row]')]
+      .filter(row => !diagnostics.contains(row))
+      .pop();
+    expect(
+      lastRow.compareDocumentPosition(diagnostics) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(
+      within(diagnostics).getByText('SHA-256 fingerprint')
+    ).toBeInTheDocument();
+    expect(
+      within(diagnostics).getByText('Managed certificate ID')
+    ).toBeInTheDocument();
+  });
+
+  it('does not render diagnostics outside the Certificate operations section', () => {
+    renderModal();
+
+    const operations = screen
+      .getByRole('heading', { name: 'Certificate operations' })
+      .closest('section');
+    screen.getAllByText('Managed certificate ID').forEach(node => {
+      expect(operations).toContainElement(node);
+    });
+    screen.getAllByText('SHA-256 fingerprint').forEach(node => {
+      expect(operations).toContainElement(node);
+    });
+  });
+
+  it('keeps diagnostics reachable with only the managed certificate ID', () => {
+    const idOnly = { id: 'managed-cert-2' };
+    renderModal({
+      certificate: idOnly,
+      certOps: {
+        certificate: idOnly,
+        certificateCount: 1,
+        instances: [],
+        instancesAvailable: true,
+        instancesError: '',
+        loading: false,
+        error: '',
+      },
+    });
+
+    const operations = screen
+      .getByRole('heading', { name: 'Certificate operations' })
+      .closest('section');
+    const diagnostics = screen.getByTestId('certificate-diagnostics');
+    expect(operations).toContainElement(diagnostics);
+    expect(screen.getByText('Managed certificate ID')).toBeInTheDocument();
+    expect(screen.queryByText('SHA-256 fingerprint')).not.toBeInTheDocument();
+  });
+
+  it('keeps diagnostics reachable with only the fingerprint', () => {
+    const fingerprintOnly = { fingerprintSha256: 'b'.repeat(64) };
+    renderModal({
+      certificate: fingerprintOnly,
+      certOps: {
+        certificate: fingerprintOnly,
+        certificateCount: 1,
+        instances: [],
+        instancesAvailable: true,
+        instancesError: '',
+        loading: false,
+        error: '',
+      },
+    });
+
+    expect(
+      screen.getByRole('heading', { name: 'Certificate operations' })
+    ).toBeInTheDocument();
+    expect(screen.getByText('SHA-256 fingerprint')).toBeInTheDocument();
+    expect(
+      screen.queryByText('Managed certificate ID')
+    ).not.toBeInTheDocument();
+  });
+
+  it('hides diagnostics for tokens without a managed certificate', () => {
+    renderModal({
+      certificate: null,
+      certOps: {
+        certificate: null,
+        certificateCount: 0,
+        instances: [],
+        instancesAvailable: true,
+        instancesError: '',
+        loading: false,
+        error: '',
+      },
+    });
+
+    expect(
+      screen.queryByText('Advanced certificate diagnostics')
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId('certificate-diagnostics')
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows diagnostics in the operations section when only diagnostics exist', () => {
+    const idOnly = { id: 'managed-cert-3' };
+    renderModal({
+      compactTableSections: false,
+      certificate: idOnly,
+      certOps: {
+        certificate: idOnly,
+        certificateCount: 1,
+        instances: [],
+        instancesAvailable: true,
+        instancesError: '',
+        loading: false,
+        error: '',
+      },
+    });
+
+    expect(
+      screen
+        .getByRole('heading', { name: 'Certificate operations' })
+        .closest('section')
+    ).toContainElement(screen.getByTestId('certificate-diagnostics'));
+  });
   it('shows managed X.509 expiry once in the Expires tile instead of the asset date', () => {
     const now = Date.now();
     const expiringCertificate = {
