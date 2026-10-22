@@ -120,8 +120,9 @@ export function ExecutionStep({ ctx }) {
         description='You chose to observe only.'
       >
         <Text fontSize='sm'>
-          The agent reports what it finds and cannot run jobs. You can enable
-          execution later from this guide.
+          The {saved.infrastructure === 'kubernetes' ? 'controller' : 'agent'}{' '}
+          reports what it finds and cannot run jobs. You can enable execution
+          later from this guide.
         </Text>
         <PrimaryButton
           mt={3}

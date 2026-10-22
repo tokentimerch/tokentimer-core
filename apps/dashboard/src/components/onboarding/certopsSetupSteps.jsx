@@ -23,7 +23,11 @@ import PrimaryButton from './PrimaryButton.jsx';
 import { CopyBlock, ErrorText } from './blocks.jsx';
 import { GOALS } from './modules.js';
 import { ADCS_DRY_RUN_NOTE, buildAdcsConfig } from './adcsModel.js';
-import { mergeCertops, scopeCertops } from './certopsScope.js';
+import {
+  chooseInfrastructure,
+  mergeCertops,
+  scopeCertops,
+} from './certopsScope.js';
 import { isCandidatePick, pickHint, pickKey } from './guidedSetupStatus.js';
 import {
   CANDIDATE_NOTE_ID,
@@ -156,7 +160,23 @@ export function ObjectiveStep({ ctx }) {
 
   const save = async () => {
     try {
-      await saveCertops(ctx, { objective, infrastructure: infra });
+      // Decided inside the write so a retry after a conflict sees the latest
+      // platform, and the previous platform's step marks do not carry over.
+      await ctx.controller.update(session => ({
+        progress: {
+          ...session.progress,
+          certops: chooseInfrastructure(
+            session.progress?.certops,
+            objective,
+            infra
+          ),
+        },
+      }));
+      await ctx.refresh();
+      // Reviewing this step from the list: go back to the live step, which
+      // the new platform may have moved.
+      ctx.release?.();
+      ctx.onDone?.();
     } catch (e) {
       setError(e.message);
     }

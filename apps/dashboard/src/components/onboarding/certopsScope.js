@@ -60,3 +60,30 @@ export function mergeCertops(certops, objective, patch = {}) {
 export function switchObjective(certops, objective) {
   return mergeCertops(certops, objective);
 }
+
+// Marks that only mean something for the platform they were made on.
+const VARIANT_KEYS = [
+  'configReviewed',
+  'executionAcknowledged',
+  'installerKey',
+  'clusterId',
+  'tokenCreatedAt',
+  'agentLaterAt',
+  'dryRunJobId',
+  'issueJobId',
+  'issueAttempt',
+  'issueReloadService',
+];
+
+/**
+ * The value to store when the platform is chosen. Picking another platform
+ * drops the previous one's step marks, so none of its steps shows as done for
+ * the new one. Picking the same platform again changes nothing.
+ */
+export function chooseInfrastructure(certops, objective, infrastructure) {
+  const changed =
+    scopeCertops(certops, objective).infrastructure !== infrastructure;
+  const next = mergeCertops(certops, objective, { objective, infrastructure });
+  if (changed) for (const key of VARIANT_KEYS) delete next[key];
+  return next;
+}

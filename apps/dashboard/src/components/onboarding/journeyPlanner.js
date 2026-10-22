@@ -128,15 +128,12 @@ function certopsDone(stepId, { reality, progress, objective }) {
       );
     }
     case 'certops_config':
-      // The Kubernetes controller has no agent configuration file.
-      return (
-        saved.configReviewed === true || saved.infrastructure === 'kubernetes'
-      );
+      // Kubernetes has no file to prepare, but the page still needs a click:
+      // choosing a platform must not skip steps the operator never saw.
+      return saved.configReviewed === true;
     case 'certops_execution':
       // Observe-only goals never enable execution, so they acknowledge instead.
-      // The Kubernetes controller has no execution switch to acknowledge.
       if (saved.executionAcknowledged === true) return true;
-      if (saved.infrastructure === 'kubernetes') return true;
       // Stage 3 is a signed dry run that ended as dry_run_complete. The job
       // id is stored, but whether it passed is read from the server.
       return (
