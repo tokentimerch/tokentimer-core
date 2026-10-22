@@ -79,6 +79,12 @@ vi.mock('../../src/utils/onboardingActions.js', async () => {
           ssl_valid_to: '2027-03-01T00:00:00Z',
         };
         server.state.monitors.push(monitor);
+        // The real API gives a new certificate token the workspace default
+        // group, so the alerts step meets items that already carry a group.
+        const def = server.state.alert.default_contact_group_id;
+        if (server.state.attachDefault && def) {
+          server.state.tokenGroups[monitor.token_id] = [def];
+        }
         return clone(monitor);
       },
       getAlertSettings: async () => clone(server.state.alert),
@@ -348,6 +354,67 @@ describe('first-value onboarding journey', () => {
     );
   });
 
+  it('always shows the alerts step, even when the default group is attached already', async () => {
+    server.state.contacts.push({
+      id: 'c1',
+      details: { email: 'ana@example.com' },
+    });
+    server.state.alert = {
+      contact_groups: [
+        {
+          id: 'ops',
+          name: 'Ops',
+          email_contact_ids: ['c1'],
+          webhook_names: [],
+        },
+      ],
+      default_contact_group_id: 'ops',
+    };
+    server.state.attachDefault = true;
+    mount();
+
+    await user.click(
+      await screen.findByLabelText(/Monitor a website certificate/i)
+    );
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await user.type(
+      await screen.findByPlaceholderText('https://example.com'),
+      'example.com'
+    );
+    await user.click(
+      screen.getByRole('button', { name: 'Monitor this website' })
+    );
+
+    // The token already carries the default group, and the step still shows,
+    // with that group ticked so the operator sees the truth.
+    const ops = await screen.findByRole('checkbox', { name: 'Ops' });
+    expect(server.state.tokenGroups[41]).toEqual(['ops']);
+    await waitFor(() => expect(ops).toHaveAttribute('aria-checked', 'true'));
+    await new Promise(resolve => setTimeout(resolve, 300));
+    expect(screen.queryByText('Alerts have a recipient')).toBeNull();
+    expect(
+      server.state.session.progress.recipientsConfirmedFor
+    ).toBeUndefined();
+    expect(screen.getByTestId('continue-hint')).toHaveTextContent(
+      'Continue when the groups are right.'
+    );
+
+    // Unticking is allowed, keeps the step open and blocks Continue.
+    await user.click(ops);
+    await waitFor(() => expect(server.state.tokenGroups[41]).toEqual([]));
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+    await user.click(await screen.findByRole('checkbox', { name: 'Ops' }));
+    await waitFor(() => expect(server.state.tokenGroups[41]).toEqual(['ops']));
+
+    // Only Continue ends the step, and it records the confirmation.
+    const next = screen.getByRole('button', { name: 'Continue' });
+    await waitFor(() => expect(next).toBeEnabled());
+    await user.click(next);
+    expect(await screen.findByText('Alerts have a recipient')).toBeVisible();
+    expect(server.state.session.progress.recipientsConfirmedFor).toBe(
+      'monitor_https'
+    );
+  });
   it('resumes on another device without creating anything twice', async () => {
     const first = mount();
     await user.click(

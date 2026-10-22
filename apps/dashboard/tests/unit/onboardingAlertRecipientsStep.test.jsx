@@ -887,7 +887,7 @@ describe('RecipientsStep Continue for goals with ticks', () => {
       const ctx = makeCtx({ goal, websiteIds: [11], assetIds: [21] });
       mount(ctx);
       await continueButton();
-      // The page keeps the finished step open; the step only offers Continue.
+      // The step only offers Continue; it never ends by itself.
       expect(screen.getByRole('button', { name: 'Continue' })).toBeVisible();
     }
   );
@@ -900,14 +900,81 @@ describe('RecipientsStep Continue for goals with ticks', () => {
     );
   });
 
-  it('enables Continue when the step is done and Continue leaves the step', async () => {
+  it('enables Continue once every item reaches a group, without leaving', async () => {
     const ctx = withGroups(makeCtx(), doneGroups);
     mount(ctx);
     const button = await continueButton();
     await waitFor(() => expect(button).toBeEnabled());
+    expect(screen.getByTestId('continue-hint').textContent).toBe(
+      'Continue when the groups are right.'
+    );
     expect(ctx.release).not.toHaveBeenCalled();
+    expect(ctx.controller.update).not.toHaveBeenCalled();
+  });
+
+  it('shows the default group already ticked and does not finish on arrival', async () => {
+    // The product attaches the workspace default group to a new certificate.
+    store.tokens[11] = token(11, ['ops']);
+    store.tokens[12] = token(12, ['ops']);
+    const ctx = withGroups(makeCtx(), { 11: ['ops'], 12: ['ops'] });
+    mount(ctx);
+    expect(await box('Ops')).toHaveAttribute('aria-checked', 'true');
+    expect(await box('Billing')).toHaveAttribute('aria-checked', 'false');
+    expect(ctx.release).not.toHaveBeenCalled();
+    expect(ctx.controller.update).not.toHaveBeenCalled();
+    expect(await continueButton()).toBeEnabled();
+  });
+
+  it('Continue releases the hold and saves the confirmation for this goal', async () => {
+    const ctx = withGroups(makeCtx(), doneGroups);
+    const order = [];
+    ctx.controller.update.mockImplementation(() => {
+      order.push('save');
+      return Promise.resolve();
+    });
+    ctx.refresh.mockImplementation(() => {
+      order.push('refresh');
+      return Promise.resolve();
+    });
+    ctx.release.mockImplementation(() => order.push('release'));
+    mount(ctx);
+    const button = await continueButton();
+    await waitFor(() => expect(button).toBeEnabled());
     fireEvent.click(button);
+    await waitFor(() => expect(order).toContain('refresh'));
     expect(ctx.release).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['release', 'save', 'refresh']);
+    const patch = ctx.controller.update.mock.calls[0][0]({
+      progress: { skipped: ['smtp'] },
+    });
+    expect(patch.progress).toEqual({
+      skipped: ['smtp'],
+      recipientsConfirmedFor: 'monitor_https',
+    });
+    expect(ctx.skip).not.toHaveBeenCalled();
+  });
+
+  it('shows the error and stays usable when the confirmation cannot be saved', async () => {
+    const ctx = withGroups(makeCtx(), doneGroups);
+    ctx.controller.update.mockRejectedValue(new Error('offline'));
+    mount(ctx);
+    const button = await continueButton();
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    expect(await screen.findByText('offline')).toBeVisible();
+    expect(ctx.refresh).not.toHaveBeenCalled();
+    await waitFor(() => expect(button).toBeEnabled());
+  });
+
+  it('Continue on an already confirmed step only releases', async () => {
+    const ctx = withGroups(makeCtx(), doneGroups);
+    ctx.session.progress = { recipientsConfirmedFor: 'monitor_https' };
+    mount(ctx);
+    const button = await continueButton();
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    await waitFor(() => expect(ctx.release).toHaveBeenCalledTimes(1));
+    expect(ctx.controller.update).not.toHaveBeenCalled();
   });
 
   it('never leaves the step when groups are ticked one after the other', async () => {
@@ -939,6 +1006,8 @@ describe('RecipientsStep Continue for goals with ticks', () => {
     );
     expect(actions.setTokenContactGroups).toHaveBeenCalledTimes(5);
     expect(ctx.release).not.toHaveBeenCalled();
+    // Ticking and unticking never confirm the step.
+    expect(ctx.controller.update).not.toHaveBeenCalled();
   });
 
   it('shows no Continue while a finished step is reviewed', async () => {
@@ -1129,8 +1198,11 @@ describe.each([
     mount(ctx);
     const next = await screen.findByRole('button', { name: 'Continue' });
     await waitFor(() => expect(next).toBeEnabled());
+    expect(ctx.release).not.toHaveBeenCalled();
     fireEvent.click(next);
-    expect(ctx.release).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(ctx.release).toHaveBeenCalledTimes(1));
+    const patch = ctx.controller.update.mock.calls[0][0]({ progress: {} });
+    expect(patch.progress).toEqual({ recipientsConfirmedFor: goal });
     expect(ctx.skip).not.toHaveBeenCalled();
   });
 

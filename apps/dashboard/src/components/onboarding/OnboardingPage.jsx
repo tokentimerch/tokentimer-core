@@ -524,7 +524,11 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
   // an agent checks in) stays open until they choose to continue.
   const [heldStepId, setHeldStepId] = useState(null);
   const shownRef = useRef(null);
+  // The step a Continue click just released: it must not be held again when
+  // that same click is what finished it.
+  const releasedRef = useRef(null);
   const releaseStep = useCallback(() => {
+    releasedRef.current = shownRef.current;
     shownRef.current = null;
     setHeldStepId(null);
   }, []);
@@ -537,13 +541,17 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
     () => (ready ? planJourney(journeyInputs(onboarding)) : null),
     [ready, onboarding]
   );
-  const observedId = heldStepId
+  const observedCandidate = heldStepId
     ? null
     : observedDoneStep(shownRef.current, {
         key,
         plan: basePlan,
         session: onboarding.session,
       });
+  const observedId =
+    observedCandidate && releasedRef.current?.id === observedCandidate
+      ? null
+      : observedCandidate;
   const activeHeldId = heldStepId || observedId;
   const plan = useMemo(
     () =>
@@ -637,6 +645,10 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
   useEffect(() => {
     shownRef.current =
       plan && !viewStepId ? { id: plan.currentStepId, key } : null;
+    // The release only matters until the guide has moved off that step.
+    if (releasedRef.current && plan?.currentStepId !== releasedRef.current.id) {
+      releasedRef.current = null;
+    }
   });
   // Leaving a step by doing something always returns to the live step.
   const stepKey = plan?.currentStepId;

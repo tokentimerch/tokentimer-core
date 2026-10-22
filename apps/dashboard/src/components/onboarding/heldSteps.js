@@ -27,7 +27,8 @@ export function finishesByItself(stepId, { goal, progress } = {}) {
   // Edition steps opt in with holdWhenDone; core steps never come from there.
   if (editionStepHolds(stepId)) return true;
   if (!WAITING_STEPS.has(stepId)) return false;
-  // Ticks can finish the step; the confirmation of other goals is a click.
+  // Ticks alone never finish the step: the operator's Continue confirms them,
+  // and the page then moves on. Other goals confirm with a click as well.
   if (stepId === 'recipients') return canTickGoal(goal);
   if (stepId === 'certops_execution') {
     // Observe-only goals acknowledge with a button instead of waiting.

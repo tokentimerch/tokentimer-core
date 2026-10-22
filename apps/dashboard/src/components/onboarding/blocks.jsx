@@ -47,8 +47,11 @@ export function WarnText({ children, ...props }) {
   );
 }
 
-/** One line under a disabled main button saying what is missing. */
-export function ContinueHint({ children, ...props }) {
+/**
+ * One line under a disabled main button saying what is missing. `plain` drops
+ * the "To continue:" lead for a note on an enabled button.
+ */
+export function ContinueHint({ children, plain = false, ...props }) {
   const { muted } = useDashboardTheme();
   return (
     <Text
@@ -59,7 +62,8 @@ export function ContinueHint({ children, ...props }) {
       data-testid='continue-hint'
       {...props}
     >
-      To continue: {children}
+      {plain ? null : 'To continue: '}
+      {children}
     </Text>
   );
 }

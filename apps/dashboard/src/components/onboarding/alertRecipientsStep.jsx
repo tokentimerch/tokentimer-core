@@ -36,6 +36,7 @@ import { groupReaches, planGroupDelete } from './alertGroupUsage.js';
 import {
   DEFAULT_ONLY_NOTE,
   canTickGoal,
+  canContinueTicks,
   confirmsDefault,
   describeNoToken,
   describeTicks,
@@ -225,8 +226,8 @@ export function RecipientsStep({ ctx, reviewing = false }) {
   const needsConfirm =
     Boolean(sessionGoal) &&
     (!canTickGoal(sessionGoal) || confirmsDefault(sessionGoal, ticks.plan));
-  // The guide keeps this step open once every item has a group, because
-  // several groups are usually wanted; Continue moves on.
+  // The step is always shown once and ends with an explicit Continue, even
+  // when the items already carry the workspace default group.
   const stepDone = recipientsSatisfied({
     goal: sessionGoal,
     refs: ctx.session?.operationRefs,
@@ -240,14 +241,41 @@ export function RecipientsStep({ ctx, reviewing = false }) {
     !reviewing && sessionGoal === 'monitor_https' && ticks.noToken > 0
   );
   const [confirming, setConfirming] = useState(false);
+  // Writes the operator's confirmation for this goal. Idempotent, so a retry
+  // or a second tab does no harm.
+  const saveConfirmation = async () => {
+    await ctx.controller.update(session => ({
+      progress: { ...session.progress, recipientsConfirmedFor: sessionGoal },
+    }));
+    await ctx.refresh();
+  };
   const confirm = async () => {
     setConfirming(true);
     setError('');
     try {
-      await ctx.controller.update(session => ({
-        progress: { ...session.progress, recipientsConfirmedFor: sessionGoal },
-      }));
-      await ctx.refresh();
+      await saveConfirmation();
+    } catch (e) {
+      setError(e.message || 'Could not save your choice.');
+    } finally {
+      setConfirming(false);
+    }
+  };
+  // The ticks only say what is attached. Continue is the operator saying the
+  // groups are right, so a group the product attached by default never ends
+  // the step on its own.
+  const canContinue = canContinueTicks({
+    goal: sessionGoal,
+    refs: ctx.session?.operationRefs,
+    reality: ctx.summary,
+  });
+  const goOn = async () => {
+    setConfirming(true);
+    setError('');
+    try {
+      // Release first: saving the confirmation is what finishes the step, and
+      // the page must not hold it open as if it had finished by itself.
+      ctx.release?.();
+      if (!stepDone) await saveConfirmation();
     } catch (e) {
       setError(e.message || 'Could not save your choice.');
     } finally {
@@ -386,8 +414,12 @@ export function RecipientsStep({ ctx, reviewing = false }) {
             ) : null}
             {ticksGoal && (!needsConfirm || stepDone) ? (
               <PrimaryButton
-                onClick={() => ctx.release?.()}
-                isDisabled={!stepDone || Boolean(ticks.saving)}
+                onClick={goOn}
+                isLoading={confirming}
+                isDisabled={
+                  (needsConfirm ? !stepDone : !canContinue) ||
+                  Boolean(ticks.saving)
+                }
               >
                 Continue
               </PrimaryButton>
@@ -398,10 +430,16 @@ export function RecipientsStep({ ctx, reviewing = false }) {
       actionHint={
         !reviewing && needsConfirm && !defaultReaches ? (
           <ContinueHint>set a default group that has a recipient.</ContinueHint>
-        ) : !reviewing && ticksGoal && !needsConfirm && !stepDone ? (
-          <ContinueHint>
-            tick a group that reaches someone for everything you added.
-          </ContinueHint>
+        ) : !reviewing && ticksGoal && !needsConfirm ? (
+          canContinue ? (
+            <ContinueHint plain>
+              Continue when the groups are right.
+            </ContinueHint>
+          ) : (
+            <ContinueHint>
+              tick a group that reaches someone for everything you added.
+            </ContinueHint>
+          )
         ) : null
       }
     >

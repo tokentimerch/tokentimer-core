@@ -124,13 +124,16 @@ export function planSessionItems({ goal, refs = {}, summary = null }) {
  * Whether the alerting that belongs to THIS goal is set up in this session.
  * A group existing in the workspace proves nothing about the items the guide
  * created, so each goal is judged on its own evidence:
- * - monitor_https: every website the guide added carries a reachable group.
- *   Websites without a certificate record yet cannot carry one; when none of
- *   them can, the operator confirms the workspace default group instead.
- * - track_asset: every asset the guide added carries a reachable group.
- * - CertOps goals that create a certificate (ACME, AD CS, Vault): every
- *   certificate made in this session carries a reachable group; with none yet,
- *   the operator confirms the workspace default group.
+ * - monitor_https: every website the guide added carries a reachable group
+ *   AND the operator confirmed it in this goal. A certificate token is born
+ *   with the workspace default group, so the groups alone prove nothing about
+ *   what the operator saw. Websites without a certificate record yet cannot
+ *   carry one; when none of them can, the operator confirms the workspace
+ *   default group instead.
+ * - track_asset: the same, for the assets the guide added.
+ * - CertOps goals that create a certificate (ACME, AD CS, Vault): the same,
+ *   for the certificates made in this session; with none yet, the operator
+ *   confirms the workspace default group.
  * - everything else (imports, alerting, observe): the operator confirmed the
  *   recipients for this goal and the default group still reaches someone.
  * A group counts only if it exists and reaches a recipient. Skipping is
@@ -138,21 +141,35 @@ export function planSessionItems({ goal, refs = {}, summary = null }) {
  */
 export function recipientsSatisfied({ goal, refs, progress, reality }) {
   if (!reality || !goal) return false;
+  const confirmed = progress?.recipientsConfirmedFor === goal;
   if (canTickGoal(goal)) {
     const plan = planSessionItems({ goal, refs: refs || {}, summary: reality });
     const ids = tickIds(goal, plan);
-    if (ids.length) {
-      const groups = reality.references?.tokenGroups;
-      if (!groups) return false;
-      return ids.every(id => (groups[text(id)] || []).length > 0);
-    }
+    if (ids.length) return confirmed && itemsReachGroups(ids, reality);
     if (!confirmsDefault(goal, plan)) return false;
   }
   const defaults = reality.alerts?.contactGroups;
   const reaches =
     (defaults?.defaultHasRecipient ?? defaults?.defaultHasEmailRecipient) ===
     true;
-  return progress?.recipientsConfirmedFor === goal && reaches;
+  return confirmed && reaches;
+}
+
+/** Whether every one of these tokens carries a reachable group. */
+export function itemsReachGroups(ids, reality) {
+  const groups = reality?.references?.tokenGroups;
+  if (!groups || !ids.length) return false;
+  return ids.every(id => (groups[text(id)] || []).length > 0);
+}
+
+/**
+ * Whether the operator may continue from the ticks: there is something to
+ * tick and all of it reaches a group. Confirming is the Continue click.
+ */
+export function canContinueTicks({ goal, refs, reality }) {
+  if (!reality || !canTickGoal(goal)) return false;
+  const plan = planSessionItems({ goal, refs: refs || {}, summary: reality });
+  return itemsReachGroups(tickIds(goal, plan), reality);
 }
 
 /** The token ids a goal's ticks apply to. */

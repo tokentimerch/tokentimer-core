@@ -72,7 +72,11 @@ describe('planJourney', () => {
     const plan = planJourney({
       intent: { goal: 'monitor_https' },
       // A stale claim in progress must not matter.
-      progress: { skipped: [], monitorDone: true },
+      progress: {
+        skipped: [],
+        monitorDone: true,
+        recipientsConfirmedFor: 'monitor_https',
+      },
       operationRefs: {
         monitorUrl: 'https://example.com',
         monitorIds: ['m1'],
@@ -144,7 +148,10 @@ describe('planJourney', () => {
       },
     };
     expect(planJourney(base).complete).toBe(false);
-    const confirmed = planJourney({ ...base, progress: { verified: true } });
+    const confirmed = planJourney({
+      ...base,
+      progress: { verified: true, recipientsConfirmedFor: 'track_asset' },
+    });
     expect(confirmed.complete).toBe(true);
     expect(confirmed.currentStepId).toBeNull();
   });
