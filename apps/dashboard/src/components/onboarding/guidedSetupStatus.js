@@ -35,7 +35,7 @@ const OBSERVE_WINDOWS_UNTESTED = [
 const AUTOMATE_LINUX_UNTESTED = [
   'Cloudflare, Route 53 and Google Cloud DNS against real accounts (Azure DNS and RFC 2136 ran for real)',
   "Let's Encrypt or any production ACME CA",
-  'Other distributions',
+  'Distributions other than Ubuntu 24.04',
   'The exact 3-minute moment of the notice that no agent took the request',
 ];
 
