@@ -182,6 +182,12 @@ describe('first issuance without a request yet', () => {
     mount(IssueStep, ctx);
     expect(await screen.findByRole('alert')).toHaveTextContent(/DNS timed out/);
     expect(screen.getByText('What to do next')).toBeVisible();
+    const next = screen.getByText('What to do next').parentElement;
+    expect(next).toHaveTextContent(/can stay reserved by an earlier request/);
+    expect(next).toHaveTextContent(/the message names what holds it/);
+    expect(next).toHaveTextContent(/retire that certificate/);
+    expect(next).not.toHaveTextContent(/cannot be retired/);
+    expect(next).not.toHaveTextContent(/is rejected/);
     expect(await screen.findByText('Finished: Failed')).toBeVisible();
   });
 });

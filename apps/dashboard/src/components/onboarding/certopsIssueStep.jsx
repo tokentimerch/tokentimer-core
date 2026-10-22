@@ -358,11 +358,11 @@ export default function IssueStep({ ctx }) {
         ) : null}
         {view.failed && !windows ? (
           <StatusPanel status='info' title='What to do next'>
-            A failed order still reserves the certificate file{' '}
-            <code>{saved.certPath}</code> and it cannot be retired, so asking
-            again with the same path is rejected. Choose a different file name
-            in the same folder (go back to the configuration step), then request
-            again.
+            The certificate file <code>{saved.certPath}</code> can stay reserved
+            by an earlier request until that request ends. If asking again with
+            the same file path is refused, the message names what holds it. You
+            can retire that certificate, or choose a different file name in the
+            same folder (go back to the configuration step), then request again.
           </StatusPanel>
         ) : null}
         {view.noRetry ? (

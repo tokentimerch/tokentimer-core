@@ -239,7 +239,7 @@ describe('issue step', () => {
       'The CA refused the order. (code: ACME_FAILED)'
     );
     expect(document.body.textContent).toMatch(
-      /A failed order still reserves the certificate file/
+      /can stay reserved by an earlier request/
     );
     expect(document.body.textContent).not.toMatch(/provisioning/);
   });
