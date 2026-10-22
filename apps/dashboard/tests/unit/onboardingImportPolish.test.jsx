@@ -43,7 +43,7 @@ describe('contact group note in the import dialog', () => {
       EMBEDDED_GROUPS_NOTE
     );
     expect(EMBEDDED_GROUPS_NOTE).toBe(
-      'Groups chosen here receive alerts for the assets you import now. You can review all groups in the next step.'
+      'Groups chosen here receive alerts for the assets you import now. Assets a sync adds later use the group set on the sync.'
     );
   });
 
@@ -95,11 +95,12 @@ describe('provider logos in the integration step', () => {
     expect(within(github).getByText('GitHub')).toBeInTheDocument();
   });
 
-  it('adds a badge to tell the two Azure logos apart', () => {
+  it('gives the two Azure sources their own logo instead of a badge', () => {
     const { container } = render(
       wrap(<ImportSourceLogo sourceKey='azure-ad' />)
     );
-    expect(container.querySelector('svg')).not.toBeNull();
+    expect(container.querySelector('img')).not.toBeNull();
+    expect(container.querySelector('svg')).toBeNull();
     expect(
       render(wrap(<ImportSourceLogo sourceKey='nope' />)).container.textContent
     ).toBe('');
