@@ -123,7 +123,10 @@ function readBrokerFailure(output) {
     if (!stat.isFile() || stat.size > 2048) return "unreadable broker failure";
     const text = fs.readFileSync(file, "utf8");
     fs.unlinkSync(file);
-    return text.replace(/[^\x20-\x7e]+/g, " ").trim().slice(0, 1024);
+    return text
+      .replace(/[^\x20-\x7e]+/g, " ")
+      .trim()
+      .slice(0, 1024);
   } catch {
     return "no broker failure detail";
   }
@@ -784,7 +787,25 @@ async function qualifyOcsp(c) {
       revocationCheck: "require",
       execFileImpl: (file, args, options) =>
         execute(file, args, { ...options, env: nativeEnvironment() }),
-    });
+    }).then(classifyNativeRevoked);
+  }
+  // The native chain helper has no "revoked" verdict: CryptoAPI reports a
+  // revoked chain as verdict "invalid" with CERT_TRUST_IS_REVOKED (0x4) set and
+  // the fixed error below. Name that exact outcome "revoked"; any other invalid
+  // chain keeps its verdict so unrelated native failures still fail the probe.
+  function classifyNativeRevoked(outcome) {
+    const native = outcome && outcome.result;
+    if (
+      outcome &&
+      outcome.verdict === "invalid" &&
+      native &&
+      Number.isInteger(native.trustStatus) &&
+      (native.trustStatus & 0x4) !== 0 &&
+      native.error === "certificate is revoked"
+    ) {
+      return { ...outcome, verdict: "revoked" };
+    }
+    return outcome;
   }
   // Each publication change restarts the CA and republishes its base CRL.
   // The responder reads that file by URL, so track the CRL it now serves.

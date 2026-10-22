@@ -404,3 +404,18 @@ test("revoked signed-status timeout code names what the responder kept answering
   for (const status of ["good", "unknown", "x".repeat(200), "???"])
     assert.match(code({ status, responseSha256: "z" }, []), pattern);
 });
+
+test("native revoked probe maps only the exact CryptoAPI revoked outcome to revoked", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../tests/e2e/helpers/certops-adcs-ocsp.js"),
+    "utf8",
+  );
+  // The chain helper has no "revoked" verdict; the harness names the exact
+  // invalid + CERT_TRUST_IS_REVOKED + fixed-error outcome and nothing else.
+  assert.match(source, /\.then\(classifyNativeRevoked\)/);
+  const body = source.slice(source.indexOf("function classifyNativeRevoked"));
+  assert.match(body, /outcome\.verdict === "invalid"/);
+  assert.match(body, /native\.trustStatus & 0x4\) !== 0/);
+  assert.match(body, /native\.error === "certificate is revoked"/);
+  assert.match(body, /verdict: "revoked"/);
+});
