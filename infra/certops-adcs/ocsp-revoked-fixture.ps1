@@ -143,6 +143,35 @@ function Get-OwnedOcspProviderFingerprint($Properties) {
  finally { $hash.Dispose() }
 }
 
+function Invoke-OwnedOcspWorkerRecycle($Owner) {
+ # The ISAPI worker keeps signed responses it already served (the historical
+ # leaf was answered good earlier), so a recreated configuration alone keeps
+ # returning them. A fresh worker asks the untouched ocspsvc, which has loaded
+ # the new CRL, and answers revoked within seconds (observed live).
+ $actual=Get-OwnedOcspIisSnapshot $Owner
+ $manager=[Microsoft.Web.Administration.ServerManager]::new()
+ try {
+  $pool=@($manager.ApplicationPools|Where-Object Name -CEQ $actual.applicationPool)
+  if($pool.Count -ne 1) { throw 'Exact native responder application pool required' }
+  $before=@($manager.WorkerProcesses|Where-Object AppPoolName -CEQ $actual.applicationPool|ForEach-Object {[uint32]$_.ProcessId})
+  if(@($manager.WorkerProcesses).Count -ne $before.Count) { throw 'Foreign application pool worker present during recycle' }
+  # No running worker means no cached response to drop.
+  if($before.Count -eq 0) { return }
+ } finally { $manager.Dispose() }
+ Import-Module WebAdministration -ErrorAction Stop
+ Restart-WebAppPool -Name $actual.applicationPool -ErrorAction Stop
+ # Cleanup requires exactly one worker, so wait for the retiring one to exit.
+ # The next request starts the fresh worker, which asks the current ocspsvc.
+ $deadline=[Diagnostics.Stopwatch]::StartNew()
+ do {
+  $manager=[Microsoft.Web.Administration.ServerManager]::new()
+  try { $old=@($manager.WorkerProcesses|Where-Object { $before -contains [uint32]$_.ProcessId }) } finally { $manager.Dispose() }
+  if($old.Count -eq 0) { break }
+  if($deadline.Elapsed.TotalSeconds -ge 240) { throw 'Retiring responder worker did not exit' }
+  Start-Sleep -Seconds 1
+ } while($true)
+}
+
 function Set-OwnedOcspRevokedProvider($Owner,[byte[]]$CaDer,[byte[]]$SignerDer,[byte[]]$OriginalCrl,[byte[]]$RevokedCrl) {
  Assert-OwnedOcspOriginalService $Owner
  $published=Read-OwnedOcspPhase $Owner 'historical-revoked' @('historicalRequestId','currentRequestId','historicalSha256','currentSha256','originalCrlSha256','revokedCrlSha256','nativeDisposition')
@@ -219,6 +248,7 @@ function Set-OwnedOcspRevokedProvider($Owner,[byte[]]$CaDer,[byte[]]$SignerDer,[
    }
   }
  }
+ Invoke-OwnedOcspWorkerRecycle $Owner
  Assert-OwnedOcspOriginalService $Owner
  $observation=Get-OwnedOcspConfigurationObservation $identifier $CaDer $SignerDer $RevokedCrl
  $admin=$null;$collection=$null;$entry=$null
