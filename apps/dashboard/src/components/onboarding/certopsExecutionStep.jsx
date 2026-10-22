@@ -17,6 +17,11 @@ import { pickGoalAgent } from './certopsMatrix.js';
 import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
 import { useSummaryPolling } from './useSummaryPolling.js';
 import { createJob, getJob } from '../certops/certopsJobsApi.js';
+import {
+  ApprovalPolicyNote,
+  ApprovalWaitPanel,
+  useJobApprovalPolicy,
+} from './approvalPolicy.jsx';
 
 // Shown as a block to merge: pasting it over the file would drop agentId.
 const EXECUTION_BLOCK = `"execution": {
@@ -65,6 +70,7 @@ export function ExecutionStep({ ctx }) {
   const [job, setJob] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const { required: approvalRequired } = useJobApprovalPolicy(ctx.workspaceId);
   const goal = GOALS[ctx.session.intent?.goal];
   const needsExecution = goal?.certopsObjective !== 'observe';
 
@@ -237,7 +243,16 @@ export function ExecutionStep({ ctx }) {
             </VStack>
           </Callout>
         ) : null}
-        {job && job.status !== 'dry_run_complete' ? (
+        {agent && !saved.dryRunJobId && state.done.includes('enabled') ? (
+          <ApprovalPolicyNote required={approvalRequired} noun='test job' />
+        ) : null}
+        <ApprovalWaitPanel
+          job={job}
+          title='The test job is waiting for approval'
+        />
+        {job &&
+        job.status !== 'dry_run_complete' &&
+        job.status !== 'pending_approval' ? (
           <StatusPanel status='warning' title='The test job has not passed'>
             The test job is {job.status}. A passing dry run ends as
             dry_run_complete, not as succeeded.

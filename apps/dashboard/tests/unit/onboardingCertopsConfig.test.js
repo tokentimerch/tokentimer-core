@@ -585,7 +585,7 @@ describe('vault distribution', () => {
     expect(commands['nginx-reload'].argv).toEqual(RELOAD_SERVICES.nginx.reload);
   });
 
-  it('builds the publish job with the key algorithm the agent requires, held for approval', () => {
+  it('builds the publish job with the key algorithm the agent requires, without forcing approval', () => {
     const job = buildVaultPublishJob({
       names: ['www.example.com'],
       zone: 'example.com',
@@ -594,7 +594,7 @@ describe('vault distribution', () => {
       idempotencyKey: 'k',
     });
     expect(job.operation).toBe('issue');
-    expect(job.requiresApproval).toBe(true);
+    expect(job.requiresApproval).toBeUndefined();
     expect(job.payload.keyAlgorithm).toBe('ecdsa');
     expect(job.payload.keySize).toBe(256);
     expect(job.payload.publicationDestination).toEqual({
@@ -971,13 +971,13 @@ describe('Vault publish job creation', () => {
     expect(key).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
   });
 
-  it('holds the job for approval and carries the key algorithm', () => {
+  it('leaves approval to the workspace policy and carries the key algorithm', () => {
     const job = buildVaultPublishJob({
       ...base,
       assignedAgentId: 'agent-1',
       idempotencyKey: vaultPublishIdempotencyKey(base),
     });
-    expect(job.requiresApproval).toBe(true);
+    expect(job).not.toHaveProperty('requiresApproval');
     expect(job.payload.keyAlgorithm).toBe('ecdsa');
     expect(job.payload.publicationDestination.materialStoreRef).toBe(
       'customer'

@@ -48,6 +48,11 @@ import {
 } from './certopsConfig.js';
 import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
 import IssueStep from './certopsIssueStep.jsx';
+import {
+  ApprovalPolicyNote,
+  ApprovalWaitPanel,
+  useJobApprovalPolicy,
+} from './approvalPolicy.jsx';
 import { outboxBacklogMessage } from './certopsWorkerMessages.js';
 import JobActivity, { JobTimelineList } from './JobActivity.jsx';
 import {
@@ -272,6 +277,7 @@ export function VaultStep({ ctx }) {
   const gap = capabilityGap('vault', 'linux', declared);
   const backlogMessage = outboxBacklogMessage(ctx.summary?.certops);
   const [pub, setPub] = useState({ job: null, busy: false, error: '' });
+  const { required: approvalRequired } = useJobApprovalPolicy(ctx.workspaceId);
   const publishJobId = saved.vaultPublishJobId || '';
   const publishKey = vaultPublishIdempotencyKey({
     names,
@@ -460,12 +466,15 @@ export function VaultStep({ ctx }) {
           who='You, in this dashboard (workspace manager)'
         >
           <Text fontSize='sm'>
-            The job is held for approval, so you can set up Vault and the issuer
-            first. A workspace manager other than the person who creates it must
-            approve it (Certificate Management, Jobs): you cannot approve your
-            own job. Only then does the issuer order the certificate and publish
-            it to Vault. The group id appears on the job and is filled in below.
+            The issuing agent orders the certificate and publishes it to Vault.
+            The group id appears on the job and is filled in below.
+            {approvalRequired === false && !publishJobId
+              ? ' Create it once the issuing agent is configured and out of dry run (parts 2 to 5).'
+              : ''}
           </Text>
+          {!publishJobId ? (
+            <ApprovalPolicyNote required={approvalRequired} />
+          ) : null}
           <FormControl>
             <FormLabel fontSize='sm'>Issuing agent</FormLabel>
             <Select
@@ -530,11 +539,12 @@ export function VaultStep({ ctx }) {
             ) : null}
           </HStack>
           {pub.error ? <ErrorText>{pub.error}</ErrorText> : null}
+          <ApprovalWaitPanel job={pub.job} />
           {pub.job?.status === 'pending_approval' ? (
-            <StatusPanel status='info' title='Waiting for approval'>
-              Waiting for approval by another workspace manager. After approval
-              the issuing agent must be online and out of dry run.
-            </StatusPanel>
+            <Text fontSize='xs' color={muted}>
+              After approval the issuing agent must be online and out of dry
+              run.
+            </Text>
           ) : null}
           {publishJobId ? (
             <JobActivity
@@ -808,7 +818,7 @@ export function VaultStep({ ctx }) {
             <Part
               n={6}
               title='Test, assign and roll out'
-              who='You, with the API (a different workspace manager approves)'
+              who='You, with the API (a different workspace manager approves the rollout)'
             >
               <Text fontSize='sm'>
                 These calls need a signed-in workspace manager, not a machine
@@ -830,6 +840,16 @@ export function VaultStep({ ctx }) {
                 later check-only rollout (verificationOnly: true) just compares
                 what is installed.
               </Text>
+              {approvalRequired === true ? (
+                <Text
+                  fontSize='xs'
+                  color={muted}
+                  data-testid='vault-dry-run-approval'
+                >
+                  Job approval is on for this workspace, so each dry run also
+                  waits for a workspace manager other than you to approve it.
+                </Text>
+              ) : null}
               <CopyBlock
                 label='Signed dry run for the issuing agent'
                 text={buildApiCall({
@@ -854,9 +874,10 @@ export function VaultStep({ ctx }) {
               />
               <Text fontSize='sm'>
                 Once both agents are registered, assign the consumer and request
-                a rollout. A rollout needs approval from a different user and a
-                running CertOps worker (the worker-certops service in Compose,
-                the certops cron job in Helm). Without the worker an approved
+                a rollout. A rollout always needs approval from a different
+                user, whatever the workspace approval setting, and a running
+                CertOps worker (the worker-certops service in Compose, the
+                certops cron job in Helm). Without the worker an approved
                 rollout stays pending and nothing is deployed, and renewals are
                 never scheduled.
               </Text>

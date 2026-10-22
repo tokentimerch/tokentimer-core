@@ -1140,7 +1140,8 @@ export function buildVaultConfigs({
  * The job that publishes a certificate to Vault. The group id appears on the
  * created job as payload.publication.groupId. The agent refuses a publish job
  * without a key algorithm, so it is part of the body. There is no screen for
- * this job: it is created through the Jobs API.
+ * this job: it is created through the Jobs API. It waits for approval only
+ * when the workspace requires approval for every job.
  */
 export function buildVaultPublishJob({
   names,
@@ -1156,8 +1157,7 @@ export function buildVaultPublishJob({
   const list = (names || []).map(n => String(n).trim()).filter(Boolean);
   return {
     operation: 'issue',
-    // Hold the job until the Vault policies and agent configuration exist.
-    requiresApproval: true,
+    // No per-job approval flag: the workspace Job approval policy decides.
     idempotencyKey,
     ...(assignedAgentId ? { assignedAgentId } : {}),
     payload: {

@@ -22,6 +22,11 @@ import {
   STAGING_CA,
 } from './certopsConfig.js';
 import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
+import {
+  ApprovalPolicyNote,
+  ApprovalWaitPanel,
+  useJobApprovalPolicy,
+} from './approvalPolicy.jsx';
 
 const ACTIVE = new Set([
   'pending_approval',
@@ -111,6 +116,7 @@ export default function IssueStep({ ctx }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [acknowledged, setAcknowledged] = useState(false);
+  const { required: approvalRequired } = useJobApprovalPolicy(ctx.workspaceId);
   const gate = canRequestIssue({
     agents: certops?.agents,
     dryRun: certops?.dryRun,
@@ -328,6 +334,13 @@ export default function IssueStep({ ctx }) {
             </VStack>
           </StatusPanel>
         ) : null}
+        {!job ? (
+          <ApprovalPolicyNote required={approvalRequired} noun='request' />
+        ) : null}
+        <ApprovalWaitPanel
+          job={job}
+          title='The request is waiting for approval'
+        />
         {waitNotice ? (
           <StatusPanel
             status='warning'
