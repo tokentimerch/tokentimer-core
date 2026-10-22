@@ -2,7 +2,7 @@
 // succeeds, an agent checks in, a controller reports. The guide keeps such a
 // step on screen once it turns done, so the result can be read, and moves on
 // only when the person presses Continue.
-import { allGoals } from './editionModules.js';
+import { allGoals, editionStepHolds } from './editionModules.js';
 import { scopeCertops } from './certopsScope.js';
 import { canTickGoal } from './groupAttachment.js';
 
@@ -24,6 +24,8 @@ const OWN_CONTINUE = new Set(['recipients']);
  * once, as before.
  */
 export function finishesByItself(stepId, { goal, progress } = {}) {
+  // Edition steps opt in with holdWhenDone; core steps never come from there.
+  if (editionStepHolds(stepId)) return true;
   if (!WAITING_STEPS.has(stepId)) return false;
   // Ticks can finish the step; the confirmation of other goals is a click.
   if (stepId === 'recipients') return canTickGoal(goal);

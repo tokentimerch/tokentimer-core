@@ -11,7 +11,18 @@
 //   registerEditionModule({
 //     id: 'example',
 //     areas: [{ id: 'example_area', label: 'Example' }],
-//     steps: { example_step: { title: 'Do the thing', kind: 'ui' } },
+//     steps: {
+//       example_step: {
+//         title: 'Do the thing',
+//         kind: 'ui',
+//         // Optional, default false. Set it on a step that can turn done by
+//         // itself while the person watches (a provider becoming ready, a
+//         // job finishing): the guide then keeps it on screen with a
+//         // Continue button instead of jumping to the next step. Leave it
+//         // off for steps whose own button finishes the work.
+//         holdWhenDone: true,
+//       },
+//     },
 //     goals: {
 //       example_goal: {
 //         label, description, time, steps: ['example_step', 'verify'],
@@ -97,6 +108,12 @@ function validate(mod) {
     if (takenSteps.has(id)) fail(`step "${id}" is already registered`);
     if (!def?.title) fail(`step "${id}" needs a title`);
     if (!STEP_KINDS.has(def.kind)) fail(`step "${id}" has an unknown kind`);
+    if (
+      def.holdWhenDone !== undefined &&
+      typeof def.holdWhenDone !== 'boolean'
+    ) {
+      fail(`step "${id}" holdWhenDone must be a boolean`);
+    }
   }
   for (const [id, component] of Object.entries(components)) {
     if (!Object.prototype.hasOwnProperty.call(steps, id)) {
@@ -219,6 +236,16 @@ export function editionStepSatisfied(stepId, ctx) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether a registered edition step asked to be held once it turns done.
+ * Read from the registry on every call; false when nothing is registered.
+ */
+export function editionStepHolds(stepId) {
+  return registry.some(
+    m => Object.hasOwn(m.steps, stepId) && m.steps[stepId].holdWhenDone === true
+  );
 }
 
 /** Suggestions for an edition goal, or `undefined` for any other goal. */

@@ -8,10 +8,15 @@ import {
 } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 import { MemoryRouter } from 'react-router';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 import { commandProfileFor } from '../../src/components/onboarding/certopsMatrix.js';
 import { realAgent } from './helpers/realAgentPayload.js';
+import { stubOf } from './helpers/heldStepStubs.js';
+import {
+  registerEditionModule,
+  resetEditionModules,
+} from '../../src/components/onboarding/editionModules.js';
 import {
   finishesByItself,
   journeyKey,
@@ -545,5 +550,126 @@ describe('closing card rail label', () => {
       await screen.findByRole('heading', { name: 'You are set up' })
     ).toBeVisible();
     expect(summaryButton().textContent).toBe(`Step 2 of 2: ${title}`);
+  });
+});
+
+describe('an edition step that finishes by itself', () => {
+  vi.setConfig({ testTimeout: 15000 });
+  configure({ asyncUtilTimeout: 5000 });
+
+  const register = steps =>
+    registerEditionModule({
+      id: 'example',
+      areas: [{ id: 'example_area', label: 'Example area' }],
+      steps,
+      goals: {
+        example_goal: {
+          label: 'Run the example',
+          description: 'An extra goal from an edition.',
+          time: 'About 1 min',
+          steps: ['example_step', 'verify'],
+          area: 'example_area',
+          requires: [],
+        },
+      },
+      components: { example_step: stubOf('example_step') },
+      isStepSatisfied: (id, ctx) =>
+        id === 'example_step'
+          ? ctx.reality?.edition?.ready === true
+          : undefined,
+    });
+  const setReady = ready => {
+    server.summary.edition = { ready };
+  };
+  const hold = {
+    example_step: { title: 'Do it', kind: 'ui', holdWhenDone: true },
+  };
+  const plain = { example_step: { title: 'Do it', kind: 'ui' } };
+
+  afterEach(() => resetEditionModules());
+
+  it('is not held, and changes nothing, when nothing is registered', () => {
+    expect(finishesByItself('example_step', {})).toBe(false);
+  });
+
+  it('rejects a flag that is not a boolean', () => {
+    expect(() =>
+      register({
+        example_step: { title: 'x', kind: 'ui', holdWhenDone: 'yes' },
+      })
+    ).toThrow(/holdWhenDone must be a boolean/);
+  });
+
+  it('is read from the registry when asked, not when the module loads', () => {
+    expect(finishesByItself('example_step', {})).toBe(false);
+    register(hold);
+    expect(finishesByItself('example_step', {})).toBe(true);
+    resetEditionModules();
+    expect(finishesByItself('example_step', {})).toBe(false);
+  });
+
+  it('holds with Continue when it turns done while on screen', async () => {
+    register(hold);
+    seed('example_goal', {});
+    setReady(false);
+    mount();
+    await screen.findByTestId('stub-example_step');
+    expect(continueBar()).toBeNull();
+
+    setReady(true);
+    poll('example_step');
+
+    await waitFor(() => expect(continueBar()).not.toBeNull());
+    expect(screen.getByTestId('stub-example_step')).toBeVisible();
+    clickContinue();
+    expect(await screen.findByTestId('stub-verify')).toBeVisible();
+    expect(continueBar()).toBeNull();
+  });
+
+  it('moves on at once without the flag', async () => {
+    register(plain);
+    seed('example_goal', {});
+    setReady(false);
+    mount();
+    await screen.findByTestId('stub-example_step');
+
+    setReady(true);
+    poll('example_step');
+
+    expect(await screen.findByTestId('stub-verify')).toBeVisible();
+    expect(continueBar()).toBeNull();
+  });
+
+  it('does not hold a step that is already done when reached', async () => {
+    register(hold);
+    seed('example_goal', {});
+    setReady(true);
+    mount();
+    expect(await screen.findByTestId('stub-verify')).toBeVisible();
+    expect(continueBar()).toBeNull();
+  });
+
+  it('drops the hold when the goal is changed', async () => {
+    register(hold);
+    seed('example_goal', {});
+    setReady(false);
+    mount();
+    await screen.findByTestId('stub-example_step');
+    setReady(true);
+    poll('example_step');
+    await waitFor(() => expect(continueBar()).not.toBeNull());
+
+    fireEvent.click(
+      screen.getAllByRole('button', {
+        name: 'Change what I am setting up',
+        hidden: true,
+      })[0]
+    );
+    expect(
+      await screen.findByRole('heading', {
+        name: 'What do you want to do first?',
+      })
+    ).toBeVisible();
+    expect(continueBar()).toBeNull();
   });
 });
