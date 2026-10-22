@@ -798,3 +798,56 @@ describe('RecipientsStep delete', () => {
     expect(actions.putAlertSettings).not.toHaveBeenCalled();
   });
 });
+
+describe('RecipientsStep confirmation for goals without ticks', () => {
+  const confirmButton = () =>
+    screen.findByRole('button', { name: 'Use these groups' });
+
+  it.each(['import_file', 'import_integration', 'alerting', 'certops_observe'])(
+    'records the confirmation for %s',
+    async goal => {
+      const ctx = makeCtx({ goal, websiteIds: [], assetIds: [] });
+      mount(ctx);
+      fireEvent.click(await confirmButton());
+      await waitFor(() => expect(ctx.controller.update).toHaveBeenCalled());
+      const patch = ctx.controller.update.mock.calls[0][0]({
+        progress: { skipped: [] },
+      });
+      expect(patch.progress).toEqual({
+        skipped: [],
+        recipientsConfirmedFor: goal,
+      });
+      await waitFor(() => expect(ctx.refresh).toHaveBeenCalled());
+    }
+  );
+
+  it.each(['monitor_https', 'track_asset'])(
+    'offers no confirmation for %s, ticks decide',
+    async goal => {
+      mount(makeCtx({ goal, websiteIds: [11], assetIds: [] }));
+      await screen.findByRole('button', { name: 'Skip for now' });
+      expect(
+        screen.queryByRole('button', { name: 'Use these groups' })
+      ).toBeNull();
+    }
+  );
+
+  it('keeps the button off while the default group reaches nobody', async () => {
+    store.settings.contact_groups = [group('ops', 'Ops', [])];
+    mount(makeCtx({ goal: 'certops_observe', websiteIds: [] }));
+    expect(await confirmButton()).toBeDisabled();
+    expect(screen.getByTestId('continue-hint')).toHaveTextContent(
+      'set a default group that has a recipient'
+    );
+  });
+
+  it('shows no confirmation while a finished step is reviewed', async () => {
+    mount(makeCtx({ goal: 'import_file', websiteIds: [] }), {
+      reviewing: true,
+    });
+    await screen.findByRole('button', { name: 'Create a new group' });
+    expect(
+      screen.queryByRole('button', { name: 'Use these groups' })
+    ).toBeNull();
+  });
+});

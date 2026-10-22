@@ -29,10 +29,7 @@ function splitExisting(wanted, found) {
   };
 }
 
-function summarizeContactGroups(settings, contacts) {
-  const groups = Array.isArray(settings?.contact_groups)
-    ? settings.contact_groups
-    : [];
+function recipientChecks(settings, contacts) {
   const emailById = new Set(
     contacts
       .filter((c) => c.details && typeof c.details.email === "string" && c.details.email)
@@ -41,7 +38,6 @@ function summarizeContactGroups(settings, contacts) {
   const hasEmailRecipient = (g) =>
     Array.isArray(g.email_contact_ids) &&
     g.email_contact_ids.some((id) => emailById.has(String(id)));
-  const groupsWithEmail = groups.filter(hasEmailRecipient);
   // A webhook only counts if it still exists; a group can name one that was deleted.
   const webhookNames = new Set(
     (Array.isArray(settings?.webhook_urls) ? settings.webhook_urls : [])
@@ -51,6 +47,42 @@ function summarizeContactGroups(settings, contacts) {
   const hasWebhookRecipient = (g) =>
     Array.isArray(g.webhook_names) && g.webhook_names.some((n) => webhookNames.has(n));
   const hasRecipient = (g) => hasEmailRecipient(g) || hasWebhookRecipient(g);
+  return { hasEmailRecipient, hasWebhookRecipient, hasRecipient, webhookNames };
+}
+
+/** Ids of the groups that exist and can reach at least one recipient. */
+function reachableGroupIds(settings, contacts) {
+  const groups = Array.isArray(settings?.contact_groups)
+    ? settings.contact_groups
+    : [];
+  const { hasRecipient } = recipientChecks(settings, contacts);
+  return new Set(groups.filter(hasRecipient).map((g) => String(g.id)));
+}
+
+/**
+ * The reachable contact groups carried by each token, by token id. A token
+ * with no group row uses the workspace default and maps to an empty list.
+ */
+function tokenGroupMap(tokenIds, rows, reachable) {
+  const out = {};
+  for (const id of tokenIds) out[String(id)] = [];
+  for (const row of rows) {
+    const key = String(row.token_id);
+    const group = String(row.contact_group_id);
+    if (out[key] && reachable.has(group) && !out[key].includes(group)) {
+      out[key].push(group);
+    }
+  }
+  return out;
+}
+
+function summarizeContactGroups(settings, contacts) {
+  const groups = Array.isArray(settings?.contact_groups)
+    ? settings.contact_groups
+    : [];
+  const { hasEmailRecipient, hasWebhookRecipient, hasRecipient, webhookNames } =
+    recipientChecks(settings, contacts);
+  const groupsWithEmail = groups.filter(hasEmailRecipient);
   const defaultId = settings?.default_contact_group_id || null;
   const defaultGroup = defaultId
     ? groups.find((g) => String(g.id) === String(defaultId))
@@ -159,6 +191,27 @@ async function buildSummary(
     ]);
 
   const syncRows = autoSync.rows;
+
+  // Groups carried by the items this session created, so the recipients step
+  // can tell "a group is attached" from "a default group exists". Monitor
+  // certificates that are not in the stored ids yet are read too.
+  const reachable = reachableGroupIds(settings.rows[0], contacts.rows);
+  const sessionMonitors = new Set(monitorRefs.rows.map((r) => String(r.id)));
+  const monitorTokenIds = monitors.rows
+    .filter((m) => sessionMonitors.has(String(m.id)) && m.token_id != null)
+    .map((m) => Number(m.token_id))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  const groupTokenIds = Array.from(new Set([...allTokenIds, ...monitorTokenIds]));
+  const membership = groupTokenIds.length
+    ? await pool.query(
+        `SELECT token_id, contact_group_id
+           FROM token_contact_groups
+          WHERE workspace_id = $1 AND token_id = ANY($2::int[])`,
+        [workspaceId, groupTokenIds],
+      )
+    : { rows: [] };
+  const tokenGroups = tokenGroupMap(groupTokenIds, membership.rows, reachable);
+
   return {
     generatedAt: new Date().toISOString(),
     assets: {
@@ -205,6 +258,7 @@ async function buildSummary(
         tokenRefs.rows.map((r) => r.id),
       ),
       monitorIds: splitExisting(monitorIds, monitorRefs.rows.map((r) => r.id)),
+      tokenGroups,
     },
   };
 }
@@ -213,5 +267,7 @@ module.exports = {
   buildSummary,
   findMonitorByUrl,
   summarizeContactGroups,
+  reachableGroupIds,
+  tokenGroupMap,
   splitExisting,
 };

@@ -3311,6 +3311,17 @@ paths:
                             $ref: "#/components/schemas/OnboardingReferenceCheck"
                           monitorIds:
                             $ref: "#/components/schemas/OnboardingReferenceCheck"
+                          tokenGroups:
+                            type: object
+                            description: >-
+                              Contact groups carried by the tokens this session
+                              created, by token id. Only groups that exist and
+                              reach a recipient are listed; an empty list means
+                              the token uses the workspace default group.
+                            additionalProperties:
+                              type: array
+                              items:
+                                type: string
                         additionalProperties: true
         "400":
           $ref: "#/components/responses/BadRequest"

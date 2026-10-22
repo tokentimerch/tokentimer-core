@@ -27,11 +27,14 @@ import {
   useDashboardThemeColors,
 } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
+import PrimaryButton from './PrimaryButton.jsx';
+import { ContinueHint } from './blocks.jsx';
 import GroupEditor from './alertGroupEditor.jsx';
 import { GroupRow } from './alertGroupRow.jsx';
 import { describeGroup } from './alertGroups.js';
 import { groupReaches, planGroupDelete } from './alertGroupUsage.js';
 import {
+  canTickGoal,
   describeNoToken,
   describeTicks,
   tickState,
@@ -207,6 +210,26 @@ export function RecipientsStep({ ctx, reviewing = false }) {
     await ctx.skip('recipients');
   };
 
+  // Goals whose items carry no ticks (imports, alerting, CertOps) finish this
+  // step by an explicit confirmation that belongs to the chosen goal.
+  const sessionGoal = ctx.session?.intent?.goal;
+  const needsConfirm = Boolean(sessionGoal) && !canTickGoal(sessionGoal);
+  const [confirming, setConfirming] = useState(false);
+  const confirm = async () => {
+    setConfirming(true);
+    setError('');
+    try {
+      await ctx.controller.update(session => ({
+        progress: { ...session.progress, recipientsConfirmedFor: sessionGoal },
+      }));
+      await ctx.refresh();
+    } catch (e) {
+      setError(e.message || 'Could not save your choice.');
+    } finally {
+      setConfirming(false);
+    }
+  };
+
   const docs = [
     ...ctx.docs('alerts.contactGroups', 'Contact groups'),
     ...ctx.docs('quickstart.recipients', 'Choosing recipients'),
@@ -322,10 +345,26 @@ export function RecipientsStep({ ctx, reviewing = false }) {
       docs={docs}
       actions={
         reviewing ? null : (
-          <DashboardActionButton variant='outline' onClick={skip}>
-            Skip for now
-          </DashboardActionButton>
+          <>
+            <DashboardActionButton variant='outline' onClick={skip}>
+              Skip for now
+            </DashboardActionButton>
+            {needsConfirm ? (
+              <PrimaryButton
+                onClick={confirm}
+                isLoading={confirming}
+                isDisabled={!defaultReaches}
+              >
+                Use these groups
+              </PrimaryButton>
+            ) : null}
+          </>
         )
+      }
+      actionHint={
+        !reviewing && needsConfirm && !defaultReaches ? (
+          <ContinueHint>set a default group that has a recipient.</ContinueHint>
+        ) : null
       }
     >
       <VStack align='stretch' spacing={4}>

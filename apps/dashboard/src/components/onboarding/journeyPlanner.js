@@ -7,6 +7,7 @@ import { existingAssetStepIds } from './assetRefs.js';
 import { commandProfileFor, reportedCertificates } from './certopsMatrix.js';
 import { installerOptionsFor, installerOptionsKey } from './certopsConfig.js';
 import { GOALS, STEP_DEFS } from './modules.js';
+import { recipientsSatisfied } from './groupAttachment.js';
 import { scopeCertops } from './certopsScope.js';
 
 export { GOALS, STEP_DEFS };
@@ -184,7 +185,7 @@ function certopsDone(stepId, { reality, progress, objective }) {
  */
 export function isStepSatisfied(
   stepId,
-  { reality, refs = {}, progress, objective } = {}
+  { reality, refs = {}, progress, objective, goal } = {}
 ) {
   if (!reality) return false;
   switch (stepId) {
@@ -211,12 +212,9 @@ export function isStepSatisfied(
       return imported > 0 && (reality.assets?.total || 0) >= imported;
     }
     case 'recipients':
-      // An email recipient or a verified webhook both count; falls back for
-      // older summaries that only reported email.
-      return (
-        (reality.alerts?.contactGroups?.defaultHasRecipient ??
-          reality.alerts?.contactGroups?.defaultHasEmailRecipient) === true
-      );
+      // Judged per goal on what this session created, never on the mere
+      // existence of a workspace default group.
+      return recipientsSatisfied({ goal, refs, progress, reality });
     case 'notifications':
       return progress?.notificationsReviewed === true;
     case 'smtp':
@@ -276,6 +274,7 @@ export function planJourney({
         refs: operationRefs,
         progress,
         objective: goal.certopsObjective,
+        goal: goalId,
       })
     ) {
       status = 'done';

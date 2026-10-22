@@ -60,14 +60,24 @@ describe('planJourney', () => {
   it('derives completion from reality, not from stored flags', () => {
     const reality = {
       ...emptyReality,
-      monitors: { items: [{ url: 'https://example.com' }] },
-      alerts: { contactGroups: { defaultHasEmailRecipient: true } },
+      monitors: {
+        items: [{ id: 'm1', url: 'https://example.com', tokenId: 7 }],
+      },
+      references: {
+        tokenIds: { existing: [7] },
+        monitorIds: { existing: ['m1'] },
+        tokenGroups: { 7: ['g1'] },
+      },
     };
     const plan = planJourney({
       intent: { goal: 'monitor_https' },
       // A stale claim in progress must not matter.
       progress: { skipped: [], monitorDone: true },
-      operationRefs: { monitorUrl: 'https://example.com' },
+      operationRefs: {
+        monitorUrl: 'https://example.com',
+        monitorIds: ['m1'],
+        tokenIds: [7],
+      },
       capabilities,
       reality,
     });
@@ -129,8 +139,8 @@ describe('planJourney', () => {
         references: {
           tokenIds: { existing: [5] },
           assetTokenIds: { existing: [5] },
+          tokenGroups: { 5: ['g1'] },
         },
-        alerts: { contactGroups: { defaultHasEmailRecipient: true } },
       },
     };
     expect(planJourney(base).complete).toBe(false);

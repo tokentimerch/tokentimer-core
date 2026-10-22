@@ -99,8 +99,13 @@ vi.mock('../../src/utils/onboardingActions.js', async () => {
       },
       getToken: async () => ({
         id: 41,
+        contact_group_ids: server.state.tokenGroups[41] || [],
         alert_state: { eligibility: { eligible_channels: ['email'] } },
       }),
+      setTokenContactGroups: async (id, ids) => {
+        server.state.tokenGroups[id] = ids;
+        return { id };
+      },
     },
   };
 });
@@ -197,6 +202,8 @@ function freshServer() {
     monitors: [],
     contacts: [],
     alert: { contact_groups: [], default_contact_group_id: null },
+    // Contact groups attached to each token, as the server stores them.
+    tokenGroups: {},
     calls: { createMonitor: 0, putAlertSettings: 0, createContact: 0 },
   };
   server.state = state;
@@ -229,6 +236,16 @@ function freshServer() {
       references: {
         tokenIds: { existing: [], missing: [] },
         monitorIds: { existing: [], missing: [] },
+        // Only groups that reach someone count, as on the real server.
+        tokenGroups: Object.fromEntries(
+          state.monitors.map(m => [
+            m.token_id,
+            (state.tokenGroups[m.token_id] || []).filter(id => {
+              const g = state.alert.contact_groups.find(x => x.id === id);
+              return g?.email_contact_ids?.some(c => contactsWithEmail.has(c));
+            }),
+          ])
+        ),
       },
     };
   };
@@ -285,7 +302,16 @@ describe('first-value onboarding journey', () => {
     await addRecipient();
     await user.click(screen.getByRole('button', { name: 'Save group' }));
 
+    // A group existing is not enough: the website has to carry it.
+    expect(server.state.tokenGroups[41]).toBeUndefined();
+    await user.click(
+      await screen.findByRole('checkbox', { name: 'Alert recipients' })
+    );
+
     expect(await screen.findByText('Alerts have a recipient')).toBeVisible();
+    expect(server.state.tokenGroups[41]).toEqual([
+      server.state.alert.default_contact_group_id,
+    ]);
     expect(screen.getByText(/Will notify through: email/)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Finish setup' }));
 

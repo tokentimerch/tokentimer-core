@@ -3,6 +3,8 @@ const assert = require("node:assert/strict");
 const {
   buildSummary,
   summarizeContactGroups,
+  reachableGroupIds,
+  tokenGroupMap,
   splitExisting,
 } = require("../../apps/api/services/onboarding/summary");
 
@@ -96,5 +98,96 @@ describe("onboarding summary helpers", () => {
       existing: [],
       missing: [],
     });
+  });
+});
+
+describe("groups attached to session items", () => {
+  const settings = {
+    contact_groups: [
+      { id: "g1", name: "Ops", email_contact_ids: ["c1"] },
+      { id: "g2", name: "Nobody", email_contact_ids: ["c2"] },
+    ],
+    default_contact_group_id: "g1",
+  };
+
+  it("lists only groups that exist and reach a recipient", () => {
+    const reachable = reachableGroupIds(settings, [emailContact, phoneOnly]);
+    assert.deepEqual([...reachable], ["g1"]);
+  });
+
+  it("maps a token with no group row to an empty list", () => {
+    const reachable = reachableGroupIds(settings, [emailContact, phoneOnly]);
+    const map = tokenGroupMap(
+      [5, 6, 7],
+      [
+        { token_id: 5, contact_group_id: "g1" },
+        { token_id: 5, contact_group_id: "g1" },
+        { token_id: 6, contact_group_id: "g2" },
+        { token_id: 6, contact_group_id: "gone" },
+        { token_id: 99, contact_group_id: "g1" },
+      ],
+      reachable,
+    );
+    assert.deepEqual(map, { 5: ["g1"], 6: [], 7: [] });
+  });
+
+  it("exposes tokenGroups for session tokens and monitor certificates", async () => {
+    const memberQueries = [];
+    const pool = {
+      query: async (sql, params) => {
+        if (sql.includes("token_contact_groups")) {
+          memberQueries.push(params[1]);
+          return { rows: [{ token_id: 5, contact_group_id: "g1" }] };
+        }
+        if (sql.includes("FROM workspace_settings")) {
+          return { rows: [settings] };
+        }
+        if (sql.includes("FROM workspace_contacts")) {
+          return { rows: [emailContact, phoneOnly] };
+        }
+        if (sql.includes("FROM domain_monitors") && sql.includes("ORDER BY")) {
+          return {
+            rows: [
+              { id: "11111111-1111-1111-1111-111111111111", token_id: 8 },
+            ],
+          };
+        }
+        if (sql.includes("FROM domain_monitors")) {
+          return {
+            rows: [{ id: "11111111-1111-1111-1111-111111111111" }],
+          };
+        }
+        if (sql.includes("FROM tokens WHERE workspace_id = $1 AND id = ANY")) {
+          return { rows: [{ id: 5 }] };
+        }
+        if (sql.includes("COUNT(*)")) return { rows: [{ n: 1 }] };
+        if (sql.includes("COUNT(DISTINCT")) return { rows: [{ n: 0 }] };
+        return { rows: [] };
+      },
+    };
+    const summary = await buildSummary(pool, {
+      workspaceId: "w1",
+      refs: {
+        tokenIds: [5],
+        monitorIds: ["11111111-1111-1111-1111-111111111111"],
+      },
+    });
+    assert.deepEqual(summary.references.tokenGroups, { 5: ["g1"], 8: [] });
+    assert.deepEqual(memberQueries[0].sort(), [5, 8]);
+  });
+
+  it("skips the membership query when the session holds no tokens", async () => {
+    let asked = false;
+    const pool = {
+      query: async (sql) => {
+        if (sql.includes("token_contact_groups")) asked = true;
+        if (sql.includes("COUNT(*)")) return { rows: [{ n: 0 }] };
+        if (sql.includes("COUNT(DISTINCT")) return { rows: [{ n: 0 }] };
+        return { rows: [] };
+      },
+    };
+    const summary = await buildSummary(pool, { workspaceId: "w1", refs: {} });
+    assert.deepEqual(summary.references.tokenGroups, {});
+    assert.equal(asked, false);
   });
 });

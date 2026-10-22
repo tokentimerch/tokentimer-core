@@ -76,6 +76,33 @@ export function planSessionItems({ goal, refs = {}, summary = null }) {
   const blocked = websites.length + assets.length > MAX_ITEMS ? 'cap' : null;
   return { websites, assets, noToken, blocked };
 }
+/**
+ * Whether the alerting that belongs to THIS goal is set up in this session.
+ * A group existing in the workspace proves nothing about the items the guide
+ * created, so each goal is judged on its own evidence:
+ * - monitor_https: every website the guide added carries a reachable group.
+ * - track_asset: every asset the guide added carries a reachable group.
+ * - everything else (imports, alerting, CertOps): the operator confirmed the
+ *   recipients for this goal and the default group still reaches someone.
+ * A group counts only if it exists and reaches a recipient. Skipping is
+ * handled by the planner, not here.
+ */
+export function recipientsSatisfied({ goal, refs, progress, reality }) {
+  if (!reality || !goal) return false;
+  if (canTickGoal(goal)) {
+    const plan = planSessionItems({ goal, refs: refs || {}, summary: reality });
+    const ids = goal === 'monitor_https' ? plan.websites : plan.assets;
+    const groups = reality.references?.tokenGroups;
+    if (!ids.length || !groups) return false;
+    return ids.every(id => (groups[text(id)] || []).length > 0);
+  }
+  const defaults = reality.alerts?.contactGroups;
+  const reaches =
+    (defaults?.defaultHasRecipient ?? defaults?.defaultHasEmailRecipient) ===
+    true;
+  return progress?.recipientsConfirmedFor === goal && reaches;
+}
+
 /** 'all' | 'some' | 'none': how many items carry the group. */
 export function tickState(groupId, items) {
   if (!items.length) return 'none';
