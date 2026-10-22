@@ -295,7 +295,9 @@ describe('Microsoft CA step', () => {
       { objective: 'adcs', infrastructure: 'windows' },
       {
         adcs: { issuers: [], profiles: 0 },
-        agents: { items: [agent] },
+        agents: {
+          items: [{ ...agent, hostname: 'web-01', platform: 'win32' }],
+        },
       }
     );
     mount(AdcsStep, ctx);
@@ -307,6 +309,27 @@ describe('Microsoft CA step', () => {
     expect(screen.getAllByText('To do').length).toBeGreaterThan(0);
     expect(screen.getByText(/Agent web-01 last seen/)).toBeVisible();
     expect(screen.getByText('Still to do on your side')).toBeVisible();
+  });
+
+  it('ignores a Linux agent of the workspace', () => {
+    const ctx = makeCtx(
+      'certops_adcs',
+      { objective: 'adcs', infrastructure: 'windows' },
+      {
+        adcs: { issuers: [], profiles: 0 },
+        agents: {
+          items: [{ ...agent, declaredCapabilities: ['adcs-enroll-v1'] }],
+        },
+      }
+    );
+    mount(AdcsStep, ctx);
+    expect(screen.queryByText(/Agent web-01 last seen/)).toBeNull();
+    expect(
+      screen.queryByRole('region', {
+        name: '1. Agent connected and able to enroll',
+      })
+    ).not.toBeNull();
+    expect(screen.queryByText('Done')).toBeNull();
   });
 });
 

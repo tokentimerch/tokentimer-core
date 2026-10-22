@@ -11,6 +11,7 @@ import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 import { commandProfileFor } from '../../src/components/onboarding/certopsMatrix.js';
+import { realAgent } from './helpers/realAgentPayload.js';
 import {
   finishesByItself,
   journeyKey,
@@ -340,7 +341,7 @@ describe('a step that finishes by itself stays open until Continue', () => {
       {
         agents: {
           live: 1,
-          items: [liveAgent({ declaredCapabilities: ['adcs-enroll-v1'] })],
+          items: [realAgent('win32')],
         },
         adcs: { issuers: [], profiles: 0 },
       }
@@ -369,7 +370,9 @@ describe('a step that finishes by itself stays open until Continue', () => {
         agents: {
           live: 1,
           executionEnabled: true,
-          items: [liveAgent({ commandProfiles: profile ? [profile] : [] })],
+          items: [
+            realAgent('linux', { commandProfiles: profile ? [profile] : [] }),
+          ],
         },
         distribution: { groups: 1, verified: false },
       }

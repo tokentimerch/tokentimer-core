@@ -7,7 +7,7 @@ import { createJob, getJob } from '../certops/certopsJobsApi.js';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import { CopyBlock } from './blocks.jsx';
-import { pickGoalAgent } from './certopsMatrix.js';
+import { agentsFor, pickGoalAgent } from './certopsMatrix.js';
 import JobActivity from './JobActivity.jsx';
 import { Callout, FactsList, StatusPanel, StatusTag } from './panels.jsx';
 import {
@@ -118,7 +118,7 @@ export default function IssueStep({ ctx }) {
   const [acknowledged, setAcknowledged] = useState(false);
   const { required: approvalRequired } = useJobApprovalPolicy(ctx.workspaceId);
   const gate = canRequestIssue({
-    agents: certops?.agents,
+    agents: agentsFor(certops?.agents, agent),
     dryRun: certops?.dryRun,
     saved,
   });

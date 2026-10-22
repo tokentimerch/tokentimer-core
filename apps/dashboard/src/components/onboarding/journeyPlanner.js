@@ -4,7 +4,7 @@
 // Adding steps later therefore needs no data migration.
 
 import { existingAssetStepIds } from './assetRefs.js';
-import { commandProfileFor, reportedCertificates } from './certopsMatrix.js';
+import { reportedCertificates, setupAgentReady } from './certopsMatrix.js';
 import { installerOptionsFor, installerOptionsKey } from './certopsConfig.js';
 import { GOALS, STEP_DEFS } from './modules.js';
 import {
@@ -136,40 +136,26 @@ function certopsDone(stepId, { reality, progress, objective }) {
           c => !saved.clusterId || c.clusterId === saved.clusterId
         );
       }
-      if ((agents?.live || 0) === 0) return false;
-      // AD CS enrolls only through an agent that declared the capability.
-      if (objective === 'adcs') {
-        return (agents.items || []).some(
-          a =>
-            a.livenessState === 'live' &&
-            (a.declaredCapabilities || []).includes('adcs-enroll-v1')
-        );
-      }
+      const infra =
+        saved.infrastructure || (objective === 'adcs' ? 'windows' : 'linux');
       // An agent keeps the write path and reload grant it was installed with.
       // When this setup needs others, the installer has to run again, so the
       // step stays open until the operator says it did.
       const neededKey = installerOptionsKey(
         installerOptionsFor({
           objective,
-          infrastructure: saved.infrastructure || 'linux',
+          infrastructure: infra,
           certPath: saved.certPath,
           reloadService: saved.reloadService,
         })
       );
       if (neededKey && saved.installerKey !== neededKey) return false;
-      // An agent registered for discovery declares no command profile, so it
-      // can never claim an issuance order. Command profiles are only reported
-      // at registration, which makes it a different agent setup, not a setting.
-      const profile = commandProfileFor(
-        objective,
-        saved.infrastructure || 'linux'
-      );
-      if (!profile) return true;
-      return (agents.items || []).some(
-        a =>
-          a.livenessState === 'live' &&
-          (a.commandProfiles || []).includes(profile)
-      );
+      // One live agent must carry what the goal uses: the command profile
+      // (reported at registration, so a discovery-only agent never claims an
+      // order), the capabilities (re-declared on every check-in) and the right
+      // system. Other agents of the workspace neither help nor block. This is
+      // the same rule the status card shows.
+      return setupAgentReady(agents, objective, infra);
     }
     case 'certops_config':
       // Kubernetes has no file to prepare, but the page still needs a click:

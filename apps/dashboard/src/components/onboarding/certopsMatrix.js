@@ -86,6 +86,9 @@ export function isSupported(objective, infrastructure) {
   return Boolean(INFRASTRUCTURES[infrastructure]?.objectives[objective]);
 }
 
+// Operations that only exist once execution is switched on in the agent.
+const EXECUTION_OPERATIONS = ['issue', 'renew', 'deploy', 'reload', 'revoke'];
+
 /** Name of the Windows ACME client profile the job and the policy share. */
 export const WINDOWS_ACME_PROFILE = 'acme-windows';
 
@@ -103,13 +106,16 @@ export function commandProfileFor(objective, infrastructure) {
 }
 
 /**
- * The agent a guide step sends its jobs to. With several agents in the
- * workspace (for example an issuer and a Vault consumer) the newest one is not
- * necessarily the one that can place orders, so prefer a live agent that
- * declared the goal's command profile.
+ * The agent a guide step sends its jobs to, among the agents on the platform
+ * this setup runs on (an agent of another platform is never "the agent" for
+ * it). One that serves the setup comes first; with several agents (for example
+ * an issuer and a Vault consumer) the newest is not necessarily the one that
+ * can place orders, so a live agent with the goal's command profile follows.
  */
 export function pickGoalAgent(items, objective, infrastructure) {
-  const list = items || [];
+  const list = (items || []).filter(a => agentOnPlatform(a, infrastructure));
+  const served = list.find(a => agentServesSetup(a, objective, infrastructure));
+  if (served) return served;
   const profile = commandProfileFor(objective, infrastructure);
   if (profile) {
     const has = a => (a.commandProfiles || []).includes(profile);
@@ -117,7 +123,7 @@ export function pickGoalAgent(items, objective, infrastructure) {
       list.find(a => a.livenessState === 'live' && has(a)) || list.find(has);
     if (match) return match;
   }
-  return list[0];
+  return list.find(a => a.livenessState === 'live') || list[0];
 }
 
 /**
@@ -171,5 +177,100 @@ export function capabilityGap(objective, infrastructure, declared = []) {
   const have = new Set(declared);
   return requiredCapabilities(objective, infrastructure).filter(
     c => !have.has(c)
+  );
+}
+
+/**
+ * The workspace agent counts as seen by one chosen agent: execution is
+ * "enabled" when that agent can run jobs, not when any other agent can (a
+ * Linux agent set up earlier must not switch on a Windows setup's stage).
+ * Summaries whose agent rows carry no operation list keep the workspace flag.
+ */
+export function agentsFor(agents, agent) {
+  if (!agents) return agents;
+  if (!agent) return { ...agents, live: 0, executionEnabled: false };
+  const ops = agent.supportedOperations;
+  return {
+    ...agents,
+    executionEnabled: Array.isArray(ops)
+      ? ops.some(op => EXECUTION_OPERATIONS.includes(op))
+      : agents.executionEnabled === true,
+  };
+}
+
+/**
+ * Whether a goal needs anything from an agent beyond checking in. Observe
+ * goals do not, so a live agent in the count is enough for them.
+ */
+export function needsAgentFacts(objective, infrastructure) {
+  return (
+    Boolean(commandProfileFor(objective, infrastructure)) ||
+    requiredCapabilities(objective, infrastructure).length > 0
+  );
+}
+
+/**
+ * Whether an agent runs on the system this setup targets. An agent whose
+ * platform is unknown is not ruled out, and the Kubernetes controller has no
+ * agent platform at all.
+ */
+export function agentOnPlatform(agent, infrastructure) {
+  const platform = INFRASTRUCTURES[infrastructure]?.platform;
+  return !platform || !agent?.platform || agent.platform === platform;
+}
+
+/**
+ * Whether one agent row can serve this setup: checking in, on the right
+ * system, with the command profile and every capability the goal needs. The
+ * planner, the poll loop and the status card all use this one rule so they
+ * cannot disagree. Other agents of the workspace never block it.
+ */
+export function agentServesSetup(agent, objective, infrastructure) {
+  if (!agent || agent.livenessState !== 'live') return false;
+  if (!agentOnPlatform(agent, infrastructure)) return false;
+  const profile = commandProfileFor(objective, infrastructure);
+  if (profile && !(agent.commandProfiles || []).includes(profile)) {
+    return false;
+  }
+  return (
+    capabilityGap(objective, infrastructure, agent.declaredCapabilities)
+      .length === 0
+  );
+}
+
+/**
+ * Whether the workspace has an agent for this setup: any one of its live
+ * agents is enough. A summary without the agent list can only say how many
+ * are live, which settles goals that ask nothing of the agent.
+ */
+export function setupAgentReady(agents, objective, infrastructure) {
+  if ((agents?.live || 0) === 0) return false;
+  if (!Array.isArray(agents.items)) {
+    return !needsAgentFacts(objective, infrastructure);
+  }
+  return agents.items.some(a => agentServesSetup(a, objective, infrastructure));
+}
+
+/**
+ * The agent the status card describes: one that serves the setup, else a live
+ * one on the right system (so its gap is what gets explained), else any.
+ */
+export function pickSetupAgent(items, objective, infrastructure) {
+  const list = items || [];
+  const onPlatform = list.filter(a => agentOnPlatform(a, infrastructure));
+  return (
+    onPlatform.find(a => agentServesSetup(a, objective, infrastructure)) ||
+    onPlatform.find(a => a.livenessState === 'live') ||
+    onPlatform[0]
+  );
+}
+
+/**
+ * Live agents of this workspace that cannot serve the setup because they run
+ * on another system, for the sentence that tells the operator where to install.
+ */
+export function otherSystemAgents(items, infrastructure) {
+  return (items || []).filter(
+    a => a.livenessState === 'live' && !agentOnPlatform(a, infrastructure)
   );
 }

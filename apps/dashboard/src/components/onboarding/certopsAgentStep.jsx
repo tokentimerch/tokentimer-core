@@ -22,6 +22,10 @@ import {
   INFRASTRUCTURES,
   capabilityGap,
   commandProfileFor,
+  otherSystemAgents,
+  pickSetupAgent,
+  requiredCapabilities,
+  setupAgentReady,
 } from './certopsMatrix.js';
 import {
   registrationNotesFor,
@@ -54,7 +58,12 @@ function agentsSummaryControllers(ctx) {
   return certops && certops !== 'unknown' ? certops.controllers?.clusters : [];
 }
 
-/** Plain-language reading of one agent row, with the reason when unhealthy. */
+/** First agent build that declares every capability the guide asks for. */
+const CAPABILITY_AGENT_VERSION = '0.18.0';
+
+/**
+ * Plain-language reading of one agent row, with the reason when unhealthy.
+ */
 export function describeAgent(agent, gap = []) {
   const problems = [];
   if (agent.livenessState !== 'live')
@@ -68,7 +77,11 @@ export function describeAgent(agent, gap = []) {
   ) {
     problems.push('Its clock is drifting. Fix time synchronisation (NTP).');
   }
-  if (gap.length) problems.push(`Missing capabilities: ${gap.join(', ')}.`);
+  if (gap.length) {
+    problems.push(
+      `Missing capabilities: ${gap.join(', ')}. Agent ${CAPABILITY_AGENT_VERSION} or later declares them. Upgrade this agent: run the install steps above again with that package (the installer keeps your config.json). It reports its capabilities at its next check-in.`
+    );
+  }
   return { healthy: problems.length === 0, problems };
 }
 
@@ -109,7 +122,8 @@ function InstallStep({ n, text, children }) {
 export function AgentStep({ ctx }) {
   const { muted } = useDashboardTheme();
   const saved = certopsProgress(ctx);
-  const infra = saved.infrastructure || 'linux';
+  const infra =
+    saved.infrastructure || (saved.objective === 'adcs' ? 'windows' : 'linux');
   const os = INFRASTRUCTURES[infra]?.platform === 'win32' ? 'windows' : 'linux';
   const notes = registrationNotesFor(os);
   const configPath = agentConfigPathFor(os);
@@ -131,9 +145,11 @@ export function AgentStep({ ctx }) {
 
   const agents = ctx.summary?.certops?.agents;
   const items = agents?.items || [];
-  const target =
-    items.find(a => a.platform === (os === 'windows' ? 'win32' : 'linux')) ||
-    items[0];
+  const target = pickSetupAgent(items, saved.objective, infra);
+  // Live agents of this workspace that run on another system (for example a
+  // Linux web-01 when the setup is Windows): never "the agent" for this
+  // setup, but worth naming so the operator knows where to install.
+  const elsewhere = otherSystemAgents(items, infra);
 
   // Only Linux issuing needs installer options (the Vault issuer publishes to
   // Vault and writes no certificate file).
@@ -197,15 +213,7 @@ export function AgentStep({ ctx }) {
 
   const poll = useCallback(() => ctx.refresh().catch(() => {}), [ctx]);
   // Same rule as the planner: keep watching until a usable agent exists.
-  const wantedProfile = commandProfileFor(saved.objective, infra);
-  const usableAgent =
-    (agents?.live || 0) > 0 &&
-    (!wantedProfile ||
-      items.some(
-        a =>
-          a.livenessState === 'live' &&
-          (a.commandProfiles || []).includes(wantedProfile)
-      ));
+  const usableAgent = setupAgentReady(agents, saved.objective, infra);
   const clusterReported = (agentsSummaryControllers(ctx) || []).some(
     c => !clusterId || c.clusterId === clusterId
   );
@@ -569,6 +577,27 @@ export function AgentStep({ ctx }) {
             <StatusTag tone='orange'>Needs attention</StatusTag>
           )}
         </HStack>
+        {!healthy && elsewhere.length > 0 ? (
+          <VStack align='stretch' spacing={1} data-testid='other-system-agents'>
+            {elsewhere.map(a => {
+              const lacking = capabilityGap(
+                saved.objective,
+                infra,
+                a.declaredCapabilities
+              );
+              const need = lacking.length
+                ? lacking
+                : requiredCapabilities(saved.objective, infra);
+              return (
+                <WarnText key={a.id}>
+                  {need.length
+                    ? `Agent ${a.hostname || a.name} (${a.platform}) does not declare ${need.join(', ')}: install the agent on the ${os === 'windows' ? 'Windows' : 'Linux'} server.`
+                    : `Agent ${a.hostname || a.name} (${a.platform}) runs on another system: install the agent on the ${os === 'windows' ? 'Windows' : 'Linux'} server.`}
+                </WarnText>
+              );
+            })}
+          </VStack>
+        ) : null}
         {target ? (
           <VStack align='stretch' spacing={2}>
             <Text fontSize='sm'>
@@ -595,9 +624,10 @@ export function AgentStep({ ctx }) {
           </VStack>
         ) : (
           <Text fontSize='xs' color={muted}>
-            Nothing has registered yet. Checking every few seconds. If it stays
-            empty: check outbound HTTPS to this address, that the token has not
-            expired, and the service log.
+            {elsewhere.length ? 'No agent on this system has' : 'Nothing has'}{' '}
+            registered yet. Checking every few seconds. If it stays empty: check
+            outbound HTTPS to this address, that the token has not expired, and
+            the service log.
           </Text>
         )}
       </VStack>

@@ -13,7 +13,7 @@ import {
   agentRestartCommandFor,
   buildDryRunJob,
 } from './certopsConfig.js';
-import { pickGoalAgent } from './certopsMatrix.js';
+import { agentsFor, pickGoalAgent } from './certopsMatrix.js';
 import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
 import { useSummaryPolling } from './useSummaryPolling.js';
 import { createJob, getJob } from '../certops/certopsJobsApi.js';
@@ -61,12 +61,13 @@ export function executionStage({ agents, dryRunJob }) {
 export function ExecutionStep({ ctx }) {
   const { muted } = useDashboardTheme();
   const saved = certopsProgress(ctx);
-  const agents = ctx.summary?.certops?.agents;
+  const allAgents = ctx.summary?.certops?.agents;
   const agent = pickGoalAgent(
-    agents?.items,
+    allAgents?.items,
     saved.objective,
     saved.infrastructure
   );
+  const agents = agentsFor(allAgents, agent);
   const [job, setJob] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);

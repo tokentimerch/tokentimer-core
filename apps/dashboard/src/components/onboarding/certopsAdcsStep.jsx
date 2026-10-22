@@ -5,6 +5,7 @@ import { DashboardActionButton } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import { certopsProgress } from './certopsSetupSteps.jsx';
+import { agentOnPlatform } from './certopsMatrix.js';
 import { ADCS_REMAINING_STEPS, buildCaConfig } from './adcsModel.js';
 import {
   WORKER_NOTE,
@@ -51,7 +52,11 @@ export default function AdcsStep({ ctx }) {
   const { muted } = useDashboardTheme();
   const saved = certopsProgress(ctx);
   const certops = ctx.summary?.certops;
-  const agents = certops?.agents?.items || [];
+  // Only agents on a Windows host can enroll; a Linux agent of the same
+  // workspace is neither counted nor listed here.
+  const agents = (certops?.agents?.items || []).filter(a =>
+    agentOnPlatform(a, 'windows')
+  );
   const status = adcsStatus({
     adcs: certops?.adcs,
     agentDeclares: agents.some(
