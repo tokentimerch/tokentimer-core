@@ -54,8 +54,8 @@ ownership, restrictive permissions, parent-directory and symlink defenses,
 crash/restart durability, uncertain writes and token replacement on the exact
 proposed artifact. The isolated API/Vault/ACME/NGINX/HAProxy lab is supporting
 evidence, not release qualification. Windows AD CS has its own real-host CA,
-template, CNG, pending-approval and continuation matrix; its `adcs-enroll-v1`
-capability also stays unqualified. Appliance HA and multi-listener configurations
+template, CNG, pending-approval and continuation matrix, which qualifies
+`adcs-enroll-v1` separately from this one. Appliance HA and multi-listener configurations
 need explicit coverage before claiming support.
 
 ## Customer-local configuration

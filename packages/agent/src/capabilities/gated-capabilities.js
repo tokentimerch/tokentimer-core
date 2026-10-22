@@ -33,8 +33,9 @@
  * produces (./qualified-capabilities.generated.js) exists, so it cannot
  * depend on anything that itself requires that generated file.
  */
-// adcs-enroll-v1 stays out of qualified-capabilities.json until the AD CS
-// real-host qualification matrix passes for the release build.
+// adcs-enroll-v1 is qualified in qualified-capabilities.json as of 0.18.0.
+// It stays in this list because the list is the set of strings a manifest
+// may name; a build whose manifest omits it still refuses AD CS jobs.
 const GATED_CAPABILITIES = Object.freeze([
   "windows-cert-store-v1",
   "iis-binding-v1",

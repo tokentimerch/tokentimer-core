@@ -81,7 +81,7 @@ describe("Workspace Transfer Tokens", function () {
       .send({
         name: "Xfer Token 1",
         type: "api_key",
-        category: "general",
+        category: "key_secret",
         expiresAt: soon.toISOString().slice(0, 10),
         workspace_id: wsA,
       })
@@ -93,7 +93,7 @@ describe("Workspace Transfer Tokens", function () {
       .send({
         name: "Xfer Token 2",
         type: "ssl_cert",
-        category: "general",
+        category: "cert",
         expiresAt: soon.toISOString().slice(0, 10),
         workspace_id: wsA,
       })
@@ -186,7 +186,7 @@ describe("Workspace Transfer Tokens", function () {
       .send({
         name: `Grouped Xfer ${Date.now()}`,
         type: "api_key",
-        category: "general",
+        category: "key_secret",
         expiresAt: soon.toISOString().slice(0, 10),
         workspace_id: wsA,
         contact_group_ids: ["src-ops"],
@@ -229,7 +229,7 @@ describe("Workspace Transfer Tokens", function () {
       .send({
         name: `Monitored Xfer ${Date.now()}`,
         type: "ssl_cert",
-        category: "general",
+        category: "cert",
         expiresAt: soon.toISOString().slice(0, 10),
         workspace_id: wsA,
       })
@@ -271,7 +271,7 @@ describe("Workspace Transfer Tokens", function () {
       .send({
         name: `Managed Xfer ${Date.now()}`,
         type: "ssl_cert",
-        category: "general",
+        category: "cert",
         expiresAt: soon.toISOString().slice(0, 10),
         workspace_id: wsA,
       })
@@ -311,7 +311,7 @@ describe("Workspace Transfer Tokens", function () {
       .send({
         name: `Collision Src ${Date.now()}`,
         type: "ssl_cert",
-        category: "general",
+        category: "cert",
         expiresAt: soon.toISOString().slice(0, 10),
         workspace_id: wsA,
       })
@@ -323,7 +323,7 @@ describe("Workspace Transfer Tokens", function () {
       .send({
         name: `Collision Dest ${Date.now()}`,
         type: "ssl_cert",
-        category: "general",
+        category: "cert",
         expiresAt: soon.toISOString().slice(0, 10),
         workspace_id: wsB,
       })

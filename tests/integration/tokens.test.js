@@ -320,7 +320,7 @@ describe("Token Management Integration Tests", () => {
 
       const tokenData = {
         name: "Microsoft Office License",
-        type: "api_key",
+        type: "software_license",
         category: "license",
         expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
           .toISOString()
@@ -454,7 +454,7 @@ describe("Token Management Integration Tests", () => {
 
       const tokenData = {
         name: "License with Invalid Cost",
-        type: "api_key",
+        type: "software_license",
         category: "license",
         vendor: "Test Vendor Inc.",
         expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)

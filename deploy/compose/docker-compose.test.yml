@@ -78,6 +78,8 @@ services:
       # NODE_ENV=test (see apps/api/utils/webhookSafety.js). Only set on the
       # API: delivery workers post to local mock targets during tests.
       - WEBHOOK_ENFORCE_PRIVATE_IP_CHECK=true
+      # Same for the integration base URL guard (Vault, GitLab, GitHub, Azure).
+      - INTEGRATION_ENFORCE_PRIVATE_IP_CHECK=true
       # Exercises the self-hosted allowlist escape hatch end-to-end against
       # this API container. tests/integration/webhook-test-endpoint.test.js
       # asserts this exact host is accepted; setting it in the test runner's

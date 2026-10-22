@@ -41,7 +41,7 @@ describe("CSRF Protection", function () {
       .send({
         name: "CSRF Test Token",
         type: "api_key",
-        category: "general",
+        category: "key_secret",
         expiresAt: "2027-01-01",
         workspace_id: ws,
       });

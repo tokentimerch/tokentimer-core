@@ -191,6 +191,7 @@ an incomplete configuration and SMTP is reported as not configured. With no
 | `WEBHOOK_ENFORCE_PRIVATE_IP_CHECK`        | Force the private-IP check even when `NODE_ENV=test` (test infrastructure)  | `false`                               | Webhook security     |
 | `WEBHOOK_PROVIDER_HOSTS`                  | Legacy alias for `WEBHOOK_EXTRA_PROVIDER_HOSTS`. Both variables are parsed and unioned together (not a fallback -- if both are set, hosts from either are allowed). Neither variable replaces the built-in provider allowlist (Slack, Discord, Teams incl. legacy `office.com`/`office365.com`, PagerDuty, and Power Automate/Logic Apps `*.logic.azure.com` / `*.environment.api.powerplatform.com`), which is always allowed in addition to whatever these add. Prefer `WEBHOOK_EXTRA_PROVIDER_HOSTS` for new entries. | `empty (built-in list still allowed)` | Webhook security     |
 | `WEBHOOK_EXTRA_PROVIDER_HOSTS`            | Additional allowed hosts, unioned with the built-in provider allowlist above and with `WEBHOOK_PROVIDER_HOSTS` if both are set (comma-separated) | `empty`                               | Webhook security     |
+| `INTEGRATION_ALLOW_PRIVATE_IPS`           | Allow Vault, GitLab, GitHub and Azure Key Vault scans to connect to private or loopback base URLs when `true` (self-hosted). Helm: `config.integrationAllowPrivateIps` | `false`                               | Integration security |
 | `VAULT_ADDRESS_ALLOWLIST`                 | Vault integration host allowlist                                            | `empty (no host restriction)`         | Integration security |
 | `AZURE_VAULT_ADDRESS_ALLOWLIST`           | Azure Key Vault host allowlist                                              | `empty (no host restriction)`         | Integration security |
 | `GITHUB_ADDRESS_ALLOWLIST`                | GitHub host allowlist                                                       | `empty (no host restriction)`         | Integration security |
@@ -302,6 +303,10 @@ posture.
 
 Kubernetes auth is out of scope unless operators confirm AppRole is
 insufficient.
+
+## Integration base URLs
+
+The Vault, GitLab, GitHub and Azure Key Vault inventory scans connect to an address the user types in. By default the API refuses base URLs that point at private, loopback, link-local or other reserved addresses (including hostnames that resolve to them) and answers with 400 `INTEGRATION_PRIVATE_ADDRESS_BLOCKED`. A self-hosted GitLab, GitHub Enterprise or Vault on your own network is a legitimate target: set `INTEGRATION_ALLOW_PRIVATE_IPS=true` (Helm `config.integrationAllowPrivateIps`) on the API to allow it. The `*_ADDRESS_ALLOWLIST` host lists still apply on top. This is separate from `WEBHOOK_ALLOW_PRIVATE_IPS`, which only covers webhooks.
 
 ## Proxy
 

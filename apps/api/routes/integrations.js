@@ -1,4 +1,5 @@
 const { logger } = require("../utils/logger");
+const { checkIntegrationAddress } = require("../utils/integrationAddressGuard");
 const { writeAudit } = require("../services/audit");
 const { requireAuth } = require("../middleware/auth");
 const {
@@ -242,6 +243,12 @@ router.post(
               .json(withQuota({ error: "Vault address not allowed" }));
           }
         }
+        const guard = await checkIntegrationAddress(u);
+        if (!guard.allowed) {
+          return res
+            .status(400)
+            .json(withQuota({ error: guard.message, code: guard.code }));
+        }
       } catch (e) {
         logger.warn("Vault scan: invalid address URL", { error: e.message });
         return res
@@ -447,6 +454,12 @@ router.post(
           if (!allowedHosts.includes(hostLc)) {
             return res.status(400).json({ error: "Vault address not allowed" });
           }
+        }
+        const guard = await checkIntegrationAddress(u);
+        if (!guard.allowed) {
+          return res
+            .status(400)
+            .json({ error: guard.message, code: guard.code });
         }
       } catch (e) {
         logger.warn("Vault mounts: invalid address URL", { error: e.message });
@@ -959,6 +972,12 @@ router.post(
               .json(withQuota({ error: "GitLab address not allowed" }));
           }
         }
+        const guard = await checkIntegrationAddress(u);
+        if (!guard.allowed) {
+          return res
+            .status(400)
+            .json(withQuota({ error: guard.message, code: guard.code }));
+        }
       } catch (_) {
         return res
           .status(400)
@@ -1173,6 +1192,12 @@ router.post(
               .status(400)
               .json(withQuota({ error: "GitHub address not allowed" }));
           }
+        }
+        const guard = await checkIntegrationAddress(u);
+        if (!guard.allowed) {
+          return res
+            .status(400)
+            .json(withQuota({ error: guard.message, code: guard.code }));
         }
       } catch (_) {
         return res
@@ -1699,6 +1724,12 @@ router.post(
                 withQuota({ error: "Azure Key Vault address not allowed" }),
               );
           }
+        }
+        const guard = await checkIntegrationAddress(u);
+        if (!guard.allowed) {
+          return res
+            .status(400)
+            .json(withQuota({ error: guard.message, code: guard.code }));
         }
       } catch (_) {
         return res

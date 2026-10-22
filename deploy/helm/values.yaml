@@ -480,6 +480,11 @@ config:
   # this if webhook targets intentionally live on a private network.
   webhookAllowPrivateIps: false
 
+  # Set to true to let the Vault, GitLab, GitHub and Azure Key Vault inventory
+  # scans connect to base URLs on private, loopback, or link-local addresses
+  # (self-hosted instances). Default false refuses them to prevent SSRF.
+  integrationAllowPrivateIps: false
+
   # Extra allowed webhook destination hosts (comma-separated). Legacy alias,
   # parsed and unioned together with webhookExtraProviderHosts (not a
   # fallback -- if both are set, hosts from either are allowed); not a

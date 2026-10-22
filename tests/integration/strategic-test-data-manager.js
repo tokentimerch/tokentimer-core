@@ -24,8 +24,8 @@ const TEST_BASE_URL = process.env.TEST_API_URL || "http://localhost:4000";
 const TOKEN_DEFINITIONS = {
   cert: ["ssl_cert", "tls_cert", "code_signing", "client_cert"],
   key_secret: ["api_key", "secret", "password", "encryption_key", "ssh_key"],
-  license: ["software_license", "service_subscription"],
-  general: ["domain_registration", "other", "document", "membership"],
+  license: ["software_license", "service_subscription", "domain_registration"],
+  general: ["other", "document", "membership"],
 };
 
 // Smart field grouping - logically related fields
