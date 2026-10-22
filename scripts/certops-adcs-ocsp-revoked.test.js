@@ -357,6 +357,16 @@ test("actual managed native-provider fingerprint preserves ordering, variant typ
   // Identical-property rewrites never reload the CRL: the entry is recreated.
   assert.ok(source.includes("$collection.DeleteCAConfiguration($identifier)"));
   assert.ok(source.includes("$collection.CreateCAConfiguration($identifier,"));
+  // A recreated entry alone keeps serving the IIS worker's cached good answer.
+  assert.match(source, /function Invoke-OwnedOcspWorkerRecycle/);
+  assert.ok(
+    source.includes("Restart-WebAppPool -Name $actual.applicationPool"),
+  );
+  assert.match(
+    source,
+    /SetConfiguration\('tt-ca\.lab\.certops\.test',\$false\)\r?\n(?:.*\r?\n){1,8}? Invoke-OwnedOcspWorkerRecycle \$Owner/,
+  );
+  assert.ok(!/Stop-Service|Restart-Service/.test(source));
   assert.ok(!source.includes("$after=$before.Clone()"));
   const script = `$ErrorActionPreference='Stop';$file='${file.replace(/'/g, "''")}';$tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($file,[ref]$tokens,[ref]$errors);if($errors.Count){throw 'Invalid managed policy source'};$functions=@($ast.FindAll({param($n) $n-is[Management.Automation.Language.FunctionDefinitionAst]-and$n.Name-ceq'Get-OwnedOcspProviderFingerprint'},$true));if($functions.Count-ne 1){throw 'Exact managed policy required'};. ([scriptblock]::Create($functions[0].Extent.Text));$p=[Array]::CreateInstance([object],3,2);$p[0,0]='BaseCrl';$p[0,1]=[byte[]]@(1,2,3);$p[1,0]='RevocationErrorCode';$p[1,1]=[int]0;$p[2,0]='BaseCrlUrls';$p[2,1]=[string[]]@('http://PUBLIC.invalid/owned');$a=Get-OwnedOcspProviderFingerprint $p;$copy=$p.Clone();$copy[0,1]=[byte[]]@(4,5,6);$b=Get-OwnedOcspProviderFingerprint $copy;if($a-eq$b-or$a-cne(Get-OwnedOcspProviderFingerprint $p)){throw 'Actual clone did not preserve original snapshot'};$copy=$p.Clone();$copy[1,1]=[uint32]0;if($a-ceq(Get-OwnedOcspProviderFingerprint $copy)){throw 'Native variant kind was lost'};$copy=$p.Clone();$copy[2,1]=[string[]]@('http://PUBLIC.invalid/foreign');if($a-ceq(Get-OwnedOcspProviderFingerprint $copy)){throw 'Native unrelated URL was lost'};'passed'`;
   const result = spawnSync(
