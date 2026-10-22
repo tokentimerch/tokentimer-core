@@ -35,12 +35,14 @@ import { describeGroup } from './alertGroups.js';
 import { groupReaches, planGroupDelete } from './alertGroupUsage.js';
 import {
   canTickGoal,
+  confirmsDefault,
   describeNoToken,
   describeTicks,
   recipientsSatisfied,
   tickState,
 } from './groupAttachment.js';
 import { useSessionGroupTicks } from './useSessionGroupTicks.js';
+import { useSummaryPolling } from './useSummaryPolling.js';
 import { onboardingActions } from '../../utils/onboardingActions.js';
 import { useContactGroupPluralWrites } from '../../utils/contactGroupPluralWrites.jsx';
 
@@ -211,19 +213,29 @@ export function RecipientsStep({ ctx, reviewing = false }) {
     await ctx.skip('recipients');
   };
 
-  // Goals whose items carry no ticks (imports, alerting, CertOps) finish this
-  // step by an explicit confirmation that belongs to the chosen goal.
+  // Goals whose items carry no ticks (imports, alerting, observe) finish this
+  // step by an explicit confirmation that belongs to the chosen goal. So do
+  // the website and certificate goals while nothing exists yet that could
+  // carry a group.
   const sessionGoal = ctx.session?.intent?.goal;
-  const needsConfirm = Boolean(sessionGoal) && !canTickGoal(sessionGoal);
+  const ticksGoal = Boolean(sessionGoal) && canTickGoal(sessionGoal);
+  const needsConfirm =
+    Boolean(sessionGoal) &&
+    (!canTickGoal(sessionGoal) || confirmsDefault(sessionGoal, ticks.plan));
   // The guide keeps this step open once every item has a group, because
   // several groups are usually wanted; Continue moves on.
-  const ticksGoal = Boolean(sessionGoal) && canTickGoal(sessionGoal);
   const stepDone = recipientsSatisfied({
     goal: sessionGoal,
     refs: ctx.session?.operationRefs,
     progress: ctx.session?.progress,
     reality: ctx.summary,
   });
+  // A website gets its certificate record at its first check, so keep
+  // reading while one is missing and the ticks will appear by themselves.
+  useSummaryPolling(
+    ctx.refresh,
+    !reviewing && sessionGoal === 'monitor_https' && ticks.noToken > 0
+  );
   const [confirming, setConfirming] = useState(false);
   const confirm = async () => {
     setConfirming(true);
@@ -359,7 +371,7 @@ export function RecipientsStep({ ctx, reviewing = false }) {
             <DashboardActionButton variant='outline' onClick={skip}>
               Skip for now
             </DashboardActionButton>
-            {needsConfirm ? (
+            {needsConfirm && !(ticksGoal && stepDone) ? (
               <PrimaryButton
                 onClick={confirm}
                 isLoading={confirming}
@@ -368,7 +380,7 @@ export function RecipientsStep({ ctx, reviewing = false }) {
                 Use these groups
               </PrimaryButton>
             ) : null}
-            {ticksGoal ? (
+            {ticksGoal && (!needsConfirm || stepDone) ? (
               <PrimaryButton
                 onClick={() => ctx.release?.()}
                 isDisabled={!stepDone || Boolean(ticks.saving)}
@@ -382,7 +394,7 @@ export function RecipientsStep({ ctx, reviewing = false }) {
       actionHint={
         !reviewing && needsConfirm && !defaultReaches ? (
           <ContinueHint>set a default group that has a recipient.</ContinueHint>
-        ) : !reviewing && ticksGoal && !stepDone ? (
+        ) : !reviewing && ticksGoal && !needsConfirm && !stepDone ? (
           <ContinueHint>
             tick a group that reaches someone for everything you added.
           </ContinueHint>
@@ -437,7 +449,7 @@ export function RecipientsStep({ ctx, reviewing = false }) {
           ) : null}
           {canTick && ticks.noToken ? (
             <Text fontSize='xs' color={muted} data-testid='no-token-note'>
-              {describeNoToken(ticks.noToken)}
+              {describeNoToken(ticks.noToken, goal, defaultGroup?.name)}
             </Text>
           ) : null}
           {ticks.notice ? (

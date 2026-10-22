@@ -67,6 +67,7 @@ describe('planSessionItems', () => {
       expect(plan).toEqual({
         websites: [],
         assets: [],
+        certificates: [],
         noToken: 0,
         blocked: null,
       });
@@ -275,5 +276,11 @@ describe('sentences', () => {
       defaultName: 'Ops',
     });
     expect(text).not.toMatch(/Ticked/);
+  });
+
+  it('tells a website without a certificate record which group it uses', () => {
+    expect(describeNoToken(1, 'monitor_https', 'Ops')).toBe(
+      '1 website you added has no certificate record yet, so its groups cannot be set here. Until then it uses the workspace default group "Ops"; you can change that in Alert Preferences.'
+    );
   });
 });

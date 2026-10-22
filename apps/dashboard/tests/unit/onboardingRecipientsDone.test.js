@@ -258,6 +258,53 @@ describe.each([
   });
 });
 
+describe('recipients step: website without a certificate record', () => {
+  const noToken = { id: 'm9', url: 'https://down.example.com', tokenId: null };
+  const refs = { monitorUrl: noToken.url, monitorIds: ['m9'], tokenIds: [] };
+
+  it('waits for a confirmation when no website can carry a group', () => {
+    const r = reality({ monitors: [noToken] });
+    expect(recipients('monitor_https', { refs, reality: r })).toBe(false);
+    expect(
+      recipients('monitor_https', {
+        refs,
+        progress: { recipientsConfirmedFor: 'monitor_https' },
+        reality: r,
+      })
+    ).toBe(true);
+  });
+
+  it('needs a default group that reaches someone to confirm', () => {
+    const r = reality({ monitors: [noToken] });
+    r.alerts = {
+      ...defaultOk,
+      contactGroups: { defaultHasRecipient: false },
+    };
+    expect(
+      recipients('monitor_https', {
+        refs,
+        progress: { recipientsConfirmedFor: 'monitor_https' },
+        reality: r,
+      })
+    ).toBe(false);
+  });
+
+  it('judges by the ticks again once a certificate record appears', () => {
+    const r = reality({
+      monitors: [{ ...noToken, tokenId: 12 }],
+      tokens: [12],
+      groups: { 12: [] },
+    });
+    expect(
+      recipients('monitor_https', {
+        refs,
+        progress: { recipientsConfirmedFor: 'monitor_https' },
+        reality: r,
+      })
+    ).toBe(false);
+  });
+});
+
 describe('recipients step in the planned journey', () => {
   const statusOf = (plan, id) => plan.steps.find(s => s.id === id).status;
 

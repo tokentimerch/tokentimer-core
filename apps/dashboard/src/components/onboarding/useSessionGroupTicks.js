@@ -56,7 +56,8 @@ function nameList(items) {
 }
 
 /**
- * The contact groups attached to the websites and assets this guide created,
+ * The contact groups attached to the websites, assets and certificates this
+ * guide created,
  * read from the server, and the writes that change them. Every write is
  * followed by a read, so the ticks only ever show what is saved.
  */
@@ -98,6 +99,7 @@ export function useSessionGroupTicks({ ctx, plural = true }) {
     const entries = [
       ...current.websites.map(id => ({ id, kind: 'website' })),
       ...current.assets.map(id => ({ id, kind: 'asset' })),
+      ...current.certificates.map(id => ({ id, kind: 'certificate' })),
     ];
     if (!entries.length) {
       setState({ status: 'ready', items: [], reason: null });
@@ -113,7 +115,7 @@ export function useSessionGroupTicks({ ctx, plural = true }) {
     return { ok: true, items };
   }, []);
 
-  const key = `${plan.blocked || ''}|${plan.websites.join(',')}|${plan.assets.join(',')}|${goal}`;
+  const key = `${plan.blocked || ''}|${plan.websites.join(',')}|${plan.assets.join(',')}|${plan.certificates.join(',')}|${goal}`;
   useEffect(() => {
     load();
   }, [key, load]);
@@ -182,6 +184,7 @@ export function useSessionGroupTicks({ ctx, plural = true }) {
     status: state.status,
     items: state.items,
     noToken: plan.noToken,
+    plan,
     blockedMessage: state.reason ? BLOCKED_MESSAGES[state.reason] : '',
     saving,
     notice,

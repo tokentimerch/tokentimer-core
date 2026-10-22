@@ -11,19 +11,48 @@ export const MAX_ITEMS = 50;
 const TICK_GOALS = new Set(['monitor_https', 'track_asset']);
 export const canTickGoal = goal => TICK_GOALS.has(goal);
 
+// Which certificates a CertOps goal made, as the summary reports them.
+const CERTIFICATE_SOURCE = {};
+export const isCertificateGoal = goal => goal in CERTIFICATE_SOURCE;
+
 const text = v => String(v);
 const unique = list => Array.from(new Set(list.map(text)));
 
 /**
- * The tokens this guide created, split into websites and assets, plus why
- * ticks cannot be offered when the set cannot be trusted. operationRefs
- * tokenIds holds website certificates and asset-step ids together;
- * assetTokenIds (newer sessions) or the session's monitors tell them apart.
- * @returns {{ websites: string[], assets: string[], noToken: number, blocked: string|null }}
+ * The tokens this guide created, split into websites, assets and CertOps
+ * certificates, plus why ticks cannot be offered when the set cannot be
+ * trusted. operationRefs tokenIds holds website certificates and asset-step
+ * ids together; assetTokenIds (newer sessions) or the session's monitors tell
+ * them apart. CertOps certificates come from the summary, which resolves the
+ * jobs and enrollments of this session to their inventory tokens.
+ * noToken counts items that exist but have no token yet to carry a group.
+ * @returns {{ websites: string[], assets: string[], certificates: string[], noToken: number, blocked: string|null }}
  */
 export function planSessionItems({ goal, refs = {}, summary = null }) {
   if (!canTickGoal(goal)) {
-    return { websites: [], assets: [], noToken: 0, blocked: null };
+    return {
+      websites: [],
+      assets: [],
+      certificates: [],
+      noToken: 0,
+      blocked: null,
+    };
+  }
+  if (isCertificateGoal(goal)) {
+    const source = CERTIFICATE_SOURCE[goal];
+    const made = (summary?.certops?.sessionCertificates || []).filter(
+      c => c?.source === source
+    );
+    const certificates = unique(
+      made.filter(c => c.tokenId != null).map(c => c.tokenId)
+    );
+    return {
+      websites: [],
+      assets: [],
+      certificates,
+      noToken: made.filter(c => c.tokenId == null).length,
+      blocked: certificates.length > MAX_ITEMS ? 'cap' : null,
+    };
   }
   const references = summary?.references || {};
   const liveTokens = Array.isArray(references.tokenIds?.existing)
@@ -74,15 +103,20 @@ export function planSessionItems({ goal, refs = {}, summary = null }) {
   }
 
   const blocked = websites.length + assets.length > MAX_ITEMS ? 'cap' : null;
-  return { websites, assets, noToken, blocked };
+  return { websites, assets, certificates: [], noToken, blocked };
 }
 /**
  * Whether the alerting that belongs to THIS goal is set up in this session.
  * A group existing in the workspace proves nothing about the items the guide
  * created, so each goal is judged on its own evidence:
  * - monitor_https: every website the guide added carries a reachable group.
+ *   Websites without a certificate record yet cannot carry one; when none of
+ *   them can, the operator confirms the workspace default group instead.
  * - track_asset: every asset the guide added carries a reachable group.
- * - everything else (imports, alerting, CertOps): the operator confirmed the
+ * - CertOps goals that create a certificate (ACME, AD CS, Vault): every
+ *   certificate made in this session carries a reachable group; with none yet,
+ *   the operator confirms the workspace default group.
+ * - everything else (imports, alerting, observe): the operator confirmed the
  *   recipients for this goal and the default group still reaches someone.
  * A group counts only if it exists and reaches a recipient. Skipping is
  * handled by the planner, not here.
@@ -91,16 +125,37 @@ export function recipientsSatisfied({ goal, refs, progress, reality }) {
   if (!reality || !goal) return false;
   if (canTickGoal(goal)) {
     const plan = planSessionItems({ goal, refs: refs || {}, summary: reality });
-    const ids = goal === 'monitor_https' ? plan.websites : plan.assets;
-    const groups = reality.references?.tokenGroups;
-    if (!ids.length || !groups) return false;
-    return ids.every(id => (groups[text(id)] || []).length > 0);
+    const ids = tickIds(goal, plan);
+    if (ids.length) {
+      const groups = reality.references?.tokenGroups;
+      if (!groups) return false;
+      return ids.every(id => (groups[text(id)] || []).length > 0);
+    }
+    if (!confirmsDefault(goal, plan)) return false;
   }
   const defaults = reality.alerts?.contactGroups;
   const reaches =
     (defaults?.defaultHasRecipient ?? defaults?.defaultHasEmailRecipient) ===
     true;
   return progress?.recipientsConfirmedFor === goal && reaches;
+}
+
+/** The token ids a goal's ticks apply to. */
+export function tickIds(goal, plan) {
+  if (goal === 'monitor_https') return plan.websites;
+  if (goal === 'track_asset') return plan.assets;
+  return plan.certificates;
+}
+
+/**
+ * Whether a goal that normally ticks has nothing to tick yet and falls back
+ * to confirming the workspace default group: websites that cannot carry a
+ * group until their first check, or CertOps picks with no certificate yet.
+ */
+export function confirmsDefault(goal, plan) {
+  if (!canTickGoal(goal) || tickIds(goal, plan).length > 0) return false;
+  if (goal === 'monitor_https') return plan.noToken > 0;
+  return isCertificateGoal(goal);
 }
 
 /** 'all' | 'some' | 'none': how many items carry the group. */
@@ -160,13 +215,16 @@ export function describeTicks({
   }
   const hasWebsites = items.some(i => i.kind === 'website');
   const hasAssets = items.some(i => i.kind === 'asset');
-  if (!hasWebsites && !hasAssets) {
-    return noToken
-      ? describeNoToken(noToken)
+  const hasCertificates = items.some(i => i.kind === 'certificate');
+  if (!hasWebsites && !hasAssets && !hasCertificates) {
+    if (noToken) return describeNoToken(noToken, goal, defaultName);
+    return isCertificateGoal(goal)
+      ? describeNoCertificate(defaultName)
       : 'Add something first, then choose its groups here.';
   }
-  const what =
-    hasWebsites && hasAssets
+  const what = hasCertificates
+    ? 'the certificates'
+    : hasWebsites && hasAssets
       ? 'the websites and assets'
       : hasWebsites
         ? 'the websites'
@@ -187,7 +245,13 @@ export function describeUngrouped({ items, defaultName }) {
   if (!count) return '';
   const kinds = new Set(items.map(i => i.kind));
   const noun =
-    kinds.size > 1 ? 'item' : kinds.has('website') ? 'website' : 'asset';
+    kinds.size > 1
+      ? 'item'
+      : kinds.has('website')
+        ? 'website'
+        : kinds.has('certificate')
+          ? 'certificate'
+          : 'asset';
   const [subject, verb] =
     count === 1 ? [`1 ${noun} has`, 'uses'] : [`${count} ${noun}s have`, 'use'];
   return defaultName
@@ -195,15 +259,44 @@ export function describeUngrouped({ items, defaultName }) {
     : `${subject} no group and no default group is set, so there is no recipient until a group is set.`;
 }
 
-/** Websites that exist but have no certificate to carry a group. */
-export function describeNoToken(count) {
+/**
+ * Items that exist but have no token yet to carry a group. A website gets its
+ * certificate record at the first check that reads a certificate, with the
+ * workspace default group; a CertOps certificate gets its token once issued.
+ */
+export function describeNoToken(
+  count,
+  goal = 'monitor_https',
+  defaultName = ''
+) {
   if (!count) return '';
+  if (isCertificateGoal(goal)) {
+    const subject =
+      count === 1
+        ? '1 certificate from this setup has'
+        : `${count} certificates from this setup have`;
+    return `${subject} no inventory record yet, so ${count === 1 ? 'its' : 'their'} groups cannot be set here.`;
+  }
   const subject =
     count === 1
       ? '1 website you added has'
       : `${count} websites you added have`;
-  return `${subject} no certificate record yet, so ${count === 1 ? 'its' : 'their'} groups cannot be set here.`;
+  const tail = defaultName
+    ? ` Until then ${count === 1 ? 'it uses' : 'they use'} the workspace default group ${quoted(defaultName)}; you can change that in Alert Preferences.`
+    : '';
+  return `${subject} no certificate record yet, so ${count === 1 ? 'its' : 'their'} groups cannot be set here.${tail}`;
 }
+
+/** A CertOps pick that has not produced a certificate with a token yet. */
+export function describeNoCertificate(defaultName = '') {
+  return defaultName
+    ? `Nothing was created yet that could carry a group: the workspace default group ${quoted(defaultName)} is used.`
+    : 'Nothing was created yet that could carry a group, and no default group is set.';
+}
+
+/** Why observe and alerting setups have nothing to tick. */
+export const DEFAULT_ONLY_NOTE =
+  'This setup does not create items that carry their own group. Alerts use the groups below as the workspace default: set the default group and make sure it reaches someone.';
 
 export const BLOCKED_MESSAGES = {
   cap: `This guide added more than ${MAX_ITEMS} items, so groups cannot be ticked here. Change them on each asset.`,

@@ -943,3 +943,74 @@ describe('RecipientsStep Continue for goals with ticks', () => {
     }
   );
 });
+
+describe('RecipientsStep websites without a certificate record', () => {
+  const noTokenCtx = () => {
+    const ctx = makeCtx({ websiteIds: [] });
+    ctx.session.operationRefs.monitorIds = ['m99'];
+    ctx.summary.monitors.items = [{ id: 'm99', tokenId: null }];
+    return ctx;
+  };
+
+  it('explains why nothing can be ticked and offers the default group', async () => {
+    mount(noTokenCtx());
+    expect((await screen.findByTestId('tick-sentence')).textContent).toBe(
+      '1 website you added has no certificate record yet, so its groups cannot be set here. Until then it uses the workspace default group "Ops"; you can change that in Alert Preferences.'
+    );
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    expect(
+      await screen.findByRole('button', { name: 'Use these groups' })
+    ).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull();
+  });
+
+  it('records the confirmation for the website goal', async () => {
+    const ctx = noTokenCtx();
+    mount(ctx);
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Use these groups' })
+    );
+    await waitFor(() => expect(ctx.controller.update).toHaveBeenCalled());
+    const patch = ctx.controller.update.mock.calls[0][0]({ progress: {} });
+    expect(patch.progress).toEqual({ recipientsConfirmedFor: 'monitor_https' });
+  });
+
+  it('keeps the button off while the default group reaches nobody', async () => {
+    store.settings.contact_groups = [group('ops', 'Ops', [])];
+    mount(noTokenCtx());
+    expect(
+      await screen.findByRole('button', { name: 'Use these groups' })
+    ).toBeDisabled();
+    expect(screen.getByTestId('continue-hint')).toHaveTextContent(
+      'set a default group that has a recipient'
+    );
+  });
+
+  it('shows Continue instead once the confirmation is saved', async () => {
+    const ctx = noTokenCtx();
+    ctx.session.progress = { recipientsConfirmedFor: 'monitor_https' };
+    ctx.summary.alerts = { contactGroups: { defaultHasRecipient: true } };
+    mount(ctx);
+    const next = await screen.findByRole('button', { name: 'Continue' });
+    expect(next).toBeEnabled();
+    expect(
+      screen.queryByRole('button', { name: 'Use these groups' })
+    ).toBeNull();
+    fireEvent.click(next);
+    expect(ctx.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('ticks the websites that have a record and notes the others', async () => {
+    const ctx = makeCtx({ websiteIds: [11] });
+    ctx.session.operationRefs.monitorIds.push('m99');
+    ctx.summary.monitors.items.push({ id: 'm99', tokenId: null });
+    mount(ctx);
+    expect(await screen.findByTestId('no-token-note')).toHaveTextContent(
+      'has no certificate record yet'
+    );
+    expect(await box('Ops')).toHaveAttribute('aria-checked', 'true');
+    expect(
+      screen.queryByRole('button', { name: 'Use these groups' })
+    ).toBeNull();
+  });
+});
