@@ -47,3 +47,14 @@ test("agent logger prefixes every line with an ISO-8601 timestamp", () => {
   assert.match(infoLines[0], isoPrefix);
   assert.match(infoLines[0], /job done/);
 });
+
+test("agent logger warn routes to the error sink with the same scrubbing", () => {
+  const lines = [];
+  const logger = createAgentLogger({ sink: (line) => lines.push(line) });
+
+  logger.warn("custody key not updated", { credential: "ttagent_agent-1_0123456789abcdef" });
+
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /custody key not updated/);
+  assert.doesNotMatch(lines[0], /0123456789abcdef/);
+});

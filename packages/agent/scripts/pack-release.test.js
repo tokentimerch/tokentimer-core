@@ -10,6 +10,7 @@ const {
   main,
   sha256File,
   assertNoPrivateKeyMaterial,
+  assertExecutableEntries,
 } = require("./pack-release.js");
 
 const packageJsonPath = path.resolve(__dirname, "..", "package.json");
@@ -191,4 +192,53 @@ describe("pack-release (H10)", () => {
       fs.rmSync(scratchDir, { recursive: true, force: true });
     }
   });
-});
+
+  it("tracks install-agent.sh as executable in git (mode 100755)", (t) => {
+    const ls = spawnSync(
+      "git",
+      ["ls-files", "-s", "--", "scripts/install-agent.sh"],
+      { cwd: path.resolve(__dirname, ".."), encoding: "utf8" },
+    );
+    if (ls.status !== 0 || !ls.stdout.trim()) {
+      t.skip("not a git checkout");
+      return;
+    }
+    assert.match(ls.stdout, /^100755 /);
+  });
+
+  it("assertExecutableEntries rejects a tarball whose installer lost the exec bit", (t) => {
+    if (process.platform === "win32") {
+      t.skip("tar modes are not controllable on win32");
+      return;
+    }
+    const scratchDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "tokentimer-agent-release-mode-"),
+    );
+    try {
+      const script = path.join(scratchDir, "package", "scripts");
+      fs.mkdirSync(script, { recursive: true });
+      const installer = path.join(script, "install-agent.sh");
+      fs.writeFileSync(installer, "#!/bin/sh\n");
+      const pack = (name) => {
+        const tarball = path.join(scratchDir, name);
+        const result = spawnSync(
+          "tar",
+          ["-czf", tarball, "-C", scratchDir, "package"],
+          { encoding: "utf8" },
+        );
+        assert.equal(result.status, 0);
+        return tarball;
+      };
+
+      fs.chmodSync(installer, 0o644);
+      assert.throws(
+        () => assertExecutableEntries(pack("plain.tgz")),
+        /install-agent\.sh/,
+      );
+
+      fs.chmodSync(installer, 0o755);
+      assert.doesNotThrow(() => assertExecutableEntries(pack("exec.tgz")));
+    } finally {
+      fs.rmSync(scratchDir, { recursive: true, force: true });
+    }
+  });});

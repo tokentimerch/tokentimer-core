@@ -91,7 +91,9 @@ function buildTokenlessInstallCommand({ apiUrl, workspaceId, os }) {
     ].join('\n');
   }
   return [
-    `sudo ./install-agent.sh \\`,
+    // `bash` keeps older release tarballs working, where the installer
+    // shipped without the executable bit.
+    `sudo bash ./install-agent.sh \\`,
     `  --api-url '${apiUrl}' \\`,
     `  --workspace-id '${workspaceId}' \\`,
     `  --trust-store`,

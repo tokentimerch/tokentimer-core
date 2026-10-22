@@ -2,6 +2,10 @@
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const {
   validateAbsolutePath,
   trustStoreWritePaths,
@@ -9,6 +13,8 @@ const {
   isTrustStoreRecursiveAclPath,
   buildSystemdOverride,
   buildPolkitRule,
+  planPolkitRule,
+  parseExistingPolkitUnits,
   mapReloadService,
 } = require("./host-sandbox.js");
 
@@ -120,5 +126,112 @@ describe("host-sandbox polkit reload rules", () => {
       buildPolkitRule({ user: "tokentimer-agent", reloadServices: [] }),
       null,
     );
+  });
+});
+
+describe("host-sandbox polkit re-run behavior", () => {
+  const user = "tokentimer-agent";
+  const nginxRule = buildPolkitRule({ user, reloadServices: ["nginx"] });
+
+  it("reads the units back out of a generated rule", () => {
+    assert.deepEqual(parseExistingPolkitUnits(nginxRule), ["nginx.service"]);
+    assert.equal(parseExistingPolkitUnits("polkit.addRule(function () {});"), null);
+    assert.equal(parseExistingPolkitUnits(null), null);
+  });
+
+  it("merges a new service with the grants already on the host", () => {
+    const plan = planPolkitRule({
+      user,
+      reloadServices: ["haproxy"],
+      existingRuleText: nginxRule,
+    });
+    assert.match(plan.rule, /"nginx\.service", "haproxy\.service"/);
+    assert.deepEqual(plan.added, ["haproxy.service"]);
+    assert.deepEqual(plan.dropped, []);
+  });
+
+  it("does not duplicate a service that is already granted", () => {
+    const plan = planPolkitRule({
+      user,
+      reloadServices: ["nginx"],
+      existingRuleText: nginxRule,
+    });
+    assert.deepEqual(parseExistingPolkitUnits(plan.rule), ["nginx.service"]);
+    assert.deepEqual(plan.added, []);
+  });
+
+  it("replace makes the requested list authoritative and reports what it drops", () => {
+    const plan = planPolkitRule({
+      user,
+      reloadServices: ["haproxy"],
+      existingRuleText: nginxRule,
+      replace: true,
+    });
+    assert.deepEqual(parseExistingPolkitUnits(plan.rule), ["haproxy.service"]);
+    assert.deepEqual(plan.dropped, ["nginx.service"]);
+  });
+
+  it("replace with no services removes the rule", () => {
+    const plan = planPolkitRule({
+      user,
+      reloadServices: [],
+      existingRuleText: nginxRule,
+      replace: true,
+    });
+    assert.equal(plan.rule, null);
+    assert.deepEqual(plan.dropped, ["nginx.service"]);
+  });
+
+  it("never carries a unit outside the allowlist forward", () => {
+    const tampered = nginxRule.replace('"nginx.service"', '"nginx.service", "sshd.service"');
+    const plan = planPolkitRule({
+      user,
+      reloadServices: ["haproxy"],
+      existingRuleText: tampered,
+    });
+    assert.doesNotMatch(plan.rule, /sshd/);
+    assert.deepEqual(plan.dropped, ["sshd.service"]);
+  });
+
+  it("flags an existing file that this installer did not write", () => {
+    const plan = planPolkitRule({
+      user,
+      reloadServices: ["nginx"],
+      existingRuleText: "polkit.addRule(function () { return polkit.Result.YES; });",
+    });
+    assert.equal(plan.unrecognizedExisting, true);
+    assert.deepEqual(parseExistingPolkitUnits(plan.rule), ["nginx.service"]);
+  });
+
+  describe("CLI with --rule-file", () => {
+    function runCli(args) {
+      return spawnSync(process.execPath, [path.join(__dirname, "host-sandbox.js"), ...args], {
+        encoding: "utf8",
+      });
+    }
+
+    it("merges by default, warns on replace, and tolerates a missing file", () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-polkit-"));
+      try {
+        const ruleFile = path.join(dir, "50-tokentimer-agent.rules");
+        fs.writeFileSync(ruleFile, nginxRule);
+
+        const merged = runCli(["polkit", "--user", user, "--rule-file", ruleFile, "--reload-service", "haproxy"]);
+        assert.equal(merged.status, 0);
+        assert.deepEqual(parseExistingPolkitUnits(merged.stdout), ["nginx.service", "haproxy.service"]);
+        assert.match(merged.stderr, /keeping existing reload grants: nginx\.service/);
+
+        const replaced = runCli(["polkit", "--user", user, "--rule-file", ruleFile, "--replace", "--reload-service", "haproxy"]);
+        assert.equal(replaced.status, 0);
+        assert.deepEqual(parseExistingPolkitUnits(replaced.stdout), ["haproxy.service"]);
+        assert.match(replaced.stderr, /WARNING: dropping reload grants no longer listed: nginx\.service/);
+
+        const fresh = runCli(["polkit", "--user", user, "--rule-file", path.join(dir, "absent.rules"), "--reload-service", "nginx"]);
+        assert.equal(fresh.status, 0);
+        assert.deepEqual(parseExistingPolkitUnits(fresh.stdout), ["nginx.service"]);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 });
