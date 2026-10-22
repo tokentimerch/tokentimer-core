@@ -2765,8 +2765,8 @@ function ImportTokensModalContent({
                     },
                     {
                       key: 'azure-ad',
-                      label: 'Entra ID',
-                      alt: 'Microsoft Entra ID',
+                      label: 'Azure AD',
+                      alt: 'Azure Active Directory',
                     },
                     {
                       key: 'gcp',

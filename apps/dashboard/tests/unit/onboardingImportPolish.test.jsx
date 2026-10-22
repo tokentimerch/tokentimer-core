@@ -95,12 +95,11 @@ describe('provider logos in the integration step', () => {
     expect(within(github).getByText('GitHub')).toBeInTheDocument();
   });
 
-  it('gives the two Azure sources their own logo instead of a badge', () => {
+  it('adds a badge to tell the two Azure logos apart', () => {
     const { container } = render(
       wrap(<ImportSourceLogo sourceKey='azure-ad' />)
     );
-    expect(container.querySelector('img')).not.toBeNull();
-    expect(container.querySelector('svg')).toBeNull();
+    expect(container.querySelector('svg')).not.toBeNull();
     expect(
       render(wrap(<ImportSourceLogo sourceKey='nope' />)).container.textContent
     ).toBe('');

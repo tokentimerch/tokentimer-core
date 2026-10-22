@@ -1,10 +1,6 @@
-﻿import React from 'react';
+import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import {
-  render,
-  screen,
-  cleanup,
-} from '@testing-library/react';
+import { render, screen, cleanup } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 
 import ImportTokensModal from '../../src/components/ImportTokensModal.jsx';
@@ -185,7 +181,7 @@ describe('ImportTokensModal source options', () => {
       screen.getByRole('button', { name: 'Public certificate PEM import' })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Microsoft Entra ID' })
+      screen.getByRole('button', { name: 'Azure Active Directory' })
     ).toBeInTheDocument();
   });
 
@@ -201,7 +197,7 @@ describe('ImportTokensModal source options', () => {
       'GitHub',
       'AWS',
       'Azure Key Vault',
-      'Microsoft Entra ID',
+      'Azure Active Directory',
       'Google Cloud',
     ].forEach(name =>
       expect(screen.getByRole('button', { name })).toBeInTheDocument()

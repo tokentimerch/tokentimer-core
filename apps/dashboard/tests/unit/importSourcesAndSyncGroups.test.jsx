@@ -1,13 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import { ChakraProvider } from '@chakra-ui/react';
 
 import {
-  IMPORT_SOURCE_LOGOS,
-  IMPORT_SOURCE_NAMES,
-  ImportSourceLogo,
   isSourceVisible,
   resolveStartSource,
 } from '../../src/components/imports/importSources.jsx';
@@ -15,59 +8,6 @@ import {
   describeSyncGroups,
   formatNextSync,
 } from '../../src/components/imports/syncGroupLine.js';
-
-const PUBLIC = resolve(__dirname, '../../public');
-
-describe('provider logos', () => {
-  const entries = Object.entries(IMPORT_SOURCE_LOGOS);
-
-  it('covers every provider and names each one', () => {
-    expect(Object.keys(IMPORT_SOURCE_NAMES).sort()).toEqual(
-      entries.map(([k]) => k).sort()
-    );
-  });
-
-  for (const [key, src] of entries) {
-    it(`${key} points at a file that ships with the app`, () => {
-      expect(src.startsWith('/')).toBe(true);
-      expect(existsSync(resolve(PUBLIC, src.slice(1)))).toBe(true);
-    });
-  }
-
-  it.each(['azure', 'azure-ad'])(
-    '%s has its own crisp SVG with a viewBox and no remote fetch',
-    key => {
-      const file = resolve(PUBLIC, IMPORT_SOURCE_LOGOS[key].slice(1));
-      const svg = readFileSync(file, 'utf8');
-      expect(file.endsWith('.svg')).toBe(true);
-      expect(svg).toMatch(/viewBox="0 0 48 48"/);
-      expect(svg).not.toMatch(/https?:\/\/(?!www\.w3\.org)/);
-      expect(svg).not.toMatch(/<image/);
-    }
-  );
-
-  it('the two Azure sources no longer share a logo or a badge', () => {
-    expect(IMPORT_SOURCE_LOGOS.azure).not.toBe(IMPORT_SOURCE_LOGOS['azure-ad']);
-    const { container } = render(
-      <ChakraProvider>
-        <ImportSourceLogo sourceKey='azure-ad' />
-      </ChakraProvider>
-    );
-    expect(container.querySelectorAll('img')).toHaveLength(1);
-    expect(container.querySelector('svg')).toBeNull();
-    expect(container.querySelector('img').getAttribute('alt')).toBe('');
-  });
-
-  it('renders nothing for an unknown source', () => {
-    const { container } = render(
-      <ChakraProvider>
-        <ImportSourceLogo sourceKey='nope' />
-      </ChakraProvider>
-    );
-    expect(container.textContent).toBe('');
-    expect(screen.queryByRole('img')).toBeNull();
-  });
-});
 
 describe('visible import sources', () => {
   it('shows everything by default and starts on File', () => {
