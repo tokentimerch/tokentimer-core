@@ -47,11 +47,30 @@ import {
   saveCertops,
 } from './certopsSetupSteps.jsx';
 import { createBootstrapToken } from '../certops/certopsAgentsApi.js';
+import { createApiToken } from '../certops/certopsTokensApi.js';
+import { isValidControllerClusterId } from '../certops/certopsTokenScopeMeta.js';
 import AgentCheckIn from './AgentCheckIn.jsx';
 import { JobTimelineList } from './JobActivity.jsx';
-import { Callout, StatusPanel, StatusTag } from './panels.jsx';
+import { Callout, DetailsSection, StatusPanel, StatusTag } from './panels.jsx';
 
 const POLL_MS = 5000;
+
+// The controller reports with a token bound to one cluster; this is the only
+// scope it needs.
+export const CONTROLLER_TOKEN_SCOPE = 'certops:observations:write';
+
+function machineTokenError(err) {
+  const code = err?.response?.data?.code;
+  if (err?.response?.status === 403 || code === 'INSUFFICIENT_ROLE') {
+    return 'You need workspace manager permission to create machine tokens.';
+  }
+  if (code === 'CERTOPS_API_TOKEN_CONTROLLER_CLUSTER_INVALID') {
+    return 'The cluster id is not valid. Use lowercase letters, digits and hyphens.';
+  }
+  return (
+    err?.response?.data?.error || err?.message || 'Could not create the token.'
+  );
+}
 
 function agentsSummaryControllers(ctx) {
   const certops = ctx.summary?.certops;
@@ -128,6 +147,10 @@ export function AgentStep({ ctx }) {
   const notes = registrationNotesFor(os);
   const configPath = agentConfigPathFor(os);
   const [token, setToken] = useState(null); // shown once, never persisted
+  // Same rule for the Kubernetes machine token: component state only.
+  const [machineToken, setMachineToken] = useState(null);
+  const [machineBusy, setMachineBusy] = useState(false);
+  const [machineError, setMachineError] = useState('');
   const [clusterId, setClusterId] = useState(saved.clusterId || '');
   const [error, setError] = useState('');
   const [tokenError, setTokenError] = useState('');
@@ -139,6 +162,8 @@ export function AgentStep({ ctx }) {
   // page must not keep showing a used token or a disabled button.
   useEffect(() => {
     setToken(null);
+    setMachineToken(null);
+    setMachineError('');
     setTokenError('');
     setDeferred(false);
   }, [saved.objective, infra]);
@@ -208,6 +233,35 @@ export function AgentStep({ ctx }) {
       await saveCertops(ctx, { installerKey: neededKey });
     } catch (e) {
       setError(e.message || 'Could not save your progress.');
+    }
+  };
+
+  const issueMachineToken = async () => {
+    const bound = clusterId.trim();
+    if (!isValidControllerClusterId(bound)) return;
+    setMachineBusy(true);
+    setMachineError('');
+    try {
+      const res = await createApiToken(ctx.workspaceId, {
+        name: `Setup guide controller ${bound}`,
+        scopes: [CONTROLLER_TOKEN_SCOPE],
+        controllerClusterId: bound,
+      });
+      const plaintext =
+        typeof res?.plaintextToken === 'string'
+          ? res.plaintextToken.trim()
+          : '';
+      if (!plaintext) {
+        setMachineError(
+          'The server did not return the token value. The token may have been created: check the list in Certificate Management, Settings, and revoke it if needed.'
+        );
+        return;
+      }
+      setMachineToken({ plaintext, clusterId: bound });
+    } catch (e) {
+      setMachineError(machineTokenError(e));
+    } finally {
+      setMachineBusy(false);
     }
   };
 
@@ -290,16 +344,83 @@ export function AgentStep({ ctx }) {
             />
           </FormControl>
           {valuesError ? <ErrorText>{valuesError}</ErrorText> : null}
-          <Text fontSize='sm'>
-            2. Create a machine token: in Certificate Management, open Settings
-            and add a token with the scope{' '}
-            <code>certops:observations:write</code> and that same cluster id
-            (the token is bound to it). Then store it in the cluster:
-          </Text>
-          <CopyBlock
-            label='Create the secret (token read from stdin)'
-            text={buildControllerSecretCommand({})}
-          />
+          <InstallStep
+            n={2}
+            text='Create a machine token for this cluster. It is bound to the cluster id above, can only report certificates, and is shown once. Then store it in the cluster with the command below.'
+          >
+            {machineError ? (
+              <DashboardErrorAlert>{machineError}</DashboardErrorAlert>
+            ) : null}
+            {machineToken ? (
+              <>
+                <CopyBlock
+                  label='One-time machine token'
+                  text={machineToken.plaintext}
+                  allowSecret
+                />
+                <Text
+                  fontSize='xs'
+                  color={muted}
+                  data-testid='machine-token-bound'
+                >
+                  Bound to cluster {machineToken.clusterId}. If you change the
+                  cluster id above, create another token.
+                </Text>
+                <HStack>
+                  <DashboardActionButton
+                    size='sm'
+                    variant='outline'
+                    onClick={issueMachineToken}
+                    isLoading={machineBusy}
+                    isDisabled={!isValidControllerClusterId(clusterId)}
+                  >
+                    Create another token
+                  </DashboardActionButton>
+                </HStack>
+              </>
+            ) : (
+              <>
+                <SlotBlock
+                  label='One-time machine token'
+                  placeholder='<machine token>'
+                />
+                <HStack>
+                  <PrimaryButton
+                    size='sm'
+                    onClick={issueMachineToken}
+                    isLoading={machineBusy}
+                    isDisabled={!isValidControllerClusterId(clusterId)}
+                  >
+                    Create machine token
+                  </PrimaryButton>
+                </HStack>
+                {!isValidControllerClusterId(clusterId) ? (
+                  <Text
+                    fontSize='xs'
+                    color={muted}
+                    data-testid='machine-token-hint'
+                  >
+                    Choose a valid cluster id first: lowercase letters, digits
+                    and hyphens.
+                  </Text>
+                ) : null}
+              </>
+            )}
+            <DetailsSection
+              summary='Create it in settings instead'
+              testId='machine-token-manual'
+            >
+              <Text fontSize='sm'>
+                In Certificate Management, open Settings and add a token with
+                the scope <code>{CONTROLLER_TOKEN_SCOPE}</code> and that same
+                cluster id (the token is bound to it).
+              </Text>
+            </DetailsSection>
+            <CopyBlock
+              label='Create the secret (token read from stdin)'
+              text={buildControllerSecretCommand({})}
+            />
+          </InstallStep>
           {values ? (
             <>
               <Text fontSize='sm'>

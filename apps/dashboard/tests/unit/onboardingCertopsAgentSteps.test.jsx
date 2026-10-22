@@ -9,7 +9,14 @@ import {
 import { ChakraProvider } from '@chakra-ui/react';
 import { describe, expect, it, vi } from 'vitest';
 
-const { createToken } = vi.hoisted(() => ({ createToken: vi.fn() }));
+const { createToken, createMachineToken } = vi.hoisted(() => ({
+  createToken: vi.fn(),
+  createMachineToken: vi.fn(),
+}));
+vi.mock('../../src/components/certops/certopsTokensApi.js', async orig => ({
+  ...(await orig()),
+  createApiToken: createMachineToken,
+}));
 vi.mock('../../src/components/certops/certopsAgentsApi.js', async orig => ({
   ...(await orig()),
   createBootstrapToken: createToken,
@@ -198,6 +205,132 @@ describe('Kubernetes install step', () => {
       expect(ctx.session.progress.certops.clusterId).toBe('prod-eu')
     );
     expect(ctx.session.progress.certops.configReviewed).toBeUndefined();
+  });
+});
+
+describe('Kubernetes machine token', () => {
+  const k8s = { objective: 'observe', infrastructure: 'kubernetes' };
+  const mountK8s = (certops = k8s) => {
+    const ctx = makeCtx('certops_observe', certops, noAgents);
+    mount(AgentStep, ctx);
+    return ctx;
+  };
+  const type = value =>
+    fireEvent.change(screen.getByLabelText('Cluster id'), {
+      target: { value },
+    });
+  const create = () =>
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create machine token' })
+    );
+
+  it('shows a marked slot and keeps the button off until the cluster id is valid', () => {
+    mountK8s();
+    expect(screen.getByText('<machine token>')).toBeInTheDocument();
+    const button = screen.getByRole('button', { name: 'Create machine token' });
+    expect(button).toBeDisabled();
+    expect(screen.getByTestId('machine-token-hint')).toBeInTheDocument();
+    type('Prod_EU');
+    expect(button).toBeDisabled();
+    type('prod-eu');
+    expect(button).toBeEnabled();
+    expect(screen.queryByTestId('machine-token-hint')).toBeNull();
+    expect(createMachineToken).not.toHaveBeenCalled();
+  });
+
+  it('creates a token with the observations scope bound to the cluster id', async () => {
+    createMachineToken.mockReset().mockResolvedValue({
+      token: { id: 't1' },
+      plaintextToken: 'tt_machine_secret_1',
+    });
+    const ctx = mountK8s();
+    type(' prod-eu ');
+    create();
+    await screen.findByText('tt_machine_secret_1');
+    expect(createMachineToken).toHaveBeenCalledTimes(1);
+    expect(createMachineToken).toHaveBeenCalledWith(WS, {
+      name: 'Setup guide controller prod-eu',
+      scopes: ['certops:observations:write'],
+      controllerClusterId: 'prod-eu',
+    });
+    // The slot is replaced and the token is not saved with the progress.
+    expect(screen.queryByText('<machine token>')).toBeNull();
+    expect(screen.getByTestId('machine-token-bound').textContent).toMatch(
+      /Bound to cluster prod-eu/
+    );
+    expect(JSON.stringify(ctx.session)).not.toContain('tt_machine_secret_1');
+    expect(ctx.controller.update).not.toHaveBeenCalled();
+  });
+
+  it('creates another token bound to the current cluster id', async () => {
+    createMachineToken
+      .mockReset()
+      .mockResolvedValueOnce({ plaintextToken: 'first_secret' })
+      .mockResolvedValueOnce({ plaintextToken: 'second_secret' });
+    mountK8s();
+    type('prod-eu');
+    create();
+    await screen.findByText('first_secret');
+    type('prod-us');
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create another token' })
+    );
+    await screen.findByText('second_secret');
+    expect(screen.queryByText('first_secret')).toBeNull();
+    expect(createMachineToken).toHaveBeenLastCalledWith(
+      WS,
+      expect.objectContaining({ controllerClusterId: 'prod-us' })
+    );
+    expect(screen.getByTestId('machine-token-bound').textContent).toMatch(
+      /prod-us/
+    );
+  });
+
+  it('explains a refusal and keeps the slot', async () => {
+    createMachineToken.mockReset().mockRejectedValue({
+      response: { status: 403, data: { code: 'INSUFFICIENT_ROLE' } },
+    });
+    mountK8s();
+    type('prod-eu');
+    create();
+    expect(
+      await screen.findByText(/need workspace manager permission/)
+    ).toBeInTheDocument();
+    expect(screen.getByText('<machine token>')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Create machine token' })
+    ).toBeEnabled();
+  });
+
+  it('does not show a token the server did not return', async () => {
+    createMachineToken.mockReset().mockResolvedValue({ token: { id: 't1' } });
+    mountK8s();
+    type('prod-eu');
+    create();
+    expect(
+      await screen.findByText(/did not return the token value/)
+    ).toBeInTheDocument();
+    expect(screen.getByText('<machine token>')).toBeInTheDocument();
+  });
+
+  it('keeps the manual route as a collapsed detail', () => {
+    mountK8s();
+    const details = screen.getByTestId('machine-token-manual');
+    expect(details.tagName).toBe('DETAILS');
+    expect(details).not.toHaveAttribute('open');
+    expect(
+      within(details).getByText('Create it in settings instead')
+    ).toBeTruthy();
+    expect(
+      within(details).getByText('certops:observations:write')
+    ).toBeTruthy();
+  });
+
+  it('offers no machine token on the Linux install', () => {
+    mount(AgentStep, makeCtx('certops_observe', linux, noAgents));
+    expect(
+      screen.queryByRole('button', { name: 'Create machine token' })
+    ).toBeNull();
   });
 });
 
