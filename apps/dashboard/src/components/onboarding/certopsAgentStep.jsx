@@ -17,7 +17,7 @@ import {
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame, { DocsLink } from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
-import { CopyBlock, ErrorText, WarnText } from './blocks.jsx';
+import { CopyBlock, ErrorText, SlotBlock, WarnText } from './blocks.jsx';
 import {
   INFRASTRUCTURES,
   capabilityGap,
@@ -116,6 +116,7 @@ export function AgentStep({ ctx }) {
   const [token, setToken] = useState(null); // shown once, never persisted
   const [clusterId, setClusterId] = useState(saved.clusterId || '');
   const [error, setError] = useState('');
+  const [tokenError, setTokenError] = useState('');
   const [busy, setBusy] = useState(false);
   const [deferred, setDeferred] = useState(false);
   const timer = useRef(null);
@@ -124,6 +125,7 @@ export function AgentStep({ ctx }) {
   // page must not keep showing a used token or a disabled button.
   useEffect(() => {
     setToken(null);
+    setTokenError('');
     setDeferred(false);
   }, [saved.objective, infra]);
 
@@ -149,7 +151,7 @@ export function AgentStep({ ctx }) {
 
   const issueToken = async () => {
     setBusy(true);
-    setError('');
+    setTokenError('');
     try {
       const expiresAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
       const res = await createBootstrapToken(ctx.workspaceId, {
@@ -164,7 +166,7 @@ export function AgentStep({ ctx }) {
         ...(target ? {} : { installerKey: neededKey }),
       });
     } catch (e) {
-      setError(
+      setTokenError(
         e?.response?.data?.error || e.message || 'Could not create a token.'
       );
     } finally {
@@ -395,20 +397,11 @@ export function AgentStep({ ctx }) {
         ),
       ]}
       actions={
-        <>
-          {healthy ? null : (
-            <DashboardActionButton variant='outline' onClick={installLater}>
-              I will install it later
-            </DashboardActionButton>
-          )}
-          <PrimaryButton
-            onClick={issueToken}
-            isLoading={busy}
-            isDisabled={Boolean(token)}
-          >
-            {token ? 'Token created' : 'Create a one-time token'}
-          </PrimaryButton>
-        </>
+        healthy ? undefined : (
+          <DashboardActionButton variant='outline' onClick={installLater}>
+            I will install it later
+          </DashboardActionButton>
+        )
       }
     >
       <VStack align='stretch' spacing={3}>
@@ -444,8 +437,8 @@ export function AgentStep({ ctx }) {
               <Text fontSize='sm'>
                 This goal needs different installer options. Run the command
                 below again on the server. The installer asks for a bootstrap
-                token again: create another one with the button at the bottom of
-                this card.
+                token again: create another one with the token button in step 3
+                of this card.
               </Text>
               <DashboardActionButton size='sm' onClick={confirmRerun}>
                 I ran the command again
@@ -502,15 +495,46 @@ export function AgentStep({ ctx }) {
           <InstallStep n={2} text={notes[1]} />
           <InstallStep
             n={3}
-            text='Create a one-time bootstrap token with the button at the bottom of this card. It is shown once and expires in 24 hours. If you lose it or it expires, create another.'
+            text='Create a one-time bootstrap token. It is shown once and expires in 24 hours. If you lose it or it expires, create another.'
           >
-            {token ? (
-              <CopyBlock
-                label='One-time bootstrap token'
-                text={token.plaintext}
-                allowSecret
-              />
+            {tokenError ? (
+              <DashboardErrorAlert>{tokenError}</DashboardErrorAlert>
             ) : null}
+            {token ? (
+              <>
+                <CopyBlock
+                  label='One-time bootstrap token'
+                  text={token.plaintext}
+                  allowSecret
+                />
+                <HStack>
+                  <DashboardActionButton
+                    size='sm'
+                    variant='outline'
+                    onClick={issueToken}
+                    isLoading={busy}
+                  >
+                    Create another token
+                  </DashboardActionButton>
+                </HStack>
+              </>
+            ) : (
+              <>
+                <SlotBlock
+                  label='One-time bootstrap token'
+                  placeholder='<bootstrap token>'
+                />
+                <HStack>
+                  <PrimaryButton
+                    size='sm'
+                    onClick={issueToken}
+                    isLoading={busy}
+                  >
+                    Create bootstrap token
+                  </PrimaryButton>
+                </HStack>
+              </>
+            )}
           </InstallStep>
           <InstallStep n={4} text={notes[2]}>
             {commandError ? (

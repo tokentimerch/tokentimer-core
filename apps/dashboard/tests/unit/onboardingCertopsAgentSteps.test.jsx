@@ -268,7 +268,7 @@ describe('installer options after the agent registered', () => {
     const first = makeCtx('certops_automate', automate, noAgents);
     mount(AgentStep, first);
     fireEvent.click(
-      screen.getByRole('button', { name: 'Create a one-time token' })
+      screen.getByRole('button', { name: 'Create bootstrap token' })
     );
     await waitFor(() =>
       expect(first.session.progress.certops.installerKey).toBe(key)
@@ -277,7 +277,7 @@ describe('installer options after the agent registered', () => {
     const again = makeCtx('certops_automate', automate, registered);
     mount(AgentStep, again);
     fireEvent.click(
-      screen.getByRole('button', { name: 'Create a one-time token' })
+      screen.getByRole('button', { name: 'Create bootstrap token' })
     );
     await waitFor(() =>
       expect(again.session.progress.certops.tokenCreatedAt).toBeTruthy()
@@ -286,12 +286,144 @@ describe('installer options after the agent registered', () => {
   });
 });
 
+describe('bootstrap token slot inside step 3', () => {
+  const stepThree = () =>
+    screen.getByText(/Create a one-time bootstrap token\./).parentElement;
+
+  it.each([
+    ['Linux', linux],
+    ['Windows', windows],
+  ])(
+    'puts the only token button inside step 3 with a marked placeholder (%s)',
+    (_name, certops) => {
+      mount(AgentStep, makeCtx('certops_observe', certops, noAgents));
+      const buttons = screen.getAllByRole('button', {
+        name: /bootstrap token|one-time token/i,
+      });
+      expect(buttons).toHaveLength(1);
+      const step = stepThree();
+      expect(step.textContent).toMatch(/3\. Create a one-time bootstrap token/);
+      expect(step.contains(buttons[0])).toBe(true);
+      expect(within(step).getByTestId('slot-placeholder').textContent).toBe(
+        '<bootstrap token>'
+      );
+      // Nothing to copy before the token exists.
+      expect(within(step).queryByLabelText(/^Copy /)).toBeNull();
+      // The old bottom-of-card location is gone.
+      expect(
+        screen.queryByRole('button', { name: 'Create a one-time token' })
+      ).toBeNull();
+      expect(document.body.textContent).not.toMatch(/bottom of this card/);
+    }
+  );
+
+  it('replaces the placeholder with the token once and keeps the earlier steps', async () => {
+    createToken
+      .mockReset()
+      .mockResolvedValue({ plaintextToken: 'ttboot_secretvalue' });
+    mount(AgentStep, makeCtx('certops_observe', linux, noAgents));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create bootstrap token' })
+    );
+    await waitFor(() =>
+      expect(within(stepThree()).getByText('ttboot_secretvalue')).toBeVisible()
+    );
+    const step = stepThree();
+    expect(within(step).queryByTestId('slot-placeholder')).toBeNull();
+    expect(
+      within(step).getByLabelText(/Copy One-time bootstrap token/)
+    ).toBeVisible();
+    expect(step.textContent).toMatch(/shown once and expires in 24 hours/);
+    // Steps 1, 2 and 4 stay on the page, and the command has no token in it.
+    const steps = screen.getByTestId('install-steps').textContent;
+    expect(steps).toMatch(/1\. On the server, download/);
+    expect(steps).toMatch(/2\. Extract it/);
+    expect(steps).toMatch(/4\. Run the install command/);
+    expect(steps.match(/ttboot_secretvalue/g)).toHaveLength(1);
+    // Still one place to make another token.
+    expect(
+      within(step).getByRole('button', { name: 'Create another token' })
+    ).toBeVisible();
+    expect(
+      screen.queryByRole('button', { name: 'Create bootstrap token' })
+    ).toBeNull();
+  });
+
+  it('makes another token from the same step', async () => {
+    createToken
+      .mockReset()
+      .mockResolvedValueOnce({ plaintextToken: 'ttboot_one' })
+      .mockResolvedValueOnce({ plaintextToken: 'ttboot_two' });
+    mount(AgentStep, makeCtx('certops_observe', linux, noAgents));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create bootstrap token' })
+    );
+    await screen.findByText('ttboot_one');
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create another token' })
+    );
+    await screen.findByText('ttboot_two');
+    expect(screen.queryByText('ttboot_one')).toBeNull();
+    expect(createToken).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows a failed creation inside step 3 and keeps the placeholder', async () => {
+    createToken.mockReset().mockRejectedValue(new Error('nope'));
+    mount(AgentStep, makeCtx('certops_observe', linux, noAgents));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create bootstrap token' })
+    );
+    await waitFor(() =>
+      expect(within(stepThree()).getByText('nope')).toBeVisible()
+    );
+    expect(within(stepThree()).getByTestId('slot-placeholder')).toBeVisible();
+  });
+
+  it('points the reinstall prompt at the token button in step 3', () => {
+    const automate = {
+      objective: 'automate',
+      infrastructure: 'linux',
+      certPath: '/etc/ssl/tokentimer/a.pem',
+      reloadService: 'haproxy',
+    };
+    const agent = {
+      id: 'a1',
+      platform: 'linux',
+      livenessState: 'live',
+      commandProfiles: ['certbot'],
+    };
+    mount(
+      AgentStep,
+      makeCtx('certops_automate', automate, {
+        certops: { agents: { live: 1, total: 1, items: [agent] } },
+      })
+    );
+    const prompt = screen.getByTestId('reinstall-needed').textContent;
+    expect(prompt).toMatch(/token button in step 3/);
+    expect(prompt).not.toMatch(/bottom of/);
+  });
+
+  it('has no token button on the Kubernetes controller step, which uses a Settings token', () => {
+    mount(
+      AgentStep,
+      makeCtx(
+        'certops_observe',
+        { objective: 'observe', infrastructure: 'kubernetes' },
+        noAgents
+      )
+    );
+    expect(
+      screen.queryByRole('button', { name: /bootstrap token|one-time token/i })
+    ).toBeNull();
+  });
+});
+
 describe('bootstrap token name', () => {
   it('calls the token a setup guide token, not a wizard token', async () => {
     createToken.mockReset().mockResolvedValue({ plaintextToken: 'ttboot_x' });
     mount(AgentStep, makeCtx('certops_observe', linux, noAgents));
     fireEvent.click(
-      screen.getByRole('button', { name: 'Create a one-time token' })
+      screen.getByRole('button', { name: 'Create bootstrap token' })
     );
     await waitFor(() => expect(createToken).toHaveBeenCalled());
     expect(createToken.mock.calls[0][1].name).toMatch(/^Setup guide \d{4}-/);

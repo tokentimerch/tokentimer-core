@@ -19,6 +19,8 @@ const SHELL_BG = '#0f172a';
 const SHELL_BORDER = 'rgba(148, 163, 184, 0.28)';
 const SHELL_TEXT = '#e2e8f0';
 const SHELL_PROMPT = '#4ade80';
+// Amber marks a value the operator has not produced yet.
+const SLOT_ACCENT = '#fbbf24';
 
 /**
  * Error and warning lines. The theme gives every Text a fixed light-mode
@@ -159,6 +161,42 @@ export function CopyBlock({
             onClick={copy}
           />
         </Tooltip>
+      </Box>
+    </VStack>
+  );
+}
+
+/**
+ * The empty place where a one-time value will appear (for example a token),
+ * drawn like a command block so the step reads the same before and after. It
+ * holds a marked placeholder, never a value, so there is nothing to copy.
+ */
+export function SlotBlock({ label, placeholder }) {
+  const { muted } = useDashboardTheme();
+  return (
+    <VStack align='stretch' spacing={1}>
+      {label ? (
+        <Text fontSize='xs' color={muted} fontWeight='semibold'>
+          {label}
+        </Text>
+      ) : null}
+      <Box
+        bg={SHELL_BG}
+        borderWidth='1px'
+        borderStyle='dashed'
+        borderColor={SLOT_ACCENT}
+        borderRadius='md'
+        p={3}
+        data-testid='slot-placeholder'
+      >
+        <Code
+          bg='rgba(251, 191, 36, 0.14)'
+          fontSize='xs'
+          px={1.5}
+          sx={{ color: `${SLOT_ACCENT} !important` }}
+        >
+          {placeholder}
+        </Code>
       </Box>
     </VStack>
   );
