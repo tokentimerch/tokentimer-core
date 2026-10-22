@@ -39,7 +39,7 @@ import { StatusPanel, StatusTag } from './panels.jsx';
 const POLL_MS = 4000;
 
 const STATUS_VIEW = {
-  done: { icon: FiCheckCircle, tone: 'success', tag: 'Done', tagTone: 'green' },
+  done: { icon: FiCheckCircle, tone: 'success', tag: '', tagTone: 'green' },
   failed: { icon: FiXCircle, tone: 'danger', tag: 'Failed', tagTone: 'red' },
   active: { icon: FiClock, tone: 'info', tag: 'In progress', tagTone: 'blue' },
   waiting: {

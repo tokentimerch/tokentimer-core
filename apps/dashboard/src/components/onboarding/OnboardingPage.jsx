@@ -20,6 +20,7 @@ import {
   AlertDescription,
   AlertIcon,
   Badge,
+  Progress,
   Box,
   Flex,
   HStack,
@@ -238,6 +239,29 @@ const STATUS_BADGE = {
 };
 
 function JourneyRail({ steps, shownId, onSelect }) {
+  const { muted } = useDashboardTheme();
+  const finished = steps.filter(
+    s => s.status === 'done' || s.status === 'skipped'
+  ).length;
+  return (
+    <VStack align='stretch' spacing={2}>
+      <Box data-testid='rail-progress'>
+        <Text fontSize='xs' color={muted} _light={{ color: muted }} mb={1}>
+          {finished} of {steps.length} steps finished
+        </Text>
+        <Progress
+          value={steps.length ? (finished / steps.length) * 100 : 0}
+          size='xs'
+          borderRadius='full'
+          aria-label='Setup progress'
+        />
+      </Box>
+      <JourneyRailList steps={steps} shownId={shownId} onSelect={onSelect} />
+    </VStack>
+  );
+}
+
+function JourneyRailList({ steps, shownId, onSelect }) {
   const { muted } = useDashboardTheme();
   return (
     <VStack

@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { VStack } from '@chakra-ui/react';
 import { listAgents } from '../certops/certopsAgentsApi.js';
 import { JobTimelineList } from './JobActivity.jsx';
-import { FactsList, StatusTag } from './panels.jsx';
 
 /**
  * What the server knows about one agent: when it first registered, when it
@@ -54,25 +53,6 @@ export default function AgentCheckIn({ workspaceId, agent }) {
   if (!agent) return null;
   return (
     <VStack align='stretch' spacing={3} data-testid='agent-checkin'>
-      <FactsList
-        items={[
-          { label: 'Host', value: agent.hostname || agent.name || 'unknown' },
-          {
-            label: 'System',
-            value: `${agent.platform || 'unknown'}, version ${agent.agentVersion || 'unknown'}`,
-          },
-          {
-            label: 'Check-in',
-            value: (
-              <StatusTag
-                tone={agent.livenessState === 'live' ? 'green' : 'orange'}
-              >
-                {agent.livenessState === 'live' ? 'Live' : 'Not live'}
-              </StatusTag>
-            ),
-          },
-        ]}
-      />
       <JobTimelineList
         label='Agent timeline'
         events={agentEvents({ agent, registeredAt })}

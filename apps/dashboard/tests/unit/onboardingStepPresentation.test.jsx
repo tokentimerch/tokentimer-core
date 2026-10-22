@@ -223,7 +223,7 @@ describe('agent step', () => {
     });
     mount(AgentStep, ctx);
     const box = await screen.findByTestId('agent-checkin');
-    expect(within(box).getByText('web-01')).toBeVisible();
+    expect(screen.getByText(/web-01 \(linux, version/)).toBeVisible();
     expect(
       await within(box).findByText('Agent registered (first seen)')
     ).toBeVisible();

@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  configure,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -271,6 +277,7 @@ function mount() {
 describe('first-value onboarding journey', () => {
   // The whole journey renders the page several times; allow for a loaded CI box.
   vi.setConfig({ testTimeout: 15000 });
+  configure({ asyncUtilTimeout: 5000 });
   beforeEach(() => {
     window.matchMedia = vi.fn(query => ({
       matches: false,
@@ -300,6 +307,10 @@ describe('first-value onboarding journey', () => {
       screen.getByRole('button', { name: 'Monitor this website' })
     );
 
+    // The rail says how far along the setup is.
+    expect(
+      (await screen.findAllByTestId('rail-progress'))[0]
+    ).toHaveTextContent(/\d+ of \d+ steps finished/);
     await openGroup();
     await addRecipient();
     await user.click(screen.getByRole('button', { name: 'Save group' }));
