@@ -525,3 +525,25 @@ describe('observedDoneStep', () => {
     ).toBe(false);
   });
 });
+
+describe('closing card rail label', () => {
+  vi.setConfig({ testTimeout: 15000 });
+  configure({ asyncUtilTimeout: 5000 });
+
+  const summaryButton = () =>
+    screen.getByRole('button', { name: /^Step \d+ of \d+:/, hidden: true });
+
+  it.each([
+    ['import_file', 'Import assets from a file', 'file_import'],
+    ['import_integration', 'Connect a service', 'integration'],
+  ])('%s: the closing card reads as the last step', async (goal, title, id) => {
+    seed(goal, {});
+    server.session.progress.imported = [{ step: id, count: 3 }];
+    server.summary.assets = { total: 3 };
+    mount();
+    expect(
+      await screen.findByRole('heading', { name: 'You are set up' })
+    ).toBeVisible();
+    expect(summaryButton().textContent).toBe(`Step 2 of 2: ${title}`);
+  });
+});

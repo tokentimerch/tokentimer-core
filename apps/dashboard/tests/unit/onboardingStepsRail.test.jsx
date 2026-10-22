@@ -1,7 +1,12 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 import { describe, expect, it } from 'vitest';
-import { CollapsibleSteps } from '../../src/components/onboarding/OnboardingPage.jsx';
+import {
+  CollapsibleSteps,
+  stepSummaryLabel,
+} from '../../src/components/onboarding/OnboardingPage.jsx';
+import { allGoals } from '../../src/components/onboarding/editionModules.js';
+import { planJourney } from '../../src/components/onboarding/journeyPlanner.js';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
 const steps = [
@@ -39,6 +44,37 @@ const mount = (shownId = 'b') => {
 const toggle = () => screen.getByRole('button', { name: /^Step \d of \d:/ });
 const list = () =>
   document.getElementById(toggle().getAttribute('aria-controls'));
+
+describe('summary label of a finished journey', () => {
+  it('reads as the last step when no step is on screen', () => {
+    expect(stepSummaryLabel(steps, null)).toBe(
+      'Step 3 of 3: Check that it is working'
+    );
+  });
+
+  it('keeps naming the step being shown', () => {
+    expect(stepSummaryLabel(steps, 'a')).toBe(
+      'Step 1 of 3: Add the websites to monitor'
+    );
+    expect(stepSummaryLabel([], null)).toBe('');
+  });
+
+  it.each(Object.keys(allGoals()))(
+    '%s: the closing card labels step M of M',
+    goal => {
+      const all = planJourney({ intent: { goal } }).steps;
+      const last = all[all.length - 1];
+      expect(stepSummaryLabel(all, null)).toBe(
+        `Step ${all.length} of ${all.length}: ${last.title}`
+      );
+    }
+  );
+
+  it('renders the label in the narrow-screen toggle', () => {
+    mount(null);
+    expect(toggle().textContent).toBe('Step 3 of 3: Check that it is working');
+  });
+});
 
 describe('narrow-screen steps summary', () => {
   it('names the active step and how far along it is', () => {

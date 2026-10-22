@@ -368,11 +368,21 @@ function JourneyRailList({ steps, shownId, onSelect }) {
  * the page, so it folds into one summary line that opens on demand. From lg
  * up the list is always shown, as before.
  */
+/**
+ * The summary line of the narrow-screen steps list. A finished journey has
+ * no step on screen (the closing card), so it reads as the last step, which
+ * matches the "N of N steps finished" counter in the rail.
+ */
+export function stepSummaryLabel(steps, shownId) {
+  if (!steps.length) return '';
+  const found = shownId ? steps.findIndex(s => s.id === shownId) : -1;
+  const index = shownId ? Math.max(found, 0) : steps.length - 1;
+  return `Step ${index + 1} of ${steps.length}: ${steps[index]?.title || ''}`;
+}
+
 export function CollapsibleSteps({ steps, shownId, children }) {
   const [open, setOpen] = useState(false);
   const listId = useId();
-  const found = steps.findIndex(s => s.id === shownId);
-  const index = found < 0 ? 0 : found;
   return (
     <>
       <Box display={{ base: 'block', lg: 'none' }}>
@@ -389,7 +399,7 @@ export function CollapsibleSteps({ steps, shownId, children }) {
           aria-controls={listId}
           onClick={() => setOpen(value => !value)}
         >
-          {`Step ${index + 1} of ${steps.length}: ${steps[index]?.title || ''}`}
+          {stepSummaryLabel(steps, shownId)}
         </DashboardActionButton>
       </Box>
       <Box
