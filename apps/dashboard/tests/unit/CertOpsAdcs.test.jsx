@@ -4,7 +4,6 @@ import {
   screen,
   fireEvent,
   waitFor,
-  act,
   within,
 } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
@@ -181,7 +180,9 @@ describe('CertOpsAdcs', () => {
     expect(proposeEnrollmentRequestIdMock).not.toHaveBeenCalled();
     fireEvent.change(input, { target: { value: '2147483647' } });
     fireEvent.click(submit);
-    await waitFor(() => expect(proposeEnrollmentRequestIdMock).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(proposeEnrollmentRequestIdMock).toHaveBeenCalledTimes(1)
+    );
     expect(showErrorMock).not.toHaveBeenCalled();
   });
 
