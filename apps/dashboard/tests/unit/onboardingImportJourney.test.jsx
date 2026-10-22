@@ -136,7 +136,7 @@ describe('closing card after an import', () => {
     goal => {
       show(goal, false);
       expect(
-        screen.getByText(/Your assets are imported\. Review them/)
+        screen.getByText(/Review your assets in the asset inventory/)
       ).toBeInTheDocument();
       expect(
         screen.getByRole('link', { name: 'Alert Preferences' })

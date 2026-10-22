@@ -70,7 +70,7 @@ export const GOALS = {
     doneText: 'Your assets are imported and alerts have somewhere to go.',
     // Shown when the import dialog replaces the guided steps.
     doneTextModal:
-      'Your assets are imported. Review them in the asset inventory and check who gets alerted in Alert Preferences.',
+      'Review your assets in the asset inventory and check who gets alerted in Alert Preferences.',
     label: 'Import many assets from a file',
     description: 'Bring in a CSV, spreadsheet, JSON or YAML inventory.',
     time: 'About 2 min',
@@ -81,7 +81,7 @@ export const GOALS = {
   import_integration: {
     doneText: 'Your assets are imported and alerts have somewhere to go.',
     doneTextModal:
-      'Your assets are imported. Review them in the asset inventory and check who gets alerted in Alert Preferences.',
+      'Review your assets in the asset inventory and check who gets alerted in Alert Preferences.',
     label: 'Import from GitHub, Vault, AWS or another service',
     description: 'Scan a connected service and choose which assets to import.',
     time: 'About 2 min',
