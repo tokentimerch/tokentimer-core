@@ -87,6 +87,8 @@ function makeCtx({
     docs: () => [],
     refresh: vi.fn().mockResolvedValue(undefined),
     skip: vi.fn().mockResolvedValue(undefined),
+    hold: vi.fn(),
+    release: vi.fn(),
     userEmail: 'ana@example.com',
     userName: 'Ana',
     summary: {
@@ -850,4 +852,96 @@ describe('RecipientsStep confirmation for goals without ticks', () => {
       screen.queryByRole('button', { name: 'Use these groups' })
     ).toBeNull();
   });
+});
+
+describe('RecipientsStep Continue for goals with ticks', () => {
+  const doneGroups = { 11: ['ops'], 12: ['ops', 'billing'] };
+  const withGroups = (ctx, groups) => {
+    ctx.summary.references.tokenGroups = groups;
+    return ctx;
+  };
+  const continueButton = () =>
+    screen.findByRole('button', { name: 'Continue' });
+
+  beforeEach(() => {
+    store.settings.contact_groups.push(group('legal', 'Legal'));
+  });
+
+  it.each(['monitor_https', 'track_asset'])(
+    'asks the guide to keep the step open for %s',
+    async goal => {
+      const ctx = makeCtx({ goal, websiteIds: [11], assetIds: [21] });
+      mount(ctx);
+      await continueButton();
+      expect(ctx.hold).toHaveBeenCalledWith('recipients');
+    }
+  );
+
+  it('keeps Continue off until every item carries a group', async () => {
+    mount(makeCtx());
+    expect(await continueButton()).toBeDisabled();
+    expect(screen.getByTestId('continue-hint')).toHaveTextContent(
+      'tick a group'
+    );
+  });
+
+  it('enables Continue when the step is done and Continue leaves the step', async () => {
+    const ctx = withGroups(makeCtx(), doneGroups);
+    mount(ctx);
+    const button = await continueButton();
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(ctx.release).not.toHaveBeenCalled();
+    fireEvent.click(button);
+    expect(ctx.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('never leaves the step when groups are ticked one after the other', async () => {
+    const ctx = withGroups(makeCtx(), doneGroups);
+    mount(ctx);
+    fireEvent.click(await box('Billing'));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Billing' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    );
+    fireEvent.click(await box('Legal'));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Legal' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    );
+    expect(actions.setTokenContactGroups).toHaveBeenCalledTimes(3);
+    expect(ctx.release).not.toHaveBeenCalled();
+    expect(ctx.skip).not.toHaveBeenCalled();
+    fireEvent.click(await box('Legal'));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Legal' })).toHaveAttribute(
+        'aria-checked',
+        'false'
+      )
+    );
+    expect(actions.setTokenContactGroups).toHaveBeenCalledTimes(5);
+    expect(ctx.release).not.toHaveBeenCalled();
+  });
+
+  it('shows no Continue and no hold while a finished step is reviewed', async () => {
+    const ctx = withGroups(makeCtx(), doneGroups);
+    mount(ctx, { reviewing: true });
+    await box('Ops');
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull();
+    expect(ctx.hold).not.toHaveBeenCalled();
+  });
+
+  it.each(['import_file', 'certops_observe'])(
+    'does not hold or add Continue for %s',
+    async goal => {
+      const ctx = makeCtx({ goal, websiteIds: [], assetIds: [] });
+      mount(ctx);
+      await screen.findByRole('button', { name: 'Use these groups' });
+      expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull();
+      expect(ctx.hold).not.toHaveBeenCalled();
+    }
+  );
 });

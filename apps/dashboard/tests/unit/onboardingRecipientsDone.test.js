@@ -379,3 +379,37 @@ describe('recipients step when the goal changes mid-journey', () => {
     );
   });
 });
+
+describe('recipients step stays open until the person continues', () => {
+  const statusOf = (plan, id) => plan.steps.find(s => s.id === id)?.status;
+  const input = {
+    intent: { goal: 'monitor_https' },
+    operationRefs: siteRefs,
+    capabilities,
+    reality: reality({ monitors: [site], tokens: [7], groups: { 7: ['g1'] } }),
+  };
+
+  it('moves on by itself when nothing holds it', () => {
+    const plan = planJourney(input);
+    expect(statusOf(plan, 'recipients')).toBe('done');
+    expect(plan.currentStepId).toBe('verify');
+  });
+
+  it('keeps the finished step current, marked done, while it is held', () => {
+    const plan = planJourney({ ...input, heldStepId: 'recipients' });
+    expect(statusOf(plan, 'recipients')).toBe('done');
+    expect(statusOf(plan, 'verify')).toBe('upcoming');
+    expect(plan.currentStepId).toBe('recipients');
+    expect(plan.complete).toBe(false);
+  });
+
+  it('ignores a hold on a step that is not done', () => {
+    const plan = planJourney({
+      ...input,
+      heldStepId: 'recipients',
+      reality: reality({ monitors: [site], tokens: [7], groups: { 7: [] } }),
+    });
+    expect(statusOf(plan, 'recipients')).toBe('current');
+    expect(plan.currentStepId).toBe('recipients');
+  });
+});

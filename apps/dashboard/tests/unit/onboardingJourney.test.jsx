@@ -321,6 +321,17 @@ describe('first-value onboarding journey', () => {
       await screen.findByRole('checkbox', { name: 'Alert recipients' })
     );
 
+    // Ticking never moves on: the step waits for an explicit Continue.
+    await waitFor(() =>
+      expect(server.state.tokenGroups[41]).toEqual([
+        server.state.alert.default_contact_group_id,
+      ])
+    );
+    expect(screen.queryByText('Alerts have a recipient')).toBeNull();
+    const next = await screen.findByRole('button', { name: 'Continue' });
+    await waitFor(() => expect(next).toBeEnabled());
+    await user.click(next);
+
     expect(await screen.findByText('Alerts have a recipient')).toBeVisible();
     expect(server.state.tokenGroups[41]).toEqual([
       server.state.alert.default_contact_group_id,

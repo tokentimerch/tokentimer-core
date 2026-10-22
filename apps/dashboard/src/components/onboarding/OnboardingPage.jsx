@@ -485,6 +485,12 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
     [docsBaseUrl]
   );
 
+  // A step that finishes while the person is still working on it (ticking
+  // contact groups) stays open until they choose to continue.
+  const [heldStepId, setHeldStepId] = useState(null);
+  const holdStep = useCallback(id => setHeldStepId(id), []);
+  const releaseStep = useCallback(() => setHeldStepId(null), []);
+
   const plan = useMemo(
     () =>
       onboarding.status === 'ready'
@@ -494,12 +500,16 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
             operationRefs: onboarding.session.operationRefs,
             capabilities: onboarding.capabilities,
             reality: onboarding.summary,
+            heldStepId,
           })
         : null,
-    [onboarding]
+    [onboarding, heldStepId]
   );
 
   const chosenGoal = onboarding.session?.intent?.goal || null;
+  useEffect(() => {
+    setHeldStepId(null);
+  }, [chosenGoal]);
 
   const changeGoal = useCallback(async () => {
     await onboarding.controller.update(clearGoal);
@@ -508,6 +518,7 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
 
   const skip = useCallback(
     async stepId => {
+      setHeldStepId(null);
       await onboarding.controller.update(s => skipStep(s, stepId));
       await onboarding.refresh();
     },
@@ -528,6 +539,8 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
             refresh: onboarding.refresh,
             fetchSummary: onboarding.refresh,
             skip,
+            hold: holdStep,
+            release: releaseStep,
             // Steps call this when they finish something that should leave a review.
             onDone: () => setViewStepId(null),
             // Leaves the guide without touching progress.
@@ -540,7 +553,7 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
             userName: session?.name || session?.displayName || '',
           }
         : null,
-    [onboarding, docs, session, skip, navigate]
+    [onboarding, docs, session, skip, navigate, holdStep, releaseStep]
   );
 
   // A finished step can be reopened. It is only a view: the planner keeps

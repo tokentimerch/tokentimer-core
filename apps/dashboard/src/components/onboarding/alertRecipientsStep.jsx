@@ -37,6 +37,7 @@ import {
   canTickGoal,
   describeNoToken,
   describeTicks,
+  recipientsSatisfied,
   tickState,
 } from './groupAttachment.js';
 import { useSessionGroupTicks } from './useSessionGroupTicks.js';
@@ -214,6 +215,19 @@ export function RecipientsStep({ ctx, reviewing = false }) {
   // step by an explicit confirmation that belongs to the chosen goal.
   const sessionGoal = ctx.session?.intent?.goal;
   const needsConfirm = Boolean(sessionGoal) && !canTickGoal(sessionGoal);
+  // Ticking items finishes the step as soon as every item has a group, but
+  // several groups are usually wanted, so the step waits for Continue.
+  const ticksGoal = Boolean(sessionGoal) && canTickGoal(sessionGoal);
+  const stepDone = recipientsSatisfied({
+    goal: sessionGoal,
+    refs: ctx.session?.operationRefs,
+    progress: ctx.session?.progress,
+    reality: ctx.summary,
+  });
+  const hold = ctx.hold;
+  useEffect(() => {
+    if (ticksGoal && !reviewing) hold?.('recipients');
+  }, [ticksGoal, reviewing, hold]);
   const [confirming, setConfirming] = useState(false);
   const confirm = async () => {
     setConfirming(true);
@@ -358,12 +372,24 @@ export function RecipientsStep({ ctx, reviewing = false }) {
                 Use these groups
               </PrimaryButton>
             ) : null}
+            {ticksGoal ? (
+              <PrimaryButton
+                onClick={() => ctx.release?.()}
+                isDisabled={!stepDone || Boolean(ticks.saving)}
+              >
+                Continue
+              </PrimaryButton>
+            ) : null}
           </>
         )
       }
       actionHint={
         !reviewing && needsConfirm && !defaultReaches ? (
           <ContinueHint>set a default group that has a recipient.</ContinueHint>
+        ) : !reviewing && ticksGoal && !stepDone ? (
+          <ContinueHint>
+            tick a group that reaches someone for everything you added.
+          </ContinueHint>
         ) : null
       }
     >

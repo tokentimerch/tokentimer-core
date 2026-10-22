@@ -233,6 +233,7 @@ export function planJourney({
   operationRefs = {},
   capabilities = null,
   reality = null,
+  heldStepId = null,
 } = {}) {
   const goalId = intent.goal;
   const goal = GOALS[goalId];
@@ -289,16 +290,30 @@ export function planJourney({
     steps.push({ id, ...def, status });
   }
 
+  // A finished step the person is still on stays the current one, shown as
+  // done, until they continue. Later steps wait.
+  const held =
+    heldStepId && heldStepId !== 'verify'
+      ? steps.find(s => s.id === heldStepId && s.status === 'done')
+      : null;
+  if (held) {
+    const at = steps.indexOf(held);
+    for (const s of steps.slice(at + 1)) {
+      if (s.status === 'current') s.status = 'upcoming';
+    }
+  }
+
   const verifyStep = steps.find(s => s.id === 'verify');
   const verified =
     progress.verified === true && verifyStep?.status === 'current';
   if (verified) verifyStep.status = 'done';
 
-  const current = steps.find(s => s.status === 'current') || null;
+  const current = held || steps.find(s => s.status === 'current') || null;
   return {
     steps,
     currentStepId: current ? current.id : null,
     blocked,
-    complete: steps.every(s => s.status === 'done' || s.status === 'skipped'),
+    complete:
+      !held && steps.every(s => s.status === 'done' || s.status === 'skipped'),
   };
 }
