@@ -1,5 +1,5 @@
 {
-  "_comment": "Every entry is validated against the docs sources by tests/unit/onboarding-doc-links.test.js (set TT_DOCS_ROOT to tokentimer-cloud/apps/docs). A variant of null means the page does not exist in that edition and the link is hidden. A url entry is an absolute link to the public core docs, used where an edition has no page yet.",
+  "_comment": "Every entry is validated against the docs sources by tests/unit/onboarding-doc-links.test.js (set TT_DOCS_ROOT to the docs sources directory, apps/docs of the docs repository). A variant of null means the page does not exist in that edition and the link is hidden. A url entry is an absolute link to the public core docs, used where an edition has no page yet.",
   "tokens.fields": {
     "path": "/tokens",
     "anchor": "fields"

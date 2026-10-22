@@ -2,7 +2,7 @@
 "use strict";
 
 // Validates the onboarding wizard's documentation link registry against the
-// docs sources. The docs live in a separate repository (tokentimer-cloud,
+// docs sources. The docs live in a separate repository (its apps/docs folder),
 // apps/docs), so the root must be supplied explicitly:
 //
 //   TT_DOCS_ROOT=<path to apps/docs> node scripts/check-onboarding-doc-links.js
@@ -85,7 +85,7 @@ function main() {
   const docsRoot = process.env.TT_DOCS_ROOT;
   if (!docsRoot || !fs.existsSync(docsRoot)) {
     console.error(
-      "check-onboarding-doc-links: set TT_DOCS_ROOT to the tokentimer-cloud apps/docs directory",
+      "check-onboarding-doc-links: set TT_DOCS_ROOT to the docs sources directory (apps/docs of the docs repository)",
     );
     process.exit(2);
   }
