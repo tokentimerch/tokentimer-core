@@ -87,7 +87,6 @@ function makeCtx({
     docs: () => [],
     refresh: vi.fn().mockResolvedValue(undefined),
     skip: vi.fn().mockResolvedValue(undefined),
-    hold: vi.fn(),
     release: vi.fn(),
     userEmail: 'ana@example.com',
     userName: 'Ana',
@@ -868,12 +867,13 @@ describe('RecipientsStep Continue for goals with ticks', () => {
   });
 
   it.each(['monitor_https', 'track_asset'])(
-    'asks the guide to keep the step open for %s',
+    'offers Continue for %s',
     async goal => {
       const ctx = makeCtx({ goal, websiteIds: [11], assetIds: [21] });
       mount(ctx);
       await continueButton();
-      expect(ctx.hold).toHaveBeenCalledWith('recipients');
+      // The page keeps the finished step open; the step only offers Continue.
+      expect(screen.getByRole('button', { name: 'Continue' })).toBeVisible();
     }
   );
 
@@ -926,22 +926,20 @@ describe('RecipientsStep Continue for goals with ticks', () => {
     expect(ctx.release).not.toHaveBeenCalled();
   });
 
-  it('shows no Continue and no hold while a finished step is reviewed', async () => {
+  it('shows no Continue while a finished step is reviewed', async () => {
     const ctx = withGroups(makeCtx(), doneGroups);
     mount(ctx, { reviewing: true });
     await box('Ops');
     expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull();
-    expect(ctx.hold).not.toHaveBeenCalled();
   });
 
   it.each(['import_file', 'certops_observe'])(
-    'does not hold or add Continue for %s',
+    'does not add Continue for %s',
     async goal => {
       const ctx = makeCtx({ goal, websiteIds: [], assetIds: [] });
       mount(ctx);
       await screen.findByRole('button', { name: 'Use these groups' });
       expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull();
-      expect(ctx.hold).not.toHaveBeenCalled();
     }
   );
 });

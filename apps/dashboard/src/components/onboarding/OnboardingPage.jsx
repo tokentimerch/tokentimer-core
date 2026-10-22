@@ -7,6 +7,7 @@ import {
   useState,
 } from 'react';
 import {
+  FiArrowRight,
   FiChevronDown,
   FiChevronUp,
   FiRepeat,
@@ -51,6 +52,12 @@ import {
 import { clearGoal, skipStep } from './sessionTransitions.js';
 import { scopeCertops } from './certopsScope.js';
 import { resolveNavigation } from './stepNavigation.js';
+import {
+  finishesByItself,
+  hasOwnContinue,
+  journeyKey,
+  observedDoneStep,
+} from './heldSteps.js';
 import { AssetStep, GoalStep, MonitorStep } from './steps.jsx';
 import { RecipientsStep, VerifyStep } from './recipientAndVerifySteps.jsx';
 import { FileImportStep, IntegrationStep } from './importSteps.jsx';
@@ -167,6 +174,16 @@ export const STEP_COMPONENTS = {
   certops_adcs: AdcsStep,
   certops_vault: VaultStep,
 };
+
+function journeyInputs(onboarding) {
+  return {
+    intent: onboarding.session.intent,
+    progress: onboarding.session.progress,
+    operationRefs: onboarding.session.operationRefs,
+    capabilities: onboarding.capabilities,
+    reality: onboarding.summary,
+  };
+}
 
 /**
  * Loads the three sources the wizard reasons about: the persisted session
@@ -385,6 +402,28 @@ export function CollapsibleSteps({ steps, shownId, children }) {
   );
 }
 
+// Shown under a step that finished by itself, so the person reads the result
+// and moves on when ready.
+function StepContinueBar({ onContinue }) {
+  const { muted } = useDashboardTheme();
+  return (
+    <HStack
+      justify='flex-end'
+      flexWrap='wrap'
+      spacing={3}
+      mt={3}
+      data-testid='step-continue'
+    >
+      <Text fontSize='sm' color={muted} role='status'>
+        This step is finished.
+      </Text>
+      <PrimaryButton rightIcon={<FiArrowRight />} onClick={onContinue}>
+        Continue
+      </PrimaryButton>
+    </HStack>
+  );
+}
+
 export function DoneCard({ ctx, guidedImportSteps = GUIDED_IMPORT_STEPS }) {
   const { muted } = useDashboardTheme();
   const smtp = ctx.summary?.alerts?.smtpConfigured;
@@ -478,31 +517,61 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
     [docsBaseUrl]
   );
 
-  // A step that finishes while the person is still working on it (ticking
-  // contact groups) stays open until they choose to continue.
+  // A step that finishes while the person is looking at it (a job succeeds,
+  // an agent checks in) stays open until they choose to continue.
   const [heldStepId, setHeldStepId] = useState(null);
-  const holdStep = useCallback(id => setHeldStepId(id), []);
-  const releaseStep = useCallback(() => setHeldStepId(null), []);
+  const shownRef = useRef(null);
+  const releaseStep = useCallback(() => {
+    shownRef.current = null;
+    setHeldStepId(null);
+  }, []);
 
+  const ready = onboarding.status === 'ready';
+  const key = ready
+    ? journeyKey(onboarding.session.intent, onboarding.session.progress)
+    : '';
+  const basePlan = useMemo(
+    () => (ready ? planJourney(journeyInputs(onboarding)) : null),
+    [ready, onboarding]
+  );
+  const observedId = heldStepId
+    ? null
+    : observedDoneStep(shownRef.current, {
+        key,
+        plan: basePlan,
+        session: onboarding.session,
+      });
+  const activeHeldId = heldStepId || observedId;
   const plan = useMemo(
     () =>
-      onboarding.status === 'ready'
+      ready && activeHeldId
         ? planJourney({
-            intent: onboarding.session.intent,
-            progress: onboarding.session.progress,
-            operationRefs: onboarding.session.operationRefs,
-            capabilities: onboarding.capabilities,
-            reality: onboarding.summary,
-            heldStepId,
+            ...journeyInputs(onboarding),
+            heldStepId: activeHeldId,
           })
-        : null,
-    [onboarding, heldStepId]
+        : basePlan,
+    [ready, onboarding, basePlan, activeHeldId]
   );
+  useEffect(() => {
+    if (observedId) setHeldStepId(observedId);
+  }, [observedId]);
 
   const chosenGoal = onboarding.session?.intent?.goal || null;
+  // A new goal or platform starts without any hold.
   useEffect(() => {
+    shownRef.current = null;
     setHeldStepId(null);
-  }, [chosenGoal]);
+  }, [key]);
+  // A hold only makes sense while its step is done.
+  useEffect(() => {
+    if (
+      heldStepId &&
+      plan &&
+      plan.steps.find(s => s.id === heldStepId)?.status !== 'done'
+    ) {
+      setHeldStepId(null);
+    }
+  }, [heldStepId, plan]);
 
   const changeGoal = useCallback(async () => {
     await onboarding.controller.update(clearGoal);
@@ -532,7 +601,6 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
             refresh: onboarding.refresh,
             fetchSummary: onboarding.refresh,
             skip,
-            hold: holdStep,
             release: releaseStep,
             // Steps call this when they finish something that should leave a review.
             onDone: () => setViewStepId(null),
@@ -546,7 +614,7 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
             userName: session?.name || session?.displayName || '',
           }
         : null,
-    [onboarding, docs, session, skip, navigate, holdStep, releaseStep]
+    [onboarding, docs, session, skip, navigate, releaseStep]
   );
 
   // A finished step can be reopened. It is only a view: the planner keeps
@@ -562,6 +630,11 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
   );
   const goToStep = useCallback(id => setViewStepId(id), []);
   const returnToCurrent = useCallback(() => setViewStepId(null), []);
+  // What was on screen at the last commit, to notice a step turning done.
+  useEffect(() => {
+    shownRef.current =
+      plan && !viewStepId ? { id: plan.currentStepId, key } : null;
+  });
   // Leaving a step by doing something always returns to the live step.
   const stepKey = plan?.currentStepId;
   useEffect(() => {
@@ -571,6 +644,25 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
   const Current = nav.shownId
     ? STEP_COMPONENTS[nav.shownId] || editionStepComponents()[nav.shownId]
     : null;
+
+  // A finished step that finished by itself waits for the person to move on.
+  const shownStep = plan?.steps.find(s => s.id === nav.shownId);
+  const waitingDone =
+    shownStep?.status === 'done' &&
+    finishesByItself(shownStep.id, {
+      goal: chosenGoal,
+      progress: onboarding.session?.progress,
+    });
+  const showContinue =
+    waitingDone &&
+    (nav.viewing
+      ? true
+      : activeHeldId === shownStep.id && !hasOwnContinue(shownStep.id));
+  const continueFromStep = () => {
+    if (!nav.viewing) releaseStep();
+    else if (nav.nextId) goToStep(nav.nextId);
+    else returnToCurrent();
+  };
 
   return (
     <>
@@ -658,18 +750,23 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
                   {plan.complete && !nav.viewing ? (
                     <DoneCard ctx={ctx} />
                   ) : Current ? (
-                    <Current
-                      ctx={ctx}
-                      reviewing={nav.viewing}
-                      returnTo={
-                        nav.viewing === 'goal' && nav.returnId
-                          ? {
-                              title: titleOf(nav.returnId),
-                              go: returnToCurrent,
-                            }
-                          : null
-                      }
-                    />
+                    <>
+                      <Current
+                        ctx={ctx}
+                        reviewing={nav.viewing}
+                        returnTo={
+                          nav.viewing === 'goal' && nav.returnId
+                            ? {
+                                title: titleOf(nav.returnId),
+                                go: returnToCurrent,
+                              }
+                            : null
+                        }
+                      />
+                      {showContinue ? (
+                        <StepContinueBar onContinue={continueFromStep} />
+                      ) : null}
+                    </>
                   ) : null}
                 </Box>
               </Flex>

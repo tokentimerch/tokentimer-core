@@ -215,8 +215,8 @@ export function RecipientsStep({ ctx, reviewing = false }) {
   // step by an explicit confirmation that belongs to the chosen goal.
   const sessionGoal = ctx.session?.intent?.goal;
   const needsConfirm = Boolean(sessionGoal) && !canTickGoal(sessionGoal);
-  // Ticking items finishes the step as soon as every item has a group, but
-  // several groups are usually wanted, so the step waits for Continue.
+  // The guide keeps this step open once every item has a group, because
+  // several groups are usually wanted; Continue moves on.
   const ticksGoal = Boolean(sessionGoal) && canTickGoal(sessionGoal);
   const stepDone = recipientsSatisfied({
     goal: sessionGoal,
@@ -224,10 +224,6 @@ export function RecipientsStep({ ctx, reviewing = false }) {
     progress: ctx.session?.progress,
     reality: ctx.summary,
   });
-  const hold = ctx.hold;
-  useEffect(() => {
-    if (ticksGoal && !reviewing) hold?.('recipients');
-  }, [ticksGoal, reviewing, hold]);
   const [confirming, setConfirming] = useState(false);
   const confirm = async () => {
     setConfirming(true);
