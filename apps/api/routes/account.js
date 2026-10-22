@@ -11,6 +11,7 @@ const {
   countOtherActiveSystemAdmins,
   lockSystemAdminMutation,
 } = require("../services/systemAdmin");
+const { deleteWorkspaces } = require("../services/workspaceDeletion");
 
 const router = require("express").Router();
 
@@ -96,10 +97,7 @@ router.delete(
         if (forceDeleteWorkspaces) {
           const ids = (soleAdmin.rows || []).map((r) => r.id).filter(Boolean);
           if (ids.length > 0) {
-            await client.query(
-              "DELETE FROM workspaces WHERE id = ANY($1::uuid[])",
-              [ids],
-            );
+            await deleteWorkspaces(client, ids);
           }
         } else {
           await client.query("ROLLBACK");
@@ -117,16 +115,16 @@ router.delete(
       }
 
       // Delete any single-member workspaces that were created by this user
-      await client.query(
-        `DELETE FROM workspaces
-       WHERE created_by = $1
-         AND id IN (
-           SELECT w.id
+      const ownedSolo = await client.query(
+        `SELECT w.id
            FROM workspaces w
-           WHERE w.created_by = $1
-             AND (SELECT COUNT(*) FROM workspace_memberships m WHERE m.workspace_id = w.id) = 1
-         )`,
+          WHERE w.created_by = $1
+            AND (SELECT COUNT(*) FROM workspace_memberships m WHERE m.workspace_id = w.id) = 1`,
         [userId],
+      );
+      await deleteWorkspaces(
+        client,
+        ownedSolo.rows.map((r) => r.id),
       );
 
       // Transfer ownership of remaining workspaces created by this user to another admin (if present)
