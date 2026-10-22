@@ -269,6 +269,8 @@ function mount() {
 }
 
 describe('first-value onboarding journey', () => {
+  // The whole journey renders the page several times; allow for a loaded CI box.
+  vi.setConfig({ testTimeout: 15000 });
   beforeEach(() => {
     window.matchMedia = vi.fn(query => ({
       matches: false,

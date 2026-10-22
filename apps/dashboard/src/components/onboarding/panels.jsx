@@ -9,10 +9,14 @@ import {
   HStack,
   Icon,
   Text,
+  VisuallyHidden,
   VStack,
 } from '@chakra-ui/react';
 import { FiCheck, FiChevronRight } from 'react-icons/fi';
-import { useDashboardTheme } from '../../hooks/useDashboardTheme';
+import {
+  useDashboardTheme,
+  useDashboardThemeColors,
+} from '../../hooks/useDashboardTheme';
 import { DocsLink, resolveDocLinks } from '../LearnMorePanel';
 
 // Small presentational pieces shared by the setup steps. They only draw what
@@ -115,7 +119,8 @@ export function StepCard({
   children,
   testId,
 }) {
-  const { border, muted, dashboard } = useDashboardTheme();
+  const { border, muted } = useDashboardTheme();
+  const { dashboard } = useDashboardThemeColors();
   const done = status === 'done';
   const blocked = status === 'blocked';
   const ring = done
@@ -158,6 +163,7 @@ export function StepCard({
           <Box>
             <HStack spacing={2} flexWrap='wrap' align='center'>
               <Text as='h3' fontSize='sm' fontWeight='semibold'>
+                {n ? <VisuallyHidden>{n}. </VisuallyHidden> : null}
                 {title}
               </Text>
               {status === 'done' ? (
@@ -247,7 +253,8 @@ const CALLOUT_KINDS = {
  * list so long paragraphs stay scannable.
  */
 export function Callout({ kind = 'next', title, items, children, testId }) {
-  const { muted, border, dashboard } = useDashboardTheme();
+  const { muted, border } = useDashboardTheme();
+  const { dashboard } = useDashboardThemeColors();
   const def = CALLOUT_KINDS[kind] || CALLOUT_KINDS.next;
   const list = (items || []).filter(Boolean);
   return (

@@ -1,10 +1,6 @@
 import { useEffect, useState } from 'react';
 import { FiRefreshCw } from 'react-icons/fi';
 import {
-  Alert,
-  AlertDescription,
-  AlertIcon,
-  Badge,
   Box,
   FormControl,
   FormErrorMessage,
@@ -53,6 +49,14 @@ import {
 import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
 import IssueStep from './certopsIssueStep.jsx';
 import { outboxBacklogMessage } from './certopsWorkerMessages.js';
+import JobActivity, { JobTimelineList } from './JobActivity.jsx';
+import {
+  Callout,
+  DetailsSection,
+  StatusPanel,
+  StatusTag,
+  StepCard,
+} from './panels.jsx';
 import { useSummaryPolling, vaultNeedsPolling } from './useSummaryPolling.js';
 import WorkerWarning from './WorkerWarning.jsx';
 
@@ -76,6 +80,28 @@ export function FirstCertificateStep({ ctx }) {
     infrastructure: saved.infrastructure,
     clusterId: saved.clusterId,
   });
+  // Only what the summary really carries: the agent's last check-in, or the
+  // controller's last report. Nothing is inferred.
+  const discoveryEvents =
+    saved.infrastructure === 'kubernetes'
+      ? (ctx.summary?.certops?.controllers?.clusters || [])
+          .filter(c => c.lastReportedAt)
+          .filter(c => !saved.clusterId || c.clusterId === saved.clusterId)
+          .map(c => ({
+            id: `cluster-${c.clusterId}`,
+            at: c.lastReportedAt,
+            label: `Controller report from ${c.clusterId}`,
+            status: 'done',
+          }))
+      : (ctx.summary?.certops?.agents?.items || [])
+          .filter(a => a.lastSeenAt)
+          .slice(0, 3)
+          .map(a => ({
+            id: `agent-${a.id}`,
+            at: a.lastSeenAt,
+            label: `Agent ${a.hostname || a.name || 'check-in'} last seen`,
+            status: a.livenessState === 'live' ? 'done' : 'waiting',
+          }));
   return (
     <StepFrame
       kind='verify'
@@ -95,17 +121,20 @@ export function FirstCertificateStep({ ctx }) {
         </DashboardActionButton>
       }
     >
-      <VStack align='stretch' spacing={2}>
-        <HStack>
-          <Badge colorScheme={total > 0 ? 'green' : 'gray'}>
-            {total > 0 ? 'Found' : 'Waiting'}
-          </Badge>
-          <Text fontSize='sm'>
-            {total > 0
-              ? `${total} certificate${total === 1 ? '' : 's'} in the inventory.`
-              : 'No certificates have been reported yet.'}
-          </Text>
-        </HStack>
+      <VStack align='stretch' spacing={4}>
+        {total > 0 ? (
+          <StatusPanel
+            status='success'
+            title={`${total} certificate${total === 1 ? '' : 's'} in the inventory`}
+          >
+            Open Certificate Management, Certificates to inspect each one:
+            identity, validity, observed locations and monitoring status.
+          </StatusPanel>
+        ) : (
+          <StatusPanel status='info' title='No certificates reported yet'>
+            This page checks again on its own. Use Check again to look now.
+          </StatusPanel>
+        )}
         {total === 0 && workspaceTotal > 0 ? (
           <Text fontSize='xs' color={muted} data-testid='not-from-agent'>
             The inventory already holds {workspaceTotal} certificate
@@ -117,18 +146,21 @@ export function FirstCertificateStep({ ctx }) {
             to report one.
           </Text>
         ) : null}
+        {discoveryEvents.length > 0 ? (
+          <JobTimelineList
+            label='Discovery timeline'
+            events={discoveryEvents}
+          />
+        ) : null}
         {total === 0 ? (
-          <Text fontSize='xs' color={muted}>
-            {saved.infrastructure === 'windows'
-              ? 'Discovery on Windows runs about every 30 minutes by default and reads the machine certificate store. Check that the agent service is running and that certificates exist in LocalMachine\\My. Private keys are never read.'
-              : 'Discovery runs about once an hour by default. Make sure the folders you listed contain a PEM certificate and that the agent user can read them. Private keys are never read.'}
-          </Text>
-        ) : (
-          <Text fontSize='sm'>
-            Open Certificate Management, Certificates to inspect each one:
-            identity, validity, observed locations and monitoring status.
-          </Text>
-        )}
+          <Callout kind='check' title='If nothing shows up'>
+            <Text fontSize='sm'>
+              {saved.infrastructure === 'windows'
+                ? 'Discovery on Windows runs about every 30 minutes by default and reads the machine certificate store. Check that the agent service is running and that certificates exist in LocalMachine\\My. Private keys are never read.'
+                : 'Discovery runs about once an hour by default. Make sure the folders you listed contain a PEM certificate and that the agent user can read them. Private keys are never read.'}
+            </Text>
+          </Callout>
+        ) : null}
       </VStack>
     </StepFrame>
   );
@@ -151,26 +183,10 @@ export function vaultOutcome({ declaredByAgents, distribution }) {
 
 /** A numbered part of the Vault guide, with who runs it and as which user. */
 function Part({ n, title, who, children }) {
-  const { border } = useDashboardTheme();
   return (
-    <Box
-      as='section'
-      aria-label={`${n}. ${title}`}
-      data-testid={`vault-part-${n}`}
-      borderTop='1px solid'
-      borderColor={border}
-      pt={4}
-    >
-      <HStack align='baseline' spacing={2} flexWrap='wrap'>
-        <Text fontSize='sm' fontWeight='semibold'>
-          {n}. {title}
-        </Text>
-        <Badge>{who}</Badge>
-      </HStack>
-      <VStack align='stretch' spacing={3} mt={2}>
-        {children}
-      </VStack>
-    </Box>
+    <StepCard n={n} title={title} who={who} testId={`vault-part-${n}`}>
+      {children}
+    </StepCard>
   );
 }
 
@@ -407,28 +423,26 @@ export function VaultStep({ ctx }) {
       }
     >
       <VStack align='stretch' spacing={4}>
-        <Alert status='warning' borderRadius='md' variant='left-accent'>
-          <AlertIcon />
-          <AlertDescription fontSize='sm'>
-            The commands below only prepare the configuration. Distribution
-            works once a rollout has been verified.
-          </AlertDescription>
-        </Alert>
+        <StatusPanel
+          status='warning'
+          title='This guide only prepares the configuration'
+        >
+          The commands below only prepare the configuration. Distribution works
+          once a rollout has been verified.
+        </StatusPanel>
         {backlogMessage ? (
           <WorkerWarning testId='vault-backlog-warning'>
             {backlogMessage}
           </WorkerWarning>
         ) : null}
         <HStack>
-          <Badge
-            colorScheme={outcome.level === 'verified' ? 'green' : 'orange'}
-          >
+          <StatusTag tone={outcome.level === 'verified' ? 'green' : 'orange'}>
             {outcome.level === 'verified'
               ? 'Distribution verified'
               : outcome.level === 'ready_to_roll_out'
                 ? 'Ready to roll out'
                 : 'Configuration prepared'}
-          </Badge>
+          </StatusTag>
           {gap.length ? (
             <Text fontSize='xs' color={muted}>
               Agents do not yet declare: {gap.join(', ')}.
@@ -505,7 +519,7 @@ export function VaultStep({ ctx }) {
                 {pub.job?.status ? (
                   <>
                     {' '}
-                    <Badge>{pub.job.status}</Badge>
+                    <StatusTag>{pub.job.status}</StatusTag>
                   </>
                 ) : null}
               </Text>
@@ -513,10 +527,17 @@ export function VaultStep({ ctx }) {
           </HStack>
           {pub.error ? <ErrorText>{pub.error}</ErrorText> : null}
           {pub.job?.status === 'pending_approval' ? (
-            <Text fontSize='xs' color={muted}>
+            <StatusPanel status='info' title='Waiting for approval'>
               Waiting for approval by another workspace manager. After approval
               the issuing agent must be online and out of dry run.
-            </Text>
+            </StatusPanel>
+          ) : null}
+          {publishJobId ? (
+            <JobActivity
+              workspaceId={workspaceId}
+              jobId={publishJobId}
+              title='What happened to the publish job'
+            />
           ) : null}
           <Box as='details'>
             <Box as='summary' fontSize='xs' cursor='pointer'>
@@ -869,55 +890,46 @@ export function VaultStep({ ctx }) {
               />
             </Part>
 
-            <Box
-              as='details'
-              data-testid='vault-uncertain-note'
-              borderTop='1px solid'
-              pt={3}
+            <DetailsSection
+              testId='vault-uncertain-note'
+              summary='If a rollout fails or reports an uncertain result'
             >
-              <Box as='summary' fontSize='sm' cursor='pointer'>
-                If a rollout fails or reports an uncertain result
-              </Box>
-              <VStack align='stretch' spacing={2} mt={2}>
-                <Text fontSize='xs' color={muted}>
-                  A root-owned placeholder or a file the agent cannot overwrite
-                  makes the first rollout fail with material_install_failed.
-                </Text>
-                <Text fontSize='xs' color={muted}>
-                  Before the consumer agent touches a file it records an
-                  uncertain marker for the binding in {AGENT_STATE_DIR}
-                  /material-bindings. It clears the marker only after the files
-                  are installed, nginx is reloaded and every probe serves the
-                  new certificate. If any of that fails (for example a file the
-                  agent cannot overwrite, or a CA file the check cannot read or
-                  does not trust, reported as
-                  material_service_verification_failed), the rollout ends as
-                  orphaned_unknown_effect and every later attempt for this
-                  binding fails with material_binding_uncertain until the marker
-                  is cleared.
-                </Text>
-                <Text fontSize='xs' color={muted}>
-                  Repair the cause on the host first. Then run this as the agent
-                  user. It installs and reloads nothing: it only checks that the
-                  installed certificate and key are the ones being rolled out
-                  and that every probe serves them, then clears the marker.
-                </Text>
-                <CopyBlock
-                  label='Clear the marker (consumer host)'
-                  text={buildReconcileCommand(bindingId)}
-                />
-                <Text fontSize='xs' color={muted}>
-                  Then retry the same consumer job (POST
-                  .../certops/distribution-jobs/JOB_ID/retry) and resume the
-                  rollout. If no file was replaced, the check reports
-                  material_reconciliation_mismatch and the marker stays: there
-                  is no other supported command, so prepare the folder as
-                  described above before the first rollout. Do not delete the
-                  files under material-bindings or material-locks to force a
-                  retry.
-                </Text>
-              </VStack>
-            </Box>
+              <Text fontSize='xs' color={muted}>
+                A root-owned placeholder or a file the agent cannot overwrite
+                makes the first rollout fail with material_install_failed.
+              </Text>
+              <Text fontSize='xs' color={muted}>
+                Before the consumer agent touches a file it records an uncertain
+                marker for the binding in {AGENT_STATE_DIR}
+                /material-bindings. It clears the marker only after the files
+                are installed, nginx is reloaded and every probe serves the new
+                certificate. If any of that fails (for example a file the agent
+                cannot overwrite, or a CA file the check cannot read or does not
+                trust, reported as material_service_verification_failed), the
+                rollout ends as orphaned_unknown_effect and every later attempt
+                for this binding fails with material_binding_uncertain until the
+                marker is cleared.
+              </Text>
+              <Text fontSize='xs' color={muted}>
+                Repair the cause on the host first. Then run this as the agent
+                user. It installs and reloads nothing: it only checks that the
+                installed certificate and key are the ones being rolled out and
+                that every probe serves them, then clears the marker.
+              </Text>
+              <CopyBlock
+                label='Clear the marker (consumer host)'
+                text={buildReconcileCommand(bindingId)}
+              />
+              <Text fontSize='xs' color={muted}>
+                Then retry the same consumer job (POST
+                .../certops/distribution-jobs/JOB_ID/retry) and resume the
+                rollout. If no file was replaced, the check reports
+                material_reconciliation_mismatch and the marker stays: there is
+                no other supported command, so prepare the folder as described
+                above before the first rollout. Do not delete the files under
+                material-bindings or material-locks to force a retry.
+              </Text>
+            </DetailsSection>
           </>
         ) : null}
       </VStack>

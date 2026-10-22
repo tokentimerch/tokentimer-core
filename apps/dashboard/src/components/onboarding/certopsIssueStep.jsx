@@ -1,15 +1,6 @@
 import { useEffect, useState } from 'react';
 import { FiRefreshCw } from 'react-icons/fi';
-import {
-  Alert,
-  AlertDescription,
-  AlertIcon,
-  Badge,
-  Checkbox,
-  HStack,
-  Text,
-  VStack,
-} from '@chakra-ui/react';
+import { Checkbox, Text, VStack } from '@chakra-ui/react';
 import { DashboardActionButton } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { createJob, getJob } from '../certops/certopsJobsApi.js';
@@ -17,6 +8,8 @@ import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import { CopyBlock } from './blocks.jsx';
 import { pickGoalAgent } from './certopsMatrix.js';
+import JobActivity from './JobActivity.jsx';
+import { Callout, FactsList, StatusPanel, StatusTag } from './panels.jsx';
 import {
   AGENT_KEYS_DIR,
   agentConfigPathFor,
@@ -267,39 +260,56 @@ export default function IssueStep({ ctx }) {
         )
       }
     >
-      <VStack align='stretch' spacing={3}>
-        <HStack>
-          <Badge colorScheme={view.tone}>{view.label}</Badge>
-          <Text fontSize='sm'>
-            {names.join(', ') || 'No names saved yet'} via {saved.dnsProvider}
-          </Text>
-        </HStack>
+      <VStack align='stretch' spacing={4}>
+        <FactsList
+          testId='issue-facts'
+          items={[
+            {
+              label: 'Status',
+              value: <StatusTag tone={view.tone}>{view.label}</StatusTag>,
+            },
+            {
+              label: 'Names',
+              value: names.join(', ') || 'No names saved yet',
+            },
+            { label: 'DNS provider', value: saved.dnsProvider },
+            windows
+              ? {
+                  label: 'HTTPS binding',
+                  value: `${saved.iisSite || 'Default Web Site'}, port ${saved.iisPort || 443}`,
+                }
+              : {
+                  label: 'Certificate file',
+                  value: saved.certPath,
+                  mono: true,
+                },
+          ]}
+        />
         {!gate.ok ? (
-          <Alert status='warning' borderRadius='md'>
-            <AlertIcon />
-            <AlertDescription fontSize='sm'>
-              Needs {gate.missing.join(', ')} first.
-            </AlertDescription>
-          </Alert>
+          <StatusPanel status='warning' title='Not ready yet'>
+            Needs {gate.missing.join(', ')} first.
+          </StatusPanel>
         ) : null}
         {!job ? (
-          <Alert
+          <StatusPanel
             status='warning'
-            borderRadius='md'
-            alignItems='flex-start'
-            data-testid='dryrun-ack-warning'
+            title='Before you request'
+            testId='dryrun-ack-warning'
           >
-            <AlertIcon />
             <VStack align='stretch' spacing={2} flex='1' minW={0}>
-              <AlertDescription fontSize='sm'>
-                Before you request: while <code>execution.dryRun</code> is{' '}
-                <code>true</code> the agent refuses real orders, and this page
-                cannot see that setting. Open <code>{configPath}</code> on the
-                server, set <code>dryRun</code> to <code>false</code> in the
-                execution block (keep the other keys, do not replace the file)
-                and restart the agent.
-              </AlertDescription>
-              <CopyBlock label='Restart the agent' text={restartCommand} />
+              <Text fontSize='sm'>
+                While <code>execution.dryRun</code> is <code>true</code> the
+                agent refuses real orders, and this page cannot see that
+                setting. Open <code>{configPath}</code> on the server, set{' '}
+                <code>dryRun</code> to <code>false</code> in the execution block
+                (keep the other keys, do not replace the file) and restart the
+                agent.
+              </Text>
+              <CopyBlock
+                label='Restart the agent'
+                text={restartCommand}
+                prompt
+              />
               <Checkbox
                 size='sm'
                 isChecked={acknowledged}
@@ -315,109 +325,121 @@ export default function IssueStep({ ctx }) {
                 </Text>
               ) : null}
             </VStack>
-          </Alert>
+          </StatusPanel>
         ) : null}
         {waitNotice ? (
-          <Alert status='warning' borderRadius='md' data-testid='issue-wait'>
-            <AlertIcon />
-            <AlertDescription fontSize='sm'>{waitNotice}</AlertDescription>
-          </Alert>
+          <StatusPanel
+            status='warning'
+            title='No agent has taken this request'
+            testId='issue-wait'
+          >
+            {waitNotice}
+          </StatusPanel>
         ) : null}
         {job?.errorCode === 'AGENT_RESULT_BLOCKED' ? (
-          <Text fontSize='sm'>
+          <StatusPanel status='warning' title='The agent is still in dry run'>
             The agent refused the order because it is still in dry run. Set{' '}
             <code>execution.dryRun</code> to <code>false</code>, restart it with{' '}
             <code>{restartCommand}</code>, then request again.
-          </Text>
+          </StatusPanel>
         ) : null}
         {job?.errorMessage ? (
-          <Alert status='error' borderRadius='md'>
-            <AlertIcon />
-            <AlertDescription fontSize='sm'>
-              {job.errorMessage}
-              {job.errorCode ? ` (code: ${job.errorCode})` : ''}
-            </AlertDescription>
-          </Alert>
+          <StatusPanel status='error' title='The order did not complete'>
+            {job.errorMessage}
+            {job.errorCode ? ` (code: ${job.errorCode})` : ''}
+          </StatusPanel>
         ) : null}
         {view.failed && windows ? (
-          <Text fontSize='sm'>
+          <StatusPanel status='info' title='What to do next'>
             Check the job log, then request again. The ACME client path and the
             HTTPS listener (usually an IIS site) must exist on the host, and the
             agent must be allowed to run that client.
-          </Text>
+          </StatusPanel>
         ) : null}
         {view.failed && !windows ? (
-          <Text fontSize='sm'>
+          <StatusPanel status='info' title='What to do next'>
             A failed order still reserves the certificate file{' '}
             <code>{saved.certPath}</code> and it cannot be retired, so asking
             again with the same path is rejected. Choose a different file name
             in the same folder (go back to the configuration step), then request
             again.
-          </Text>
+          </StatusPanel>
         ) : null}
         {view.noRetry ? (
-          <Text fontSize='sm'>
+          <StatusPanel status='warning' title='Needs review'>
             {jobReloadService
               ? `The certificate may already be on disk, but the ${jobReloadLabel} check or reload failed, so the server was not reloaded and nothing was rolled back. Fix the ${jobReloadLabel} configuration, then check the job log before asking again.`
               : 'The agent may have placed the order before the result was lost. Review the job log before asking again.'}
-          </Text>
+          </StatusPanel>
         ) : null}
         {error ? (
-          <Alert status='error' borderRadius='md'>
-            <AlertIcon />
-            <AlertDescription fontSize='sm'>{error}</AlertDescription>
-          </Alert>
-        ) : null}
-        <Text fontSize='xs' color={muted}>
-          CA: {caEndpoint}. Staging certificates are not trusted by browsers;
-          that is intended for a first run. Asking again places a new order, and
-          CAs rate limit repeated orders.
-        </Text>
-        <Text fontSize='sm' data-testid='reload-note'>
-          {windows
-            ? `The agent stores the certificate in the ${saved.iisStore || 'My'} machine store and binds it to the HTTPS binding ${saved.iisSite || 'Default Web Site'} (usually an IIS site) on port ${saved.iisPort || 443}, replacing the certificate currently bound there.`
-            : saved.reloadService
-              ? `After writing the certificate, the agent checks that ${reloadLabel} is running and then reloads it with systemctl. The unit's own reload tests the configuration as root, so a broken configuration is not loaded.`
-              : 'The certificate is written to the path above. Nothing is reloaded; you can choose a web server to reload in the configuration step.'}
-        </Text>
-        {!windows && saved.reloadService ? (
-          <Text fontSize='xs' color={muted} data-testid='server-running-note'>
-            Start {reloadLabel} before you request, for example with its default
-            site. The agent checks that the unit is active before it reloads,
-            and a stopped server ends the order as Needs review even though the
-            certificate was written. Add the lines below to a TLS server block
-            once the files exist.
-          </Text>
-        ) : null}
-        {!windows && keyPathFor(saved.certPath) ? (
-          <>
-            <Text fontSize='sm' data-testid='key-note'>
-              The private key is written next to the certificate, to{' '}
-              <code>{keyPathFor(saved.certPath)}</code> (mode 0600, owned by the
-              agent user tokentimer-agent). A copy also stays in the agent key
-              store under <code>{AGENT_KEYS_DIR}</code>. A web server reads its
-              certificate files as root when it starts or reloads, so it can
-              read the key. Leave the owner and mode alone, or the next renewal
-              cannot replace the file.
-            </Text>
-            <CopyBlock
-              label='Point your web server at these files'
-              text={buildServerSnippet({
-                reloadService: saved.reloadService,
-                certPath: saved.certPath,
-              })}
-            />
-          </>
+          <StatusPanel status='error' title='Could not request the order'>
+            {error}
+          </StatusPanel>
         ) : null}
         {view.done ? (
-          <Text fontSize='sm'>
+          <StatusPanel status='success' title='Certificate issued'>
             {windows
               ? `The certificate was issued and bound to the HTTPS binding ${saved.iisSite || 'Default Web Site'}.`
               : `The certificate was issued and written to ${saved.certPath}, with its key in ${keyPathFor(saved.certPath)}.`}{' '}
             Installing it into a web server and renewal are separate steps.
-          </Text>
+          </StatusPanel>
         ) : null}
-      </VStack>
+        {job?.id ? (
+          <JobActivity
+            workspaceId={ctx.workspaceId}
+            jobId={job.id}
+            title='What happened to this request'
+          />
+        ) : null}
+        <Callout kind='next' testId='issue-next'>
+          <Text fontSize='sm' data-testid='reload-note'>
+            {windows
+              ? `The agent stores the certificate in the ${saved.iisStore || 'My'} machine store and binds it to the HTTPS binding ${saved.iisSite || 'Default Web Site'} (usually an IIS site) on port ${saved.iisPort || 443}, replacing the certificate currently bound there.`
+              : saved.reloadService
+                ? `After writing the certificate, the agent checks that ${reloadLabel} is running and then reloads it with systemctl. The unit's own reload tests the configuration as root, so a broken configuration is not loaded.`
+                : 'The certificate is written to the path above. Nothing is reloaded; you can choose a web server to reload in the configuration step.'}
+          </Text>
+          <Text fontSize='xs' color={muted} mt={2}>
+            CA: {caEndpoint}. Staging certificates are not trusted by browsers;
+            that is intended for a first run. Asking again places a new order,
+            and CAs rate limit repeated orders.
+          </Text>
+        </Callout>
+        {!windows && saved.reloadService ? (
+          <Callout kind='before' title='Start the web server first'>
+            <Text fontSize='sm' data-testid='server-running-note'>
+              Start {reloadLabel} before you request, for example with its
+              default site. The agent checks that the unit is active before it
+              reloads, and a stopped server ends the order as Needs review even
+              though the certificate was written. Add the lines below to a TLS
+              server block once the files exist.
+            </Text>
+          </Callout>
+        ) : null}
+        {!windows && keyPathFor(saved.certPath) ? (
+          <Callout kind='check' title='Files and web server settings'>
+            <VStack align='stretch' spacing={3}>
+              <Text fontSize='sm' data-testid='key-note'>
+                The private key is written next to the certificate, to{' '}
+                <code>{keyPathFor(saved.certPath)}</code> (mode 0600, owned by
+                the agent user tokentimer-agent). A copy also stays in the agent
+                key store under <code>{AGENT_KEYS_DIR}</code>. A web server
+                reads its certificate files as root when it starts or reloads,
+                so it can read the key. Leave the owner and mode alone, or the
+                next renewal cannot replace the file.
+              </Text>
+              <CopyBlock
+                label='Point your web server at these files'
+                text={buildServerSnippet({
+                  reloadService: saved.reloadService,
+                  certPath: saved.certPath,
+                })}
+              />
+            </VStack>
+          </Callout>
+        ) : null}
+      </VStack>{' '}
     </StepFrame>
   );
 }

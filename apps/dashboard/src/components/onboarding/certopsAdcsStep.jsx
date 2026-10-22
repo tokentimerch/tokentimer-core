@@ -1,16 +1,6 @@
 import { useState } from 'react';
 import { FiRefreshCw } from 'react-icons/fi';
-import {
-  Alert,
-  AlertDescription,
-  AlertIcon,
-  Badge,
-  HStack,
-  ListItem,
-  OrderedList,
-  Text,
-  VStack,
-} from '@chakra-ui/react';
+import { HStack, ListItem, OrderedList, Text, VStack } from '@chakra-ui/react';
 import { DashboardActionButton } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
@@ -21,6 +11,8 @@ import {
   overdueEnrollmentsMessage,
 } from './certopsWorkerMessages.js';
 import WorkerWarning from './WorkerWarning.jsx';
+import { JobTimelineList } from './JobActivity.jsx';
+import { Callout, StatusPanel, StatusTag, StepCard } from './panels.jsx';
 
 /**
  * Status of the part of AD CS setup the server can see. Enrollment itself
@@ -37,22 +29,21 @@ export function adcsStatus({ adcs, agentDeclares }) {
   };
 }
 
-function Row({ done, label, hint }) {
+function Row({ n, done, label, hint }) {
   const { muted } = useDashboardTheme();
   return (
-    <HStack align='start'>
-      <Badge colorScheme={done ? 'green' : 'gray'} mt='2px'>
-        {done ? 'Done' : 'To do'}
-      </Badge>
-      <VStack align='start' spacing={0}>
-        <Text fontSize='sm'>{label}</Text>
-        {!done && hint ? (
-          <Text fontSize='xs' color={muted}>
-            {hint}
-          </Text>
-        ) : null}
-      </VStack>
-    </HStack>
+    <StepCard n={n} title={label} status={done ? 'done' : undefined}>
+      {done ? null : (
+        <HStack align='start' spacing={2}>
+          <StatusTag>To do</StatusTag>
+          {hint ? (
+            <Text fontSize='xs' color={muted}>
+              {hint}
+            </Text>
+          ) : null}
+        </HStack>
+      )}
+    </StepCard>
   );
 }
 
@@ -71,6 +62,16 @@ export default function AdcsStep({ ctx }) {
   });
   const [checking, setChecking] = useState(false);
   const ca = buildCaConfig(saved.caHost, saved.caName);
+  // The setup summary only carries each agent's last check-in.
+  const agentEvents = agents
+    .filter(a => a.lastSeenAt)
+    .slice(0, 3)
+    .map(a => ({
+      id: `agent-${a.id}`,
+      at: a.lastSeenAt,
+      label: `Agent ${a.hostname || a.name || 'check-in'} last seen`,
+      status: a.livenessState === 'live' ? 'done' : 'waiting',
+    }));
   const overdueMessage = overdueEnrollmentsMessage(certops);
 
   const check = async () => {
@@ -103,25 +104,24 @@ export default function AdcsStep({ ctx }) {
       }
     >
       <VStack align='stretch' spacing={3}>
-        <Alert status='info' borderRadius='md'>
-          <AlertIcon />
-          <AlertDescription fontSize='sm'>
-            This guide prepares the agent rule and watches for the issuer and
-            profile. It cannot verify enrollment against your CA: start the
-            first enrollment from Certificate Management.
-          </AlertDescription>
-        </Alert>
+        <StatusPanel status='info' title='What this guide can see'>
+          This guide prepares the agent rule and watches for the issuer and
+          profile. It cannot verify enrollment against your CA: start the first
+          enrollment from Certificate Management.
+        </StatusPanel>
         {overdueMessage ? (
           <WorkerWarning testId='adcs-overdue-warning'>
             {overdueMessage}
           </WorkerWarning>
         ) : null}
         <Row
+          n={1}
           done={status.agent}
           label='Agent connected and able to enroll'
           hint='Needs a live agent on a domain-joined Windows host that reports adcs-enroll-v1. If it was installed before the rule was saved, restart TokenTimerAgent.'
         />
         <Row
+          n={2}
           done={status.issuer}
           label='Issuer created and CA certificate pinned'
           hint={
@@ -131,29 +131,35 @@ export default function AdcsStep({ ctx }) {
           }
         />
         {status.unsafe.length > 0 ? (
-          <Text fontSize='xs' color='orange.400'>
+          <StatusPanel
+            status='warning'
+            title='An issuer did not pass the check'
+          >
             {status.unsafe.map(i => i.name).join(', ')} did not pass the check
             and is not pinned. Fix the template or CA flags, then run the check
             again.
-          </Text>
+          </StatusPanel>
         ) : null}
         <Row
+          n={3}
           done={status.profile}
           label='AD CS renewal profile created'
           hint='In Renewals, Renewal profiles, New AD CS profile. Pick the confirmed issuer, the HTTPS binding (IIS site) and the certificate name.'
         />
-        <Text fontSize='sm' fontWeight='semibold'>
-          Still to do on your side
-        </Text>
-        <OrderedList fontSize='sm' spacing={1} pl={2}>
-          {ADCS_REMAINING_STEPS.map(s => (
-            <ListItem key={s}>{s}</ListItem>
-          ))}
-        </OrderedList>
-        <Text fontSize='xs' color={muted}>
-          Attaching the profile to a certificate and the first enrollment happen
-          in Certificate Management, where the real result is shown.
-        </Text>
+        {agentEvents.length > 0 ? (
+          <JobTimelineList label='Agent timeline' events={agentEvents} />
+        ) : null}
+        <Callout kind='next' title='Still to do on your side'>
+          <OrderedList fontSize='sm' spacing={1} pl={2}>
+            {ADCS_REMAINING_STEPS.map(s => (
+              <ListItem key={s}>{s}</ListItem>
+            ))}
+          </OrderedList>
+          <Text fontSize='xs' color={muted} mt={2}>
+            Attaching the profile to a certificate and the first enrollment
+            happen in Certificate Management, where the real result is shown.
+          </Text>
+        </Callout>
         <Text fontSize='xs' color={muted} data-testid='adcs-worker-note'>
           {WORKER_NOTE}
         </Text>

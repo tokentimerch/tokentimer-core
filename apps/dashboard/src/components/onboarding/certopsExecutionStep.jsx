@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Badge, HStack, Text, VStack } from '@chakra-ui/react';
+import { Text, VStack } from '@chakra-ui/react';
 import { DashboardErrorAlert } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
-import { CopyBlock, WarnText } from './blocks.jsx';
+import { CopyBlock } from './blocks.jsx';
+import JobActivity from './JobActivity.jsx';
+import { Callout, StatusPanel, StatusTag, StepCard } from './panels.jsx';
 import { GOALS } from './modules.js';
 import {
   agentConfigPathFor,
@@ -178,60 +180,85 @@ export function ExecutionStep({ ctx }) {
         ) : null
       }
     >
-      <VStack align='stretch' spacing={3}>
+      <VStack align='stretch' spacing={4}>
         {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
-        {EXECUTION_STAGES.map(s => (
-          <HStack key={s.id} align='start'>
-            <Badge colorScheme={state.done.includes(s.id) ? 'green' : 'gray'}>
-              {state.done.includes(s.id) ? 'Done' : 'Waiting'}
-            </Badge>
-            <VStack align='start' spacing={0}>
-              <Text fontSize='sm' fontWeight='semibold'>
-                {s.label}
-              </Text>
-              <Text fontSize='xs' color={muted}>
-                {s.hint}
-              </Text>
-            </VStack>
-          </HStack>
-        ))}
+        <VStack
+          as='ol'
+          align='stretch'
+          spacing={2}
+          listStyleType='none'
+          m={0}
+          p={0}
+          aria-label='Execution stages'
+        >
+          {EXECUTION_STAGES.map((s, index) => (
+            <li key={s.id}>
+              <StepCard
+                n={index + 1}
+                title={s.label}
+                description={s.hint}
+                status={state.done.includes(s.id) ? 'done' : undefined}
+                testId={`stage-${s.id}`}
+              >
+                {state.done.includes(s.id) ? null : (
+                  <StatusTag tone='gray' alignSelf='flex-start'>
+                    Waiting
+                  </StatusTag>
+                )}
+              </StepCard>
+            </li>
+          ))}
+        </VStack>
         {!state.done.includes('enabled') ? (
-          <>
-            <Text fontSize='sm'>
-              Open <code>{configPath}</code> on the server. Do not replace the
-              file: keep <code>agentId</code>, your policy and the other keys in
-              the execution block, and set only these two values. Then restart
-              the agent.
-            </Text>
-            <CopyBlock
-              label='execution block (merge into config.json, do not replace the file)'
-              text={EXECUTION_BLOCK}
-              language='json'
-            />
-            <CopyBlock label='Restart the agent' text={restartCommand} />
-            {agent && !saved.dryRunJobId ? (
-              <Text fontSize='xs' color={muted} data-testid='send-test-hint'>
-                Send a test job stays disabled until the agent checks in again
-                with execution enabled. This page re-checks every 15 seconds.
+          <Callout kind='before' title='Turn on execution on the server'>
+            <VStack align='stretch' spacing={3}>
+              <Text fontSize='sm'>
+                Open <code>{configPath}</code> on the server. Do not replace the
+                file: keep <code>agentId</code>, your policy and the other keys
+                in the execution block, and set only these two values. Then
+                restart the agent.
               </Text>
-            ) : null}
-          </>
+              <CopyBlock
+                label='execution block (merge into config.json, do not replace the file)'
+                text={EXECUTION_BLOCK}
+                language='json'
+              />
+              <CopyBlock
+                label='Restart the agent'
+                text={restartCommand}
+                prompt
+              />
+              {agent && !saved.dryRunJobId ? (
+                <Text fontSize='xs' color={muted} data-testid='send-test-hint'>
+                  Send a test job stays disabled until the agent checks in again
+                  with execution enabled. This page re-checks every 15 seconds.
+                </Text>
+              ) : null}
+            </VStack>
+          </Callout>
         ) : null}
         {job && job.status !== 'dry_run_complete' ? (
-          <WarnText>
+          <StatusPanel status='warning' title='The test job has not passed'>
             The test job is {job.status}. A passing dry run ends as
             dry_run_complete, not as succeeded.
-          </WarnText>
+          </StatusPanel>
+        ) : null}
+        {saved.dryRunJobId ? (
+          <JobActivity
+            workspaceId={ctx.workspaceId}
+            jobId={saved.dryRunJobId}
+            title='What happened to the test job'
+          />
         ) : null}
         {state.done.includes('dryrun') ? (
-          <Text fontSize='sm'>
-            The dry run passed. When you are ready for real work, set{' '}
-            <code>dryRun</code> to <code>false</code> in the same execution
-            block of <code>{configPath}</code> and restart the agent with{' '}
+          <StatusPanel status='success' title='The dry run passed'>
+            When you are ready for real work, set <code>dryRun</code> to{' '}
+            <code>false</code> in the same execution block of{' '}
+            <code>{configPath}</code> and restart the agent with{' '}
             <code>{restartCommand}</code>.
-          </Text>
+          </StatusPanel>
         ) : null}
-      </VStack>
+      </VStack>{' '}
     </StepFrame>
   );
 }

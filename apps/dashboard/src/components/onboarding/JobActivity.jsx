@@ -15,7 +15,10 @@ import {
   FiClock,
   FiXCircle,
 } from 'react-icons/fi';
-import { useDashboardTheme } from '../../hooks/useDashboardTheme';
+import {
+  useDashboardTheme,
+  useDashboardThemeColors,
+} from '../../hooks/useDashboardTheme';
 import AgentShellConsole from '../certops/AgentShellConsole.jsx';
 import {
   getJob,
@@ -60,7 +63,8 @@ export function hideSecretLine(message) {
  * whether it succeeded. Pure display of what buildJobTimeline returns.
  */
 export function JobTimelineList({ events, label = 'Job timeline' }) {
-  const { muted, border, dashboard } = useDashboardTheme();
+  const { muted, border } = useDashboardTheme();
+  const { dashboard } = useDashboardThemeColors();
   const color = {
     success: dashboard.state.success,
     danger: dashboard.state.danger,

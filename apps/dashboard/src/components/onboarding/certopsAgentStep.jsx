@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FiRefreshCw } from 'react-icons/fi';
 import {
-  Alert,
-  AlertDescription,
-  AlertIcon,
-  Badge,
+  Flex,
   FormControl,
   FormLabel,
   HStack,
   Input,
   Text,
+  VisuallyHidden,
   VStack,
 } from '@chakra-ui/react';
 import {
@@ -45,6 +43,9 @@ import {
   saveCertops,
 } from './certopsSetupSteps.jsx';
 import { createBootstrapToken } from '../certops/certopsAgentsApi.js';
+import AgentCheckIn from './AgentCheckIn.jsx';
+import { JobTimelineList } from './JobActivity.jsx';
+import { Callout, StatusPanel, StatusTag } from './panels.jsx';
 
 const POLL_MS = 5000;
 
@@ -73,13 +74,35 @@ export function describeAgent(agent, gap = []) {
 
 /** One numbered instruction with the block it refers to right under it. */
 function InstallStep({ n, text, children }) {
+  const { border, muted } = useDashboardTheme();
   return (
-    <VStack align='stretch' spacing={1}>
-      <Text fontSize='sm'>
-        {n}. {text}
-      </Text>
-      {children}
-    </VStack>
+    <Flex gap={3} align='flex-start'>
+      <Flex
+        aria-hidden
+        flexShrink={0}
+        w='24px'
+        h='24px'
+        mt='1px'
+        borderRadius='full'
+        borderWidth='2px'
+        borderColor={border}
+        align='center'
+        justify='center'
+        fontSize='xs'
+        fontWeight='bold'
+        color={muted}
+        _light={{ color: muted }}
+      >
+        {n}
+      </Flex>
+      <VStack align='stretch' spacing={2} flex='1' minW={0}>
+        <Text fontSize='sm'>
+          <VisuallyHidden>{n}. </VisuallyHidden>
+          {text}
+        </Text>
+        {children}
+      </VStack>
+    </Flex>
   );
 }
 
@@ -299,16 +322,30 @@ export function AgentStep({ ctx }) {
               ) : null}
             </>
           ) : null}
-          <HStack>
-            <Text fontSize='sm' fontWeight='semibold'>
-              Controller status
-            </Text>
-            {clusterReported ? (
-              <Badge colorScheme='green'>Reporting</Badge>
-            ) : (
-              <Badge>Waiting for the controller</Badge>
-            )}
-          </HStack>
+          <VStack align='stretch' spacing={2} data-testid='controller-status'>
+            <HStack>
+              <Text as='h3' fontSize='sm' fontWeight='semibold'>
+                Controller status
+              </Text>
+              {clusterReported ? (
+                <StatusTag tone='green'>Reporting</StatusTag>
+              ) : (
+                <StatusTag>Waiting for the controller</StatusTag>
+              )}
+            </HStack>
+            <JobTimelineList
+              label='Controller timeline'
+              events={(agentsSummaryControllers(ctx) || [])
+                .filter(c => !clusterId || c.clusterId === clusterId)
+                .filter(c => c.lastReportedAt)
+                .map(c => ({
+                  id: `cluster-${c.clusterId}`,
+                  at: c.lastReportedAt,
+                  label: `Last report from cluster ${c.clusterId}`,
+                  status: 'done',
+                }))}
+            />
+          </VStack>
           <Text fontSize='xs' color={muted}>
             {clusterReported
               ? 'The controller has reported certificates from this cluster.'
@@ -379,69 +416,74 @@ export function AgentStep({ ctx }) {
       <VStack align='stretch' spacing={3}>
         {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
         {deferred ? (
-          <Alert status='info' borderRadius='md' data-testid='install-later'>
-            <AlertIcon />
+          <StatusPanel status='info' title='Saved' testId='install-later'>
             <VStack align='start' spacing={2}>
-              <AlertDescription fontSize='sm'>
+              <Text fontSize='sm'>
                 Saved. This step stays open until a suitable agent connects. To
                 come back, use the setup banner on Certificate Management (shown
                 while nothing is set up there) or Preferences, Setup guide, Open
                 setup guide.
-              </AlertDescription>
+              </Text>
               {ctx.leaveGuide ? (
                 <DashboardActionButton size='sm' onClick={ctx.leaveGuide}>
                   Go to Certificate Management
                 </DashboardActionButton>
               ) : null}
             </VStack>
-          </Alert>
+          </StatusPanel>
         ) : saved.agentLaterAt ? (
           <Text fontSize='xs' color={muted}>
             You paused here earlier. This page keeps watching for the agent.
           </Text>
         ) : null}
         {needsRerun ? (
-          <Alert
+          <StatusPanel
             status='warning'
-            borderRadius='md'
-            alignItems='flex-start'
-            data-testid='reinstall-needed'
+            title='Run the installer again'
+            testId='reinstall-needed'
           >
-            <AlertIcon />
             <VStack align='start' spacing={2}>
-              <AlertDescription fontSize='sm'>
+              <Text fontSize='sm'>
                 This goal needs different installer options. Run the command
                 below again on the server. The installer asks for a bootstrap
                 token again: create another one with the button at the bottom of
                 this card.
-              </AlertDescription>
+              </Text>
               <DashboardActionButton size='sm' onClick={confirmRerun}>
                 I ran the command again
               </DashboardActionButton>
             </VStack>
-          </Alert>
+          </StatusPanel>
         ) : null}
         {certopsObjectiveFor(ctx) === 'adcs' ? (
-          <Alert status='info' borderRadius='md' data-testid='adcs-host-note'>
-            <AlertIcon />
-            <AlertDescription fontSize='sm'>
-              Install the agent on a domain-joined Windows Server member that
-              can reach your CA. A domain controller is not supported.
-            </AlertDescription>
-          </Alert>
+          <StatusPanel
+            status='info'
+            title='Where to install it'
+            testId='adcs-host-note'
+          >
+            Install the agent on a domain-joined Windows Server member that can
+            reach your CA. A domain controller is not supported.
+          </StatusPanel>
         ) : null}
         {os === 'linux' && ['automate', 'vault'].includes(saved.objective) ? (
-          <Text fontSize='xs' color={muted} data-testid='certbot-note'>
-            The agent places orders with /usr/bin/certbot on the issuing server,
-            so install it first (for example sudo apt install certbot).
-          </Text>
+          <Callout kind='before' title='Install certbot first'>
+            <Text fontSize='sm' data-testid='certbot-note'>
+              The agent places orders with /usr/bin/certbot on the issuing
+              server, so install it first (for example sudo apt install
+              certbot).
+            </Text>
+          </Callout>
         ) : null}
         {isLoopbackHttp(ctx.apiUrl) ? (
-          <Text fontSize='xs' color={muted} data-testid='loopback-note'>
+          <StatusPanel
+            status='warning'
+            title='This address is localhost'
+            testId='loopback-note'
+          >
             This API address is localhost, so it only works when the agent runs
             on this same machine. For a server elsewhere, open the dashboard
             through the address that server can reach.
-          </Text>
+          </StatusPanel>
         ) : null}
         <VStack align='stretch' spacing={3} data-testid='install-steps'>
           <InstallStep n={1} text={notes[0]}>
@@ -494,23 +536,24 @@ export function AgentStep({ ctx }) {
           ))}
         </VStack>
         <HStack>
-          <Text fontSize='sm' fontWeight='semibold'>
+          <Text as='h3' fontSize='sm' fontWeight='semibold'>
             Agent status
           </Text>
           {!target ? (
-            <Badge>Waiting for an agent</Badge>
+            <StatusTag>Waiting for an agent</StatusTag>
           ) : healthy ? (
-            <Badge colorScheme='green'>Connected</Badge>
+            <StatusTag tone='green'>Connected</StatusTag>
           ) : (
-            <Badge colorScheme='orange'>Needs attention</Badge>
+            <StatusTag tone='orange'>Needs attention</StatusTag>
           )}
         </HStack>
         {target ? (
-          <VStack align='stretch' spacing={1}>
+          <VStack align='stretch' spacing={2}>
             <Text fontSize='sm'>
               {target.hostname || target.name} ({target.platform}, version{' '}
               {target.agentVersion})
             </Text>
+            <AgentCheckIn workspaceId={ctx.workspaceId} agent={target} />
             {lacksProfile ? (
               <WarnText data-testid='lacks-profile-note'>
                 This agent has not reported the {wantedProfileName} command
