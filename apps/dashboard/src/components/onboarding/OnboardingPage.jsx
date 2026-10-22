@@ -43,6 +43,7 @@ import { reconcilePending } from './reconcile.js';
 import { docUrl } from './docLinks.js';
 import StepFrame, { INFO_NOTE_PROPS } from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
+import NextStepsList from './nextStepsList.jsx';
 import { PLANNER_VERSION, planJourney } from './journeyPlanner.js';
 import {
   allGoals,
@@ -425,7 +426,6 @@ function StepContinueBar({ onContinue }) {
 }
 
 export function DoneCard({ ctx, guidedImportSteps = GUIDED_IMPORT_STEPS }) {
-  const { muted } = useDashboardTheme();
   const smtp = ctx.summary?.alerts?.smtpConfigured;
   const goal = allGoals()[ctx.session.intent?.goal];
   const modalImport = !guidedImportSteps && Boolean(goal?.doneTextModal);
@@ -473,26 +473,19 @@ export function DoneCard({ ctx, guidedImportSteps = GUIDED_IMPORT_STEPS }) {
         </>
       }
     >
-      <VStack align='stretch' spacing={2}>
-        <Text fontSize='sm' color={muted}>
-          Suggested next steps, all optional:
-        </Text>
-        {smtp !== true ? (
-          <Text fontSize='sm'>
-            Email delivery is not confirmed. Ask an administrator to check SMTP
-            so alerts can be emailed.
-          </Text>
-        ) : null}
-        {nextSteps(
-          ctx.session.intent?.goal,
-          ctx.summary?.certops,
-          ctx.summary
-        ).map(text => (
-          <Text key={text} fontSize='sm'>
-            {text}
-          </Text>
-        ))}
-      </VStack>
+      <NextStepsList
+        docs={ctx.docs}
+        items={[
+          smtp !== true
+            ? 'Email delivery is not confirmed. Ask an administrator to check SMTP so alerts can be emailed.'
+            : null,
+          ...nextSteps(
+            ctx.session.intent?.goal,
+            ctx.summary?.certops,
+            ctx.summary
+          ),
+        ]}
+      />
     </StepFrame>
   );
 }
