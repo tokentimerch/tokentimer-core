@@ -404,6 +404,7 @@ export function IntegrationStep({ ctx, reviewing = false }) {
 
       <ImportTokensModal
         hideDocs
+        embeddedWorkspaceId={ctx.workspaceId}
         sourceChoices={INTEGRATION_SOURCES}
         isOpen={host.open}
         onClose={host.close}

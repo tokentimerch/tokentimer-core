@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   render,
   waitFor,
@@ -14,12 +14,13 @@ import ImportTokensModal from '../../src/components/ImportTokensModal.jsx';
 import { tokenAPI, integrationAPI } from '../../src/utils/apiClient';
 import { IMPORT_DOCS } from '../../src/utils/docsUrls.js';
 
-const { apiGetMock, apiDeleteMock, gitlabFormProps, githubFormProps } =
+const { apiGetMock, apiDeleteMock, gitlabFormProps, githubFormProps, wsCtx } =
   vi.hoisted(() => ({
     apiGetMock: vi.fn(),
     apiDeleteMock: vi.fn(),
     gitlabFormProps: [],
     githubFormProps: [],
+    wsCtx: { id: 'ws-1' },
   }));
 
 vi.mock('../../src/utils/logger', () => ({
@@ -32,7 +33,7 @@ vi.mock('../../src/utils/toast.js', () => ({
 }));
 
 vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
-  useWorkspace: () => ({ workspaceId: 'ws-1', selectWorkspace: vi.fn() }),
+  useWorkspace: () => ({ workspaceId: wsCtx.id, selectWorkspace: vi.fn() }),
 }));
 
 vi.mock('../../src/utils/apiClient', () => ({
@@ -47,7 +48,13 @@ vi.mock('../../src/utils/apiClient', () => ({
     get: vi.fn().mockResolvedValue({}),
     getAlertSettings: vi.fn().mockResolvedValue({}),
   },
-  authAPI: { getPlan: vi.fn().mockResolvedValue({}) },
+  authAPI: {
+    getPlan: vi.fn().mockResolvedValue({
+      integrationScansUsed: 0,
+      integrationScansLimit: null,
+      integrationScansRemaining: null,
+    }),
+  },
   azureADAPI: { scan: vi.fn() },
   integrationAPI: {
     checkDuplicates: vi
@@ -688,5 +695,68 @@ describe('ImportTokensModal file preview', () => {
     const row = screen.getByText('Invalid date').closest('tr');
     expect(row).toHaveTextContent('3');
     window.history.pushState({}, '', '/');
+  });
+});
+
+describe('ImportTokensModal workspace resolution', () => {
+  const CSV = 'name,category,type,expiresAt\nweb,cert,ssl_cert,2030-01-01\n';
+
+  beforeEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    apiGetMock.mockResolvedValue({ data: {} });
+    tokenAPI.createToken.mockReset().mockResolvedValue({ id: 1 });
+    window.history.pushState({}, '', '/');
+  });
+
+  afterEach(() => {
+    wsCtx.id = 'ws-1';
+    window.history.pushState({}, '', '/');
+  });
+
+  const importCsv = async extraProps => {
+    render(renderModal(null, extraProps));
+    await screen.findByText(/Upload a file in/);
+    const input = document.querySelector('input[type="file"]');
+    const file = new File([CSV], 'ok.csv', { type: 'text/plain' });
+    file.text = () => Promise.resolve(CSV);
+    fireEvent.change(input, { target: { files: [file] } });
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Import 1 selected/ })
+    );
+  };
+
+  it('imports into the active workspace when the URL has no workspace', async () => {
+    wsCtx.id = 'ws-ctx';
+    await importCsv();
+    await waitFor(() => expect(tokenAPI.createToken).toHaveBeenCalledTimes(1));
+    expect(tokenAPI.createToken.mock.calls[0][0].workspace_id).toBe('ws-ctx');
+    expect(
+      screen.queryByText('Please select a workspace first.')
+    ).not.toBeInTheDocument();
+  });
+
+  it('prefers the URL workspace over the active workspace', async () => {
+    wsCtx.id = 'ws-ctx';
+    window.history.pushState({}, '', '/?workspace=ws-url');
+    await importCsv();
+    await waitFor(() => expect(tokenAPI.createToken).toHaveBeenCalledTimes(1));
+    expect(tokenAPI.createToken.mock.calls[0][0].workspace_id).toBe('ws-url');
+  });
+
+  it('uses the setup guide workspace when embedded', async () => {
+    wsCtx.id = 'ws-ctx';
+    await importCsv({ hideDocs: true, embeddedWorkspaceId: 'ws-guide' });
+    await waitFor(() => expect(tokenAPI.createToken).toHaveBeenCalledTimes(1));
+    expect(tokenAPI.createToken.mock.calls[0][0].workspace_id).toBe('ws-guide');
+  });
+
+  it('asks for a workspace only when none can be determined', async () => {
+    wsCtx.id = null;
+    await importCsv();
+    expect(
+      await screen.findByText('Please select a workspace first.')
+    ).toBeInTheDocument();
+    expect(tokenAPI.createToken).not.toHaveBeenCalled();
   });
 });

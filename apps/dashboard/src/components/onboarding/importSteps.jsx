@@ -151,6 +151,7 @@ export function FileImportStep({ ctx, reviewing = false }) {
       </VStack>
       <ImportTokensModal
         hideDocs
+        embeddedWorkspaceId={ctx.workspaceId}
         sourceChoices={FILE_SOURCES}
         isOpen={host.open}
         onClose={host.close}

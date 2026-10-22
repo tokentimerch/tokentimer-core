@@ -55,6 +55,7 @@ import IntegrationImportTable from './IntegrationImportTable';
 import BulkIntegrationAssignment from './BulkIntegrationAssignment';
 import { ImportSourceLogo } from './imports/importSources.jsx';
 import { EmbeddedImportContext } from './imports/embeddedImportContext.js';
+import { resolveImportWorkspaceId } from './imports/resolveImportWorkspaceId.js';
 import {
   canonicalContactGroupFields,
   contactGroupFieldsForImportDefaults,
@@ -914,8 +915,15 @@ function ImportTokensModalContent({
   hideDocs = false,
   // Source keys the dialog may show. Unset means every source.
   sourceChoices = null,
+  // Workspace the setup guide is configuring; the URL may not carry it.
+  embeddedWorkspaceId = null,
 }) {
-  const { workspaceId } = useWorkspace();
+  const { workspaceId: contextWorkspaceId } = useWorkspace();
+  // Forms and auto-sync get the same id the import handlers resolve.
+  const workspaceId = resolveImportWorkspaceId({
+    embeddedWorkspaceId,
+    contextWorkspaceId,
+  });
   const {
     ready: certOpsReady,
     enabled: certOpsEnabled,
@@ -1983,8 +1991,7 @@ function ImportTokensModalContent({
       setSelectedRowsFile(new Set(normalized.map((_, i) => i)));
 
       // Check for duplicates after parsing
-      const params = new URLSearchParams(window.location.search);
-      const workspaceId = params.get('workspace');
+      const workspaceId = getWorkspaceId();
       if (workspaceId && normalized.length > 0) {
         try {
           const items = normalized.map(r => ({
@@ -2031,8 +2038,7 @@ function ImportTokensModalContent({
         .map((r, i) => ({ ...r, knownDuplicate: fileDuplicates.has(i) }))
         .filter((_, i) => selectedRowsFile.has(i));
       setProgress({ done: 0, total: selectedRows.length });
-      const params = new URLSearchParams(window.location.search);
-      const workspaceId = params.get('workspace');
+      const workspaceId = getWorkspaceId();
       if (!workspaceId) {
         setError('Please select a workspace first.');
         setIsImporting(false);
@@ -2248,11 +2254,9 @@ function ImportTokensModalContent({
     return false; // No quota in error response
   };
 
-  // Helper to get workspaceId from URL params
-  const getWorkspaceId = () => {
-    const params = new URLSearchParams(window.location.search);
-    return params.get('workspace');
-  };
+  // Read live so a handler never acts on a stale render.
+  const getWorkspaceId = () =>
+    resolveImportWorkspaceId({ embeddedWorkspaceId, contextWorkspaceId });
 
   const updateAzureADItem = (index, updates) => {
     setAzureADItems(prev => {
@@ -2349,8 +2353,7 @@ function ImportTokensModalContent({
           section: bulkSection || item.section || null,
           ...canonicalContactGroupFields(bulkContactGroupIds),
         }));
-      const params = new URLSearchParams(window.location.search);
-      const workspaceId = params.get('workspace');
+      const workspaceId = getWorkspaceId();
       if (!workspaceId) {
         setError('Please select a workspace first.');
         setIsImporting(false);
@@ -2386,9 +2389,7 @@ function ImportTokensModalContent({
   React.useEffect(() => {
     logger.info('[ImportModal] useEffect triggered, isOpen:', isOpen);
     if (!isOpen) return;
-    const params = new URLSearchParams(window.location.search);
-    const workspaceId = params.get('workspace');
-    logger.info('[ImportModal] Workspace ID from URL:', workspaceId);
+    logger.info('[ImportModal] Workspace ID:', workspaceId);
     if (!workspaceId) {
       setIsViewer(false);
       setContactGroups([]);
@@ -2496,7 +2497,7 @@ function ImportTokensModalContent({
         }
       }
     })();
-  }, [isOpen]);
+  }, [isOpen, workspaceId]);
 
   const renderErrorAlert = () =>
     error ? (
