@@ -2875,7 +2875,8 @@ paths:
         authorized, qualified, configured; each true, false or "unknown"),
         blockers with remediation, available actions and the derived wizard
         state. "unknown" means the source could not be read and must not be
-        treated as unavailable.
+        treated as unavailable. An edition may add capability ids beyond the
+        ones core lists; clients ignore ids they do not know.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       responses:
@@ -3300,6 +3301,21 @@ paths:
                                 nullable: true
                             additionalProperties: true
                         additionalProperties: true
+                      edition:
+                        type: object
+                        description: >-
+                          Present only when the deployment's edition registered
+                          extra summary providers, keyed by provider id. Each
+                          value is a free-form object defined by the edition,
+                          or the string "unknown" when that provider failed;
+                          treat "unknown" as not known. Absent on a deployment
+                          with no provider. Never carries credentials.
+                        additionalProperties:
+                          oneOf:
+                            - type: object
+                              additionalProperties: true
+                            - type: string
+                              enum: [unknown]
                       references:
                         type: object
                         description: >-

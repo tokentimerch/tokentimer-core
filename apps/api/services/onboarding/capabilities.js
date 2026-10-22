@@ -52,6 +52,8 @@ const BASE_CAPABILITIES = Object.freeze([
 ]);
 
 const overrides = new Map();
+// Capabilities an edition adds on top of BASE_CAPABILITIES.
+const registered = new Map();
 let docsBaseUrl = "https://tokentimer.ch/docs/self-hosted";
 
 /** Overlay hook: Cloud and Enterprise point wizard doc links at their editions. */
@@ -82,27 +84,71 @@ function resetCapabilityOverrides() {
   overrides.clear();
 }
 
+const CAPABILITY_ID = /^[a-z][a-z0-9_]*(\.[a-z0-9_-]+)+$/;
+
+/**
+ * Edition hook: adds a capability id the base list does not know. `def` is
+ * { id, group, minRole?, scope? } where `scope: "system_admin"` replaces the
+ * workspace role check with the system administrator flag. `evaluate(ctx,
+ * capability)` is optional, synchronous and returns the same partial object as
+ * an override (facts, blockers, availableActions). A throwing evaluator leaves
+ * the facts unknown instead of failing the whole list.
+ */
+function registerCapability(def, evaluate) {
+  if (!def || typeof def !== "object") throw new Error("capability definition required");
+  if (typeof def.id !== "string" || !CAPABILITY_ID.test(def.id)) {
+    throw new Error("capability id must look like area.name");
+  }
+  if (BASE_CAPABILITIES.some((c) => c.id === def.id) || registered.has(def.id)) {
+    throw new Error(`capability "${def.id}" is already registered`);
+  }
+  if (typeof def.group !== "string" || !def.group) {
+    throw new Error("capability group required");
+  }
+  const minRole = def.minRole === undefined ? "viewer" : def.minRole;
+  if (!ROLE_RANK[minRole]) throw new Error("capability minRole is not a known role");
+  if (def.scope !== undefined && def.scope !== "system_admin") {
+    throw new Error("capability scope must be system_admin");
+  }
+  if (evaluate !== undefined && typeof evaluate !== "function") {
+    throw new Error("capability evaluator must be a function");
+  }
+  registered.set(def.id, {
+    def: { id: def.id, group: def.group, minRole, scope: def.scope },
+    evaluate,
+  });
+}
+
+function resetRegisteredCapabilities() {
+  registered.clear();
+}
+
 function toTriState(value) {
   if (value === true || value === false) return value;
   return UNKNOWN;
 }
 
-function authorize(ctx, minRole) {
+function authorize(ctx, def) {
+  if (def.scope === "system_admin") {
+    return typeof ctx.isSystemAdmin === "boolean" ? ctx.isSystemAdmin : UNKNOWN;
+  }
   const rank = ROLE_RANK[ctx.workspaceRole];
   if (!rank) return UNKNOWN;
-  return rank >= ROLE_RANK[minRole];
+  return rank >= ROLE_RANK[def.minRole];
 }
 
 function baseCapability(def, ctx) {
   const blockers = [];
-  const authorized = authorize(ctx, def.minRole);
+  const authorized = authorize(ctx, def);
   if (authorized === false) {
     blockers.push({
       code: "ROLE_REQUIRED",
       remediation:
-        def.minRole === "admin"
-          ? "Ask a workspace administrator to complete this step."
-          : "Ask a workspace manager or administrator to complete this step.",
+        def.scope === "system_admin"
+          ? "Ask a system administrator to complete this step."
+          : def.minRole === "admin"
+            ? "Ask a workspace administrator to complete this step."
+            : "Ask a workspace manager or administrator to complete this step.",
     });
   }
 
@@ -152,21 +198,25 @@ function baseCapability(def, ctx) {
   };
 }
 
+function applyPatch(current, patch) {
+  const next = { ...current };
+  const p = patch || {};
+  for (const fact of FACTS) {
+    if (p[fact] !== undefined) next[fact] = toTriState(p[fact]);
+  }
+  if (Array.isArray(p.blockers)) {
+    next.blockers = [...current.blockers, ...p.blockers];
+  }
+  if (Array.isArray(p.availableActions)) {
+    next.availableActions = p.availableActions;
+  }
+  return next;
+}
+
 function applyOverrides(capability, ctx) {
   let current = capability;
   for (const fn of overrides.get(capability.id) || []) {
-    const patch = fn(ctx, current) || {};
-    const next = { ...current };
-    for (const fact of FACTS) {
-      if (patch[fact] !== undefined) next[fact] = toTriState(patch[fact]);
-    }
-    if (Array.isArray(patch.blockers)) {
-      next.blockers = [...current.blockers, ...patch.blockers];
-    }
-    if (Array.isArray(patch.availableActions)) {
-      next.availableActions = patch.availableActions;
-    }
-    current = next;
+    current = applyPatch(current, fn(ctx, current));
   }
   return current;
 }
@@ -197,17 +247,33 @@ function finalize(capability) {
 }
 
 function evaluateCapabilities(ctx = {}) {
-  return BASE_CAPABILITIES.map((def) =>
+  const items = BASE_CAPABILITIES.map((def) =>
     finalize(applyOverrides(baseCapability(def, ctx), ctx)),
   );
+  for (const { def, evaluate } of registered.values()) {
+    let capability = baseCapability(def, ctx);
+    if (evaluate) {
+      try {
+        capability = applyPatch(capability, evaluate(ctx, capability));
+      } catch {
+        // A faulty edition evaluator must not break the list: facts it
+        // would have set stay unknown.
+        capability = { ...capability, configured: UNKNOWN };
+      }
+    }
+    items.push(finalize(applyOverrides(capability, ctx)));
+  }
+  return items;
 }
 
 module.exports = {
   UNKNOWN,
   FACTS,
   QUALIFIED_FEATURES,
+  registerCapability,
   registerCapabilityOverride,
   resetCapabilityOverrides,
+  resetRegisteredCapabilities,
   setDocsBaseUrl,
   getDocsBaseUrl,
   deriveState,

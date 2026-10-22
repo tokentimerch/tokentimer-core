@@ -6,6 +6,61 @@
 const MAX_REF_IDS = 100;
 const MAX_MONITORS = 20;
 
+// Edition hook: extra facts for the summary, under `summary.edition.<id>`.
+const PROVIDER_ID = /^[a-z][a-z0-9_]{0,39}$/;
+const PROVIDER_TIMEOUT_MS = 5000;
+const providers = new Map();
+
+/**
+ * `fn({ workspaceId, db, user })` resolves to a plain, JSON-safe object. Never
+ * return credentials. `user` is { id, isSystemAdmin, workspaceRole }. A
+ * provider that throws, times out or returns something else is reported as
+ * "unknown", which callers must not read as "nothing there".
+ */
+function registerSummaryProvider(id, fn) {
+  if (typeof id !== "string" || !PROVIDER_ID.test(id)) {
+    throw new Error("summary provider id must match [a-z][a-z0-9_]{0,39}");
+  }
+  if (typeof fn !== "function") throw new Error("summary provider must be a function");
+  if (providers.has(id)) throw new Error(`summary provider "${id}" is already registered`);
+  providers.set(id, fn);
+}
+
+function resetSummaryProviders() {
+  providers.clear();
+}
+
+function hasSummaryProviders() {
+  return providers.size > 0;
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+async function readEditionFacts(input) {
+  if (providers.size === 0) return null;
+  const entries = await Promise.all(
+    [...providers].map(async ([id, fn]) => {
+      let timer;
+      try {
+        const value = await Promise.race([
+          Promise.resolve(fn(input)),
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error("timeout")), PROVIDER_TIMEOUT_MS);
+          }),
+        ]);
+        return [id, isPlainObject(value) ? value : "unknown"];
+      } catch {
+        return [id, "unknown"];
+      } finally {
+        clearTimeout(timer);
+      }
+    }),
+  );
+  return Object.fromEntries(entries);
+}
+
 function intIds(value) {
   if (!Array.isArray(value)) return [];
   return value
@@ -117,7 +172,7 @@ async function findMonitorByUrl(pool, workspaceId, url) {
 
 async function buildSummary(
   pool,
-  { workspaceId, refs = {}, smtpConfigured, certops = null },
+  { workspaceId, refs = {}, smtpConfigured, certops = null, user = null },
 ) {
   const tokenIds = intIds(refs.tokenIds);
   // Asset-step ids are looked up with the rest in one query.
@@ -212,6 +267,8 @@ async function buildSummary(
     : { rows: [] };
   const tokenGroups = tokenGroupMap(groupTokenIds, membership.rows, reachable);
 
+  const edition = await readEditionFacts({ workspaceId, db: pool, user });
+
   return {
     generatedAt: new Date().toISOString(),
     assets: {
@@ -260,11 +317,16 @@ async function buildSummary(
       monitorIds: splitExisting(monitorIds, monitorRefs.rows.map((r) => r.id)),
       tokenGroups,
     },
+    // Present only when an edition registered a provider.
+    ...(edition ? { edition } : {}),
   };
 }
 
 module.exports = {
   buildSummary,
+  hasSummaryProviders,
+  registerSummaryProvider,
+  resetSummaryProviders,
   findMonitorByUrl,
   summarizeContactGroups,
   reachableGroupIds,

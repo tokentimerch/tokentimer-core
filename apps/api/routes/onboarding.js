@@ -21,7 +21,7 @@ const {
   resetSession,
 } = require("../services/onboarding/sessionStore");
 const { evaluateCapabilities, getDocsBaseUrl, UNKNOWN } = require("../services/onboarding/capabilities");
-const { buildSummary } = require("../services/onboarding/summary");
+const { buildSummary, hasSummaryProviders } = require("../services/onboarding/summary");
 const { loadCertopsReality } = require("../services/onboarding/certopsReality");
 
 const router = express.Router({ mergeParams: true });
@@ -133,11 +133,21 @@ router.get(`${BASE}/:flow/summary`, ...guards, async (req, res) => {
         }),
       null,
     );
+    // Only identifies the caller to edition providers; no extra query unless
+    // an edition registered one.
+    const user = hasSummaryProviders()
+      ? {
+          id: req.user.id,
+          isSystemAdmin: await resolveIsSystemAdmin(req),
+          workspaceRole: req.authz?.workspaceRole || null,
+        }
+      : null;
     const summary = await buildSummary(pool, {
       workspaceId: req.workspace.id,
       refs: session.operationRefs,
       smtpConfigured,
       certops,
+      user,
     });
     res.set("Cache-Control", "no-store");
     res.json({ summary });
