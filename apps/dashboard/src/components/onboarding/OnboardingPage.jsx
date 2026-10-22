@@ -378,10 +378,11 @@ export function CollapsibleSteps({ steps, shownId, children }) {
   );
 }
 
-export function DoneCard({ ctx }) {
+export function DoneCard({ ctx, guidedImportSteps = GUIDED_IMPORT_STEPS }) {
   const { muted } = useDashboardTheme();
   const smtp = ctx.summary?.alerts?.smtpConfigured;
   const goal = GOALS[ctx.session.intent?.goal];
+  const modalImport = !guidedImportSteps && Boolean(goal?.doneTextModal);
   const windows =
     scopeCertops(ctx.session.progress?.certops, goal?.certopsObjective)
       .infrastructure === 'windows';
@@ -401,6 +402,7 @@ export function DoneCard({ ctx }) {
       title={unverified ? 'Setup finished, not verified yet' : 'You are set up'}
       description={
         (windows && goal?.doneTextWindows) ||
+        (modalImport && goal.doneTextModal) ||
         goal?.doneText ||
         'Setup is complete.'
       }
@@ -410,8 +412,17 @@ export function DoneCard({ ctx }) {
           <DashboardActionButton variant='outline' onClick={restart}>
             Track something else
           </DashboardActionButton>
+          {modalImport ? (
+            <DashboardActionButton
+              as={RouterLink}
+              to='/alert-preferences'
+              variant='outline'
+            >
+              Alert Preferences
+            </DashboardActionButton>
+          ) : null}
           <PrimaryButton as={RouterLink} to='/dashboard'>
-            Go to dashboard
+            {modalImport ? 'Open the asset inventory' : 'Go to dashboard'}
           </PrimaryButton>
         </>
       }

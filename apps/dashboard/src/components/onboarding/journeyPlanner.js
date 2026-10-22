@@ -9,9 +9,27 @@ import { installerOptionsFor, installerOptionsKey } from './certopsConfig.js';
 import { GOALS, STEP_DEFS } from './modules.js';
 import { recipientsSatisfied } from './groupAttachment.js';
 import { scopeCertops } from './certopsScope.js';
+import { GUIDED_IMPORT_STEPS } from './importFlow.js';
 
 export { GOALS, STEP_DEFS };
 export const PLANNER_VERSION = 2;
+
+// With the guided import steps parked, the import dialog already asks for the
+// contact groups and shows its own result, so these goals end right after a
+// successful import and skip the alerts and verify steps.
+const MODAL_IMPORT_STEPS = {
+  import_file: ['file_import'],
+  import_integration: ['integration'],
+};
+
+/** The steps a goal runs, for the chosen import path. */
+export function stepsForGoal(goalId, guidedImportSteps = GUIDED_IMPORT_STEPS) {
+  const goal = GOALS[goalId];
+  if (!goal) return [];
+  if (!guidedImportSteps && MODAL_IMPORT_STEPS[goalId])
+    return MODAL_IMPORT_STEPS[goalId];
+  return goal.steps;
+}
 
 const ACTIVE_STATES = new Set(['ready', 'unknown']);
 // "candidate" features can be planned but are always labelled as such.
@@ -231,6 +249,7 @@ export function planJourney({
   capabilities = null,
   reality = null,
   heldStepId = null,
+  guidedImportSteps = GUIDED_IMPORT_STEPS,
 } = {}) {
   const goalId = intent.goal;
   const goal = GOALS[goalId];
@@ -246,7 +265,7 @@ export function planJourney({
   const skipped = new Set(progress.skipped || []);
   const blocked = goalBlocker(goalId, capabilities);
   // Steps the user does not need are removed, not skipped.
-  const stepIds = goal.steps.filter(id => {
+  const stepIds = stepsForGoal(goalId, guidedImportSteps).filter(id => {
     if (id === 'smtp') {
       // Only ask about email delivery when it is not already working, and
       // never when the deployment manages it (unknown is treated as needed).
