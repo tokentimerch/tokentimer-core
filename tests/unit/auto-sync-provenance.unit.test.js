@@ -143,3 +143,31 @@ describe("auto-sync provenance transaction boundaries", () => {
     assert.doesNotMatch(sql, /INSERT INTO auto_sync_token_links/i);
   });
 });
+
+describe("auto-sync contact groups setting", () => {
+  it("does not treat a group change as a scan change", () => {
+    assert.equal(
+      provenance.scanSettingsEqual(
+        { include: { tokens: true }, contactGroupIds: ["a"] },
+        { include: { tokens: true }, contactGroupIds: [] },
+      ),
+      true,
+    );
+    assert.equal(
+      provenance.scanSettingsEqual(
+        { include: { tokens: true } },
+        { include: { tokens: false } },
+      ),
+      false,
+    );
+  });
+
+  it("accepts a list of ids and rejects anything else", () => {
+    const ok = (contactGroupIds) =>
+      provenance.validateAutoSyncSettings({ scan_params: { contactGroupIds } });
+    assert.equal(ok(["a", "b"]), null);
+    assert.equal(ok("a"), "Invalid contact groups");
+    assert.equal(ok([""]), "Invalid contact groups");
+    assert.equal(ok([1]), "Invalid contact groups");
+  });
+});

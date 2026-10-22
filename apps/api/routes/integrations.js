@@ -94,8 +94,30 @@ function invalidContactGroupResponse(res) {
   });
 }
 
+// A scheduled sync applies its configured groups to assets it creates only, so
+// groups an operator changed later are never overwritten. Groups that no longer
+// exist are dropped instead of failing every run.
+async function resolveImportMembership(req, workspaceId) {
+  const membership = interpretImportContactGroups(req.body || {});
+  if (membership.action !== "set") return membership;
+  const fromSync = Boolean(req.isWorkerCall && req.body?.auto_sync_run);
+  try {
+    await assertContactGroupIds(pool, workspaceId, membership.ids);
+  } catch (err) {
+    if (fromSync && err?.code === "VALIDATION_ERROR") {
+      logger.warn("Auto-sync contact groups no longer exist; using the default", {
+        workspaceId,
+      });
+      return { action: "omit" };
+    }
+    throw err;
+  }
+  return fromSync ? { ...membership, createOnly: true } : membership;
+}
+
 function assignTokenContactGroups(payload, membership, { isCreate }) {
   if (membership.action === "set") {
+    if (membership.createOnly && !isCreate) return;
     payload.contact_group_ids = membership.ids;
     payload.contact_group_id = canonicalLegacyContactGroupId(membership.ids);
     return;
@@ -561,10 +583,7 @@ router.post(
       } = req.body || {};
       let membership;
       try {
-        membership = interpretImportContactGroups(req.body || {});
-        if (membership.action === "set") {
-          await assertContactGroupIds(pool, workspaceId, membership.ids);
-        }
+        membership = await resolveImportMembership(req, workspaceId);
       } catch (err) {
         if (err?.code === "VALIDATION_ERROR") {
           return invalidContactGroupResponse(res);
@@ -2262,10 +2281,7 @@ router.post(
       } = req.body || {};
       let membership;
       try {
-        membership = interpretImportContactGroups(req.body || {});
-        if (membership.action === "set") {
-          await assertContactGroupIds(pool, workspaceId, membership.ids);
-        }
+        membership = await resolveImportMembership(req, workspaceId);
       } catch (err) {
         if (err?.code === "VALIDATION_ERROR") {
           return invalidContactGroupResponse(res);

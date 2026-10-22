@@ -47,6 +47,8 @@ function validateAutoSyncSettings(body) {
   }
   for (const key of ["enabled", "cleanup_obsolete"]) if (body[key] !== undefined && typeof body[key] !== "boolean") return `Invalid ${key}`;
   if (body.scan_params !== undefined && (!body.scan_params || typeof body.scan_params !== "object" || Array.isArray(body.scan_params))) return "Invalid scan parameters";
+  const groups = body.scan_params?.contactGroupIds;
+  if (groups !== undefined && (!Array.isArray(groups) || groups.length > 50 || groups.some((id) => typeof id !== "string" || !id || id.length > 255))) return "Invalid contact groups";
   return null;
 }
 
@@ -59,9 +61,15 @@ function canonicalJson(value) {
   return value;
 }
 
+// Which groups new assets get does not change what a scan covers, so changing
+// it must not restart the running scan or bump the scan version.
 function scanSettingsEqual(left, right) {
-  return JSON.stringify(canonicalJson(left || {})) ===
-    JSON.stringify(canonicalJson(right || {}));
+  const scanOnly = (value) => {
+    const { contactGroupIds: _ignored, ...rest } = value || {};
+    return rest;
+  };
+  return JSON.stringify(canonicalJson(scanOnly(left))) ===
+    JSON.stringify(canonicalJson(scanOnly(right)));
 }
 
 // Public errors are controlled messages, never provider response bodies or item names.
