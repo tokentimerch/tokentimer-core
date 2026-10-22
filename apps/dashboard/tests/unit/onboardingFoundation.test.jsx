@@ -164,23 +164,29 @@ describe('docUrl', () => {
     expect(docUrl('alerts.thresholds', undefined)).toBeNull();
   });
 
-  it('sends self-hosted Vault readers to the public core docs, keeps cloud', () => {
-    const github =
-      'https://github.com/tokentimerch/tokentimer-core/blob/main/docs/certops/';
-    for (const base of [
-      'https://tokentimer.ch/docs/self-hosted',
-      'https://tokentimer.ch/docs/enterprise',
-    ]) {
-      expect(docUrl('certops.vault', base)).toBe(
-        `${github}wildcard-vault-operations.md`
-      );
-      expect(docUrl('certops.vaultAuth', base)).toBe(
-        `${github}vault-agent-authentication.md`
-      );
+  it('points the Vault and controller guides at the runbooks in every edition', () => {
+    const runbooks = {
+      'certops.vault':
+        '/runbooks/certops-shared-certificate-distribution#setup',
+      'certops.vaultAuth':
+        '/runbooks/certops-vault-agent-authentication#1-create-narrowly-scoped-roles-as-a-vault-administrator',
+      'certops.controller': '/runbooks/acme-cert-manager#controller',
+    };
+    const bases = {
+      'https://tokentimer.ch/docs/self-hosted':
+        'https://tokentimer.ch/docs/self-hosted',
+      // Enterprise inherits the self-hosted guides.
+      'https://tokentimer.ch/docs/enterprise':
+        'https://tokentimer.ch/docs/self-hosted',
+      'https://tokentimer.ch/docs/cloud': 'https://tokentimer.ch/docs/cloud',
+    };
+    for (const [key, suffix] of Object.entries(runbooks)) {
+      for (const [base, expected] of Object.entries(bases)) {
+        expect(docUrl(key, base), `${key} ${base}`).toBe(
+          `${expected}${suffix}`
+        );
+      }
     }
-    expect(docUrl('certops.vault', 'https://tokentimer.ch/docs/cloud')).toBe(
-      'https://tokentimer.ch/docs/cloud/runbooks/certops-shared-certificate-distribution#setup'
-    );
   });
 
   it('keeps one permissions page per integration provider', async () => {

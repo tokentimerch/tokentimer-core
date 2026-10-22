@@ -157,20 +157,14 @@
   },
   "certops.controller": {
     "path": "/runbooks/acme-cert-manager",
-    "anchor": "reporting"
+    "anchor": "controller"
   },
   "certops.vault": {
-    "url": "https://github.com/tokentimerch/tokentimer-core/blob/main/docs/certops/wildcard-vault-operations.md",
-    "cloud": {
-      "path": "/runbooks/certops-shared-certificate-distribution",
-      "anchor": "setup"
-    }
+    "path": "/runbooks/certops-shared-certificate-distribution",
+    "anchor": "setup"
   },
   "certops.vaultAuth": {
-    "url": "https://github.com/tokentimerch/tokentimer-core/blob/main/docs/certops/vault-agent-authentication.md",
-    "cloud": {
-      "path": "/runbooks/certops-vault-agent-authentication",
-      "anchor": "1-create-narrowly-scoped-roles-as-a-vault-administrator"
-    }
+    "path": "/runbooks/certops-vault-agent-authentication",
+    "anchor": "1-create-narrowly-scoped-roles-as-a-vault-administrator"
   }
 }

@@ -30,6 +30,22 @@ describe("onboarding doc link registry", () => {
       }
     }
   });
+
+  it("points the Vault and controller guides at the runbooks in every edition", () => {
+    const registry = Object.fromEntries(loadRegistry());
+    assert.deepEqual(registry["certops.vault"], {
+      path: "/runbooks/certops-shared-certificate-distribution",
+      anchor: "setup",
+    });
+    assert.deepEqual(registry["certops.vaultAuth"], {
+      path: "/runbooks/certops-vault-agent-authentication",
+      anchor: "1-create-narrowly-scoped-roles-as-a-vault-administrator",
+    });
+    assert.deepEqual(registry["certops.controller"], {
+      path: "/runbooks/acme-cert-manager",
+      anchor: "controller",
+    });
+  });
 });
 
 describe("onboarding doc link validator", () => {
