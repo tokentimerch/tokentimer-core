@@ -36,8 +36,7 @@ const AUTOMATE_LINUX_UNTESTED = [
   'Cloudflare, Route 53 and Google Cloud DNS against real accounts (Azure DNS and RFC 2136 ran for real)',
   "Let's Encrypt or any production ACME CA",
   'Other distributions',
-  'Apache and HAProxy re-run on the final guide',
-  'The live notice that no agent took the request',
+  'The exact 3-minute moment of the notice that no agent took the request',
 ];
 
 const AUTOMATE_WINDOWS_UNTESTED = [
@@ -61,23 +60,16 @@ const VAULT_UNTESTED = [
   'Several consumers',
   'Renewal and rollback rollouts',
   'Apache or HAProxy as consumers',
-  'A supported recovery after a failed install (the agent leaves an uncertain binding marker, so an agent change is needed)',
+  'Recovery after a failed install needs an agent build that includes the binding recovery fix',
   'The positive path of the reconcile script',
 ];
 
 // Verified means the guided path was run end to end for what the picker row
 // promises. Keep untested to what is still not covered.
 export const GUIDED_SETUP_STATUS = {
-  monitor_https: verified([
-    'Result pagination beyond 50 hosts',
-    'The truncated and partial discovery notices',
-    'A genuine server-side failure on a website batch',
-  ]),
-  track_asset: verified([
-    'Categories other than key/secret, license and certificate',
-    'The 25-asset limit',
-  ]),
-  import_file: verified(['The 1100-row file']),
+  monitor_https: verified([]),
+  track_asset: verified([]),
+  import_file: verified(['JSON, xlsx and yaml imports run to completion']),
   import_integration: verified([
     'Real scans for AWS, Azure Key Vault, GCP, Vault and GitHub from the setup guide (call parity with the standalone import was proven)',
   ]),

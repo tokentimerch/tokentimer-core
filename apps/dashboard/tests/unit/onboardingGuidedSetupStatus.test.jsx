@@ -203,10 +203,12 @@ describe('goal picker badges', () => {
 });
 
 describe('shipped register', () => {
-  it('has every key verified and keeps each list of what was not covered', () => {
+  it('has every key verified and lists what was not covered as plain text', () => {
     for (const [key, item] of Object.entries(GUIDED_SETUP_STATUS)) {
       expect(item.verified, key).toBe(true);
-      expect(item.untested.length, key).toBeGreaterThan(0);
+      // A fully covered pick may list nothing.
+      expect(Array.isArray(item.untested), key).toBe(true);
+      for (const line of item.untested) expect(line.trim(), key).not.toBe('');
       expect(item.hint, key).toBe('');
       expect(isCandidatePick(key), key).toBe(false);
     }
@@ -448,5 +450,26 @@ describe('infrastructure card badges', () => {
       expect(text).toContain('not been verified through a real enrollment');
       expect(text).toContain('Server 2019 or later');
     });
+  });
+});
+
+describe('register wording', () => {
+  it('lists the import formats still to verify and drops what was run', () => {
+    expect(GUIDED_SETUP_STATUS.import_file.untested).toEqual([
+      'JSON, xlsx and yaml imports run to completion',
+    ]);
+    expect(GUIDED_SETUP_STATUS.monitor_https.untested).toEqual([]);
+    expect(GUIDED_SETUP_STATUS.track_asset.untested).toEqual([]);
+  });
+
+  it('keeps the remaining caveats without citing internal numbers', () => {
+    const all = Object.values(GUIDED_SETUP_STATUS).flatMap(e => e.untested);
+    expect(all).toContain(
+      'Recovery after a failed install needs an agent build that includes the binding recovery fix'
+    );
+    expect(all).toContain(
+      'The exact 3-minute moment of the notice that no agent took the request'
+    );
+    expect(all.join(' ')).not.toMatch(/\bPR\b|#\d+/);
   });
 });
