@@ -203,21 +203,17 @@ describe('CertOps journey', () => {
     });
     const status = plan =>
       Object.fromEntries(plan.steps.map(s => [s.id, s.status]));
-    // The controller has no agent configuration or execution switch, but the
-    // operator still confirms both pages rather than finding them done.
-    expect(status(waiting).certops_config).toBe('current');
-    expect(status(waiting).certops_execution).toBe('upcoming');
-    expect(waiting.currentStepId).toBe('certops_config');
-    progress.certops.configReviewed = true;
-    progress.certops.executionAcknowledged = true;
-    const acknowledged = planJourney({
-      ...base,
-      progress,
-      reality: reality([]),
-    });
-    expect(status(acknowledged).certops_config).toBe('done');
-    expect(status(acknowledged).certops_execution).toBe('done');
-    expect(acknowledged.currentStepId).toBe('certops_agent');
+    // The controller has no agent configuration or execution switch: those
+    // two steps are not part of its journey at all.
+    expect(waiting.steps.map(s => s.id)).toEqual([
+      'goal',
+      'certops_objective',
+      'certops_agent',
+      'certops_first',
+      'recipients',
+      'verify',
+    ]);
+    expect(waiting.currentStepId).toBe('certops_agent');
     const other = planJourney({
       ...base,
       progress,

@@ -121,6 +121,14 @@ export const GOALS = {
     requires: ['certops.core', 'alerts.contact_groups'],
     area: 'certops',
     certopsObjective: 'observe',
+    // The Kubernetes controller has no agent configuration file and no
+    // execution switch; its Helm values are in the install step.
+    variants: {
+      kubernetes: {
+        omit: ['certops_config', 'certops_execution'],
+        titles: { certops_agent: 'Install the Kubernetes controller' },
+      },
+    },
   },
   certops_automate: {
     doneText: 'Your agent issued a staging certificate.',

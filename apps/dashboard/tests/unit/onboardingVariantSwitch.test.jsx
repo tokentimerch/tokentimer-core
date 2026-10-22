@@ -30,13 +30,34 @@ const plan = (progress, reality = freshReality, extra = {}) =>
 
 const statuses = p => Object.fromEntries(p.steps.map(s => [s.id, s.status]));
 
+const LINUX_IDS = [
+  'goal',
+  'certops_objective',
+  'certops_config',
+  'certops_agent',
+  'certops_execution',
+  'certops_first',
+  'recipients',
+  'verify',
+];
+const KUBERNETES_IDS = [
+  'goal',
+  'certops_objective',
+  'certops_agent',
+  'certops_first',
+  'recipients',
+  'verify',
+];
+const idsOf = p => p.steps.map(s => s.id);
+
 describe('fresh workspace, observe goal', () => {
-  it.each(['linux', 'windows', 'kubernetes'])(
+  it.each(['linux', 'windows'])(
     'shows only the platform choice as done after picking %s',
     infrastructure => {
       const certops = chooseInfrastructure({}, 'observe', infrastructure);
       const p = plan({ certops });
       const s = statuses(p);
+      expect(idsOf(p)).toEqual(LINUX_IDS);
       expect(s.certops_objective).toBe('done');
       expect(s.certops_config).toBe('current');
       for (const id of [
@@ -50,6 +71,41 @@ describe('fresh workspace, observe goal', () => {
       expect(p.currentStepId).toBe('certops_config');
     }
   );
+
+  it('drops the agent-only steps from the Kubernetes journey', () => {
+    const certops = chooseInfrastructure({}, 'observe', 'kubernetes');
+    const p = plan({ certops });
+    const s = statuses(p);
+    expect(idsOf(p)).toEqual(KUBERNETES_IDS);
+    expect(s.certops_objective).toBe('done');
+    expect(s.certops_agent).toBe('current');
+    expect(s.certops_first).toBe('upcoming');
+    expect(p.currentStepId).toBe('certops_agent');
+    // The install step is titled for what it installs.
+    expect(p.steps.find(s => s.id === 'certops_agent').title).toBe(
+      'Install the Kubernetes controller'
+    );
+    // Rail count: one fewer than the "goal" line plus the shorter list.
+    expect(p.steps).toHaveLength(6);
+  });
+
+  it('keeps the agent steps titled as before on Linux', () => {
+    const p = plan({ certops: chooseInfrastructure({}, 'observe', 'linux') });
+    expect(p.steps.find(s => s.id === 'certops_agent').title).toBe(
+      'Install the agent'
+    );
+  });
+
+  it('does not let the previous platform hide steps on another goal', () => {
+    const certops = chooseInfrastructure({}, 'observe', 'kubernetes');
+    const p = planJourney({
+      intent: { goal: 'certops_automate' },
+      progress: { certops },
+      reality: freshReality,
+    });
+    expect(idsOf(p)).toContain('certops_config');
+    expect(idsOf(p)).toContain('certops_execution');
+  });
 
   it('still shows the agent and certificate steps done when they really exist', () => {
     const certops = {
@@ -118,6 +174,15 @@ describe('changing the platform choice', () => {
       certops = chooseInfrastructure(certops, 'observe', next);
       const p = plan({ certops });
       const s = statuses(p);
+      if (next === 'kubernetes') {
+        // Shorter journey: it opens on the controller install.
+        expect(idsOf(p)).toEqual(KUBERNETES_IDS);
+        expect(p.currentStepId).toBe('certops_agent');
+        expect(s.certops_agent).toBe('current');
+        expect(p.steps.filter(x => x.status === 'done')).toHaveLength(2);
+        continue;
+      }
+      expect(idsOf(p)).toEqual(LINUX_IDS);
       expect(s.certops_config).toBe('current');
       expect(s.certops_execution).toBe('upcoming');
       expect(p.currentStepId).toBe('certops_config');

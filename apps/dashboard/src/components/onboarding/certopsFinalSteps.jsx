@@ -106,7 +106,9 @@ export function FirstCertificateStep({ ctx }) {
     <StepFrame
       kind='verify'
       title='See your first certificate'
-      description='This confirms the agent is reporting real certificates into your inventory.'
+      description={`This confirms ${
+        saved.infrastructure === 'kubernetes' ? 'the controller' : 'the agent'
+      } is reporting real certificates into your inventory.`}
       docs={[
         ...ctx.docs('certops.inventory', 'Certificate inventory'),
         ...ctx.docs('certops.discovery', 'How discovery works'),
@@ -157,7 +159,9 @@ export function FirstCertificateStep({ ctx }) {
             <Text fontSize='sm'>
               {saved.infrastructure === 'windows'
                 ? 'Discovery on Windows runs about every 30 minutes by default and reads the machine certificate store. Check that the agent service is running and that certificates exist in LocalMachine\\My. Private keys are never read.'
-                : 'Discovery runs about once an hour by default. Make sure the folders you listed contain a PEM certificate and that the agent user can read them. Private keys are never read.'}
+                : saved.infrastructure === 'kubernetes'
+                  ? 'The controller reports cert-manager Certificates, so the cluster needs at least one. Read the controller pod logs and confirm the token is bound to this cluster id.'
+                  : 'Discovery runs about once an hour by default. Make sure the folders you listed contain a PEM certificate and that the agent user can read them. Private keys are never read.'}
             </Text>
           </Callout>
         ) : null}

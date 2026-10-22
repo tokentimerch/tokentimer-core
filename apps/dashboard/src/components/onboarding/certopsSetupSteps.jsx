@@ -302,34 +302,6 @@ export function ConfigStep({ ctx }) {
   };
   const blur = key => () => markTouched(key);
 
-  if (infra === 'kubernetes') {
-    return (
-      <StepFrame
-        kind='info'
-        title='Kubernetes'
-        description='The controller needs no agent configuration.'
-        actions={
-          <PrimaryButton
-            onClick={async () => {
-              try {
-                await saveCertops(ctx, { configReviewed: true });
-              } catch (e) {
-                setError(e.message);
-              }
-            }}
-          >
-            Continue
-          </PrimaryButton>
-        }
-      >
-        <VStack align='stretch' spacing={2}>
-          {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
-          <Text fontSize='sm'>The next step shows the Helm values.</Text>
-        </VStack>
-      </StepFrame>
-    );
-  }
-
   const names = form.names.split(/[\s,]+/).filter(Boolean);
   let result;
   if (objective === 'observe') {

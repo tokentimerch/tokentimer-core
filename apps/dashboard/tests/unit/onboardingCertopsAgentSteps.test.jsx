@@ -16,7 +16,6 @@ vi.mock('../../src/components/certops/certopsAgentsApi.js', async orig => ({
 }));
 
 import { AgentStep } from '../../src/components/onboarding/certopsAgentStep.jsx';
-import { ConfigStep } from '../../src/components/onboarding/certopsSetupSteps.jsx';
 import {
   agentConfigPathFor,
   agentRestartCommandFor,
@@ -183,18 +182,22 @@ describe('agent step', () => {
   });
 });
 
-describe('Kubernetes configuration step', () => {
-  it('has a Continue button that saves the step', async () => {
+describe('Kubernetes install step', () => {
+  it('saves only the cluster id and does not mark a configuration done', async () => {
     const ctx = makeCtx(
       'certops_observe',
       { objective: 'observe', infrastructure: 'kubernetes' },
       noAgents
     );
-    mount(ConfigStep, ctx);
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    mount(AgentStep, ctx);
+    fireEvent.change(screen.getByLabelText('Cluster id'), {
+      target: { value: 'prod-eu' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'I installed it' }));
     await waitFor(() =>
-      expect(ctx.session.progress.certops.configReviewed).toBe(true)
+      expect(ctx.session.progress.certops.clusterId).toBe('prod-eu')
     );
+    expect(ctx.session.progress.certops.configReviewed).toBeUndefined();
   });
 });
 

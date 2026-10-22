@@ -264,8 +264,16 @@ export function planJourney({
 
   const skipped = new Set(progress.skipped || []);
   const blocked = goalBlocker(goalId, capabilities);
+  // Steps that do not apply to the chosen platform (for example the agent
+  // configuration on Kubernetes) are removed from the journey, not skipped.
+  const variant =
+    goal.variants?.[
+      scopeCertops(progress.certops, goal.certopsObjective).infrastructure
+    ] || {};
+  const omitted = new Set(variant.omit || []);
   // Steps the user does not need are removed, not skipped.
   const stepIds = stepsForGoal(goalId, guidedImportSteps).filter(id => {
+    if (omitted.has(id)) return false;
     if (id === 'smtp') {
       // Only ask about email delivery when it is not already working, and
       // never when the deployment manages it (unknown is treated as needed).
@@ -303,7 +311,12 @@ export function planJourney({
       status = 'upcoming';
     }
     if (status === 'current') currentAssigned = true;
-    steps.push({ id, ...def, status });
+    steps.push({
+      id,
+      ...def,
+      title: variant.titles?.[id] || def.title,
+      status,
+    });
   }
 
   // A finished step the person is still on stays the current one, shown as

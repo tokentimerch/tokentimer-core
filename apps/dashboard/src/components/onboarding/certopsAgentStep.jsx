@@ -262,9 +262,7 @@ export function AgentStep({ ctx }) {
         actions={
           <PrimaryButton
             isDisabled={!values}
-            onClick={() =>
-              saveCertops(ctx, { clusterId, configReviewed: true })
-            }
+            onClick={() => saveCertops(ctx, { clusterId })}
           >
             I installed it
           </PrimaryButton>
