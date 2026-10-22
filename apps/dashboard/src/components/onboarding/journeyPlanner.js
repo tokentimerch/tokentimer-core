@@ -7,6 +7,13 @@ import { existingAssetStepIds } from './assetRefs.js';
 import { commandProfileFor, reportedCertificates } from './certopsMatrix.js';
 import { installerOptionsFor, installerOptionsKey } from './certopsConfig.js';
 import { GOALS, STEP_DEFS } from './modules.js';
+import {
+  allGoals,
+  allStepDefs,
+  editionStepSatisfied,
+  normalizeRequirement,
+  viewerHasScope,
+} from './editionModules.js';
 import { recipientsSatisfied } from './groupAttachment.js';
 import { scopeCertops } from './certopsScope.js';
 import { GUIDED_IMPORT_STEPS } from './importFlow.js';
@@ -24,7 +31,7 @@ const MODAL_IMPORT_STEPS = {
 
 /** The steps a goal runs, for the chosen import path. */
 export function stepsForGoal(goalId, guidedImportSteps = GUIDED_IMPORT_STEPS) {
-  const goal = GOALS[goalId];
+  const goal = allGoals()[goalId];
   if (!goal) return [];
   if (!guidedImportSteps && MODAL_IMPORT_STEPS[goalId])
     return MODAL_IMPORT_STEPS[goalId];
@@ -41,12 +48,30 @@ function findCapability(capabilities, id) {
 
 /** Why a goal cannot be started, or null when it can. */
 export function goalBlocker(goalId, capabilities) {
-  const goal = GOALS[goalId];
+  const goal = allGoals()[goalId];
   if (!goal) return { code: 'UNKNOWN_GOAL' };
-  // No capability data yet: do not block, the server enforces anyway.
-  if (!capabilities?.items) return null;
-  for (const id of goal.requires) {
+  // An edition goal that declares requirements cannot be vouched for without
+  // capability data, so it stays hidden. Core goals are not blocked: the
+  // server enforces anyway.
+  const edition = Boolean(goal.edition);
+  if (!capabilities?.items) {
+    return edition && goal.requires.length
+      ? { code: 'CAPABILITY_UNKNOWN', hidden: true }
+      : null;
+  }
+  for (const entry of goal.requires) {
+    const { capability: id, scope } = normalizeRequirement(entry);
     const cap = findCapability(capabilities, id);
+    // An edition goal never silently passes on a capability this deployment
+    // does not know; it is hidden, and other goals are unaffected.
+    if (edition) {
+      if (!cap || cap.state === 'hidden') {
+        return { code: 'CAPABILITY_MISSING', capability: id, hidden: true };
+      }
+      if (!viewerHasScope(scope, capabilities.viewer)) {
+        return { code: 'SCOPE_REQUIRED', capability: id, scope, hidden: true };
+      }
+    }
     if (!cap) continue;
     const allowed = goal.candidate ? PLANNABLE_STATES : ACTIVE_STATES;
     // A host-side prerequisite (for example CertOps disabled) is still a
@@ -65,11 +90,12 @@ export function goalBlocker(goalId, capabilities) {
 }
 
 export function availableGoals(capabilities) {
-  return Object.keys(GOALS).map(id => ({
+  const goals = allGoals();
+  return Object.keys(goals).map(id => ({
     id,
-    ...GOALS[id],
+    ...goals[id],
     blocker: goalBlocker(id, capabilities),
-    candidate: Boolean(GOALS[id].candidate),
+    candidate: Boolean(goals[id].candidate),
   }));
 }
 
@@ -234,8 +260,18 @@ export function isStepSatisfied(
       return progress?.notificationsReviewed === true;
     case 'smtp':
       return reality.alerts?.smtpConfigured === true;
-    default:
-      return certopsDone(stepId, { reality, progress, objective });
+    default: {
+      const edition = editionStepSatisfied(stepId, {
+        reality,
+        refs,
+        progress,
+        objective,
+        goal,
+      });
+      return edition === undefined
+        ? certopsDone(stepId, { reality, progress, objective })
+        : edition;
+    }
   }
 }
 
@@ -252,10 +288,10 @@ export function planJourney({
   guidedImportSteps = GUIDED_IMPORT_STEPS,
 } = {}) {
   const goalId = intent.goal;
-  const goal = GOALS[goalId];
+  const goal = allGoals()[goalId];
   if (!goal) {
     return {
-      steps: [{ id: 'goal', ...STEP_DEFS.goal, status: 'current' }],
+      steps: [{ id: 'goal', ...allStepDefs().goal, status: 'current' }],
       currentStepId: 'goal',
       complete: false,
       blocked: null,
@@ -282,11 +318,12 @@ export function planJourney({
     return true;
   });
 
-  const steps = [{ id: 'goal', ...STEP_DEFS.goal, status: 'done' }];
+  const stepDefs = allStepDefs();
+  const steps = [{ id: 'goal', ...stepDefs.goal, status: 'done' }];
   let currentAssigned = false;
 
   for (const id of stepIds) {
-    const def = STEP_DEFS[id];
+    const def = stepDefs[id];
     let status;
     if (id === 'verify') {
       const earlierDone = steps.every(

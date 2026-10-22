@@ -43,7 +43,11 @@ import { docUrl } from './docLinks.js';
 import StepFrame, { INFO_NOTE_PROPS } from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import { PLANNER_VERSION, planJourney } from './journeyPlanner.js';
-import { GOALS } from './modules.js';
+import {
+  allGoals,
+  editionNextSteps,
+  editionStepComponents,
+} from './editionModules.js';
 import { clearGoal, skipStep } from './sessionTransitions.js';
 import { scopeCertops } from './certopsScope.js';
 import { resolveNavigation } from './stepNavigation.js';
@@ -75,7 +79,7 @@ const FLOW = 'mega';
 
 // Follow-ups are suggestions, never incomplete items, and never repeat what
 // the user just did.
-export function nextSteps(goalId, certops) {
+export function nextSteps(goalId, certops, summary = null) {
   const thresholds =
     'Adjust alert thresholds and the delivery window in workspace preferences.';
   // A real order that finished means the staging run is already done.
@@ -128,8 +132,11 @@ export function nextSteps(goalId, certops) {
           ? 'Assign more consumers and request a rollout for each, or request a check-only rollout (no changes) to look for drift.'
           : 'Run a verified rollout once your agents declare the distribution capabilities.',
       ];
-    default:
-      return [thresholds];
+    default: {
+      // An edition goal supplies its own suggestions.
+      const fromEdition = editionNextSteps(goalId, summary);
+      return fromEdition || [thresholds];
+    }
   }
 }
 
@@ -381,7 +388,7 @@ export function CollapsibleSteps({ steps, shownId, children }) {
 export function DoneCard({ ctx, guidedImportSteps = GUIDED_IMPORT_STEPS }) {
   const { muted } = useDashboardTheme();
   const smtp = ctx.summary?.alerts?.smtpConfigured;
-  const goal = GOALS[ctx.session.intent?.goal];
+  const goal = allGoals()[ctx.session.intent?.goal];
   const modalImport = !guidedImportSteps && Boolean(goal?.doneTextModal);
   const windows =
     scopeCertops(ctx.session.progress?.certops, goal?.certopsObjective)
@@ -437,7 +444,11 @@ export function DoneCard({ ctx, guidedImportSteps = GUIDED_IMPORT_STEPS }) {
             so alerts can be emailed.
           </Text>
         ) : null}
-        {nextSteps(ctx.session.intent?.goal, ctx.summary?.certops).map(text => (
+        {nextSteps(
+          ctx.session.intent?.goal,
+          ctx.summary?.certops,
+          ctx.summary
+        ).map(text => (
           <Text key={text} fontSize='sm'>
             {text}
           </Text>
@@ -557,7 +568,9 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
     setViewStepId(null);
   }, [stepKey, chosenGoal]);
 
-  const Current = nav.shownId ? STEP_COMPONENTS[nav.shownId] : null;
+  const Current = nav.shownId
+    ? STEP_COMPONENTS[nav.shownId] || editionStepComponents()[nav.shownId]
+    : null;
 
   return (
     <>

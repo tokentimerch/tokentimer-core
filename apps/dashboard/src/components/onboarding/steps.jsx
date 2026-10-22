@@ -18,7 +18,7 @@ import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import { availableGoals } from './journeyPlanner.js';
-import { GOAL_AREAS } from './modules.js';
+import { allGoalAreas } from './editionModules.js';
 import {
   isCandidatePick,
   pickHint,
@@ -36,18 +36,25 @@ import { progressForGoalChange } from './sessionTransitions.js';
 // another step is in progress: { title, go }.
 export function GoalStep({ ctx, returnTo = null }) {
   const { muted } = useDashboardTheme();
-  const goals = availableGoals(ctx.capabilities);
+  // A goal an edition hides (missing capability or scope) is not listed.
+  const goals = availableGoals(ctx.capabilities).filter(
+    g => !g.blocker?.hidden
+  );
   // A link such as /onboarding?area=certops opens straight on one area.
   const [params, setParams] = useSearchParams();
   const requestedArea = params.get('area');
-  const areaFilter = GOAL_AREAS.some(a => a.id === requestedArea)
+  const goalAreas = allGoalAreas();
+  const areaFilter = goalAreas.some(a => a.id === requestedArea)
     ? requestedArea
     : '';
   const areas = areaFilter
-    ? GOAL_AREAS.filter(a => a.id === areaFilter)
-    : GOAL_AREAS;
+    ? goalAreas.filter(a => a.id === areaFilter)
+    : goalAreas;
+  // The "not fully tested" register covers core goals; an edition owns the
+  // status of the goals it adds.
+  const isCandidate = goal => !goal.edition && isCandidatePick(goal.id);
   const anyCandidate = areas.some(area =>
-    goals.some(g => g.area === area.id && isCandidatePick(g.id))
+    goals.some(g => g.area === area.id && isCandidate(g))
   );
   const current = ctx.session.intent?.goal || '';
   const [choice, setChoice] = useState(current);
@@ -123,7 +130,7 @@ export function GoalStep({ ctx, returnTo = null }) {
                   </Text>
                   <Stack spacing={3}>
                     {inArea.map(goal => {
-                      const candidate = isCandidatePick(goal.id);
+                      const candidate = isCandidate(goal);
                       const hint = pickHint(goal.id);
                       const scope = candidate
                         ? untestedPlatformsNote(
