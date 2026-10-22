@@ -95,6 +95,29 @@ describe('provider logos in the integration step', () => {
     expect(within(github).getByText('GitHub')).toBeInTheDocument();
   });
 
+  it.each(['azure', 'azure-ad'])(
+    'keeps the %s badge inside a padded, unclipped wrapper',
+    key => {
+      render(wrap(<ImportSourceLogo sourceKey={key} />));
+      const wrapper = screen.getByTestId('import-source-logo');
+      expect(wrapper).toHaveStyle({ padding: '6px', overflow: 'visible' });
+      expect(wrapper.querySelector('svg').parentElement).toHaveStyle({
+        top: '0px',
+        right: '0px',
+      });
+    }
+  );
+
+  it.each(['vault', 'gitlab', 'github', 'aws', 'gcp'])(
+    'adds no badge or padding to the %s logo',
+    key => {
+      render(wrap(<ImportSourceLogo sourceKey={key} />));
+      const wrapper = screen.getByTestId('import-source-logo');
+      expect(wrapper.querySelector('svg')).toBeNull();
+      expect(wrapper).toHaveStyle({ overflow: 'visible' });
+    }
+  );
+
   it('adds a badge to tell the two Azure logos apart', () => {
     const { container } = render(
       wrap(<ImportSourceLogo sourceKey='azure-ad' />)

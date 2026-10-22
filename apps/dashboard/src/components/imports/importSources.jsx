@@ -38,7 +38,15 @@ export function ImportSourceLogo({
   if (!src) return null;
   const badge = AZURE_BADGES[sourceKey];
   return (
-    <Box position='relative'>
+    // The badge sits in the wrapper's own padding, so a parent that clips at
+    // the wrapper edge cannot cut it off. Same place on screen as before.
+    <Box
+      position='relative'
+      display='inline-flex'
+      p={badge ? '6px' : undefined}
+      overflow='visible'
+      data-testid='import-source-logo'
+    >
       <Image
         src={src}
         alt=''
@@ -53,8 +61,8 @@ export function ImportSourceLogo({
         <Tooltip label={badge.label} fontSize='xs'>
           <Box
             position='absolute'
-            top='-6px'
-            right='-6px'
+            top='0'
+            right='0'
             bg={badge.bg}
             borderRadius='full'
             p={1.5}
