@@ -295,8 +295,11 @@ function verifyUnservedInventory(
   }
   return true;
 }
+// An HTTPS binding with no certificate assigned (a refused enrollment's owned site) serves neither
+// leaf, so it cannot contradict the unserved proof. Any assigned certificate must still resolve to an
+// exact My/WebHosting thumbprint, and central-certificate bindings stay refused.
 function iisInventoryScript() {
-  return `Import-Module WebAdministration;$rows=@();foreach($site in @(Get-Website)){foreach($b in @(Get-WebBinding -Name $site.Name -Protocol https)){if(([int]$b.sslFlags -band 2)-ne 0){throw 'Unresolved central-certificate IIS binding refused'};$hash=$b.certificateHash;if($hash-is[byte[]]){$hash=[BitConverter]::ToString($hash).Replace('-','')};$hash=([string]$hash).ToUpperInvariant();if($hash-cnotmatch'^[A-F0-9]{40}$'-or$b.certificateStoreName-notin @('My','WebHosting')){throw 'Incomplete IIS certificate inventory refused'};$rows+=,@{siteId=[int]$site.Id;site=[string]$site.Name;coordinates=[string]$b.bindingInformation;flags=[int]$b.sslFlags;store=[string]$b.certificateStoreName;thumbprint=$hash};if($rows.Count-gt 2048){throw 'Bounded IIS inventory required'}}};ConvertTo-Json -InputObject @($rows) -Depth 5 -Compress`;
+  return `Import-Module WebAdministration;$rows=@();foreach($site in @(Get-Website)){foreach($b in @(Get-WebBinding -Name $site.Name -Protocol https)){if(([int]$b.sslFlags -band 2)-ne 0){throw 'Unresolved central-certificate IIS binding refused'};$hash=$b.certificateHash;if($hash-is[byte[]]){$hash=[BitConverter]::ToString($hash).Replace('-','')};$hash=([string]$hash).ToUpperInvariant();if($hash-eq''){continue};if($hash-cnotmatch'^[A-F0-9]{40}$'-or$b.certificateStoreName-notin @('My','WebHosting')){throw 'Incomplete IIS certificate inventory refused'};$rows+=,@{siteId=[int]$site.Id;site=[string]$site.Name;coordinates=[string]$b.bindingInformation;flags=[int]$b.sslFlags;store=[string]$b.certificateStoreName;thumbprint=$hash};if($rows.Count-gt 2048){throw 'Bounded IIS inventory required'}}};ConvertTo-Json -InputObject @($rows) -Depth 5 -Compress`;
 }
 async function observeHistoricalUnserved({ historicalDer, currentDer, ps }) {
   assert.equal(process.platform, "win32");

@@ -419,3 +419,33 @@ test("native revoked probe maps only the exact CryptoAPI revoked outcome to revo
   assert.match(body, /native\.error === "certificate is revoked"/);
   assert.match(body, /verdict: "revoked"/);
 });
+
+// Runs the real inventory script against mocked IIS cmdlets so the binding rules are exercised
+// by PowerShell itself, not by matching source text.
+test("IIS inventory skips certificate-less HTTPS bindings but still refuses incomplete or central ones", {
+  skip: process.platform !== "win32",
+}, () => {
+  const run = (bindings) => {
+    const mock = [
+      "function Get-Website { $script:sites }",
+      "function Get-WebBinding { param($Name,$Protocol) @($script:bindings | Where-Object { $_.site -eq $Name }) }",
+      "$script:sites = @([pscustomobject]@{Name='s1';Id=1},[pscustomobject]@{Name='s2';Id=2})",
+      `$script:bindings = @(${bindings})`,
+    ].join(";");
+    const script = subject.iisInventoryScript().replace("Import-Module WebAdministration;", "");
+    return spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `$ErrorActionPreference='Stop';${mock};${script}`], { encoding: "utf8" });
+  };
+  const binding = (site, hash, store, flags = 1) =>
+    `[pscustomobject]@{site='${site}';certificateHash=${hash};certificateStoreName='${store}';sslFlags=${flags};bindingInformation='*:${site === "s1" ? 8443 : 8444}:h'}`;
+  const thumb = "A".repeat(40);
+  // A refused enrollment's site has an HTTPS binding and no certificate: skipped, not fatal.
+  const ok = run([binding("s1", `'${thumb}'`, "My"), binding("s2", "$null", "")].join(","));
+  assert.equal(ok.status, 0, ok.stderr);
+  const rows = JSON.parse(ok.stdout);
+  assert.deepEqual(rows.map((row) => [row.site, row.thumbprint]), [["s1", thumb]]);
+  // An assigned but malformed or foreign-store certificate still fails closed.
+  assert.notEqual(run(binding("s1", "'ZZ'", "My")).status, 0);
+  assert.notEqual(run(binding("s1", `'${thumb}'`, "Root")).status, 0);
+  // Central-certificate bindings are still refused even without a hash.
+  assert.notEqual(run(binding("s1", "$null", "", 3)).status, 0);
+});
