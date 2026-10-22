@@ -129,5 +129,9 @@ export function diffImport(before, after) {
     const prev = beforeById.get(c.id);
     return prev && c.lastSyncAt && c.lastSyncAt !== prev.lastSyncAt;
   });
-  return { assets, newConnections, ranSince };
+  const afterIds = new Set((after?.autoSync?.items || []).map(c => c.id));
+  const removedConnections = (before?.autoSync?.items || []).filter(
+    c => !afterIds.has(c.id)
+  );
+  return { assets, newConnections, ranSince, removedConnections };
 }

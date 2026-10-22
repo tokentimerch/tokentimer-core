@@ -135,7 +135,19 @@ describe('diffImport', () => {
 
   it('reports nothing when nothing happened', () => {
     const r = diffImport(before, before);
-    expect(r).toEqual({ assets: 0, newConnections: [], ranSince: [] });
+    expect(r).toEqual({
+      assets: 0,
+      newConnections: [],
+      ranSince: [],
+      removedConnections: [],
+    });
+  });
+
+  it('finds a connection removed while the modal was open', () => {
+    const after = { assets: { total: 2 }, autoSync: { items: [] } };
+    expect(diffImport(before, after).removedConnections.map(c => c.id)).toEqual(
+      ['a']
+    );
   });
 });
 

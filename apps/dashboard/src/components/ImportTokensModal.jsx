@@ -53,14 +53,21 @@ import { useWorkspace } from '../utils/WorkspaceContext.jsx';
 import { FiDownload, FiShield, FiAlertTriangle } from 'react-icons/fi';
 import IntegrationImportTable from './IntegrationImportTable';
 import BulkIntegrationAssignment from './BulkIntegrationAssignment';
-import { ImportSourceLogo } from './imports/importSources.jsx';
+import {
+  ImportSourceLogo,
+  isSourceVisible,
+  resolveStartSource,
+} from './imports/importSources.jsx';
 import { EmbeddedImportContext } from './imports/embeddedImportContext.js';
 import { resolveImportWorkspaceId } from './imports/resolveImportWorkspaceId.js';
 import {
   canonicalContactGroupFields,
   contactGroupFieldsForImportDefaults,
   hydrateContactGroupIds,
+  normalizeContactGroupIds,
 } from '../utils/contactGroupAssignment.js';
+import AutoSyncGroupLine from './imports/AutoSyncGroupLine.jsx';
+import { formatNextSync } from './imports/syncGroupLine.js';
 import CopyableCodeBlock from './CopyableCodeBlock';
 import ImportVaultForm from './imports/ImportVaultForm';
 import ImportGitLabForm from './imports/ImportGitLabForm';
@@ -915,6 +922,10 @@ function ImportTokensModalContent({
   hideDocs = false,
   // Source keys the dialog may show. Unset means every source.
   sourceChoices = null,
+  // Source keys to hide, e.g. ['file', 'cert-pem'] for integrations only.
+  hiddenSources = null,
+  // Source the dialog opens on (and returns to after a reset). Default File.
+  initialSource = null,
   // Workspace the setup guide is configuring; the URL may not carry it.
   embeddedWorkspaceId = null,
 }) {
@@ -986,7 +997,12 @@ function ImportTokensModalContent({
     }
   }, []);
 
-  const [source, setSource] = React.useState('file'); // 'file' | 'vault' | 'gitlab' | 'github' | 'aws' | 'azure' | 'azure-ad' | 'gcp'
+  const startSource = resolveStartSource({
+    initialSource,
+    sourceChoices,
+    hiddenSources,
+  });
+  const [source, setSource] = React.useState(startSource); // 'file' | 'vault' | 'gitlab' | 'github' | 'aws' | 'azure' | 'azure-ad' | 'gcp'
   const [isViewer, setIsViewer] = React.useState(false);
   // Integration quota state
   const [integrationQuota, setIntegrationQuota] = React.useState({
@@ -1064,6 +1080,9 @@ function ImportTokensModalContent({
     type: 'other',
   });
   const [contactGroups, setContactGroups] = React.useState([]);
+  const [defaultContactGroupId, setDefaultContactGroupId] = React.useState('');
+  // Groups for assets that scheduled syncs add. Starts from the import choice.
+  const [autoSyncGroupIds, setAutoSyncGroupIds] = React.useState([]);
 
   // Shared bulk assignment state (used across all integrations)
   const [bulkSection, setBulkSection] = React.useState('');
@@ -1285,6 +1304,7 @@ function ImportTokensModalContent({
         // Restore non-secret form fields from scan_params when auto-sync is already configured
         if (existing && existing.scan_params) {
           const sp = existing.scan_params;
+          setAutoSyncGroupIds(normalizeContactGroupIds(sp.contactGroupIds));
           // Forms (GitLab/GitHub) own their field state; hand them the full
           // saved scan_params so reopening the modal shows the configured
           // values instead of the defaults.
@@ -1657,6 +1677,7 @@ function ImportTokensModalContent({
     setEnableSyncFrequency('daily');
     setEnableSyncTime('09:00');
     setEnableSyncTz(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+    setAutoSyncGroupIds(normalizeContactGroupIds(bulkContactGroupIds));
     onEnableAutoSyncOpen();
   };
 
@@ -1696,7 +1717,7 @@ function ImportTokensModalContent({
       schedule_tz: enableSyncTz,
       // scan_params (filters) never contain secrets, so they're always sent,
       // even if the user didn't re-enter the token.
-      scan_params: scanParams,
+      scan_params: { ...scanParams, contactGroupIds: autoSyncGroupIds },
       cleanup_obsolete: scanParams?.cleanupObsolete === true,
     };
     if (credentialsHasSecrets(credentials, source)) {
@@ -1808,14 +1829,19 @@ function ImportTokensModalContent({
           provider: source,
           name: autoSyncName,
           credentials,
-          scan_params: scanParams,
+          scan_params: { ...scanParams, contactGroupIds: autoSyncGroupIds },
           frequency: enableSyncFrequency,
           schedule_time: enableSyncTime,
           schedule_tz: enableSyncTz,
           cleanup_obsolete: scanParams?.cleanupObsolete === true,
         }
       );
-      showSuccess(`Auto-sync enabled for ${source}`);
+      const firstRun = formatNextSync(created.data?.next_sync_at);
+      showSuccess(
+        firstRun
+          ? `Auto-sync enabled for ${source}. First scan: ${firstRun}. Use Sync now to run it immediately.`
+          : `Auto-sync enabled for ${source}`
+      );
       const res = await apiClient.get(
         `/api/v1/workspaces/${workspaceId}/auto-sync`
       );
@@ -1870,7 +1896,9 @@ function ImportTokensModalContent({
       });
       setIntegrationSubTab('scan');
       setPendingManageTab(false);
-      showSuccess(`Auto-sync disabled for ${source}`);
+      showSuccess(
+        `Auto-sync removed for ${source}. Saved credentials were deleted; assets already imported were kept.`
+      );
       dispatchNotificationsRefresh();
     } catch (e) {
       showWarning(e?.response?.data?.error || 'Failed to disable auto-sync');
@@ -1898,7 +1926,7 @@ function ImportTokensModalContent({
   // Users can still manually set a bulk section to override all selected tokens
 
   const reset = React.useCallback(() => {
-    setSource('file');
+    setSource(startSource);
     setFile(null);
     setRows([]);
     setParsing(false);
@@ -1946,7 +1974,7 @@ function ImportTokensModalContent({
     setAzureADDuplicates(new Set());
     setIntegrationSubTab('scan');
     setPendingManageTab(false);
-  }, []);
+  }, [startSource]);
 
   const onSelectFile = async e => {
     const f = e?.target?.files?.[0];
@@ -2462,6 +2490,9 @@ function ImportTokensModalContent({
             ? alertSettings.contact_groups
             : [];
           setContactGroups(groups);
+          setDefaultContactGroupId(
+            String(alertSettings?.default_contact_group_id || '')
+          );
         } catch (_) {
           setContactGroups([]);
         }
@@ -2723,8 +2754,8 @@ function ImportTokensModalContent({
                     },
                     {
                       key: 'azure-ad',
-                      label: 'Azure AD',
-                      alt: 'Azure Active Directory',
+                      label: 'Entra ID',
+                      alt: 'Microsoft Entra ID',
                     },
                     {
                       key: 'gcp',
@@ -2739,8 +2770,11 @@ function ImportTokensModalContent({
                       icon: 'shield',
                     },
                   ]
-                    .filter(
-                      card => !sourceChoices || sourceChoices.includes(card.key)
+                    .filter(card =>
+                      isSourceVisible(card.key, {
+                        sourceChoices,
+                        hiddenSources,
+                      })
                     )
                     .map(card => {
                       const isCertPemCard = card.key === 'cert-pem';
@@ -3018,7 +3052,19 @@ function ImportTokensModalContent({
                           No sync run yet
                         </Text>
                       )}
+                      {autoSyncConfig.enabled && autoSyncConfig.next_sync_at ? (
+                        <Text fontSize='sm' data-testid='next-sync'>
+                          Next sync:{' '}
+                          {formatNextSync(autoSyncConfig.next_sync_at)}
+                        </Text>
+                      ) : null}
                     </Box>
+                    <AutoSyncGroupLine
+                      groupIds={autoSyncGroupIds}
+                      onChange={setAutoSyncGroupIds}
+                      contactGroups={contactGroups}
+                      defaultGroupId={defaultContactGroupId}
+                    />
                     <Box>
                       <Text fontSize='sm' fontWeight='semibold' mb={2}>
                         Recent runs
@@ -4004,6 +4050,12 @@ function ImportTokensModalContent({
                   maxLength={255}
                 />
               </FormControl>
+              <AutoSyncGroupLine
+                groupIds={autoSyncGroupIds}
+                onChange={setAutoSyncGroupIds}
+                contactGroups={contactGroups}
+                defaultGroupId={defaultContactGroupId}
+              />
               <HStack spacing={4} align='flex-end'>
                 <FormControl flex='1'>
                   <FormLabel fontSize='sm'>Frequency</FormLabel>

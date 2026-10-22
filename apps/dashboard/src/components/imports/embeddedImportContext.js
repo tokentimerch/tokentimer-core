@@ -4,4 +4,4 @@ import { createContext } from 'react';
 export const EmbeddedImportContext = createContext(false);
 
 export const EMBEDDED_GROUPS_NOTE =
-  'Groups chosen here receive alerts for the assets you import now. You can review all groups in the next step.';
+  'Groups chosen here receive alerts for the assets you import now. Assets a sync adds later use the group set on the sync.';

@@ -48,13 +48,17 @@ function useIntegrationHost(ctx, provider) {
   const [watching, setWatching] = useState(false);
   const startedAt = useRef(0);
   const recorded = useRef(false);
+  // The page builds a new ctx after every refresh. Reading it through a ref
+  // keeps the watcher from restarting (and re-reading) on its own refreshes.
+  const ctxRef = useRef(ctx);
+  ctxRef.current = ctx;
 
   const start = useCallback(async () => {
     setError('');
     setResult(null);
     recorded.current = false;
     try {
-      const summary = await ctx.refresh();
+      const summary = await ctxRef.current.refresh();
       setBefore(summary);
       startedAt.current = Date.now();
       setOpen(true);
@@ -62,7 +66,7 @@ function useIntegrationHost(ctx, provider) {
     } catch (e) {
       setError(e.message || 'Could not start.');
     }
-  }, [ctx]);
+  }, []);
 
   // While the modal is open or a sync is running, read the server.
   useEffect(() => {
@@ -70,7 +74,7 @@ function useIntegrationHost(ctx, provider) {
     let stopped = false;
     const tick = async () => {
       try {
-        const now = await ctx.refresh();
+        const now = await ctxRef.current.refresh();
         if (stopped || !now) return;
         const diff = diffImport(before, now);
         const running = (now.autoSync?.items || []).some(
@@ -82,6 +86,7 @@ function useIntegrationHost(ctx, provider) {
           !running &&
           (diff.assets > 0 ||
             diff.newConnections.length > 0 ||
+            diff.removedConnections.length > 0 ||
             diff.ranSince.length > 0);
         const expired = Date.now() - startedAt.current > POLL_LIMIT_MS;
         if (settled || (!open && expired)) setWatching(false);
@@ -95,7 +100,7 @@ function useIntegrationHost(ctx, provider) {
       stopped = true;
       clearInterval(t);
     };
-  }, [watching, before, open, ctx, provider]);
+  }, [watching, before, open, provider]);
 
   const close = useCallback(() => {
     setOpen(false);
@@ -205,6 +210,11 @@ function Outcome({ result, mode, watching, muted }) {
     parts.push(
       `${result.assets} asset${result.assets === 1 ? '' : 's'} added to this workspace.`
     );
+  (result.removedConnections || []).forEach(c =>
+    parts.push(
+      `Connection "${c.name}" removed. Assets it brought in stay in the workspace but are no longer synced.`
+    )
+  );
   result.newConnections.forEach(c =>
     parts.push(`Connection "${c.name}" saved and scheduled ${c.frequency}.`)
   );
