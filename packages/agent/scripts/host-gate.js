@@ -44,12 +44,32 @@ function measuredEnvironment() {
   return { ...nativeEnvironment };
 }
 
+/** A combined run registers shared fixture sources from several journeys. The report must hold each
+ * source exactly once: re-registering an identical digest is a no-op, a different digest for the same
+ * file is a real integrity failure. The property stays absent from the report until first assigned. */
+function addFixtureSource(list, item) {
+  const existing = item && typeof item === "object" ? list.find((row) => row.file === item.file) : undefined;
+  if (!existing) { Array.prototype.push.call(list, item); return; }
+  if (existing.sha256 !== item.sha256) throw new Error("Conflicting fixture source digest");
+}
+function guardFixtureSources(list) {
+  const unique = [];
+  for (const item of list) addFixtureSource(unique, item);
+  Object.defineProperty(unique, "push", { enumerable: false, configurable: true, writable: true, value(...items) { for (const item of items) addFixtureSource(this, item); return this.length; } });
+  return unique;
+}
+function trackFixtureSources(report) {
+  let sources;
+  const define = (enumerable) => Object.defineProperty(report, "fixtureSources", { enumerable, configurable: true, get: () => sources, set(value) { sources = Array.isArray(value) ? guardFixtureSources(value) : value; define(true); } });
+  define(false);
+}
 /** Named runtime evidence. Capability probes must observe the host, not flags. */
 function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = async () => ({}), strict = process.env.CERTOPS_QUALIFICATION_STRICT === "1", reportPath = process.env.CERTOPS_QUALIFICATION_REPORT, candidateSha = process.env.GITHUB_SHA || null, evidenceLevel = "real-host", fixtureSource, continueOnFailure = process.env.CERTOPS_QUALIFICATION_CONTINUE === "1", maxFailures = Number(process.env.CERTOPS_QUALIFICATION_MAX_FAILURES || 8), debugDetail = process.env.CERTOPS_QUALIFICATION_DEBUG === "1", scenarioTimeoutMs = 0 } = {}) {
   if (!suite) throw new Error("A qualification suite name is required");
   if (!Number.isInteger(maxFailures) || maxFailures < 1 || maxFailures > 1000) throw new Error("Invalid qualification failure budget");
   const report = { schemaVersion: 1, suite, strict, platform: process.platform, architecture: process.arch, nodeVersion: process.version, startedAt: new Date().toISOString(), requiredCapabilities: [...requiredCapabilities], capabilities: {}, scenarios: [], status: "running" };
   if (!Number.isInteger(scenarioTimeoutMs) || scenarioTimeoutMs < 0 || scenarioTimeoutMs > 7200000) throw new Error("Invalid scenario timeout");
+  trackFixtureSources(report);
   let ready = false;
   // Diagnostic modes are never release evidence: the validator refuses reports carrying these markers.
   if (continueOnFailure) report.continueOnFailure = true;
