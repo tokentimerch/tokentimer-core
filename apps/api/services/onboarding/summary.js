@@ -256,7 +256,15 @@ async function buildSummary(
     .filter((m) => sessionMonitors.has(String(m.id)) && m.token_id != null)
     .map((m) => Number(m.token_id))
     .filter((id) => Number.isInteger(id) && id > 0);
-  const groupTokenIds = Array.from(new Set([...allTokenIds, ...monitorTokenIds]));
+  // Certificates the CertOps guide produced carry groups on their token too.
+  const certificateTokenIds = (
+    Array.isArray(certops?.sessionCertificates) ? certops.sessionCertificates : []
+  )
+    .map((c) => Number(c?.tokenId))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  const groupTokenIds = Array.from(
+    new Set([...allTokenIds, ...monitorTokenIds, ...certificateTokenIds]),
+  );
   const membership = groupTokenIds.length
     ? await pool.query(
         `SELECT token_id, contact_group_id

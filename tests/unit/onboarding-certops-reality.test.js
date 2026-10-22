@@ -8,6 +8,8 @@ const {
   loadDistributionReality,
   loadOutboxBacklog,
   loadOverdueEnrollments,
+  loadSessionCertificates,
+  loadJobStatus,
 } = require("../../apps/api/services/onboarding/certopsReality");
 
 const agent = (over = {}) => ({
@@ -241,5 +243,89 @@ describe("loadCertopsReality", () => {
       }),
       null,
     );
+  });
+});
+
+describe("session certificates", () => {
+  const JOB = "11111111-1111-1111-1111-111111111111";
+
+  it("reads the managed certificate and token of a job", async () => {
+    let sql = "";
+    const pool = {
+      query: async (text) => {
+        sql = text;
+        return {
+          rows: [
+            {
+              id: JOB,
+              operation: "issue",
+              status: "succeeded",
+              mode: "real",
+              certificate_status: "active",
+              certificate_id: "22222222-2222-2222-2222-222222222222",
+              certificate_token_id: 97,
+            },
+          ],
+        };
+      },
+    };
+    const job = await loadJobStatus(pool, "w", JOB);
+    assert.equal(job.certificateId, "22222222-2222-2222-2222-222222222222");
+    assert.equal(job.tokenId, 97);
+    assert.match(sql, /mc\.token_id/);
+  });
+
+  it("reports no token while the certificate has none", async () => {
+    const pool = {
+      query: async () => ({
+        rows: [{ id: JOB, certificate_id: "c1", certificate_token_id: null }],
+      }),
+    };
+    assert.equal((await loadJobStatus(pool, "w", JOB)).tokenId, null);
+  });
+
+  it("collects job certificates once and tags their source", async () => {
+    const pool = { query: async () => ({ rows: [] }) };
+    const out = await loadSessionCertificates(pool, "w", {
+      jobs: [
+        { job: { certificateId: "c1", tokenId: 5 }, source: "issue" },
+        { job: { certificateId: "c1", tokenId: 5 }, source: "publish" },
+        { job: { certificateId: "c2", tokenId: null }, source: "publish" },
+        { job: null, source: "issue" },
+      ],
+    });
+    assert.deepEqual(out, [
+      { certificateId: "c1", tokenId: 5, source: "issue" },
+      { certificateId: "c2", tokenId: null, source: "publish" },
+    ]);
+  });
+
+  it("adds enrollments started since the session began, scoped to the workspace", async () => {
+    const seen = [];
+    const pool = {
+      query: async (sql, params) => {
+        seen.push({ sql, params });
+        return { rows: [{ certificate_id: "c9", token_id: 41 }] };
+      },
+    };
+    const since = "2026-10-22T10:00:00.000Z";
+    const out = await loadSessionCertificates(pool, "w", { since });
+    assert.deepEqual(out, [
+      { certificateId: "c9", tokenId: 41, source: "enrollment" },
+    ]);
+    assert.deepEqual(seen[0].params, ["w", since]);
+    assert.match(seen[0].sql, /e\.workspace_id = \$1/);
+  });
+
+  it("does not query enrollments without a session start", async () => {
+    let asked = false;
+    const pool = {
+      query: async () => {
+        asked = true;
+        return { rows: [] };
+      },
+    };
+    assert.deepEqual(await loadSessionCertificates(pool, "w", {}), []);
+    assert.equal(asked, false);
   });
 });

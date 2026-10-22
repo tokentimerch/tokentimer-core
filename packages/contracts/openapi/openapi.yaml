@@ -3268,6 +3268,26 @@ paths:
                                 allOf:
                                   - $ref: "#/components/schemas/OnboardingJobStatus"
                                 nullable: true
+                              sessionCertificates:
+                                type: array
+                                description: >-
+                                  Managed certificates this setup session
+                                  produced (issue and publish jobs, AD CS
+                                  enrollments started since the session
+                                  began). At most 20.
+                                items:
+                                  type: object
+                                  properties:
+                                    certificateId:
+                                      type: string
+                                      format: uuid
+                                    tokenId:
+                                      type: integer
+                                      nullable: true
+                                    source:
+                                      type: string
+                                      enum: [issue, publish, enrollment]
+                                  additionalProperties: true
                             additionalProperties: true
                       alerts:
                         type: object
@@ -9929,6 +9949,17 @@ components:
         certificateStatus:
           type: string
           nullable: true
+        certificateId:
+          type: string
+          format: uuid
+          nullable: true
+          description: The managed certificate the job acts on.
+        tokenId:
+          type: integer
+          nullable: true
+          description: >-
+            Inventory token of that certificate, once it has one. Contact
+            groups are attached to this token.
       additionalProperties: true
     ErrorResponse:
       type: object

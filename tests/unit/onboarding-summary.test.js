@@ -176,6 +176,38 @@ describe("groups attached to session items", () => {
     assert.deepEqual(memberQueries[0].sort(), [5, 8]);
   });
 
+  it("reads the groups of CertOps session certificates too", async () => {
+    const memberQueries = [];
+    const pool = {
+      query: async (sql, params) => {
+        if (sql.includes("token_contact_groups")) {
+          memberQueries.push(params[1]);
+          return { rows: [{ token_id: 41, contact_group_id: "g1" }] };
+        }
+        if (sql.includes("FROM workspace_settings")) return { rows: [settings] };
+        if (sql.includes("FROM workspace_contacts")) {
+          return { rows: [emailContact, phoneOnly] };
+        }
+        if (sql.includes("COUNT(*)")) return { rows: [{ n: 0 }] };
+        if (sql.includes("COUNT(DISTINCT")) return { rows: [{ n: 0 }] };
+        return { rows: [] };
+      },
+    };
+    const summary = await buildSummary(pool, {
+      workspaceId: "w1",
+      refs: {},
+      certops: {
+        sessionCertificates: [
+          { certificateId: "c1", tokenId: 41, source: "issue" },
+          { certificateId: "c2", tokenId: 42, source: "issue" },
+          { certificateId: "c3", tokenId: null, source: "issue" },
+        ],
+      },
+    });
+    assert.deepEqual(summary.references.tokenGroups, { 41: ["g1"], 42: [] });
+    assert.deepEqual(memberQueries[0].sort(), [41, 42]);
+  });
+
   it("skips the membership query when the session holds no tokens", async () => {
     let asked = false;
     const pool = {

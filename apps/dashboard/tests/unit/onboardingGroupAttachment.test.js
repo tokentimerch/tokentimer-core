@@ -3,8 +3,10 @@ import {
   MAX_ITEMS,
   canTickGoal,
   describeNoToken,
+  describeNoCertificate,
   describeTicks,
   describeUngrouped,
+  isDefaultOnlyGoal,
   itemsToChange,
   nextGroupIds,
   planSessionItems,
@@ -71,6 +73,90 @@ describe('planSessionItems', () => {
         noToken: 0,
         blocked: null,
       });
+    }
+  });
+
+  it('plans a CertOps pick from the certificates of its own source', () => {
+    const certops = {
+      sessionCertificates: [
+        { certificateId: 'c1', tokenId: 31, source: 'issue' },
+        { certificateId: 'c2', tokenId: 32, source: 'issue' },
+        { certificateId: 'c3', tokenId: null, source: 'issue' },
+        { certificateId: 'c4', tokenId: 33, source: 'publish' },
+        { certificateId: 'c5', tokenId: 34, source: 'enrollment' },
+      ],
+    };
+    const plan = goal =>
+      planSessionItems({ goal, refs: {}, summary: { certops } });
+    expect(plan('certops_automate')).toEqual({
+      websites: [],
+      assets: [],
+      certificates: ['31', '32'],
+      noToken: 1,
+      blocked: null,
+    });
+    expect(plan('certops_vault').certificates).toEqual(['33']);
+    expect(plan('certops_adcs').certificates).toEqual(['34']);
+  });
+
+  it('plans nothing for a CertOps pick that created no certificate', () => {
+    for (const summary of [
+      null,
+      { certops: 'unknown' },
+      { certops: { sessionCertificates: [] } },
+    ]) {
+      expect(
+        planSessionItems({ goal: 'certops_automate', refs: {}, summary })
+      ).toEqual({
+        websites: [],
+        assets: [],
+        certificates: [],
+        noToken: 0,
+        blocked: null,
+      });
+    }
+  });
+
+  it('ignores website refs for a CertOps pick and repeats no token', () => {
+    const plan = planSessionItems({
+      goal: 'certops_automate',
+      refs: { tokenIds: [1], monitorIds: ['m1'] },
+      summary: {
+        certops: {
+          sessionCertificates: [
+            { certificateId: 'c1', tokenId: 5, source: 'issue' },
+            { certificateId: 'c2', tokenId: 5, source: 'issue' },
+          ],
+        },
+      },
+    });
+    expect(plan.certificates).toEqual(['5']);
+    expect(plan.websites).toEqual([]);
+  });
+
+  it('blocks a CertOps pick past the cap', () => {
+    const many = Array.from({ length: MAX_ITEMS + 1 }, (_, i) => ({
+      certificateId: `c${i}`,
+      tokenId: i + 1,
+      source: 'issue',
+    }));
+    expect(
+      planSessionItems({
+        goal: 'certops_automate',
+        refs: {},
+        summary: { certops: { sessionCertificates: many } },
+      }).blocked
+    ).toBe('cap');
+  });
+
+  it('keeps the observe and alerting picks out of the ticking goals', () => {
+    expect(canTickGoal('certops_observe')).toBe(false);
+    expect(canTickGoal('alerting')).toBe(false);
+    expect(isDefaultOnlyGoal('certops_observe')).toBe(true);
+    expect(isDefaultOnlyGoal('alerting')).toBe(true);
+    expect(isDefaultOnlyGoal('import_file')).toBe(false);
+    for (const goal of ['certops_automate', 'certops_adcs', 'certops_vault']) {
+      expect(canTickGoal(goal)).toBe(true);
     }
   });
 
@@ -276,6 +362,38 @@ describe('sentences', () => {
       defaultName: 'Ops',
     });
     expect(text).not.toMatch(/Ticked/);
+  });
+
+  it('words certificates for the CertOps picks', () => {
+    const certs = [item('9', [], 'certificate')];
+    expect(
+      describeTicks({
+        goal: 'certops_automate',
+        items: certs,
+        defaultName: 'Ops',
+      })
+    ).toBe(
+      'Ticked groups receive alerts for the certificates you added in this guide. 1 certificate has no group and uses the workspace default group "Ops".'
+    );
+  });
+
+  it('says nothing carries a group yet when a CertOps pick made no certificate', () => {
+    expect(
+      describeTicks({ goal: 'certops_vault', items: [], defaultName: 'Ops' })
+    ).toBe(
+      'Nothing was created yet that could carry a group: the workspace default group "Ops" is used.'
+    );
+    expect(describeNoCertificate('')).toMatch(/no default group is set/);
+    expect(
+      describeTicks({
+        goal: 'certops_adcs',
+        items: [],
+        defaultName: 'Ops',
+        noToken: 2,
+      })
+    ).toBe(
+      '2 certificates from this setup have no inventory record yet, so their groups cannot be set here.'
+    );
   });
 
   it('tells a website without a certificate record which group it uses', () => {

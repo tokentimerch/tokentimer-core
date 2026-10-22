@@ -8,12 +8,27 @@ import { normalizeContactGroupIds } from '../../utils/contactGroupAssignment.js'
 export const MAX_ITEMS = 50;
 
 // Only these goals create items that can carry a group from this step.
-const TICK_GOALS = new Set(['monitor_https', 'track_asset']);
+const TICK_GOALS = new Set([
+  'monitor_https',
+  'track_asset',
+  'certops_automate',
+  'certops_adcs',
+  'certops_vault',
+]);
 export const canTickGoal = goal => TICK_GOALS.has(goal);
 
-// Which certificates a CertOps goal made, as the summary reports them.
-const CERTIFICATE_SOURCE = {};
+// Which certificates a CertOps goal made: the issue job, the publish job or
+// the AD CS enrollments, as the summary reports them.
+const CERTIFICATE_SOURCE = {
+  certops_automate: 'issue',
+  certops_vault: 'publish',
+  certops_adcs: 'enrollment',
+};
 export const isCertificateGoal = goal => goal in CERTIFICATE_SOURCE;
+
+// Goals that only confirm the workspace default group and say why.
+const DEFAULT_ONLY_GOALS = new Set(['alerting', 'certops_observe']);
+export const isDefaultOnlyGoal = goal => DEFAULT_ONLY_GOALS.has(goal);
 
 const text = v => String(v);
 const unique = list => Array.from(new Set(list.map(text)));

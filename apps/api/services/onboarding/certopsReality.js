@@ -118,7 +118,8 @@ async function loadJobStatus(pool, workspaceId, jobId) {
   if (typeof jobId !== "string" || !/^[0-9a-f-]{36}$/i.test(jobId)) return null;
   const { rows } = await pool.query(
     `SELECT j.id, j.operation, j.status, j.mode, j.error_code, j.error_message,
-            mc.status AS certificate_status
+            mc.status AS certificate_status, mc.id AS certificate_id,
+            mc.token_id AS certificate_token_id
        FROM certificate_jobs j
        LEFT JOIN managed_certificates mc
          ON j.subject_type = 'managed_certificate' AND mc.id::text = j.subject_id
@@ -136,7 +137,52 @@ async function loadJobStatus(pool, workspaceId, jobId) {
     // Shown in the wizard, so bounded; the full text stays in the job log.
     errorMessage: row.error_message ? String(row.error_message).slice(0, 300) : null,
     certificateStatus: row.certificate_status || null,
+    certificateId: row.certificate_id || null,
+    // Set once the issued certificate has an inventory token to carry groups.
+    tokenId: row.certificate_token_id ?? null,
   };
+}
+
+const MAX_SESSION_CERTIFICATES = 20;
+
+/**
+ * The managed certificates this guide session produced: the issue and publish
+ * jobs it created, and AD CS enrollments started since the session began.
+ * tokenId is null until the certificate has an inventory token, and only
+ * tokens that still exist are returned.
+ */
+async function loadSessionCertificates(
+  pool,
+  workspaceId,
+  { jobs = [], since = null } = {},
+) {
+  const found = new Map();
+  const add = (certificateId, tokenId, source) => {
+    if (!certificateId || found.has(certificateId)) return;
+    found.set(certificateId, {
+      certificateId,
+      tokenId: tokenId ?? null,
+      source,
+    });
+  };
+  for (const { job, source } of jobs) {
+    add(job?.certificateId, job?.tokenId, source);
+  }
+  if (since) {
+    const { rows } = await pool.query(
+      `SELECT mc.id AS certificate_id, mc.token_id
+         FROM certificate_enrollments e
+         JOIN managed_certificates mc
+           ON mc.workspace_id = e.workspace_id AND mc.id = e.certificate_id
+        WHERE e.workspace_id = $1 AND e.created_at >= $2
+          AND mc.status NOT IN ('decommissioned')
+        ORDER BY e.created_at DESC
+        LIMIT ${MAX_SESSION_CERTIFICATES}`,
+      [workspaceId, since],
+    );
+    for (const row of rows) add(row.certificate_id, row.token_id, "enrollment");
+  }
+  return Array.from(found.values()).slice(0, MAX_SESSION_CERTIFICATES);
 }
 
 /**
@@ -275,7 +321,7 @@ async function loadControllerReality(pool, workspaceId) {
 
 async function loadCertopsReality(
   pool,
-  { workspaceId, role, enabled, since, dryRunJobId, issueJobId },
+  { workspaceId, role, enabled, since, dryRunJobId, issueJobId, publishJobId },
 ) {
   if (enabled !== true) return null;
   if (role !== "admin" && role !== "workspace_manager") return null;
@@ -295,7 +341,15 @@ async function loadCertopsReality(
   const distribution = await loadDistributionReality(pool, workspaceId);
   const dryRun = await loadJobStatus(pool, workspaceId, dryRunJobId);
   const issueJob = await loadJobStatus(pool, workspaceId, issueJobId);
+  const publishJob = await loadJobStatus(pool, workspaceId, publishJobId);
   const adcs = await loadAdcsReality(pool, workspaceId);
+  const sessionCertificates = await loadSessionCertificates(pool, workspaceId, {
+    jobs: [
+      { job: issueJob, source: "issue" },
+      { job: publishJob, source: "publish" },
+    ],
+    since,
+  });
   const controllers = await loadControllerReality(pool, workspaceId);
   return {
     adcs,
@@ -304,6 +358,7 @@ async function loadCertopsReality(
     distribution,
     dryRun,
     issueJob,
+    sessionCertificates,
     certificates: {
       total: certs.rows[0]?.total || 0,
       active: certs.rows[0]?.active || 0,
@@ -321,5 +376,6 @@ module.exports = {
   loadOutboxBacklog,
   loadOverdueEnrollments,
   loadJobStatus,
+  loadSessionCertificates,
   EXECUTION_OPERATIONS,
 };

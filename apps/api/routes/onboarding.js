@@ -130,6 +130,7 @@ router.get(`${BASE}/:flow/summary`, ...guards, async (req, res) => {
           since: session.createdAt,
           dryRunJobId: session.progress?.certops?.dryRunJobId,
           issueJobId: session.progress?.certops?.issueJobId,
+          publishJobId: session.progress?.certops?.vaultPublishJobId,
         }),
       null,
     );

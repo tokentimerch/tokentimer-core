@@ -305,6 +305,82 @@ describe('recipients step: website without a certificate record', () => {
   });
 });
 
+describe.each([
+  ['certops_automate', 'issue'],
+  ['certops_vault', 'publish'],
+  ['certops_adcs', 'enrollment'],
+])('recipients step: %s certificates', (goal, source) => {
+  const made = (tokenId, certificateId = 'c1', as = source) => ({
+    certificateId,
+    tokenId,
+    source: as,
+  });
+  const withCerts = (list, groups = {}) => {
+    const r = reality({ groups });
+    r.certops = { sessionCertificates: list };
+    return r;
+  };
+
+  it('is not done while the certificate carries no group', () => {
+    const r = withCerts([made(41)], { 41: [] });
+    expect(recipients(goal, { reality: r })).toBe(false);
+    // A stored confirmation does not stand in for the tick.
+    expect(
+      recipients(goal, {
+        progress: { recipientsConfirmedFor: goal },
+        reality: r,
+      })
+    ).toBe(false);
+  });
+
+  it('is done once every certificate of this session carries a group', () => {
+    const r = withCerts([made(41), made(42, 'c2')], {
+      41: ['g1'],
+      42: ['g1', 'g2'],
+    });
+    expect(recipients(goal, { reality: r })).toBe(true);
+    const partial = withCerts([made(41), made(42, 'c2')], {
+      41: ['g1'],
+      42: [],
+    });
+    expect(recipients(goal, { reality: partial })).toBe(false);
+  });
+
+  it('reopens when the group stops reaching anyone', () => {
+    const r = withCerts([made(41)], { 41: [] });
+    expect(recipients(goal, { reality: r })).toBe(false);
+  });
+
+  it('is not done against a summary that cannot say which groups are attached', () => {
+    const r = withCerts([made(41)]);
+    delete r.references.tokenGroups;
+    expect(recipients(goal, { reality: r })).toBe(false);
+  });
+
+  it('ignores certificates that belong to another pick', () => {
+    const other = source === 'issue' ? 'enrollment' : 'issue';
+    const r = withCerts([made(41, 'c1', other)], { 41: ['g1'] });
+    expect(recipients(goal, { reality: r })).toBe(false);
+    expect(
+      recipients(goal, {
+        progress: { recipientsConfirmedFor: goal },
+        reality: r,
+      })
+    ).toBe(true);
+  });
+
+  it('falls back to the confirmation while nothing has a token yet', () => {
+    const r = withCerts([made(null)]);
+    expect(recipients(goal, { reality: r })).toBe(false);
+    expect(
+      recipients(goal, {
+        progress: { recipientsConfirmedFor: goal },
+        reality: r,
+      })
+    ).toBe(true);
+  });
+});
+
 describe('recipients step in the planned journey', () => {
   const statusOf = (plan, id) => plan.steps.find(s => s.id === id).status;
 

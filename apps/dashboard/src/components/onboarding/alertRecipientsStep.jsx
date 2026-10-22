@@ -34,15 +34,18 @@ import { GroupRow } from './alertGroupRow.jsx';
 import { describeGroup } from './alertGroups.js';
 import { groupReaches, planGroupDelete } from './alertGroupUsage.js';
 import {
+  DEFAULT_ONLY_NOTE,
   canTickGoal,
   confirmsDefault,
   describeNoToken,
   describeTicks,
+  isDefaultOnlyGoal,
   recipientsSatisfied,
   tickState,
 } from './groupAttachment.js';
 import { useSessionGroupTicks } from './useSessionGroupTicks.js';
 import { useSummaryPolling } from './useSummaryPolling.js';
+import { StatusPanel } from './panels.jsx';
 import { onboardingActions } from '../../utils/onboardingActions.js';
 import { useContactGroupPluralWrites } from '../../utils/contactGroupPluralWrites.jsx';
 
@@ -344,8 +347,9 @@ export function RecipientsStep({ ctx, reviewing = false }) {
 
   const canTick = ticks.status === 'ready' && ticks.items.length > 0;
   const existingIds = new Set(groups.map(g => String(g.id)));
+  const defaultOnly = isDefaultOnlyGoal(goal);
   const sentence =
-    ticks.status === 'blocked'
+    ticks.status === 'blocked' || defaultOnly
       ? ''
       : describeTicks({
           goal,
@@ -403,6 +407,11 @@ export function RecipientsStep({ ctx, reviewing = false }) {
     >
       <VStack align='stretch' spacing={4}>
         {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
+        {defaultOnly ? (
+          <StatusPanel status='info' testId='default-only-note'>
+            {DEFAULT_ONLY_NOTE}
+          </StatusPanel>
+        ) : null}
         <VStack align='stretch' spacing={3} as='section'>
           <HStack
             justify='space-between'

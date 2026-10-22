@@ -79,6 +79,7 @@ function makeCtx({
   goal = 'monitor_https',
   websiteIds = [11, 12],
   assetIds = [],
+  certificates = [],
 } = {}) {
   const tokenIds = [...websiteIds, ...assetIds];
   const monitorIds = websiteIds.map(id => `m${id}`);
@@ -92,6 +93,7 @@ function makeCtx({
     userName: 'Ana',
     summary: {
       monitors: { items: [] },
+      certops: { sessionCertificates: certificates },
       references: {
         tokenIds: { existing: tokenIds },
         assetTokenIds: { existing: assetIds },
@@ -586,14 +588,27 @@ describe('RecipientsStep sentence', () => {
   });
 
   it.each(['alerting', 'certops_observe'])(
-    'shows no ticks and points at the default for %s',
+    'explains there is nothing to tick for %s',
     async goal => {
       mount(makeCtx({ goal, websiteIds: [11], assetIds: [21] }));
-      expect((await sentence()).textContent).toBe(
-        'Alerts for this setup use the group chosen elsewhere, or the workspace default group "Ops".'
+      expect(await screen.findByTestId('default-only-note')).toHaveTextContent(
+        'This setup does not create items that carry their own group. Alerts use the groups below as the workspace default: set the default group and make sure it reaches someone.'
       );
+      expect(screen.queryByTestId('tick-sentence')).toBeNull();
       expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
       expect(actions.getToken).not.toHaveBeenCalled();
+      expect(
+        screen.getByRole('button', { name: 'Create a new group' })
+      ).toBeVisible();
+    }
+  );
+
+  it.each(['import_file', 'monitor_https', 'certops_vault'])(
+    'shows no default-only panel for %s',
+    async goal => {
+      mount(makeCtx({ goal, websiteIds: [], assetIds: [] }));
+      await screen.findByRole('heading', { name: 'Groups in this workspace' });
+      expect(screen.queryByTestId('default-only-note')).toBeNull();
     }
   );
 
@@ -944,6 +959,9 @@ describe('RecipientsStep Continue for goals with ticks', () => {
   );
 });
 
+const certsFor = (source, ids = [31, 32]) =>
+  ids.map((tokenId, i) => ({ certificateId: `c${i}`, tokenId, source }));
+
 describe('RecipientsStep websites without a certificate record', () => {
   const noTokenCtx = () => {
     const ctx = makeCtx({ websiteIds: [] });
@@ -1012,5 +1030,164 @@ describe('RecipientsStep websites without a certificate record', () => {
     expect(
       screen.queryByRole('button', { name: 'Use these groups' })
     ).toBeNull();
+  });
+});
+
+describe.each([
+  ['certops_automate', 'issue'],
+  ['certops_vault', 'publish'],
+  ['certops_adcs', 'enrollment'],
+])('RecipientsStep %s certificates', (goal, source) => {
+  beforeEach(() => {
+    store.settings.contact_groups.push(group('legal', 'Legal'));
+    store.tokens[31] = token(31, ['ops'], 'app.example.com');
+    store.tokens[32] = token(32, ['ops'], 'api.example.com');
+  });
+  const mountCerts = (ctxOver = {}) => {
+    const ctx = makeCtx({
+      goal,
+      websiteIds: [],
+      certificates: certsFor(source),
+      ...ctxOver,
+    });
+    mount(ctx);
+    return ctx;
+  };
+
+  it('lists the groups with ticks for the certificates of this session', async () => {
+    mountCerts();
+    expect(await box('Ops')).toHaveAttribute('aria-checked', 'true');
+    expect(await box('Legal')).toHaveAttribute('aria-checked', 'false');
+    expect(actions.getToken).toHaveBeenCalledWith('31');
+    expect(actions.getToken).toHaveBeenCalledWith('32');
+    expect((await screen.findByTestId('tick-sentence')).textContent).toBe(
+      'Ticked groups receive alerts for the certificates you added in this guide. Anything without a group uses the workspace default group "Ops".'
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Use these groups' })
+    ).toBeNull();
+  });
+
+  it('attaches two groups and detaches one through the token update', async () => {
+    mountCerts();
+    fireEvent.click(await box('Billing'));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Billing' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    );
+    fireEvent.click(await box('Legal'));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Legal' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    );
+    expect(store.tokens[31].contact_group_ids).toEqual([
+      'billing',
+      'legal',
+      'ops',
+    ]);
+    expect(store.tokens[32].contact_group_ids).toEqual([
+      'billing',
+      'legal',
+      'ops',
+    ]);
+    fireEvent.click(await box('Ops'));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Ops' })).toHaveAttribute(
+        'aria-checked',
+        'false'
+      )
+    );
+    expect(store.tokens[31].contact_group_ids).toEqual(['billing', 'legal']);
+    expect(actions.setTokenContactGroups).toHaveBeenCalledWith(
+      '32',
+      ['billing', 'legal'],
+      {}
+    );
+  });
+
+  it('keeps Continue off until every certificate has a group, then releases', async () => {
+    const ctx = mountCerts();
+    ctx.summary.references.tokenGroups = { 31: ['ops'], 32: [] };
+    const off = await screen.findByRole('button', { name: 'Continue' });
+    expect(off).toBeDisabled();
+    expect(screen.getByTestId('continue-hint')).toHaveTextContent(
+      'tick a group'
+    );
+  });
+
+  it('enables Continue when both certificates carry a group', async () => {
+    const ctx = makeCtx({
+      goal,
+      websiteIds: [],
+      certificates: certsFor(source),
+    });
+    ctx.summary.references.tokenGroups = { 31: ['ops'], 32: ['ops'] };
+    mount(ctx);
+    const next = await screen.findByRole('button', { name: 'Continue' });
+    await waitFor(() => expect(next).toBeEnabled());
+    fireEvent.click(next);
+    expect(ctx.release).toHaveBeenCalledTimes(1);
+    expect(ctx.skip).not.toHaveBeenCalled();
+  });
+
+  it('turns ticks off when a certificate cannot be read', async () => {
+    delete store.tokens[32];
+    mountCerts();
+    expect(
+      await screen.findByText(
+        'The groups of your items could not be read, so ticking is turned off.'
+      )
+    ).toBeVisible();
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+  });
+
+  it('turns ticks off past the cap without reading anything', async () => {
+    const many = Array.from({ length: 51 }, (_, i) => 200 + i);
+    mountCerts({ certificates: certsFor(source, many) });
+    expect(
+      await screen.findByText(/more than 50 items, so groups cannot be ticked/)
+    ).toBeVisible();
+    expect(actions.getToken).not.toHaveBeenCalled();
+  });
+
+  it('ignores certificates of another pick and falls back to the default group', async () => {
+    const other = source === 'issue' ? 'enrollment' : 'issue';
+    mountCerts({ certificates: certsFor(other) });
+    expect((await screen.findByTestId('tick-sentence')).textContent).toBe(
+      'Nothing was created yet that could carry a group: the workspace default group "Ops" is used.'
+    );
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    expect(
+      await screen.findByRole('button', { name: 'Use these groups' })
+    ).toBeEnabled();
+    expect(actions.getToken).not.toHaveBeenCalled();
+  });
+
+  it('records the confirmation when nothing was created yet', async () => {
+    const ctx = makeCtx({ goal, websiteIds: [] });
+    mount(ctx);
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Use these groups' })
+    );
+    await waitFor(() => expect(ctx.controller.update).toHaveBeenCalled());
+    const patch = ctx.controller.update.mock.calls[0][0]({ progress: {} });
+    expect(patch.progress).toEqual({ recipientsConfirmedFor: goal });
+  });
+
+  it('says a certificate without a token yet cannot take a group', async () => {
+    mountCerts({
+      certificates: [
+        ...certsFor(source, [31]),
+        { certificateId: 'cx', tokenId: null, source },
+      ],
+    });
+    expect(await screen.findByTestId('no-token-note')).toHaveTextContent(
+      '1 certificate from this setup has no inventory record yet'
+    );
+    expect(await box('Ops')).toHaveAttribute('aria-checked', 'true');
   });
 });
