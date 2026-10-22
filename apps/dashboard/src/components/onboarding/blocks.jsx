@@ -14,6 +14,12 @@ import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { dashboardThemeColors } from '../../styles/theme.js';
 import { SENSITIVE_PATTERN } from './certopsConfig.js';
 
+// Same palette as the agent output panel, so commands and logs look alike.
+const SHELL_BG = '#0f172a';
+const SHELL_BORDER = 'rgba(148, 163, 184, 0.28)';
+const SHELL_TEXT = '#e2e8f0';
+const SHELL_PROMPT = '#4ade80';
+
 /**
  * Error and warning lines. The theme gives every Text a fixed light-mode
  * colour that beats a plain color prop, so these set the colour through the
@@ -68,8 +74,9 @@ export function CopyBlock({
   text,
   language = 'text',
   allowSecret = false,
+  prompt = false,
 }) {
-  const { border, muted } = useDashboardTheme();
+  const { muted } = useDashboardTheme();
   const [copied, setCopied] = useState(false);
   if (!allowSecret && SENSITIVE_PATTERN.test(String(text))) {
     return (
@@ -96,14 +103,20 @@ export function CopyBlock({
           {label}
         </Text>
       ) : null}
+      {/* Always-dark shell panel so a command reads the same in both themes. */}
       <Box
         position='relative'
-        border='1px solid'
-        borderColor={border}
+        bg={SHELL_BG}
+        borderWidth='1px'
+        borderColor={SHELL_BORDER}
         borderRadius='md'
         p={3}
         pr={10}
         overflowX='auto'
+        tabIndex={0}
+        role='group'
+        aria-label={label ? `${label} (command)` : 'Command'}
+        _focusVisible={{ boxShadow: 'outline', outline: 'none' }}
       >
         <Code
           as='pre'
@@ -112,17 +125,30 @@ export function CopyBlock({
           fontSize='xs'
           whiteSpace='pre'
           data-language={language}
+          sx={{ color: `${SHELL_TEXT} !important` }}
         >
+          {prompt ? (
+            <Box
+              as='span'
+              aria-hidden
+              userSelect='none'
+              sx={{ color: `${SHELL_PROMPT} !important` }}
+            >
+              ${' '}
+            </Box>
+          ) : null}
           {text}
         </Code>
         <Tooltip label={copied ? 'Copied' : 'Copy'}>
           <IconButton
             aria-label={`Copy ${label || 'text'}`}
             size='xs'
-            variant='outline'
+            variant='ghost'
             position='absolute'
             top={1}
             right={1}
+            color={SHELL_TEXT}
+            _hover={{ bg: 'whiteAlpha.200' }}
             icon={copied ? <FiCheck /> : <FiCopy />}
             onClick={copy}
           />
