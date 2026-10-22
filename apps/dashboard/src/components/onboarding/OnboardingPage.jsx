@@ -50,6 +50,11 @@ import { resolveNavigation } from './stepNavigation.js';
 import { AssetStep, GoalStep, MonitorStep } from './steps.jsx';
 import { RecipientsStep, VerifyStep } from './recipientAndVerifySteps.jsx';
 import { FileImportStep, IntegrationStep } from './importSteps.jsx';
+import {
+  FileImportModalStep,
+  IntegrationModalStep,
+} from './importModalStep.jsx';
+import { GUIDED_IMPORT_STEPS } from './importFlow.js';
 import { NotificationsStep, SmtpStep } from './notificationSteps.jsx';
 import { ConfigStep, ObjectiveStep } from './certopsSetupSteps.jsx';
 import { AgentStep } from './certopsAgentStep.jsx';
@@ -128,12 +133,21 @@ export function nextSteps(goalId, certops) {
   }
 }
 
+/**
+ * The components for the two import steps. The guided steps are parked (see
+ * importFlow.js); by default the import goals show the regular import dialog.
+ */
+export function importStepComponents(guided = GUIDED_IMPORT_STEPS) {
+  return guided
+    ? { file_import: FileImportStep, integration: IntegrationStep }
+    : { file_import: FileImportModalStep, integration: IntegrationModalStep };
+}
+
 export const STEP_COMPONENTS = {
   goal: GoalStep,
   monitor: MonitorStep,
   asset: AssetStep,
-  file_import: FileImportStep,
-  integration: IntegrationStep,
+  ...importStepComponents(),
   recipients: RecipientsStep,
   notifications: NotificationsStep,
   smtp: SmtpStep,
