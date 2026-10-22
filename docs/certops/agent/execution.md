@@ -95,6 +95,15 @@ control-plane-only concept: at dispatch the control plane translates it to
 protocol `schemaVersion` bump. Agents already deployed in the field execute
 `issue` jobs with no upgrade, byte-identically to a renew.
 
+An issue request names a `certPath` on one agent. A first order that fails
+leaves a `provisioning` entry with no fingerprint, which cannot be retired but
+does not block a retry: requesting the same `certPath` on the same agent again,
+with a new idempotency key, reuses the entry once every earlier issue job has
+failed, been cancelled or been rejected. A path held by a live certificate, or
+by an issue job that is still running or ended with an unknown outcome, returns
+`409 CERTOPS_CERTIFICATE_PATH_IN_USE`. Retire that certificate in the
+inventory, or choose a different `certPath`.
+
 For `renew` (`executeRenewJob`):
 
 1. **Keys** (`src/keys`): the private key lives at
