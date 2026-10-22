@@ -349,6 +349,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
   React.useImperativeHandle(ref, () => ({
     importSelected: importGitlabSelected,
     getSelectedCount: () => selectedRowsGitlab.size,
+    getContactGroupIds: () => bulkContactGroupIds,
     getCredentials: () => ({
       credentials: {
         baseUrl: gitlabBaseUrl || 'https://gitlab.com',

@@ -15,6 +15,7 @@ import ImportAWSForm from '../../src/components/imports/ImportAWSForm.jsx';
 import ImportGCPForm from '../../src/components/imports/ImportGCPForm.jsx';
 import ImportAzureForm from '../../src/components/imports/ImportAzureForm.jsx';
 import ImportGitHubForm from '../../src/components/imports/ImportGitHubForm.jsx';
+import ImportGitLabForm from '../../src/components/imports/ImportGitLabForm.jsx';
 import { IMPORT_DOCS } from '../../src/utils/docsUrls.js';
 
 const {
@@ -795,5 +796,32 @@ describe('Import form docs panel', () => {
       />
     );
     expect(screen.queryByRole('note', { name: 'Learn more' })).toBeNull();
+  });
+
+  it.each([
+    ['ImportGitHubForm', ImportGitHubForm],
+    ['ImportGitLabForm', ImportGitLabForm],
+  ])('%s exposes the groups picked for the import', (_name, Form) => {
+    const ref = React.createRef();
+    renderWithProviders(
+      <Form
+        ref={ref}
+        workspaceId='ws-1'
+        onImportComplete={vi.fn()}
+        onError={vi.fn()}
+        onScanSuccess={vi.fn()}
+        borderColor='gray.200'
+        helpTextColor='gray.500'
+        autoSyncTokenPlaceholder='token'
+        updateQuotaFromResponse={() => true}
+        refreshIntegrationQuota={vi.fn()}
+        isQuotaExceededError={() => false}
+        formatQuotaError={e => e?.message}
+        extractQuotaFromError={() => false}
+        contactGroups={[]}
+        onSelectionChange={vi.fn()}
+      />
+    );
+    expect(ref.current.getContactGroupIds()).toEqual([]);
   });
 });

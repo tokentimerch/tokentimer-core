@@ -324,6 +324,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
   React.useImperativeHandle(ref, () => ({
     importSelected: importGithubSelected,
     getSelectedCount: () => selectedRowsGithub.size,
+    getContactGroupIds: () => bulkContactGroupIds,
     getCredentials: () => ({
       credentials: {
         baseUrl: githubBaseUrl || 'https://api.github.com',

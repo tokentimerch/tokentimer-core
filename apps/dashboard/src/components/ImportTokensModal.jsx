@@ -1677,7 +1677,18 @@ function ImportTokensModalContent({
     setEnableSyncFrequency('daily');
     setEnableSyncTime('09:00');
     setEnableSyncTz(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
-    setAutoSyncGroupIds(normalizeContactGroupIds(bulkContactGroupIds));
+    // The provider form owns the group picked for the import; start from it.
+    const formRef =
+      source === 'github'
+        ? githubFormRef
+        : source === 'gitlab'
+          ? gitlabFormRef
+          : null;
+    setAutoSyncGroupIds(
+      normalizeContactGroupIds(
+        formRef?.current?.getContactGroupIds?.() ?? bulkContactGroupIds
+      )
+    );
     onEnableAutoSyncOpen();
   };
 
