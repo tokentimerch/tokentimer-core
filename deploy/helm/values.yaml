@@ -89,6 +89,8 @@ api:
     periodSeconds: 5
     failureThreshold: 40
 
+  # Extra API env, e.g. the domain checker settings (DOMAIN_CHECKER_*,
+  # SUBFINDER_BIN; see docs/CONFIGURATION.md).
   env: {}
   # Extra envFrom entries. configMapRef.name / secretRef.name support Helm tpl
   # (e.g. '{{ .Release.Name }}-overlay-env').
