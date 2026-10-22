@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FiList } from 'react-icons/fi';
+import { FiArrowLeft, FiList } from 'react-icons/fi';
 import { useSearchParams } from 'react-router';
 import {
   Box,
@@ -32,7 +32,9 @@ import {
 } from './candidateMarks.jsx';
 import { progressForGoalChange } from './sessionTransitions.js';
 
-export function GoalStep({ ctx }) {
+// returnTo is set only when this screen is opened from the steps list while
+// another step is in progress: { title, go }.
+export function GoalStep({ ctx, returnTo = null }) {
   const { muted } = useDashboardTheme();
   const goals = availableGoals(ctx.capabilities);
   // A link such as /onboarding?area=certops opens straight on one area.
@@ -89,9 +91,21 @@ export function GoalStep({ ctx }) {
       description='Pick one. You can come back for the others, and nothing is created until you confirm a step.'
       docs={ctx.docs('quickstart.firstAsset', 'First asset guide')}
       actions={
-        <PrimaryButton onClick={save} isLoading={saving} isDisabled={!choice}>
-          Continue
-        </PrimaryButton>
+        <>
+          {returnTo ? (
+            <DashboardActionButton
+              variant='outline'
+              leftIcon={<FiArrowLeft />}
+              title={returnTo.title}
+              onClick={returnTo.go}
+            >
+              Back to where I was
+            </DashboardActionButton>
+          ) : null}
+          <PrimaryButton onClick={save} isLoading={saving} isDisabled={!choice}>
+            Continue
+          </PrimaryButton>
+        </>
       }
     >
       <VStack align='stretch' spacing={4}>

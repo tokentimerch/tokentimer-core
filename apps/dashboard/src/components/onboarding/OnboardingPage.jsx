@@ -7,8 +7,6 @@ import {
   useState,
 } from 'react';
 import {
-  FiArrowLeft,
-  FiArrowRight,
   FiChevronDown,
   FiChevronUp,
   FiRepeat,
@@ -366,47 +364,6 @@ export function CollapsibleSteps({ steps, shownId, children }) {
   );
 }
 
-/**
- * Back/next controls and a notice while a finished step is being reviewed.
- * Looking at a step never changes what is recorded as done.
- */
-function ReviewBar({ nav, titleOf, onGo, onReturn }) {
-  const { muted } = useDashboardTheme();
-  if (!nav.previousId && !nav.viewing) return null;
-  return (
-    <HStack justify='space-between' flexWrap='wrap' gap={2} mb={3}>
-      <DashboardActionButton
-        size='sm'
-        variant='outline'
-        leftIcon={<FiArrowLeft />}
-        isDisabled={!nav.previousId}
-        onClick={() => onGo(nav.previousId)}
-      >
-        Back{nav.previousId ? `: ${titleOf(nav.previousId)}` : ''}
-      </DashboardActionButton>
-      {nav.viewing ? (
-        <HStack spacing={2} flexWrap='wrap'>
-          <Text fontSize='xs' color={muted}>
-            Reviewing a finished step. Nothing here is lost.
-          </Text>
-          {nav.nextId ? (
-            <DashboardActionButton
-              size='sm'
-              variant='outline'
-              rightIcon={<FiArrowRight />}
-              onClick={() => onGo(nav.nextId)}
-            >
-              Next
-            </DashboardActionButton>
-          ) : null}
-          <PrimaryButton size='sm' onClick={onReturn}>
-            Back to where I was
-          </PrimaryButton>
-        </HStack>
-      ) : null}
-    </HStack>
-  );
-}
 export function DoneCard({ ctx }) {
   const { muted } = useDashboardTheme();
   const smtp = ctx.summary?.alerts?.smtpConfigured;
@@ -660,16 +617,21 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
                   </CollapsibleSteps>
                 </DashboardPanel>
                 <Box as='main' flex='1' minW={0} w='full'>
-                  <ReviewBar
-                    nav={nav}
-                    titleOf={titleOf}
-                    onGo={goToStep}
-                    onReturn={returnToCurrent}
-                  />
                   {plan.complete && !nav.viewing ? (
                     <DoneCard ctx={ctx} />
                   ) : Current ? (
-                    <Current ctx={ctx} reviewing={nav.viewing} />
+                    <Current
+                      ctx={ctx}
+                      reviewing={nav.viewing}
+                      returnTo={
+                        nav.viewing === 'goal' && nav.returnId
+                          ? {
+                              title: titleOf(nav.returnId),
+                              go: returnToCurrent,
+                            }
+                          : null
+                      }
+                    />
                   ) : null}
                 </Box>
               </Flex>

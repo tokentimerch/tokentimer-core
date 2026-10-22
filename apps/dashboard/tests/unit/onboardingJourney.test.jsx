@@ -481,3 +481,119 @@ describe('first-value onboarding journey', () => {
     expect(screen.getByRole('button', { name: 'Save group' })).toBeVisible();
   });
 });
+
+describe('back controls', () => {
+  vi.setConfig({ testTimeout: 15000 });
+  configure({ asyncUtilTimeout: 5000 });
+  beforeEach(() => {
+    window.matchMedia = vi.fn(query => ({
+      matches: false,
+      media: query,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    freshServer();
+  });
+
+  const seed = (goal, extra = {}) => {
+    server.state.session = {
+      exists: true,
+      revision: 2,
+      intent: { goal },
+      progress: {},
+      operationRefs: {},
+      ...extra,
+    };
+  };
+  const noBackControls = () => {
+    expect(screen.queryByRole('button', { name: /^Back(:|$)/ })).toBeNull();
+    expect(screen.queryByText(/Reviewing a finished step/)).toBeNull();
+    expect(screen.queryByText(/Nothing here is lost/)).toBeNull();
+  };
+  // The narrow-screen summary hides the list from the accessibility tree in
+  // jsdom, so look the link up by its label.
+  const railLink = name => screen.findByLabelText(name);
+
+  it('hides Back to where I was on a first visit', async () => {
+    mount();
+    expect(
+      await screen.findByRole('heading', {
+        name: 'What do you want to do first?',
+      })
+    ).toBeVisible();
+    expect(
+      screen.queryByRole('button', { name: 'Back to where I was' })
+    ).toBeNull();
+    noBackControls();
+  });
+
+  it('shows no Back button on the website step and returns from the goal screen', async () => {
+    seed('monitor_https');
+    mount();
+    expect(
+      await screen.findByPlaceholderText('https://example.com')
+    ).toBeVisible();
+    noBackControls();
+
+    await user.click(await railLink('What do you want to do first?, review'));
+    expect(
+      await screen.findByRole('heading', {
+        name: 'What do you want to do first?',
+      })
+    ).toBeVisible();
+    noBackControls();
+    const back = screen.getByRole('button', { name: 'Back to where I was' });
+    await user.click(back);
+
+    expect(
+      await screen.findByPlaceholderText('https://example.com')
+    ).toBeVisible();
+    expect(
+      screen.queryByRole('button', { name: 'Back to where I was' })
+    ).toBeNull();
+  });
+
+  it('shows no Back button or review strip when revisiting a finished step', async () => {
+    seed('monitor_https', {
+      operationRefs: { monitorUrl: 'https://example.com' },
+    });
+    server.state.monitors.push({
+      id: 'm1',
+      url: 'https://example.com',
+      token_id: 41,
+      ssl_valid_to: '2027-03-01T00:00:00Z',
+    });
+    mount();
+    // The alerts step is the one in progress.
+    await screen.findByRole('button', { name: 'Create a new group' });
+    noBackControls();
+
+    await user.click(await railLink('Add the websites to monitor, review'));
+    await waitFor(() =>
+      expect(document.querySelector('li[aria-current=step]')).toHaveTextContent(
+        'Add the websites to monitor'
+      )
+    );
+    noBackControls();
+    expect(
+      screen.queryByRole('button', { name: 'Back to where I was' })
+    ).toBeNull();
+
+    // The steps list is still the way back.
+    await user.click(await railLink('Choose who gets alerted, current step'));
+    expect(
+      await screen.findByRole('button', { name: 'Create a new group' })
+    ).toBeVisible();
+    noBackControls();
+  });
+
+  it('shows no Back button on the asset step', async () => {
+    seed('track_asset');
+    mount();
+    await screen.findByRole('region', { name: /asset/i });
+    noBackControls();
+  });
+});
