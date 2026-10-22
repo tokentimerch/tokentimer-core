@@ -278,7 +278,7 @@ async function scanAzureAD({
     canonicalTenantGuid(providedTenantId) || decodeGraphTokenTid(cleanToken);
   if (!tenantId) {
     const err = new Error(
-      "Azure AD scan is missing a tenant id; cannot safely attribute scan results",
+      "Microsoft Entra ID scan is missing a tenant id; cannot safely attribute scan results",
     );
     err.status = 401;
     throw err;

@@ -7,7 +7,7 @@ describe('formatProviderLabel', () => {
     expect(formatProviderLabel('gitlab')).toBe('GitLab');
     expect(formatProviderLabel('aws')).toBe('AWS');
     expect(formatProviderLabel('azure')).toBe('Azure KV');
-    expect(formatProviderLabel('azure-ad')).toBe('Azure AD');
+    expect(formatProviderLabel('azure-ad')).toBe('Microsoft Entra ID');
     expect(formatProviderLabel('gcp')).toBe('GCP');
     expect(formatProviderLabel('vault')).toBe('HashiCorp Vault');
   });

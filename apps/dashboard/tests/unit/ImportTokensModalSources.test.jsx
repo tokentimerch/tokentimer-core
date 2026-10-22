@@ -181,7 +181,7 @@ describe('ImportTokensModal source options', () => {
       screen.getByRole('button', { name: 'Public certificate PEM import' })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Azure Active Directory' })
+      screen.getByRole('button', { name: 'Microsoft Entra ID' })
     ).toBeInTheDocument();
   });
 
@@ -197,7 +197,7 @@ describe('ImportTokensModal source options', () => {
       'GitHub',
       'AWS',
       'Azure Key Vault',
-      'Azure Active Directory',
+      'Microsoft Entra ID',
       'Google Cloud',
     ].forEach(name =>
       expect(screen.getByRole('button', { name })).toBeInTheDocument()

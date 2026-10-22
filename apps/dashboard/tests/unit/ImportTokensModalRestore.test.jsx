@@ -491,11 +491,13 @@ describe('ImportTokensModal docs panel', () => {
     expect(screen.getAllByRole('note', { name: 'Learn more' })).toHaveLength(1);
   });
 
-  it('shows the Entra ID guide for the Azure AD source', async () => {
+  it('shows the Entra ID guide for the Microsoft Entra ID source', async () => {
     render(renderModal({ provider: 'azure-ad' }));
     const panel = await screen.findByRole('note', { name: 'Learn more' });
     expect(
-      within(panel).getByRole('link', { name: 'Importing from Azure AD' })
+      within(panel).getByRole('link', {
+        name: 'Importing from Microsoft Entra ID',
+      })
     ).toHaveAttribute('href', IMPORT_DOCS.entraId);
   });
 

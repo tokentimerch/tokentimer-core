@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { collapseScanSummaryByType } from '../../src/components/imports/collapseScanSummaryByType';
 
 describe('collapseScanSummaryByType', () => {
-  it('collapses duplicate Azure AD type rows and uses extracted credential counts', () => {
+  it('collapses duplicate Microsoft Entra ID type rows and uses extracted credential counts', () => {
     const rows = collapseScanSummaryByType([
       {
         type: 'applications',

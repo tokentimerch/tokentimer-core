@@ -573,7 +573,7 @@ export const API_ENDPOINTS = {
   // Azure integration (workspace_id required for scan)
   AZURE_SCAN: workspaceId =>
     `/api/v1/integrations/azure/scan?workspace_id=${encodeURIComponent(workspaceId)}`,
-  // Azure AD integration (workspace_id required for scan)
+  // Microsoft Entra ID integration (workspace_id required for scan)
   AZURE_AD_SCAN: workspaceId =>
     `/api/v1/integrations/azure-ad/scan?workspace_id=${encodeURIComponent(workspaceId)}`,
   // GCP integration (workspace_id required for scan)
@@ -1595,7 +1595,7 @@ export const gcpAPI = {
   },
 };
 
-// Azure AD integration API
+// Microsoft Entra ID integration API
 export const azureADAPI = {
   scan: async ({
     workspaceId,
@@ -1633,7 +1633,7 @@ export const azureADAPI = {
       );
       return res.data; // { items, summary }
     } catch (e) {
-      const errorMessage = handleApiError(e, 'Azure AD scan failed');
+      const errorMessage = handleApiError(e, 'Microsoft Entra ID scan failed');
       const err = new Error(errorMessage);
       err.code = e.response?.data?.code;
       err.quota = e.response?.data?.quota;

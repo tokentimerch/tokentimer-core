@@ -21,7 +21,7 @@ const AZURE_BADGES = {
   'azure-ad': {
     icon: FiUsers,
     bg: 'purple.500',
-    label: 'Azure Active Directory',
+    label: 'Microsoft Entra ID',
   },
 };
 

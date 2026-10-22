@@ -1171,7 +1171,7 @@ function ImportTokensModalContent({
   const [_gcpSummary, _setGcpSummary] = React.useState([]);
   const [_selectedRowsGcp, setSelectedRowsGcp] = React.useState(new Set());
 
-  // Azure AD state
+  // Microsoft Entra ID state
   const [azureADToken, setAzureADToken] = React.useState('');
   const [azureADAuthMethod, setAzureADAuthMethod] = React.useState('token');
   const [azureADTenantId, setAzureADTenantId] = React.useState('');
@@ -2305,7 +2305,7 @@ function ImportTokensModalContent({
     });
   };
 
-  // Azure AD scan and import
+  // Microsoft Entra ID scan and import
   const doAzureADScan = async () => {
     const workspaceId = getWorkspaceId();
     if (!workspaceId) {
@@ -2371,7 +2371,7 @@ function ImportTokensModalContent({
       if (isQuotaExceededError(e)) {
         setError(formatQuotaError(e));
       } else {
-        setError(e?.message || 'Azure AD scan failed');
+        setError(e?.message || 'Microsoft Entra ID scan failed');
       }
       // Extract quota from error response, or refresh if not present
       if (!extractQuotaFromError(e)) {
@@ -2418,7 +2418,7 @@ function ImportTokensModalContent({
       });
       onImported && onImported(selected);
     } catch (e) {
-      setError(e?.message || 'Azure AD import failed');
+      setError(e?.message || 'Microsoft Entra ID import failed');
     } finally {
       setIsImporting(false);
     }
@@ -2765,8 +2765,8 @@ function ImportTokensModalContent({
                     },
                     {
                       key: 'azure-ad',
-                      label: 'Azure AD',
-                      alt: 'Azure Active Directory',
+                      label: 'Microsoft Entra ID',
+                      alt: 'Microsoft Entra ID',
                     },
                     {
                       key: 'gcp',
@@ -3480,8 +3480,8 @@ function ImportTokensModalContent({
                   {!autoSyncManageMode ? (
                     <Box>
                       <Text fontSize='sm' color={muted}>
-                        Scans Azure AD for app registrations and service
-                        principals with expiring client secrets and
+                        Scans Microsoft Entra ID for app registrations and
+                        service principals with expiring client secrets and
                         certificates. Pasted Graph tokens and Entra app client
                         credentials are stored encrypted if auto-sync is
                         enabled. Application.Read.All is the recommended Graph
@@ -3493,7 +3493,7 @@ function ImportTokensModalContent({
                           mt={2}
                           links={[
                             {
-                              label: 'Importing from Azure AD',
+                              label: 'Importing from Microsoft Entra ID',
                               url: IMPORT_DOCS.entraId,
                             },
                           ]}
