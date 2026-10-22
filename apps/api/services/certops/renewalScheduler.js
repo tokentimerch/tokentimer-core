@@ -56,7 +56,7 @@ const {
   resolveRenewalPerCaCap,
 } = require("./renewalCapacity");
 const { writeAudit } = require("../audit");
-const { createEnrollment } = require("./certificateEnrollments");
+const { createEnrollment, findOpenEnrollment } = require("./certificateEnrollments");
 const { validateAdcsRenewalProfile } = require("./adcsRenewalRules");
 const {
   loadCurrentAdcsIssuerVersion,
@@ -419,19 +419,6 @@ function adcsFieldsFromProfile(certificate) {
   };
 }
 
-const OPEN_ENROLLMENT_STATES = [
-  "requested",
-  "prepared",
-  "submitting",
-  "pending_issuance",
-  "submission_uncertain",
-  "issued",
-  "validation_deferred",
-  "validated",
-  "installing",
-  "install_failed",
-];
-
 async function createAutomaticAdcsRenewal({
   dbPool,
   certificate,
@@ -484,16 +471,8 @@ async function createAutomaticAdcsRenewal({
       : CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE;
     throw error;
   }
-  const open = await dbPool.query(
-    `SELECT id
-       FROM certificate_enrollments
-      WHERE workspace_id = $1
-        AND certificate_id = $2
-        AND state = ANY($3::text[])
-      LIMIT 1`,
-    [certificate.workspace_id, certificate.id, OPEN_ENROLLMENT_STATES],
-  );
-  if (open.rows[0]) return { job: { id: null, operation: "renew" }, created: false };
+  const open = await findOpenEnrollment(dbPool, certificate.workspace_id, certificate.id);
+  if (open) return { job: { id: null, operation: "renew" }, created: false };
 
   const idempotencyKey = renewalIdempotencyKey(
     certificate.id,
@@ -540,7 +519,7 @@ async function createAutomaticAdcsRenewal({
       keySize: fields.keySize,
     });
   } catch (error) {
-    if (error?.code === "CERTOPS_ENROLLMENT_REPLAY") {
+    if (["CERTOPS_ENROLLMENT_REPLAY", "CERTOPS_ENROLLMENT_OPEN"].includes(error?.code)) {
       return { job: { id: null, operation: "renew" }, created: false };
     }
     throw error;

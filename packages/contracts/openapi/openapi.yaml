@@ -5499,6 +5499,8 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: CERTOPS_ENROLLMENT_OPEN when this certificate already has an open enrollment; cancel or abandon it before creating another. CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED when the CA admission limit is reached.
         "500": { $ref: "#/components/responses/InternalError" }
     post:
       tags: [CertOps]
@@ -5581,6 +5583,8 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: CERTOPS_ENROLLMENT_OPEN when this certificate already has an open enrollment; cancel or abandon it before creating another. CERTOPS_ADCS_PER_CA_CAP_REACHED when the CA admission limit is reached.
         "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/workspaces/{id}/certops/enrollments/meter:
     get:

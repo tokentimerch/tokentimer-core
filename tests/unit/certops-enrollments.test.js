@@ -275,6 +275,7 @@ const WEBHOSTING = {
 function profileEnrollmentDb(versionRow) {
   return {
     async query(sql) {
+      if (sql.includes("pg_advisory_xact_lock") || (sql.includes("SELECT id FROM certificate_enrollments") && sql.includes("state = ANY"))) return { rows: [] };
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
       if (sql.includes("FROM certificate_profiles")) return { rows: [{ issuer_id: ISSUER }] };
       if (sql.includes("FROM certificate_issuer_versions")) {
@@ -365,6 +366,9 @@ function rowDb() {
         return { rows: [] };
       }
       if (text.includes("pg_advisory_xact_lock")) return { rows: [] };
+      if (text.startsWith("SELECT id FROM certificate_enrollments") && text.includes("state = ANY")) {
+        return { rows: [...enrollments.values()].filter(row => row.workspace_id === params[0] && row.certificate_id === params[1] && params[2].includes(row.state)).slice(0, 1) };
+      }
       if (text.includes("certops_normalize_fingerprint(mc.fingerprint_sha256)") && text.includes("identity.lifecycle_status")) {
         return { rows: [{ lifecycle_status: this.lifecycleStatus ?? null }] };
       }
@@ -1302,6 +1306,7 @@ describe("enrollment rows", () => {
   it("keeps ACME profiles off the AD CS enrollment path", async () => {
     const db = {
       async query(sql) {
+        if (sql.includes("pg_advisory_xact_lock") || (sql.includes("SELECT id FROM certificate_enrollments") && sql.includes("state = ANY"))) return { rows: [] };
         if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
         if (sql.includes("FROM certificate_profiles")) return { rows: [{ issuer_id: null }] };
         throw new Error(sql);
@@ -1330,6 +1335,7 @@ describe("enrollment rows", () => {
     const other = "99999999-9999-4999-8999-999999999999";
     const db = {
       async query(sql) {
+        if (sql.includes("pg_advisory_xact_lock") || (sql.includes("SELECT id FROM certificate_enrollments") && sql.includes("state = ANY"))) return { rows: [] };
         if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
         if (sql.includes("FROM certificate_profiles")) return { rows: [{ issuer_id: other }] };
         throw new Error(sql);
@@ -1487,6 +1493,7 @@ describe("enrollment rows", () => {
     const frozen = freezeSnapshot(snapshotInput());
     const db = {
       async query(sql) {
+
         if (sql.includes("ORDER BY i.name")) {
           return {
             rows: [{
@@ -1567,6 +1574,7 @@ describe("enrollment rows", () => {
     const seen = [];
     const db = {
       async query(sql) {
+
         seen.push(sql);
         if (sql.includes("count(*)")) return { rows: [{ n: 0 }] };
         return { rows: [] };
@@ -1591,6 +1599,7 @@ describe("enrollment rows", () => {
   it("discards only a version-0 issuer that has no enrollments", async () => {
     const db = {
       async query(sql) {
+
         assert.match(sql, /current_version = 0/);
         assert.match(sql, /NOT EXISTS/);
         assert.match(sql, /certificate_enrollments/);

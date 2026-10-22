@@ -65,14 +65,14 @@
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "0229c2940a55139bf3910f3e7844c346fada10a4abfa0302cc83c9ba07387d4b"
+          "sha256": "5aa4871c08f4c78492108c83da16285ab00a78ed96c3f758a65aa28c634b8fb4"
         },
         {
           "id": "integration-openapi-spec",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "0229c2940a55139bf3910f3e7844c346fada10a4abfa0302cc83c9ba07387d4b"
+          "sha256": "5aa4871c08f4c78492108c83da16285ab00a78ed96c3f758a65aa28c634b8fb4"
         },
         {
           "id": "auth-route-compat-contract",
