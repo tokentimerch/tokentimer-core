@@ -2337,6 +2337,7 @@ paths:
                   additionalProperties: true
                 scan_params:
                   type: object
+                  description: Scan filters and scope. `contactGroupIds` (array of contact group IDs) sets the alert groups for assets this configuration creates; assets it already imported or later edited keep their groups, and an empty or missing list uses the workspace default. Changing it does not restart a scan.
                   additionalProperties: true
                 frequency:
                   type: string

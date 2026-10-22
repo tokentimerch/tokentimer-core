@@ -10,6 +10,8 @@ Inventory identity is the existing `(workspace, provider, instance, owner key, s
 
 `auto_sync_managed` is false by default. Only creation inside a validated fenced import makes it true. Rediscovery of existing inventory never changes it to true. Manual integration import or confirmed CSV/JSON duplicate import makes it false. Deleting a configuration detaches its associations; otherwise orphaned inventory becomes unmanaged and remains present. Other configurations still protect their associations.
 
+Alert groups: a configuration may carry `scan_params.contactGroupIds`. Assets a run creates get those groups; assets that already exist keep theirs, so a sync never overwrites a group an operator changed. Without it, new assets use the workspace default group. A group that was deleted since is ignored for that run instead of failing it. Groups chosen in the import dialog apply only to what was imported then.
+
 ## Run and transaction boundaries
 
 Claiming a due configuration locks its row with `FOR UPDATE SKIP LOCKED`, increments its generation, assigns a random run ID and lease owner, and records an allowlisted non-secret settings snapshot. The lease lasts 300 seconds and is renewed every 60 seconds. An expired owner cannot renew or write; the next claim supersedes its run and advances generation. Import, scan persistence, association writes and completion lock and validate the current configuration/run/generation/scan-version/owner in PostgreSQL. Provider calls occur outside the claim transaction.
