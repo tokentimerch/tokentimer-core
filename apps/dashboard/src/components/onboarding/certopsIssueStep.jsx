@@ -309,6 +309,7 @@ export default function IssueStep({ ctx }) {
                 label='Restart the agent'
                 text={restartCommand}
                 prompt
+                inheritLabelColor
               />
               <Checkbox
                 size='sm'
@@ -319,7 +320,7 @@ export default function IssueStep({ ctx }) {
                 I set dryRun to false and restarted the agent
               </Checkbox>
               {!acknowledged ? (
-                <Text fontSize='xs' color={muted} data-testid='ack-hint'>
+                <Text fontSize='xs' color='inherit' data-testid='ack-hint'>
                   The request button stays disabled until you tick this box
                   {gate.ok ? '.' : ` and ${gate.missing.join(', ')} are ready.`}
                 </Text>

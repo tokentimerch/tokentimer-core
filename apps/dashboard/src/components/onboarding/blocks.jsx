@@ -75,6 +75,8 @@ export function CopyBlock({
   language = 'text',
   allowSecret = false,
   prompt = false,
+  // Inside a tinted panel the muted gray can fall under AA; inherit instead.
+  inheritLabelColor = false,
 }) {
   const { muted } = useDashboardTheme();
   const [copied, setCopied] = useState(false);
@@ -99,7 +101,11 @@ export function CopyBlock({
   return (
     <VStack align='stretch' spacing={1}>
       {label ? (
-        <Text fontSize='xs' color={muted} fontWeight='semibold'>
+        <Text
+          fontSize='xs'
+          color={inheritLabelColor ? 'inherit' : muted}
+          fontWeight='semibold'
+        >
           {label}
         </Text>
       ) : null}
