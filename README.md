@@ -106,7 +106,7 @@ Notify teams through email, Slack, Microsoft Teams, Discord, PagerDuty, WhatsApp
 
 ### Native integrations, auto-sync, and automated discovery
 
-Connect TokenTimer to providers like HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, Azure AD, GCP Secret Manager, GitHub, and GitLab to automatically import and keep expiration metadata up to date, discover public subdomains for SSL certificate imports, and monitor HTTPS endpoints for SSL expiry and health.
+Connect TokenTimer to providers like HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, Microsoft Entra ID, GCP Secret Manager, GitHub, and GitLab to automatically import and keep expiration metadata up to date, discover public subdomains for SSL certificate imports, and monitor HTTPS endpoints for SSL expiry and health.
 
 <p align="center">
   <img src="docs/assets/dashboard-workflow.gif" alt="Import, subdomain discovery, and dashboard filtering in TokenTimer" width="888" />
