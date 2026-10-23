@@ -3243,6 +3243,23 @@ paths:
                                           type: boolean
                                         safe:
                                           type: boolean
+                                        configured:
+                                          type: boolean
+                                          description: The issuer has a saved version (a CA certificate was chosen at least once).
+                                        checked:
+                                          type: boolean
+                                          description: A CA check has reported for this issuer.
+                                        caConfig:
+                                          type: string
+                                          nullable: true
+                                        template:
+                                          type: string
+                                          nullable: true
+                                        reasons:
+                                          type: array
+                                          description: Up to 6 reasons the last check gave, template then CA.
+                                          items:
+                                            type: string
                                       additionalProperties: true
                                   profiles:
                                     type: integer

@@ -140,6 +140,45 @@ describe("loadAdcsReality", () => {
   });
 });
 
+describe("loadAdcsReality issuer facts", () => {
+  it("reports why a check failed without exposing the raw preflight", async () => {
+    const issuerRow = {
+      id: "i1",
+      name: "Corp CA",
+      confirmed: false,
+      current_version: 0,
+      last_preflight: {
+        caConfig: "ca01.corp.example.com\\Corp CA",
+        template: "WebServer",
+        templateCheck: { verdict: "unsafe", reasons: ["template_not_found"] },
+        caCheck: { verdict: "safe", reasons: [] },
+        caCertificates: [{ keySha256: "secret-ish" }],
+      },
+    };
+    const answers = [
+      { rows: [issuerRow, { id: "i2", name: "Draft", current_version: 0, last_preflight: null }] },
+      { rows: [{ n: 0 }] },
+      { rows: [{ installed: 0 }] },
+      { rows: [] },
+    ];
+    const pool = { query: async () => answers.shift() };
+    const { issuers } = await loadAdcsReality(pool, "w");
+    assert.deepEqual(issuers[0], {
+      id: "i1",
+      name: "Corp CA",
+      confirmed: false,
+      safe: false,
+      configured: false,
+      checked: true,
+      caConfig: "ca01.corp.example.com\\Corp CA",
+      template: "WebServer",
+      reasons: ["template_not_found"],
+    });
+    assert.equal(issuers[1].checked, false);
+    assert.deepEqual(issuers[1].reasons, []);
+    assert.equal(issuers[1].caConfig, null);
+  });
+});
 const NOW = Date.parse("2026-10-21T12:00:00.000Z");
 const minutesAgo = (m) => new Date(NOW - m * 60 * 1000).toISOString();
 const snapshotBytes = (pollInterval) =>

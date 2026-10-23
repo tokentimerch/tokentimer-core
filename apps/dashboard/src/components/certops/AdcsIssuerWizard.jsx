@@ -140,8 +140,15 @@ export default function AdcsIssuerWizard({
   agents,
   paused,
   onChanged,
+  initialName = '',
+  initialAgentId = '',
+  initialCaConfig = '',
+  initialTemplate = '',
 }) {
   const modal = useDashboardModalProps();
+  const seedRef = useRef({});
+  seedRef.current = { initialName, initialCaConfig, initialTemplate };
+  const agentSeededRef = useRef(false);
   const [step, setStep] = useState(0);
   const [name, setName] = useState('');
   const [issuer, setIssuer] = useState(null);
@@ -167,11 +174,25 @@ export default function AdcsIssuerWizard({
       setBusy(false);
       setWaiting(false);
       setLocalError('');
+      agentSeededRef.current = false;
       return;
     }
     finishedRef.current = false;
     draftIdRef.current = null;
+    // Callers may prefill the form; the operator can still change it.
+    const seed = seedRef.current;
+    setName(seed.initialName || '');
+    setCaConfig(seed.initialCaConfig || '');
+    setTemplate(seed.initialTemplate || '');
   }, [isOpen]);
+
+  // The agent list can arrive after the dialog opens, so seed it once.
+  useEffect(() => {
+    if (!isOpen || agentSeededRef.current || !initialAgentId) return;
+    if (!agents.some(agent => agent.id === initialAgentId)) return;
+    agentSeededRef.current = true;
+    setAgentId(initialAgentId);
+  }, [isOpen, initialAgentId, agents]);
 
   useEffect(() => {
     if (!isOpen || !waiting || !issuer?.id) return undefined;
@@ -208,18 +229,25 @@ export default function AdcsIssuerWizard({
           }
         }
         const expected = expectedPairRef.current;
-        const pairMatches =
+        const pairMatches = Boolean(
           current?.lastPreflight?.caConfig === expected?.caConfig &&
           current?.lastPreflight?.template === expected?.template &&
           current?.lastPreflightJobId &&
-          current.lastPreflightJobId !== expected?.previousJobId;
+          current.lastPreflightJobId !== expected?.previousJobId
+        );
         const safe =
           pairMatches &&
           current?.lastPreflight?.templateCheck?.verdict === 'safe' &&
           current?.lastPreflight?.caCheck?.verdict === 'safe';
-        if (safe || attempts >= 20) {
+        if (safe || pairMatches || attempts >= 20) {
           setWaiting(false);
           if (safe) setStep(2);
+          else if (!pairMatches) {
+            // Without this the dialog just stops waiting and says nothing.
+            setLocalError(
+              'The agent has not reported a verdict yet. Check that it is online, that its enrollment rule names this CA config and template, and that TokenTimerAgent was restarted after the rule was saved. Then run the check again.'
+            );
+          }
         }
       } catch (err) {
         if (!cancelled) {

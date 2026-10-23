@@ -191,6 +191,26 @@ async function loadSessionCertificates(
   return Array.from(found.values()).slice(0, MAX_SESSION_CERTIFICATES);
 }
 
+const PREFLIGHT_REASON_LIMIT = 6;
+
+// What the guide needs to tell a draft from a failed check: whether a check
+// has reported, the CA and template it ran against, and why it was unsafe.
+function preflightFacts(row) {
+  const pre = row.last_preflight;
+  const reasons = [pre?.templateCheck, pre?.caCheck]
+    .flatMap((check) => (Array.isArray(check?.reasons) ? check.reasons : []))
+    .filter((r) => typeof r === "string" && r)
+    .map((r) => r.slice(0, 200))
+    .slice(0, PREFLIGHT_REASON_LIMIT);
+  return {
+    configured: Number(row.current_version) > 0,
+    checked: Boolean(pre),
+    caConfig: typeof pre?.caConfig === "string" ? pre.caConfig : null,
+    template: typeof pre?.template === "string" ? pre.template : null,
+    reasons,
+  };
+}
+
 /**
  * AD CS issuers and profiles, by name and state only. An issuer counts as
  * confirmed once its current version has a pinned CA certificate, and as safe
@@ -198,7 +218,7 @@ async function loadSessionCertificates(
  */
 async function loadAdcsReality(pool, workspaceId, { now = Date.now() } = {}) {
   const issuers = await pool.query(
-    `SELECT i.id, i.name, i.last_preflight,
+    `SELECT i.id, i.name, i.last_preflight, i.current_version,
             (v.confirmed_at IS NOT NULL AND v.ca_key_sha256 IS NOT NULL) AS confirmed
        FROM certificate_issuers i
        LEFT JOIN certificate_issuer_versions v
@@ -230,6 +250,7 @@ async function loadAdcsReality(pool, workspaceId, { now = Date.now() } = {}) {
       safe:
         row.last_preflight?.templateCheck?.verdict === "safe" &&
         row.last_preflight?.caCheck?.verdict === "safe",
+      ...preflightFacts(row),
     })),
     profiles: profiles.rows[0]?.n || 0,
     installedEnrollments: enrollments.rows[0]?.installed || 0,

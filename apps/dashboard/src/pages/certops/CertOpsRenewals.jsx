@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   AlertDescription,
@@ -7,9 +7,13 @@ import {
   SimpleGrid,
 } from '@chakra-ui/react';
 import { FiRefreshCw, FiServer } from 'react-icons/fi';
-import { useOutletContext } from 'react-router';
+import { useOutletContext, useSearchParams } from 'react-router';
 import { SettingsIntegrationCard } from '../../components/SettingsIntegrationHub.jsx';
 import RenewalProfilesPanel from '../../components/certops/RenewalProfilesPanel.jsx';
+import {
+  parseAdcsIssuerRequest,
+  withoutAdcsIssuerRequest,
+} from '../../components/certops/adcsIssuerLink.js';
 import CertOpsAdcs from './CertOpsAdcs.jsx';
 
 function ProfilesDisclosure() {
@@ -30,8 +34,13 @@ function ProfilesDisclosure() {
   );
 }
 
-function AdcsDisclosure() {
-  const [open, setOpen] = useState(false);
+function AdcsDisclosure({ openRequest, onRequestHandled }) {
+  const [open, setOpen] = useState(Boolean(openRequest));
+
+  // A link to the New issuer dialog needs the section open first.
+  useEffect(() => {
+    if (openRequest) setOpen(true);
+  }, [openRequest]);
 
   return (
     <SettingsIntegrationCard
@@ -44,7 +53,10 @@ function AdcsDisclosure() {
       unmountOnExit
       panelId='certops-adcs-section'
     >
-      <CertOpsAdcs />
+      <CertOpsAdcs
+        openRequest={openRequest}
+        onRequestHandled={onRequestHandled}
+      />
     </SettingsIntegrationCard>
   );
 }
@@ -58,6 +70,18 @@ function AdcsDisclosure() {
  */
 export default function CertOpsRenewals() {
   const { certOpsPaused } = useOutletContext() || {};
+  const [searchParams, setSearchParams] = useSearchParams();
+  // ?action=new-adcs-issuer opens the dialog, then the parameters are removed
+  // so a reload or a shared URL does not open it again.
+  const issuerRequest = useMemo(
+    () => parseAdcsIssuerRequest(searchParams),
+    [searchParams]
+  );
+  const clearIssuerRequest = useCallback(() => {
+    setSearchParams(current => withoutAdcsIssuerRequest(current), {
+      replace: true,
+    });
+  }, [setSearchParams]);
 
   return (
     <SimpleGrid columns={{ base: 1 }} spacing={3}>
@@ -74,7 +98,10 @@ export default function CertOpsRenewals() {
         </Alert>
       ) : null}
       <ProfilesDisclosure />
-      <AdcsDisclosure />
+      <AdcsDisclosure
+        openRequest={issuerRequest}
+        onRequestHandled={clearIssuerRequest}
+      />
     </SimpleGrid>
   );
 }

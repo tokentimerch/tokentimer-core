@@ -22,7 +22,7 @@ export const STEP_DEFS = {
   certops_config: { title: 'Prepare the agent configuration', kind: 'runbook' },
   certops_execution: { title: 'Turn on execution safely', kind: 'verify' },
   certops_first: { title: 'See your first certificate', kind: 'verify' },
-  certops_adcs: { title: 'Connect your Microsoft CA', kind: 'runbook' },
+  certops_adcs: { title: 'Connect your Microsoft CA', kind: 'ui' },
   certops_vault: {
     title: 'Share a certificate through Vault',
     kind: 'runbook',

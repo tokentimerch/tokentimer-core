@@ -217,10 +217,44 @@ export function buildAdcsConfig(args) {
 export const ADCS_DRY_RUN_NOTE =
   'This file starts in dry run (execution.dryRun is true). The CA check works, but the agent refuses real enrollment. After the issuer has passed its check, set dryRun to false and restart TokenTimerAgent. The agent authenticates as its computer account, so no credential goes in this file.';
 
+/**
+ * Where the AD CS issuer stands, read from the setup summary: ready (pinned
+ * and its check passed), failed (the check found a problem), unpinned (the
+ * check passed but no CA certificate was chosen), pending (no verdict yet) or
+ * none. The newest issuer decides when none is ready. A summary from an older
+ * server has no checked flag, so an issuer that is not safe reads as failed.
+ */
+export function adcsIssuerState(adcs) {
+  const issuers = adcs?.issuers || [];
+  const ready = issuers.find(i => i.confirmed && i.safe);
+  if (ready) return { kind: 'ready', issuer: ready };
+  const latest = issuers[0];
+  if (!latest) return { kind: 'none', issuer: null };
+  if (latest.checked === false) return { kind: 'pending', issuer: latest };
+  if (!latest.safe) return { kind: 'failed', issuer: latest };
+  return { kind: 'unpinned', issuer: latest };
+}
+
+/** What a failed check says and what to do about it. */
+export function adcsFailureAdvice(issuer) {
+  const reasons = Array.isArray(issuer?.reasons)
+    ? issuer.reasons.filter(Boolean)
+    : [];
+  const pair =
+    issuer?.caConfig && issuer?.template
+      ? `${issuer.caConfig} with template ${issuer.template}`
+      : '';
+  return {
+    reasons,
+    pair,
+    action:
+      'Fix the CA name or the template, make sure the agent enrollment rule names the same pair, then add the issuer again.',
+  };
+}
 /** What the person still has to do after the guide has prepared its part. */
 export const ADCS_REMAINING_STEPS = [
   'Join the Windows server to the domain (it must not be a domain controller) and grant the computer account Enroll on the template.',
-  'In Certificate Management, Renewals, open AD CS issuers and create the issuer with the same CA and template, then pin the CA certificate. Renewal needs a CA check taken after the pin, so choose Check again on the issuer once more.',
-  'Create an AD CS renewal profile for the site and attach it to the certificate.',
+  'Renewal needs a CA check taken after the CA certificate was pinned. On the issuer in Renewals, choose Check again once more.',
+  'Attach the renewal profile to the site certificate if the profile dialog could not, then watch the first enrollment in Certificate Management.',
   'Once the issuer has passed its CA check, set "dryRun" to false under "execution" in the saved config.json and restart TokenTimerAgent. Until then the agent refuses real enrollment and only the CA check runs.',
 ];
