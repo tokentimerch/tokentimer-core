@@ -2981,6 +2981,7 @@ paths:
                     `certops.chosenAgentConfirmed` echoes it once confirmed.
                     Clients that do not know the fields ignore them.
                   additionalProperties: true
+                operation_refs:
                   type: object
                   additionalProperties: true
       responses:
