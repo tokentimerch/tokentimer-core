@@ -114,7 +114,7 @@ export default function IssueStep({ ctx }) {
     certops?.agents?.items,
     saved.objective,
     effectiveInfrastructure(saved.objective, saved.infrastructure),
-    saved.reusedAgentId
+    saved.chosenAgentId
   );
   const job = certops?.issueJob;
   const view = issueView(job);

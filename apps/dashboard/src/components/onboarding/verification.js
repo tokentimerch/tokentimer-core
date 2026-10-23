@@ -101,6 +101,7 @@ export function evaluateVerification({
   summary,
   infrastructure,
   clusterId,
+  agentId,
 }) {
   const checks = [];
 
@@ -221,7 +222,7 @@ export function evaluateVerification({
       // another platform choice is not evidence for this one.
       const objective = goal.slice('certops_'.length);
       const infra = effectiveInfrastructure(objective, infrastructure);
-      const live = scopeAgents(certops.agents, infra)?.live || 0;
+      const live = scopeAgents(certops.agents, infra, agentId)?.live || 0;
       const clusters = (certops.controllers?.clusters || []).filter(
         c => !clusterId || c.clusterId === clusterId
       );
@@ -262,6 +263,7 @@ export function evaluateVerification({
       const certs = reportedCertificates(certops, {
         infrastructure: infra,
         clusterId,
+        agentId,
       });
       checks.push(
         certs > 0

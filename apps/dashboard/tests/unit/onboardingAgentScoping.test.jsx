@@ -6,6 +6,8 @@ import { AgentStep } from '../../src/components/onboarding/certopsAgentStep.jsx'
 import { FirstCertificateStep } from '../../src/components/onboarding/certopsFinalSteps.jsx';
 import { planJourney } from '../../src/components/onboarding/journeyPlanner.js';
 import {
+  agentFitsSetup,
+  agentMismatch,
   agentOnPlatform,
   pickGoalAgent,
   pickSetupAgent,
@@ -17,7 +19,10 @@ import {
   installerOptionsFor,
   installerOptionsKey,
 } from '../../src/components/onboarding/certopsConfig.js';
-import { chooseInfrastructure } from '../../src/components/onboarding/certopsScope.js';
+import {
+  chooseInfrastructure,
+  scopeCertops,
+} from '../../src/components/onboarding/certopsScope.js';
 import { finishesByItself } from '../../src/components/onboarding/heldSteps.js';
 import { evaluateVerification } from '../../src/components/onboarding/verification.js';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
@@ -286,40 +291,16 @@ describe('agent satisfaction is a function of the pick', () => {
   });
 });
 
-describe('an agent that existed before the session', () => {
+describe('without the checkbox, a pre-existing agent is never used', () => {
   const old = { ...lin, existedBeforeSession: true };
   const pick = PICKS[0];
 
-  it('does not finish the install step until the operator reuses it', () => {
+  it('the install step keeps waiting for a new agent', () => {
     expect(setupAgentReady({ live: 1, items: [old] }, 'observe', 'linux')).toBe(
       false
     );
     expect(status(plan(pick, [old]), 'certops_agent')).toBe('current');
-    expect(
-      status(
-        plan(pick, [old], { progress: { reusedAgentId: 'lin-row' } }),
-        'certops_agent'
-      )
-    ).toBe('done');
-  });
-
-  it('a reuse choice for another agent does not count', () => {
-    expect(
-      status(
-        plan(pick, [old], { progress: { reusedAgentId: 'other-row' } }),
-        'certops_agent'
-      )
-    ).toBe('current');
-  });
-
-  it('a Windows agent can never be the reused one for a Linux pick', () => {
-    const oldWin = { ...win, existedBeforeSession: true };
-    expect(
-      status(
-        plan(pick, [oldWin], { progress: { reusedAgentId: 'win-row' } }),
-        'certops_agent'
-      )
-    ).toBe('current');
+    expect(status(plan(pick, [old]), 'certops_first')).not.toBe('done');
   });
 
   it('an agent enrolled during the session counts at once', () => {
@@ -331,62 +312,274 @@ describe('an agent that existed before the session', () => {
     ).toBe('done');
   });
 
-  it('a new agent wins over a reusable one for every job target', () => {
+  it('summaries that do not say when the agent was created read as new', () => {
+    expect(status(plan(pick, [lin]), 'certops_agent')).toBe('done');
+  });
+
+  it('a new agent is the one every job targets, the old one is ignored', () => {
     const fresh = { ...lin, id: 'fresh-row', existedBeforeSession: false };
+    expect(pickGoalAgent([old], 'observe', 'linux')).toBeUndefined();
+    expect(pickSetupAgent([old], 'observe', 'linux')).toBeUndefined();
     expect(pickGoalAgent([old, fresh], 'observe', 'linux').id).toBe(
       'fresh-row'
     );
     expect(pickSetupAgent([old, fresh], 'observe', 'linux').id).toBe(
       'fresh-row'
     );
-    expect(pickGoalAgent([old, fresh], 'observe', 'linux', 'lin-row').id).toBe(
-      'lin-row'
-    );
   });
 
-  it('the first certificate waits for the reuse choice', () => {
-    expect(status(plan(pick, [old]), 'certops_first')).not.toBe('done');
-    expect(
-      status(
-        plan(pick, [old], { progress: { reusedAgentId: 'lin-row' } }),
-        'certops_first'
-      )
-    ).toBe('done');
-  });
-
-  it('reuse is the operator click, so the step does not hold for a second Continue', () => {
-    const progress = {
-      certops: { objective: 'observe', infrastructure: 'linux' },
+  it('the first certificate and the closing check ignore its reports', () => {
+    const certs = {
+      agents: { live: 1, items: [old] },
+      certificates: { observed: 3 },
     };
-    expect(
-      finishesByItself('certops_agent', { goal: 'certops_observe', progress })
-    ).toBe(true);
+    expect(reportedCertificates(certs, { infrastructure: 'linux' })).toBe(0);
+    const result = evaluateVerification({
+      goal: 'certops_observe',
+      summary: { certops: { ...certs, controllers: { clusters: [] } } },
+      infrastructure: 'linux',
+    });
+    expect(result.checks.find(c => c.id === 'agent').status).toBe('fail');
+  });
+
+  it('waiting for the install keeps the step watching, as before', () => {
     expect(
       finishesByItself('certops_agent', {
         goal: 'certops_observe',
         progress: {
-          certops: { ...progress.certops, reusedAgentId: 'lin-row' },
+          certops: { objective: 'observe', infrastructure: 'linux' },
         },
       })
-    ).toBe(false);
-  });
-
-  it('picking another platform forgets the reuse choice', () => {
-    const before = {
-      objective: 'observe',
-      infrastructure: 'linux',
-      reusedAgentId: 'lin-row',
-      configReviewed: true,
-    };
-    const after = chooseInfrastructure(before, 'observe', 'windows');
-    expect(after.reusedAgentId).toBeUndefined();
-    expect(after.configReviewed).toBeUndefined();
-    expect(chooseInfrastructure(before, 'observe', 'linux').reusedAgentId).toBe(
-      'lin-row'
-    );
+    ).toBe(true);
   });
 });
 
+describe('with "My agent is already set up" (chosenAgentId)', () => {
+  const old = { ...lin, existedBeforeSession: true };
+  const pick = PICKS[0];
+  const chosen = { chosenAgentId: 'lin-row' };
+  const confirmed = { ...chosen, chosenAgentConfirmed: 'lin-row' };
+
+  it('a fitting chosen agent is satisfied only after Continue', () => {
+    expect(
+      status(plan(pick, [old], { progress: chosen }), 'certops_agent')
+    ).toBe('current');
+    expect(
+      status(plan(pick, [old], { progress: confirmed }), 'certops_agent')
+    ).toBe('done');
+  });
+
+  it('a confirmation for another agent does not count', () => {
+    expect(
+      status(
+        plan(pick, [old], {
+          progress: { ...chosen, chosenAgentConfirmed: 'other-row' },
+        }),
+        'certops_agent'
+      )
+    ).toBe('current');
+  });
+
+  it('the chosen agent is the only one that counts, even next to a new one', () => {
+    const fresh = {
+      ...lin,
+      id: 'fresh-row',
+      existedBeforeSession: false,
+    };
+    const items = [fresh, old];
+    expect(pickGoalAgent(items, 'observe', 'linux', 'lin-row').id).toBe(
+      'lin-row'
+    );
+    expect(pickSetupAgent(items, 'observe', 'linux', 'lin-row').id).toBe(
+      'lin-row'
+    );
+    expect(
+      status(plan(pick, [fresh], { progress: confirmed }), 'certops_agent')
+    ).toBe('current');
+  });
+
+  it('a Windows agent can never be the chosen one for a Linux pick', () => {
+    const oldWin = { ...win, existedBeforeSession: true };
+    expect(
+      status(
+        plan(pick, [oldWin], {
+          progress: {
+            chosenAgentId: 'win-row',
+            chosenAgentConfirmed: 'win-row',
+          },
+        }),
+        'certops_agent'
+      )
+    ).toBe('current');
+  });
+
+  it('a chosen agent that lost a capability no longer satisfies the step', () => {
+    const adcs = PICKS[5];
+    const weak = {
+      ...win,
+      existedBeforeSession: true,
+      declaredCapabilities: ['windows-cert-store-v1'],
+    };
+    const progress = {
+      chosenAgentId: 'win-row',
+      chosenAgentConfirmed: 'win-row',
+    };
+    expect(status(plan(adcs, [weak], { progress }), 'certops_agent')).toBe(
+      'current'
+    );
+    expect(
+      status(
+        plan(
+          adcs,
+          [{ ...weak, declaredCapabilities: win.declaredCapabilities }],
+          {
+            progress,
+          }
+        ),
+        'certops_agent'
+      )
+    ).toBe('done');
+  });
+
+  it('a chosen agent that disappeared leaves the step open', () => {
+    expect(
+      status(plan(pick, [], { progress: confirmed }), 'certops_agent')
+    ).toBe('current');
+  });
+
+  it('the first certificate waits for the confirmed choice', () => {
+    expect(
+      status(plan(pick, [old], { progress: chosen }), 'certops_first')
+    ).not.toBe('done');
+    expect(
+      status(plan(pick, [old], { progress: confirmed }), 'certops_first')
+    ).toBe('done');
+  });
+
+  it('the Continue button moves on at once, so the step does not hold again', () => {
+    const progress = {
+      certops: { objective: 'observe', infrastructure: 'linux' },
+    };
+    expect(
+      finishesByItself('certops_agent', {
+        goal: 'certops_observe',
+        progress: { certops: { ...progress.certops, ...chosen } },
+      })
+    ).toBe(false);
+  });
+});
+
+describe('the choice never leaks into another pick', () => {
+  const before = {
+    objective: 'observe',
+    infrastructure: 'linux',
+    chosenAgentId: 'lin-row',
+    chosenAgentConfirmed: 'lin-row',
+    installerKey: 'k',
+    configReviewed: true,
+  };
+
+  it('picking another platform forgets the choice and its confirmation', () => {
+    const after = chooseInfrastructure(before, 'observe', 'windows');
+    expect(after.chosenAgentId).toBeUndefined();
+    expect(after.chosenAgentConfirmed).toBeUndefined();
+    expect(after.configReviewed).toBeUndefined();
+  });
+
+  it('picking the same platform again keeps it', () => {
+    const after = chooseInfrastructure(before, 'observe', 'linux');
+    expect(after.chosenAgentId).toBe('lin-row');
+    expect(after.chosenAgentConfirmed).toBe('lin-row');
+  });
+
+  it('sets, changes and clears the choice with the pick', () => {
+    const set = chooseInfrastructure({}, 'observe', 'linux', 'lin-row');
+    expect(set.chosenAgentId).toBe('lin-row');
+    const changed = chooseInfrastructure(
+      before,
+      'observe',
+      'linux',
+      'other-row'
+    );
+    expect(changed.chosenAgentId).toBe('other-row');
+    expect(changed.chosenAgentConfirmed).toBeUndefined();
+    expect(changed.installerKey).toBeUndefined();
+    const cleared = chooseInfrastructure(before, 'observe', 'linux', null);
+    expect(cleared.chosenAgentId).toBeUndefined();
+    expect(cleared.chosenAgentConfirmed).toBeUndefined();
+  });
+
+  it('a choice made for one goal is not seen by another goal', () => {
+    const adcs = chooseInfrastructure({}, 'adcs', 'windows', 'win-row');
+    const next = chooseInfrastructure(adcs, 'observe', 'linux');
+    expect(scopeCertops(next, 'observe').chosenAgentId).toBeUndefined();
+    expect(scopeCertops(next, 'adcs').chosenAgentId).toBe('win-row');
+  });
+
+  it('the AD CS Windows choice does not satisfy Discover on Linux', () => {
+    const oldWin = { ...win, existedBeforeSession: true };
+    const carried = chooseInfrastructure(
+      chooseInfrastructure({}, 'adcs', 'windows', 'win-row'),
+      'observe',
+      'linux'
+    );
+    const p = planJourney({
+      intent: { goal: 'certops_observe' },
+      progress: { certops: { ...carried, configReviewed: true } },
+      capabilities: caps,
+      reality: {
+        alerts: { smtpConfigured: true },
+        certops: { agents: { live: 1, items: [oldWin] } },
+      },
+    });
+    expect(status(p, 'certops_agent')).toBe('current');
+  });
+});
+
+describe('why an agent does not fit a pick', () => {
+  it('names the other system', () => {
+    expect(agentMismatch(win, 'observe', 'linux')).toBe(
+      'Windows agent, this setup needs Linux'
+    );
+    expect(agentMismatch(lin, 'adcs', 'windows')).toBe(
+      'Linux agent, this setup needs Windows'
+    );
+  });
+
+  it('names the missing capability or command profile', () => {
+    const weak = { ...win, declaredCapabilities: ['windows-cert-store-v1'] };
+    expect(agentMismatch(weak, 'adcs', 'windows')).toBe(
+      'Missing capabilities: iis-binding-v1, adcs-enroll-v1'
+    );
+    expect(
+      agentMismatch(
+        {
+          ...win,
+          declaredCapabilities: ['windows-cert-store-v1', 'iis-binding-v1'],
+        },
+        'adcs',
+        'windows'
+      )
+    ).toBe('Missing capability: adcs-enroll-v1');
+    expect(
+      agentMismatch({ ...lin, commandProfiles: [] }, 'automate', 'linux')
+    ).toBe('Missing command profile: certbot');
+  });
+
+  it('is null for a fitting agent, offline or not', () => {
+    expect(agentMismatch(win, 'adcs', 'windows')).toBeNull();
+    expect(
+      agentMismatch({ ...win, livenessState: 'offline' }, 'adcs', 'windows')
+    ).toBeNull();
+  });
+
+  it('Kubernetes and an agent without a platform never fit', () => {
+    expect(agentFitsSetup(lin, 'observe', 'kubernetes')).toBe(false);
+    expect(agentFitsSetup({ ...lin, platform: null }, 'observe', 'linux')).toBe(
+      false
+    );
+  });
+});
 function mount(Component, { goal, certops, items, summary = {}, update }) {
   const session = { intent: { goal }, progress: { certops } };
   const ctx = {
@@ -420,7 +613,7 @@ function mount(Component, { goal, certops, items, summary = {}, update }) {
 describe('the install step display', () => {
   const observeLinux = { objective: 'observe', infrastructure: 'linux' };
 
-  it('Discover on Linux with only a Windows agent: not connected, agent not shown', () => {
+  it('Discover on Linux with only a Windows agent: not connected, nothing suggested', () => {
     mount(AgentStep, {
       goal: 'certops_observe',
       certops: observeLinux,
@@ -429,12 +622,9 @@ describe('the install step display', () => {
     expect(screen.getByText('Waiting for an agent')).toBeVisible();
     expect(screen.queryByText('Connected')).toBeNull();
     expect(screen.queryByText(/WIN-CA01 \(win32, version/)).toBeNull();
-    expect(screen.queryByTestId('reuse-agent')).toBeNull();
-    expect(screen.getByTestId('other-system-agents').textContent).toBe(
-      'You also have 1 Windows agent in this workspace (WIN-CA01). It cannot be used for this setup. Install an agent on the Linux server.'
-    );
+    expect(screen.queryByTestId('other-system-agents')).toBeNull();
+    expect(screen.queryByText(/You also have/)).toBeNull();
   });
-
   it.each([
     [
       'Automate on Linux',
@@ -465,9 +655,7 @@ describe('the install step display', () => {
       mount(AgentStep, { goal, certops, items: [lin] });
       expect(screen.getByText('Waiting for an agent')).toBeVisible();
       expect(screen.queryByText(/web-01 \(linux, version/)).toBeNull();
-      expect(screen.getByTestId('other-system-agents').textContent).toMatch(
-        /1 Linux agent .*web-01.*Windows server/
-      );
+      expect(screen.queryByTestId('other-system-agents')).toBeNull();
     }
   });
 
@@ -482,38 +670,125 @@ describe('the install step display', () => {
     expect(screen.queryByText(/web-01|WIN-CA01/)).toBeNull();
   });
 
-  it('names an existing matching agent and waits for the operator', () => {
-    const update = vi.fn().mockResolvedValue(undefined);
-    const ctx = mount(AgentStep, {
+  const REUSE_WORDING =
+    /already have a suitable agent|Existing agent found|Use this agent and continue|Reusing the agent/;
+
+  it('a pre-existing fitting agent is never offered: the install path stays', () => {
+    mount(AgentStep, {
       goal: 'certops_observe',
       certops: observeLinux,
       items: [{ ...lin, existedBeforeSession: true }],
-      update,
     });
-    expect(screen.getByText('Existing agent found')).toBeVisible();
-    expect(screen.getByTestId('reuse-agent').textContent).toMatch(
-      /web-01 \(linux\) was in this workspace before the guide started/
-    );
-    fireEvent.click(screen.getByText('Use this agent and continue'));
-    expect(update).toHaveBeenCalledTimes(1);
-    const saved = update.mock.calls[0][0](ctx.session);
-    expect(saved.progress.certops.reusedAgentId).toBe('lin-row');
-    expect(saved.progress.certops.objective).toBe('observe');
+    expect(screen.getByText('Waiting for an agent')).toBeVisible();
+    expect(screen.queryByText('Connected')).toBeNull();
+    expect(screen.queryByText(REUSE_WORDING)).toBeNull();
+    expect(screen.queryByText(/web-01 \(linux, version/)).toBeNull();
+    expect(screen.getByTestId('install-steps')).toBeVisible();
+    expect(screen.queryByTestId('install-folded')).toBeNull();
   });
 
-  it('after the choice, says which existing agent is reused', () => {
+  it('the chosen agent is named, its install commands are folded, Continue confirms', () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    const certops = { ...observeLinux, chosenAgentId: 'lin-row' };
+    const ctx = mount(AgentStep, {
+      goal: 'certops_observe',
+      certops,
+      items: [{ ...lin, existedBeforeSession: true }],
+      update,
+    });
+    expect(screen.getByTestId('chosen-agent').textContent).toMatch(
+      /Using your agent.*web-01 \(Linux, version 0\.18\.0\)/
+    );
+    expect(screen.getByTestId('install-folded')).toBeInTheDocument();
+    expect(screen.getByTestId('install-folded').hasAttribute('open')).toBe(
+      false
+    );
+    expect(screen.queryByText(REUSE_WORDING)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(update).toHaveBeenCalledTimes(1);
+    const saved = update.mock.calls[0][0](ctx.session);
+    expect(saved.progress.certops.chosenAgentConfirmed).toBe('lin-row');
+    expect(saved.progress.certops.chosenAgentId).toBe('lin-row');
+  });
+
+  it('once confirmed, the chosen agent shows as connected', () => {
     mount(AgentStep, {
       goal: 'certops_observe',
-      certops: { ...observeLinux, reusedAgentId: 'lin-row' },
+      certops: {
+        ...observeLinux,
+        chosenAgentId: 'lin-row',
+        chosenAgentConfirmed: 'lin-row',
+      },
       items: [{ ...lin, existedBeforeSession: true }],
     });
     expect(screen.getByText('Connected')).toBeVisible();
-    expect(screen.queryByText('Use this agent and continue')).toBeNull();
-    expect(screen.getByTestId('reused-agent').textContent).toBe(
-      'Reusing the agent that was already in this workspace: web-01 (linux).'
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull();
+  });
+
+  it('an offline chosen agent keeps the step waiting and says so', () => {
+    mount(AgentStep, {
+      goal: 'certops_observe',
+      certops: { ...observeLinux, chosenAgentId: 'lin-row' },
+      items: [{ ...lin, existedBeforeSession: true, livenessState: 'offline' }],
+    });
+    expect(screen.getByTestId('chosen-agent').textContent).toMatch(
+      /Waiting for your agent.*web-01 has not checked in recently/
+    );
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'Install a new agent instead' })
+    ).toBeVisible();
+  });
+
+  it('a chosen agent that is gone says so and falls back to the install path', () => {
+    mount(AgentStep, {
+      goal: 'certops_observe',
+      certops: { ...observeLinux, chosenAgentId: 'lin-row' },
+      items: [],
+    });
+    expect(screen.getByTestId('chosen-agent').textContent).toMatch(
+      /Your agent is not in this workspace/
+    );
+    expect(screen.getByTestId('install-steps')).toBeVisible();
+    expect(screen.queryByTestId('install-folded')).toBeNull();
+  });
+
+  it('a chosen agent that stopped fitting names the gap', () => {
+    mount(AgentStep, {
+      goal: 'certops_adcs',
+      certops: {
+        objective: 'adcs',
+        infrastructure: 'windows',
+        chosenAgentId: 'win-row',
+      },
+      items: [
+        {
+          ...win,
+          existedBeforeSession: true,
+          declaredCapabilities: ['windows-cert-store-v1'],
+        },
+      ],
+    });
+    expect(screen.getByTestId('chosen-agent').textContent).toMatch(
+      /does not fit this setup.*Missing capabilities: iis-binding-v1, adcs-enroll-v1/
     );
   });
 
+  it('Install a new agent instead clears the choice', () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    const certops = { ...observeLinux, chosenAgentId: 'lin-row' };
+    const ctx = mount(AgentStep, {
+      goal: 'certops_observe',
+      certops,
+      items: [],
+      update,
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Install a new agent instead' })
+    );
+    const saved = update.mock.calls[0][0](ctx.session);
+    expect(saved.progress.certops.chosenAgentId).toBeUndefined();
+  });
   it('an agent enrolled by this guide is simply connected', () => {
     mount(AgentStep, {
       goal: 'certops_observe',
@@ -521,8 +796,7 @@ describe('the install step display', () => {
       items: [{ ...lin, existedBeforeSession: false }],
     });
     expect(screen.getByText('Connected')).toBeVisible();
-    expect(screen.queryByTestId('reuse-agent')).toBeNull();
-    expect(screen.queryByTestId('reused-agent')).toBeNull();
+    expect(screen.queryByText(REUSE_WORDING)).toBeNull();
   });
 });
 

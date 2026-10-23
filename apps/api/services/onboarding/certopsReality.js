@@ -48,7 +48,8 @@ function summarizeAgents(items, { now = Date.now(), since = null } = {}) {
       lastSeenAt: a.lastSeenAt,
       createdAt: a.createdAt || null,
       // True for an agent already in the workspace when the session began, so
-      // the guide offers it for reuse instead of treating it as installed now.
+      // the guide never counts it as installed by the session unless the
+      // operator chose it ("My agent is already set up").
       existedBeforeSession:
         sinceMs !== null && new Date(a.createdAt).getTime() < sinceMs,
       compatibilityState: a.compatibilityState,

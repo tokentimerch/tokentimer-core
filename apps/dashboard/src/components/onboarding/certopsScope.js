@@ -69,7 +69,8 @@ const VARIANT_KEYS = [
   'clusterId',
   'tokenCreatedAt',
   'agentLaterAt',
-  'reusedAgentId',
+  'chosenAgentId',
+  'chosenAgentConfirmed',
   'dryRunJobId',
   'issueJobId',
   'issueAttempt',
@@ -80,11 +81,30 @@ const VARIANT_KEYS = [
  * The value to store when the platform is chosen. Picking another platform
  * drops the previous one's step marks, so none of its steps shows as done for
  * the new one. Picking the same platform again changes nothing.
+ *
+ * `agentId` is the existing agent the operator opted to reuse for this pick:
+ * a string sets it, null clears it, and leaving it out keeps what the same
+ * platform already had. A choice never outlives the platform it was made for.
  */
-export function chooseInfrastructure(certops, objective, infrastructure) {
-  const changed =
-    scopeCertops(certops, objective).infrastructure !== infrastructure;
+export function chooseInfrastructure(
+  certops,
+  objective,
+  infrastructure,
+  agentId
+) {
+  const before = scopeCertops(certops, objective);
+  const changed = before.infrastructure !== infrastructure;
   const next = mergeCertops(certops, objective, { objective, infrastructure });
   if (changed) for (const key of VARIANT_KEYS) delete next[key];
+  if (
+    agentId !== undefined &&
+    (agentId || undefined) !== before.chosenAgentId
+  ) {
+    // The installer confirmation was about the previous agent.
+    delete next.installerKey;
+    delete next.chosenAgentConfirmed;
+  }
+  if (agentId) next.chosenAgentId = agentId;
+  else if (agentId === null) delete next.chosenAgentId;
   return next;
 }

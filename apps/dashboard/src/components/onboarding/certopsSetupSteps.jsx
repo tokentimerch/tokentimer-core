@@ -35,6 +35,7 @@ import {
   CandidateNote,
 } from './candidateMarks.jsx';
 import { INFRASTRUCTURES, infrastructuresFor } from './certopsMatrix.js';
+import ExistingAgentPick, { fittingAgents } from './ExistingAgentPick.jsx';
 import {
   DNS_PROVIDERS,
   buildAutomateConfig,
@@ -156,7 +157,19 @@ export function ObjectiveStep({ ctx }) {
   });
   const saved = certopsProgress(ctx);
   const [infra, setInfra] = useState(saved.infrastructure || '');
+  // Reusing an agent is opt-in: ticked only with a choice already saved, or
+  // when the operator ticks it here. Another pick starts unticked.
+  const [agentId, setAgentId] = useState(saved.chosenAgentId || '');
+  const [ticked, setTicked] = useState(Boolean(saved.chosenAgentId));
   const [error, setError] = useState('');
+  const fitting = fittingAgents(ctx, objective, infra);
+  const reuse = ticked && fitting.some(a => a.id === agentId);
+  const pickInfra = value => {
+    if (value === infra) return;
+    setInfra(value);
+    setTicked(false);
+    setAgentId('');
+  };
 
   const save = async () => {
     try {
@@ -168,7 +181,8 @@ export function ObjectiveStep({ ctx }) {
           certops: chooseInfrastructure(
             session.progress?.certops,
             objective,
-            infra
+            infra,
+            reuse ? agentId : null
           ),
         },
       }));
@@ -189,7 +203,10 @@ export function ObjectiveStep({ ctx }) {
       description='Only combinations that are supported for your goal are listed.'
       docs={ctx.docs('certops.overview', 'About certificate management')}
       actions={
-        <PrimaryButton onClick={save} isDisabled={!infra}>
+        <PrimaryButton
+          onClick={save}
+          isDisabled={!infra || (ticked && fitting.length > 0 && !reuse)}
+        >
           Continue
         </PrimaryButton>
       }
@@ -209,7 +226,7 @@ export function ObjectiveStep({ ctx }) {
           </Box>
         ) : null}
         {picks.some(o => o.candidate) ? <CandidateNote /> : null}
-        <RadioGroup value={infra} onChange={setInfra}>
+        <RadioGroup value={infra} onChange={pickInfra}>
           <Stack spacing={3}>
             {picks.map(o => (
               <Box key={o.id}>
@@ -259,6 +276,18 @@ export function ObjectiveStep({ ctx }) {
             ))}
           </Stack>
         </RadioGroup>
+        <ExistingAgentPick
+          ctx={ctx}
+          objective={objective}
+          infra={infra}
+          ticked={ticked}
+          agentId={agentId}
+          onTick={on => {
+            setTicked(on);
+            if (!on) setAgentId('');
+          }}
+          onAgent={setAgentId}
+        />
       </VStack>
     </StepFrame>
   );

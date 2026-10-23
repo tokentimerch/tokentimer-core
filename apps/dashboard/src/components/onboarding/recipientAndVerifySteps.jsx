@@ -95,6 +95,7 @@ export function VerifyStep({ ctx }) {
             summary,
             infrastructure: certopsSaved.infrastructure,
             clusterId: certopsSaved.clusterId,
+            agentId: certopsSaved.chosenAgentId,
           }),
         });
       } catch (e) {

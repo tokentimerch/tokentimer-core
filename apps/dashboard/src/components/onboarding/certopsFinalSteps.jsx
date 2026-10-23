@@ -19,6 +19,7 @@ import PrimaryButton from './PrimaryButton.jsx';
 import { CopyBlock, ErrorText } from './blocks.jsx';
 import {
   agentOnPlatform,
+  candidateAgents,
   capabilityGap,
   effectiveInfrastructure,
   pickGoalAgent,
@@ -87,6 +88,7 @@ export function FirstCertificateStep({ ctx }) {
   const total = reportedCertificates(ctx.summary?.certops, {
     infrastructure: infra,
     clusterId: saved.clusterId,
+    agentId: saved.chosenAgentId,
   });
   // Only what the summary really carries: the agent's last check-in, or the
   // controller's last report. Nothing is inferred.
@@ -101,7 +103,10 @@ export function FirstCertificateStep({ ctx }) {
             label: `Controller report from ${c.clusterId}`,
             status: 'done',
           }))
-      : (ctx.summary?.certops?.agents?.items || [])
+      : candidateAgents(
+          ctx.summary?.certops?.agents?.items,
+          saved.chosenAgentId
+        )
           .filter(a => agentOnPlatform(a, infra))
           .filter(a => a.lastSeenAt)
           .slice(0, 3)
@@ -236,13 +241,20 @@ export function VaultStep({ ctx }) {
   };
   const names = (saved.names || '').split(/[\s,]+/).filter(Boolean);
   // Vault runs on Linux: a Windows agent is neither an issuer nor a consumer.
+  // The consumer is a second server the operator picks by name, so every
+  // Linux agent is listed; only the default issuer follows the agent choice.
   const agentItems = (ctx.summary?.certops?.agents?.items || []).filter(a =>
     agentOnPlatform(a, 'linux')
   );
   const [issuerPick, setIssuerPick] = useState(saved.vaultIssuerAgentId || '');
   const issuerId =
     issuerPick ||
-    pickGoalAgent(agentItems, 'vault', 'linux', saved.reusedAgentId)?.id ||
+    pickGoalAgent(
+      ctx.summary?.certops?.agents?.items,
+      'vault',
+      'linux',
+      saved.chosenAgentId
+    )?.id ||
     '';
   const issuerWireId =
     agentItems.find(a => a.id === issuerId)?.wireAgentId || undefined;

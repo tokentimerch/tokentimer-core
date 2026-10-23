@@ -70,7 +70,7 @@ export function ExecutionStep({ ctx }) {
     allAgents?.items,
     saved.objective,
     effectiveInfrastructure(saved.objective, saved.infrastructure),
-    saved.reusedAgentId
+    saved.chosenAgentId
   );
   const agents = agentsFor(allAgents, agent);
   const [job, setJob] = useState(null);

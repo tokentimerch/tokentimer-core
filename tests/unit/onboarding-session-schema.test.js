@@ -73,6 +73,37 @@ describe("onboarding session schema", () => {
     rejects({ expectedRevision: 1, intent: deep }, "TOO_DEEP");
   });
 
+  it("keeps the chosen existing agent in CertOps progress", () => {
+    const certops = {
+      objective: "observe",
+      infrastructure: "linux",
+      chosenAgentId: "4f0d2c1e-7a53-4a49-9d0b-2f1c8b6a9e11",
+      chosenAgentConfirmed: "4f0d2c1e-7a53-4a49-9d0b-2f1c8b6a9e11",
+    };
+    const { patch } = validateSessionWrite({
+      expectedRevision: 2,
+      progress: { certops },
+    });
+    assert.deepEqual(patch.progress.certops, certops);
+    // A write without the field (older client) stays valid.
+    const older = validateSessionWrite({
+      expectedRevision: 2,
+      progress: { certops: { objective: "observe", infrastructure: "linux" } },
+    });
+    assert.equal(older.patch.progress.certops.chosenAgentId, undefined);
+  });
+
+  it("still applies the credential and size rules to the chosen agent", () => {
+    rejects(
+      { expectedRevision: 1, progress: { certops: { chosenAgentId: "ttagent_abc" } } },
+      "SECRET_REJECTED",
+    );
+    rejects(
+      { expectedRevision: 1, progress: { certops: { chosenAgentId: "a".repeat(513) } } },
+      "VALUE_TOO_LONG",
+    );
+  });
+
   it("only accepts known flows", () => {
     assert.equal(assertFlow("mega"), "mega");
     assert.equal(assertFlow("certops"), "certops");

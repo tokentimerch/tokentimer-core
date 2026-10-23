@@ -266,9 +266,9 @@ describe('several agents in one workspace', () => {
     // The Linux agent is never reported as the agent for this pick.
     expect(screen.queryByText(/web-01 \(linux, version/)).toBeNull();
     expect(screen.queryByText('Connected')).toBeNull();
-    expect(screen.getByTestId('other-system-agents').textContent).toBe(
-      'You also have 1 Linux agent in this workspace (web-01). It cannot be used for this setup. Install an agent on the Windows server.'
-    );
+    // No suggestion to reuse an agent of another system.
+    expect(screen.queryByTestId('other-system-agents')).toBeNull();
+    expect(screen.queryByText(/You also have/)).toBeNull();
   });
 
   it('Linux and Windows agents: the Windows one satisfies the pick, in any order', () => {

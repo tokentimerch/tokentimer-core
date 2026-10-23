@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { FiRefreshCw } from 'react-icons/fi';
 import {
   Flex,
@@ -20,13 +20,12 @@ import PrimaryButton from './PrimaryButton.jsx';
 import { CopyBlock, ErrorText, SlotBlock, WarnText } from './blocks.jsx';
 import {
   INFRASTRUCTURES,
-  agentExistedBefore,
-  agentServesSetup,
+  agentMismatch,
   capabilityGap,
   commandProfileFor,
   effectiveInfrastructure,
-  otherSystemAgents,
   pickSetupAgent,
+  platformLabel,
   setupAgentReady,
 } from './certopsMatrix.js';
 import {
@@ -48,12 +47,25 @@ import {
   certopsProgress,
   saveCertops,
 } from './certopsSetupSteps.jsx';
+import { chooseInfrastructure } from './certopsScope.js';
 import { createBootstrapToken } from '../certops/certopsAgentsApi.js';
 import { createApiToken } from '../certops/certopsTokensApi.js';
 import { isValidControllerClusterId } from '../certops/certopsTokenScopeMeta.js';
 import AgentCheckIn from './AgentCheckIn.jsx';
 import { JobTimelineList } from './JobActivity.jsx';
 import { Callout, DetailsSection, StatusPanel, StatusTag } from './panels.jsx';
+
+// Folds the install commands away when the operator reuses an agent.
+function FoldedInstall({ children }) {
+  return (
+    <DetailsSection
+      summary='Show install instructions anyway'
+      testId='install-folded'
+    >
+      {children}
+    </DetailsSection>
+  );
+}
 
 const POLL_MS = 5000;
 
@@ -140,19 +152,6 @@ function InstallStep({ n, text, children }) {
   );
 }
 
-const PLATFORM_LABELS = { win32: 'Windows', linux: 'Linux', darwin: 'macOS' };
-
-/** Neutral note about agents of this workspace that run on another system. */
-export function otherSystemHint(agents, os) {
-  const label = os === 'windows' ? 'Windows' : 'Linux';
-  const count = agents.length;
-  const kinds = [
-    ...new Set(agents.map(a => PLATFORM_LABELS[a.platform] || a.platform)),
-  ].join(' and ');
-  const names = agents.map(a => a.hostname || a.name).join(', ');
-  return `You also have ${count} ${kinds} ${count === 1 ? 'agent' : 'agents'} in this workspace (${names}). ${count === 1 ? 'It' : 'They'} cannot be used for this setup. Install an agent on the ${label} server.`;
-}
-
 export function AgentStep({ ctx }) {
   const { muted } = useDashboardTheme();
   const saved = certopsProgress(ctx);
@@ -184,16 +183,14 @@ export function AgentStep({ ctx }) {
 
   const agents = ctx.summary?.certops?.agents;
   const items = agents?.items || [];
-  const target = pickSetupAgent(
-    items,
-    saved.objective,
-    infra,
-    saved.reusedAgentId
-  );
-  // Live agents of this workspace that run on another system (for example a
-  // Windows server when the setup is Linux): never "the agent" for this
-  // setup, only a neutral hint so the operator knows where to install.
-  const elsewhere = otherSystemAgents(items, infra);
+  // Without a chosen agent the guide provisions a new one, so only agents
+  // enrolled during this session count. With one, only that agent does.
+  const chosenId = saved.chosenAgentId;
+  const target = pickSetupAgent(items, saved.objective, infra, chosenId);
+  const chosen = chosenId ? items.find(a => a.id === chosenId) : null;
+  const chosenMismatch = chosenId
+    ? agentMismatch(chosen, saved.objective, infra)
+    : null;
 
   // Only Linux issuing needs installer options (the Vault issuer publishes to
   // Vault and writes no certificate file).
@@ -285,12 +282,8 @@ export function AgentStep({ ctx }) {
   };
 
   const poll = useCallback(() => ctx.refresh().catch(() => {}), [ctx]);
-  // Same rule as the planner: keep watching until a usable agent exists. An
-  // older agent offered for reuse already counts as found.
-  const usableAgent = setupAgentReady(agents, saved.objective, infra, {
-    reusedAgentId: saved.reusedAgentId,
-    acceptReused: true,
-  });
+  // Same rule as the planner: keep watching until a usable agent exists.
+  const usableAgent = setupAgentReady(agents, saved.objective, infra, chosenId);
   const clusterReported = (agentsSummaryControllers(ctx) || []).some(
     c => !clusterId || c.clusterId === clusterId
   );
@@ -536,23 +529,46 @@ export function AgentStep({ ctx }) {
     Boolean(target) &&
     !(target.commandProfiles || []).includes(wantedProfileName);
   const healthy = Boolean(verdict?.healthy) && !lacksProfile;
-  // An agent that was in the workspace before this guide started: it is shown
-  // by name and used only after the operator says so.
-  const offerReuse =
-    healthy &&
-    !needsRerun &&
-    agentServesSetup(target, saved.objective, infra) &&
-    agentExistedBefore(target) &&
-    saved.reusedAgentId !== target.id;
-  const reuseAgent = async () => {
+  // An agent the operator chose in "Where will the certificates live?" is
+  // the only one this step looks at, and its install commands stay folded.
+  const chosenName = chosen
+    ? chosen.hostname || chosen.name
+    : 'The agent you chose';
+  const choiceOffline =
+    Boolean(chosen) && !chosenMismatch && chosen.livenessState !== 'live';
+  const foldInstall = Boolean(chosen) && !chosenMismatch && !needsRerun;
+  const Fold = foldInstall ? FoldedInstall : Fragment;
+  // The Continue is the operator's confirmation of the chosen agent.
+  const confirmed =
+    Boolean(chosenId) && saved.chosenAgentConfirmed === chosenId;
+  const confirmChosen = async () => {
     setError('');
     try {
-      await saveCertops(ctx, { reusedAgentId: target.id });
+      await saveCertops(ctx, { chosenAgentConfirmed: chosenId });
     } catch (e) {
       setError(e.message || 'Could not save your progress.');
     }
   };
-
+  // Back to the normal path: provision a new agent.
+  const installNewInstead = async () => {
+    setError('');
+    try {
+      await ctx.controller.update(session => ({
+        progress: {
+          ...session.progress,
+          certops: chooseInfrastructure(
+            session.progress?.certops,
+            saved.objective,
+            saved.infrastructure || infra,
+            null
+          ),
+        },
+      }));
+      await ctx.refresh();
+    } catch (e) {
+      setError(e.message || 'Could not save your progress.');
+    }
+  };
   return (
     <StepFrame
       kind='runbook'
@@ -565,10 +581,12 @@ export function AgentStep({ ctx }) {
         ),
       ]}
       actions={
-        offerReuse ? (
-          <PrimaryButton onClick={reuseAgent}>
-            Use this agent and continue
-          </PrimaryButton>
+        chosenId && healthy && !confirmed ? (
+          <PrimaryButton onClick={confirmChosen}>Continue</PrimaryButton>
+        ) : chosenId && !healthy ? (
+          <DashboardActionButton variant='outline' onClick={installNewInstead}>
+            Install a new agent instead
+          </DashboardActionButton>
         ) : healthy ? undefined : (
           <DashboardActionButton variant='outline' onClick={installLater}>
             I will install it later
@@ -599,6 +617,33 @@ export function AgentStep({ ctx }) {
             You paused here earlier. This page keeps watching for the agent.
           </Text>
         ) : null}
+        {chosenId ? (
+          <StatusPanel
+            status={
+              chosen && !chosenMismatch && !choiceOffline ? 'info' : 'warning'
+            }
+            title={
+              !chosen
+                ? 'Your agent is not in this workspace'
+                : chosenMismatch
+                  ? 'Your agent does not fit this setup'
+                  : choiceOffline
+                    ? 'Waiting for your agent'
+                    : 'Using your agent'
+            }
+            testId='chosen-agent'
+          >
+            <Text fontSize='sm'>
+              {!chosen
+                ? 'The agent you chose is no longer listed here. Choose another one in Where will the certificates live?, or install a new agent.'
+                : chosenMismatch
+                  ? `${chosenName}: ${chosenMismatch}. Upgrade it, choose another one in Where will the certificates live?, or install a new agent.`
+                  : choiceOffline
+                    ? `${chosenName} has not checked in recently. This step waits for it to come online. Start it on its server, or install a new agent instead.`
+                    : `${chosenName} (${platformLabel(chosen.platform)}, version ${chosen.agentVersion}).`}
+            </Text>
+          </StatusPanel>
+        ) : null}
         {needsRerun ? (
           <StatusPanel
             status='warning'
@@ -618,161 +663,138 @@ export function AgentStep({ ctx }) {
             </VStack>
           </StatusPanel>
         ) : null}
-        {certopsObjectiveFor(ctx) === 'adcs' ? (
-          <StatusPanel
-            status='info'
-            title='Where to install it'
-            testId='adcs-host-note'
-          >
-            Install the agent on a domain-joined Windows Server member that can
-            reach your CA. A domain controller is not supported.
-          </StatusPanel>
-        ) : null}
-        {os === 'linux' && ['automate', 'vault'].includes(saved.objective) ? (
-          <Callout kind='before' title='Install certbot first'>
-            <Text fontSize='sm' data-testid='certbot-note'>
-              The agent places orders with /usr/bin/certbot on the issuing
-              server, so install it first (for example sudo apt install
-              certbot).
-            </Text>
-          </Callout>
-        ) : null}
-        {isLoopbackHttp(ctx.apiUrl) ? (
-          <StatusPanel
-            status='warning'
-            title='This address is localhost'
-            testId='loopback-note'
-          >
-            This API address is localhost, so it only works when the agent runs
-            on this same machine. For a server elsewhere, open the dashboard
-            through the address that server can reach.
-          </StatusPanel>
-        ) : null}
-        <VStack align='stretch' spacing={3} data-testid='install-steps'>
-          <InstallStep n={1} text={notes[0]}>
-            <CopyBlock
-              label='Download, verify and extract the agent package (replace <version>)'
-              text={buildPackageCommand(os)}
-            />
-            <HStack data-testid='package-doc-links'>
-              {ctx
-                .docs('certops.agentPackage', 'Where to get the package')
-                .map(link => (
-                  <DocsLink key={link.url} href={link.url}>
-                    {link.label}
-                  </DocsLink>
-                ))}
-            </HStack>
-          </InstallStep>
-          <InstallStep n={2} text={notes[1]} />
-          <InstallStep
-            n={3}
-            text='Create a one-time bootstrap token. It is shown once and expires in 24 hours. If you lose it or it expires, create another.'
-          >
-            {tokenError ? (
-              <DashboardErrorAlert>{tokenError}</DashboardErrorAlert>
-            ) : null}
-            {token ? (
-              <>
-                <CopyBlock
-                  label='One-time bootstrap token'
-                  text={token.plaintext}
-                  allowSecret
-                />
-                <HStack>
-                  <DashboardActionButton
-                    size='sm'
-                    variant='outline'
-                    onClick={issueToken}
-                    isLoading={busy}
-                  >
-                    Create another token
-                  </DashboardActionButton>
-                </HStack>
-              </>
-            ) : (
-              <>
-                <SlotBlock
-                  label='One-time bootstrap token'
-                  placeholder='<bootstrap token>'
-                />
-                <HStack>
-                  <PrimaryButton
-                    size='sm'
-                    onClick={issueToken}
-                    isLoading={busy}
-                  >
-                    Create bootstrap token
-                  </PrimaryButton>
-                </HStack>
-              </>
-            )}
-          </InstallStep>
-          <InstallStep n={4} text={notes[2]}>
-            {commandError ? (
-              <DashboardErrorAlert>{commandError}</DashboardErrorAlert>
-            ) : (
+        <Fold>
+          {certopsObjectiveFor(ctx) === 'adcs' ? (
+            <StatusPanel
+              status='info'
+              title='Where to install it'
+              testId='adcs-host-note'
+            >
+              Install the agent on a domain-joined Windows Server member that
+              can reach your CA. A domain controller is not supported.
+            </StatusPanel>
+          ) : null}
+          {os === 'linux' && ['automate', 'vault'].includes(saved.objective) ? (
+            <Callout kind='before' title='Install certbot first'>
+              <Text fontSize='sm' data-testid='certbot-note'>
+                The agent places orders with /usr/bin/certbot on the issuing
+                server, so install it first (for example sudo apt install
+                certbot).
+              </Text>
+            </Callout>
+          ) : null}
+          {isLoopbackHttp(ctx.apiUrl) ? (
+            <StatusPanel
+              status='warning'
+              title='This address is localhost'
+              testId='loopback-note'
+            >
+              This API address is localhost, so it only works when the agent
+              runs on this same machine. For a server elsewhere, open the
+              dashboard through the address that server can reach.
+            </StatusPanel>
+          ) : null}
+          <VStack align='stretch' spacing={3} data-testid='install-steps'>
+            <InstallStep n={1} text={notes[0]}>
               <CopyBlock
-                label='Install command (run as administrator)'
-                text={command}
+                label='Download, verify and extract the agent package (replace <version>)'
+                text={buildPackageCommand(os)}
               />
-            )}
-          </InstallStep>
-          <InstallStep n={5} text={notes[3]} />
-          <Text fontSize='xs' color={muted} data-testid='keep-config-note'>
-            The installer keeps a config.json that already exists ({configPath}
-            ), so the file you saved in the previous step stays as it is.
-          </Text>
-          {notes.slice(4).map(n => (
-            <Text key={n} fontSize='xs' color={muted}>
-              {n}
+              <HStack data-testid='package-doc-links'>
+                {ctx
+                  .docs('certops.agentPackage', 'Where to get the package')
+                  .map(link => (
+                    <DocsLink key={link.url} href={link.url}>
+                      {link.label}
+                    </DocsLink>
+                  ))}
+              </HStack>
+            </InstallStep>
+            <InstallStep n={2} text={notes[1]} />
+            <InstallStep
+              n={3}
+              text='Create a one-time bootstrap token. It is shown once and expires in 24 hours. If you lose it or it expires, create another.'
+            >
+              {tokenError ? (
+                <DashboardErrorAlert>{tokenError}</DashboardErrorAlert>
+              ) : null}
+              {token ? (
+                <>
+                  <CopyBlock
+                    label='One-time bootstrap token'
+                    text={token.plaintext}
+                    allowSecret
+                  />
+                  <HStack>
+                    <DashboardActionButton
+                      size='sm'
+                      variant='outline'
+                      onClick={issueToken}
+                      isLoading={busy}
+                    >
+                      Create another token
+                    </DashboardActionButton>
+                  </HStack>
+                </>
+              ) : (
+                <>
+                  <SlotBlock
+                    label='One-time bootstrap token'
+                    placeholder='<bootstrap token>'
+                  />
+                  <HStack>
+                    <PrimaryButton
+                      size='sm'
+                      onClick={issueToken}
+                      isLoading={busy}
+                    >
+                      Create bootstrap token
+                    </PrimaryButton>
+                  </HStack>
+                </>
+              )}
+            </InstallStep>
+            <InstallStep n={4} text={notes[2]}>
+              {commandError ? (
+                <DashboardErrorAlert>{commandError}</DashboardErrorAlert>
+              ) : (
+                <CopyBlock
+                  label='Install command (run as administrator)'
+                  text={command}
+                />
+              )}
+            </InstallStep>
+            <InstallStep n={5} text={notes[3]} />
+            <Text fontSize='xs' color={muted} data-testid='keep-config-note'>
+              The installer keeps a config.json that already exists (
+              {configPath}
+              ), so the file you saved in the previous step stays as it is.
             </Text>
-          ))}
-        </VStack>
+            {notes.slice(4).map(n => (
+              <Text key={n} fontSize='xs' color={muted}>
+                {n}
+              </Text>
+            ))}
+          </VStack>
+        </Fold>
         <HStack>
           <Text as='h3' fontSize='sm' fontWeight='semibold'>
             Agent status
           </Text>
           {!target ? (
             <StatusTag>Waiting for an agent</StatusTag>
-          ) : offerReuse ? (
-            <StatusTag>Existing agent found</StatusTag>
           ) : healthy ? (
             <StatusTag tone='green'>Connected</StatusTag>
           ) : (
             <StatusTag tone='orange'>Needs attention</StatusTag>
           )}
         </HStack>
-        {offerReuse ? (
-          <StatusPanel
-            status='info'
-            title='You already have a suitable agent'
-            testId='reuse-agent'
-          >
-            <Text fontSize='sm'>
-              {target.hostname || target.name} ({target.platform}) was in this
-              workspace before the guide started and fits this setup. Use it, or
-              install another one below.
-            </Text>
-          </StatusPanel>
-        ) : null}
-        {!healthy && elsewhere.length > 0 ? (
-          <Text fontSize='xs' color={muted} data-testid='other-system-agents'>
-            {otherSystemHint(elsewhere, os)}
-          </Text>
-        ) : null}
         {target ? (
           <VStack align='stretch' spacing={2}>
             <Text fontSize='sm'>
               {target.hostname || target.name} ({target.platform}, version{' '}
               {target.agentVersion})
             </Text>
-            {healthy && agentExistedBefore(target) && !offerReuse ? (
-              <Text fontSize='xs' color={muted} data-testid='reused-agent'>
-                Reusing the agent that was already in this workspace:{' '}
-                {target.hostname || target.name} ({target.platform}).
-              </Text>
-            ) : null}
             <AgentCheckIn workspaceId={ctx.workspaceId} agent={target} />
             {lacksProfile ? (
               <WarnText data-testid='lacks-profile-note'>
@@ -793,10 +815,9 @@ export function AgentStep({ ctx }) {
           </VStack>
         ) : (
           <Text fontSize='xs' color={muted}>
-            {elsewhere.length ? 'No agent on this system has' : 'Nothing has'}{' '}
-            registered yet. Checking every few seconds. If it stays empty: check
-            outbound HTTPS to this address, that the token has not expired, and
-            the service log.
+            No agent has registered for this setup yet. Checking every few
+            seconds. If it stays empty: check outbound HTTPS to this address,
+            that the token has not expired, and the service log.
           </Text>
         )}
       </VStack>

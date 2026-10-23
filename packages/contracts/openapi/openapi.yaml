@@ -2973,8 +2973,14 @@ paths:
                   additionalProperties: true
                 progress:
                   type: object
+                  description: >-
+                    Free-form progress. For CertOps goals, `certops` holds the
+                    per-goal marks; `certops.chosenAgentId` (string, optional)
+                    is the id of a workspace agent the operator opted to reuse
+                    with "My agent is already set up", and
+                    `certops.chosenAgentConfirmed` echoes it once confirmed.
+                    Clients that do not know the fields ignore them.
                   additionalProperties: true
-                operation_refs:
                   type: object
                   additionalProperties: true
       responses:

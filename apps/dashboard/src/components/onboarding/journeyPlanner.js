@@ -125,10 +125,11 @@ export function availableProviders(capabilities, allProviders) {
 
 /**
  * Whether the install step is satisfied for this pick. It is a function of
- * the pick (platform and what it needs from an agent) and of the agents that
- * fit it, never of the workspace as a whole: an agent on another system does
- * not count, and one that was already in the workspace before the session
- * counts only after the operator chose to reuse it.
+ * the pick (platform and what it needs from an agent) and of the agents it may
+ * use, never of the workspace as a whole: an agent on another system does not
+ * count, an agent that was already in the workspace before the session counts
+ * only when the operator chose it ("My agent is already set up"), and with
+ * that choice made no other agent does.
  */
 function agentStepDone(certops, saved, objective) {
   const agents = certops?.agents;
@@ -159,9 +160,14 @@ function agentStepDone(certops, saved, objective) {
   // (reported at registration, so a discovery-only agent never claims an
   // order), the capabilities (re-declared on every check-in) and the right
   // system. This is the same rule the status card shows.
-  return setupAgentReady(agents, objective, infra, {
-    reusedAgentId: saved.reusedAgentId,
-  });
+  if (!setupAgentReady(agents, objective, infra, saved.chosenAgentId)) {
+    return false;
+  }
+  // An agent the operator chose to reuse is used once they confirm it with
+  // Continue on the install step, never on its own.
+  return (
+    !saved.chosenAgentId || saved.chosenAgentConfirmed === saved.chosenAgentId
+  );
 }
 
 function certopsDone(stepId, { reality, progress, objective }) {
@@ -194,7 +200,7 @@ function certopsDone(stepId, { reality, progress, objective }) {
         certops?.agents?.items,
         objective || saved.objective,
         infra,
-        saved.reusedAgentId
+        saved.chosenAgentId
       );
       const executionEnabled = Array.isArray(certops?.agents?.items)
         ? agentsFor(certops.agents, agent).executionEnabled === true
@@ -220,6 +226,7 @@ function certopsDone(stepId, { reality, progress, objective }) {
             saved.infrastructure
           ),
           clusterId: saved.clusterId,
+          agentId: saved.chosenAgentId,
         }) > 0
       );
     }
