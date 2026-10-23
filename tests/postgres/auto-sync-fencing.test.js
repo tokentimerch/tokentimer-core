@@ -43,7 +43,7 @@ async function scan(run, items = [], complete = true) {
 }
 async function imported(run, extra = {}, manual = false) {
   return provenance.upsertImportedToken({ context: manual ? null : run.context,
-    payload: { name: "Shared credential", location: "gitlab.example", type: "api_key", category: "general",
+    payload: { name: "Shared credential", location: "gitlab.example", type: "api_key", category: "key_secret",
       expiration: "2028-01-01", ...source, source_observed_at: new Date(), ...extra },
     workspaceId, userId, manual, assignMembership() {} });
 }
@@ -185,7 +185,7 @@ describe("PostgreSQL auto-sync ownership and fencing", { concurrency: false }, (
     assert.equal((await inventory(token.id)).auto_sync_managed, false);
     await pool.query("UPDATE tokens SET auto_sync_managed=TRUE WHERE id=$1", [token.id]);
     const response = await request(app).post("/api/tokens").send({ name: token.name, location: token.location,
-      type: "api_key", category: "general", expiresAt: "2028-01-01", workspace_id: workspaceId, confirm_duplicate: true });
+      type: "api_key", category: "key_secret", expiresAt: "2028-01-01", workspace_id: workspaceId, confirm_duplicate: true });
     assert.equal(response.status, 200, JSON.stringify(response.body));
     assert.equal((await inventory(token.id)).auto_sync_managed, false);
   });
