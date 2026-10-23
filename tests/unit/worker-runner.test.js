@@ -83,6 +83,26 @@ describe("worker runner helpers", () => {
     assert.ok(Date.now() - startedAt < 100, "expected immediate validation failure");
   });
 
+  it("allows weekday matches when the month cannot contain the requested day", async () => {
+    const runner = await import(runnerUrl);
+
+    assert.deepStrictEqual(
+      runner.getNextCronRunAt("0 9 31 2 1", new Date(2026, 0, 31, 12, 0)),
+      new Date(2026, 1, 2, 9, 0),
+    );
+  });
+
+  it("allows Sunday aliases with an impossible day of month", async () => {
+    const runner = await import(runnerUrl);
+
+    for (const sunday of [0, 7]) {
+      assert.deepStrictEqual(
+        runner.getNextCronRunAt(`0 9 31 2 ${sunday}`, new Date(2026, 1, 1, 9, 0)),
+        new Date(2026, 1, 8, 9, 0),
+      );
+    }
+  });
+
   it("calculates next runs for the default cron expressions", async () => {
     const runner = await import(runnerUrl);
     const mondayMorning = new Date(2026, 5, 1, 8, 59, 0, 0);

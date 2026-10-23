@@ -155,5 +155,46 @@ describe(
         (error) => error.code === "CERTOPS_CERTIFICATE_PATH_IN_USE",
       );
     });
+
+    it("admits only one of two concurrent abandoned-path reuses", async () => {
+      const certPath = `/etc/ssl/tokentimer/${hex(4)}.pem`;
+      const abandoned = await issue(`abandoned-${hex(4)}`, certPath);
+      await setJobStatus(abandoned.job.id, "failed");
+
+      const keyA = `contend-a-${hex(4)}`;
+      const keyB = `contend-b-${hex(4)}`;
+      // Each issue() takes its own pool connection and transaction.
+      const results = await Promise.allSettled([
+        issue(keyA, certPath),
+        issue(keyB, certPath),
+      ]);
+      const fulfilled = results.filter((result) => result.status === "fulfilled");
+      const rejected = results.filter((result) => result.status === "rejected");
+      assert.equal(fulfilled.length, 1, "exactly one admission must win");
+      assert.equal(rejected.length, 1, "the loser must conflict");
+      assert.equal(
+        rejected[0].reason.code,
+        "CERTOPS_CERTIFICATE_PATH_IN_USE",
+      );
+
+      const winner = fulfilled[0].value;
+      assert.equal(winner.created, true);
+      assert.equal(
+        winner.job.subjectId,
+        abandoned.job.subjectId,
+        "the abandoned identity is reused, not duplicated",
+      );
+      const winnerKey =
+        results[0].status === "fulfilled" ? keyA : keyB;
+      const replay = await issue(winnerKey, certPath);
+      assert.equal(replay.created, false);
+      assert.equal(replay.job.id, winner.job.id);
+
+      const rows = await pool.query(
+        "SELECT count(*)::int AS n FROM managed_certificates WHERE workspace_id=$1 AND deployed_cert_path=$2",
+        [workspaceId, certPath],
+      );
+      assert.equal(rows.rows[0].n, 1);
+    });
   },
 );
