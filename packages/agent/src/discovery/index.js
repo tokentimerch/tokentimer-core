@@ -363,11 +363,21 @@ function detectCoLocatedKey(dirPath, certFileName, dirEntryNames, onWarning) {
 function parseCertificateFile(filePath, fileBuffer) {
   try {
     const cert = new X509Certificate(fileBuffer);
+    // SAN-only certificates have an empty Distinguished Name; Node may
+    // expose that as "" or undefined. The evidence contract uses null.
+    const subject =
+      typeof cert.subject === "string" && cert.subject.length > 0
+        ? cert.subject
+        : null;
+    const issuer =
+      typeof cert.issuer === "string" && cert.issuer.length > 0
+        ? cert.issuer
+        : null;
     return {
       path: filePath,
       parsed: true,
-      subject: cert.subject ?? null,
-      issuer: cert.issuer ?? null,
+      subject,
+      issuer,
       validFrom: cert.validFrom,
       validTo: cert.validTo,
       serialNumber: cert.serialNumber,

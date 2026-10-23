@@ -6535,11 +6535,13 @@ async function runDiscoveryScan({ directories, client, log = null }) {
     // Node's X509Certificate is already a comma-separated string (or null
     // when the extension is absent); omit the entry when null rather than
     // sending an empty/null value the ingest path does not need.
+    const subject = cert.subject || null;
+    const issuer = cert.issuer || null;
     const metadata = [
       { name: "filePath", value: cert.path },
       { name: "targetHost", value: targetHost },
-      { name: "subject", value: cert.subject },
-      { name: "issuer", value: cert.issuer },
+      { name: "subject", value: subject },
+      { name: "issuer", value: issuer },
       { name: "serialNumber", value: cert.serialNumber },
       { name: "validFrom", value: cert.validFrom },
       { name: "validTo", value: cert.validTo },
@@ -6553,7 +6555,7 @@ async function runDiscoveryScan({ directories, client, log = null }) {
         eventType: "certificate.observed",
         observedAt,
         fingerprintSha256: cert.fingerprintSha256,
-        summary: `Observed certificate at ${cert.path} (subject: ${cert.subject})`,
+        summary: `Observed certificate at ${cert.path} (subject: ${subject})`,
         metadata,
       }),
     );
@@ -6617,12 +6619,14 @@ async function runWindowsDiscoveryScan({
     // observation contract. filePath is
     // intentionally absent -- locationKind !== 'filesystem' requires
     // locationSlot instead, never filePath.
+    const subject = observation.subject || null;
+    const issuer = observation.issuer || null;
     const metadata = [
       { name: "locationKind", value: observation.locationKind },
       { name: "locationSlot", value: observation.locationSlot },
       { name: "targetHost", value: targetHost },
-      { name: "subject", value: observation.subject ?? null },
-      { name: "issuer", value: observation.issuer ?? null },
+      { name: "subject", value: subject },
+      { name: "issuer", value: issuer },
       { name: "serialNumber", value: observation.serialNumber ?? null },
       { name: "validFrom", value: observation.notBefore ?? null },
       { name: "validTo", value: observation.notAfter ?? null },
@@ -6665,7 +6669,7 @@ async function runWindowsDiscoveryScan({
         eventType: "certificate.observed",
         observedAt,
         fingerprintSha256: observation.fingerprintSha256,
-        summary: `Observed certificate at ${observation.locationSlot} (${observation.locationKind}, subject: ${observation.subject})`,
+        summary: `Observed certificate at ${observation.locationSlot} (${observation.locationKind}, subject: ${subject})`,
         metadata,
       }),
     );
