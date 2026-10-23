@@ -28,6 +28,7 @@ Target: **0.18.0**.
 - Renewals now separates CA-capacity waits from job status and shows each profile's issuer. AD CS issuers are managed on the Renewals tab.
 - IIS renewal preserves binding settings or refuses the change with `UNSUPPORTED_BINDING_SETTINGS`. **Operator guidance:** remove the named unsupported setting or rebind manually.
 - Token create and edit now share one type and category rule set. `oauth_token` and `jwt_token` return `400` instead of a database `500`, tokens created through the API can be re-saved from the dashboard, and `domain_registration` under the license category is accepted on edit.
+- **Compose now forwards the domain checker settings to the API.** `docker-compose.yml` and `docker-compose.dev.yml` pass `SUBFINDER_BIN`, `DOMAIN_CHECKER_TOOL_TIMEOUT_MS` and `DOMAIN_CHECKER_OVERALL_TIMEOUT_MS` (both default `300000`), the result and import caps, and the lookup rate limit (`DOMAIN_CHECKER_LOOKUP_RATE_LIMIT_MAX`, default `1` per `DOMAIN_CHECKER_LOOKUP_RATE_LIMIT_WINDOW_MS`, default `60000`) from `.env`. Empty values keep the defaults. **Operator guidance:** Helm users already set these through `api.env`.
 
 ### Fixed
 

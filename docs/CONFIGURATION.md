@@ -206,6 +206,9 @@ an incomplete configuration and SMTP is reported as not configured. With no
 | `DOMAIN_CHECKER_OVERALL_TIMEOUT_MS` | Time limit for a whole lookup; on expiry `504 DOMAIN_CHECKER_TIMEOUT` | `300000` | Domain checker |
 | `DOMAIN_CHECKER_LOOKUP_RATE_LIMIT_MAX` | Lookups allowed per user and workspace in each window; over it `429 DOMAIN_CHECKER_RATE_LIMITED` | `1` | Domain checker |
 | `DOMAIN_CHECKER_LOOKUP_RATE_LIMIT_WINDOW_MS` | Length of that window | `60000` | Domain checker |
+| `DOMAIN_CHECKER_TLS_TIMEOUT_MS` | Time limit for one TLS certificate fetch during a lookup (minimum `1000`) | `5000` | Domain checker |
+| `DOMAIN_CHECKER_IMPORT_SOCKET_TIMEOUT_MS` | Socket timeout for a long certificate import request; unset or `0` means no socket timeout | `unset` | Domain checker |
+| `DOMAIN_CHECKER_TOOL_TMPDIR` | Writable parent directory for discovery tool scratch space | system temp directory | Domain checker |
 | `CONTACT_GROUP_PLURAL_WRITES`             | Allow two-or-more contact groups per asset via `contact_group_ids` / `contactGroupIds`. Unset or empty = **on**. Set `false` only to 400 two-or-more `contact_group_ids` on a 0.16.0 replica. It does **not** make 0.15.0 write join tables. Do not mix 0.15.0 + 0.16.0 API/worker. Migrations 52-54 add the join tables; rolling a 0.15.0 binary onto a post-54 database is unsupported. Dashboard exposes the flag on `GET /api/auth/features` as `contactGroupPluralWrites`. | `unset` (on) | API, dashboard |
 | `CONTACT_GROUP_LIMITS`                    | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Contact groups       |
 | `CONTACT_GROUP_MEMBER_LIMITS`             | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Contact groups       |
