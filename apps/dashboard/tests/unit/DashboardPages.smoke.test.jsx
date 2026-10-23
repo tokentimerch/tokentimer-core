@@ -310,11 +310,12 @@ describe('Dashboard page smoke tests', () => {
     workspaceListMock.mockResolvedValue({
       items: [{ id: 'ws-1', name: 'Workspace', role: 'admin' }],
     });
+    const longAction = 'CERTOPS_AGENT_ALERT_SETTINGS_UPDATED';
     alertGetAuditEventsMock.mockResolvedValue([
       {
         id: 'ev-1',
         occurred_at: new Date().toISOString(),
-        action: 'LOGIN_SUCCESS',
+        action: longAction,
         actor_display_name: 'Test User',
         workspace_name: 'Workspace',
         metadata: {},
@@ -323,7 +324,14 @@ describe('Dashboard page smoke tests', () => {
     renderWithProviders(<Audit {...baseProps} />);
 
     await waitFor(() => expectTextPresent('Audit events'));
-    await waitFor(() => expectTextPresent('LOGIN_SUCCESS'));
+    await waitFor(() => expectTextPresent(longAction));
+    const actionBadge = screen.getAllByText(longAction)[0];
+    expect(actionBadge).toHaveAttribute('title', longAction);
+    expect(actionBadge).toHaveStyle({
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+    });
   });
 
   it.each([
