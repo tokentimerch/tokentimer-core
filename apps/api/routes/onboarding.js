@@ -132,6 +132,7 @@ router.get(`${BASE}/:flow/summary`, ...guards, async (req, res) => {
           issueJobId: session.progress?.certops?.issueJobId,
           publishJobId: session.progress?.certops?.vaultPublishJobId,
           chosenAgentId: session.progress?.certops?.chosenAgentId,
+          adcsIssuerId: session.progress?.certops?.chosenIssuerId,
           clusterId: session.progress?.certops?.clusterId,
         }),
       null,

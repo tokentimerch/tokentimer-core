@@ -598,6 +598,11 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
     [onboarding]
   );
 
+  // A finished step can be reopened. It is only a view: the planner keeps
+  // deciding what is done and what comes next from server state.
+  const [viewStepId, setViewStepId] = useState(null);
+  const goToStep = useCallback(id => setViewStepId(id), []);
+
   const ctx = useMemo(
     () =>
       onboarding.status === 'ready'
@@ -613,6 +618,8 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
             fetchSummary: onboarding.refresh,
             skip,
             release: releaseStep,
+            // Opens a step that is already reached, as a view.
+            goToStep,
             // Steps call this when they finish something that should leave a review.
             onDone: () => setViewStepId(null),
             // Leaves the guide without touching progress.
@@ -625,12 +632,9 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
             userName: session?.name || session?.displayName || '',
           }
         : null,
-    [onboarding, docs, session, skip, navigate, releaseStep]
+    [onboarding, docs, session, skip, navigate, releaseStep, goToStep]
   );
 
-  // A finished step can be reopened. It is only a view: the planner keeps
-  // deciding what is done and what comes next from server state.
-  const [viewStepId, setViewStepId] = useState(null);
   const nav = useMemo(
     () => resolveNavigation(plan, viewStepId),
     [plan, viewStepId]
@@ -639,7 +643,6 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
     id => plan?.steps.find(s => s.id === id)?.title || id,
     [plan]
   );
-  const goToStep = useCallback(id => setViewStepId(id), []);
   const returnToCurrent = useCallback(() => setViewStepId(null), []);
   // What was on screen at the last commit, to notice a step turning done.
   useEffect(() => {

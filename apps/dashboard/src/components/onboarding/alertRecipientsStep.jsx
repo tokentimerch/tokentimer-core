@@ -34,20 +34,22 @@ import { GroupRow } from './alertGroupRow.jsx';
 import { describeGroup } from './alertGroups.js';
 import { groupReaches, planGroupDelete } from './alertGroupUsage.js';
 import {
-  DEFAULT_ONLY_NOTE,
   canTickGoal,
   canContinueTicks,
   confirmsDefault,
+  defaultOnlyNote,
   describeItemsCovered,
   describeNoToken,
   describeTicks,
+  adcsGap,
   isDefaultOnlyGoal,
+  recipientsNeedPolling,
   recipientsSatisfied,
   summarizeItems,
   tickState,
 } from './groupAttachment.js';
 import { useSessionGroupTicks } from './useSessionGroupTicks.js';
-import { useSummaryPolling } from './useSummaryPolling.js';
+import { WAIT_POLL_MS, useSummaryPolling } from './useSummaryPolling.js';
 import { StatusPanel } from './panels.jsx';
 import { onboardingActions } from '../../utils/onboardingActions.js';
 import { useContactGroupPluralWrites } from '../../utils/contactGroupPluralWrites.jsx';
@@ -267,16 +269,21 @@ export function RecipientsStep({ ctx, reviewing = false }) {
     progress: ctx.session?.progress,
     reality: ctx.summary,
   });
-  // A website gets its certificate record at its first check, so keep
-  // reading while one is missing and the ticks will appear by themselves. The
-  // same while the agent has not reported a certificate yet.
+  // A website gets its certificate record at its first check, a certificate
+  // appears when a profile is attached, an agent reports or a job finishes:
+  // keep reading while something is expected and the ticks will appear by
+  // themselves.
   useSummaryPolling(
     ctx.refresh,
     !reviewing &&
-      ((sessionGoal === 'monitor_https' && ticks.noToken > 0) ||
-        (sessionGoal === 'certops_observe' &&
-          ticks.status === 'ready' &&
-          ticks.items.length === 0))
+      !stepDone &&
+      recipientsNeedPolling({
+        goal: sessionGoal,
+        plan: ticks.plan,
+        ready: ticks.status === 'ready',
+        itemCount: ticks.items.length,
+      }),
+    WAIT_POLL_MS
   );
   const [confirming, setConfirming] = useState(false);
   // Writes the operator's confirmation for this goal. Idempotent, so a retry
@@ -415,6 +422,7 @@ export function RecipientsStep({ ctx, reviewing = false }) {
   const canTick = ticks.status === 'ready' && ticks.items.length > 0;
   const existingIds = new Set(groups.map(g => String(g.id)));
   const defaultOnly = isDefaultOnlyGoal(goal);
+  const defaultNote = defaultOnlyNote({ goal, summary: ctx.summary });
   // The agent found nothing to carry a group yet: say so instead of showing
   // groups that tick nothing. Continuing is allowed, the default group applies.
   const nothingFound =
@@ -422,8 +430,18 @@ export function RecipientsStep({ ctx, reviewing = false }) {
     ticks.status === 'ready' &&
     ticks.items.length === 0 &&
     !ticks.noToken;
+  // AD CS has an item as soon as the renewal profile is attached to a
+  // certificate; until then say what is missing and where to fix it.
+  const adcsMissing =
+    goal === 'certops_adcs' &&
+    ticks.status === 'ready' &&
+    ticks.items.length === 0 &&
+    !ticks.noToken
+      ? adcsGap({ summary: ctx.summary, progress: ctx.session?.progress }) ||
+        'attach'
+      : null;
   const sentence =
-    ticks.status === 'blocked' || defaultOnly
+    ticks.status === 'blocked' || defaultOnly || adcsMissing
       ? ''
       : describeTicks({
           goal,
@@ -491,9 +509,41 @@ export function RecipientsStep({ ctx, reviewing = false }) {
     >
       <VStack align='stretch' spacing={4}>
         {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
-        {defaultOnly ? (
+        {defaultOnly && defaultNote ? (
           <StatusPanel status='info' testId='default-only-note'>
-            {DEFAULT_ONLY_NOTE}
+            {defaultNote}
+          </StatusPanel>
+        ) : null}
+        {adcsMissing ? (
+          <StatusPanel
+            status='info'
+            title={
+              adcsMissing === 'profile'
+                ? 'No renewal profile yet'
+                : 'No certificate is attached to the renewal profile yet'
+            }
+            testId='adcs-nothing-attached'
+          >
+            <VStack align='start' spacing={2}>
+              <Text fontSize='sm'>
+                {adcsMissing === 'profile'
+                  ? 'Create the renewal profile in the Microsoft CA step and attach it to the site certificate. The certificate shows up here to tick groups for, and this page checks again every 10 seconds.'
+                  : 'Attach the profile to the site certificate in the Microsoft CA step (the last step of the profile dialog). The certificate shows up here to tick groups for, and this page checks again every 10 seconds.'}{' '}
+                {defaultGroup
+                  ? `Until then the workspace default group "${defaultGroup.name}" is used.`
+                  : 'No default group is set, so there is no recipient until one is. Set a default group below.'}
+              </Text>
+              {typeof ctx.goToStep === 'function' && !reviewing ? (
+                <DashboardActionButton
+                  size='sm'
+                  variant='outline'
+                  onClick={() => ctx.goToStep('certops_adcs')}
+                  data-testid='adcs-back-to-profile'
+                >
+                  Back to the Microsoft CA step
+                </DashboardActionButton>
+              ) : null}
+            </VStack>
           </StatusPanel>
         ) : null}
         {nothingFound ? (

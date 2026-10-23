@@ -118,7 +118,7 @@ export function ExecutionStep({ ctx }) {
   // until the server has seen it.
   useSummaryPolling(
     ctx.refresh,
-    needsExecution && (agents?.live || 0) > 0 && !agents?.executionEnabled
+    needsExecution && Boolean(agent) && !agents?.executionEnabled
   );
   const os = saved.infrastructure === 'windows' ? 'windows' : 'linux';
   const configPath = agentConfigPathFor(os);

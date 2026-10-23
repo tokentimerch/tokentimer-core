@@ -2,10 +2,13 @@ import { useEffect } from 'react';
 import { CHECK_STATUS } from './verification.js';
 
 export const SUMMARY_POLL_MS = 15000;
+// Steps that wait for something to show up (a certificate, an attachment).
+export const WAIT_POLL_MS = 10000;
 
 /**
  * Re-reads the onboarding summary on an interval while `active` is true and
- * stops on unmount or when it turns false.
+ * stops on unmount or when it turns false. A hidden tab skips its turn and
+ * reads once as soon as it is visible again.
  */
 export function useSummaryPolling(
   refresh,
@@ -14,10 +17,25 @@ export function useSummaryPolling(
 ) {
   useEffect(() => {
     if (!active || typeof refresh !== 'function') return undefined;
-    const timer = setInterval(() => {
+    const hidden = () => typeof document !== 'undefined' && document.hidden;
+    const read = () => {
       Promise.resolve(refresh()).catch(() => {});
+    };
+    const timer = setInterval(() => {
+      if (!hidden()) read();
     }, intervalMs);
-    return () => clearInterval(timer);
+    const onVisible = () => {
+      if (!hidden()) read();
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisible);
+    }
+    return () => {
+      clearInterval(timer);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisible);
+      }
+    };
   }, [active, refresh, intervalMs]);
 }
 
@@ -44,6 +62,8 @@ export function verifyNeedsPolling(result) {
   return (result?.checks || []).some(
     c =>
       c.id === 'worker' ||
-      (c.id === 'distribution' && c.status === CHECK_STATUS.WARN)
+      (c.id === 'distribution' && c.status === CHECK_STATUS.WARN) ||
+      // A website the server has not read yet is rechecked on its side.
+      (c.status === CHECK_STATUS.WARN && String(c.id).startsWith('certificate'))
   );
 }

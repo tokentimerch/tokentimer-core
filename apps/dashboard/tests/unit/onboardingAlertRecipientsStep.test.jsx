@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -6,7 +7,7 @@ import {
   within,
 } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { actions, store, editor } = vi.hoisted(() => ({
   actions: {
@@ -1231,9 +1232,13 @@ describe.each([
   it('ignores certificates of another pick and falls back to the default group', async () => {
     const other = source === 'issue' ? 'enrollment' : 'issue';
     mountCerts({ certificates: certsFor(other) });
-    expect((await screen.findByTestId('tick-sentence')).textContent).toBe(
-      'Nothing was created yet that could carry a group: the workspace default group "Ops" is used.'
-    );
+    if (goal === 'certops_adcs') {
+      expect(await screen.findByTestId('adcs-nothing-attached')).toBeVisible();
+    } else {
+      expect((await screen.findByTestId('tick-sentence')).textContent).toBe(
+        'Nothing was created yet that could carry a group: the workspace default group "Ops" is used.'
+      );
+    }
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
     expect(
       await screen.findByRole('button', { name: 'Use these groups' })
@@ -1490,5 +1495,231 @@ describe('RecipientsStep certops_observe on Kubernetes', () => {
     expect(await box('Ops')).toHaveAttribute('aria-checked', 'true');
     await waitFor(() => expect(actions.getToken).toHaveBeenCalledTimes(1));
     expect(actions.getToken).toHaveBeenCalledWith('61');
+  });
+});
+
+// AD CS has an item to tick as soon as the renewal profile is attached to a
+// certificate, long before the first enrollment.
+describe('RecipientsStep AD CS renewal profile coverage', () => {
+  const issuer = (over = {}) => ({
+    id: 'i1',
+    name: 'Corp CA',
+    confirmed: true,
+    safe: true,
+    profileCount: 1,
+    attachedCertificates: 1,
+    ...over,
+  });
+  const profileCert = (tokenId, id = `p${tokenId}`) => ({
+    certificateId: id,
+    tokenId,
+    source: 'profile',
+  });
+  const mountAdcs = ({ certificates = [], adcs, goToStep } = {}) => {
+    const ctx = makeCtx({
+      goal: 'certops_adcs',
+      websiteIds: [],
+      certificates,
+      certops: { adcs: adcs || { issuers: [issuer()], profiles: 1 } },
+      progress: { certops: { objective: 'adcs', infrastructure: 'windows' } },
+    });
+    if (goToStep) ctx.goToStep = goToStep;
+    mount(ctx);
+    return ctx;
+  };
+  beforeEach(() => {
+    store.settings.contact_groups.push(group('legal', 'Legal'));
+    store.tokens[31] = token(31, ['ops'], 'app.example.com');
+    store.tokens[32] = token(32, ['ops'], 'api.example.com');
+  });
+
+  it('ticks the certificate the profile is attached to, with no enrollment yet', async () => {
+    mountAdcs({ certificates: [profileCert(31)] });
+    expect(await box('Ops')).toHaveAttribute('aria-checked', 'true');
+    expect(await box('Legal')).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByTestId('tick-item-names')).toHaveTextContent(
+      'app.example.com'
+    );
+    expect(screen.getByTestId('tick-items')).toHaveTextContent(
+      '1 certificate from this setup'
+    );
+    expect(screen.queryByTestId('adcs-nothing-attached')).toBeNull();
+    expect(screen.queryByTestId('default-only-note')).toBeNull();
+    expect(
+      screen.queryByText(/does not create items that carry their own group/)
+    ).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: 'Use these groups' })
+    ).toBeNull();
+  });
+
+  it('ticks and unticks a group on that certificate', async () => {
+    mountAdcs({ certificates: [profileCert(31)] });
+    fireEvent.click(await box('Legal'));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Legal' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    );
+    expect(store.tokens[31].contact_group_ids).toEqual(['legal', 'ops']);
+    fireEvent.click(await box('Legal'));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Legal' })).toHaveAttribute(
+        'aria-checked',
+        'false'
+      )
+    );
+    expect(store.tokens[31].contact_group_ids).toEqual(['ops']);
+  });
+
+  it('needs the operator Continue once the certificate carries a group', async () => {
+    const ctx = makeCtx({
+      goal: 'certops_adcs',
+      websiteIds: [],
+      certificates: [profileCert(31)],
+      certops: { adcs: { issuers: [issuer()], profiles: 1 } },
+      progress: { certops: { objective: 'adcs', infrastructure: 'windows' } },
+    });
+    ctx.summary.references.tokenGroups = { 31: ['ops'] };
+    mount(ctx);
+    const next = await screen.findByRole('button', { name: 'Continue' });
+    await waitFor(() => expect(next).toBeEnabled());
+    expect(ctx.release).not.toHaveBeenCalled();
+    expect(ctx.controller.update).not.toHaveBeenCalled();
+    fireEvent.click(next);
+    await waitFor(() => expect(ctx.release).toHaveBeenCalledTimes(1));
+    const patch = ctx.controller.update.mock.calls[0][0]({ progress: {} });
+    expect(patch.progress).toEqual({ recipientsConfirmedFor: 'certops_adcs' });
+  });
+
+  it('adds enrollment certificates to the profile ones, each token once', async () => {
+    mountAdcs({
+      certificates: [
+        profileCert(31),
+        { certificateId: 'e1', tokenId: 32, source: 'enrollment' },
+        { certificateId: 'e2', tokenId: 31, source: 'enrollment' },
+      ],
+    });
+    await box('Ops');
+    expect(screen.getByTestId('tick-items')).toHaveTextContent(
+      '2 certificates from this setup'
+    );
+    expect(actions.getToken).toHaveBeenCalledTimes(2);
+  });
+
+  it('says what is missing when the profile is not attached, and links back', async () => {
+    const goToStep = vi.fn();
+    const ctx = mountAdcs({
+      goToStep,
+      adcs: {
+        issuers: [issuer({ attachedCertificates: 0 })],
+        profiles: 1,
+      },
+    });
+    const note = await screen.findByTestId('adcs-nothing-attached');
+    expect(note).toHaveTextContent(
+      'No certificate is attached to the renewal profile yet'
+    );
+    expect(note).toHaveTextContent('workspace default group "Ops" is used');
+    expect(note).toHaveTextContent('checks again every 10 seconds');
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    expect(screen.queryByTestId('default-only-note')).toBeNull();
+    fireEvent.click(screen.getByTestId('adcs-back-to-profile'));
+    expect(goToStep).toHaveBeenCalledWith('certops_adcs');
+    // The step is still shown once, with the explicit default confirmation.
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Use these groups' })
+    );
+    await waitFor(() => expect(ctx.controller.update).toHaveBeenCalled());
+    const patch = ctx.controller.update.mock.calls[0][0]({ progress: {} });
+    expect(patch.progress).toEqual({ recipientsConfirmedFor: 'certops_adcs' });
+  });
+
+  it('says so when there is no renewal profile at all', async () => {
+    mountAdcs({
+      adcs: { issuers: [issuer({ profileCount: 0 })], profiles: 0 },
+    });
+    expect(
+      await screen.findByTestId('adcs-nothing-attached')
+    ).toHaveTextContent('No renewal profile yet');
+  });
+
+  it('offers no way back while a finished step is only being reviewed', async () => {
+    const ctx = makeCtx({
+      goal: 'certops_adcs',
+      websiteIds: [],
+      certops: { adcs: { issuers: [issuer({ attachedCertificates: 0 })] } },
+    });
+    ctx.goToStep = vi.fn();
+    mount(ctx, { reviewing: true });
+    await screen.findByTestId('adcs-nothing-attached');
+    expect(screen.queryByTestId('adcs-back-to-profile')).toBeNull();
+  });
+
+  it('explains a profile certificate that has no inventory record yet', async () => {
+    mountAdcs({
+      certificates: [{ certificateId: 'p1', tokenId: null, source: 'profile' }],
+    });
+    expect(await screen.findByTestId('tick-sentence')).toHaveTextContent(
+      '1 certificate from this setup has no inventory record yet'
+    );
+    expect(screen.queryByTestId('adcs-nothing-attached')).toBeNull();
+  });
+
+  describe('while the page waits', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+      Object.defineProperty(document, 'hidden', {
+        configurable: true,
+        get: () => false,
+      });
+    });
+    const advance = ms =>
+      act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+
+    it('reads again every 10 seconds until a certificate is attached', async () => {
+      const ctx = mountAdcs({
+        adcs: { issuers: [issuer({ attachedCertificates: 0 })], profiles: 1 },
+      });
+      await screen.findByTestId('adcs-nothing-attached');
+      const before = ctx.refresh.mock.calls.length;
+      await advance(10000);
+      expect(ctx.refresh.mock.calls.length).toBeGreaterThan(before);
+    });
+
+    it('does not read while the tab is hidden', async () => {
+      Object.defineProperty(document, 'hidden', {
+        configurable: true,
+        get: () => true,
+      });
+      const ctx = mountAdcs({
+        adcs: { issuers: [issuer({ attachedCertificates: 0 })], profiles: 1 },
+      });
+      await screen.findByTestId('adcs-nothing-attached');
+      await advance(60000);
+      expect(ctx.refresh).not.toHaveBeenCalled();
+    });
+
+    it('stops reading once every certificate can carry a group', async () => {
+      const ctx = mountAdcs({ certificates: [profileCert(31)] });
+      await box('Ops');
+      await advance(60000);
+      expect(ctx.refresh).not.toHaveBeenCalled();
+    });
+
+    it('keeps reading while a certificate has no inventory record', async () => {
+      const ctx = mountAdcs({
+        certificates: [profileCert(31), profileCert(null, 'p2')],
+      });
+      await box('Ops');
+      await advance(10000);
+      expect(ctx.refresh).toHaveBeenCalled();
+    });
   });
 });

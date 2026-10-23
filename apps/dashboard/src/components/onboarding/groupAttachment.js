@@ -9,6 +9,7 @@ import {
   effectiveInfrastructure,
 } from './certopsMatrix.js';
 import { scopeCertops } from './certopsScope.js';
+import { scopeAdcs } from './adcsModel.js';
 
 // The step reads every item once and writes one by one, so it stays bounded.
 export const MAX_ITEMS = 50;
@@ -30,14 +31,16 @@ const TICK_GOALS = new Set([
 export const canTickGoal = goal => TICK_GOALS.has(goal);
 
 // Which certificates a CertOps goal made or found: the issue job, the publish
-// job, the AD CS enrollments or the agent's reports, as the summary lists them.
-const CERTIFICATE_SOURCE = {
-  certops_observe: 'observed',
-  certops_automate: 'issue',
-  certops_vault: 'publish',
-  certops_adcs: 'enrollment',
+// job, the AD CS renewal profile's certificates and enrollments, or the
+// agent's reports, as the summary lists them. AD CS has its item as soon as a
+// profile is attached to a certificate, long before the first enrollment.
+const CERTIFICATE_SOURCES = {
+  certops_observe: ['observed'],
+  certops_automate: ['issue'],
+  certops_vault: ['publish'],
+  certops_adcs: ['profile', 'enrollment'],
 };
-export const isCertificateGoal = goal => goal in CERTIFICATE_SOURCE;
+export const isCertificateGoal = goal => goal in CERTIFICATE_SOURCES;
 
 // Goals with no item of their own: they only confirm the workspace default
 // group and say why.
@@ -123,9 +126,9 @@ export function planSessionItems({
     };
   }
   if (isCertificateGoal(goal)) {
-    const source = CERTIFICATE_SOURCE[goal];
-    const made = (summary?.certops?.sessionCertificates || []).filter(
-      c => c?.source === source
+    const sources = CERTIFICATE_SOURCES[goal];
+    const made = (summary?.certops?.sessionCertificates || []).filter(c =>
+      sources.includes(c?.source)
     );
     const certificates = unique(
       made.filter(c => c.tokenId != null).map(c => c.tokenId)
@@ -356,6 +359,19 @@ export function describeTicks({
   }`;
 }
 
+/**
+ * What an AD CS pick still lacks before it has a certificate to tick: the
+ * renewal profile itself ('profile') or its attachment to a certificate
+ * ('attach'). Null when nothing is lacking or the server does not say.
+ */
+export function adcsGap({ summary, progress }) {
+  const saved = scopeCertops(progress?.certops, 'adcs');
+  const adcs = scopeAdcs(summary?.certops?.adcs, saved.chosenIssuerId);
+  if (!adcs || summary?.certops === 'unknown') return null;
+  if (!(adcs.profiles > 0)) return 'profile';
+  return adcs.attached === 0 ? 'attach' : null;
+}
+
 /** Note for items that carry no group, from the live default group. */
 export function describeUngrouped({ items, defaultName }) {
   const count = items.length;
@@ -411,6 +427,12 @@ export function describeNoCertificate(defaultName = '', goal = '') {
       ? `No certificates found yet. Certificates your agent finds later use the workspace default group ${quoted(defaultName)}.`
       : 'No certificates found yet, and no default group is set.';
   }
+  if (goal === 'certops_adcs') {
+    const tail = defaultName
+      ? ` Until then the workspace default group ${quoted(defaultName)} is used.`
+      : ' No default group is set, so there is no recipient until one is.';
+    return `No certificate is attached to the renewal profile yet, so there is nothing to tick.${tail}`;
+  }
   return defaultName
     ? `Nothing was created yet that could carry a group: the workspace default group ${quoted(defaultName)} is used.`
     : 'Nothing was created yet that could carry a group, and no default group is set.';
@@ -438,6 +460,48 @@ export function describeItemsCovered(items, goal) {
 /** Why the alerting goal has nothing to tick. */
 export const DEFAULT_ONLY_NOTE =
   'This setup does not create items that carry their own group. Alerts use the groups below as the workspace default: set the default group and make sure it reaches someone.';
+
+/**
+ * The note for a goal with no items of its own. It must not claim "no items"
+ * in a workspace that already manages some, so then it only says where the
+ * default group applies.
+ */
+export const DEFAULT_ONLY_NOTE_WITH_ITEMS =
+  'Items in this workspace that have no group of their own use the workspace default group. Set the default group below and make sure it reaches someone.';
+
+export function workspaceHasItems(summary) {
+  const certs = summary?.certops?.certificates;
+  return (
+    (summary?.assets?.total || 0) > 0 ||
+    (summary?.monitors?.items || []).length > 0 ||
+    (typeof certs === 'object' && certs !== null && (certs.total || 0) > 0)
+  );
+}
+
+export function defaultOnlyNote({ goal, summary }) {
+  if (!isDefaultOnlyGoal(goal) || canTickGoal(goal)) return '';
+  return workspaceHasItems(summary)
+    ? DEFAULT_ONLY_NOTE_WITH_ITEMS
+    : DEFAULT_ONLY_NOTE;
+}
+
+/**
+ * Whether the recipients step should keep reading the summary: something
+ * this goal manages exists or is expected, but not every item can carry a
+ * group yet. A website gets its record at the first check; a certificate
+ * appears when the profile is attached, an agent reports or a job finishes.
+ * `ready` means the ticks were read; `itemCount` is how many are listed.
+ */
+export function recipientsNeedPolling({
+  goal,
+  plan,
+  ready = false,
+  itemCount = 0,
+}) {
+  if (goal === 'monitor_https') return (plan?.noToken || 0) > 0;
+  if (!isCertificateGoal(goal)) return false;
+  return ready && (itemCount === 0 || (plan?.noToken || 0) > 0);
+}
 
 export const BLOCKED_MESSAGES = {
   cap: `This guide added more than ${MAX_ITEMS} items, so groups cannot be ticked here. Change them on each asset.`,

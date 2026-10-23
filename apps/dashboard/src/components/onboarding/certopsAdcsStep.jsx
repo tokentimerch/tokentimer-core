@@ -7,6 +7,7 @@ import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
+import { WAIT_POLL_MS, useSummaryPolling } from './useSummaryPolling.js';
 import { chooseIssuer } from './certopsScope.js';
 import { CopyBlock } from './blocks.jsx';
 import { agentConfigPathFor, agentRestartCommandFor } from './certopsConfig.js';
@@ -303,6 +304,17 @@ export default function AdcsStep({ ctx }) {
     }));
   const overdueMessage = overdueEnrollmentsMessage(certops);
 
+  // The agent, the CA check and the attachment all show up on the server
+  // without a click here: keep reading until every row is done. Dialogs read
+  // on their own when they close.
+  useSummaryPolling(
+    ctx.refresh,
+    !issuerOpen &&
+      !profileOpen &&
+      (!(status.agent && status.issuer && status.profile) ||
+        status.attached === false),
+    WAIT_POLL_MS
+  );
   const check = async () => {
     setChecking(true);
     try {
@@ -388,8 +400,9 @@ export default function AdcsStep({ ctx }) {
       <VStack align='stretch' spacing={3}>
         <StatusPanel status='info' title='What this guide can see'>
           Add the issuer and the renewal profile below; this guide watches the
-          results. It cannot verify enrollment against your CA: start the first
-          enrollment from Certificate Management.
+          results and checks again every 10 seconds. It cannot verify enrollment
+          against your CA: start the first enrollment from Certificate
+          Management.
         </StatusPanel>
         {overdueMessage ? (
           <WorkerWarning testId='adcs-overdue-warning'>

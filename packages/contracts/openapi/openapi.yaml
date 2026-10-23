@@ -3329,7 +3329,14 @@ paths:
                                   Managed certificates this setup session
                                   produced (issue and publish jobs, AD CS
                                   enrollments started since the session
-                                  began). At most 20.
+                                  began, and certificates attached to an AD CS
+                                  renewal profile of the session: the chosen
+                                  issuer's profiles when an existing issuer is
+                                  reused, else profiles created since the
+                                  session began). At most 20, each certificate
+                                  once. A `profile` entry exists as soon as the
+                                  profile is attached, long before the first
+                                  enrollment.
                                 items:
                                   type: object
                                   properties:
@@ -3341,7 +3348,7 @@ paths:
                                       nullable: true
                                     source:
                                       type: string
-                                      enum: [issue, publish, enrollment]
+                                      enum: [issue, publish, enrollment, profile]
                                   additionalProperties: true
                               observedCertificates:
                                 type: object

@@ -415,4 +415,83 @@ describe("session certificates", () => {
     assert.deepEqual(await loadSessionCertificates(pool, "w", {}), []);
     assert.equal(asked, false);
   });
+
+  describe("certificates attached to a profile of this session", () => {
+    const ISSUER = "44444444-4444-4444-4444-444444444444";
+    const since = "2026-10-22T10:00:00.000Z";
+    // Answers the enrollment query empty and the profile query with `rows`.
+    const poolWith = (rows) => {
+      const seen = [];
+      return {
+        seen,
+        query: async (sql, params) => {
+          seen.push({ sql, params });
+          return { rows: /certificate_profiles/.test(sql) ? rows : [] };
+        },
+      };
+    };
+
+    it("lists them before any enrollment exists", async () => {
+      const pool = poolWith([
+        { certificate_id: "c1", token_id: 12 },
+        { certificate_id: "c2", token_id: null },
+      ]);
+      const out = await loadSessionCertificates(pool, "w", { since });
+      assert.deepEqual(out, [
+        { certificateId: "c1", tokenId: 12, source: "profile" },
+        { certificateId: "c2", tokenId: null, source: "profile" },
+      ]);
+    });
+
+    it("scopes to AD CS profiles created in the session, in this workspace", async () => {
+      const pool = poolWith([]);
+      await loadSessionCertificates(pool, "w", { since });
+      const q = pool.seen.find((s) => /certificate_profiles/.test(s.sql));
+      assert.deepEqual(q.params, ["w", null, since]);
+      assert.match(q.sql, /mc\.workspace_id = \$1/);
+      assert.match(q.sql, /i\.kind = 'adcs'/);
+      assert.match(q.sql, /p\.created_at >= \$3/);
+      assert.match(q.sql, /NOT IN \('decommissioned'\)/);
+    });
+
+    it("follows the issuer the operator chose to reuse, and ignores a malformed id", async () => {
+      const chosen = poolWith([]);
+      await loadSessionCertificates(chosen, "w", {
+        since,
+        adcsIssuerId: ISSUER,
+      });
+      const q = chosen.seen.find((s) => /certificate_profiles/.test(s.sql));
+      assert.deepEqual(q.params, ["w", ISSUER, since]);
+
+      const bad = poolWith([]);
+      await loadSessionCertificates(bad, "w", {
+        since,
+        adcsIssuerId: "x' OR 1=1",
+      });
+      const b = bad.seen.find((s) => /certificate_profiles/.test(s.sql));
+      assert.equal(b.params[1], null);
+    });
+
+    it("lists a certificate once when it is both enrolled and attached", async () => {
+      const pool = {
+        query: async () => ({ rows: [{ certificate_id: "c9", token_id: 41 }] }),
+      };
+      const out = await loadSessionCertificates(pool, "w", { since });
+      assert.deepEqual(out, [
+        { certificateId: "c9", tokenId: 41, source: "enrollment" },
+      ]);
+    });
+
+    it("asks for nothing without a session start or a chosen issuer", async () => {
+      let asked = false;
+      const pool = {
+        query: async () => {
+          asked = true;
+          return { rows: [] };
+        },
+      };
+      await loadSessionCertificates(pool, "w", {});
+      assert.equal(asked, false);
+    });
+  });
 });

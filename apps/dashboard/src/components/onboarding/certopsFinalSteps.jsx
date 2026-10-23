@@ -65,7 +65,11 @@ import {
   StatusTag,
   StepCard,
 } from './panels.jsx';
-import { useSummaryPolling, vaultNeedsPolling } from './useSummaryPolling.js';
+import {
+  WAIT_POLL_MS,
+  useSummaryPolling,
+  vaultNeedsPolling,
+} from './useSummaryPolling.js';
 import WorkerWarning from './WorkerWarning.jsx';
 
 /** A UUID the operator uses for the consumer binding (not secret). */
@@ -76,12 +80,16 @@ function newBindingId() {
 }
 
 export function FirstCertificateStep({ ctx }) {
-  const { muted } = useDashboardTheme();
   const saved = certopsProgress(ctx);
-  const automating = saved.objective === 'automate';
-  if (automating) {
+  if (saved.objective === 'automate') {
     return <IssueStep ctx={ctx} />;
   }
+  return <DiscoveredCertificateStep ctx={ctx} />;
+}
+
+function DiscoveredCertificateStep({ ctx }) {
+  const { muted } = useDashboardTheme();
+  const saved = certopsProgress(ctx);
   const certs = ctx.summary?.certops?.certificates;
   const workspaceTotal = certs?.observed ?? certs?.total ?? 0;
   const infra = effectiveInfrastructure(saved.objective, saved.infrastructure);
@@ -90,6 +98,8 @@ export function FirstCertificateStep({ ctx }) {
     clusterId: saved.clusterId,
     agentId: saved.chosenAgentId,
   });
+  // The agent reports on its own schedule: read again until one arrives.
+  useSummaryPolling(ctx.refresh, total === 0, WAIT_POLL_MS);
   // Only what the summary really carries: the agent's last check-in, or the
   // controller's last report. Nothing is inferred.
   const discoveryEvents =
@@ -148,7 +158,8 @@ export function FirstCertificateStep({ ctx }) {
           </StatusPanel>
         ) : (
           <StatusPanel status='info' title='No certificates reported yet'>
-            This page checks again on its own. Use Check again to look now.
+            This page checks again every 10 seconds. Use Check again to look
+            now.
           </StatusPanel>
         )}
         {total === 0 && workspaceTotal > 0 ? (

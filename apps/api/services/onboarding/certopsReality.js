@@ -153,14 +153,17 @@ const MAX_SESSION_CERTIFICATES = 20;
 
 /**
  * The managed certificates this guide session produced: the issue and publish
- * jobs it created, and AD CS enrollments started since the session began.
- * tokenId is null until the certificate has an inventory token, and only
- * tokens that still exist are returned.
+ * jobs it created, AD CS enrollments started since the session began, and the
+ * certificates an AD CS renewal profile of this session is attached to (the
+ * chosen issuer's profiles when the operator reuses an issuer, else profiles
+ * created since the session began). The last kind exists long before the
+ * first enrollment. tokenId is null until the certificate has an inventory
+ * token, and only tokens that still exist are returned.
  */
 async function loadSessionCertificates(
   pool,
   workspaceId,
-  { jobs = [], since = null } = {},
+  { jobs = [], since = null, adcsIssuerId = null } = {},
 ) {
   const found = new Map();
   const add = (certificateId, tokenId, source) => {
@@ -187,6 +190,31 @@ async function loadSessionCertificates(
       [workspaceId, since],
     );
     for (const row of rows) add(row.certificate_id, row.token_id, "enrollment");
+  }
+  const issuerId =
+    typeof adcsIssuerId === "string" && UUID_PATTERN.test(adcsIssuerId)
+      ? adcsIssuerId
+      : null;
+  if (since || issuerId) {
+    const { rows } = await pool.query(
+      `SELECT mc.id AS certificate_id, mc.token_id
+         FROM managed_certificates mc
+         JOIN certificate_profiles p
+           ON p.workspace_id = mc.workspace_id AND p.id = mc.profile_id
+         JOIN certificate_issuers i
+           ON i.workspace_id = p.workspace_id AND i.id = p.issuer_id
+        WHERE mc.workspace_id = $1
+          AND i.kind = 'adcs'
+          AND mc.status NOT IN ('decommissioned')
+          AND (
+            ($2::uuid IS NOT NULL AND i.id = $2::uuid)
+            OR ($2::uuid IS NULL AND p.created_at >= $3::timestamptz)
+          )
+        ORDER BY mc.created_at DESC
+        LIMIT ${MAX_SESSION_CERTIFICATES}`,
+      [workspaceId, issuerId, since],
+    );
+    for (const row of rows) add(row.certificate_id, row.token_id, "profile");
   }
   return Array.from(found.values()).slice(0, MAX_SESSION_CERTIFICATES);
 }
@@ -458,6 +486,7 @@ async function loadCertopsReality(
     issueJobId,
     publishJobId,
     chosenAgentId,
+    adcsIssuerId,
     clusterId,
   },
 ) {
@@ -487,6 +516,7 @@ async function loadCertopsReality(
       { job: publishJob, source: "publish" },
     ],
     since,
+    adcsIssuerId,
   });
   const controllers = await loadControllerReality(pool, workspaceId);
   const observed = await loadObservedCertificates(pool, workspaceId, {

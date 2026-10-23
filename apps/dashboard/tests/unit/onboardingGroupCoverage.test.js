@@ -4,18 +4,24 @@ import {
   stepsForGoal,
 } from '../../src/components/onboarding/journeyPlanner.js';
 import {
+  DEFAULT_ONLY_NOTE,
+  DEFAULT_ONLY_NOTE_WITH_ITEMS,
   ITEMS_SHOWN,
+  adcsGap,
   canContinueTicks,
   canTickGoal,
   confirmsDefault,
+  defaultOnlyNote,
   describeItemsCovered,
   describeTicks,
   isDefaultOnlyGoal,
   observedForPick,
   planSessionItems,
+  recipientsNeedPolling,
   recipientsSatisfied,
   summarizeItems,
   tickIds,
+  workspaceHasItems,
 } from '../../src/components/onboarding/groupAttachment.js';
 
 const wired = (summary, ids) => ({
@@ -398,5 +404,320 @@ describe('the list of items under the heading', () => {
     expect(
       describeItemsCovered([{ kind: 'asset' }, { kind: 'website' }], 'x')
     ).toBe('2 items from this guide');
+  });
+});
+
+// Every certificate goal and pick, in each state a managed item can be in:
+// the thing the guide manages exists (with or without a token) or does not
+// yet. A pick that has something never gets the default-only wording.
+describe('pick x state matrix for the certificate goals', () => {
+  const SOURCES = {
+    certops_observe: null,
+    certops_automate: ['issue'],
+    certops_vault: ['publish'],
+    certops_adcs: ['profile', 'enrollment'],
+  };
+  const certGoals = Object.keys(SOURCES);
+  const cases = certGoals.flatMap(goal =>
+    PICKS[goal].map(pick => [goal, pick])
+  );
+
+  // One session where the goal's own item exists, optionally without a token.
+  function withItem(goal, pick, { tokenId = 77, source } = {}) {
+    const base = sessionFor(goal, pick);
+    const certops =
+      goal === 'certops_observe'
+        ? {
+            ...base.summary.certops,
+            observedCertificates: {
+              total: 1,
+              items: [
+                {
+                  certificateId: 'o',
+                  tokenId,
+                  source:
+                    pick === 'kubernetes'
+                      ? 'cert_manager'
+                      : pick === 'windows'
+                        ? 'agent_windows'
+                        : 'agent_filesystem',
+                  agentId: pick === 'windows' ? 'w1' : 'a1',
+                  clusterId: 'prod',
+                },
+              ],
+            },
+          }
+        : {
+            ...base.summary.certops,
+            sessionCertificates: [
+              {
+                certificateId: 'x',
+                tokenId,
+                source: source || SOURCES[goal][0],
+              },
+            ],
+          };
+    return {
+      ...base,
+      summary: { ...base.summary, certops },
+    };
+  }
+  function nothingYet(goal, pick) {
+    const base = sessionFor(goal, pick);
+    return {
+      ...base,
+      summary: {
+        ...base.summary,
+        certops: {
+          ...base.summary.certops,
+          sessionCertificates: [],
+          observedCertificates: { total: 0, items: [] },
+        },
+      },
+    };
+  }
+  const sentenceFor = (goal, plan, items = []) =>
+    describeTicks({
+      goal,
+      items,
+      defaultName: 'Ops',
+      noToken: plan.noToken,
+    });
+  const DEFAULT_ONLY_WORDS = /does not create items|Nothing was created yet/;
+
+  it.each(cases)('%s / %s: an item with a token is ticked', (goal, pick) => {
+    const { refs, summary, progress } = withItem(goal, pick);
+    const plan = planSessionItems({ goal, refs, summary, progress });
+    expect(tickIds(goal, plan)).toEqual(['77']);
+    expect(confirmsDefault(goal, plan)).toBe(false);
+    expect(plan.noToken).toBe(0);
+    expect(
+      sentenceFor(goal, plan, [{ id: '77', kind: 'certificate', groupIds: [] }])
+    ).not.toMatch(DEFAULT_ONLY_WORDS);
+    expect(defaultOnlyNote({ goal, summary })).toBe('');
+    expect(
+      recipientsNeedPolling({ goal, plan, ready: true, itemCount: 1 })
+    ).toBe(false);
+  });
+
+  it.each(cases)(
+    '%s / %s: an item without a token is named, never default-only',
+    (goal, pick) => {
+      const { refs, summary, progress } = withItem(goal, pick, {
+        tokenId: null,
+      });
+      const plan = planSessionItems({ goal, refs, summary, progress });
+      expect(tickIds(goal, plan)).toEqual([]);
+      expect(plan.noToken).toBe(1);
+      const sentence = sentenceFor(goal, plan);
+      expect(sentence).toMatch(/no inventory record yet/);
+      expect(sentence).not.toMatch(DEFAULT_ONLY_WORDS);
+      expect(defaultOnlyNote({ goal, summary })).toBe('');
+      // The record appears on its own, so the page keeps reading.
+      expect(
+        recipientsNeedPolling({ goal, plan, ready: true, itemCount: 0 })
+      ).toBe(true);
+    }
+  );
+
+  it.each(cases)(
+    '%s / %s: with nothing yet it confirms the default group and keeps reading',
+    (goal, pick) => {
+      const { refs, summary, progress } = nothingYet(goal, pick);
+      const plan = planSessionItems({ goal, refs, summary, progress });
+      expect(tickIds(goal, plan)).toEqual([]);
+      expect(confirmsDefault(goal, plan)).toBe(true);
+      expect(defaultOnlyNote({ goal, summary })).toBe('');
+      expect(
+        recipientsNeedPolling({ goal, plan, ready: true, itemCount: 0 })
+      ).toBe(true);
+      // Still reading the ticks: nothing to poll for yet.
+      expect(
+        recipientsNeedPolling({ goal, plan, ready: false, itemCount: 0 })
+      ).toBe(false);
+    }
+  );
+
+  it('AD CS names the missing attachment instead of the generic fallback', () => {
+    const text = describeTicks({
+      goal: 'certops_adcs',
+      items: [],
+      defaultName: 'Ops',
+    });
+    expect(text).toBe(
+      'No certificate is attached to the renewal profile yet, so there is nothing to tick. Until then the workspace default group "Ops" is used.'
+    );
+    expect(text).not.toMatch(DEFAULT_ONLY_WORDS);
+  });
+});
+
+describe('AD CS certificates before the first enrollment', () => {
+  const progress = (extra = {}) => ({
+    certops: { objective: 'adcs', infrastructure: 'windows', ...extra },
+  });
+  const adcsSummary = (sessionCertificates, adcs) => ({
+    certops: { sessionCertificates, ...(adcs ? { adcs } : {}) },
+  });
+
+  it('plans the certificates a profile is attached to, no enrollment needed', () => {
+    const plan = planSessionItems({
+      goal: 'certops_adcs',
+      summary: adcsSummary([
+        { certificateId: 'a', tokenId: 5, source: 'profile' },
+        { certificateId: 'b', tokenId: 6, source: 'profile' },
+      ]),
+      progress: progress(),
+    });
+    expect(plan.certificates).toEqual(['5', '6']);
+    expect(plan.noToken).toBe(0);
+  });
+
+  it('merges enrollments once they exist and lists a token once', () => {
+    const plan = planSessionItems({
+      goal: 'certops_adcs',
+      summary: adcsSummary([
+        { certificateId: 'a', tokenId: 5, source: 'profile' },
+        { certificateId: 'c', tokenId: 5, source: 'enrollment' },
+        { certificateId: 'd', tokenId: 9, source: 'enrollment' },
+      ]),
+      progress: progress(),
+    });
+    expect(plan.certificates).toEqual(['5', '9']);
+  });
+
+  it('does not take issue or publish certificates for AD CS', () => {
+    const plan = planSessionItems({
+      goal: 'certops_adcs',
+      summary: adcsSummary([
+        { certificateId: 'a', tokenId: 5, source: 'issue' },
+        { certificateId: 'b', tokenId: 6, source: 'publish' },
+      ]),
+      progress: progress(),
+    });
+    expect(plan.certificates).toEqual([]);
+    expect(confirmsDefault('certops_adcs', plan)).toBe(true);
+  });
+
+  it('does not take profile certificates for the other goals', () => {
+    for (const goal of ['certops_automate', 'certops_vault']) {
+      const plan = planSessionItems({
+        goal,
+        summary: adcsSummary([
+          { certificateId: 'a', tokenId: 5, source: 'profile' },
+        ]),
+        progress: { certops: { objective: GOALS[goal].certopsObjective } },
+      });
+      expect(plan.certificates).toEqual([]);
+    }
+  });
+
+  it('blocks ticking past the cap', () => {
+    const many = Array.from({ length: 51 }, (_, i) => ({
+      certificateId: `c${i}`,
+      tokenId: 100 + i,
+      source: 'profile',
+    }));
+    const plan = planSessionItems({
+      goal: 'certops_adcs',
+      summary: adcsSummary(many),
+      progress: progress(),
+    });
+    expect(plan.blocked).toBe('cap');
+  });
+
+  describe('adcsGap', () => {
+    const issuer = (over = {}) => ({
+      id: 'i1',
+      confirmed: true,
+      safe: true,
+      profileCount: 1,
+      attachedCertificates: 1,
+      ...over,
+    });
+    const gap = (issuers, extra) =>
+      adcsGap({
+        summary: { certops: { adcs: { issuers, profiles: 0 } } },
+        progress: progress(extra),
+      });
+
+    it('says a profile is missing, or not attached, or nothing', () => {
+      expect(gap([issuer({ profileCount: 0, attachedCertificates: 0 })])).toBe(
+        'profile'
+      );
+      expect(gap([issuer({ attachedCertificates: 0 })])).toBe('attach');
+      expect(gap([issuer()])).toBeNull();
+    });
+
+    it('counts only the issuer of this session, or the one the operator chose', () => {
+      const old = issuer({
+        id: 'old',
+        existedBeforeSession: true,
+        attachedCertificates: 4,
+      });
+      const fresh = issuer({ attachedCertificates: 0 });
+      expect(gap([old, fresh])).toBe('attach');
+      expect(gap([old, fresh], { chosenIssuerId: 'old' })).toBeNull();
+    });
+
+    it('claims nothing when the server does not say', () => {
+      expect(adcsGap({ summary: {}, progress: progress() })).toBeNull();
+      expect(
+        adcsGap({ summary: { certops: 'unknown' }, progress: progress() })
+      ).toBeNull();
+    });
+  });
+});
+
+describe('recipientsNeedPolling', () => {
+  const none = { noToken: 0 };
+  it('reads for a website without a record, whatever else is going on', () => {
+    expect(
+      recipientsNeedPolling({ goal: 'monitor_https', plan: { noToken: 1 } })
+    ).toBe(true);
+    expect(recipientsNeedPolling({ goal: 'monitor_https', plan: none })).toBe(
+      false
+    );
+  });
+
+  it('never reads for goals whose items are in hand when they are added', () => {
+    for (const goal of ['track_asset', 'alerting', 'import_file']) {
+      expect(
+        recipientsNeedPolling({
+          goal,
+          plan: none,
+          ready: true,
+          itemCount: 0,
+        })
+      ).toBe(false);
+    }
+  });
+});
+
+describe('the default-only note', () => {
+  it('is only for the alerting goal and never claims "no items" in a workspace that has some', () => {
+    for (const goal of Object.keys(PICKS)) {
+      expect(defaultOnlyNote({ goal, summary: {} })).toBe('');
+      expect(
+        defaultOnlyNote({
+          goal,
+          summary: { certops: { certificates: { total: 3 } } },
+        })
+      ).toBe('');
+    }
+    expect(defaultOnlyNote({ goal: 'alerting', summary: {} })).toBe(
+      DEFAULT_ONLY_NOTE
+    );
+    for (const summary of [
+      { assets: { total: 2 } },
+      { monitors: { items: [{ id: 'm' }] } },
+      { certops: { certificates: { total: 1 } } },
+    ]) {
+      expect(workspaceHasItems(summary)).toBe(true);
+      expect(defaultOnlyNote({ goal: 'alerting', summary })).toBe(
+        DEFAULT_ONLY_NOTE_WITH_ITEMS
+      );
+    }
+    expect(DEFAULT_ONLY_NOTE_WITH_ITEMS).not.toMatch(/does not create items/);
+    expect(workspaceHasItems({ certops: 'unknown' })).toBe(false);
   });
 });

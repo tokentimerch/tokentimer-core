@@ -118,7 +118,11 @@ export function VerifyStep({ ctx }) {
   const polling = verifyNeedsPolling(state.result);
   useEffect(() => {
     if (!polling) return undefined;
-    const timer = setInterval(() => runRef.current(true), SUMMARY_POLL_MS);
+    const timer = setInterval(() => {
+      if (typeof document === 'undefined' || !document.hidden) {
+        runRef.current(true);
+      }
+    }, SUMMARY_POLL_MS);
     return () => clearInterval(timer);
   }, [polling]);
 
