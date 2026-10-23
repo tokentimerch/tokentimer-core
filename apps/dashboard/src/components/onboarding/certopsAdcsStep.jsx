@@ -93,7 +93,13 @@ function PageLink({ to, children }) {
   const inRouter = useInRouterContext();
   if (!inRouter) return null;
   return (
-    <DashboardActionButton as={RouterLink} to={to} variant='outline' size='sm'>
+    <DashboardActionButton
+      as={RouterLink}
+      to={to}
+      variant='outline'
+      size='sm'
+      mt={2}
+    >
       {children}
     </DashboardActionButton>
   );
