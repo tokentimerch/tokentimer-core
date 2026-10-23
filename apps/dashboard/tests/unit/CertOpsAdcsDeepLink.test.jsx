@@ -102,6 +102,15 @@ describe('New AD CS issuer deep link', () => {
     await waitFor(() => expect(search()).toBe('?workspace=ws-1'));
   });
 
+  it('opens the section for a re-check link without the new issuer dialog, then clears it', async () => {
+    renderRenewals(
+      `/certops/renewals?workspace=ws-1&action=check-adcs-issuer&issuerId=${AGENT}`
+    );
+    expect(await screen.findByText('No issuers yet.')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(search()).toBe('?workspace=ws-1'));
+  });
+
   it('does nothing without the action', async () => {
     renderRenewals('/certops/renewals?workspace=ws-1');
     await screen.findByRole('button', { name: /AD CS issuers/ });

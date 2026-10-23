@@ -71,6 +71,8 @@ const VARIANT_KEYS = [
   'agentLaterAt',
   'chosenAgentId',
   'chosenAgentConfirmed',
+  'chosenIssuerId',
+  'chosenIssuerConfirmed',
   'dryRunJobId',
   'issueJobId',
   'issueAttempt',
@@ -106,5 +108,22 @@ export function chooseInfrastructure(
   }
   if (agentId) next.chosenAgentId = agentId;
   else if (agentId === null) delete next.chosenAgentId;
+  return next;
+}
+
+/**
+ * The value to store when the operator ticks "My Microsoft CA issuer is
+ * already set up" and picks an issuer (a string), or unticks it (null).
+ * Picking another issuer drops the confirmation that was about the previous
+ * one; Continue on the step confirms the new choice.
+ */
+export function chooseIssuer(certops, objective, issuerId) {
+  const before = scopeCertops(certops, objective);
+  const next = mergeCertops(certops, objective, { objective });
+  if ((issuerId || undefined) !== before.chosenIssuerId) {
+    delete next.chosenIssuerConfirmed;
+  }
+  if (issuerId) next.chosenIssuerId = issuerId;
+  else delete next.chosenIssuerId;
   return next;
 }

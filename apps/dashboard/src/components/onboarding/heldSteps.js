@@ -37,6 +37,12 @@ export function finishesByItself(stepId, { goal, progress } = {}) {
     const objective = allGoals()[goal]?.certopsObjective;
     return !scopeCertops(progress?.certops, objective).chosenAgentId;
   }
+  // The same for the Microsoft CA issuer: a chosen one is confirmed by the
+  // step's own Continue, a new one is watched until it turns done.
+  if (stepId === 'certops_adcs') {
+    const objective = allGoals()[goal]?.certopsObjective;
+    return !scopeCertops(progress?.certops, objective).chosenIssuerId;
+  }
   if (stepId === 'certops_execution') {
     // Observe-only goals acknowledge with a button instead of waiting.
     const objective = allGoals()[goal]?.certopsObjective;

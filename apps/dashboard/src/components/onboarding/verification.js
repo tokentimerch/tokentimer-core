@@ -11,6 +11,7 @@ import {
   reportedCertificates,
   scopeAgents,
 } from './certopsMatrix.js';
+import { scopeAdcs } from './adcsModel.js';
 
 export const CHECK_STATUS = { PASS: 'pass', FAIL: 'fail', WARN: 'warn' };
 
@@ -102,6 +103,7 @@ export function evaluateVerification({
   infrastructure,
   clusterId,
   agentId,
+  issuerId,
 }) {
   const checks = [];
 
@@ -281,7 +283,7 @@ export function evaluateVerification({
             )
       );
       if (goal === 'certops_adcs') {
-        const { adcs } = certops;
+        const adcs = scopeAdcs(certops.adcs, issuerId);
         const ready =
           (adcs?.issuers || []).some(i => i.confirmed && i.safe) &&
           (adcs?.profiles || 0) > 0;

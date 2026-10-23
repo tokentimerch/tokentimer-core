@@ -73,10 +73,10 @@ describe('adcsStatus', () => {
 });
 
 describe('AdcsStep', () => {
-  it('always says enrollment is not verified and lists what is left', () => {
+  it('always says enrollment is not verified and has no trailing to-do list', () => {
     show(ctxWith({ adcs: { issuers: [], profiles: 0 }, agents: [] }));
     expect(screen.getByText(/cannot verify enrollment/i)).toBeTruthy();
-    expect(screen.getByText(/Still to do on your side/i)).toBeTruthy();
+    expect(screen.queryByText(/Still to do on your side/i)).toBeNull();
     expect(screen.getAllByText('To do')).toHaveLength(3);
   });
 

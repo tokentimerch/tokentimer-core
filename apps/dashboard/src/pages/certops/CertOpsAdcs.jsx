@@ -850,6 +850,8 @@ function EnrollmentRow({
 export default function CertOpsAdcs({
   openRequest = null,
   onRequestHandled,
+  focusIssuerId = null,
+  onFocusHandled,
 } = {}) {
   const {
     status: adminStatus,
@@ -1003,6 +1005,17 @@ export default function CertOpsAdcs({
     paused,
     onRequestHandled,
   ]);
+
+  // A deep link names one issuer to open, for a re-check. Once the list is
+  // loaded the issuer is expanded and the request is handed back.
+  useEffect(() => {
+    if (!focusIssuerId || loading || adminStatus === 'loading') return;
+    if (issuers.some(item => item.id === focusIssuerId)) {
+      issuerListReady.current = true;
+      setOpenIssuerId(focusIssuerId);
+    }
+    onFocusHandled?.();
+  }, [focusIssuerId, loading, adminStatus, issuers, onFocusHandled]);
 
   useEffect(() => {
     issuerListReady.current = false;

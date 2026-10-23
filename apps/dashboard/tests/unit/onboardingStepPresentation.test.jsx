@@ -308,7 +308,7 @@ describe('Microsoft CA step', () => {
     ).toBeVisible();
     expect(screen.getAllByText('To do').length).toBeGreaterThan(0);
     expect(screen.getByText(/Agent web-01 last seen/)).toBeVisible();
-    expect(screen.getByText('Still to do on your side')).toBeVisible();
+    expect(screen.queryByText('Still to do on your side')).toBeNull();
   });
 
   it('ignores a Linux agent of the workspace', () => {

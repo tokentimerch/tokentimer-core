@@ -21,6 +21,7 @@ import {
   viewerHasScope,
 } from './editionModules.js';
 import { recipientsSatisfied } from './groupAttachment.js';
+import { scopeAdcs } from './adcsModel.js';
 import { scopeCertops } from './certopsScope.js';
 import { GUIDED_IMPORT_STEPS } from './importFlow.js';
 
@@ -232,11 +233,15 @@ function certopsDone(stepId, { reality, progress, objective }) {
     }
     case 'certops_adcs': {
       // What the guide can see: a confirmed, safe issuer and a profile on it.
-      // Enrollment itself needs a real CA and is not verified here.
-      const adcs = certops?.adcs;
+      // Only an issuer made in this session counts, or the one the operator
+      // chose and confirmed with Continue. Enrollment itself needs a real CA
+      // and is not verified here.
+      const adcs = scopeAdcs(certops?.adcs, saved.chosenIssuerId);
       return (
         (adcs?.issuers || []).some(i => i.confirmed && i.safe) &&
-        (adcs?.profiles || 0) > 0
+        (adcs?.profiles || 0) > 0 &&
+        (!saved.chosenIssuerId ||
+          saved.chosenIssuerConfirmed === saved.chosenIssuerId)
       );
     }
     case 'certops_vault':

@@ -671,7 +671,9 @@ export function AgentStep({ ctx }) {
               testId='adcs-host-note'
             >
               Install the agent on a domain-joined Windows Server member that
-              can reach your CA. A domain controller is not supported.
+              can reach your CA. A domain controller is not supported. Grant its
+              computer account Enroll on the certificate template (in the
+              template's Security tab).
             </StatusPanel>
           ) : null}
           {os === 'linux' && ['automate', 'vault'].includes(saved.objective) ? (

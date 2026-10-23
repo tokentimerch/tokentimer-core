@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   adcsIssuerLink,
+  adcsRecheckLink,
   parseAdcsIssuerRequest,
+  parseAdcsRecheckRequest,
   withoutAdcsIssuerRequest,
 } from '../../src/components/certops/adcsIssuerLink.js';
 
@@ -57,5 +59,40 @@ describe('parseAdcsIssuerRequest', () => {
       )
     );
     expect(next.toString()).toBe('workspace=ws-1&profileOffset=20');
+  });
+});
+
+describe('adcsRecheckLink', () => {
+  it('builds a link that names the issuer', () => {
+    expect(adcsRecheckLink({ workspaceId: 'ws-1', issuerId: AGENT })).toBe(
+      `/certops/renewals?workspace=ws-1&action=check-adcs-issuer&issuerId=${AGENT}`
+    );
+  });
+
+  it('reads the issuer back and drops a malformed id', () => {
+    const url = new URL(
+      adcsRecheckLink({ workspaceId: 'ws-1', issuerId: AGENT }),
+      'http://x'
+    );
+    expect(parseAdcsRecheckRequest(url.searchParams)).toEqual({
+      issuerId: AGENT,
+    });
+    expect(
+      parseAdcsRecheckRequest(
+        new URLSearchParams('action=check-adcs-issuer&issuerId=nope')
+      )
+    ).toBeNull();
+    expect(
+      parseAdcsRecheckRequest(new URLSearchParams(`issuerId=${AGENT}`))
+    ).toBeNull();
+  });
+
+  it('is removed with the other issuer request parameters', () => {
+    const next = withoutAdcsIssuerRequest(
+      new URLSearchParams(
+        `workspace=ws-1&action=check-adcs-issuer&issuerId=${AGENT}`
+      )
+    );
+    expect(next.toString()).toBe('workspace=ws-1');
   });
 });

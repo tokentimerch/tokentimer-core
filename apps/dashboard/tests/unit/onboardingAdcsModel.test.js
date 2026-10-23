@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ADCS_CA_CONFIG_PATTERN,
   ADCS_DRY_RUN_NOTE,
-  ADCS_REMAINING_STEPS,
+  ADCS_REAL_ENROLLMENT_BLOCK,
   ADCS_TEMPLATE_PATTERN,
   buildAdcsConfig,
   buildAdcsRule,
@@ -109,24 +109,14 @@ describe('buildAdcsConfig', () => {
     expect(text).not.toMatch(/password|secret|token|key material/i);
   });
 
-  it('lists what the person still has to do', () => {
-    expect(ADCS_REMAINING_STEPS.length).toBeGreaterThanOrEqual(3);
-    expect(ADCS_REMAINING_STEPS.join(' ')).toMatch(/issuer/i);
-  });
-
-  it('keeps the dry-run default and tells the operator how to leave it', () => {
+  it('keeps the dry-run default and points at the step that turns it off', () => {
     const r = buildAdcsConfig({ ...good, names: ['web.corp.example.com'] });
     expect(r.config.execution.dryRun).toBe(true);
-    const last = ADCS_REMAINING_STEPS.at(-1);
-    expect(last).toMatch(/dryRun/);
-    expect(last).toMatch(/false/);
-    expect(last).toMatch(/restart TokenTimerAgent/);
-    expect(last).toMatch(/refuses real enrollment/);
-    expect(ADCS_DRY_RUN_NOTE).toMatch(/set dryRun to false/);
-  });
-
-  it('says the host must not be a domain controller', () => {
-    expect(ADCS_REMAINING_STEPS[0]).toMatch(/domain controller/);
+    expect(ADCS_DRY_RUN_NOTE).toMatch(/refuses real enrollment/);
+    expect(ADCS_DRY_RUN_NOTE).toMatch(/Connect your Microsoft CA/);
+    expect(JSON.parse(`{${ADCS_REAL_ENROLLMENT_BLOCK}}`)).toEqual({
+      execution: { enabled: true, dryRun: false },
+    });
   });
 });
 

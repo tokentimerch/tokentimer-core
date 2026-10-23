@@ -12,6 +12,7 @@ import { SettingsIntegrationCard } from '../../components/SettingsIntegrationHub
 import RenewalProfilesPanel from '../../components/certops/RenewalProfilesPanel.jsx';
 import {
   parseAdcsIssuerRequest,
+  parseAdcsRecheckRequest,
   withoutAdcsIssuerRequest,
 } from '../../components/certops/adcsIssuerLink.js';
 import CertOpsAdcs from './CertOpsAdcs.jsx';
@@ -34,13 +35,18 @@ function ProfilesDisclosure() {
   );
 }
 
-function AdcsDisclosure({ openRequest, onRequestHandled }) {
-  const [open, setOpen] = useState(Boolean(openRequest));
+function AdcsDisclosure({
+  openRequest,
+  onRequestHandled,
+  focusIssuerId,
+  onFocusHandled,
+}) {
+  const [open, setOpen] = useState(Boolean(openRequest || focusIssuerId));
 
   // A link to the New issuer dialog needs the section open first.
   useEffect(() => {
-    if (openRequest) setOpen(true);
-  }, [openRequest]);
+    if (openRequest || focusIssuerId) setOpen(true);
+  }, [openRequest, focusIssuerId]);
 
   return (
     <SettingsIntegrationCard
@@ -56,6 +62,8 @@ function AdcsDisclosure({ openRequest, onRequestHandled }) {
       <CertOpsAdcs
         openRequest={openRequest}
         onRequestHandled={onRequestHandled}
+        focusIssuerId={focusIssuerId}
+        onFocusHandled={onFocusHandled}
       />
     </SettingsIntegrationCard>
   );
@@ -75,6 +83,10 @@ export default function CertOpsRenewals() {
   // so a reload or a shared URL does not open it again.
   const issuerRequest = useMemo(
     () => parseAdcsIssuerRequest(searchParams),
+    [searchParams]
+  );
+  const recheckRequest = useMemo(
+    () => parseAdcsRecheckRequest(searchParams),
     [searchParams]
   );
   const clearIssuerRequest = useCallback(() => {
@@ -101,6 +113,8 @@ export default function CertOpsRenewals() {
       <AdcsDisclosure
         openRequest={issuerRequest}
         onRequestHandled={clearIssuerRequest}
+        focusIssuerId={recheckRequest?.issuerId || null}
+        onFocusHandled={clearIssuerRequest}
       />
     </SimpleGrid>
   );

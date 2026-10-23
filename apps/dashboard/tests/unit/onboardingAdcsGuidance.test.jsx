@@ -275,15 +275,35 @@ describe('agent step for AD CS', () => {
   });
 });
 
-describe('AD CS step lists the dry-run switch', () => {
-  it('names dryRun false and the restart as the last thing to do', () => {
+describe('AD CS step shows the dry-run switch when it applies', () => {
+  const safe = { id: 'i1', name: 'Corp CA', confirmed: true, safe: true };
+
+  it('keeps it out of the way until the issuer has passed its check', () => {
     mount(
       AdcsStep,
       makeCtx('certops_adcs', adcs(), { certops: { agents: { items: [] } } })
     );
-    const items = screen.getAllByRole('listitem').map(li => li.textContent);
-    const last = items.at(-1);
-    expect(last).toMatch(/dryRun/);
-    expect(last).toMatch(/restart TokenTimerAgent/);
+    expect(screen.queryByTestId('adcs-real-enrollment')).toBeNull();
+    expect(screen.queryByText('Still to do on your side')).toBeNull();
+  });
+
+  it('names dryRun false, the file and the restart once the issuer passed', () => {
+    mount(
+      AdcsStep,
+      makeCtx('certops_adcs', adcs(), {
+        certops: {
+          agents: { items: [] },
+          adcs: { issuers: [safe], profiles: 0 },
+        },
+      })
+    );
+    const box = screen.getByTestId('adcs-real-enrollment');
+    expect(box).toHaveTextContent('Turn on real enrollment');
+    expect(box).toHaveTextContent('real enrollment is refused');
+    expect(box).toHaveTextContent(
+      'C:\\ProgramData\\TokenTimerAgent\\state\\config.json'
+    );
+    expect(box).toHaveTextContent('"dryRun": false');
+    expect(box).toHaveTextContent('Restart-Service TokenTimerAgent');
   });
 });

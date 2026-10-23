@@ -215,7 +215,49 @@ export function buildAdcsConfig(args) {
 
 /** Shown next to the generated config: why dryRun is true and when to change it. */
 export const ADCS_DRY_RUN_NOTE =
-  'This file starts in dry run (execution.dryRun is true). The CA check works, but the agent refuses real enrollment. After the issuer has passed its check, set dryRun to false and restart TokenTimerAgent. The agent authenticates as its computer account, so no credential goes in this file.';
+  'This file starts in dry run (execution.dryRun is true). The CA check works, but the agent refuses real enrollment until you turn it on in Connect your Microsoft CA, once the issuer has passed its check. The agent authenticates as its computer account, so no credential goes in this file.';
+
+// Shown once the issuer has passed: the one edit that allows real enrollment.
+export const ADCS_REAL_ENROLLMENT_BLOCK = `"execution": {
+  "enabled": true,
+  "dryRun": false
+}`;
+
+/** An issuer that was already in the workspace when the session began. */
+export function issuerExistedBefore(issuer) {
+  return issuer?.existedBeforeSession === true;
+}
+
+/**
+ * The issuers a guide may use. Reusing an existing issuer is the operator's
+ * explicit choice (`chosenId`, from "My Microsoft CA issuer is already set
+ * up"): with one, that issuer is the only candidate. Without it the guide
+ * creates a new issuer, so only issuers made during this session count.
+ * Summaries from an API that does not say so read every issuer as new.
+ */
+export function candidateIssuers(issuers, chosenId) {
+  const list = Array.isArray(issuers) ? issuers : [];
+  if (chosenId) return list.filter(i => i.id === chosenId);
+  return list.filter(i => !issuerExistedBefore(i));
+}
+
+/**
+ * The AD CS summary as one session sees it: only the issuers it may use, and
+ * the profile counts of those issuers. A server that does not report profiles
+ * per issuer keeps the workspace count.
+ */
+export function scopeAdcs(adcs, chosenId) {
+  if (!adcs) return adcs;
+  const issuers = candidateIssuers(adcs.issuers, chosenId);
+  const perIssuer = issuers.every(i => Number.isInteger(i.profileCount));
+  const sum = key => issuers.reduce((n, i) => n + (i[key] || 0), 0);
+  return {
+    ...adcs,
+    issuers,
+    profiles: perIssuer ? sum('profileCount') : adcs.profiles,
+    attached: perIssuer ? sum('attachedCertificates') : null,
+  };
+}
 
 /**
  * Where the AD CS issuer stands, read from the setup summary: ready (pinned
@@ -235,6 +277,18 @@ export function adcsIssuerState(adcs) {
   return { kind: 'unpinned', issuer: latest };
 }
 
+/**
+ * Renewal needs a CA check taken after the CA certificate was pinned. True
+ * only when the server says so: an older server reports nothing and reads as
+ * fine.
+ */
+export function issuerNeedsRecheck(issuer) {
+  return (
+    Boolean(issuer?.confirmed) &&
+    (issuer.checkedAfterPin === false || issuer.revalidationRequired === true)
+  );
+}
+
 /** What a failed check says and what to do about it. */
 export function adcsFailureAdvice(issuer) {
   const reasons = Array.isArray(issuer?.reasons)
@@ -251,10 +305,3 @@ export function adcsFailureAdvice(issuer) {
       'Fix the CA name or the template, make sure the agent enrollment rule names the same pair, then add the issuer again.',
   };
 }
-/** What the person still has to do after the guide has prepared its part. */
-export const ADCS_REMAINING_STEPS = [
-  'Join the Windows server to the domain (it must not be a domain controller) and grant the computer account Enroll on the template.',
-  'Renewal needs a CA check taken after the CA certificate was pinned. On the issuer in Renewals, choose Check again once more.',
-  'Attach the renewal profile to the site certificate if the profile dialog could not, then watch the first enrollment in Certificate Management.',
-  'Once the issuer has passed its CA check, set "dryRun" to false under "execution" in the saved config.json and restart TokenTimerAgent. Until then the agent refuses real enrollment and only the CA check runs.',
-];

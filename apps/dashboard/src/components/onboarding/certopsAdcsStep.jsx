@@ -1,18 +1,24 @@
 import { useEffect, useState } from 'react';
 import { FiRefreshCw } from 'react-icons/fi';
 import { Link as RouterLink, useInRouterContext } from 'react-router';
-import { HStack, ListItem, OrderedList, Text, VStack } from '@chakra-ui/react';
+import { HStack, Text, VStack } from '@chakra-ui/react';
 import { DashboardActionButton } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
-import { certopsProgress } from './certopsSetupSteps.jsx';
+import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
+import { chooseIssuer } from './certopsScope.js';
+import { CopyBlock } from './blocks.jsx';
+import { agentConfigPathFor, agentRestartCommandFor } from './certopsConfig.js';
+import ExistingIssuerPick, { reusableIssuers } from './ExistingIssuerPick.jsx';
 import { agentOnPlatform, pickSetupAgent } from './certopsMatrix.js';
 import {
-  ADCS_REMAINING_STEPS,
+  ADCS_REAL_ENROLLMENT_BLOCK,
   adcsFailureAdvice,
   adcsIssuerState,
   buildCaConfig,
+  issuerNeedsRecheck,
+  scopeAdcs,
 } from './adcsModel.js';
 import {
   WORKER_NOTE,
@@ -26,6 +32,7 @@ import AdcsProfileWizard from '../certops/AdcsProfileWizard.jsx';
 import { listIssuers } from '../certops/certopsEnrollmentsApi.js';
 import { getWorkspaceCertOpsPauseState } from '../certops/certopsApi.js';
 import { listAllIssuers } from '../certops/certopsFormat.js';
+import { adcsRecheckLink } from '../certops/adcsIssuerLink.js';
 
 /**
  * Status of the part of AD CS setup the server can see. Enrollment itself
@@ -39,6 +46,9 @@ export function adcsStatus({ adcs, agentDeclares }) {
     issuer: confirmed.length > 0,
     unsafe: issuers.filter(i => i.confirmed === false && i.safe === false),
     profile: (adcs?.profiles || 0) > 0,
+    // Whether a profile of these issuers is attached to a certificate. Null
+    // when the server does not say, so nothing is claimed either way.
+    attached: typeof adcs?.attached === 'number' ? adcs.attached > 0 : null,
   };
 }
 
@@ -97,6 +107,7 @@ function IssuerBody({
   agentName,
   disabledReason,
   onOpen,
+  workspaceId,
 }) {
   const { muted } = useDashboardTheme();
   if (ready) {
@@ -104,10 +115,26 @@ function IssuerBody({
     const pair =
       i.caConfig && i.template ? `${i.caConfig}, template ${i.template}` : '';
     return (
-      <Text fontSize='sm' data-testid='adcs-issuer-ready'>
-        {i.name} passed the CA check and its CA certificate is pinned.
-        {pair ? ` ${pair}.` : ''}
-      </Text>
+      <VStack align='stretch' spacing={3}>
+        <Text fontSize='sm' data-testid='adcs-issuer-ready'>
+          {i.name} passed the CA check and its CA certificate is pinned.
+          {pair ? ` ${pair}.` : ''}
+        </Text>
+        {issuerNeedsRecheck(i) ? (
+          <StatusPanel
+            status='info'
+            title='Check again once more'
+            testId='adcs-issuer-recheck'
+          >
+            Renewal needs a CA check taken after the CA certificate was pinned.
+            The check you ran came before the pin. In Renewals, open {i.name}{' '}
+            and choose Check again.
+            <PageLink to={adcsRecheckLink({ workspaceId, issuerId: i.id })}>
+              Open {i.name} in Renewals
+            </PageLink>
+          </StatusPanel>
+        ) : null}
+      </VStack>
     );
   }
   const advice =
@@ -145,7 +172,16 @@ function IssuerBody({
           testId='adcs-issuer-unpinned'
         >
           Add the issuer again and choose the CA certificate in the last step of
-          the dialog.
+          the dialog, or open it in Renewals, run Check again and choose Use
+          this certificate.
+          <PageLink
+            to={adcsRecheckLink({
+              workspaceId,
+              issuerId: state.issuer.id,
+            })}
+          >
+            Open {state.issuer.name} in Renewals
+          </PageLink>
         </StatusPanel>
       ) : null}
       <Callout
@@ -155,8 +191,8 @@ function IssuerBody({
           ca.ok
             ? `CA: ${ca.caConfig}`
             : 'CA: the server name and CA name from the Certification Authority console',
-          `Template: ${saved.template || 'WebServer'} (common name, with Enroll for the agent computer account)`,
-          `Agent: ${agentName || 'the Windows agent from the previous step'}, with adcs-enroll-v1 and an enrollment rule for that CA and template`,
+          `Template: ${saved.template || 'WebServer'} (common name)`,
+          `Agent: ${agentName || 'the Windows agent from the previous step'}, joined to the domain (not a domain controller), with adcs-enroll-v1, an enrollment rule for that CA and template, and Enroll on the template for its computer account`,
         ]}
       />
       <HStack justify='flex-end' flexWrap='wrap'>
@@ -186,15 +222,22 @@ export default function AdcsStep({ ctx }) {
   const agents = (certops?.agents?.items || []).filter(a =>
     agentOnPlatform(a, 'windows')
   );
+  // Only an issuer made in this session counts, or the one the operator
+  // chose with "My Microsoft CA issuer is already set up".
+  const chosenIssuerId = saved.chosenIssuerId || '';
+  const adcs = scopeAdcs(certops?.adcs, chosenIssuerId);
   const status = adcsStatus({
-    adcs: certops?.adcs,
+    adcs,
     agentDeclares: agents.some(
       a =>
         a.livenessState === 'live' &&
         (a.declaredCapabilities || []).includes('adcs-enroll-v1')
     ),
   });
-  const state = adcsIssuerState(certops?.adcs);
+  const reusable = reusableIssuers(certops?.adcs);
+  const [reuseTicked, setReuseTicked] = useState(Boolean(chosenIssuerId));
+  const [choiceError, setChoiceError] = useState('');
+  const state = adcsIssuerState(adcs);
   const [checking, setChecking] = useState(false);
   const [issuerOpen, setIssuerOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -204,7 +247,7 @@ export default function AdcsStep({ ctx }) {
   const blocker = adcsBlocker(ctx.capabilities);
   // The agent from the earlier steps: the one that serves AD CS, or the
   // Windows agent whose gap the first row explains.
-  const chosen = pickSetupAgent(agents, 'adcs', 'windows', saved.reusedAgentId);
+  const chosen = pickSetupAgent(agents, 'adcs', 'windows', saved.chosenAgentId);
   const agentName = chosen?.name || chosen?.hostname || '';
   const dialogAgents = agents.map(a => ({
     ...a,
@@ -264,6 +307,34 @@ export default function AdcsStep({ ctx }) {
   };
   const refreshQuietly = () => Promise.resolve(ctx.refresh?.()).catch(() => {});
 
+  // Reusing an issuer is the operator's choice; Continue confirms it.
+  const saveIssuerChoice = async id => {
+    setChoiceError('');
+    try {
+      await ctx.controller.update(session => ({
+        progress: {
+          ...session.progress,
+          certops: chooseIssuer(session.progress?.certops, 'adcs', id),
+        },
+      }));
+      await ctx.refresh();
+    } catch (e) {
+      setChoiceError(e.message || 'Could not save your choice.');
+    }
+  };
+  const confirmIssuer = async () => {
+    setChoiceError('');
+    try {
+      await saveCertops(ctx, { chosenIssuerConfirmed: chosenIssuerId });
+    } catch (e) {
+      setChoiceError(e.message || 'Could not save your progress.');
+    }
+  };
+  const confirmed =
+    Boolean(chosenIssuerId) && saved.chosenIssuerConfirmed === chosenIssuerId;
+  const scopedIds = new Set((adcs?.issuers || []).map(i => i.id));
+  const certificatesPath = `/certops/certificates${ctx.workspaceId ? `?workspace=${encodeURIComponent(ctx.workspaceId)}` : ''}`;
+
   const issuerDisabled = blocker
     ? blocker
     : paused
@@ -287,14 +358,25 @@ export default function AdcsStep({ ctx }) {
         ...ctx.docs('certops.worker', 'Check the CertOps worker'),
       ]}
       actions={
-        <DashboardActionButton
-          leftIcon={<FiRefreshCw />}
-          variant='outline'
-          onClick={check}
-          isLoading={checking}
-        >
-          Check again
-        </DashboardActionButton>
+        <>
+          <DashboardActionButton
+            leftIcon={<FiRefreshCw />}
+            variant='outline'
+            onClick={check}
+            isLoading={checking}
+          >
+            Check again
+          </DashboardActionButton>
+          {chosenIssuerId && !confirmed ? (
+            <PrimaryButton
+              onClick={confirmIssuer}
+              isDisabled={!(status.issuer && status.profile)}
+              data-testid='adcs-use-issuer'
+            >
+              Continue
+            </PrimaryButton>
+          ) : null}
+        </>
       }
     >
       <VStack align='stretch' spacing={3}>
@@ -317,9 +399,40 @@ export default function AdcsStep({ ctx }) {
         <Row
           n={2}
           done={status.issuer}
-          label='Issuer created and CA certificate pinned'
+          label={
+            chosenIssuerId
+              ? 'Issuer chosen and CA certificate pinned'
+              : 'Issuer created and CA certificate pinned'
+          }
         >
+          {choiceError ? (
+            <StatusPanel status='error' testId='adcs-choice-error'>
+              {choiceError}
+            </StatusPanel>
+          ) : null}
+          <ExistingIssuerPick
+            issuers={reusable}
+            ticked={reuseTicked && reusable.length > 0}
+            issuerId={chosenIssuerId}
+            onTick={on => {
+              setReuseTicked(on);
+              if (!on) saveIssuerChoice(null);
+            }}
+            onIssuer={saveIssuerChoice}
+          />
+          {!reuseTicked && reusable.length > 0 ? (
+            <Text
+              fontSize='xs'
+              color={muted}
+              data-testid='existing-issuers-note'
+            >
+              {reusable.length === 1
+                ? '1 issuer is already in this workspace. Add a new one below, or tick the box to use it.'
+                : `${reusable.length} issuers are already in this workspace. Add a new one below, or tick the box to use one.`}
+            </Text>
+          ) : null}
           <IssuerBody
+            workspaceId={ctx.workspaceId}
             state={state}
             ready={status.issuer}
             ca={ca}
@@ -333,7 +446,7 @@ export default function AdcsStep({ ctx }) {
           n={3}
           done={status.profile}
           label='AD CS renewal profile created'
-          hint='Pick the confirmed issuer, the HTTPS binding (IIS site) and the certificate name. The last step of the dialog attaches it to the certificate.'
+          hint='Pick the confirmed issuer, the HTTPS binding (IIS site) and the certificate name. The last step of the dialog attaches it to the site certificate.'
         >
           {status.profile ? null : (
             <HStack justify='flex-end' flexWrap='wrap'>
@@ -356,28 +469,55 @@ export default function AdcsStep({ ctx }) {
             </HStack>
           )}
         </Row>
+        {status.profile && status.attached !== null ? (
+          <Row
+            n={4}
+            done={status.attached}
+            label='Profile attached to the site certificate'
+            hint='The profile dialog attaches it in its last step. If it could not, open the certificate in Certificate Management and attach the profile there. Then watch the first enrollment on that page.'
+          >
+            {status.attached ? (
+              <Text fontSize='sm' data-testid='adcs-attached'>
+                Attached. Watch the first enrollment in Certificate Management.
+              </Text>
+            ) : null}
+            <HStack>
+              <PageLink to={certificatesPath}>
+                Open Certificate Management
+              </PageLink>
+            </HStack>
+          </Row>
+        ) : null}
+        {status.issuer ? (
+          <Callout
+            kind='next'
+            title='Turn on real enrollment'
+            testId='adcs-real-enrollment'
+          >
+            <VStack align='stretch' spacing={2}>
+              <Text fontSize='sm'>
+                The agent starts in dry run: the CA check works, but real
+                enrollment is refused. Now that the issuer has passed its check,
+                merge this into the execution block of{' '}
+                <code>{agentConfigPathFor('windows')}</code> and restart the
+                agent.
+              </Text>
+              <CopyBlock
+                label='execution block (merge into config.json, do not replace the file)'
+                text={ADCS_REAL_ENROLLMENT_BLOCK}
+                language='json'
+              />
+              <CopyBlock
+                label='Restart the agent'
+                text={agentRestartCommandFor('windows')}
+                prompt
+              />
+            </VStack>
+          </Callout>
+        ) : null}
         {agentEvents.length > 0 ? (
           <JobTimelineList label='Agent timeline' events={agentEvents} />
         ) : null}
-        <Callout kind='next' title='Still to do on your side'>
-          <OrderedList fontSize='sm' spacing={1} pl={2}>
-            {ADCS_REMAINING_STEPS.map(s => (
-              <ListItem key={s}>{s}</ListItem>
-            ))}
-          </OrderedList>
-          <HStack mt={2} spacing={2} flexWrap='wrap'>
-            <PageLink
-              to={`/certops/renewals${ctx.workspaceId ? `?workspace=${encodeURIComponent(ctx.workspaceId)}` : ''}`}
-            >
-              Open Renewals
-            </PageLink>
-            <PageLink
-              to={`/certops/certificates${ctx.workspaceId ? `?workspace=${encodeURIComponent(ctx.workspaceId)}` : ''}`}
-            >
-              Open Certificate Management
-            </PageLink>
-          </HStack>
-        </Callout>
         <Text fontSize='xs' color={muted} data-testid='adcs-worker-note'>
           {WORKER_NOTE}
         </Text>
@@ -407,7 +547,7 @@ export default function AdcsStep({ ctx }) {
             refreshQuietly();
           }}
           workspaceId={ctx.workspaceId}
-          issuers={issuers}
+          issuers={issuers.filter(i => scopedIds.has(i.id))}
           onCreated={ctx.refresh}
         />
       ) : null}
