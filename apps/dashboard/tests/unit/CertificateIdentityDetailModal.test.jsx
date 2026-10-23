@@ -199,12 +199,33 @@ it('shows one linked token together with all certificate sources and locations',
     screen.queryByRole('button', { name: 'View token details' })
   ).not.toBeInTheDocument();
   expect(detailsModalMock.mock.lastCall[0].managedCertificateId).toBeNull();
+  const managementSection = screen
+    .getByRole('heading', { name: 'Certificate management' })
+    .closest('section');
+  const registrationSelect = screen.getByRole('combobox', {
+    name: 'Management registration to inspect',
+  });
+  expect(managementSection).toContainElement(registrationSelect);
+  expect(
+    within(managementSection).getByText('Management registration')
+  ).toBeInTheDocument();
+  expect(
+    within(managementSection).getByText(/Picks which registration/)
+  ).toBeInTheDocument();
+  expect(
+    within(managementSection).getByText(
+      'Select a registration to see its jobs, deployment and renewal profile.'
+    )
+  ).toBeInTheDocument();
   fireEvent.change(
     screen.getByRole('combobox', {
       name: 'Management registration to inspect',
     }),
     { target: { value: 'cert-1' } }
   );
+  expect(
+    screen.queryByText(/Select a registration to see its jobs/)
+  ).not.toBeInTheDocument();
   await waitFor(() =>
     expect(detailsModalMock.mock.lastCall[0].certOps.certificate.keyMode).toBe(
       'external-unknown'
@@ -751,4 +772,105 @@ it('loads the explicitly selected registration without requiring a linked token'
     isViewer: true,
   });
   expect(getTokenMock).not.toHaveBeenCalled();
+});
+
+const twoRegistrations = sources => ({
+  identityId: 'multi-identity',
+  tokenId: null,
+  fingerprintSha256: 'd'.repeat(64),
+  commonName: 'multi.example.test',
+  certificateSnapshot: { fingerprintSha256: 'd'.repeat(64) },
+  sources: sources.map(([id, ended]) => ({
+    managedCertificateId: id,
+    source: 'api',
+    startedAt: '2026-01-01T00:00:00Z',
+    currentIdentityId: 'multi-identity',
+    ...(ended ? { periodEndedAt: '2026-03-01T00:00:00Z' } : {}),
+  })),
+  locations: [],
+});
+
+it('preselects the only current registration and lets the operator pick an ended one', async () => {
+  const identity = twoRegistrations([
+    ['reg-ended', true],
+    ['reg-current', false],
+  ]);
+  getIdentityMock.mockResolvedValue(identity);
+  getCertificateMock.mockImplementation((_workspace, id) =>
+    Promise.resolve({
+      certificate: { id, fingerprintSha256: 'd'.repeat(64) },
+    })
+  );
+  render(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='workspace-1'
+        certificate={identity}
+        isOpen
+        onClose={vi.fn()}
+      />
+    </ChakraProvider>
+  );
+  const select = await screen.findByRole('combobox', {
+    name: 'Management registration to inspect',
+  });
+  expect(select).toHaveValue('reg-current');
+  expect(
+    within(select).queryByRole('option', {
+      name: 'Select a management registration',
+    })
+  ).not.toBeInTheDocument();
+  expect(within(select).getByRole('option', { name: /Current/ })).toBeVisible();
+  expect(within(select).getByRole('option', { name: /Ended/ })).toBeVisible();
+  expect(
+    screen.queryByText(/Select a registration to see its jobs/)
+  ).not.toBeInTheDocument();
+  await waitFor(() =>
+    expect(detailsModalMock.mock.lastCall[0].managedCertificateId).toBe(
+      'reg-current'
+    )
+  );
+  expect(getCertificateMock).toHaveBeenCalledWith('workspace-1', 'reg-current');
+
+  fireEvent.change(select, { target: { value: 'reg-ended' } });
+  await waitFor(() =>
+    expect(detailsModalMock.mock.lastCall[0].managedCertificateId).toBe(
+      'reg-ended'
+    )
+  );
+});
+
+it('does not preselect when several registrations are current or none is', async () => {
+  for (const sources of [
+    [
+      ['a', false],
+      ['b', false],
+    ],
+    [
+      ['a', true],
+      ['b', true],
+    ],
+  ]) {
+    const identity = twoRegistrations(sources);
+    getIdentityMock.mockResolvedValue(identity);
+    const { unmount } = render(
+      <ChakraProvider>
+        <CertificateIdentityDetailModal
+          workspaceId='workspace-1'
+          certificate={identity}
+          isOpen
+          onClose={vi.fn()}
+        />
+      </ChakraProvider>
+    );
+    const select = await screen.findByRole('combobox', {
+      name: 'Management registration to inspect',
+    });
+    expect(select).toHaveValue('');
+    expect(
+      screen.getByText(/Select a registration to see its jobs/)
+    ).toBeInTheDocument();
+    expect(detailsModalMock.mock.lastCall[0].managedCertificateId).toBeNull();
+    unmount();
+  }
 });
