@@ -3,35 +3,83 @@
 
 import { existingAssetStepIds } from './assetRefs.js';
 import { normalizeContactGroupIds } from '../../utils/contactGroupAssignment.js';
+import {
+  agentOnPlatform,
+  candidateAgents,
+  effectiveInfrastructure,
+} from './certopsMatrix.js';
+import { scopeCertops } from './certopsScope.js';
 
 // The step reads every item once and writes one by one, so it stays bounded.
 export const MAX_ITEMS = 50;
+// Certificates an agent found are listed up to this many; the server caps its
+// list at the same number.
+export const MAX_OBSERVED = MAX_ITEMS;
 
-// Only these goals create items that can carry a group from this step.
+// The goals whose items can carry a group from this step: what the guide
+// creates (websites, assets, issued certificates) and what the session's agent
+// or controller reports.
 const TICK_GOALS = new Set([
   'monitor_https',
   'track_asset',
+  'certops_observe',
   'certops_automate',
   'certops_adcs',
   'certops_vault',
 ]);
 export const canTickGoal = goal => TICK_GOALS.has(goal);
 
-// Which certificates a CertOps goal made: the issue job, the publish job or
-// the AD CS enrollments, as the summary reports them.
+// Which certificates a CertOps goal made or found: the issue job, the publish
+// job, the AD CS enrollments or the agent's reports, as the summary lists them.
 const CERTIFICATE_SOURCE = {
+  certops_observe: 'observed',
   certops_automate: 'issue',
   certops_vault: 'publish',
   certops_adcs: 'enrollment',
 };
 export const isCertificateGoal = goal => goal in CERTIFICATE_SOURCE;
 
-// Goals that only confirm the workspace default group and say why.
-const DEFAULT_ONLY_GOALS = new Set(['alerting', 'certops_observe']);
+// Goals with no item of their own: they only confirm the workspace default
+// group and say why.
+const DEFAULT_ONLY_GOALS = new Set(['alerting']);
 export const isDefaultOnlyGoal = goal => DEFAULT_ONLY_GOALS.has(goal);
 
 const text = v => String(v);
 const unique = list => Array.from(new Set(list.map(text)));
+
+/**
+ * The certificates this pick's agent (or controller) reported. An agent that
+ * was already in the workspace counts only when the operator chose it, and
+ * only an agent on the pick's exact system counts, as for the install step.
+ * `truncated` means the server listed fewer than it found.
+ */
+export function observedForPick(certops, saved = {}) {
+  const reported =
+    certops && certops !== 'unknown' ? certops.observedCertificates : null;
+  const items = Array.isArray(reported?.items) ? reported.items : [];
+  const infra = effectiveInfrastructure('observe', saved.infrastructure);
+  let found;
+  if (infra === 'kubernetes') {
+    found = items.filter(
+      c =>
+        c.source === 'cert_manager' &&
+        (!saved.clusterId || c.clusterId === saved.clusterId)
+    );
+  } else {
+    const agents = Array.isArray(certops?.agents?.items)
+      ? certops.agents.items
+      : [];
+    const mine = new Set(
+      candidateAgents(agents, saved.chosenAgentId)
+        .filter(a => agentOnPlatform(a, infra))
+        .map(a => a.id)
+    );
+    found = items.filter(
+      c => c.source !== 'cert_manager' && mine.has(c.agentId)
+    );
+  }
+  return { items: found, truncated: (reported?.total || 0) > items.length };
+}
 
 /**
  * The tokens this guide created, split into websites, assets and CertOps
@@ -43,7 +91,12 @@ const unique = list => Array.from(new Set(list.map(text)));
  * noToken counts items that exist but have no token yet to carry a group.
  * @returns {{ websites: string[], assets: string[], certificates: string[], noToken: number, blocked: string|null }}
  */
-export function planSessionItems({ goal, refs = {}, summary = null }) {
+export function planSessionItems({
+  goal,
+  refs = {},
+  summary = null,
+  progress = null,
+}) {
   if (!canTickGoal(goal)) {
     return {
       websites: [],
@@ -51,6 +104,22 @@ export function planSessionItems({ goal, refs = {}, summary = null }) {
       certificates: [],
       noToken: 0,
       blocked: null,
+    };
+  }
+  if (goal === 'certops_observe') {
+    const saved = scopeCertops(progress?.certops, 'observe');
+    const { items: found, truncated } = observedForPick(
+      summary?.certops,
+      saved
+    );
+    return {
+      websites: [],
+      assets: [],
+      certificates: unique(
+        found.filter(c => c.tokenId != null).map(c => c.tokenId)
+      ),
+      noToken: found.filter(c => c.tokenId == null).length,
+      blocked: truncated ? 'capObserved' : null,
     };
   }
   if (isCertificateGoal(goal)) {
@@ -143,7 +212,12 @@ export function recipientsSatisfied({ goal, refs, progress, reality }) {
   if (!reality || !goal) return false;
   const confirmed = progress?.recipientsConfirmedFor === goal;
   if (canTickGoal(goal)) {
-    const plan = planSessionItems({ goal, refs: refs || {}, summary: reality });
+    const plan = planSessionItems({
+      goal,
+      refs: refs || {},
+      summary: reality,
+      progress,
+    });
     const ids = tickIds(goal, plan);
     if (ids.length) return confirmed && itemsReachGroups(ids, reality);
     if (!confirmsDefault(goal, plan)) return false;
@@ -166,9 +240,14 @@ export function itemsReachGroups(ids, reality) {
  * Whether the operator may continue from the ticks: there is something to
  * tick and all of it reaches a group. Confirming is the Continue click.
  */
-export function canContinueTicks({ goal, refs, reality }) {
+export function canContinueTicks({ goal, refs, reality, progress }) {
   if (!reality || !canTickGoal(goal)) return false;
-  const plan = planSessionItems({ goal, refs: refs || {}, summary: reality });
+  const plan = planSessionItems({
+    goal,
+    refs: refs || {},
+    summary: reality,
+    progress,
+  });
   return itemsReachGroups(tickIds(goal, plan), reality);
 }
 
@@ -215,6 +294,9 @@ export function itemsToChange(groupId, items, add) {
   return items.filter(i => i.groupIds.includes(id) !== add);
 }
 
+// How many items the recipients step names before saying "and N more".
+export const ITEMS_SHOWN = 10;
+
 function quoted(name) {
   return name ? `"${name}"` : '';
 }
@@ -251,11 +333,13 @@ export function describeTicks({
   if (!hasWebsites && !hasAssets && !hasCertificates) {
     if (noToken) return describeNoToken(noToken, goal, defaultName);
     return isCertificateGoal(goal)
-      ? describeNoCertificate(defaultName)
+      ? describeNoCertificate(defaultName, goal)
       : 'Add something first, then choose its groups here.';
   }
   const what = hasCertificates
-    ? 'the certificates'
+    ? goal === 'certops_observe'
+      ? 'the certificates your agent found'
+      : 'the certificates'
     : hasWebsites && hasAssets
       ? 'the websites and assets'
       : hasWebsites
@@ -264,7 +348,8 @@ export function describeTicks({
   const ungrouped = items.filter(
     i => !i.groupIds.some(id => !existingIds || existingIds.has(id))
   );
-  return `Ticked groups receive alerts for ${what} you added in this guide. ${
+  const origin = goal === 'certops_observe' ? '' : ' you added in this guide';
+  return `Ticked groups receive alerts for ${what}${origin}. ${
     ungrouped.length
       ? describeUngrouped({ items: ungrouped, defaultName })
       : fallback
@@ -320,17 +405,42 @@ export function describeNoToken(
 }
 
 /** A CertOps pick that has not produced a certificate with a token yet. */
-export function describeNoCertificate(defaultName = '') {
+export function describeNoCertificate(defaultName = '', goal = '') {
+  if (goal === 'certops_observe') {
+    return defaultName
+      ? `No certificates found yet. Certificates your agent finds later use the workspace default group ${quoted(defaultName)}.`
+      : 'No certificates found yet, and no default group is set.';
+  }
   return defaultName
     ? `Nothing was created yet that could carry a group: the workspace default group ${quoted(defaultName)} is used.`
     : 'Nothing was created yet that could carry a group, and no default group is set.';
 }
 
-/** Why observe and alerting setups have nothing to tick. */
+/** The items one tick applies to: the first few by name, then a count. */
+export function summarizeItems(items) {
+  const shown = items.slice(0, ITEMS_SHOWN).map(i => i.name);
+  return { shown, more: Math.max(0, items.length - shown.length) };
+}
+
+/** The heading over the item names, for what the ticks apply to. */
+export function describeItemsCovered(items, goal) {
+  const count = items.length;
+  const kinds = new Set(items.map(i => i.kind));
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  if (kinds.size > 1) return `${plural(count, 'item')} from this guide`;
+  if (kinds.has('website')) return `${plural(count, 'website')} you added`;
+  if (kinds.has('asset')) return `${plural(count, 'asset')} you added`;
+  return goal === 'certops_observe'
+    ? `${plural(count, 'certificate')} your agent found`
+    : `${plural(count, 'certificate')} from this setup`;
+}
+
+/** Why the alerting goal has nothing to tick. */
 export const DEFAULT_ONLY_NOTE =
   'This setup does not create items that carry their own group. Alerts use the groups below as the workspace default: set the default group and make sure it reaches someone.';
 
 export const BLOCKED_MESSAGES = {
   cap: `This guide added more than ${MAX_ITEMS} items, so groups cannot be ticked here. Change them on each asset.`,
+  capObserved: `Your agent found more than ${MAX_OBSERVED} certificates, so groups cannot be ticked here. Change them on each certificate.`,
   read: 'The groups of your items could not be read, so ticking is turned off.',
 };

@@ -38,10 +38,12 @@ import {
   canTickGoal,
   canContinueTicks,
   confirmsDefault,
+  describeItemsCovered,
   describeNoToken,
   describeTicks,
   isDefaultOnlyGoal,
   recipientsSatisfied,
+  summarizeItems,
   tickState,
 } from './groupAttachment.js';
 import { useSessionGroupTicks } from './useSessionGroupTicks.js';
@@ -52,6 +54,37 @@ import { useContactGroupPluralWrites } from '../../utils/contactGroupPluralWrite
 
 const CREATE_HELP =
   'Creating a group does not send alerts to it until it is the default or is selected on an asset.';
+
+/**
+ * What the ticks apply to: the first few items by name. One tick below
+ * changes every one of them, so the list is only there to show what that is.
+ */
+function ItemsCovered({ items, goal }) {
+  const { muted } = useDashboardTheme();
+  const { shown, more } = summarizeItems(items);
+  return (
+    <VStack align='stretch' spacing={1} data-testid='tick-items'>
+      <Text fontSize='sm' fontWeight='semibold'>
+        {describeItemsCovered(items, goal)}
+      </Text>
+      <Text fontSize='xs' color={muted} data-testid='tick-item-names'>
+        {shown.join(', ')}
+        {more > 0 ? ` and ${more} more` : ''}
+      </Text>
+      {items.length > 1 ? (
+        <Text fontSize='xs' color={muted}>
+          A group you tick applies to all {items.length} of them at once.
+        </Text>
+      ) : null}
+      {items.every(i => i.kind === 'asset') &&
+      items.some(i => i.groupIds.length > 0) ? (
+        <Text fontSize='xs' color={muted} data-testid='chosen-at-creation'>
+          Groups you chose when you added an asset are already ticked.
+        </Text>
+      ) : null}
+    </VStack>
+  );
+}
 
 function makeReaches(settings, contacts) {
   const emailIds = new Set(
@@ -235,10 +268,15 @@ export function RecipientsStep({ ctx, reviewing = false }) {
     reality: ctx.summary,
   });
   // A website gets its certificate record at its first check, so keep
-  // reading while one is missing and the ticks will appear by themselves.
+  // reading while one is missing and the ticks will appear by themselves. The
+  // same while the agent has not reported a certificate yet.
   useSummaryPolling(
     ctx.refresh,
-    !reviewing && sessionGoal === 'monitor_https' && ticks.noToken > 0
+    !reviewing &&
+      ((sessionGoal === 'monitor_https' && ticks.noToken > 0) ||
+        (sessionGoal === 'certops_observe' &&
+          ticks.status === 'ready' &&
+          ticks.items.length === 0))
   );
   const [confirming, setConfirming] = useState(false);
   // Writes the operator's confirmation for this goal. Idempotent, so a retry
@@ -267,6 +305,7 @@ export function RecipientsStep({ ctx, reviewing = false }) {
     goal: sessionGoal,
     refs: ctx.session?.operationRefs,
     reality: ctx.summary,
+    progress: ctx.session?.progress,
   });
   const goOn = async () => {
     setConfirming(true);
@@ -376,6 +415,13 @@ export function RecipientsStep({ ctx, reviewing = false }) {
   const canTick = ticks.status === 'ready' && ticks.items.length > 0;
   const existingIds = new Set(groups.map(g => String(g.id)));
   const defaultOnly = isDefaultOnlyGoal(goal);
+  // The agent found nothing to carry a group yet: say so instead of showing
+  // groups that tick nothing. Continuing is allowed, the default group applies.
+  const nothingFound =
+    goal === 'certops_observe' &&
+    ticks.status === 'ready' &&
+    ticks.items.length === 0 &&
+    !ticks.noToken;
   const sentence =
     ticks.status === 'blocked' || defaultOnly
       ? ''
@@ -450,6 +496,18 @@ export function RecipientsStep({ ctx, reviewing = false }) {
             {DEFAULT_ONLY_NOTE}
           </StatusPanel>
         ) : null}
+        {nothingFound ? (
+          <StatusPanel
+            status='info'
+            title='No certificates found yet'
+            testId='nothing-found-note'
+          >
+            {defaultGroup
+              ? `Certificates your agent finds later use the workspace default group "${defaultGroup.name}". Continue now, or wait here: this page checks again by itself.`
+              : 'No default group is set, so certificates found later have no recipient until one is. Set a default group below.'}
+          </StatusPanel>
+        ) : null}
+        {canTick ? <ItemsCovered items={ticks.items} goal={goal} /> : null}
         <VStack align='stretch' spacing={3} as='section'>
           <HStack
             justify='space-between'

@@ -15,28 +15,6 @@ vi.mock('../../src/utils/onboardingActions.js', () => ({
   onboardingActions: actions,
 }));
 
-// The shared picker is a dropdown; a plain button keeps this on the step's wiring.
-vi.mock('../../src/components/ContactGroupCheckboxGroup.jsx', () => ({
-  default: ({ contactGroups, value, onChange, defaultContactGroupId }) => (
-    <div>
-      {contactGroups.map(g => (
-        <button
-          key={g.id}
-          type='button'
-          aria-pressed={value.includes(String(g.id))}
-          data-default={String(String(g.id) === String(defaultContactGroupId))}
-          onClick={() => onChange([String(g.id)])}
-        >
-          {g.name}
-        </button>
-      ))}
-      <button type='button' onClick={() => onChange([])}>
-        Clear groups
-      </button>
-    </div>
-  ),
-}));
-
 import { MonitorStep } from '../../src/components/onboarding/monitorStep.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
@@ -142,12 +120,16 @@ describe('MonitorStep website list', () => {
     });
   });
 
-  it('sends the contact group picked for the batch to every website', async () => {
+  it('sends the workspace default group to every website', async () => {
     actions.getAlertSettings.mockResolvedValue({
-      contact_groups: [{ id: 'g1', name: 'Ops team' }],
+      contact_groups: [
+        { id: 'g1', name: 'Ops team' },
+        { id: 'g2', name: 'Security' },
+      ],
+      default_contact_group_id: 'g1',
     });
     mount(makeCtx());
-    fireEvent.click(await screen.findByRole('button', { name: 'Ops team' }));
+    await waitFor(() => expect(actions.getAlertSettings).toHaveBeenCalled());
     stage('a.example.com');
     stage('b.example.com');
     fireEvent.click(screen.getByRole('button', { name: 'Monitor 2 websites' }));
@@ -156,94 +138,36 @@ describe('MonitorStep website list', () => {
       expect(body.contactGroupIds).toEqual(['g1']);
     }
   });
-  it('starts with the workspace default group selected and labelled, like the asset step', async () => {
-    actions.getAlertSettings.mockResolvedValue({
-      contact_groups: [
-        { id: 'g1', name: 'Ops team' },
-        { id: 'g2', name: 'Security' },
-      ],
-      default_contact_group_id: 'g1',
-    });
-    mount(makeCtx());
-    const ops = await screen.findByRole('button', { name: 'Ops team' });
-    await waitFor(() => expect(ops).toHaveAttribute('aria-pressed', 'true'));
-    expect(ops).toHaveAttribute('data-default', 'true');
-    expect(screen.getByRole('button', { name: 'Security' })).toHaveAttribute(
-      'data-default',
-      'false'
-    );
-    expect(screen.queryByTestId('no-group-hint')).toBeNull();
-    stage('a.example.com');
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Monitor this website' })
-    );
-    await waitFor(() => expect(actions.createMonitor).toHaveBeenCalledTimes(1));
-    expect(actions.createMonitor.mock.calls[0][1].contactGroupIds).toEqual([
-      'g1',
-    ]);
-  });
 
-  it('says where alerts will go, with a way to change it', async () => {
-    actions.getAlertSettings.mockResolvedValue({
-      contact_groups: [
-        { id: 'g1', name: 'Ops team' },
-        { id: 'g2', name: 'Security' },
-      ],
-      default_contact_group_id: 'g1',
-    });
-    mount(makeCtx());
-    const line = await screen.findByTestId('alerts-go-to');
-    expect(line.textContent).toContain(
-      'Alerts will go to: Ops team (workspace default group)'
-    );
-    expect(
-      screen.getByRole('button', { name: 'Change who gets alerted' })
-    ).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Clear groups' }));
-    expect(screen.queryByTestId('alerts-go-to')).toBeNull();
-  });
-  it('does not override a group chosen before the settings arrive', async () => {
-    actions.getAlertSettings.mockResolvedValue({
-      contact_groups: [
-        { id: 'g1', name: 'Ops team' },
-        { id: 'g2', name: 'Security' },
-      ],
-      default_contact_group_id: 'g1',
-    });
-    mount(makeCtx());
-    fireEvent.click(await screen.findByRole('button', { name: 'Security' }));
-    expect(screen.getByRole('button', { name: 'Security' })).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    );
-    expect(screen.getByRole('button', { name: 'Ops team' })).toHaveAttribute(
-      'aria-pressed',
-      'false'
-    );
-  });
-
-  it('names the default group, or says nobody is alerted, when no group is selected', async () => {
-    actions.getAlertSettings.mockResolvedValue({
-      contact_groups: [{ id: 'g1', name: 'Ops team' }],
-      default_contact_group_id: 'g1',
-    });
-    const first = mount(makeCtx());
-    await screen.findByRole('button', { name: 'Ops team' });
-    fireEvent.click(screen.getByRole('button', { name: 'Clear groups' }));
-    expect(screen.getByTestId('no-group-hint').textContent).toBe(
-      'No group selected: alerts go to the default group (Ops team).'
-    );
-    first.unmount();
-
+  it('sends no group when the workspace has no default, so the server decides', async () => {
     actions.getAlertSettings.mockResolvedValue({
       contact_groups: [{ id: 'g1', name: 'Ops team' }],
       default_contact_group_id: '',
     });
     mount(makeCtx());
-    await screen.findByRole('button', { name: 'Ops team' });
-    expect(screen.getByTestId('no-group-hint').textContent).toBe(
-      'No group selected: alerts have no recipient until a contact group is set.'
+    await waitFor(() => expect(actions.getAlertSettings).toHaveBeenCalled());
+    stage('a.example.com');
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Monitor this website' })
     );
+    await waitFor(() => expect(actions.createMonitor).toHaveBeenCalledTimes(1));
+    expect(actions.createMonitor.mock.calls[0][1].contactGroupIds).toEqual([]);
+  });
+
+  it('asks who gets alerted only in the next step, not inside this one', async () => {
+    actions.getAlertSettings.mockResolvedValue({
+      contact_groups: [{ id: 'g1', name: 'Ops team' }],
+      default_contact_group_id: 'g1',
+    });
+    mount(makeCtx());
+    await waitFor(() => expect(actions.getAlertSettings).toHaveBeenCalled());
+    expect(screen.queryByText('Who gets alerted')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Ops team' })).toBeNull();
+    expect(screen.queryByTestId('alerts-go-to')).toBeNull();
+    expect(screen.queryByTestId('no-group-hint')).toBeNull();
+    expect(
+      screen.getByText(/You choose who gets alerted in the next step\./)
+    ).toBeTruthy();
   });
 
   it('turns down alerts off and hides the failure count', async () => {

@@ -262,8 +262,16 @@ async function buildSummary(
   )
     .map((c) => Number(c?.tokenId))
     .filter((id) => Number.isInteger(id) && id > 0);
+  // Certificates an agent or the controller reported during the session.
+  const observedTokenIds = (
+    Array.isArray(certops?.observedCertificates?.items)
+      ? certops.observedCertificates.items
+      : []
+  )
+    .map((c) => Number(c?.tokenId))
+    .filter((id) => Number.isInteger(id) && id > 0);
   const groupTokenIds = Array.from(
-    new Set([...allTokenIds, ...monitorTokenIds, ...certificateTokenIds]),
+    new Set([...allTokenIds, ...monitorTokenIds, ...certificateTokenIds, ...observedTokenIds]),
   );
   const membership = groupTokenIds.length
     ? await pool.query(

@@ -34,8 +34,6 @@ import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import { ContinueHint, ErrorText } from './blocks.jsx';
-import ContactGroupCheckboxGroup from '../ContactGroupCheckboxGroup.jsx';
-import { AlertsGoTo } from './alertsGoTo.jsx';
 import { runIdempotent } from './operations.js';
 import {
   ALERT_AFTER_MAX,
@@ -572,12 +570,9 @@ export function MonitorStep({ ctx }) {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(null);
   const [attempt, setAttempt] = useState(0);
-  // Same shared picker as the asset step, with the same default: the
-  // workspace default group starts ticked, as in the main Create form.
-  const [groups, setGroups] = useState([]);
+  // Who gets alerted is chosen in the next step. New websites start with the
+  // workspace default group, which that step then shows ticked.
   const [defaultGroupId, setDefaultGroupId] = useState('');
-  const [contactGroupIds, setContactGroupIds] = useState([]);
-  const pickerRef = useRef(null);
   // The setup summary lists only the newest few monitors, so the full list is
   // read here for the "Already monitored" marks and the count.
   const [allMonitored, setAllMonitored] = useState([]);
@@ -602,11 +597,9 @@ export function MonitorStep({ ctx }) {
         const list = Array.isArray(alerts?.contact_groups)
           ? alerts.contact_groups
           : [];
-        setGroups(list);
         const def = String(alerts?.default_contact_group_id || '');
         if (def && list.some(g => String(g.id) === def)) {
           setDefaultGroupId(def);
-          setContactGroupIds(ids => (ids.length ? ids : [def]));
         }
       })
       .catch(() => {});
@@ -621,9 +614,6 @@ export function MonitorStep({ ctx }) {
       ...(ctx.summary?.monitors?.items || []).map(m => m?.url).filter(Boolean),
     ])
   );
-  const defaultGroup = defaultGroupId
-    ? groups.find(g => String(g.id) === defaultGroupId)
-    : null;
 
   const stageInput = () => {
     if (!input.trim()) return;
@@ -695,6 +685,9 @@ export function MonitorStep({ ctx }) {
 
     setBusy(true);
     setRowErrors({});
+    // New websites carry the workspace default group; the next step lets the
+    // operator tick other groups for them.
+    const groupIds = defaultGroupId ? [defaultGroupId] : [];
     const created = [];
     let madeNow = 0;
     const failed = {};
@@ -730,7 +723,7 @@ export function MonitorStep({ ctx }) {
           create: async identity => {
             const made = await onboardingActions.createMonitor(
               ctx.workspaceId,
-              { url: identity.url, contactGroupIds, ...check.value }
+              { url: identity.url, contactGroupIds: groupIds, ...check.value }
             );
             known.push(made);
             madeNow += 1;
@@ -808,7 +801,7 @@ export function MonitorStep({ ctx }) {
     <StepFrame
       kind='ui'
       title='Add the websites to monitor'
-      description='TokenTimer reads each certificate over HTTPS, tracks its expiry and checks that the site answers.'
+      description='TokenTimer reads each certificate over HTTPS, tracks its expiry and checks that the site answers. You choose who gets alerted in the next step.'
       docs={[
         ...ctx.docs('monitoring.endpoint', 'About endpoint monitoring'),
         ...ctx.docs('monitoring.network', 'Network requirements'),
@@ -916,33 +909,6 @@ export function MonitorStep({ ctx }) {
           disabled={busy}
           onChange={patch => setSettings(s => ({ ...s, ...patch }))}
         />
-
-        <FormControl>
-          <FormLabel fontSize='sm'>Who gets alerted</FormLabel>
-          <Box ref={pickerRef}>
-            <ContactGroupCheckboxGroup
-              contactGroups={groups}
-              value={contactGroupIds}
-              onChange={setContactGroupIds}
-              isDisabled={busy}
-              defaultContactGroupId={defaultGroupId}
-              helperText=''
-            />
-          </Box>
-          <AlertsGoTo
-            selectedIds={contactGroupIds}
-            groups={groups}
-            defaultId={defaultGroupId}
-            pickerRef={pickerRef}
-          />
-          {groups.length > 0 && contactGroupIds.length === 0 ? (
-            <FormHelperText fontSize='xs' data-testid='no-group-hint'>
-              {defaultGroup
-                ? `No group selected: alerts go to the default group (${defaultGroup.name}).`
-                : 'No group selected: alerts have no recipient until a contact group is set.'}
-            </FormHelperText>
-          ) : null}
-        </FormControl>
 
         <DiscoveryPanel
           workspaceId={ctx.workspaceId}

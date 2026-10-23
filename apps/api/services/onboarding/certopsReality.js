@@ -191,6 +191,71 @@ async function loadSessionCertificates(
   return Array.from(found.values()).slice(0, MAX_SESSION_CERTIFICATES);
 }
 
+const MAX_OBSERVED_CERTIFICATES = 50;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CLUSTER_ID_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
+
+/**
+ * Certificates that agents or the Kubernetes controller reported, narrowed to
+ * what this session can own: those of the agent the operator chose, else of
+ * agents enrolled since the session began; those of the named cluster, else
+ * reported since the session began. The client narrows further by platform.
+ * `total` counts the whole match, `items` is capped. tokenId is null until
+ * the certificate has an inventory token to carry groups.
+ */
+async function loadObservedCertificates(
+  pool,
+  workspaceId,
+  { since = null, agentId = null, clusterId = null } = {},
+) {
+  const agent =
+    typeof agentId === "string" && UUID_PATTERN.test(agentId) ? agentId : null;
+  const cluster =
+    typeof clusterId === "string" && CLUSTER_ID_PATTERN.test(clusterId)
+      ? clusterId
+      : null;
+  if (!since && !agent && !cluster) return { total: 0, items: [] };
+  const { rows } = await pool.query(
+    `SELECT mc.id AS certificate_id, mc.token_id, mc.source,
+            mc.deployed_agent_id AS agent_id,
+            split_part(mc.source_ref, '/', 1) AS cluster_id,
+            COUNT(*) OVER()::int AS total
+       FROM managed_certificates mc
+       LEFT JOIN certops_agents a
+         ON a.workspace_id = mc.workspace_id AND a.id = mc.deployed_agent_id
+      WHERE mc.workspace_id = $1
+        AND mc.status NOT IN ('decommissioned')
+        AND (
+          (mc.source IN ('agent_filesystem', 'agent_windows')
+            AND (
+              ($2::uuid IS NOT NULL AND mc.deployed_agent_id = $2::uuid)
+              OR ($2::uuid IS NULL AND $3::timestamptz IS NOT NULL
+                  AND a.created_at >= $3::timestamptz)
+            ))
+          OR (mc.source = 'cert_manager'
+            AND (
+              ($4::text IS NOT NULL AND split_part(mc.source_ref, '/', 1) = $4::text)
+              OR ($4::text IS NULL AND $3::timestamptz IS NOT NULL
+                  AND mc.created_at >= $3::timestamptz)
+            ))
+        )
+      ORDER BY mc.created_at DESC
+      LIMIT ${MAX_OBSERVED_CERTIFICATES}`,
+    [workspaceId, agent, since, cluster],
+  );
+  return {
+    total: rows[0]?.total || 0,
+    items: rows.map((row) => ({
+      certificateId: row.certificate_id,
+      tokenId: row.token_id ?? null,
+      source: row.source,
+      agentId: row.agent_id || null,
+      clusterId: row.source === "cert_manager" ? row.cluster_id || null : null,
+    })),
+  };
+}
+
 const PREFLIGHT_REASON_LIMIT = 6;
 
 // What the guide needs to tell a draft from a failed check: whether a check
@@ -216,13 +281,30 @@ function preflightFacts(row) {
  * confirmed once its current version has a pinned CA certificate, and as safe
  * once the last check found both the template and the CA safe.
  */
-async function loadAdcsReality(pool, workspaceId, { now = Date.now() } = {}) {
+async function loadAdcsReality(
+  pool,
+  workspaceId,
+  { now = Date.now(), since = null } = {},
+) {
+  const sinceMs = since ? new Date(since).getTime() : null;
   const issuers = await pool.query(
-    `SELECT i.id, i.name, i.last_preflight, i.current_version,
-            (v.confirmed_at IS NOT NULL AND v.ca_key_sha256 IS NOT NULL) AS confirmed
+    `SELECT i.id, i.name, i.last_preflight, i.current_version, i.created_at,
+            i.revalidation_required,
+            (v.confirmed_at IS NOT NULL AND v.ca_key_sha256 IS NOT NULL) AS confirmed,
+            (SELECT COUNT(*)::int FROM certificate_profiles p
+              WHERE p.workspace_id = i.workspace_id AND p.issuer_id = i.id) AS profile_count,
+            (SELECT COUNT(*)::int FROM managed_certificates mc
+               JOIN certificate_profiles p
+                 ON p.workspace_id = mc.workspace_id AND p.id = mc.profile_id
+              WHERE mc.workspace_id = i.workspace_id AND p.issuer_id = i.id
+                AND mc.status NOT IN ('decommissioned')) AS attached_certificates,
+            (j.id IS NOT NULL AND v.confirmed_at IS NOT NULL
+              AND COALESCE(j.completed_at, j.updated_at) >= v.confirmed_at) AS checked_after_pin
        FROM certificate_issuers i
        LEFT JOIN certificate_issuer_versions v
          ON v.issuer_id = i.id AND v.version = i.current_version
+       LEFT JOIN certificate_jobs j
+         ON j.workspace_id = i.workspace_id AND j.id = i.last_preflight_job_id
       WHERE i.workspace_id = $1 AND i.kind = 'adcs'
       ORDER BY i.created_at DESC
       LIMIT 20`,
@@ -243,15 +325,34 @@ async function loadAdcsReality(pool, workspaceId, { now = Date.now() } = {}) {
   );
   const overdue = await loadOverdueEnrollments(pool, workspaceId, { now });
   return {
-    issuers: issuers.rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      confirmed: row.confirmed === true,
-      safe:
-        row.last_preflight?.templateCheck?.verdict === "safe" &&
-        row.last_preflight?.caCheck?.verdict === "safe",
-      ...preflightFacts(row),
-    })),
+    issuers: issuers.rows.map((row) => {
+      const confirmed = row.confirmed === true;
+      const createdMs = row.created_at
+        ? new Date(row.created_at).getTime()
+        : null;
+      return {
+        id: row.id,
+        name: row.name,
+        confirmed,
+        safe:
+          row.last_preflight?.templateCheck?.verdict === "safe" &&
+          row.last_preflight?.caCheck?.verdict === "safe",
+        ...preflightFacts(row),
+        createdAt:
+          createdMs === null ? null : new Date(createdMs).toISOString(),
+        // True for an issuer already in the workspace when the session began,
+        // so the guide never counts it as created by the session unless the
+        // operator chose it ("My Microsoft CA issuer is already set up").
+        existedBeforeSession:
+          sinceMs !== null && createdMs !== null && createdMs < sinceMs,
+        profileCount: Number(row.profile_count) || 0,
+        attachedCertificates: Number(row.attached_certificates) || 0,
+        revalidationRequired: row.revalidation_required === true,
+        // Renewal waits for a CA check taken after the CA certificate was
+        // pinned. Null until a certificate is pinned.
+        checkedAfterPin: confirmed ? row.checked_after_pin === true : null,
+      };
+    }),
     profiles: profiles.rows[0]?.n || 0,
     installedEnrollments: enrollments.rows[0]?.installed || 0,
     enrollments: { overdue },
@@ -348,7 +449,17 @@ async function loadControllerReality(pool, workspaceId) {
 
 async function loadCertopsReality(
   pool,
-  { workspaceId, role, enabled, since, dryRunJobId, issueJobId, publishJobId },
+  {
+    workspaceId,
+    role,
+    enabled,
+    since,
+    dryRunJobId,
+    issueJobId,
+    publishJobId,
+    chosenAgentId,
+    clusterId,
+  },
 ) {
   if (enabled !== true) return null;
   if (role !== "admin" && role !== "workspace_manager") return null;
@@ -369,7 +480,7 @@ async function loadCertopsReality(
   const dryRun = await loadJobStatus(pool, workspaceId, dryRunJobId);
   const issueJob = await loadJobStatus(pool, workspaceId, issueJobId);
   const publishJob = await loadJobStatus(pool, workspaceId, publishJobId);
-  const adcs = await loadAdcsReality(pool, workspaceId);
+  const adcs = await loadAdcsReality(pool, workspaceId, { since });
   const sessionCertificates = await loadSessionCertificates(pool, workspaceId, {
     jobs: [
       { job: issueJob, source: "issue" },
@@ -378,6 +489,11 @@ async function loadCertopsReality(
     since,
   });
   const controllers = await loadControllerReality(pool, workspaceId);
+  const observed = await loadObservedCertificates(pool, workspaceId, {
+    since,
+    agentId: chosenAgentId,
+    clusterId,
+  });
   return {
     adcs,
     controllers,
@@ -386,6 +502,7 @@ async function loadCertopsReality(
     dryRun,
     issueJob,
     sessionCertificates,
+    observedCertificates: observed,
     certificates: {
       total: certs.rows[0]?.total || 0,
       active: certs.rows[0]?.active || 0,
@@ -404,5 +521,6 @@ module.exports = {
   loadOverdueEnrollments,
   loadJobStatus,
   loadSessionCertificates,
+  loadObservedCertificates,
   EXECUTION_OPERATIONS,
 };

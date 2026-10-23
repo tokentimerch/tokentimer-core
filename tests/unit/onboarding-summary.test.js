@@ -208,6 +208,42 @@ describe("groups attached to session items", () => {
     assert.deepEqual(memberQueries[0].sort(), [41, 42]);
   });
 
+  it("reads the groups of the certificates an agent or controller reported", async () => {
+    const memberQueries = [];
+    const pool = {
+      query: async (sql, params) => {
+        if (sql.includes("token_contact_groups")) {
+          memberQueries.push(params[1]);
+          return { rows: [{ token_id: 51, contact_group_id: "g1" }] };
+        }
+        if (sql.includes("FROM workspace_settings"))
+          return { rows: [settings] };
+        if (sql.includes("FROM workspace_contacts")) {
+          return { rows: [emailContact, phoneOnly] };
+        }
+        if (sql.includes("COUNT(*)")) return { rows: [{ n: 0 }] };
+        if (sql.includes("COUNT(DISTINCT")) return { rows: [{ n: 0 }] };
+        return { rows: [] };
+      },
+    };
+    const summary = await buildSummary(pool, {
+      workspaceId: "w1",
+      refs: {},
+      certops: {
+        observedCertificates: {
+          total: 3,
+          items: [
+            { certificateId: "c1", tokenId: 51, source: "agent_filesystem" },
+            { certificateId: "c2", tokenId: 52, source: "cert_manager" },
+            { certificateId: "c3", tokenId: null, source: "agent_windows" },
+          ],
+        },
+      },
+    });
+    assert.deepEqual(summary.references.tokenGroups, { 51: ["g1"], 52: [] });
+    assert.deepEqual(memberQueries[0].sort(), [51, 52]);
+  });
+
   it("skips the membership query when the session holds no tokens", async () => {
     let asked = false;
     const pool = {

@@ -3261,6 +3261,32 @@ paths:
                                           description: Up to 6 reasons the last check gave, template then CA.
                                           items:
                                             type: string
+                                        createdAt:
+                                          type: string
+                                          format: date-time
+                                          nullable: true
+                                        existedBeforeSession:
+                                          type: boolean
+                                          description: >-
+                                            The issuer was created before the
+                                            session began. Absent on older
+                                            servers, read as false.
+                                        profileCount:
+                                          type: integer
+                                          description: Renewal profiles that use this issuer.
+                                        attachedCertificates:
+                                          type: integer
+                                          description: Certificates attached to a profile of this issuer.
+                                        revalidationRequired:
+                                          type: boolean
+                                        checkedAfterPin:
+                                          type: boolean
+                                          nullable: true
+                                          description: >-
+                                            Whether a CA check was taken after
+                                            the CA certificate was pinned,
+                                            which renewal needs. Null until a
+                                            certificate is pinned.
                                       additionalProperties: true
                                   profiles:
                                     type: integer
@@ -3317,6 +3343,41 @@ paths:
                                       type: string
                                       enum: [issue, publish, enrollment]
                                   additionalProperties: true
+                              observedCertificates:
+                                type: object
+                                description: >-
+                                  Certificates reported by an agent (the
+                                  chosen one, else those enrolled since the
+                                  session began) or by the Kubernetes
+                                  controller. `total` counts every match;
+                                  `items` holds at most 50. Absent on older
+                                  servers.
+                                properties:
+                                  total:
+                                    type: integer
+                                  items:
+                                    type: array
+                                    items:
+                                      type: object
+                                      properties:
+                                        certificateId:
+                                          type: string
+                                          format: uuid
+                                        tokenId:
+                                          type: integer
+                                          nullable: true
+                                        source:
+                                          type: string
+                                          enum: [agent_filesystem, agent_windows, cert_manager]
+                                        agentId:
+                                          type: string
+                                          format: uuid
+                                          nullable: true
+                                        clusterId:
+                                          type: string
+                                          nullable: true
+                                      additionalProperties: true
+                                additionalProperties: true
                             additionalProperties: true
                       alerts:
                         type: object

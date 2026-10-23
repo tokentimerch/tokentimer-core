@@ -80,6 +80,8 @@ function makeCtx({
   websiteIds = [11, 12],
   assetIds = [],
   certificates = [],
+  certops = {},
+  progress = {},
 } = {}) {
   const tokenIds = [...websiteIds, ...assetIds];
   const monitorIds = websiteIds.map(id => `m${id}`);
@@ -93,7 +95,7 @@ function makeCtx({
     userName: 'Ana',
     summary: {
       monitors: { items: [] },
-      certops: { sessionCertificates: certificates },
+      certops: { sessionCertificates: certificates, ...certops },
       references: {
         tokenIds: { existing: tokenIds },
         assetTokenIds: { existing: assetIds },
@@ -102,7 +104,7 @@ function makeCtx({
     },
     session: {
       intent: { goal },
-      progress: {},
+      progress,
       operationRefs: { tokenIds, assetTokenIds: assetIds, monitorIds },
     },
     controller: { update: vi.fn() },
@@ -587,7 +589,7 @@ describe('RecipientsStep sentence', () => {
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
   });
 
-  it.each(['alerting', 'certops_observe'])(
+  it.each(['alerting'])(
     'explains there is nothing to tick for %s',
     async goal => {
       mount(makeCtx({ goal, websiteIds: [11], assetIds: [21] }));
@@ -603,7 +605,7 @@ describe('RecipientsStep sentence', () => {
     }
   );
 
-  it.each(['import_file', 'monitor_https', 'certops_vault'])(
+  it.each(['import_file', 'monitor_https', 'certops_vault', 'certops_observe'])(
     'shows no default-only panel for %s',
     async goal => {
       mount(makeCtx({ goal, websiteIds: [], assetIds: [] }));
@@ -1261,5 +1263,232 @@ describe.each([
       '1 certificate from this setup has no inventory record yet'
     );
     expect(await box('Ops')).toHaveAttribute('aria-checked', 'true');
+  });
+});
+
+// The Discover goal: certificates the session's own agent found carry groups.
+describe.each([
+  ['linux', 'linux'],
+  ['windows', 'win32'],
+])('RecipientsStep certops_observe on %s', (infrastructure, platform) => {
+  const agent = (id, over = {}) => ({
+    id,
+    platform,
+    livenessState: 'live',
+    existedBeforeSession: false,
+    ...over,
+  });
+  const found = (n, agentId = 'a1', first = 31) =>
+    Array.from({ length: n }, (_, i) => ({
+      certificateId: `c${i}`,
+      tokenId: first + i,
+      source: platform === 'linux' ? 'agent_filesystem' : 'agent_windows',
+      agentId,
+    }));
+  const mountObserve = ({ items = [], total, agents, saved = {} } = {}) => {
+    const ctx = makeCtx({
+      goal: 'certops_observe',
+      websiteIds: [],
+      certops: {
+        agents: { items: agents || [agent('a1')] },
+        observedCertificates: { total: total ?? items.length, items },
+      },
+      progress: {
+        certops: { objective: 'observe', infrastructure, ...saved },
+      },
+    });
+    mount(ctx);
+    return ctx;
+  };
+  beforeEach(() => {
+    for (let id = 31; id < 31 + 60; id += 1) {
+      store.tokens[id] = token(id, ['ops'], `host-${id}.example.com`);
+    }
+  });
+
+  it('shows the group ticks, never the default-only text', async () => {
+    mountObserve({ items: found(3) });
+    expect(await box('Ops')).toHaveAttribute('aria-checked', 'true');
+    expect(await box('Billing')).toHaveAttribute('aria-checked', 'false');
+    expect(screen.queryByTestId('default-only-note')).toBeNull();
+    expect(
+      screen.queryByText(/does not create items that carry their own group/)
+    ).toBeNull();
+    expect((await screen.findByTestId('tick-sentence')).textContent).toBe(
+      'Ticked groups receive alerts for the certificates your agent found. Anything without a group uses the workspace default group "Ops".'
+    );
+  });
+
+  it('names the first certificates and counts the rest', async () => {
+    mountObserve({ items: found(12) });
+    await box('Ops');
+    const names = await screen.findByTestId('tick-item-names');
+    expect(names.textContent).toBe(
+      Array.from({ length: 10 }, (_, i) => `host-${31 + i}.example.com`).join(
+        ', '
+      ) + ' and 2 more'
+    );
+    expect(screen.getByTestId('tick-items')).toHaveTextContent(
+      '12 certificates your agent found'
+    );
+    expect(screen.getByTestId('tick-items')).toHaveTextContent(
+      'applies to all 12 of them at once'
+    );
+  });
+
+  it('applies one tick to every found certificate in bulk', async () => {
+    mountObserve({ items: found(12) });
+    const billing = await box('Billing');
+    fireEvent.click(billing);
+    await waitFor(() =>
+      expect(actions.setTokenContactGroups).toHaveBeenCalledTimes(12)
+    );
+    for (const [id, ids] of actions.setTokenContactGroups.mock.calls) {
+      expect(ids).toContain('billing');
+      expect(store.tokens[id].contact_group_ids).toContain('billing');
+    }
+  });
+
+  it("counts only the certificates of this session's agent", async () => {
+    const items = [
+      ...found(2, 'a1', 31),
+      ...found(2, 'old', 41),
+      ...found(1, 'other', 51),
+    ];
+    mountObserve({
+      items,
+      agents: [
+        agent('a1'),
+        agent('old', { existedBeforeSession: true }),
+        agent('other', { platform: platform === 'linux' ? 'win32' : 'linux' }),
+      ],
+    });
+    await box('Ops');
+    await waitFor(() => expect(actions.getToken).toHaveBeenCalledTimes(2));
+    expect(actions.getToken).toHaveBeenCalledWith('31');
+    expect(actions.getToken).toHaveBeenCalledWith('32');
+  });
+
+  it('counts an existing agent only when the operator chose it', async () => {
+    mountObserve({
+      items: found(2, 'old', 41),
+      agents: [agent('old', { existedBeforeSession: true })],
+      saved: { chosenAgentId: 'old' },
+    });
+    await box('Ops');
+    expect(actions.getToken).toHaveBeenCalledWith('41');
+  });
+
+  it('holds Continue until every found certificate reaches a group', async () => {
+    store.tokens[31].contact_group_ids = [];
+    const ctx = makeCtx({
+      goal: 'certops_observe',
+      websiteIds: [],
+      certops: {
+        agents: { items: [agent('a1')] },
+        observedCertificates: { total: 2, items: found(2) },
+      },
+      progress: { certops: { objective: 'observe', infrastructure } },
+    });
+    ctx.summary.references.tokenGroups = { 31: [], 32: ['ops'] };
+    mount(ctx);
+    expect(
+      await screen.findByRole('button', { name: 'Continue' })
+    ).toBeDisabled();
+    expect(
+      screen.getByText(/tick a group that reaches someone for everything/)
+    ).toBeVisible();
+  });
+
+  it('confirms with Continue once the found certificates carry a group', async () => {
+    const ctx = makeCtx({
+      goal: 'certops_observe',
+      websiteIds: [],
+      certops: {
+        agents: { items: [agent('a1')] },
+        observedCertificates: { total: 2, items: found(2) },
+      },
+      progress: { certops: { objective: 'observe', infrastructure } },
+    });
+    ctx.summary.references.tokenGroups = { 31: ['ops'], 32: ['ops'] };
+    mount(ctx);
+    const next = await screen.findByRole('button', { name: 'Continue' });
+    await waitFor(() => expect(next).toBeEnabled());
+    fireEvent.click(next);
+    await waitFor(() => expect(ctx.release).toHaveBeenCalledTimes(1));
+    const patch = ctx.controller.update.mock.calls[0][0]({ progress: {} });
+    expect(patch.progress).toEqual({
+      recipientsConfirmedFor: 'certops_observe',
+    });
+  });
+
+  it('says nothing was found yet, keeps the default group and lets the person go on', async () => {
+    const ctx = mountObserve({ items: [] });
+    const note = await screen.findByTestId('nothing-found-note');
+    expect(note).toHaveTextContent('No certificates found yet');
+    expect(note).toHaveTextContent('workspace default group "Ops"');
+    expect(screen.queryByTestId('default-only-note')).toBeNull();
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    expect((await screen.findByTestId('tick-sentence')).textContent).toBe(
+      'No certificates found yet. Certificates your agent finds later use the workspace default group "Ops".'
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Use these groups' })
+    );
+    await waitFor(() => expect(ctx.controller.update).toHaveBeenCalled());
+    const patch = ctx.controller.update.mock.calls[0][0]({ progress: {} });
+    expect(patch.progress).toEqual({
+      recipientsConfirmedFor: 'certops_observe',
+    });
+  });
+
+  it('turns ticks off past the cap and says why', async () => {
+    mountObserve({ items: found(50), total: 120 });
+    expect(
+      await screen.findByText(/found more than 50 certificates/)
+    ).toBeVisible();
+    expect(actions.getToken).not.toHaveBeenCalled();
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+  });
+});
+
+describe('RecipientsStep certops_observe on Kubernetes', () => {
+  it('ticks the certificates the cluster controller reported', async () => {
+    store.tokens[61] = token(61, ['ops'], 'ingress.example.com');
+    const ctx = makeCtx({
+      goal: 'certops_observe',
+      websiteIds: [],
+      certops: {
+        agents: { items: [] },
+        observedCertificates: {
+          total: 2,
+          items: [
+            {
+              certificateId: 'k1',
+              tokenId: 61,
+              source: 'cert_manager',
+              clusterId: 'prod-eu',
+            },
+            {
+              certificateId: 'k2',
+              tokenId: 62,
+              source: 'cert_manager',
+              clusterId: 'other',
+            },
+          ],
+        },
+      },
+      progress: {
+        certops: {
+          objective: 'observe',
+          infrastructure: 'kubernetes',
+          clusterId: 'prod-eu',
+        },
+      },
+    });
+    mount(ctx);
+    expect(await box('Ops')).toHaveAttribute('aria-checked', 'true');
+    await waitFor(() => expect(actions.getToken).toHaveBeenCalledTimes(1));
+    expect(actions.getToken).toHaveBeenCalledWith('61');
   });
 });

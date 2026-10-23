@@ -173,6 +173,12 @@ describe("loadAdcsReality issuer facts", () => {
       caConfig: "ca01.corp.example.com\\Corp CA",
       template: "WebServer",
       reasons: ["template_not_found"],
+      createdAt: null,
+      existedBeforeSession: false,
+      profileCount: 0,
+      attachedCertificates: 0,
+      revalidationRequired: false,
+      checkedAfterPin: null,
     });
     assert.equal(issuers[1].checked, false);
     assert.deepEqual(issuers[1].reasons, []);

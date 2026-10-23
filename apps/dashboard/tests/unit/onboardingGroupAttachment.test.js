@@ -59,7 +59,7 @@ describe('planSessionItems', () => {
   });
 
   it('offers nothing for goals that create no attachable items', () => {
-    for (const goal of ['alerting', 'import_file', 'certops_observe']) {
+    for (const goal of ['alerting', 'import_file', 'import_integration']) {
       expect(canTickGoal(goal)).toBe(false);
       const plan = planSessionItems({
         goal,
@@ -149,13 +149,17 @@ describe('planSessionItems', () => {
     ).toBe('cap');
   });
 
-  it('keeps the observe and alerting picks out of the ticking goals', () => {
-    expect(canTickGoal('certops_observe')).toBe(false);
+  it('keeps only the alerting goal out of the ticking goals', () => {
     expect(canTickGoal('alerting')).toBe(false);
-    expect(isDefaultOnlyGoal('certops_observe')).toBe(true);
     expect(isDefaultOnlyGoal('alerting')).toBe(true);
+    expect(isDefaultOnlyGoal('certops_observe')).toBe(false);
     expect(isDefaultOnlyGoal('import_file')).toBe(false);
-    for (const goal of ['certops_automate', 'certops_adcs', 'certops_vault']) {
+    for (const goal of [
+      'certops_observe',
+      'certops_automate',
+      'certops_adcs',
+      'certops_vault',
+    ]) {
       expect(canTickGoal(goal)).toBe(true);
     }
   });

@@ -64,10 +64,11 @@ function nameList(items) {
 export function useSessionGroupTicks({ ctx, plural = true }) {
   const goal = ctx.session?.intent?.goal;
   const refs = ctx.session?.operationRefs;
+  const progress = ctx.session?.progress;
   const { summary } = ctx;
   const plan = useMemo(
-    () => planSessionItems({ goal, refs: refs || {}, summary }),
-    [goal, refs, summary]
+    () => planSessionItems({ goal, refs: refs || {}, summary, progress }),
+    [goal, refs, summary, progress]
   );
   const planRef = useRef(plan);
   planRef.current = plan;
