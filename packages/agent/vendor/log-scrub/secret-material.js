@@ -721,13 +721,30 @@ function stringContainsPrivateKey(value) {
 
   const decoded = base64DecodeIfLikely(value);
   if (decoded) {
-    // Short blobs and hex-shaped strings are identifiers/digests (thumbprints,
-    // ids, nonces); ~0.1% of them look like a zlib header (half with FDICT)
-    // and must not hit the compressed-input fail-closed path. A compressed
-    // PEM cannot be smaller than this bound; real DER/PEM shapes are still
-    // checked directly below.
-    if (hexDecoded || decoded.length < 64) {
+    // Hex-shaped strings are identifiers/digests (thumbprints, ids, nonces).
+    // ~0.1% of arbitrary base64 also looks like a zlib header (half with
+    // FDICT); those short blobs must not hit the compressed-input
+    // fail-closed REJECTED path. Compact zlib of a small DER key (Ed25519
+    // PKCS#8 is 48 bytes; deflate is typically ~57) is under the old 64-byte
+    // skip bound, so short non-hex input still gets a single unwrap when the
+    // header is recognized: only a successful decompress that then matches
+    // key material counts. REJECTED (FDICT, corrupt gzip, nested) stays soft
+    // for short blobs so random identifiers do not hard-fail.
+    if (hexDecoded) {
       if (ordinaryBufferContainsPrivateKey(decoded)) return true;
+      return false;
+    }
+    if (ordinaryBufferContainsPrivateKey(decoded)) return true;
+    if (decoded.length < 64) {
+      if (looksGzipHeader(decoded) || looksZlibHeader(decoded)) {
+        const compressed = classifyCompressedBuffer(decoded);
+        if (
+          compressed.classification === COMPRESSION_CLASSIFICATION.DECOMPRESSED &&
+          ordinaryBufferContainsPrivateKey(compressed.decoded)
+        ) {
+          return true;
+        }
+      }
       return false;
     }
     if (bufferContainsPrivateKey(decoded)) return true;

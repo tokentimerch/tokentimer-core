@@ -4,6 +4,7 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert");
 const path = require("path");
 const zlib = require("node:zlib");
+const { generateKeyPairSync } = require("node:crypto");
 
 const {
   PRIVATE_KEY_MATERIAL_REJECTED,
@@ -785,6 +786,44 @@ describe("secretMaterial compressed-input detection (C1)", () => {
     const zl = zlib.deflateSync(Buffer.from(pem("RSA PRIVATE KEY")));
     assert.equal(zl[0], 0x78, "sanity: common zlib preset header starts with 0x78");
     assert.strictEqual(containsPrivateKeyMaterial(zl), true);
+    assert.strictEqual(containsPrivateKeyMaterial(zl.toString("base64")), true);
+  });
+
+  it("detects compact zlib-deflate of disposable Ed25519 PKCS#8 under the short-blob bound", () => {
+    // Ed25519 PKCS#8 DER is 48 bytes; zlib.deflateSync yields ~57 (< 64).
+    // The short-blob path must unwrap once so base64/base64url cannot evade.
+    const { privateKey } = generateKeyPairSync("ed25519");
+    const der = privateKey.export({ type: "pkcs8", format: "der" });
+    const deflated = zlib.deflateSync(der);
+    assert.ok(der.length < 64, `sanity: Ed25519 DER is compact (${der.length})`);
+    assert.ok(
+      deflated.length < 64,
+      `sanity: deflated Ed25519 stays under short-blob bound (${deflated.length})`,
+    );
+    assert.strictEqual(containsPrivateKeyMaterial(deflated), true);
+    assert.strictEqual(containsPrivateKeyMaterial(deflated.toString("base64")), true);
+    assert.strictEqual(containsPrivateKeyMaterial(deflated.toString("base64url")), true);
+    assert.throws(
+      () => assertNoPrivateKeyMaterial({ evidence: deflated.toString("base64") }),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
+    assert.strictEqual(
+      redactPrivateKeyMaterial(deflated.toString("base64")),
+      PRIVATE_KEY_REDACTION_PLACEHOLDER,
+    );
+  });
+
+  it("still detects larger zlib-wrapped EC and RSA DER controls via base64", () => {
+    const ec = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey
+      .export({ type: "pkcs8", format: "der" });
+    const rsa = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey
+      .export({ type: "pkcs8", format: "der" });
+    for (const der of [ec, rsa]) {
+      const deflated = zlib.deflateSync(der);
+      assert.ok(deflated.length >= 64, `sanity: larger DER deflate is not short (${deflated.length})`);
+      assert.strictEqual(containsPrivateKeyMaterial(deflated.toString("base64")), true);
+      assert.strictEqual(containsPrivateKeyMaterial(deflated.toString("base64url")), true);
+    }
   });
 
   it("recognizes a zlib stream using a smaller window size, not just the four common presets", () => {

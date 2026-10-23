@@ -2,6 +2,8 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const zlib = require("node:zlib");
+const { generateKeyPairSync } = require("node:crypto");
 
 const { createAgentLogger, sanitizeLogValue } = require("./index.js");
 
@@ -57,4 +59,25 @@ test("agent logger warn routes to the error sink with the same scrubbing", () =>
   assert.equal(lines.length, 1);
   assert.match(lines[0], /custody key not updated/);
   assert.doesNotMatch(lines[0], /0123456789abcdef/);
+});
+
+test("agent logger redacts compact zlib-deflate Ed25519 material in message and metadata", () => {
+  const { privateKey } = generateKeyPairSync("ed25519");
+  const wrapped = zlib
+    .deflateSync(privateKey.export({ type: "pkcs8", format: "der" }))
+    .toString("base64");
+  assert.ok(Buffer.from(wrapped, "base64").length < 64, "sanity: compact under short-blob bound");
+
+  assert.equal(sanitizeLogValue(wrapped), "[PRIVATE_KEY_REDACTED]");
+  assert.deepEqual(sanitizeLogValue({ attachment: wrapped }), {
+    attachment: "[PRIVATE_KEY_REDACTED]",
+  });
+
+  const lines = [];
+  const logger = createAgentLogger({ sink: (line) => lines.push(line) });
+  logger.error(wrapped, { attachment: wrapped });
+
+  assert.equal(lines.length, 1);
+  assert.doesNotMatch(lines[0], new RegExp(wrapped.replace(/[+/=]/g, "\\$&")));
+  assert.match(lines[0], /\[PRIVATE_KEY_REDACTED\]/);
 });
