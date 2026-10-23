@@ -25,6 +25,7 @@ const afterDiscover = {
 // A live agent registered for discovery: no certbot profile, no execution.
 const discoveryAgent = {
   livenessState: 'live',
+  platform: 'linux',
   commandProfiles: [],
   supportedOperations: ['noop'],
 };

@@ -99,6 +99,7 @@ describe('executionStage follows observed state', () => {
 describe('describeAgent', () => {
   const ok = {
     livenessState: 'live',
+    platform: 'linux',
     compatibilityState: 'compatible',
     clockDriftState: 'ok',
   };
@@ -242,7 +243,13 @@ describe('CertOps journey', () => {
       certops: {
         agents: {
           live: 1,
-          items: [{ livenessState: 'live', commandProfiles: ['certbot'] }],
+          items: [
+            {
+              livenessState: 'live',
+              platform: 'linux',
+              commandProfiles: ['certbot'],
+            },
+          ],
         },
       },
     };

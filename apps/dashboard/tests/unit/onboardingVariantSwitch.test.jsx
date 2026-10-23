@@ -119,7 +119,10 @@ describe('fresh workspace, observe goal', () => {
         {
           alerts: { smtpConfigured: true },
           certops: {
-            agents: { live: 1, items: [{ livenessState: 'live' }] },
+            agents: {
+              live: 1,
+              items: [{ livenessState: 'live', platform: 'linux' }],
+            },
             certificates: { observed: 2, total: 2 },
           },
         }

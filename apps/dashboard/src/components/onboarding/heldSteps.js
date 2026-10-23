@@ -30,6 +30,12 @@ export function finishesByItself(stepId, { goal, progress } = {}) {
   // Ticks alone never finish the step: the operator's Continue confirms them,
   // and the page then moves on. Other goals confirm with a click as well.
   if (stepId === 'recipients') return canTickGoal(goal);
+  // Reusing an existing agent is the person's own click, which is the
+  // Continue: the step moves on at once.
+  if (stepId === 'certops_agent') {
+    const objective = allGoals()[goal]?.certopsObjective;
+    return !scopeCertops(progress?.certops, objective).reusedAgentId;
+  }
   if (stepId === 'certops_execution') {
     // Observe-only goals acknowledge with a button instead of waiting.
     const objective = allGoals()[goal]?.certopsObjective;

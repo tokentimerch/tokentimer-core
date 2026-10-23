@@ -51,6 +51,7 @@ const agent = {
   id: 'a1',
   wireAgentId: 'agent-1',
   livenessState: 'live',
+  platform: 'linux',
   commandProfiles: ['certbot'],
 };
 

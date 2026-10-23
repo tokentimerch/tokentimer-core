@@ -38,10 +38,16 @@ const UUID_B = '22222222-2222-4222-8222-222222222222';
 
 describe('Linux key location', () => {
   it('picks the agent that can place orders, not the newest one', () => {
-    const consumer = { id: 'c', livenessState: 'live', commandProfiles: [] };
+    const consumer = {
+      id: 'c',
+      livenessState: 'live',
+      platform: 'linux',
+      commandProfiles: [],
+    };
     const issuer = {
       id: 'i',
       livenessState: 'live',
+      platform: 'linux',
       commandProfiles: ['certbot'],
     };
     expect(pickGoalAgent([consumer, issuer], 'automate', 'linux').id).toBe('i');
@@ -192,8 +198,18 @@ describe('Linux request step', () => {
           live: 1,
           executionEnabled: true,
           items: [
-            { id: 'c', livenessState: 'live', commandProfiles: [] },
-            { id: 'i', livenessState: 'live', commandProfiles: ['certbot'] },
+            {
+              id: 'c',
+              livenessState: 'live',
+              platform: 'linux',
+              commandProfiles: [],
+            },
+            {
+              id: 'i',
+              livenessState: 'live',
+              platform: 'linux',
+              commandProfiles: ['certbot'],
+            },
           ],
         },
         dryRun: { status: 'dry_run_complete' },

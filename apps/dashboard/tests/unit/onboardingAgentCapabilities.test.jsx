@@ -267,7 +267,7 @@ describe('several agents in one workspace', () => {
     expect(screen.queryByText(/web-01 \(linux, version/)).toBeNull();
     expect(screen.queryByText('Connected')).toBeNull();
     expect(screen.getByTestId('other-system-agents').textContent).toBe(
-      'Agent web-01 (linux) does not declare windows-cert-store-v1, iis-binding-v1, adcs-enroll-v1: install the agent on the Windows server.'
+      'You also have 1 Linux agent in this workspace (web-01). It cannot be used for this setup. Install an agent on the Windows server.'
     );
   });
 

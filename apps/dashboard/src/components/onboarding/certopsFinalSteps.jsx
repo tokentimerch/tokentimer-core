@@ -18,7 +18,9 @@ import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import { CopyBlock, ErrorText } from './blocks.jsx';
 import {
+  agentOnPlatform,
   capabilityGap,
+  effectiveInfrastructure,
   pickGoalAgent,
   reportedCertificates,
   requiredCapabilities,
@@ -81,8 +83,9 @@ export function FirstCertificateStep({ ctx }) {
   }
   const certs = ctx.summary?.certops?.certificates;
   const workspaceTotal = certs?.observed ?? certs?.total ?? 0;
+  const infra = effectiveInfrastructure(saved.objective, saved.infrastructure);
   const total = reportedCertificates(ctx.summary?.certops, {
-    infrastructure: saved.infrastructure,
+    infrastructure: infra,
     clusterId: saved.clusterId,
   });
   // Only what the summary really carries: the agent's last check-in, or the
@@ -99,6 +102,7 @@ export function FirstCertificateStep({ ctx }) {
             status: 'done',
           }))
       : (ctx.summary?.certops?.agents?.items || [])
+          .filter(a => agentOnPlatform(a, infra))
           .filter(a => a.lastSeenAt)
           .slice(0, 3)
           .map(a => ({
@@ -231,10 +235,15 @@ export function VaultStep({ ctx }) {
     setForm(f => ({ ...f, [key]: e.target.value }));
   };
   const names = (saved.names || '').split(/[\s,]+/).filter(Boolean);
-  const agentItems = ctx.summary?.certops?.agents?.items || [];
+  // Vault runs on Linux: a Windows agent is neither an issuer nor a consumer.
+  const agentItems = (ctx.summary?.certops?.agents?.items || []).filter(a =>
+    agentOnPlatform(a, 'linux')
+  );
   const [issuerPick, setIssuerPick] = useState(saved.vaultIssuerAgentId || '');
   const issuerId =
-    issuerPick || pickGoalAgent(agentItems, 'vault', 'linux')?.id || '';
+    issuerPick ||
+    pickGoalAgent(agentItems, 'vault', 'linux', saved.reusedAgentId)?.id ||
+    '';
   const issuerWireId =
     agentItems.find(a => a.id === issuerId)?.wireAgentId || undefined;
   const [consumerPick, setConsumerPick] = useState('');
@@ -267,9 +276,7 @@ export function VaultStep({ ctx }) {
   } catch (_) {
     policies = null;
   }
-  const declared = (ctx.summary?.certops?.agents?.items || []).flatMap(
-    a => a.declaredCapabilities || []
-  );
+  const declared = agentItems.flatMap(a => a.declaredCapabilities || []);
   const outcome = vaultOutcome({
     declaredByAgents: declared,
     distribution: ctx.summary?.certops?.distribution,

@@ -70,6 +70,48 @@ describe("summarizeAgents", () => {
     assert.equal(summary.registeredSinceToken, 1);
   });
 
+  it("marks agents that existed before the session so the guide can offer reuse", () => {
+    const { items } = summarizeAgents(
+      [
+        agent({ id: "old", createdAt: "2026-10-19T09:00:00.000Z" }),
+        agent({ id: "new", createdAt: "2026-10-19T11:00:00.000Z" }),
+      ],
+      { since: "2026-10-19T10:00:00.000Z" },
+    );
+    assert.equal(items.find((i) => i.id === "old").existedBeforeSession, true);
+    assert.equal(items.find((i) => i.id === "new").existedBeforeSession, false);
+    assert.equal(
+      items.find((i) => i.id === "old").createdAt,
+      "2026-10-19T09:00:00.000Z",
+    );
+  });
+
+  it("never claims an agent pre-dates a session it cannot date", () => {
+    const [item] = summarizeAgents([
+      agent({ createdAt: "2026-10-19T09:00:00.000Z" }),
+    ]).items;
+    assert.equal(item.existedBeforeSession, false);
+  });
+
+  it("reports platform and capabilities per agent so a pick can be scoped", () => {
+    const { items } = summarizeAgents([
+      agent({
+        id: "win",
+        platform: "win32",
+        declaredCapabilities: ["windows-cert-store-v1", "adcs-enroll-v1"],
+      }),
+      agent({ id: "lin", platform: "linux" }),
+    ]);
+    const win = items.find((i) => i.id === "win");
+    assert.equal(win.platform, "win32");
+    assert.deepEqual(win.declaredCapabilities, [
+      "windows-cert-store-v1",
+      "adcs-enroll-v1",
+    ]);
+    assert.equal(items.find((i) => i.id === "lin").platform, "linux");
+    assert.deepEqual(items.find((i) => i.id === "lin").declaredCapabilities, []);
+  });
+
   it("exposes only safe fields", () => {
     const [item] = summarizeAgents([
       agent({ pinnedSigningKeyId: "secret-ish", credential: "x" }),

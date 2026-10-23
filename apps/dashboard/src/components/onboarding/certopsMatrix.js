@@ -108,13 +108,17 @@ export function commandProfileFor(objective, infrastructure) {
 /**
  * The agent a guide step sends its jobs to, among the agents on the platform
  * this setup runs on (an agent of another platform is never "the agent" for
- * it). One that serves the setup comes first; with several agents (for example
- * an issuer and a Vault consumer) the newest is not necessarily the one that
- * can place orders, so a live agent with the goal's command profile follows.
+ * it). One that serves the setup comes first, preferring an agent enrolled by
+ * this guide (or one the operator chose to reuse); with several agents (for
+ * example an issuer and a Vault consumer) the newest is not necessarily the
+ * one that can place orders, so a live agent with the goal's command profile
+ * follows.
  */
-export function pickGoalAgent(items, objective, infrastructure) {
+export function pickGoalAgent(items, objective, infrastructure, reusedId) {
   const list = (items || []).filter(a => agentOnPlatform(a, infrastructure));
-  const served = list.find(a => agentServesSetup(a, objective, infrastructure));
+  const serves = a => agentServesSetup(a, objective, infrastructure);
+  const served =
+    list.find(a => serves(a) && agentUsable(a, reusedId)) || list.find(serves);
   if (served) return served;
   const profile = commandProfileFor(objective, infrastructure);
   if (profile) {
@@ -145,7 +149,54 @@ export function reportedCertificates(
       ? observed
       : 0;
   }
-  return (certops?.agents?.live || 0) > 0 ? observed : 0;
+  // Only a live agent on this setup's system counts, never one that runs
+  // somewhere else in the workspace.
+  return (scopeAgents(certops?.agents, infrastructure)?.live || 0) > 0
+    ? observed
+    : 0;
+}
+
+/** The system a pick runs on when the operator has not chosen one yet. */
+export function effectiveInfrastructure(objective, infrastructure) {
+  return infrastructure || (objective === 'adcs' ? 'windows' : 'linux');
+}
+
+/**
+ * The workspace agent summary as one pick sees it: only agents on the pick's
+ * system, with the live count and execution flag recomputed from them. The
+ * Kubernetes controller is not an agent, so that pick sees none. A summary
+ * without the agent list cannot be narrowed and is returned as it is.
+ */
+export function scopeAgents(agents, infrastructure) {
+  if (!agents || !Array.isArray(agents.items)) return agents;
+  const items = agents.items.filter(a => agentOnPlatform(a, infrastructure));
+  const live = items.filter(a => a.livenessState === 'live');
+  return {
+    ...agents,
+    items,
+    total: items.length,
+    live: live.length,
+    executionEnabled: live.some(a =>
+      (a.supportedOperations || []).some(op =>
+        EXECUTION_OPERATIONS.includes(op)
+      )
+    ),
+  };
+}
+
+/**
+ * An agent that was already in the workspace when this guide session started.
+ * Summaries from an API that does not say so are read as new, as before.
+ */
+export function agentExistedBefore(agent) {
+  return agent?.existedBeforeSession === true;
+}
+
+// Enrolled by this guide, or an older agent the operator chose to reuse.
+function agentUsable(agent, reusedId) {
+  return (
+    !agentExistedBefore(agent) || (Boolean(reusedId) && agent.id === reusedId)
+  );
 }
 
 /** Capabilities an agent must declare for this combination. */
@@ -192,6 +243,8 @@ export function agentsFor(agents, agent) {
   const ops = agent.supportedOperations;
   return {
     ...agents,
+    // The chosen agent is the only one this step is about.
+    live: agent.livenessState === 'live' ? 1 : 0,
     executionEnabled: Array.isArray(ops)
       ? ops.some(op => EXECUTION_OPERATIONS.includes(op))
       : agents.executionEnabled === true,
@@ -210,13 +263,13 @@ export function needsAgentFacts(objective, infrastructure) {
 }
 
 /**
- * Whether an agent runs on the system this setup targets. An agent whose
- * platform is unknown is not ruled out, and the Kubernetes controller has no
- * agent platform at all.
+ * Whether an agent runs on the system this setup targets: its reported
+ * platform must be exactly the pick's. The Kubernetes controller is not an
+ * agent, and an agent that never reported a platform cannot be vouched for.
  */
 export function agentOnPlatform(agent, infrastructure) {
   const platform = INFRASTRUCTURES[infrastructure]?.platform;
-  return !platform || !agent?.platform || agent.platform === platform;
+  return Boolean(platform) && agent?.platform === platform;
 }
 
 /**
@@ -239,27 +292,46 @@ export function agentServesSetup(agent, objective, infrastructure) {
 }
 
 /**
- * Whether the workspace has an agent for this setup: any one of its live
- * agents is enough. A summary without the agent list can only say how many
- * are live, which settles goals that ask nothing of the agent.
+ * Whether the workspace has an agent for this setup: one live agent that
+ * serves it and is either new to this guide session or one the operator chose
+ * to reuse. An agent that was in the workspace before the session only counts
+ * once `reusedAgentId` names it, so the guide never moves past the install
+ * step on an agent the operator did not see. A summary without the agent list
+ * can only say how many are live, which settles goals that ask nothing of the
+ * agent. `acceptReused` ignores the reuse choice, to know whether the
+ * operator could be offered an existing agent at all.
  */
-export function setupAgentReady(agents, objective, infrastructure) {
+export function setupAgentReady(
+  agents,
+  objective,
+  infrastructure,
+  { reusedAgentId, acceptReused = false } = {}
+) {
   if ((agents?.live || 0) === 0) return false;
   if (!Array.isArray(agents.items)) {
     return !needsAgentFacts(objective, infrastructure);
   }
-  return agents.items.some(a => agentServesSetup(a, objective, infrastructure));
+  return agents.items.some(
+    a =>
+      agentServesSetup(a, objective, infrastructure) &&
+      (acceptReused || agentUsable(a, reusedAgentId))
+  );
 }
 
 /**
- * The agent the status card describes: one that serves the setup, else a live
- * one on the right system (so its gap is what gets explained), else any.
+ * The agent the status card describes: one that serves the setup (new, or the
+ * one chosen for reuse, first), else a live one on the right system (so its
+ * gap is what gets explained), else any. Agents of another system are never
+ * returned.
  */
-export function pickSetupAgent(items, objective, infrastructure) {
-  const list = items || [];
-  const onPlatform = list.filter(a => agentOnPlatform(a, infrastructure));
+export function pickSetupAgent(items, objective, infrastructure, reusedId) {
+  const onPlatform = (items || []).filter(a =>
+    agentOnPlatform(a, infrastructure)
+  );
+  const serves = a => agentServesSetup(a, objective, infrastructure);
   return (
-    onPlatform.find(a => agentServesSetup(a, objective, infrastructure)) ||
+    onPlatform.find(a => serves(a) && agentUsable(a, reusedId)) ||
+    onPlatform.find(serves) ||
     onPlatform.find(a => a.livenessState === 'live') ||
     onPlatform[0]
   );
@@ -267,7 +339,7 @@ export function pickSetupAgent(items, objective, infrastructure) {
 
 /**
  * Live agents of this workspace that cannot serve the setup because they run
- * on another system, for the sentence that tells the operator where to install.
+ * on another system, for the neutral hint that says where to install.
  */
 export function otherSystemAgents(items, infrastructure) {
   return (items || []).filter(

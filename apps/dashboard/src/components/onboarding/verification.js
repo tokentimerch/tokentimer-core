@@ -6,6 +6,11 @@ import {
   overdueEnrollmentsMessage,
   outboxBacklogMessage,
 } from './certopsWorkerMessages.js';
+import {
+  effectiveInfrastructure,
+  reportedCertificates,
+  scopeAgents,
+} from './certopsMatrix.js';
 
 export const CHECK_STATUS = { PASS: 'pass', FAIL: 'fail', WARN: 'warn' };
 
@@ -95,6 +100,7 @@ export function evaluateVerification({
   token,
   summary,
   infrastructure,
+  clusterId,
 }) {
   const checks = [];
 
@@ -211,8 +217,14 @@ export function evaluateVerification({
         )
       );
     } else {
-      const live = certops.agents?.live || 0;
-      const clusters = certops.controllers?.clusters || [];
+      // Judged for this pick only: an agent or controller that belongs to
+      // another platform choice is not evidence for this one.
+      const objective = goal.slice('certops_'.length);
+      const infra = effectiveInfrastructure(objective, infrastructure);
+      const live = scopeAgents(certops.agents, infra)?.live || 0;
+      const clusters = (certops.controllers?.clusters || []).filter(
+        c => !clusterId || c.clusterId === clusterId
+      );
       if (goal === 'certops_observe' && infrastructure === 'kubernetes') {
         // The controller is not an agent: it is connected once it has reported.
         checks.push(
@@ -247,7 +259,10 @@ export function evaluateVerification({
               )
         );
       }
-      const certs = certops.certificates?.total || 0;
+      const certs = reportedCertificates(certops, {
+        infrastructure: infra,
+        clusterId,
+      });
       checks.push(
         certs > 0
           ? check(

@@ -7,7 +7,11 @@ import { createJob, getJob } from '../certops/certopsJobsApi.js';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import { CopyBlock } from './blocks.jsx';
-import { agentsFor, pickGoalAgent } from './certopsMatrix.js';
+import {
+  agentsFor,
+  effectiveInfrastructure,
+  pickGoalAgent,
+} from './certopsMatrix.js';
 import JobActivity from './JobActivity.jsx';
 import { Callout, FactsList, StatusPanel, StatusTag } from './panels.jsx';
 import {
@@ -109,7 +113,8 @@ export default function IssueStep({ ctx }) {
   const agent = pickGoalAgent(
     certops?.agents?.items,
     saved.objective,
-    saved.infrastructure
+    effectiveInfrastructure(saved.objective, saved.infrastructure),
+    saved.reusedAgentId
   );
   const job = certops?.issueJob;
   const view = issueView(job);

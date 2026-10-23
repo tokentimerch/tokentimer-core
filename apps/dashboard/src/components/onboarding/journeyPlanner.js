@@ -4,7 +4,13 @@
 // Adding steps later therefore needs no data migration.
 
 import { existingAssetStepIds } from './assetRefs.js';
-import { reportedCertificates, setupAgentReady } from './certopsMatrix.js';
+import {
+  agentsFor,
+  effectiveInfrastructure,
+  pickGoalAgent,
+  reportedCertificates,
+  setupAgentReady,
+} from './certopsMatrix.js';
 import { installerOptionsFor, installerOptionsKey } from './certopsConfig.js';
 import { GOALS, STEP_DEFS } from './modules.js';
 import {
@@ -117,6 +123,47 @@ export function availableProviders(capabilities, allProviders) {
   });
 }
 
+/**
+ * Whether the install step is satisfied for this pick. It is a function of
+ * the pick (platform and what it needs from an agent) and of the agents that
+ * fit it, never of the workspace as a whole: an agent on another system does
+ * not count, and one that was already in the workspace before the session
+ * counts only after the operator chose to reuse it.
+ */
+function agentStepDone(certops, saved, objective) {
+  const agents = certops?.agents;
+  // The Kubernetes controller is not an agent: it counts once it has
+  // reported from a cluster (the one named in the guide, when it names one).
+  if (saved.infrastructure === 'kubernetes') {
+    return (certops?.controllers?.clusters || []).some(
+      c => !saved.clusterId || c.clusterId === saved.clusterId
+    );
+  }
+  const infra = effectiveInfrastructure(
+    objective || saved.objective,
+    saved.infrastructure
+  );
+  // An agent keeps the write path and reload grant it was installed with.
+  // When this setup needs others, the installer has to run again, so the
+  // step stays open until the operator says it did.
+  const neededKey = installerOptionsKey(
+    installerOptionsFor({
+      objective,
+      infrastructure: infra,
+      certPath: saved.certPath,
+      reloadService: saved.reloadService,
+    })
+  );
+  if (neededKey && saved.installerKey !== neededKey) return false;
+  // One live agent must carry what the goal uses: the command profile
+  // (reported at registration, so a discovery-only agent never claims an
+  // order), the capabilities (re-declared on every check-in) and the right
+  // system. This is the same rule the status card shows.
+  return setupAgentReady(agents, objective, infra, {
+    reusedAgentId: saved.reusedAgentId,
+  });
+}
+
 function certopsDone(stepId, { reality, progress, objective }) {
   const certops = reality?.certops;
   // Only progress saved for this goal's objective counts.
@@ -127,49 +174,33 @@ function certopsDone(stepId, { reality, progress, objective }) {
         Boolean(saved.objective) &&
         (!objective || saved.objective === objective)
       );
-    case 'certops_agent': {
-      const agents = certops?.agents;
-      // The Kubernetes controller is not an agent: it counts once it has
-      // reported from a cluster (the one named in the guide, when it names one).
-      if (saved.infrastructure === 'kubernetes') {
-        return (certops?.controllers?.clusters || []).some(
-          c => !saved.clusterId || c.clusterId === saved.clusterId
-        );
-      }
-      const infra =
-        saved.infrastructure || (objective === 'adcs' ? 'windows' : 'linux');
-      // An agent keeps the write path and reload grant it was installed with.
-      // When this setup needs others, the installer has to run again, so the
-      // step stays open until the operator says it did.
-      const neededKey = installerOptionsKey(
-        installerOptionsFor({
-          objective,
-          infrastructure: infra,
-          certPath: saved.certPath,
-          reloadService: saved.reloadService,
-        })
-      );
-      if (neededKey && saved.installerKey !== neededKey) return false;
-      // One live agent must carry what the goal uses: the command profile
-      // (reported at registration, so a discovery-only agent never claims an
-      // order), the capabilities (re-declared on every check-in) and the right
-      // system. Other agents of the workspace neither help nor block. This is
-      // the same rule the status card shows.
-      return setupAgentReady(agents, objective, infra);
-    }
+    case 'certops_agent':
+      return agentStepDone(certops, saved, objective);
     case 'certops_config':
       // Kubernetes has no file to prepare, but the page still needs a click:
       // choosing a platform must not skip steps the operator never saw.
       return saved.configReviewed === true;
-    case 'certops_execution':
+    case 'certops_execution': {
       // Observe-only goals never enable execution, so they acknowledge instead.
       if (saved.executionAcknowledged === true) return true;
       // Stage 3 is a signed dry run that ended as dry_run_complete. The job
-      // id is stored, but whether it passed is read from the server.
-      return (
-        certops?.agents?.executionEnabled === true &&
-        certops?.dryRun?.status === 'dry_run_complete'
+      // id is stored, but whether it passed is read from the server. Only the
+      // agent of this pick counts as having execution enabled.
+      const infra = effectiveInfrastructure(
+        objective || saved.objective,
+        saved.infrastructure
       );
+      const agent = pickGoalAgent(
+        certops?.agents?.items,
+        objective || saved.objective,
+        infra,
+        saved.reusedAgentId
+      );
+      const executionEnabled = Array.isArray(certops?.agents?.items)
+        ? agentsFor(certops.agents, agent).executionEnabled === true
+        : certops?.agents?.executionEnabled === true;
+      return executionEnabled && certops?.dryRun?.status === 'dry_run_complete';
+    }
     case 'certops_first': {
       const goalObjective = objective || saved.objective;
       // Automation only counts once the order really succeeded, because a
@@ -180,9 +211,14 @@ function certopsDone(stepId, { reality, progress, objective }) {
           certops?.issueJob?.mode === 'real'
         );
       }
+      // Reported by the agent of this pick, not by any agent of the workspace.
       return (
+        agentStepDone(certops, saved, objective) &&
         reportedCertificates(certops, {
-          infrastructure: saved.infrastructure,
+          infrastructure: effectiveInfrastructure(
+            goalObjective,
+            saved.infrastructure
+          ),
           clusterId: saved.clusterId,
         }) > 0
       );

@@ -69,6 +69,7 @@ const VARIANT_KEYS = [
   'clusterId',
   'tokenCreatedAt',
   'agentLaterAt',
+  'reusedAgentId',
   'dryRunJobId',
   'issueJobId',
   'issueAttempt',

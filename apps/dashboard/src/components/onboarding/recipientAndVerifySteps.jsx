@@ -10,6 +10,7 @@ import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 
 import { evaluateVerification, CHECK_STATUS } from './verification.js';
+import { certopsProgress } from './certopsSetupSteps.jsx';
 import { SUMMARY_POLL_MS, verifyNeedsPolling } from './useSummaryPolling.js';
 import { existingAssetStepIds } from './assetRefs.js';
 import { onboardingActions } from '../../utils/onboardingActions.js';
@@ -83,6 +84,7 @@ export function VerifyStep({ ctx }) {
         ) {
           token = await onboardingActions.soonestToken(ctx.workspaceId);
         }
+        const certopsSaved = certopsProgress(ctx);
         setState({
           loading: false,
           result: evaluateVerification({
@@ -91,7 +93,8 @@ export function VerifyStep({ ctx }) {
             unlistedMonitors,
             token,
             summary,
-            infrastructure: ctx.session.progress?.certops?.infrastructure,
+            infrastructure: certopsSaved.infrastructure,
+            clusterId: certopsSaved.clusterId,
           }),
         });
       } catch (e) {

@@ -131,6 +131,7 @@ const clickContinue = () =>
 
 const liveAgent = (extra = {}) => ({
   livenessState: 'live',
+  platform: 'linux',
   commandProfiles: [],
   declaredCapabilities: [],
   ...extra,

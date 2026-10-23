@@ -20,11 +20,13 @@ import PrimaryButton from './PrimaryButton.jsx';
 import { CopyBlock, ErrorText, SlotBlock, WarnText } from './blocks.jsx';
 import {
   INFRASTRUCTURES,
+  agentExistedBefore,
+  agentServesSetup,
   capabilityGap,
   commandProfileFor,
+  effectiveInfrastructure,
   otherSystemAgents,
   pickSetupAgent,
-  requiredCapabilities,
   setupAgentReady,
 } from './certopsMatrix.js';
 import {
@@ -138,11 +140,23 @@ function InstallStep({ n, text, children }) {
   );
 }
 
+const PLATFORM_LABELS = { win32: 'Windows', linux: 'Linux', darwin: 'macOS' };
+
+/** Neutral note about agents of this workspace that run on another system. */
+export function otherSystemHint(agents, os) {
+  const label = os === 'windows' ? 'Windows' : 'Linux';
+  const count = agents.length;
+  const kinds = [
+    ...new Set(agents.map(a => PLATFORM_LABELS[a.platform] || a.platform)),
+  ].join(' and ');
+  const names = agents.map(a => a.hostname || a.name).join(', ');
+  return `You also have ${count} ${kinds} ${count === 1 ? 'agent' : 'agents'} in this workspace (${names}). ${count === 1 ? 'It' : 'They'} cannot be used for this setup. Install an agent on the ${label} server.`;
+}
+
 export function AgentStep({ ctx }) {
   const { muted } = useDashboardTheme();
   const saved = certopsProgress(ctx);
-  const infra =
-    saved.infrastructure || (saved.objective === 'adcs' ? 'windows' : 'linux');
+  const infra = effectiveInfrastructure(saved.objective, saved.infrastructure);
   const os = INFRASTRUCTURES[infra]?.platform === 'win32' ? 'windows' : 'linux';
   const notes = registrationNotesFor(os);
   const configPath = agentConfigPathFor(os);
@@ -170,10 +184,15 @@ export function AgentStep({ ctx }) {
 
   const agents = ctx.summary?.certops?.agents;
   const items = agents?.items || [];
-  const target = pickSetupAgent(items, saved.objective, infra);
+  const target = pickSetupAgent(
+    items,
+    saved.objective,
+    infra,
+    saved.reusedAgentId
+  );
   // Live agents of this workspace that run on another system (for example a
-  // Linux web-01 when the setup is Windows): never "the agent" for this
-  // setup, but worth naming so the operator knows where to install.
+  // Windows server when the setup is Linux): never "the agent" for this
+  // setup, only a neutral hint so the operator knows where to install.
   const elsewhere = otherSystemAgents(items, infra);
 
   // Only Linux issuing needs installer options (the Vault issuer publishes to
@@ -266,8 +285,12 @@ export function AgentStep({ ctx }) {
   };
 
   const poll = useCallback(() => ctx.refresh().catch(() => {}), [ctx]);
-  // Same rule as the planner: keep watching until a usable agent exists.
-  const usableAgent = setupAgentReady(agents, saved.objective, infra);
+  // Same rule as the planner: keep watching until a usable agent exists. An
+  // older agent offered for reuse already counts as found.
+  const usableAgent = setupAgentReady(agents, saved.objective, infra, {
+    reusedAgentId: saved.reusedAgentId,
+    acceptReused: true,
+  });
   const clusterReported = (agentsSummaryControllers(ctx) || []).some(
     c => !clusterId || c.clusterId === clusterId
   );
@@ -513,6 +536,22 @@ export function AgentStep({ ctx }) {
     Boolean(target) &&
     !(target.commandProfiles || []).includes(wantedProfileName);
   const healthy = Boolean(verdict?.healthy) && !lacksProfile;
+  // An agent that was in the workspace before this guide started: it is shown
+  // by name and used only after the operator says so.
+  const offerReuse =
+    healthy &&
+    !needsRerun &&
+    agentServesSetup(target, saved.objective, infra) &&
+    agentExistedBefore(target) &&
+    saved.reusedAgentId !== target.id;
+  const reuseAgent = async () => {
+    setError('');
+    try {
+      await saveCertops(ctx, { reusedAgentId: target.id });
+    } catch (e) {
+      setError(e.message || 'Could not save your progress.');
+    }
+  };
 
   return (
     <StepFrame
@@ -526,7 +565,11 @@ export function AgentStep({ ctx }) {
         ),
       ]}
       actions={
-        healthy ? undefined : (
+        offerReuse ? (
+          <PrimaryButton onClick={reuseAgent}>
+            Use this agent and continue
+          </PrimaryButton>
+        ) : healthy ? undefined : (
           <DashboardActionButton variant='outline' onClick={installLater}>
             I will install it later
           </DashboardActionButton>
@@ -692,32 +735,31 @@ export function AgentStep({ ctx }) {
           </Text>
           {!target ? (
             <StatusTag>Waiting for an agent</StatusTag>
+          ) : offerReuse ? (
+            <StatusTag>Existing agent found</StatusTag>
           ) : healthy ? (
             <StatusTag tone='green'>Connected</StatusTag>
           ) : (
             <StatusTag tone='orange'>Needs attention</StatusTag>
           )}
         </HStack>
+        {offerReuse ? (
+          <StatusPanel
+            status='info'
+            title='You already have a suitable agent'
+            testId='reuse-agent'
+          >
+            <Text fontSize='sm'>
+              {target.hostname || target.name} ({target.platform}) was in this
+              workspace before the guide started and fits this setup. Use it, or
+              install another one below.
+            </Text>
+          </StatusPanel>
+        ) : null}
         {!healthy && elsewhere.length > 0 ? (
-          <VStack align='stretch' spacing={1} data-testid='other-system-agents'>
-            {elsewhere.map(a => {
-              const lacking = capabilityGap(
-                saved.objective,
-                infra,
-                a.declaredCapabilities
-              );
-              const need = lacking.length
-                ? lacking
-                : requiredCapabilities(saved.objective, infra);
-              return (
-                <WarnText key={a.id}>
-                  {need.length
-                    ? `Agent ${a.hostname || a.name} (${a.platform}) does not declare ${need.join(', ')}: install the agent on the ${os === 'windows' ? 'Windows' : 'Linux'} server.`
-                    : `Agent ${a.hostname || a.name} (${a.platform}) runs on another system: install the agent on the ${os === 'windows' ? 'Windows' : 'Linux'} server.`}
-                </WarnText>
-              );
-            })}
-          </VStack>
+          <Text fontSize='xs' color={muted} data-testid='other-system-agents'>
+            {otherSystemHint(elsewhere, os)}
+          </Text>
         ) : null}
         {target ? (
           <VStack align='stretch' spacing={2}>
@@ -725,6 +767,12 @@ export function AgentStep({ ctx }) {
               {target.hostname || target.name} ({target.platform}, version{' '}
               {target.agentVersion})
             </Text>
+            {healthy && agentExistedBefore(target) && !offerReuse ? (
+              <Text fontSize='xs' color={muted} data-testid='reused-agent'>
+                Reusing the agent that was already in this workspace:{' '}
+                {target.hostname || target.name} ({target.platform}).
+              </Text>
+            ) : null}
             <AgentCheckIn workspaceId={ctx.workspaceId} agent={target} />
             {lacksProfile ? (
               <WarnText data-testid='lacks-profile-note'>

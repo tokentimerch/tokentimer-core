@@ -13,7 +13,11 @@ import {
   agentRestartCommandFor,
   buildDryRunJob,
 } from './certopsConfig.js';
-import { agentsFor, pickGoalAgent } from './certopsMatrix.js';
+import {
+  agentsFor,
+  effectiveInfrastructure,
+  pickGoalAgent,
+} from './certopsMatrix.js';
 import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
 import { useSummaryPolling } from './useSummaryPolling.js';
 import { createJob, getJob } from '../certops/certopsJobsApi.js';
@@ -65,7 +69,8 @@ export function ExecutionStep({ ctx }) {
   const agent = pickGoalAgent(
     allAgents?.items,
     saved.objective,
-    saved.infrastructure
+    effectiveInfrastructure(saved.objective, saved.infrastructure),
+    saved.reusedAgentId
   );
   const agents = agentsFor(allAgents, agent);
   const [job, setJob] = useState(null);

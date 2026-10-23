@@ -3138,7 +3138,12 @@ paths:
                                 description: >-
                                   Agents that are not retired or diagnostic.
                                   `registeredSinceToken` counts agents created
-                                  after the session started.
+                                  after the session started. Each item carries
+                                  `platform` and `declaredCapabilities`, so a
+                                  client can judge an agent against the exact
+                                  system and capabilities a setup needs, and
+                                  `existedBeforeSession` (true when the agent
+                                  was created before the session began).
                                 properties:
                                   total:
                                     type: integer

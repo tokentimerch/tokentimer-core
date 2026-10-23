@@ -12,6 +12,7 @@ vi.mock('../../src/hooks/useDashboardTheme', async importOriginal => ({
 
 const agent = {
   livenessState: 'live',
+  platform: 'win32',
   declaredCapabilities: ['adcs-enroll-v1'],
 };
 const safe = { id: 'i1', name: 'Corp CA', confirmed: true, safe: true };
@@ -103,7 +104,13 @@ describe('AdcsStep', () => {
     show(
       ctxWith({
         adcs: { issuers: [safe], profiles: 1 },
-        agents: [{ livenessState: 'live', declaredCapabilities: [] }],
+        agents: [
+          {
+            livenessState: 'live',
+            platform: 'win32',
+            declaredCapabilities: [],
+          },
+        ],
       })
     );
     expect(screen.getAllByText('To do')).toHaveLength(1);
