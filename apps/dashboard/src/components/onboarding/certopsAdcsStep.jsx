@@ -225,9 +225,10 @@ export default function AdcsStep({ ctx }) {
     };
   }, [ctx.workspaceId]);
 
-  // The profile dialog picks from the pinned issuers.
+  // The profile dialog picks from the pinned issuers; load them before it
+  // opens so it never flashes "no issuer".
   useEffect(() => {
-    if (!profileOpen || !ctx.workspaceId) return undefined;
+    if (!(status.issuer || profileOpen) || !ctx.workspaceId) return undefined;
     let cancelled = false;
     listAllIssuers(listIssuers, ctx.workspaceId, { includeUnconfigured: false })
       .then(items => {
@@ -239,7 +240,7 @@ export default function AdcsStep({ ctx }) {
     return () => {
       cancelled = true;
     };
-  }, [profileOpen, ctx.workspaceId]);
+  }, [status.issuer, profileOpen, ctx.workspaceId]);
 
   // The setup summary only carries each agent's last check-in.
   const agentEvents = agents
