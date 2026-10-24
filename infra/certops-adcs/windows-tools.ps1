@@ -10,6 +10,10 @@ param([Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{40}$')][string]$Candidat
 $ErrorActionPreference = 'Stop'
 # Keep transfer progress local to this noninteractive bootstrap.
 $script:ProgressPreference = 'SilentlyContinue'
+# Resolve the signed inbox Utility module by path. Hosted Windows runners and
+# probe stubs that shadow Expand-Archive can leave Get-FileHash undiscoverable
+# when module auto-loading is the only resolution path.
+Import-Module ([IO.Path]::Combine($PSHOME,'Modules','Microsoft.PowerShell.Utility','Microsoft.PowerShell.Utility.psd1')) -NoClobber -ErrorAction Stop
 $toolsStage='membership'
 try{
 if ((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test') { throw 'Tool bootstrap requires isolated qualification domain member' }
