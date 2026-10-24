@@ -392,11 +392,7 @@ export function VaultStep({ ctx }) {
       await ctx.controller.update(session => ({
         progress: {
           ...session.progress,
-          certops: chooseDistribution(
-            session.progress?.certops,
-            'vault',
-            id
-          ),
+          certops: chooseDistribution(session.progress?.certops, 'vault', id),
         },
       }));
       await refresh();
