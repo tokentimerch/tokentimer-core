@@ -40,6 +40,9 @@ export function probeHostFor(names) {
   return first.replace(/^\*\./, 'www.');
 }
 
+// Production agent solvers only (same ids as listSupportedDnsProviders,
+// minus pebble-challtestsrv which is test-only). Each entry needs a
+// credential shape below so the wizard can hand the operator a file.
 export const DNS_PROVIDERS = {
   cloudflare: {
     label: 'Cloudflare',
@@ -72,6 +75,36 @@ export const DNS_PROVIDERS = {
     fields: ['server', 'keyName', 'keySecretBase64'],
     note: 'Dynamic updates must be allowed for _acme-challenge.',
   },
+  'acme-dns': {
+    label: 'acme-dns',
+    fields: ['baseUrl', 'username', 'password', 'subdomain'],
+    note: 'Values from the acme-dns /register response. Cleanup is a no-op.',
+  },
+  ovhcloud: {
+    label: 'OVHcloud',
+    fields: ['applicationKey', 'applicationSecret', 'consumerKey'],
+    note: 'OVH API credentials; optional endpoint for non-EU regions.',
+  },
+  hetzner: {
+    label: 'Hetzner',
+    fields: ['apiToken'],
+    note: 'Hetzner Console / Cloud project API token (not the legacy DNS Console token).',
+  },
+  infomaniak: {
+    label: 'Infomaniak',
+    fields: ['apiToken'],
+    note: 'Token needs domain:read, dns:read, and dns:write together.',
+  },
+  exoscale: {
+    label: 'Exoscale',
+    fields: ['apiKey', 'apiSecret'],
+    note: 'Scope the IAM key to the DNS service only.',
+  },
+  powerdns: {
+    label: 'PowerDNS',
+    fields: ['apiUrl', 'apiKey'],
+    note: 'apiUrl must be https: (loopback http needs allowInsecureLocalHttp).',
+  },
 };
 
 // Shape of the agent-local credential file per provider, with placeholders
@@ -101,6 +134,28 @@ const DNS_CREDENTIAL_SHAPES = {
     keyName: '<TSIG key name>',
     keyAlgorithm: 'hmac-sha256',
     keySecretBase64: '<base64 TSIG secret>',
+  },
+  'acme-dns': {
+    baseUrl: '<https://acme-dns.example>',
+    username: '<username from /register>',
+    password: '<password from /register>',
+    subdomain: '<subdomain from /register>',
+  },
+  ovhcloud: {
+    applicationKey: '<application key>',
+    applicationSecret: '<application secret>',
+    consumerKey: '<consumer key>',
+    endpoint: 'https://eu.api.ovh.com/1.0',
+  },
+  hetzner: { apiToken: '<hetzner cloud project api token>' },
+  infomaniak: { apiToken: '<infomaniak api token>' },
+  exoscale: {
+    apiKey: '<api key>',
+    apiSecret: '<api secret>',
+  },
+  powerdns: {
+    apiUrl: '<https://pdns.example:8081>',
+    apiKey: '<X-API-Key>',
   },
 };
 

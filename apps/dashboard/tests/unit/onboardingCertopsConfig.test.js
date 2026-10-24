@@ -912,6 +912,28 @@ describe('windows ACME configuration', () => {
 });
 
 describe('DNS credential file examples', () => {
+  // Keep in lockstep with packages/agent/src/dns/index.js
+  // SUPPORTED_DNS_PROVIDERS minus pebble-challtestsrv (test-only).
+  const PRODUCTION_DNS_PROVIDERS = [
+    'cloudflare',
+    'route53',
+    'azure-dns',
+    'google-cloud-dns',
+    'rfc2136',
+    'acme-dns',
+    'ovhcloud',
+    'hetzner',
+    'infomaniak',
+    'exoscale',
+    'powerdns',
+  ];
+
+  it('lists every production agent DNS provider in the wizard', () => {
+    expect(Object.keys(DNS_PROVIDERS).sort()).toEqual(
+      [...PRODUCTION_DNS_PROVIDERS].sort()
+    );
+  });
+
   it('shows a JSON example with placeholders for every supported provider', () => {
     for (const id of Object.keys(DNS_PROVIDERS)) {
       const parsed = JSON.parse(dnsCredentialsExample(id));
@@ -919,6 +941,7 @@ describe('DNS credential file examples', () => {
       expect(dnsCredentialsExample(id)).not.toMatch(SENSITIVE_PATTERN);
     }
     expect(dnsCredentialsExample('nope')).toBe('');
+    expect(dnsCredentialsExample('pebble-challtestsrv')).toBe('');
   });
 
   it('uses the field names the agent solvers read', () => {
@@ -938,6 +961,33 @@ describe('DNS credential file examples', () => {
     );
     expect(Object.keys(JSON.parse(dnsCredentialsExample('rfc2136')))).toEqual(
       expect.arrayContaining(['server', 'keyName', 'keySecretBase64'])
+    );
+    expect(Object.keys(JSON.parse(dnsCredentialsExample('acme-dns')))).toEqual(
+      expect.arrayContaining([
+        'baseUrl',
+        'username',
+        'password',
+        'subdomain',
+      ])
+    );
+    expect(Object.keys(JSON.parse(dnsCredentialsExample('ovhcloud')))).toEqual(
+      expect.arrayContaining([
+        'applicationKey',
+        'applicationSecret',
+        'consumerKey',
+      ])
+    );
+    expect(Object.keys(JSON.parse(dnsCredentialsExample('hetzner')))).toEqual(
+      expect.arrayContaining(['apiToken'])
+    );
+    expect(Object.keys(JSON.parse(dnsCredentialsExample('infomaniak')))).toEqual(
+      expect.arrayContaining(['apiToken'])
+    );
+    expect(Object.keys(JSON.parse(dnsCredentialsExample('exoscale')))).toEqual(
+      expect.arrayContaining(['apiKey', 'apiSecret'])
+    );
+    expect(Object.keys(JSON.parse(dnsCredentialsExample('powerdns')))).toEqual(
+      expect.arrayContaining(['apiUrl', 'apiKey'])
     );
   });
 
