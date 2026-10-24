@@ -397,6 +397,20 @@ async function insertProvisioningCertificate(client, options) {
 async function resolveCertificatePathHolder(client, options) {
   const { workspaceId, agentId, certPath } = options;
   if (!agentId || !certPath) return null;
+  // Acquire the row lock in its own statement. A statement that waits for
+  // FOR UPDATE retains its original READ COMMITTED snapshot for subqueries;
+  // computing abandonment there can miss a competing retry's new job.
+  const locked = await client.query(
+    `SELECT mc.id FROM managed_certificates mc
+      WHERE mc.workspace_id = $1 AND mc.deployed_agent_id = $2
+        AND mc.deployed_cert_path = $3
+        AND mc.source IN ('agent_issuance', 'agent_filesystem')
+      FOR UPDATE OF mc`,
+    [workspaceId, agentId, certPath],
+  );
+  if (!locked.rows[0]) return null;
+  // This second statement gets a fresh snapshot after any lock wait. The row
+  // lock is retained through identity reuse and job insertion in this transaction.
   const held = await client.query(
     `SELECT mc.id, mc.source, mc.status, mc.name,
             (mc.fingerprint_sha256 IS NULL AND mc.token_id IS NULL
@@ -411,8 +425,7 @@ async function resolveCertificatePathHolder(client, options) {
        FROM managed_certificates mc
       WHERE mc.workspace_id = $1 AND mc.deployed_agent_id = $2
         AND mc.deployed_cert_path = $3
-        AND mc.source IN ('agent_issuance', 'agent_filesystem')
-      FOR UPDATE OF mc`,
+        AND mc.source IN ('agent_issuance', 'agent_filesystem')`,
     [workspaceId, agentId, certPath, ISSUANCE_SOURCE, ISSUANCE_STATUS],
   );
   const holder = held.rows[0];
