@@ -2979,7 +2979,12 @@ paths:
                     is the id of a workspace agent the operator opted to reuse
                     with "My agent is already set up", and
                     `certops.chosenAgentConfirmed` echoes it once confirmed.
-                    Clients that do not know the fields ignore them.
+                    `certops.chosenIssuerId` and `certops.chosenIssuerConfirmed`
+                    are the same for "My Microsoft CA issuer is already set up".
+                    `certops.chosenDistributionId` and
+                    `certops.chosenDistributionConfirmed` are the same for
+                    "My Vault distribution is already set up". Clients that do
+                    not know the fields ignore them.
                   additionalProperties: true
                 operation_refs:
                   type: object
@@ -3201,7 +3206,11 @@ paths:
                                 description: >-
                                   Vault distribution. `verified` is true only
                                   after a rollout reached the verified state
-                                  with consumer evidence.
+                                  with consumer evidence. `items` lists up to
+                                  20 groups with session facts so a distribution
+                                  verified before the session began does not
+                                  finish the Vault step unless the operator
+                                  opts in.
                                 properties:
                                   groups:
                                     type: integer
@@ -3209,6 +3218,35 @@ paths:
                                     type: integer
                                   verified:
                                     type: boolean
+                                  items:
+                                    type: array
+                                    description: >-
+                                      Up to 20 distribution groups. Absent on
+                                      older servers.
+                                    items:
+                                      type: object
+                                      properties:
+                                        id:
+                                          type: string
+                                        materialStoreRef:
+                                          type: string
+                                        createdAt:
+                                          type: string
+                                          format: date-time
+                                          nullable: true
+                                        verified:
+                                          type: boolean
+                                        lastVerifiedAt:
+                                          type: string
+                                          format: date-time
+                                          nullable: true
+                                        existedBeforeSession:
+                                          type: boolean
+                                          description: >-
+                                            Nothing about this group is work of
+                                            the current session. Absent on older
+                                            servers, read as false.
+                                      additionalProperties: true
                                   outboxBacklog:
                                     type: object
                                     description: >-

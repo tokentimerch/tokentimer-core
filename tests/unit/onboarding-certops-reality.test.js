@@ -271,12 +271,14 @@ describe("loadOutboxBacklog", () => {
   it("is attached to the distribution reality", async () => {
     const answers = [
       { rows: [{ groups: 1, bindings: 0, verified_rollouts: 0 }] },
+      { rows: [] },
       { rows: [{ n: 2, oldest: minutesAgo(10) }] },
     ];
     const pool = { query: async () => answers.shift() };
     const distribution = await loadDistributionReality(pool, "w", { now: NOW });
     assert.equal(distribution.groups, 1);
     assert.equal(distribution.verified, false);
+    assert.deepEqual(distribution.items, []);
     assert.deepEqual(distribution.outboxBacklog, {
       count: 2,
       oldestAt: minutesAgo(10),

@@ -22,6 +22,7 @@ import {
 } from './editionModules.js';
 import { recipientsSatisfied } from './groupAttachment.js';
 import { scopeAdcs } from './adcsModel.js';
+import { scopeDistribution } from './distributionModel.js';
 import { scopeCertops } from './certopsScope.js';
 import { GUIDED_IMPORT_STEPS } from './importFlow.js';
 
@@ -244,10 +245,21 @@ function certopsDone(stepId, { reality, progress, objective }) {
           saved.chosenIssuerConfirmed === saved.chosenIssuerId)
       );
     }
-    case 'certops_vault':
-      return (
-        certops?.distribution?.groups > 0 && certops?.distribution?.verified
+    case 'certops_vault': {
+      // Only a distribution with work from this session counts, or the one the
+      // operator chose and confirmed with Continue. A verified group that was
+      // already in the workspace never finishes the step on its own.
+      const dist = scopeDistribution(
+        certops?.distribution,
+        saved.chosenDistributionId
       );
+      return (
+        (dist?.groups || 0) > 0 &&
+        dist?.verified === true &&
+        (!saved.chosenDistributionId ||
+          saved.chosenDistributionConfirmed === saved.chosenDistributionId)
+      );
+    }
     default:
       return false;
   }

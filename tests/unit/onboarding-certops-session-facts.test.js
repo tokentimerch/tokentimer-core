@@ -2,6 +2,7 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const {
   loadAdcsReality,
+  loadDistributionReality,
   loadObservedCertificates,
 } = require("../../apps/api/services/onboarding/certopsReality");
 
@@ -165,5 +166,75 @@ describe("loadObservedCertificates", () => {
         ],
       },
     );
+  });
+});
+
+describe("loadDistributionReality session facts", () => {
+  const SINCE = "2026-10-22T10:00:00.000Z";
+  const load = async (itemRows, opts) => {
+    const answers = [
+      { rows: [{ groups: itemRows.length, bindings: 0, verified_rollouts: 1 }] },
+      { rows: itemRows },
+      { rows: [{ n: 0, oldest: null }] },
+    ];
+    return loadDistributionReality(
+      { query: async () => answers.shift() },
+      "w",
+      opts,
+    );
+  };
+
+  it("marks groups with no session work so the guide never adopts them", async () => {
+    const { items } = await load(
+      [
+        {
+          id: "old",
+          material_store_ref: "store",
+          created_at: "2026-10-22T09:00:00.000Z",
+          verified: true,
+          last_verified_at: "2026-10-22T09:30:00.000Z",
+        },
+        {
+          id: "new",
+          material_store_ref: "store",
+          created_at: "2026-10-22T11:00:00.000Z",
+          verified: true,
+          last_verified_at: "2026-10-22T11:30:00.000Z",
+        },
+      ],
+      { since: SINCE },
+    );
+    assert.equal(items[0].existedBeforeSession, true);
+    assert.equal(items[0].verified, true);
+    assert.equal(items[1].existedBeforeSession, false);
+  });
+
+  it("counts a new verified rollout on an older group as session work", async () => {
+    const { items } = await load(
+      [
+        {
+          id: "old",
+          material_store_ref: "store",
+          created_at: "2026-10-22T09:00:00.000Z",
+          verified: true,
+          last_verified_at: "2026-10-22T11:00:00.000Z",
+        },
+      ],
+      { since: SINCE },
+    );
+    assert.equal(items[0].existedBeforeSession, false);
+  });
+
+  it("never claims a group pre-dates a session it cannot date", async () => {
+    const { items } = await load([
+      {
+        id: "g",
+        material_store_ref: "store",
+        created_at: "2026-10-22T09:00:00.000Z",
+        verified: true,
+        last_verified_at: "2026-10-22T09:30:00.000Z",
+      },
+    ]);
+    assert.equal(items[0].existedBeforeSession, false);
   });
 });
