@@ -15,6 +15,27 @@ const {
 const { createAgentLogger, sanitizeLogValue } = require("./index.js");
 const { scrubAgentLogText } = require("../../vendor/log-scrub/agent-log-text.js");
 
+function createCompactPrivateKeyDer() {
+  // A valid disposable key with a repeated fresh seed half exercises short
+  // compressed inputs; input entropy is not an acceptance requirement.
+  const half = randomBytes(16);
+  const key = createPrivateKey({
+    key: Buffer.concat([
+      Buffer.from("302e020100300506032b657004220420", "hex"),
+      half,
+      half,
+    ]),
+    type: "pkcs8",
+    format: "der",
+  });
+  const message = Buffer.from("disposable logger regression");
+  assert.equal(
+    verify(null, message, createPublicKey(key), sign(null, message, key)),
+    true,
+  );
+  return key.export({ type: "pkcs8", format: "der" });
+}
+
 test("agent logger scrubs credentials, generic secrets, private material, and nested errors", () => {
   const lines = [];
   const logger = createAgentLogger({ sink: (line) => lines.push(line) });
@@ -91,25 +112,8 @@ test("agent logger redacts compact zlib-deflate Ed25519 material in message and 
 });
 
 test("agent logger and console reject short nested private material in both alphabets", () => {
-  // A valid disposable key with a repeated fresh seed half exercises the
-  // compact nested case; input entropy is not an acceptance requirement.
-  const half = randomBytes(16);
-  const key = createPrivateKey({
-    key: Buffer.concat([
-      Buffer.from("302e020100300506032b657004220420", "hex"),
-      half,
-      half,
-    ]),
-    type: "pkcs8",
-    format: "der",
-  });
-  const message = Buffer.from("disposable logger regression");
-  assert.equal(
-    verify(null, message, createPublicKey(key), sign(null, message, key)),
-    true,
-  );
   const nested = zlib.deflateSync(
-    zlib.deflateSync(key.export({ type: "pkcs8", format: "der" })),
+    zlib.deflateSync(createCompactPrivateKeyDer()),
   );
   assert.ok(nested.length < 64, "fixture must exercise the short stream branch");
   for (const encoding of ["base64", "base64url"]) {
@@ -128,6 +132,32 @@ test("agent logger and console reject short nested private material in both alph
     const consoleLine = scrubAgentLogText(value);
     assert.equal(consoleLine.rejected, true);
     assert.equal(consoleLine.text === "[PRIVATE_KEY_REDACTED]", true);
+  }
+});
+
+test("agent logger and console redact compact gzip private material with a truncated trailer", () => {
+  const der = createCompactPrivateKeyDer();
+  const compressed = zlib.gzipSync(der);
+  for (let missing = 1; missing <= 8; missing += 1) {
+    const truncated = compressed.subarray(0, -missing);
+    assert.ok(truncated.length < 64, "fixture must exercise the short branch");
+    for (const encoding of ["base64", "base64url"]) {
+      const value = truncated.toString(encoding);
+      assert.equal(sanitizeLogValue(value) === "[PRIVATE_KEY_REDACTED]", true);
+      assert.equal(
+        sanitizeLogValue({ attachment: value }).attachment === "[PRIVATE_KEY_REDACTED]",
+        true,
+      );
+      const lines = [];
+      createAgentLogger({ sink: (line) => lines.push(line) }).error(value, {
+        attachment: value,
+      });
+      assert.equal(lines.length, 1);
+      assert.equal(lines[0].includes(value), false);
+      const consoleLine = scrubAgentLogText(value);
+      assert.equal(consoleLine.rejected, true);
+      assert.equal(consoleLine.text === "[PRIVATE_KEY_REDACTED]", true);
+    }
   }
 });
 

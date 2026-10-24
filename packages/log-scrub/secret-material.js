@@ -592,6 +592,7 @@ const COMPRESSION_REJECTION_REASON = Object.freeze({
   OUTPUT_LIMIT: "output_limit",
   PRESET_DICTIONARY: "preset_dictionary",
   NESTED: "nested",
+  PARTIAL_PRIVATE_MATERIAL: "partial_private_material",
   INVALID_STREAM: "invalid_stream",
 });
 
@@ -619,8 +620,10 @@ function rejectedCompressedBuffer(reason) {
  * for it. Rejection reasons distinguish actual decompression evidence
  * (nested output or an output budget exceeded) from a header alone. Short
  * encoded identifiers can coincidentally match a header; they may tolerate
- * an invalid/dictionary-shaped stream, but never a nested or budget-limited
- * decompression. Raw buffers retain the fail-closed policy for every reason.
+ * an invalid/dictionary-shaped stream, but never recovered private material
+ * or a nested or budget-limited decompression. Partial gzip remains rejected
+ * even when its recovered output is public, preserving raw/long-input policy.
+ * Raw buffers retain the fail-closed policy for every reason.
  * @param {Buffer} buffer
  * @returns {{classification: string, decoded: Buffer|null, reason?: string}}
  */
@@ -662,29 +665,42 @@ function classifyCompressedBuffer(buffer) {
     if (err?.code === "ERR_BUFFER_TOO_LARGE") {
       return rejectedCompressedBuffer(COMPRESSION_REJECTION_REASON.OUTPUT_LIMIT);
     }
-    // A two-byte zlib header is trivially matched by ~0.1% of arbitrary
-    // base64/hex-looking identifiers (thumbprints, ids), so a zlib-shaped
-    // blob that is not a real stream must not hard-fail. Truncated streams
-    // are still decoded up to the truncation point and scanned; only data
-    // that no inflater could decode at all is treated as ordinary input.
+    // Scan the bounded recoverable output of a truncated stream. A missing
+    // gzip trailer can leave a complete private key behind the header, so it
+    // is not merely a coincidental short identifier. Unlike zlib's existing
+    // header-collision fallback, partial gzip remains REJECTED; its reason
+    // lets short strings distinguish concrete material from a header alone.
     if (
-      isZlib &&
-      (err?.code === "Z_BUF_ERROR" || err?.code === "Z_DATA_ERROR")
+      (isZlib && (err?.code === "Z_BUF_ERROR" || err?.code === "Z_DATA_ERROR")) ||
+      (isGzip && err?.code === "Z_BUF_ERROR")
     ) {
       try {
-        const partial = zlib.inflateSync(buffer, {
+        const options = {
           maxOutputLength,
           finishFlush: zlib.constants.Z_SYNC_FLUSH,
-        });
+        };
+        const partial = isGzip
+          ? zlib.gunzipSync(buffer, options)
+          : zlib.inflateSync(buffer, options);
         if (looksGzipHeader(partial) || looksZlibHeader(partial)) {
           return rejectedCompressedBuffer(COMPRESSION_REJECTION_REASON.NESTED);
+        }
+        if (isGzip) {
+          return rejectedCompressedBuffer(
+            ordinaryBufferContainsPrivateKey(partial)
+              ? COMPRESSION_REJECTION_REASON.PARTIAL_PRIVATE_MATERIAL
+              : COMPRESSION_REJECTION_REASON.INVALID_STREAM,
+          );
         }
         return { classification: COMPRESSION_CLASSIFICATION.DECOMPRESSED, decoded: partial };
       } catch (partialErr) {
         if (partialErr?.code === "ERR_BUFFER_TOO_LARGE") {
           return rejectedCompressedBuffer(COMPRESSION_REJECTION_REASON.OUTPUT_LIMIT);
         }
-        if (partialErr?.code === "Z_DATA_ERROR" || partialErr?.code === "Z_BUF_ERROR") {
+        if (
+          isZlib &&
+          (partialErr?.code === "Z_DATA_ERROR" || partialErr?.code === "Z_BUF_ERROR")
+        ) {
           return { classification: COMPRESSION_CLASSIFICATION.NOT_COMPRESSED, decoded: null };
         }
       }
@@ -752,10 +768,10 @@ function stringContainsPrivateKey(value) {
     // is different: Ed25519 PKCS#8 is 48 bytes and its zlib-deflate encoding
     // is typically about 57 bytes, under the old 64-byte
     // skip bound, so short non-hex input still gets one bounded unwrap.
-    // A successful decode revealing another compressed stream, or an
-    // inflater refusing the output budget, is structural evidence and must
-    // stay rejected. Only invalid/dictionary-shaped short identifiers retain
-    // the header-collision tolerance; no second unwrap is attempted.
+    // A decode revealing private material or another compressed stream, or
+    // an inflater refusing the output budget, is structural evidence and
+    // must stay rejected. Only invalid/dictionary-shaped short identifiers
+    // retain header-collision tolerance; no second layer is unwrapped.
     if (hexDecoded) {
       if (ordinaryBufferContainsPrivateKey(decoded)) return true;
       return false;
@@ -767,6 +783,7 @@ function stringContainsPrivateKey(value) {
         if (
           compressed.classification === COMPRESSION_CLASSIFICATION.REJECTED &&
           (compressed.reason === COMPRESSION_REJECTION_REASON.NESTED ||
+            compressed.reason === COMPRESSION_REJECTION_REASON.PARTIAL_PRIVATE_MATERIAL ||
             compressed.reason === COMPRESSION_REJECTION_REASON.OUTPUT_LIMIT)
         ) {
           return true;

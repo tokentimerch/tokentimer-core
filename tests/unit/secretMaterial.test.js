@@ -829,6 +829,84 @@ describe("secretMaterial compressed-input detection (C1)", () => {
     }
   });
 
+  it("rejects compact gzip private material with a recoverable truncated trailer", () => {
+    const { der } = createCompactPrivateMaterialFixture();
+    const compressed = zlib.gzipSync(der);
+    for (let missing = 1; missing <= 8; missing += 1) {
+      const truncated = compressed.subarray(0, -missing);
+      assert.ok(truncated.length < 64, "fixture must exercise the short branch");
+      const recovered = zlib.gunzipSync(truncated, {
+        maxOutputLength: truncated.length * 4,
+        finishFlush: zlib.constants.Z_SYNC_FLUSH,
+      });
+      assert.equal(recovered.equals(der), true, "the complete key remains recoverable");
+      assert.equal(containsPrivateKeyMaterial(truncated), true);
+      for (const encoding of ["base64", "base64url"]) {
+        const value = truncated.toString(encoding);
+        assert.equal(containsPrivateKeyMaterial(value), true);
+        assert.throws(
+          () => assertNoPrivateKeyMaterial({ details: [value] }),
+          (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+        );
+        assert.equal(
+          redactPrivateKeyMaterial(value) === PRIVATE_KEY_REDACTION_PLACEHOLDER,
+          true,
+        );
+      }
+    }
+  });
+
+  it("rejects nested and oversized output recovered from a short truncated gzip", () => {
+    const { compressed } = createCompactPrivateMaterialFixture();
+    for (const payload of [compressed, Buffer.alloc(512, 0x41)]) {
+      const truncated = zlib.gzipSync(payload).subarray(0, -8);
+      assert.ok(truncated.length < 64, "fixture must exercise the short branch");
+      assert.equal(containsPrivateKeyMaterial(truncated), true);
+      for (const encoding of ["base64", "base64url"]) {
+        const value = truncated.toString(encoding);
+        assert.equal(containsPrivateKeyMaterial(value), true);
+        assert.throws(
+          () => assertNoPrivateKeyMaterial({ attachment: value }),
+          (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+        );
+      }
+    }
+  });
+
+  it("preserves identifier tolerance and raw fail-closed behavior after partial gzip recovery", () => {
+    const { publicDer } = createCompactPrivateMaterialFixture();
+    for (const payload of [publicDer, Buffer.alloc(0)]) {
+      const compressed = zlib.gzipSync(payload);
+      const truncated = compressed.subarray(0, -8);
+      assert.ok(truncated.length < 64, "fixture must exercise the short branch");
+      assert.equal(
+        classifyCompressedBuffer(truncated).classification,
+        COMPRESSION_CLASSIFICATION.REJECTED,
+      );
+      assert.equal(containsPrivateKeyMaterial(truncated), true);
+      for (const encoding of ["base64", "base64url"]) {
+        assert.equal(containsPrivateKeyMaterial(compressed.toString(encoding)), false);
+        const identifier = truncated.toString(encoding);
+        assert.equal(containsPrivateKeyMaterial(identifier), false);
+        assert.doesNotThrow(() => assertNoPrivateKeyMaterial({ reference: identifier }));
+      }
+    }
+  });
+
+  it("keeps long truncated gzip inputs fail-closed even when their output is public", () => {
+    const { publicDer } = createCompactPrivateMaterialFixture();
+    const payload = Buffer.concat([publicDer, Buffer.from(Array.from({ length: 80 }, (_, i) => i))]);
+    const truncated = zlib.gzipSync(payload).subarray(0, -8);
+    assert.ok(truncated.length >= 64, "fixture must exercise the long branch");
+    assert.equal(
+      classifyCompressedBuffer(truncated).classification,
+      COMPRESSION_CLASSIFICATION.REJECTED,
+    );
+    for (const encoding of ["base64", "base64url"]) {
+      assert.equal(containsPrivateKeyMaterial(truncated.toString(encoding)), true);
+    }
+  });
+
   it("rejects a valid short nested stream in both encoded representations", () => {
     const { nested } = createCompactPrivateMaterialFixture();
     const classified = classifyCompressedBuffer(nested);
