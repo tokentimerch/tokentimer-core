@@ -195,17 +195,20 @@ export function useOnboardingState({ api = onboardingAPI } = {}) {
   const { workspaceId } = useWorkspace();
   const [state, setState] = useState({ status: 'loading' });
   const controllerRef = useRef(null);
+  const refreshRequestRef = useRef(0);
 
   const load = useCallback(async () => {
-    if (!workspaceId) return;
     setState({ status: 'loading' });
+    if (!workspaceId) return;
     const controller = new SessionController({
       api,
       workspaceId,
       flow: FLOW,
       onChange: session =>
         setState(prev =>
-          prev.status === 'ready' ? { ...prev, session } : prev
+          controllerRef.current === controller && prev.status === 'ready'
+            ? { ...prev, session }
+            : prev
         ),
     });
     controllerRef.current = controller;
@@ -231,14 +234,32 @@ export function useOnboardingState({ api = onboardingAPI } = {}) {
   }, [api, workspaceId]);
 
   const refresh = useCallback(async () => {
-    if (!workspaceId) return null;
+    const controller = controllerRef.current;
+    if (
+      !workspaceId ||
+      controller?.workspaceId !== workspaceId ||
+      controller.api !== api
+    ) {
+      return null;
+    }
+    const request = ++refreshRequestRef.current;
     const summary = await api.getSummary(workspaceId, FLOW);
-    setState(prev => (prev.status === 'ready' ? { ...prev, summary } : prev));
+    // A previous workspace, reload or older poll must not replace newer facts.
+    setState(prev =>
+      controllerRef.current === controller &&
+      refreshRequestRef.current === request &&
+      prev.status === 'ready'
+        ? { ...prev, summary }
+        : prev
+    );
     return summary;
   }, [api, workspaceId]);
 
   useEffect(() => {
     load();
+    return () => {
+      controllerRef.current = null;
+    };
   }, [load]);
 
   // Close operations that succeeded on the server but were never recorded.
