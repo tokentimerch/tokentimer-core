@@ -564,6 +564,27 @@ describe("certops issuance job creation", () => {
     assert.equal(state.inserts.length, 0);
   });
 
+  it("locks the path before reading its abandonment state in a new statement", async () => {
+    const { state, client } = createIssuanceClient({
+      pathHolder: { id: NEW_CERT_ID, status: "provisioning", abandoned: true },
+    });
+    await createCertificateIssuanceJob({
+      ...validRequest(),
+      assignedAgentId: "44444444-4444-4444-8444-444444444444",
+      client,
+      jobCreatorOverride: async () => ({ job: { id: "retry-job" }, created: true }),
+    });
+    const reads = state.queries.filter(({ sql }) => sql.includes("deployed_cert_path = $3"));
+    assert.equal(reads.length, 2);
+    assert.match(reads[0].sql, /FOR UPDATE OF mc/);
+    assert.doesNotMatch(reads[0].sql, /certificate_jobs|AS abandoned/);
+    assert.match(reads[1].sql, /FROM certificate_jobs/);
+    assert.match(reads[1].sql, /AS abandoned/);
+    assert.doesNotMatch(reads[1].sql, /FOR UPDATE/);
+    assert.deepEqual(reads[0].params, reads[1].params.slice(0, 3));
+    assert.equal(state.reuses.length, 1);
+  });
+
   it("does not look up a path holder without an assigned agent", async () => {
     const { state, client } = createIssuanceClient();
     await createCertificateIssuanceJob({

@@ -2,7 +2,7 @@
 
 // Dedicated migrated PostgreSQL only. A first ACME order that never produced a
 // certificate must not reserve its certificate path forever.
-const { before, after, describe, it } = require("node:test");
+const { before, beforeEach, after, describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 assert.equal(process.env.DB_HOST, "127.0.0.1");
@@ -16,27 +16,31 @@ const {
 const hex = (bytes) => crypto.randomBytes(bytes).toString("hex");
 let userId, workspaceId, agentId;
 
+async function createOnClient(client, idempotencyKey, certPath, overrides = {}) {
+  return createCertificateIssuanceJob({
+    workspaceId,
+    idempotencyKey,
+    assignedAgentId: agentId,
+    requestedByUserId: userId,
+    mode: "real",
+    payload: {
+      target: { type: "domain", reference: "path-reuse.example.com" },
+      certPath,
+      caEndpoint: "https://acme-staging-v02.api.letsencrypt.org/directory",
+      commandRef: "certbot-dns-cloudflare",
+      dnsProvider: "cloudflare",
+      dnsZone: "example.com",
+    },
+    ...overrides,
+    client,
+  });
+}
+
 async function issue(idempotencyKey, certPath, overrides = {}) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const outcome = await createCertificateIssuanceJob({
-      workspaceId,
-      idempotencyKey,
-      assignedAgentId: agentId,
-      requestedByUserId: userId,
-      mode: "real",
-      payload: {
-        target: { type: "domain", reference: "path-reuse.example.com" },
-        certPath,
-        caEndpoint: "https://acme-staging-v02.api.letsencrypt.org/directory",
-        commandRef: "certbot-dns-cloudflare",
-        dnsProvider: "cloudflare",
-        dnsZone: "example.com",
-      },
-      ...overrides,
-      client,
-    });
+    const outcome = await createOnClient(client, idempotencyKey, certPath, overrides);
     await client.query("COMMIT");
     return outcome;
   } catch (error) {
@@ -72,6 +76,9 @@ describe(
           [`path-reuse-${crypto.randomUUID()}@example.test`],
         )
       ).rows[0].id;
+    });
+    // A fresh workspace isolates the real per-CA capacity quota for each case.
+    beforeEach(async () => {
       workspaceId = crypto.randomUUID();
       await pool.query(
         "INSERT INTO workspaces(id,name,created_by) VALUES($1,'Path reuse',$2)",
@@ -115,6 +122,77 @@ describe(
       );
       assert.equal(rows.rows[0].n, 1);
     });
+
+    for (const winnerAction of ["COMMIT", "ROLLBACK"]) {
+      it(`rechecks path ownership after the blocking retry ${winnerAction.toLowerCase()}s`, { timeout: 15000 }, async () => {
+        const certPath = `/etc/ssl/tokentimer/${hex(4)}.pem`;
+        const first = await issue(`abandoned-${hex(4)}`, certPath);
+        await setJobStatus(first.job.id, "failed");
+        const winner = await pool.connect();
+        const contender = await pool.connect();
+        let pending;
+        try {
+          await winner.query("BEGIN");
+          await contender.query("BEGIN");
+          await contender.query("SET LOCAL statement_timeout = '8s'");
+          const winnerPid = (await winner.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+          const contenderPid = (await contender.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+          const winnerKey = `winner-${hex(4)}`;
+          const contenderKey = `contender-${hex(4)}`;
+          const retry = await createOnClient(winner, winnerKey, certPath);
+          // Hold an actual uncommitted retry while a second connection takes
+          // its statement snapshot and waits for this transaction in PostgreSQL.
+          pending = createOnClient(contender, contenderKey, certPath)
+            .then(value => ({ value }), error => ({ error }));
+          let blocked = false;
+          const deadline = Date.now() + 5000;
+          while (Date.now() < deadline) {
+            const { rows } = await pool.query(
+              "SELECT $1::int = ANY(pg_blocking_pids($2::int)) AS blocked",
+              [winnerPid, contenderPid],
+            );
+            if (rows[0].blocked) { blocked = true; break; }
+            await new Promise(resolve => setTimeout(resolve, 10));
+          }
+          assert.equal(blocked, true, "contender must really wait on the winner's transaction");
+          await winner.query(winnerAction);
+          const result = await pending;
+          let admitted;
+          let admittedKey;
+          if (winnerAction === "COMMIT") {
+            assert.equal(result.error?.code, "CERTOPS_CERTIFICATE_PATH_IN_USE",
+              "a fresh post-lock read must see the newly committed issue job");
+            await contender.query("ROLLBACK");
+            admitted = retry;
+            admittedKey = winnerKey;
+          } else {
+            assert.ifError(result.error);
+            assert.equal(result.value.created, true, "a rolled-back retry must not reserve the path");
+            await contender.query("COMMIT");
+            admitted = result.value;
+            admittedKey = contenderKey;
+          }
+          assert.equal(admitted.job.subjectId, first.job.subjectId);
+          const { rows } = await pool.query(
+            "SELECT id FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND status='pending'",
+            [workspaceId, first.job.subjectId],
+          );
+          assert.deepEqual(rows.map(row => row.id), [admitted.job.id]);
+          assert.equal((await certificate(first.job.subjectId)).source_ref, admittedKey);
+          const replay = await issue(admittedKey, certPath);
+          assert.equal(replay.created, false);
+          assert.equal(replay.job.id, admitted.job.id);
+        } finally {
+          // Releasing the first transaction unblocks cleanup even if the
+          // barrier/assertion fails. The contender statement also has a deadline.
+          await winner.query("ROLLBACK");
+          if (pending) await pending;
+          await contender.query("ROLLBACK");
+          winner.release();
+          contender.release();
+        }
+      });
+    }
 
     it("still replays the original request for the same idempotency key", async () => {
       const certPath = `/etc/ssl/tokentimer/${hex(4)}.pem`;

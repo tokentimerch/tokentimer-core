@@ -759,9 +759,12 @@ describe('webhook creation inside the shared group modal', () => {
     fireEvent.click(
       within(dialog).getByRole('button', { name: 'Test', exact: true })
     );
-    expect(
-      await within(dialog).findByText('Receiver unavailable; check the URL.')
-    ).toBeVisible();
+    // Text can mount before the nested modal's entrance transition finishes.
+    await waitFor(() =>
+      expect(
+        within(dialog).getByText('Receiver unavailable; check the URL.')
+      ).toBeVisible()
+    );
     expect(
       within(dialog).getByRole('button', { name: 'Save webhook' })
     ).toBeDisabled();
@@ -792,9 +795,12 @@ describe('webhook creation inside the shared group modal', () => {
     fireEvent.click(
       within(dialog).getByRole('button', { name: 'Save webhook' })
     );
-    expect(
-      await within(dialog).findByText(/webhook was not saved as requested/i)
-    ).toBeVisible();
+    // Text can mount before the nested modal's entrance transition finishes.
+    await waitFor(() =>
+      expect(
+        within(dialog).getByText(/webhook was not saved as requested/i)
+      ).toBeVisible()
+    );
     expect(within(dialog).getByDisplayValue('Ops channel')).toBeInTheDocument();
     expect(changed).not.toHaveBeenCalled();
   });
@@ -812,9 +818,12 @@ describe('webhook creation inside the shared group modal', () => {
     fireEvent.click(
       within(dialog).getByRole('button', { name: 'Save webhook' })
     );
-    expect(
-      await within(dialog).findByText('Connection lost after save')
-    ).toBeVisible();
+    // Text can mount before the nested modal's entrance transition finishes.
+    await waitFor(() =>
+      expect(
+        within(dialog).getByText('Connection lost after save')
+      ).toBeVisible()
+    );
     fireEvent.click(
       within(dialog).getByRole('button', { name: 'Save webhook' })
     );
