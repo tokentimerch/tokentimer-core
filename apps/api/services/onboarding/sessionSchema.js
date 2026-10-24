@@ -4,6 +4,8 @@
 // references only. Anything that looks like a credential is rejected on write
 // so a buggy client can never persist one.
 
+const { containsPrivateKeyMaterial } = require("../../utils/secretMaterial");
+
 const FLOWS = Object.freeze(["mega", "certops"]);
 const STATUSES = Object.freeze(["in_progress", "completed", "dismissed"]);
 const SECTIONS = Object.freeze(["intent", "progress", "operation_refs"]);
@@ -81,6 +83,12 @@ function sanitizeSection(name, value) {
   const clean = sanitizeValue(value, name, 0);
   if (Buffer.byteLength(JSON.stringify(clean), "utf8") > MAX_SECTION_BYTES) {
     fail("SECTION_TOO_LARGE", `${name} exceeds ${MAX_SECTION_BYTES} bytes`);
+  }
+  // Field names and credential prefixes are not enough: private material can
+  // arrive as DER, encoded PEM, or a compact compressed value under an
+  // ordinary key. Scan the bounded, validated section with the shared rule.
+  if (containsPrivateKeyMaterial(clean)) {
+    fail("SECRET_REJECTED", `${name} contains private key material`);
   }
   return clean;
 }

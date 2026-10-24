@@ -34,6 +34,8 @@ services:
       context: ../..
       dockerfile: apps/api/Dockerfile.dev
     container_name: tokentimer-core-api-test
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${TT_TEST_API_PORT:-4000}:4000"
     environment:
@@ -108,6 +110,8 @@ services:
       context: ../..
       dockerfile: apps/worker/Dockerfile.dev
     container_name: tokentimer-core-worker-endpoint-check-test
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - NODE_ENV=test
       - DB_HOST=postgres

@@ -79,6 +79,12 @@ source "$ENV_CLEAN"
 set +a
 rm -f "$ENV_CLEAN"
 
+# The first-value journey's TLS server runs here, while the API reads its
+# certificate from a Compose container. Native helper callers stay on loopback;
+# only this test runner advertises the host alias mapped in the test Compose.
+export TT_TEST_HTTPS_BIND_HOST="${TT_TEST_HTTPS_BIND_HOST:-0.0.0.0}"
+export TT_TEST_HTTPS_HOST="${TT_TEST_HTTPS_HOST:-host.docker.internal}"
+
 # ---- stop any leftover containers --------------------------
 echo "==> Cleaning up previous containers..."
 docker compose -f "$COMPOSE_FILE" down --volumes --remove-orphans 2>/dev/null || true

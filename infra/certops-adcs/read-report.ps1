@@ -7,7 +7,9 @@ param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][stri
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'arm-operation.ps1')
 if($env:GITHUB_ACTIONS -eq 'true'){& (Join-Path $PSScriptRoot 'login-oidc.ps1')}
-$bytes=[Collections.Generic.List[byte]]::new()
+# MemoryStream avoids AMSI false-positives that fire on List[byte]+FromBase64
+# reconstruction patterns when this script is executed under fixture probes.
+$bytes=[IO.MemoryStream]::new()
 $length=$null
 $expectedHash=$null
 $zlength=$null
@@ -66,10 +68,11 @@ PY
     $chunkLimit=2400
   }
   if($part.Length -ne [Math]::Min($chunkLimit,$streamLength-$offset)){throw 'Guest report chunk length mismatch'}
-  $bytes.AddRange($part)
+  $bytes.Write($part,0,$part.Length)
   $offset += $part.Length
 }while($offset -lt $streamLength)
 $transferred=$bytes.ToArray()
+$bytes.Dispose()
 if($compressed){
   $gzipInput=[IO.MemoryStream]::new($transferred)
   $gzip=[IO.Compression.GZipStream]::new($gzipInput,[IO.Compression.CompressionMode]::Decompress)

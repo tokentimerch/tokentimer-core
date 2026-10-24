@@ -4,6 +4,10 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert");
 const path = require("path");
 const zlib = require("node:zlib");
+const { generateKeyPairSync } = require("node:crypto");
+const {
+  createCompactPrivateMaterialFixture,
+} = require("../helpers/private-material-fixtures");
 
 const {
   PRIVATE_KEY_MATERIAL_REJECTED,
@@ -785,6 +789,185 @@ describe("secretMaterial compressed-input detection (C1)", () => {
     const zl = zlib.deflateSync(Buffer.from(pem("RSA PRIVATE KEY")));
     assert.equal(zl[0], 0x78, "sanity: common zlib preset header starts with 0x78");
     assert.strictEqual(containsPrivateKeyMaterial(zl), true);
+    assert.strictEqual(containsPrivateKeyMaterial(zl.toString("base64")), true);
+  });
+
+  it("detects compact zlib-deflate of disposable Ed25519 PKCS#8 under the short-blob bound", () => {
+    // Ed25519 PKCS#8 DER is 48 bytes; zlib.deflateSync yields ~57 (< 64).
+    // The short-blob path must unwrap once so base64/base64url cannot evade.
+    const { privateKey } = generateKeyPairSync("ed25519");
+    const der = privateKey.export({ type: "pkcs8", format: "der" });
+    const deflated = zlib.deflateSync(der);
+    assert.ok(der.length < 64, `sanity: Ed25519 DER is compact (${der.length})`);
+    assert.ok(
+      deflated.length < 64,
+      `sanity: deflated Ed25519 stays under short-blob bound (${deflated.length})`,
+    );
+    assert.strictEqual(containsPrivateKeyMaterial(deflated), true);
+    assert.strictEqual(containsPrivateKeyMaterial(deflated.toString("base64")), true);
+    assert.strictEqual(containsPrivateKeyMaterial(deflated.toString("base64url")), true);
+    assert.throws(
+      () => assertNoPrivateKeyMaterial({ evidence: deflated.toString("base64") }),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
+    assert.strictEqual(
+      redactPrivateKeyMaterial(deflated.toString("base64")),
+      PRIVATE_KEY_REDACTION_PLACEHOLDER,
+    );
+  });
+
+  it("still detects larger zlib-wrapped EC and RSA DER controls via base64", () => {
+    const ec = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey
+      .export({ type: "pkcs8", format: "der" });
+    const rsa = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey
+      .export({ type: "pkcs8", format: "der" });
+    for (const der of [ec, rsa]) {
+      const deflated = zlib.deflateSync(der);
+      assert.ok(deflated.length >= 64, `sanity: larger DER deflate is not short (${deflated.length})`);
+      assert.strictEqual(containsPrivateKeyMaterial(deflated.toString("base64")), true);
+      assert.strictEqual(containsPrivateKeyMaterial(deflated.toString("base64url")), true);
+    }
+  });
+
+  it("rejects compact gzip private material with a recoverable truncated trailer", () => {
+    const { der } = createCompactPrivateMaterialFixture();
+    const compressed = zlib.gzipSync(der);
+    for (let missing = 1; missing <= 8; missing += 1) {
+      const truncated = compressed.subarray(0, -missing);
+      assert.ok(truncated.length < 64, "fixture must exercise the short branch");
+      const recovered = zlib.gunzipSync(truncated, {
+        maxOutputLength: truncated.length * 4,
+        finishFlush: zlib.constants.Z_SYNC_FLUSH,
+      });
+      assert.equal(recovered.equals(der), true, "the complete key remains recoverable");
+      assert.equal(containsPrivateKeyMaterial(truncated), true);
+      for (const encoding of ["base64", "base64url"]) {
+        const value = truncated.toString(encoding);
+        assert.equal(containsPrivateKeyMaterial(value), true);
+        assert.throws(
+          () => assertNoPrivateKeyMaterial({ details: [value] }),
+          (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+        );
+        assert.equal(
+          redactPrivateKeyMaterial(value) === PRIVATE_KEY_REDACTION_PLACEHOLDER,
+          true,
+        );
+      }
+    }
+  });
+
+  it("rejects nested and oversized output recovered from a short truncated gzip", () => {
+    const { compressed } = createCompactPrivateMaterialFixture();
+    for (const payload of [compressed, Buffer.alloc(512, 0x41)]) {
+      const truncated = zlib.gzipSync(payload).subarray(0, -8);
+      assert.ok(truncated.length < 64, "fixture must exercise the short branch");
+      assert.equal(containsPrivateKeyMaterial(truncated), true);
+      for (const encoding of ["base64", "base64url"]) {
+        const value = truncated.toString(encoding);
+        assert.equal(containsPrivateKeyMaterial(value), true);
+        assert.throws(
+          () => assertNoPrivateKeyMaterial({ attachment: value }),
+          (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+        );
+      }
+    }
+  });
+
+  it("preserves identifier tolerance and raw fail-closed behavior after partial gzip recovery", () => {
+    const { publicDer } = createCompactPrivateMaterialFixture();
+    for (const payload of [publicDer, Buffer.alloc(0)]) {
+      const compressed = zlib.gzipSync(payload);
+      const truncated = compressed.subarray(0, -8);
+      assert.ok(truncated.length < 64, "fixture must exercise the short branch");
+      assert.equal(
+        classifyCompressedBuffer(truncated).classification,
+        COMPRESSION_CLASSIFICATION.REJECTED,
+      );
+      assert.equal(containsPrivateKeyMaterial(truncated), true);
+      for (const encoding of ["base64", "base64url"]) {
+        assert.equal(containsPrivateKeyMaterial(compressed.toString(encoding)), false);
+        const identifier = truncated.toString(encoding);
+        assert.equal(containsPrivateKeyMaterial(identifier), false);
+        assert.doesNotThrow(() => assertNoPrivateKeyMaterial({ reference: identifier }));
+      }
+    }
+  });
+
+  it("keeps long truncated gzip inputs fail-closed even when their output is public", () => {
+    const { publicDer } = createCompactPrivateMaterialFixture();
+    const payload = Buffer.concat([publicDer, Buffer.from(Array.from({ length: 80 }, (_, i) => i))]);
+    const truncated = zlib.gzipSync(payload).subarray(0, -8);
+    assert.ok(truncated.length >= 64, "fixture must exercise the long branch");
+    assert.equal(
+      classifyCompressedBuffer(truncated).classification,
+      COMPRESSION_CLASSIFICATION.REJECTED,
+    );
+    for (const encoding of ["base64", "base64url"]) {
+      assert.equal(containsPrivateKeyMaterial(truncated.toString(encoding)), true);
+    }
+  });
+
+  it("rejects a valid short nested stream in both encoded representations", () => {
+    const { nested } = createCompactPrivateMaterialFixture();
+    const classified = classifyCompressedBuffer(nested);
+    assert.equal(classified.classification, COMPRESSION_CLASSIFICATION.REJECTED);
+    assert.equal(classified.reason, "nested");
+    for (const encoding of ["base64", "base64url"]) {
+      const value = nested.toString(encoding);
+      assert.strictEqual(containsPrivateKeyMaterial(value), true);
+      assert.throws(
+        () => assertNoPrivateKeyMaterial({ details: [value] }),
+        (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+      );
+      assert.strictEqual(
+        redactPrivateKeyMaterial(value) === PRIVATE_KEY_REDACTION_PLACEHOLDER,
+        true,
+      );
+    }
+  });
+
+  it("keeps output-budget rejection when a short stream is encoded", () => {
+    for (const compress of [zlib.deflateSync, zlib.gzipSync]) {
+      const compressed = compress(Buffer.alloc(512, 0x41));
+      assert.ok(compressed.length < 64, "fixture must exercise the short branch");
+      const classified = classifyCompressedBuffer(compressed);
+      assert.equal(classified.classification, COMPRESSION_CLASSIFICATION.REJECTED);
+      assert.equal(classified.reason, "output_limit");
+      for (const encoding of ["base64", "base64url"]) {
+        const value = compressed.toString(encoding);
+        assert.strictEqual(containsPrivateKeyMaterial(value), true);
+        assert.throws(
+          () => assertNoPrivateKeyMaterial({ details: value }),
+          (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+        );
+      }
+    }
+  });
+
+  it("preserves short identifiers with coincidental malformed or dictionary headers", () => {
+    const identifiers = [
+      Buffer.concat([Buffer.from([0x78, 0x9c]), Buffer.alloc(30, 0xff)]),
+      Buffer.concat([Buffer.from([0x78, 0xbb]), Buffer.alloc(30, 0xff)]),
+      Buffer.concat([Buffer.from([0x1f, 0x8b, 0x08, 0x00]), Buffer.alloc(28, 0xff)]),
+    ];
+    for (const identifier of identifiers) {
+      for (const encoding of ["hex", "base64", "base64url"]) {
+        const value = identifier.toString(encoding);
+        assert.strictEqual(containsPrivateKeyMaterial(value), false);
+        assert.doesNotThrow(() => assertNoPrivateKeyMaterial({ reference: value }));
+      }
+    }
+  });
+
+  it("accepts a compact single-level compressed public key in both alphabets", () => {
+    const { publicDer } = createCompactPrivateMaterialFixture();
+    const compressed = zlib.deflateSync(publicDer);
+    assert.ok(compressed.length < 64, "public key control must exercise the short branch");
+    for (const encoding of ["base64", "base64url"]) {
+      const value = compressed.toString(encoding);
+      assert.strictEqual(containsPrivateKeyMaterial(value), false);
+      assert.doesNotThrow(() => assertNoPrivateKeyMaterial({ reference: value }));
+    }
   });
 
   it("recognizes a zlib stream using a smaller window size, not just the four common presets", () => {

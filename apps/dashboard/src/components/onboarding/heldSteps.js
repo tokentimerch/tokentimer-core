@@ -43,6 +43,11 @@ export function finishesByItself(stepId, { goal, progress } = {}) {
     const objective = allGoals()[goal]?.certopsObjective;
     return !scopeCertops(progress?.certops, objective).chosenIssuerId;
   }
+  // The same for a Vault distribution the operator chose to reuse.
+  if (stepId === 'certops_vault') {
+    const objective = allGoals()[goal]?.certopsObjective;
+    return !scopeCertops(progress?.certops, objective).chosenDistributionId;
+  }
   if (stepId === 'certops_execution') {
     // Observe-only goals acknowledge with a button instead of waiting.
     const objective = allGoals()[goal]?.certopsObjective;
