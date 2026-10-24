@@ -908,7 +908,9 @@ async function loadCertificateRenewalRows({
             cp.status AS profile_status,
             cp.key_mode AS profile_key_mode,
             cp.public_metadata AS profile_public_metadata,
-            cp.renew_before_days AS profile_renew_before_days`;
+            cp.renew_before_days AS profile_renew_before_days,
+            cp.issuer_id AS profile_issuer_id,
+            ci.kind AS profile_issuer_kind`;
   const scheduleColumns = `,
             mc.not_after
               - (COALESCE(cp.renew_before_days, $3) || ' days')::interval
@@ -942,9 +944,7 @@ async function loadCertificateRenewalRows({
                 )
               ),
               ''
-            ) AS profile_ca_endpoint,
-            cp.issuer_id AS profile_issuer_id,
-            ci.kind AS profile_issuer_kind`;
+            ) AS profile_ca_endpoint`;
   const fromClause = `
        FROM managed_certificates mc
        LEFT JOIN certificate_profiles cp

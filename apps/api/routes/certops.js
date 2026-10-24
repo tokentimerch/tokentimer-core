@@ -151,6 +151,10 @@ const {
   validateRenewalManualOverrides,
 } = require("../services/certops/renewalProfile");
 const {
+  CERTOPS_PROFILE_ISSUER_INCOMPATIBLE,
+  validateAdcsRenewalProfile,
+} = require("../services/certops/adcsRenewalRules");
+const {
   CERTOPS_PROFILE_FIELD_IMMUTABLE,
   CERTOPS_PROFILE_INVALID,
   CERTOPS_PROFILE_NOT_FOUND,
@@ -3194,10 +3198,10 @@ function renewalWindowStart(notAfter, renewBeforeDays) {
  * Derives the renewal state for one managed_certificates row joined with its
  * certificate_profiles row (same column names the scheduler selects).
  *
- * Profile completeness is answered by resolveRenewalProfileSnapshot, the
- * function the scheduler itself admits on, so the badge can never claim
- * "auto" for a certificate the sweep would refuse. `renewsFrom` is when the
- * sweep starts picking the certificate up (not_after minus the effective lead
+ * Profile completeness uses the scheduler's validator for the issuer kind:
+ * native AD CS profiles do not contain ACME account or DNS-provider settings.
+ * The badge must not report those valid profiles as incomplete. `renewsFrom`
+ * is when the sweep starts picking the certificate up (not_after minus the effective lead
  * time), not a promise of the exact renewal moment.
  *
  * `workspacePaused` answers a different question than `state`: `state` is
@@ -3272,11 +3276,17 @@ function deriveCertificateRenewalState(
 
   let incompleteReason = null;
   try {
-    resolveRenewalProfileSnapshot(row);
+    if (row?.profile_issuer_kind === "adcs" && row?.profile_issuer_id) {
+      validateAdcsRenewalProfile(row.profile_public_metadata?.renewalProfile);
+    } else {
+      resolveRenewalProfileSnapshot(row);
+    }
   } catch (error) {
     if (
       error?.code !== CERTOPS_RENEWAL_PROFILE_INCOMPLETE &&
-      error?.code !== CERTOPS_RENEWAL_PROFILE_INVALID
+      error?.code !== CERTOPS_RENEWAL_PROFILE_INVALID &&
+      error?.code !== CERTOPS_PROFILE_INVALID &&
+      error?.code !== CERTOPS_PROFILE_ISSUER_INCOMPATIBLE
     ) {
       throw error;
     }
