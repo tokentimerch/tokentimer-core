@@ -237,6 +237,14 @@ test("Windows tools bootstrap selects one Node and Go release from REST arrays",
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "certops-tools-selection-"));
   const qualificationRoot = path.join(dir, "qualification");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const toolsScript = path.resolve(__dirname, "../infra/certops-adcs/windows-tools.ps1");
+  // Production must pin Utility by path before Get-FileHash: hosted Windows
+  // runners plus Expand-Archive probe stubs can break module auto-loading.
+  assert.match(
+    fs.readFileSync(toolsScript, "utf8"),
+    /Microsoft\.PowerShell\.Utility\.psd1/,
+    "windows-tools.ps1 must Import-Module Microsoft.PowerShell.Utility by path",
+  );
   const probe = path.join(dir, "probe.ps1");
   // Get-FileHash is a Microsoft.PowerShell.Utility module function that
   // cannot be overridden by a global: double, so the probe writes real
@@ -283,6 +291,11 @@ function global:Invoke-WebRequest {
   if($Uri -eq 'https://go.dev/dl/go1.29.1.windows-amd64.zip'){return}
   throw 'Unexpected archive request'
 }
+# Hosted windows-2025 runners have left Get-FileHash undiscoverable once
+# Expand-Archive is shadowed; require production's path Import-Module.
+Import-Module Microsoft.PowerShell.Management -ErrorAction Stop
+Remove-Module Microsoft.PowerShell.Utility -Force -ErrorAction SilentlyContinue
+$PSModuleAutoLoadingPreference='None'
 try { & $env:CERTOPS_TOOLS_SCRIPT -CandidateSha ('a'*40) -ApiPublicPemBase64 'AA==' -QualificationRoot $env:CERTOPS_QUALIFICATION_ROOT }
 catch {
   if($_.Exception.Message -ne 'Windows qualification tools bootstrap failed; inspect bounded step receipt'){throw ('Guest release selection failed: '+$_.Exception.Message)}
@@ -301,7 +314,7 @@ throw 'Expected bounded test completion'
   const started = Date.now();
   const result = spawnSync(process.platform === "win32" ? "powershell.exe" : "pwsh", ["-NoProfile", "-NonInteractive", "-File", probe], {
     encoding: "utf8", windowsHide: true, timeout: 30000,
-    env: { ...process.env, CERTOPS_TOOLS_SCRIPT: path.resolve(__dirname, "../infra/certops-adcs/windows-tools.ps1"), CERTOPS_QUALIFICATION_ROOT: qualificationRoot },
+    env: { ...process.env, CERTOPS_TOOLS_SCRIPT: toolsScript, CERTOPS_QUALIFICATION_ROOT: qualificationRoot },
   });
   const elapsedMs = Date.now() - started;
   assert.equal(
@@ -316,7 +329,7 @@ throw 'Expected bounded test completion'
   const archives = archivePaths.map(file => fs.readFileSync(file));
   const refusal = spawnSync(process.platform === "win32" ? "powershell.exe" : "pwsh", ["-NoProfile", "-NonInteractive", "-File", probe], {
     encoding: "utf8", windowsHide: true, timeout: 30000,
-    env: { ...process.env, CERTOPS_TOOLS_SCRIPT: path.resolve(__dirname, "../infra/certops-adcs/windows-tools.ps1"), CERTOPS_QUALIFICATION_ROOT: qualificationRoot, CERTOPS_EXPECT_EXISTING: "1" },
+    env: { ...process.env, CERTOPS_TOOLS_SCRIPT: toolsScript, CERTOPS_QUALIFICATION_ROOT: qualificationRoot, CERTOPS_EXPECT_EXISTING: "1" },
   });
   assert.equal(refusal.status, 0, refusal.stdout + refusal.stderr);
   assert.match(refusal.stdout, /EXISTING_WORKSPACE_REFUSED/);
