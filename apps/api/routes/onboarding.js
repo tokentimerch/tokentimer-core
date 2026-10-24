@@ -20,7 +20,13 @@ const {
   writeSession,
   resetSession,
 } = require("../services/onboarding/sessionStore");
-const { evaluateCapabilities, getDocsBaseUrl, UNKNOWN } = require("../services/onboarding/capabilities");
+const {
+  evaluateCapabilities,
+  getDocsBaseUrl,
+  hasCapabilityContextProviders,
+  readCapabilityContext,
+  UNKNOWN,
+} = require("../services/onboarding/capabilities");
 const { buildSummary, hasSummaryProviders } = require("../services/onboarding/summary");
 const { loadCertopsReality } = require("../services/onboarding/certopsReality");
 
@@ -91,10 +97,21 @@ router.get(`${BASE}/capabilities`, ...guards, async (req, res) => {
   try {
     const signals = await readSignals();
     const isSystemAdmin = await resolveIsSystemAdmin(req);
+    const edition = hasCapabilityContextProviders()
+      ? await readCapabilityContext(pool, {
+          workspaceId: req.workspace.id,
+          user: {
+            id: req.user.id,
+            workspaceRole: req.authz?.workspaceRole || null,
+            isSystemAdmin,
+          },
+        })
+      : undefined;
     const items = evaluateCapabilities({
       workspaceRole: req.authz?.workspaceRole,
       isSystemAdmin,
       ...signals,
+      edition,
     });
     res.set("Cache-Control", "no-store");
     res.json({

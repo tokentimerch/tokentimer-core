@@ -54,7 +54,65 @@ const BASE_CAPABILITIES = Object.freeze([
 const overrides = new Map();
 // Capabilities an edition adds on top of BASE_CAPABILITIES.
 const registered = new Map();
+const contextProviders = new Map();
+const CONTEXT_PROVIDER_ID = /^[a-z][a-z0-9_]{0,39}$/;
+const CONTEXT_PROVIDER_TIMEOUT_MS = 5000;
 let docsBaseUrl = "https://tokentimer.ch/docs/self-hosted";
+
+/**
+ * Edition hook for facts that need an asynchronous read, such as a verified
+ * license. A provider receives { db, user, workspaceId } once per request.
+ * Return only safe facts, never credentials. Results are namespaced under
+ * ctx.edition.<id>; they cannot replace the route's role or system signals.
+ */
+function registerCapabilityContextProvider(id, fn) {
+  if (typeof id !== "string" || !CONTEXT_PROVIDER_ID.test(id)) {
+    throw new Error("capability context provider id must match [a-z][a-z0-9_]{0,39}");
+  }
+  if (typeof fn !== "function") throw new Error("capability context provider must be a function");
+  if (contextProviders.has(id)) {
+    throw new Error(`capability context provider "${id}" is already registered`);
+  }
+  contextProviders.set(id, fn);
+}
+
+function resetCapabilityContextProviders() {
+  contextProviders.clear();
+}
+
+function hasCapabilityContextProviders() {
+  return contextProviders.size > 0;
+}
+
+async function readCapabilityContext(db, { user, workspaceId } = {}) {
+  const input = Object.freeze({
+    db,
+    workspaceId,
+    user: user ? Object.freeze({ ...user }) : null,
+  });
+  const entries = await Promise.all(
+    [...contextProviders].map(async ([id, fn]) => {
+      let timer;
+      try {
+        const value = await Promise.race([
+          Promise.resolve().then(() => fn(input)),
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error("timeout")), CONTEXT_PROVIDER_TIMEOUT_MS);
+          }),
+        ]);
+        const plain = value !== null && typeof value === "object" &&
+          (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+        return [id, plain ? value : null];
+      } catch {
+        // An unreadable license is unknown, never an implicit entitlement.
+        return [id, null];
+      } finally {
+        clearTimeout(timer);
+      }
+    }),
+  );
+  return Object.fromEntries(entries);
+}
 
 /** Overlay hook: Cloud and Enterprise point wizard doc links at their editions. */
 function setDocsBaseUrl(url) {
@@ -272,6 +330,10 @@ module.exports = {
   QUALIFIED_FEATURES,
   registerCapability,
   registerCapabilityOverride,
+  registerCapabilityContextProvider,
+  resetCapabilityContextProviders,
+  hasCapabilityContextProviders,
+  readCapabilityContext,
   resetCapabilityOverrides,
   resetRegisteredCapabilities,
   setDocsBaseUrl,

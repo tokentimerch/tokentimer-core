@@ -1,5 +1,9 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
+const zlib = require("node:zlib");
+const {
+  createCompactPrivateMaterialFixture,
+} = require("../helpers/private-material-fixtures");
 const {
   OnboardingValidationError,
   assertFlow,
@@ -58,6 +62,37 @@ describe("onboarding session schema", () => {
     }
   });
 
+  it("rejects encoded and compact compressed private material in every section", () => {
+    const { representations } = createCompactPrivateMaterialFixture();
+    for (const section of ["intent", "progress", "operation_refs"]) {
+      for (const value of representations) {
+        rejects(
+          { expectedRevision: 1, [section]: { details: [{ note: value }] } },
+          "SECRET_REJECTED",
+        );
+      }
+    }
+  });
+
+  it("preserves legitimate references, public keys and short encoded identifiers", () => {
+    const { publicDer, publicPem } = createCompactPrivateMaterialFixture();
+    const identifier = Buffer.concat([Buffer.from([0x78, 0xbb]), Buffer.alloc(30, 0xff)]);
+    const progress = {
+      note: "Check the public deployment status",
+      publicEvidence: [publicPem, publicDer.toString("base64")],
+      compressedEvidence: zlib.deflateSync(publicDer).toString("base64url"),
+      references: [identifier.toString("hex"), identifier.toString("base64url")],
+    };
+    const { patch } = validateSessionWrite({
+      expectedRevision: 0,
+      intent: { goal: "vault_distribution" },
+      progress,
+      operation_refs: { monitorUrl: "https://example.com", tokenIds: [4, 5] },
+    });
+    assert.deepEqual(patch.progress, progress);
+    assert.deepEqual(patch.operation_refs.tokenIds, [4, 5]);
+  });
+
   it("enforces shape and size limits", () => {
     rejects({ expectedRevision: 1, intent: [] }, "INVALID_SECTION");
     rejects({ expectedRevision: 1, intent: { "bad key": 1 } }, "INVALID_KEY");
@@ -102,6 +137,20 @@ describe("onboarding session schema", () => {
       { expectedRevision: 1, progress: { certops: { chosenAgentId: "a".repeat(513) } } },
       "VALUE_TOO_LONG",
     );
+  });
+
+  it("keeps the chosen existing Vault distribution in CertOps progress", () => {
+    const certops = {
+      objective: "vault",
+      infrastructure: "linux",
+      chosenDistributionId: "4f0d2c1e-7a53-4a49-9d0b-2f1c8b6a9e11",
+      chosenDistributionConfirmed: "4f0d2c1e-7a53-4a49-9d0b-2f1c8b6a9e11",
+    };
+    const { patch } = validateSessionWrite({
+      expectedRevision: 2,
+      progress: { certops },
+    });
+    assert.deepEqual(patch.progress.certops, certops);
   });
 
   it("only accepts known flows", () => {

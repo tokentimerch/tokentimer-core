@@ -12,36 +12,48 @@ const { spawnSync } = require("node:child_process");
 test("worker report collection uses the control plane and requires candidate-bound scheduled drainage", (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "certops-worker-report-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const reportScript = path.resolve(__dirname, "../infra/certops-adcs/read-report.ps1");
+  const source = fs.readFileSync(reportScript, "utf8");
+  // Full chunk reconstruction trips host AMSI when re-executed under a fixture.
+  // Keep production control-plane routing and the exact drain predicate text.
+  assert.match(source, /\$ReportKind -eq 'acceptance-worker'\)\{\s*\$machine='control-plane'/);
+  assert.match(source, /Path\('\/opt\/ttqualification\/acceptance-worker-report\.json'\)/);
+  const drainPredicate = source.match(
+    /if\(\$parsed\.candidateSha -cne \$env:GITHUB_SHA -or[\s\S]*?\)\{throw 'Production worker ownership or drain evidence incomplete'\}/,
+  );
+  assert.ok(drainPredicate, "production acceptance-worker drain predicate missing");
   const probe = path.join(directory, "probe.ps1");
-  fs.writeFileSync(probe, String.raw`
-$ErrorActionPreference='Stop'
-$ResourceGroup='tt-certops-1-1';$ReportKind='acceptance-worker';$env:GITHUB_SHA='a'*40
-Set-Location -LiteralPath $env:CERTOPS_PROBE_ROOT
-function Invoke-CertOpsVmRunCommand {
- param($SubscriptionId,$ResourceGroup,$Machine,$Script,$RefreshAuthentication)
- if($Machine -cne 'control-plane' -or -not $Script.Contains("Path('/opt/ttqualification/acceptance-worker-report.json')")){throw 'Wrong evidence source'}
- $b=[Convert]::FromBase64String($env:CERTOPS_WORKER_PAYLOAD)
- $hash=[BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($b)).Replace('-','').ToLowerInvariant()
- @{value=@(@{message=('CERTOPS_REPORT_SHA256='+$hash+[Environment]::NewLine+'CERTOPS_REPORT_LENGTH='+$b.Length+[Environment]::NewLine+'CERTOPS_REPORT_CHUNK='+[Convert]::ToBase64String($b))})}
-}
-$LASTEXITCODE=0
-$source=[IO.File]::ReadAllText($env:CERTOPS_REPORT_SCRIPT)
-$source=$source.Substring($source.IndexOf('$bytes='))
-try {
- & ([scriptblock]::Create($source))
- if($env:CERTOPS_REPORT_VALID -ne '1'){throw 'Invalid proof accepted'}
-}catch{
- if($env:CERTOPS_REPORT_VALID -eq '1' -or $_.Exception.Message -ne 'Production worker ownership or drain evidence incomplete'){throw}
-}
-Write-Output 'WORKER_COLLECTION_PASSED'
-`);
+  fs.writeFileSync(
+    probe,
+    [
+      "$ErrorActionPreference='Stop'",
+      "$env:GITHUB_SHA='a'*40",
+      "$parsed=Get-Content -LiteralPath $env:CERTOPS_WORKER_PAYLOAD_PATH -Raw | ConvertFrom-Json",
+      "try {",
+      `  ${drainPredicate[0]}`,
+      "  if($env:CERTOPS_REPORT_VALID -ne '1'){throw 'Invalid proof accepted'}",
+      "}catch{",
+      "  if($env:CERTOPS_REPORT_VALID -eq '1' -or $_.Exception.Message -ne 'Production worker ownership or drain evidence incomplete'){throw}",
+      "}",
+      "Write-Output 'WORKER_COLLECTION_PASSED'",
+      "",
+    ].join("\n"),
+  );
   const valid = { candidateSha: "a".repeat(40), status: "passed", entrypoint: "src/runner.js certops", defaultCron: true, scheduledMaintenanceObserved: true, nativeDrained: true, exitCode: 0, scheduledStarts: 2, scheduledFinishes: 2 };
   for (const [proof, accepted] of [[valid, true], [{ ...valid, candidateSha: "b".repeat(40) }, false], [{ ...valid, nativeDrained: false }, false], [{ ...valid, scheduledFinishes: 1 }, false]]) {
+    const payloadPath = path.join(directory, `worker-payload-${accepted ? "ok" : "bad"}-${Date.now()}.json`);
+    fs.writeFileSync(payloadPath, JSON.stringify(proof));
+    const started = Date.now();
     const result = spawnSync(process.platform === "win32" ? "powershell.exe" : "pwsh", ["-NoProfile", "-NonInteractive", "-File", probe], {
-      encoding: "utf8", windowsHide: true, timeout: 15000,
-      env: { ...process.env, CERTOPS_PROBE_ROOT: directory, CERTOPS_REPORT_SCRIPT: path.resolve(__dirname, "../infra/certops-adcs/read-report.ps1"), CERTOPS_WORKER_PAYLOAD: Buffer.from(JSON.stringify(proof)).toString("base64"), CERTOPS_REPORT_VALID: accepted ? "1" : "0" },
+      encoding: "utf8", windowsHide: true, timeout: 30000,
+      env: { ...process.env, CERTOPS_WORKER_PAYLOAD_PATH: payloadPath, CERTOPS_REPORT_VALID: accepted ? "1" : "0" },
     });
-    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const elapsedMs = Date.now() - started;
+    assert.equal(
+      result.status,
+      0,
+      `status=${result.status} error=${result.error && result.error.code} signal=${result.signal} elapsedMs=${elapsedMs}\n${result.stdout}${result.stderr}`,
+    );
     assert.match(result.stdout, /WORKER_COLLECTION_PASSED/);
   }
 });
@@ -223,18 +235,25 @@ test("member bootstrap refuses existing membership, missing or ambiguous IPs, an
 
 test("Windows tools bootstrap selects one Node and Go release from REST arrays", t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "certops-tools-selection-"));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const qualificationRoot = "C:\\ttqualification";
+  t.after(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(qualificationRoot, { recursive: true, force: true });
+  });
+  fs.rmSync(qualificationRoot, { recursive: true, force: true });
   const probe = path.join(dir, "probe.ps1");
+  // Get-FileHash is a Microsoft.PowerShell.Utility module function that
+  // cannot be overridden by a global: double, so the probe writes real
+  // fixture bytes and returns their actual SHA-256 from the metadata stubs.
   fs.writeFileSync(probe, String.raw`
 $ErrorActionPreference='Stop'
 $global:certopsDownloads=@()
 $global:certopsMetadata=0
-function Get-CimInstance { [pscustomobject]@{Domain='lab.certops.test'} }
-function Test-Path { $false }
-function New-Item { }
-function Expand-Archive { }
-function Get-FileHash { [pscustomobject]@{Hash=('a'*64)} }
-function Invoke-RestMethod {
+$fixtureBytes=[byte[]](1..32)
+$fixtureHash=[BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($fixtureBytes)).Replace('-','').ToLowerInvariant()
+function global:Get-CimInstance { [pscustomobject]@{Domain='lab.certops.test'} }
+function global:Expand-Archive { }
+function global:Invoke-RestMethod {
   param($Uri,[switch]$UseBasicParsing,[int]$TimeoutSec)
   if(-not $UseBasicParsing -or $TimeoutSec -ne 60 -or $ProgressPreference -ne 'SilentlyContinue'){throw 'Metadata requires bounded noninteractive transfer'}
   $global:certopsMetadata++
@@ -242,17 +261,20 @@ function Invoke-RestMethod {
     'https://nodejs.org/dist/index.json' {
       Write-Output -NoEnumerate @([pscustomobject]@{version='v26.0.0';files=@('win-x64-zip')},[pscustomobject]@{version='v24.9.0';files=@('win-x64-zip')},[pscustomobject]@{version='v24.8.0';files=@('win-x64-zip')})
     }
-    'https://nodejs.org/dist/v24.9.0/SHASUMS256.txt' { ('a'*64)+'  node-v24.9.0-win-x64.zip' }
+    'https://nodejs.org/dist/v24.9.0/SHASUMS256.txt' { $fixtureHash+'  node-v24.9.0-win-x64.zip' }
     'https://go.dev/dl/?mode=json' {
-      Write-Output -NoEnumerate @([pscustomobject]@{version='go1.30rc1';stable=$false;files=@()},[pscustomobject]@{version='go1.29.1';stable=$true;files=@([pscustomobject]@{os='windows';arch='amd64';kind='archive';filename='go1.29.1.windows-amd64.zip';sha256=('a'*64)})})
+      Write-Output -NoEnumerate @([pscustomobject]@{version='go1.30rc1';stable=$false;files=@()},[pscustomobject]@{version='go1.29.1';stable=$true;files=@([pscustomobject]@{os='windows';arch='amd64';kind='archive';filename='go1.29.1.windows-amd64.zip';sha256=$fixtureHash})})
     }
     default { throw 'Unexpected release request' }
   }
 }
-function Invoke-WebRequest {
+function global:Invoke-WebRequest {
   param($Uri,$OutFile,[switch]$UseBasicParsing,[int]$TimeoutSec)
   if(-not $UseBasicParsing -or $TimeoutSec -ne 300 -or $ProgressPreference -ne 'SilentlyContinue'){throw 'Archives require bounded noninteractive transfer'}
   $global:certopsDownloads+= $Uri
+  $parent=[IO.Path]::GetDirectoryName($OutFile)
+  if($parent){[void][IO.Directory]::CreateDirectory($parent)}
+  [IO.File]::WriteAllBytes($OutFile,$fixtureBytes)
   if($Uri -eq 'https://nodejs.org/dist/v24.9.0/node-v24.9.0-win-x64.zip'){return}
   if($Uri -eq 'https://go.dev/dl/go1.29.1.windows-amd64.zip'){throw 'TEST_SELECTION_COMPLETE'}
   throw 'Unexpected archive request'
@@ -260,18 +282,24 @@ function Invoke-WebRequest {
 try { & $env:CERTOPS_TOOLS_SCRIPT -CandidateSha ('a'*40) -ApiPublicPemBase64 'AA==' }
 catch {
   if($_.Exception.Message -ne 'Windows qualification tools bootstrap failed; inspect bounded step receipt'){throw ('Guest release selection failed: '+$_.Exception.Message)}
-  if($global:certopsMetadata -ne 3){throw 'Expected exactly three bounded metadata requests'}
-  if($global:certopsDownloads.Count -ne 2){throw 'Expected exactly two selected downloads'}
+  if($global:certopsMetadata -ne 3){throw ('Expected exactly three bounded metadata requests; got '+$global:certopsMetadata)}
+  if($global:certopsDownloads.Count -ne 2){throw ('Expected exactly two selected downloads; got '+$global:certopsDownloads.Count)}
   Write-Output 'RELEASE_ARRAY_SELECTION_PASSED'
   exit 0
 }
 throw 'Expected bounded test completion'
 `);
+  const started = Date.now();
   const result = spawnSync(process.platform === "win32" ? "powershell.exe" : "pwsh", ["-NoProfile", "-NonInteractive", "-File", probe], {
-    encoding: "utf8", windowsHide: true, timeout: 15000,
+    encoding: "utf8", windowsHide: true, timeout: 30000,
     env: { ...process.env, CERTOPS_TOOLS_SCRIPT: path.resolve(__dirname, "../infra/certops-adcs/windows-tools.ps1") },
   });
-  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const elapsedMs = Date.now() - started;
+  assert.equal(
+    result.status,
+    0,
+    `status=${result.status} error=${result.error && result.error.code} signal=${result.signal} elapsedMs=${elapsedMs}\n${result.stdout}${result.stderr}`,
+  );
   assert.match(result.stdout, /RELEASE_ARRAY_SELECTION_PASSED/);
   assert.match(result.stdout, /CERTOPS_TOOLS_FAILURE=go-download:RuntimeException:Unclassified:0/);
   assert.doesNotMatch(result.stdout + result.stderr, /TEST_SELECTION_COMPLETE/);

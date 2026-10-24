@@ -4,6 +4,8 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const zlib = require("node:zlib");
+const { generateKeyPairSync } = require("node:crypto");
 
 const {
   projectRetainedBytes,
@@ -308,6 +310,18 @@ describe("agent job log ingest", () => {
     assert.equal(result.rejected, false);
     assert.deepEqual(result.fields, { host: "server01" });
     assert.ok(result.redactions >= 4);
+  });
+
+  it("rejects compact zlib-deflate Ed25519 PKCS#8 in console message text", () => {
+    const { privateKey } = generateKeyPairSync("ed25519");
+    const wrapped = zlib
+      .deflateSync(privateKey.export({ type: "pkcs8", format: "der" }))
+      .toString("base64");
+    const textResult = scrubAgentLogText(wrapped);
+    assert.equal(textResult.rejected, true);
+    assert.equal(textResult.text, "[PRIVATE_KEY_REDACTED]");
+    const fieldResult = scrubAgentLogFields({ note: wrapped, host: "server01" });
+    assert.equal(fieldResult.rejected, true);
   });
 
   it("counts agent droppedBefore on an empty final batch", () => {

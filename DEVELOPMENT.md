@@ -338,6 +338,10 @@ The runner accepts standard five-field cron expressions
 - exact integers, ranges (`n-m`), and comma-separated lists
 - day-of-week `0-7` where `0` and `7` are Sunday
 
+When both day of month and day of week are restricted, a run matches either
+field, while the month must still match. For example, `0 9 31 2 1` runs at 09:00
+on Mondays in February.
+
 Not supported: named months or weekdays, `L`, `W`, or `#` modifiers.
 
 Set a worker cron variable to `interval`, `0`, `false`, or `off` to use legacy

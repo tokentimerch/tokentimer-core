@@ -382,8 +382,9 @@ async function collectWindowsDiscoveryObservations({
       locationKind: "windows_store",
       locationSlot: `${storeLocation}/${storeName}/${slotIdentity}`,
       fingerprintSha256,
-      subject: cert.subject,
-      issuer: cert.issuer,
+      // Empty DN (SAN-only) is null, never "".
+      subject: cert.subject || null,
+      issuer: cert.issuer || null,
       serialNumber: cert.serialNumber,
       notBefore: cert.notBefore,
       notAfter: cert.notAfter,
@@ -434,8 +435,8 @@ async function collectWindowsDiscoveryObservations({
     const subjectAltNames = resolveSubjectAltNames(cert, rawCertificateBase64, onWarning);
     const base = {
       fingerprintSha256,
-      subject: cert.subject,
-      issuer: cert.issuer,
+      subject: cert.subject || null,
+      issuer: cert.issuer || null,
       serialNumber: cert.serialNumber,
       notBefore: cert.notBefore,
       notAfter: cert.notAfter,

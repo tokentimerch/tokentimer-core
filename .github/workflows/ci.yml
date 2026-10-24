@@ -487,6 +487,8 @@ jobs:
               await client.query('CREATE DATABASE pr329_review_distribution_ci_test');
               await client.query('CREATE DATABASE pr329_final_distribution_ci_test');
               await client.query('CREATE DATABASE wildcard_candidate_ci_test');
+              await client.query('CREATE DATABASE pr329_issuance_path_reuse_ci_test');
+              await client.query('CREATE DATABASE pr329_workspace_delete_ci_test');
             } finally {
               await client.end();
             }
@@ -494,6 +496,20 @@ jobs:
           main().catch(error => { console.error(error.message); process.exitCode = 1; });
           NODE
           node --test --test-force-exit tests/postgres/distribution-migration-upgrade.test.js
+      - name: Prove abandoned certificate-path reuse on isolated PostgreSQL
+        env:
+          DB_NAME: pr329_issuance_path_reuse_ci_test
+          CERTOPS_ENABLED: "true"
+        run: |
+          node apps/api/migrations/migrate.js
+          node --test --test-force-exit tests/postgres/issuance-path-reuse.test.js
+      - name: Prove workspace delete clears CertOps distribution material
+        env:
+          DB_NAME: pr329_workspace_delete_ci_test
+          CERTOPS_ENABLED: "true"
+        run: |
+          node apps/api/migrations/migrate.js
+          node --test --test-force-exit tests/postgres/workspace-delete-certops.test.js
       - name: Replay all supported immutable migration histories
         run: pnpm exec mocha --no-config tests/integration/certops-distribution-upgrade.test.js --timeout 120000 --exit
       - name: Fence pinned rollback identities and late deployment evidence

@@ -53,11 +53,16 @@ describe("Onboarding first-value journey (API contract)", function () {
        VALUES ($1, $2, 'admin', $1)`,
       [owner.user.id, workspaceId],
     );
-    https = await startLocalHttpsServer();
+    // The API reads the certificate itself. In the Compose suites it runs in
+    // another network namespace, so runner loopback is not reachable from it.
+    https = await startLocalHttpsServer({
+      listenHost: process.env.TT_TEST_HTTPS_BIND_HOST || "127.0.0.1",
+      advertisedHost: process.env.TT_TEST_HTTPS_HOST || "127.0.0.1",
+    });
   });
 
   after(async () => {
-    await https.close();
+    if (https) await https.close();
     await client.query("DELETE FROM workspaces WHERE id = $1", [workspaceId]);
     await client.end();
   });

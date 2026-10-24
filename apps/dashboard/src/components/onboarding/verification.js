@@ -12,6 +12,7 @@ import {
   scopeAgents,
 } from './certopsMatrix.js';
 import { scopeAdcs } from './adcsModel.js';
+import { scopeDistribution } from './distributionModel.js';
 
 export const CHECK_STATUS = { PASS: 'pass', FAIL: 'fail', WARN: 'warn' };
 
@@ -104,6 +105,7 @@ export function evaluateVerification({
   clusterId,
   agentId,
   issuerId,
+  distributionId,
 }) {
   const checks = [];
 
@@ -309,9 +311,15 @@ export function evaluateVerification({
         );
       }
       if (goal === 'certops_vault') {
-        // Never report a candidate feature as working without evidence.
+        // Never report a candidate feature as working without evidence. Only a
+        // distribution with work from this session (or the one the operator
+        // chose) counts as verified here.
+        const dist = scopeDistribution(
+          certops.distribution,
+          distributionId
+        );
         checks.push(
-          certops.distribution?.verified
+          dist?.verified
             ? check(
                 'distribution',
                 CHECK_STATUS.PASS,

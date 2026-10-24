@@ -1,5 +1,7 @@
 "use strict";
 
+const { validateSessionWrite } = require("./sessionSchema");
+
 class RevisionConflictError extends Error {
   constructor(current) {
     super("Onboarding session was changed elsewhere");
@@ -63,6 +65,10 @@ async function writeSession(
   pool,
   { userId, workspaceId, flow, expectedRevision, patch },
 ) {
+  // Keep the persistence boundary safe for every caller, including callers
+  // that do not pass through the HTTP route. Validate before serializing or
+  // issuing either INSERT or UPDATE, using the same bounded secret checks.
+  ({ patch } = validateSessionWrite({ ...patch, expectedRevision }));
   const status = patch.status || "in_progress";
   const intent = JSON.stringify(patch.intent || {});
   const progress = JSON.stringify(patch.progress || {});

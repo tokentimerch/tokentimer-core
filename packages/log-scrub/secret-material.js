@@ -51,6 +51,12 @@ const zlib = require("node:zlib");
  * directly to the ordinary scan: that is the default path for the
  * overwhelming majority of legitimate, uncompressed base64 traffic and is
  * not itself a failure mode.
+ *
+ * String inputs additionally preserve the existing identifier policy: hex
+ * digests are scanned for concrete key structures without decompression, and
+ * short base64 values are not rejected on a malformed/dictionary header
+ * alone. A successful decode revealing nested compression or exceeding the
+ * bounded output allowance is still rejected, regardless of string length.
  */
 
 const PRIVATE_KEY_REDACTION_PLACEHOLDER = "[PRIVATE_KEY_REDACTED]";
@@ -581,6 +587,22 @@ const COMPRESSION_CLASSIFICATION = Object.freeze({
   REJECTED: "rejected",
 });
 
+const COMPRESSION_REJECTION_REASON = Object.freeze({
+  INPUT_LIMIT: "input_limit",
+  OUTPUT_LIMIT: "output_limit",
+  PRESET_DICTIONARY: "preset_dictionary",
+  NESTED: "nested",
+  INVALID_STREAM: "invalid_stream",
+});
+
+function rejectedCompressedBuffer(reason) {
+  return {
+    classification: COMPRESSION_CLASSIFICATION.REJECTED,
+    decoded: null,
+    reason,
+  };
+}
+
 /**
  * Classifies a buffer for the compressed-input branch. Two outcomes besides
  * "not compressed": a single successful decompression pass whose output is
@@ -594,9 +616,13 @@ const COMPRESSION_CLASSIFICATION = Object.freeze({
  * compression is treated the same as any other suspicious input and
  * rejected rather than recursively decompressed. `FDICT` is external
  * material this detector does not have, so decompression is never attempted
- * for it; the caller must not treat REJECTED as "not found."
+ * for it. Rejection reasons distinguish actual decompression evidence
+ * (nested output or an output budget exceeded) from a header alone. Short
+ * encoded identifiers can coincidentally match a header; they may tolerate
+ * an invalid/dictionary-shaped stream, but never a nested or budget-limited
+ * decompression. Raw buffers retain the fail-closed policy for every reason.
  * @param {Buffer} buffer
- * @returns {{classification: string, decoded: Buffer|null}}
+ * @returns {{classification: string, decoded: Buffer|null, reason?: string}}
  */
 function classifyCompressedBuffer(buffer) {
   if (!Buffer.isBuffer(buffer)) {
@@ -610,11 +636,11 @@ function classifyCompressedBuffer(buffer) {
   }
 
   if (buffer.length > MAX_COMPRESSED_INPUT_LENGTH) {
-    return { classification: COMPRESSION_CLASSIFICATION.REJECTED, decoded: null };
+    return rejectedCompressedBuffer(COMPRESSION_REJECTION_REASON.INPUT_LIMIT);
   }
 
   if (isZlib && zlibHeaderHasPresetDictionary(buffer)) {
-    return { classification: COMPRESSION_CLASSIFICATION.REJECTED, decoded: null };
+    return rejectedCompressedBuffer(COMPRESSION_REJECTION_REASON.PRESET_DICTIONARY);
   }
 
   const maxOutputLength = Math.min(
@@ -629,10 +655,13 @@ function classifyCompressedBuffer(buffer) {
     if (looksGzipHeader(decoded) || looksZlibHeader(decoded)) {
       // Nested compression (gzip-of-gzip, zlib-of-gzip, etc.): fail closed
       // instead of unwrapping again. See the function-level note above.
-      return { classification: COMPRESSION_CLASSIFICATION.REJECTED, decoded: null };
+      return rejectedCompressedBuffer(COMPRESSION_REJECTION_REASON.NESTED);
     }
     return { classification: COMPRESSION_CLASSIFICATION.DECOMPRESSED, decoded };
   } catch (err) {
+    if (err?.code === "ERR_BUFFER_TOO_LARGE") {
+      return rejectedCompressedBuffer(COMPRESSION_REJECTION_REASON.OUTPUT_LIMIT);
+    }
     // A two-byte zlib header is trivially matched by ~0.1% of arbitrary
     // base64/hex-looking identifiers (thumbprints, ids), so a zlib-shaped
     // blob that is not a real stream must not hard-fail. Truncated streams
@@ -648,20 +677,22 @@ function classifyCompressedBuffer(buffer) {
           finishFlush: zlib.constants.Z_SYNC_FLUSH,
         });
         if (looksGzipHeader(partial) || looksZlibHeader(partial)) {
-          return { classification: COMPRESSION_CLASSIFICATION.REJECTED, decoded: null };
+          return rejectedCompressedBuffer(COMPRESSION_REJECTION_REASON.NESTED);
         }
         return { classification: COMPRESSION_CLASSIFICATION.DECOMPRESSED, decoded: partial };
       } catch (partialErr) {
+        if (partialErr?.code === "ERR_BUFFER_TOO_LARGE") {
+          return rejectedCompressedBuffer(COMPRESSION_REJECTION_REASON.OUTPUT_LIMIT);
+        }
         if (partialErr?.code === "Z_DATA_ERROR" || partialErr?.code === "Z_BUF_ERROR") {
           return { classification: COMPRESSION_CLASSIFICATION.NOT_COMPRESSED, decoded: null };
         }
       }
     }
-    // Covers both a corrupt/truncated stream and the library refusing to
-    // exceed maxOutputLength while decompressing: both are "claims to be
-    // compressed, cannot be safely materialized," the same inconclusive
-    // outcome as a stream this detector chose not to even attempt (FDICT).
-    return { classification: COMPRESSION_CLASSIFICATION.REJECTED, decoded: null };
+    // No successful decode or output-budget evidence remains. Raw buffers
+    // still fail closed; short encoded identifiers preserve their existing
+    // tolerance for a coincidental gzip/header match.
+    return rejectedCompressedBuffer(COMPRESSION_REJECTION_REASON.INVALID_STREAM);
   }
 }
 
@@ -715,13 +746,38 @@ function stringContainsPrivateKey(value) {
 
   const decoded = base64DecodeIfLikely(value);
   if (decoded) {
-    // Short blobs and hex-shaped strings are identifiers/digests (thumbprints,
-    // ids, nonces); ~0.1% of them look like a zlib header (half with FDICT)
-    // and must not hit the compressed-input fail-closed path. A compressed
-    // PEM cannot be smaller than this bound; real DER/PEM shapes are still
-    // checked directly below.
-    if (hexDecoded || decoded.length < 64) {
+    // Hex-shaped strings are identifiers/digests (thumbprints, ids, nonces).
+    // Arbitrary short base64 can also match a zlib header (including FDICT);
+    // that header alone is not enough to reject an identifier. A small DER key
+    // is different: Ed25519 PKCS#8 is 48 bytes and its zlib-deflate encoding
+    // is typically about 57 bytes, under the old 64-byte
+    // skip bound, so short non-hex input still gets one bounded unwrap.
+    // A successful decode revealing another compressed stream, or an
+    // inflater refusing the output budget, is structural evidence and must
+    // stay rejected. Only invalid/dictionary-shaped short identifiers retain
+    // the header-collision tolerance; no second unwrap is attempted.
+    if (hexDecoded) {
       if (ordinaryBufferContainsPrivateKey(decoded)) return true;
+      return false;
+    }
+    if (ordinaryBufferContainsPrivateKey(decoded)) return true;
+    if (decoded.length < 64) {
+      if (looksGzipHeader(decoded) || looksZlibHeader(decoded)) {
+        const compressed = classifyCompressedBuffer(decoded);
+        if (
+          compressed.classification === COMPRESSION_CLASSIFICATION.REJECTED &&
+          (compressed.reason === COMPRESSION_REJECTION_REASON.NESTED ||
+            compressed.reason === COMPRESSION_REJECTION_REASON.OUTPUT_LIMIT)
+        ) {
+          return true;
+        }
+        if (
+          compressed.classification === COMPRESSION_CLASSIFICATION.DECOMPRESSED &&
+          ordinaryBufferContainsPrivateKey(compressed.decoded)
+        ) {
+          return true;
+        }
+      }
       return false;
     }
     if (bufferContainsPrivateKey(decoded)) return true;
