@@ -31,7 +31,11 @@ export default function ExistingDistributionPick({
   const { muted } = useDashboardTheme();
   if (!items.length) return null;
   return (
-    <VStack align='stretch' spacing={2} data-testid='existing-distribution-pick'>
+    <VStack
+      align='stretch'
+      spacing={2}
+      data-testid='existing-distribution-pick'
+    >
       <Checkbox isChecked={ticked} onChange={e => onTick(e.target.checked)}>
         <Text fontSize='sm' fontWeight='semibold'>
           My Vault distribution is already set up

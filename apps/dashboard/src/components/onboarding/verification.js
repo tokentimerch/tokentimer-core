@@ -314,10 +314,7 @@ export function evaluateVerification({
         // Never report a candidate feature as working without evidence. Only a
         // distribution with work from this session (or the one the operator
         // chose) counts as verified here.
-        const dist = scopeDistribution(
-          certops.distribution,
-          distributionId
-        );
+        const dist = scopeDistribution(certops.distribution, distributionId);
         checks.push(
           dist?.verified
             ? check(

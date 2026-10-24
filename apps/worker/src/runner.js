@@ -269,8 +269,7 @@ export function parseCronExpression(expression, envName = "cron") {
 }
 
 export function validateCronFeasibility(cron) {
-  // A restricted weekday can match even when the day of month cannot
-  // (OR semantics when both day fields are restricted).
+  // A restricted weekday can match even when the day of month cannot.
   if (
     cron.dayOfMonth.unrestricted ||
     cron.month.unrestricted ||
