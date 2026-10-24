@@ -73,6 +73,8 @@ const VARIANT_KEYS = [
   'chosenAgentConfirmed',
   'chosenIssuerId',
   'chosenIssuerConfirmed',
+  'chosenDistributionId',
+  'chosenDistributionConfirmed',
   'dryRunJobId',
   'issueJobId',
   'issueAttempt',
@@ -125,5 +127,22 @@ export function chooseIssuer(certops, objective, issuerId) {
   }
   if (issuerId) next.chosenIssuerId = issuerId;
   else delete next.chosenIssuerId;
+  return next;
+}
+
+/**
+ * The value to store when the operator ticks "My Vault distribution is already
+ * set up" and picks a group (a string), or unticks it (null). Picking another
+ * group drops the confirmation that was about the previous one; Continue on
+ * the step confirms the new choice.
+ */
+export function chooseDistribution(certops, objective, distributionId) {
+  const before = scopeCertops(certops, objective);
+  const next = mergeCertops(certops, objective, { objective });
+  if ((distributionId || undefined) !== before.chosenDistributionId) {
+    delete next.chosenDistributionConfirmed;
+  }
+  if (distributionId) next.chosenDistributionId = distributionId;
+  else delete next.chosenDistributionId;
   return next;
 }

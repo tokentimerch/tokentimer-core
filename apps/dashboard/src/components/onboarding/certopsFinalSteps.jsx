@@ -50,6 +50,11 @@ import {
   vaultPublishIdempotencyKey,
 } from './certopsConfig.js';
 import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
+import { chooseDistribution } from './certopsScope.js';
+import { scopeDistribution } from './distributionModel.js';
+import ExistingDistributionPick, {
+  reusableDistributions,
+} from './ExistingDistributionPick.jsx';
 import IssueStep from './certopsIssueStep.jsx';
 import {
   ApprovalPolicyNote,
@@ -244,6 +249,7 @@ export function VaultStep({ ctx }) {
     bindingId: saved.vaultBindingId || newBindingId(),
   });
   const [touched, setTouched] = useState({});
+  const [choiceError, setChoiceError] = useState('');
   const blur = key => () =>
     setTouched(t => (t[key] ? t : { ...t, [key]: true }));
   const set = key => e => {
@@ -274,6 +280,15 @@ export function VaultStep({ ctx }) {
   const consumerId = consumerPick || consumerChoices[0]?.id || '';
   const consumerWireId =
     consumerChoices.find(a => a.id === consumerId)?.wireAgentId || undefined;
+  // Only a distribution with work from this session counts, or the one the
+  // operator chose with "My Vault distribution is already set up".
+  const chosenDistributionId = saved.chosenDistributionId || '';
+  const distribution = scopeDistribution(
+    ctx.summary?.certops?.distribution,
+    chosenDistributionId
+  );
+  const reusable = reusableDistributions(ctx.summary?.certops?.distribution);
+  const [reuseTicked, setReuseTicked] = useState(Boolean(chosenDistributionId));
   const out = buildVaultConfigs({
     issuerAgentId: issuerWireId,
     consumerAgentId: consumerWireId,
@@ -302,7 +317,7 @@ export function VaultStep({ ctx }) {
   const declared = agentItems.flatMap(a => a.declaredCapabilities || []);
   const outcome = vaultOutcome({
     declaredByAgents: declared,
-    distribution: ctx.summary?.certops?.distribution,
+    distribution,
   });
   const gap = capabilityGap('vault', 'linux', declared);
   const backlogMessage = outboxBacklogMessage(ctx.summary?.certops);
@@ -365,10 +380,43 @@ export function VaultStep({ ctx }) {
     refresh,
     vaultNeedsPolling({
       backlogMessage,
-      distribution: ctx.summary?.certops?.distribution,
+      distribution,
       publishActive: Boolean(publishJobId) && !publishSettled,
     })
   );
+
+  // Reusing a distribution is the operator's choice; Continue confirms it.
+  const saveDistributionChoice = async id => {
+    setChoiceError('');
+    try {
+      await ctx.controller.update(session => ({
+        progress: {
+          ...session.progress,
+          certops: chooseDistribution(
+            session.progress?.certops,
+            'vault',
+            id
+          ),
+        },
+      }));
+      await refresh();
+    } catch (e) {
+      setChoiceError(e.message || 'Could not save your choice.');
+    }
+  };
+  const confirmDistribution = async () => {
+    setChoiceError('');
+    try {
+      await saveCertops(ctx, {
+        chosenDistributionConfirmed: chosenDistributionId,
+      });
+    } catch (e) {
+      setChoiceError(e.message || 'Could not save your progress.');
+    }
+  };
+  const confirmed =
+    Boolean(chosenDistributionId) &&
+    saved.chosenDistributionConfirmed === chosenDistributionId;
 
   const createPublishJob = async () => {
     setPub(p => ({ ...p, busy: true, error: '' }));
@@ -446,6 +494,15 @@ export function VaultStep({ ctx }) {
       ]}
       actions={
         <VStack align='flex-end' spacing={1}>
+          {chosenDistributionId && !confirmed ? (
+            <PrimaryButton
+              onClick={confirmDistribution}
+              isDisabled={!distribution?.verified}
+              data-testid='vault-use-distribution'
+            >
+              Continue
+            </PrimaryButton>
+          ) : null}
           <PrimaryButton onClick={saveSettings} isDisabled={!out.ok}>
             Save these settings
           </PrimaryButton>
@@ -470,6 +527,32 @@ export function VaultStep({ ctx }) {
           The commands below only prepare the configuration. Distribution works
           once a rollout has been verified.
         </StatusPanel>
+        {choiceError ? (
+          <StatusPanel status='error' testId='vault-choice-error'>
+            {choiceError}
+          </StatusPanel>
+        ) : null}
+        <ExistingDistributionPick
+          items={reusable}
+          ticked={reuseTicked && reusable.length > 0}
+          distributionId={chosenDistributionId}
+          onTick={on => {
+            setReuseTicked(on);
+            if (!on) saveDistributionChoice(null);
+          }}
+          onDistribution={saveDistributionChoice}
+        />
+        {!reuseTicked && reusable.length > 0 ? (
+          <Text
+            fontSize='xs'
+            color={muted}
+            data-testid='existing-distributions-note'
+          >
+            {reusable.length === 1
+              ? '1 verified distribution is already in this workspace. Follow the guide below for a new one, or tick the box to use it.'
+              : `${reusable.length} verified distributions are already in this workspace. Follow the guide below for a new one, or tick the box to use one.`}
+          </Text>
+        ) : null}
         {backlogMessage ? (
           <WorkerWarning testId='vault-backlog-warning'>
             {backlogMessage}

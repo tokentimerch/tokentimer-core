@@ -104,6 +104,20 @@ describe("onboarding session schema", () => {
     );
   });
 
+  it("keeps the chosen existing Vault distribution in CertOps progress", () => {
+    const certops = {
+      objective: "vault",
+      infrastructure: "linux",
+      chosenDistributionId: "4f0d2c1e-7a53-4a49-9d0b-2f1c8b6a9e11",
+      chosenDistributionConfirmed: "4f0d2c1e-7a53-4a49-9d0b-2f1c8b6a9e11",
+    };
+    const { patch } = validateSessionWrite({
+      expectedRevision: 2,
+      progress: { certops },
+    });
+    assert.deepEqual(patch.progress.certops, certops);
+  });
+
   it("only accepts known flows", () => {
     assert.equal(assertFlow("mega"), "mega");
     assert.equal(assertFlow("certops"), "certops");

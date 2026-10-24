@@ -67,12 +67,15 @@ function summarizeAgents(items, { now = Date.now(), since = null } = {}) {
 /**
  * Distribution is verified only when a rollout reached the verified state,
  * which requires consumer evidence. Existing groups alone prove nothing.
+ * Each group carries session facts so the guide can ignore a distribution that
+ * was already verified before the session began, unless the operator opts in.
  */
 async function loadDistributionReality(
   pool,
   workspaceId,
-  { now = Date.now() } = {},
+  { now = Date.now(), since = null } = {},
 ) {
+  const sinceMs = since ? new Date(since).getTime() : null;
   const { rows } = await pool.query(
     `SELECT (SELECT COUNT(*)::int FROM certops_distribution_groups WHERE workspace_id = $1) AS groups,
             (SELECT COUNT(*)::int FROM certops_consumer_bindings WHERE workspace_id = $1) AS bindings,
@@ -81,10 +84,53 @@ async function loadDistributionReality(
     [workspaceId],
   );
   const row = rows[0] || {};
+  const items = await pool.query(
+    `SELECT g.id, g.material_store_ref, g.created_at,
+            EXISTS (
+              SELECT 1 FROM certops_distribution_rollouts r
+               WHERE r.workspace_id = g.workspace_id AND r.group_id = g.id
+                 AND r.state = 'verified' AND r.verification_only = false
+            ) AS verified,
+            (SELECT MAX(r.created_at) FROM certops_distribution_rollouts r
+              WHERE r.workspace_id = g.workspace_id AND r.group_id = g.id
+                AND r.state = 'verified' AND r.verification_only = false
+            ) AS last_verified_at
+       FROM certops_distribution_groups g
+      WHERE g.workspace_id = $1
+      ORDER BY g.created_at DESC
+      LIMIT 20`,
+    [workspaceId],
+  );
   return {
     groups: row.groups || 0,
     bindings: row.bindings || 0,
     verified: (row.verified_rollouts || 0) > 0,
+    items: items.rows.map((g) => {
+      const createdMs = g.created_at ? new Date(g.created_at).getTime() : null;
+      const lastVerifiedMs = g.last_verified_at
+        ? new Date(g.last_verified_at).getTime()
+        : null;
+      // Work of this session: the group was created after the session began, or
+      // a verified rollout was recorded after it began.
+      const sessionWork =
+        sinceMs === null ||
+        (createdMs !== null && createdMs >= sinceMs) ||
+        (lastVerifiedMs !== null && lastVerifiedMs >= sinceMs);
+      return {
+        id: g.id,
+        materialStoreRef: g.material_store_ref,
+        createdAt:
+          createdMs === null ? null : new Date(createdMs).toISOString(),
+        verified: g.verified === true,
+        lastVerifiedAt:
+          lastVerifiedMs === null
+            ? null
+            : new Date(lastVerifiedMs).toISOString(),
+        // True when nothing about this group is work of the current session, so
+        // the guide never counts it unless the operator chose it.
+        existedBeforeSession: sinceMs !== null && !sessionWork,
+      };
+    }),
     outboxBacklog: await loadOutboxBacklog(pool, workspaceId, { now }),
   };
 }
@@ -505,7 +551,9 @@ async function loadCertopsReality(
       WHERE workspace_id = $1 AND status NOT IN ('decommissioned')`,
     [workspaceId],
   );
-  const distribution = await loadDistributionReality(pool, workspaceId);
+  const distribution = await loadDistributionReality(pool, workspaceId, {
+    since,
+  });
   const dryRun = await loadJobStatus(pool, workspaceId, dryRunJobId);
   const issueJob = await loadJobStatus(pool, workspaceId, issueJobId);
   const publishJob = await loadJobStatus(pool, workspaceId, publishJobId);
