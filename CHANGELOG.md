@@ -17,6 +17,11 @@ Target: **0.18.0**.
 
 - **Shared certificate distribution through customer Vault.** Publish immutable certificate versions to assigned Linux consumers, including ordinary, SAN and wildcard certificates. Private keys and credentials remain customer-local. Management is API-first, with status on Renewals. The agent build in this release advertises the distribution and AD CS capabilities; Vault distribution runs on Linux consumers and AD CS enrollment on Windows/IIS hosts, as independent paths.
 - **Agent output console.** Managers and admins can follow secret-filtered job output; viewers see stream status only. Console failures do not change job results. **Operator action:** apply migration 69 and keep the `certops` worker scheduled for log cleanup. Configure retention and quotas with `CERTOPS_AGENT_LOG_RETENTION_DAYS` (default `30`; `0` disables storage) and `CERTOPS_AGENT_LOG_DAILY_BYTES` (default `0`, unlimited). `TT_AGENT_LOG_STREAM=off` disables streaming per agent. See [configuration](docs/CONFIGURATION.md#certops-maintenance-sweeps-worker).
+- **Guided setup at `/onboarding`.** A step-by-step setup guide, opened from the welcome modal, a setup banner or Preferences, with goals for monitoring several websites at once (check interval, down alerts, optional subdomain discovery), adding several assets at a time, importing from a file or an integration, alerts, CertOps observe (Linux, Windows, Kubernetes) and automate (Linux, AD CS, Vault). CertOps settings show a quickstart card with the next setup step.
+  - Progress is saved per user and workspace in a new `onboarding_sessions` table. **Operator action:** none; migration 77 is applied when the API starts.
+  - File imports in the guide keep the existing limits of 5000 rows and 5 MB.
+  - Subdomain discovery needs `subfinder`. The API image bundles it; an API run directly on a host needs it on `PATH` or in `SUBFINDER_BIN`. Without it, `POST /api/v1/workspaces/{id}/domain-checker/lookup` returns `503 DOMAIN_CHECKER_TOOL_MISSING` instead of `DOMAIN_CHECKER_FAILED`. Limits and timeouts are the existing `DOMAIN_CHECKER_*` settings ([configuration](docs/CONFIGURATION.md)).
+- **Alert groups for auto-sync.** An auto-sync configuration can carry `scan_params.contactGroupIds`. Assets a run creates get those groups; existing assets keep theirs, so a sync never overwrites a group an operator changed. A group deleted since is ignored instead of failing the run, and changing the groups does not restart a running scan.
 
 ### Changed
 
@@ -32,6 +37,7 @@ Target: **0.18.0**.
 
 ### Fixed
 
+- **Linux agent DNS propagation checks under the packaged systemd unit.** The hardened unit blocks listing network interfaces, so the check could not pick usable DNS servers before verifying DNS-01 records. It now keeps every configured server. **Operator action:** upgrade Linux agents that use DNS-01.
 - **Windows agent reliability:** graceful service shutdown drains pending output; startup failures exit cleanly; installation handles literal brackets in paths. Retention preserves keys still referenced by installed certificates, and ACME refuses certificate/key mismatches with `ACME_CERTIFICATE_KEY_MISMATCH`.
 - **Certificate backups:** concurrent deployments retain distinct rollback copies and prune only their own backups. **Operator guidance:** review historical timestamp-only backups manually; they are retained because their destination cannot be safely identified.
 - **Certificate lifecycle and alerts:** renewals and discovery keep token fingerprints and expiry windows current without reusing stale certificate details. **Operator action:** pause old workers, apply migration 73, deploy matching API/worker images, then resume. Historical alerts with uncertain associations remain discarded.

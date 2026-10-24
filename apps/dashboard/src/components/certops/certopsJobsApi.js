@@ -218,9 +218,11 @@ export async function createJob(
     assignedAgentId,
     agentId,
     owner,
+    mode,
   } = {}
 ) {
   const body = { operation };
+  if (mode !== undefined) body.mode = mode;
   if (subjectType !== undefined) body.subjectType = subjectType;
   if (subjectId !== undefined) body.subjectId = subjectId;
   if (payload !== undefined) body.payload = payload;

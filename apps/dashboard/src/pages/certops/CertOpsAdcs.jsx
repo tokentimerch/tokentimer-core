@@ -847,7 +847,12 @@ function EnrollmentRow({
   );
 }
 
-export default function CertOpsAdcs() {
+export default function CertOpsAdcs({
+  openRequest = null,
+  onRequestHandled,
+  focusIssuerId = null,
+  onFocusHandled,
+} = {}) {
   const {
     status: adminStatus,
     isAdmin,
@@ -865,6 +870,7 @@ export default function CertOpsAdcs() {
   const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [issuerPrefill, setIssuerPrefill] = useState(null);
   const [busyKey, setBusyKey] = useState(null);
   const [waitingForPreflight, setWaitingForPreflight] = useState(null);
   const [preflightNote, setPreflightNote] = useState('');
@@ -978,6 +984,38 @@ export default function CertOpsAdcs() {
   }, [workspaceId, enrollments.length]);
 
   useEffect(() => () => stopPreflightPoll(), [workspaceId, stopPreflightPoll]);
+
+  // A deep link asks for the New issuer dialog. Wait until the role, the
+  // pause state and the agent list are known, open it only when the person
+  // may use it, then hand the request back so the link is consumed once.
+  useEffect(() => {
+    if (!openRequest) return;
+    if (adminStatus === 'loading' || !pauseResolved || loading) return;
+    if (isAdmin && !paused) {
+      setIssuerPrefill(openRequest);
+      setWizardOpen(true);
+    }
+    onRequestHandled?.();
+  }, [
+    openRequest,
+    adminStatus,
+    pauseResolved,
+    loading,
+    isAdmin,
+    paused,
+    onRequestHandled,
+  ]);
+
+  // A deep link names one issuer to open, for a re-check. Once the list is
+  // loaded the issuer is expanded and the request is handed back.
+  useEffect(() => {
+    if (!focusIssuerId || loading || adminStatus === 'loading') return;
+    if (issuers.some(item => item.id === focusIssuerId)) {
+      issuerListReady.current = true;
+      setOpenIssuerId(focusIssuerId);
+    }
+    onFocusHandled?.();
+  }, [focusIssuerId, loading, adminStatus, issuers, onFocusHandled]);
 
   useEffect(() => {
     issuerListReady.current = false;
@@ -1202,7 +1240,10 @@ export default function CertOpsAdcs() {
             <HStack spacing={2}>
               <DashboardActionButton
                 {...actionProps(busyKey, 'create', paused)}
-                onClick={() => setWizardOpen(true)}
+                onClick={() => {
+                  setIssuerPrefill(null);
+                  setWizardOpen(true);
+                }}
               >
                 New issuer
               </DashboardActionButton>
@@ -1234,10 +1275,16 @@ export default function CertOpsAdcs() {
         ) : null}
         <AdcsIssuerWizard
           isOpen={wizardOpen}
-          onClose={() => setWizardOpen(false)}
+          onClose={() => {
+            setWizardOpen(false);
+            setIssuerPrefill(null);
+          }}
           workspaceId={workspaceId}
           agents={agents}
           paused={paused}
+          initialAgentId={issuerPrefill?.agentId}
+          initialCaConfig={issuerPrefill?.caConfig}
+          initialTemplate={issuerPrefill?.template}
           onChanged={reload}
         />
         {(() => {

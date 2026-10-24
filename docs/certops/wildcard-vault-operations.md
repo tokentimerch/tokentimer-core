@@ -33,17 +33,16 @@ Appliance models, firmware, service binding and HA coverage are unknown. No
 firewall adapter, Windows shared-key import or Kubernetes bundle bridge is
 advertised. Existing Windows and Kubernetes execution paths remain separate.
 
-Three new capabilities are gated: `material-store-vault-kv2-v1`,
-`certificate-publication-v1`, and `deploy-from-store-v1`. They are deliberately
-absent from the shipped `src/capabilities/qualified-capabilities.json` build
-input. The execution functions and control-plane dispatch are tested, but a
-complete enrolled, networked agent build still needs qualification before these
-capabilities are added to that input and compiled with
-`node packages/agent/scripts/build-qualified-capabilities.js`. There is no
-runtime environment-variable bypass. Registering target labels or declaring
-capabilities in a test database does not qualify a release artifact.
+The three distribution capabilities (`material-store-vault-kv2-v1`,
+`certificate-publication-v1`, and `deploy-from-store-v1`) are listed in the
+shipped `src/capabilities/qualified-capabilities.json` build input and are
+declared by the 0.18.0 agent. Your own Vault authentication, DNS provider, host
+filesystem and TLS listeners are still customer-owned and must be tested before
+you rely on this path. There is no runtime environment-variable bypass.
+Registering target labels or declaring capabilities in a test database does not
+qualify a release artifact.
 
-Before enabling a customer build, run signed enrollment/heartbeat/claim/lease/
+Before relying on a customer build, run signed enrollment/heartbeat/claim/lease/
 result transport through a real API, the real DNS provider, production Vault
 authentication/rotation, the exact service configuration and host filesystem.
 Test agent and host crashes, token expiry, revoked agent credentials, Vault
@@ -83,6 +82,31 @@ reload and all dial address/port/SNI probes. Changing a server binding increment
 its authorization revision; update and review the matching local policy before
 creating a new approved rollout. No implicit path or alias fallback exists.
 
+Create each consumer deploy folder with the installer (`--write-path`) or with
+`sudo install -d -o tokentimer-agent -g tokentimer-agent -m 0750 <folder>`. Any
+placeholder `fullchain.pem` and `privkey.pem` must also belong to the agent user
+(create them with `sudo -u tokentimer-agent`). With root-owned files the first
+rollout failed with `material_install_failed`, and the retry then reported
+`material_binding_uncertain`.
+
+The agent reads the issuer's private key from `execution.keysDir`, so that
+folder must also be listed in `policy.allowedPaths`. On the Linux installer layout
+use `/opt/tokentimer-agent/state/keys`: the hardened service unit only writes
+under `/opt/tokentimer-agent/state`, and other locations fail with
+`mkdir ... job-journal`. The agent also routes jobs by what it declares, not by
+what the policy allows: set `declaredTargetSelectors` (issuer: the SANs;
+consumer: the binding ID) and, for the issuer, `declaredCommandProfileNames`.
+Without them the agent registers but never claims work.
+
+The examples ship `"dryRun": true`. Real jobs are refused until a signed dry run
+has passed and you set `"dryRun": false` and restart the agent. For the nginx
+consumer, `nginx -t` fails for the unprivileged agent user, so the example
+validates with `systemctl is-active` and reloads through `systemctl reload nginx`
+with a one-time systemd drop-in that tests the configuration as root; see
+[nginx reload](agent/install-linux.md#nginx-reload). The certbot argv carries
+`--agree-tos` and `--register-unsafely-without-email`; use `--email <address>`
+instead if you want expiry notices from the CA.
+
 The example Vault policies separate issuer create/read, consumer read and
 scanner denial. Substitute the actual mount and workspace/group prefix. Do not
 attach broader policies that defeat the denial. The server scanner also refuses
@@ -92,17 +116,20 @@ issuer or consumer credentials. Protect Vault backups as private keys.
 
 ## Public workflow
 
-Distribution administration is API-first. The Renewals dashboard presents
+Distribution administration is mostly API-first. The Renewals dashboard presents
 groups and consumer status alongside renewal profiles and AD CS issuer
-management. Creating publication jobs, editing consumer bindings, requesting
-and approving rollouts, containment, retry and verification-only checks use the
-API below and the existing job approval endpoints. A complete distribution
-creation/editing wizard is outside this candidate's UI scope.
+management. The setup guide creates the publication job. Consumer assignment,
+editing consumer bindings, requesting and approving rollouts, containment, retry
+and verification-only checks use the API below and the existing job approval
+endpoints.
 
 1. Create an existing `issue` job with `assignedAgentId` set to the issuer's
    database row ID. Its payload includes the existing target/SANs/CA/DNS/key
    settings and `publicationDestination` containing only `materialStoreRef`,
-   `issuanceProfileRef`, `profileRevision`. Supply the existing issuance
+   `issuanceProfileRef`, `profileRevision`. The payload must include
+   `keyAlgorithm`; the agent refuses the job without it. A tested combination
+   is `ecdsa` with `keySize: 256` in the job and `"keyAlgorithm": "ec"` in the
+   local group entry. Supply the existing issuance
    idempotency key. Filesystem/reload/probe destinations are forbidden here.
    `issue` is the stored control-plane operation; signed agent dispatch uses
    the existing `renew` wire action for initial issuance as well as renewal.
@@ -197,11 +224,22 @@ Consumer state is under `material-bindings/<bindingId>.json`. A protected
 uncertain marker is durable before the first mutation. Reload failure, lost
 lease or failed service proof after mutation yields `orphaned_unknown_effect`;
 no automatic compensation or inferred success occurs. Fix the actual binding
-and listeners locally, then run `certops-reconcile-binding <bindingId>` as the
-agent account with its normal configuration directory. This command only reads
+and listeners locally, then run the reconcile script as the agent account with
+its normal configuration directory (the installer does not put
+`certops-reconcile-binding` on `PATH`; the script is `bin/reconcile-material-binding.js`
+in the installed app):
+
+```sh
+sudo -u tokentimer-agent env TOKENTIMER_AGENT_CONFIG_DIR=/opt/tokentimer-agent/state \
+  node /opt/tokentimer-agent/app/bin/reconcile-material-binding.js <bindingId>
+```
+
+It takes the binding UUID, reads the protected record under
+`material-bindings/` in the state directory (the parent of `execution.keysDir`) and
+prints only a short `material_*` error code and exits 1 on failure. This command only reads
 the installed pair, verifies all configured listeners and clears the local
-uncertain marker. It does not promote server state. Request the original signed
-retry afterward, with a fresh live claim.
+uncertain marker. It prints a one-line JSON result and does not promote server state.
+Request the original signed retry afterward, with a fresh live claim.
 
 Per-group issuer and per-binding consumer locks use exclusive files under
 `material-locks` and never expire by TTL. After a crash, stop the corresponding

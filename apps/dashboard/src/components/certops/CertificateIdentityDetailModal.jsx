@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   FormControl,
+  FormHelperText,
   FormLabel,
   HStack,
   Select,
@@ -110,8 +111,20 @@ export default function CertificateIdentityDetailModal({
       latestSourceById.set(source.managedCertificateId, source);
   }
   const sourceOptions = [...latestSourceById.values()];
+  const isEndedSource = source =>
+    Boolean(source.periodEndedAt || source.endedAt);
+  // With exactly one current registration, preselect it so the operator does
+  // not have to open the dropdown. Ended ones stay one click away.
+  const currentSourceOptions = sourceOptions.filter(
+    source => !isEndedSource(source)
+  );
+  const defaultManagedId =
+    sourceOptions.length > 1 && currentSourceOptions.length === 1
+      ? currentSourceOptions[0].managedCertificateId
+      : '';
   const selectedManagedId =
     selectedSourceId ||
+    defaultManagedId ||
     (sourceOptions.length === 1
       ? sourceOptions[0].managedCertificateId
       : sourceOptions.length
@@ -459,25 +472,6 @@ export default function CertificateIdentityDetailModal({
   ]);
   const identityPanel = (
     <VStack align='stretch' spacing={6} mb={6}>
-      {sourceOptions.length > 1 ? (
-        <Select
-          aria-label='Management registration to inspect'
-          value={selectedSourceId}
-          onChange={event => setSelectedSourceId(event.target.value)}
-        >
-          <option value=''>Select a management registration</option>
-          {sourceOptions.map((source, index) => (
-            <option
-              key={source.managedCertificateId}
-              value={source.managedCertificateId}
-            >
-              {sourceLabel(source.source)} ·{' '}
-              {source.sourceRef || `Registration ${index + 1}`} ·{' '}
-              {source.periodEndedAt || source.endedAt ? 'Ended' : 'Current'}
-            </option>
-          ))}
-        </Select>
-      ) : null}
       <HStack spacing={2} flexWrap='wrap'>
         <CertOpsBadge>
           {detail.locationCount ?? (detail.locations || []).length} locations
@@ -657,6 +651,43 @@ export default function CertificateIdentityDetailModal({
         mb={0}
       >
         <SectionContent>
+          {sourceOptions.length > 1 ? (
+            <FormControl mb={3}>
+              <FormLabel fontSize='sm' mb={1}>
+                Management registration
+              </FormLabel>
+              <Select
+                size='sm'
+                aria-label='Management registration to inspect'
+                value={selectedManagedId || ''}
+                onChange={event => setSelectedSourceId(event.target.value)}
+              >
+                {defaultManagedId ? null : (
+                  <option value=''>Select a management registration</option>
+                )}
+                {sourceOptions.map((source, index) => (
+                  <option
+                    key={source.managedCertificateId}
+                    value={source.managedCertificateId}
+                  >
+                    {sourceLabel(source.source)} ·{' '}
+                    {source.sourceRef || `Registration ${index + 1}`} ·{' '}
+                    {isEndedSource(source) ? 'Ended' : 'Current'}
+                  </option>
+                ))}
+              </Select>
+              <FormHelperText fontSize='xs' color='dashboard.modal.muted'>
+                Picks which registration&apos;s jobs, deployment and renewal
+                profile are shown for this certificate.
+              </FormHelperText>
+              {!selectedManagedId ? (
+                <Text fontSize='sm' mt={2}>
+                  Select a registration to see its jobs, deployment and renewal
+                  profile.
+                </Text>
+              ) : null}
+            </FormControl>
+          ) : null}
           <FormControl display='flex' alignItems='center' mb={3}>
             <Switch
               id='certificate-management-history'

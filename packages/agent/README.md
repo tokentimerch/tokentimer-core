@@ -6,7 +6,7 @@ certificates.
 
 Package version tracks the TokenTimer Core release line; see `package.json` for the checkout version. Use the version of the tarball you downloaded when following the commands below. For a complete operator installation guide, see [Linux agent installation](https://tokentimer.ch/docs/self-hosted/runbooks/certops-agent-install) or [Windows agent installation](https://tokentimer.ch/docs/self-hosted/runbooks/certops-agent-install-windows).
 
-## Distribution model (H10)
+## Distribution model
 
 **Decision: private package, tarball installer only (not published to the public npm registry).**
 

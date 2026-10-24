@@ -19,6 +19,7 @@ import {
   InputLeftElement,
   Button,
   IconButton,
+  Tooltip,
   useColorModeValue,
 } from '@chakra-ui/react';
 import {
@@ -245,6 +246,34 @@ const AUDIT_CONTROL_HEIGHT = '32px';
 
 function getAuditEventKey(ev) {
   return String(ev?.id ?? `${ev?.action || 'event'}-${ev?.occurred_at || ''}`);
+}
+
+/** Truncate long action names in the pill; full name on hover. */
+function AuditActionBadge({ action }) {
+  const label = action || '';
+  return (
+    <Tooltip
+      label={label}
+      hasArrow
+      placement='top'
+      openDelay={300}
+      shouldWrapChildren
+    >
+      <Badge
+        colorScheme='blue'
+        variant='subtle'
+        display='inline-block'
+        maxW='100%'
+        minW={0}
+        overflow='hidden'
+        textOverflow='ellipsis'
+        whiteSpace='nowrap'
+        title={label}
+      >
+        {label}
+      </Badge>
+    </Tooltip>
+  );
 }
 
 export default function Audit({ session, onLogout, onAccountClick }) {
@@ -2193,15 +2222,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       >
         <Flex align='flex-start' gap={3} minW={0}>
           <Box flex='1' minW={0}>
-            <Badge
-              colorScheme='blue'
-              variant='subtle'
-              maxW='100%'
-              whiteSpace='normal'
-              wordBreak='break-word'
-            >
-              {ev.action}
-            </Badge>
+            <AuditActionBadge action={ev.action} />
             <Text color={text} fontSize='sm' mt={2} noOfLines={1}>
               {formatDateTime(ev.occurred_at)}
             </Text>
@@ -2794,16 +2815,12 @@ export default function Audit({ session, onLogout, onAccountClick }) {
                               >
                                 {formatDateTime(ev.occurred_at)}
                               </Td>
-                              <Td w={AUDIT_TABLE_COLUMN_WIDTHS.action} py={3}>
-                                <Badge
-                                  colorScheme='blue'
-                                  variant='subtle'
-                                  whiteSpace='normal'
-                                  textAlign='left'
-                                  maxW='100%'
-                                >
-                                  {ev.action}
-                                </Badge>
+                              <Td
+                                w={AUDIT_TABLE_COLUMN_WIDTHS.action}
+                                minW={0}
+                                py={3}
+                              >
+                                <AuditActionBadge action={ev.action} />
                               </Td>
                               <Td
                                 w={AUDIT_TABLE_COLUMN_WIDTHS.user}

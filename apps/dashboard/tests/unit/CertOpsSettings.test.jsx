@@ -38,6 +38,11 @@ vi.mock('../../src/components/certops/ApiTokenModal.jsx', () => ({
   default: () => null,
 }));
 
+// Has its own tests; this page only needs to place it.
+vi.mock('../../src/components/onboarding/CertopsQuickstartCard.jsx', () => ({
+  default: () => <div>Quickstart card</div>,
+}));
+
 function renderPage() {
   return render(
     <ChakraProvider>
@@ -66,6 +71,10 @@ beforeEach(() => {
 });
 
 describe('CertOpsSettings job approval policy', () => {
+  it('places the quickstart card on the page', () => {
+    renderPage();
+    expect(screen.getByText('Quickstart card')).toBeInTheDocument();
+  });
   it('shows the always-require-approval control and explains every creation path', () => {
     renderPage();
 

@@ -11,12 +11,12 @@ import {
   InputGroup,
   InputRightElement,
   IconButton,
-  Link as ChakraLink,
 } from '@chakra-ui/react';
 import { FiEye, FiEyeOff } from 'react-icons/fi';
 import { gitlabAPI, integrationAPI, formatDate } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 import { IMPORT_DOCS } from '../../utils/docsUrls';
+import LearnMorePanel from '../LearnMorePanel';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 import {
@@ -90,6 +90,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
     onScanSuccess,
     borderColor,
     helpTextColor,
+    hideDocs = false,
     autoSyncTokenPlaceholder,
     updateQuotaFromResponse,
     refreshIntegrationQuota,
@@ -348,6 +349,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
   React.useImperativeHandle(ref, () => ({
     importSelected: importGitlabSelected,
     getSelectedCount: () => selectedRowsGitlab.size,
+    getContactGroupIds: () => bulkContactGroupIds,
     getCredentials: () => ({
       credentials: {
         baseUrl: gitlabBaseUrl || 'https://gitlab.com',
@@ -382,16 +384,15 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
             Deploy Tokens, and SSH Keys. Token is used for scanning and stored
             encrypted if auto-sync is enabled.
           </Text>
-          <Text fontSize='sm' mt={1}>
-            <ChakraLink
-              href={IMPORT_DOCS.gitlab}
-              color='blue.500'
-              textDecoration='underline'
-              isExternal
-            >
-              Learn more about importing from GitLab →
-            </ChakraLink>
-          </Text>
+          {hideDocs ? null : (
+            <LearnMorePanel
+              variant='compact'
+              mt={2}
+              links={[
+                { label: 'Importing from GitLab', url: IMPORT_DOCS.gitlab },
+              ]}
+            />
+          )}
         </Box>
       ) : null}
       <HStack spacing={3} align='flex-end' flexWrap='wrap'>

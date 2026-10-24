@@ -59,6 +59,7 @@ import {
 import toast, { Toaster } from 'react-hot-toast';
 import { HelmetProvider } from 'react-helmet-async';
 import { trackEvent } from './utils/analytics.js';
+import { isTourCompleted, markTourCompleted } from './utils/tourStorage.js';
 import { FiTrash2, FiPlus, FiX } from 'react-icons/fi';
 import {
   Activity as ActivityIcon,
@@ -74,6 +75,7 @@ import SEO from './components/SEO.jsx';
 import Footer from './components/Footer';
 import ErrorBoundary from './components/ErrorBoundary';
 import WelcomeModal from './components/WelcomeModal';
+import SetupNudge from './components/onboarding/SetupNudge.jsx';
 import ProductTour from './components/ProductTour';
 import { AccessibleSpinner } from './components/Accessibility';
 import ImportTokensModal from './components/ImportTokensModal.jsx';
@@ -159,10 +161,14 @@ const AlertPreferences = lazy(() => import('./pages/AlertPreferences'));
 const UserPreferences = lazy(() => import('./pages/UserPreferences'));
 const ControlCenter = lazy(() => import('./pages/ControlCenter'));
 const CertOpsRoutes = lazy(() => import('./pages/certops/CertOpsRoutes.jsx'));
+const OnboardingRoutes = lazy(
+  () => import('./components/onboarding/OnboardingRoutes.jsx')
+);
 const Audit = lazy(() => import('./pages/Audit'));
 const Workspaces = lazy(() => import('./pages/Workspaces.jsx'));
 const SystemSettings = lazy(() => import('./pages/SystemSettings.jsx'));
-import { WorkspaceProvider, useWorkspace } from './utils/WorkspaceContext.jsx';
+import { useWorkspace } from './utils/WorkspaceContext.jsx';
+import { ContactGroupWorkspaceProvider } from './utils/ContactGroupCreationContext.jsx';
 import {
   pickAccessibleWorkspace,
   readLastWorkspaceId,
@@ -2453,7 +2459,7 @@ function App() {
                       />
                     </div>
                   ) : (
-                    <WorkspaceProvider accountId={session?.id}>
+                    <ContactGroupWorkspaceProvider accountId={session?.id}>
                       <Suspense
                         fallback={
                           <Flex align='center' justify='center' minH='60vh'>
@@ -2630,6 +2636,21 @@ function App() {
                           <Route
                             path='/usage'
                             element={<Navigate to='/control-center' replace />}
+                          />
+                          <Route
+                            path='/onboarding/*'
+                            element={
+                              <RequireManagerRoute
+                                session={session}
+                                scope='active-workspace'
+                              >
+                                <OnboardingRoutes
+                                  session={session}
+                                  onLogout={handleLogout}
+                                  onAccountClick={handleHelpAccountClick}
+                                />
+                              </RequireManagerRoute>
+                            }
                           />
                           <Route
                             path='/certops/*'
@@ -2809,7 +2830,7 @@ function App() {
                           <Route path='*' element={<NotFound />} />
                         </Routes>
                       </Suspense>
-                    </WorkspaceProvider>
+                    </ContactGroupWorkspaceProvider>
                   )}
                 </Box>
                 <Footer />
@@ -2927,6 +2948,8 @@ function DashboardWrapper({
   createTokenNotesFlushRef,
 }) {
   const { pageBg } = useDashboardTheme();
+  const navigateToOnboarding = useNavigate();
+  const { workspaceId: nudgeWorkspaceId } = useWorkspace();
 
   // Restore product tour after hard navigation back from /workspace-preferences
   useEffect(() => {
@@ -3037,6 +3060,18 @@ function DashboardWrapper({
           }}
         >
           <DashboardView
+            setupNudge={
+              <SetupNudge
+                workspaceId={nudgeWorkspaceId}
+                isViewer={isViewer}
+                suppress={
+                  showWelcomeModal ||
+                  _showProductTour ||
+                  location.pathname !== '/dashboard'
+                }
+                onStart={() => navigateToOnboarding('/onboarding')}
+              />
+            }
             _session={session}
             tokens={tokens}
             tokensLoading={tokensLoading}
@@ -3109,18 +3144,16 @@ function DashboardWrapper({
           try {
             const isNewUser = welcomeData?.isNewUser;
             if (isNewUser && window.location.pathname === '/dashboard') {
-              const hasCompletedTour = localStorage.getItem(
-                'tt_tour_dashboard_v1'
-              );
+              const hasCompletedTour = isTourCompleted('dashboard');
               if (!hasCompletedTour) {
                 // Mark as completed/skipped so tour doesn't auto-start
-                localStorage.setItem('tt_tour_dashboard_v1', 'true');
+                markTourCompleted('dashboard');
               }
             }
           } catch (_) {}
         }}
-        onStartTour={
-          isViewer || isProductTourMobile
+        onStartSetup={
+          isViewer
             ? undefined
             : () => {
                 setShowWelcomeModal(false);
@@ -3136,16 +3169,8 @@ function DashboardWrapper({
                 } catch (_) {}
                 try {
                   localStorage.removeItem('tt_welcome_pending');
-                  localStorage.removeItem('tt_tour_dashboard_v1');
                 } catch (_) {}
-
-                if (window.location.pathname === '/dashboard') {
-                  setForceRunTour(true);
-                  setTimeout(() => {
-                    setTourType('dashboard');
-                    setShowProductTour(true);
-                  }, 500);
-                }
+                navigateToOnboarding('/onboarding');
               }
         }
         introductionVideoUrl={
@@ -3304,6 +3329,7 @@ function DashboardView({
   onLogout,
   selectedToken,
   handleCloseTokenModal,
+  setupNudge = null,
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -5037,6 +5063,7 @@ function DashboardView({
         pageTitle='Asset Inventory'
       >
         <Box px={{ base: 4, lg: 4, '2xl': 5 }} py={{ base: 5, lg: 3 }}>
+          {setupNudge}
           {/* Token creation actions (hidden for viewers) */}
           {!isViewer && (
             <>

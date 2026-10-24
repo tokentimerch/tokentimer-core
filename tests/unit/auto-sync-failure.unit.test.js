@@ -746,3 +746,30 @@ describe("gitlabFiltersForAutoSync", () => {
     );
   });
 });
+
+describe("buildAutoSyncImportBody contact groups", () => {
+  it("forwards the sync's groups so new assets get them", async () => {
+    const mod = await importFresh(
+      "apps/worker/src/shared/autoSyncImportBody.js",
+    );
+    assert.deepStrictEqual(
+      mod.buildAutoSyncImportBody({
+        items: [],
+        scanId: "s",
+        contactGroupIds: ["g1", "", 7, "g2"],
+      }),
+      { items: [], scan_id: "s", contact_group_ids: ["g1", "g2"] },
+    );
+  });
+
+  it("sends no group field when none is configured", async () => {
+    const mod = await importFresh(
+      "apps/worker/src/shared/autoSyncImportBody.js",
+    );
+    assert.equal(
+      "contact_group_ids" in
+        mod.buildAutoSyncImportBody({ items: [], contactGroupIds: [] }),
+      false,
+    );
+  });
+});

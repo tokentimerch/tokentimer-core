@@ -12,12 +12,12 @@ import {
   InputRightElement,
   IconButton,
   Code,
-  Link as ChakraLink,
 } from '@chakra-ui/react';
 import { FiEye, FiEyeOff } from 'react-icons/fi';
 import { gcpAPI, integrationAPI } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 import { IMPORT_DOCS } from '../../utils/docsUrls';
+import LearnMorePanel from '../LearnMorePanel';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 import {
@@ -97,6 +97,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
     onScanSuccess,
     borderColor,
     helpTextColor,
+    hideDocs = false,
     autoSyncTokenPlaceholder,
     updateQuotaFromResponse,
     refreshIntegrationQuota,
@@ -264,16 +265,13 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
           </Code>
           ).
         </Text>
-        <Text fontSize='sm' mt={1}>
-          <ChakraLink
-            href={IMPORT_DOCS.gcp}
-            color='blue.500'
-            textDecoration='underline'
-            isExternal
-          >
-            Learn more about importing from GCP →
-          </ChakraLink>
-        </Text>
+        {hideDocs ? null : (
+          <LearnMorePanel
+            variant='compact'
+            mt={2}
+            links={[{ label: 'Importing from GCP', url: IMPORT_DOCS.gcp }]}
+          />
+        )}
       </Box>
       <HStack spacing={3} align='flex-end' flexWrap='wrap'>
         <Box minW='240px'>

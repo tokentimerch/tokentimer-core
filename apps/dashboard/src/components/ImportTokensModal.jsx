@@ -24,7 +24,6 @@ import {
   Td,
   Input,
   Switch,
-  Image,
   Badge,
   Checkbox,
   Tooltip,
@@ -38,6 +37,7 @@ import {
 } from '@chakra-ui/react';
 import { logger } from '../utils/logger';
 import { IMPORT_DOCS } from '../utils/docsUrls';
+import LearnMorePanel from './LearnMorePanel';
 import apiClient, {
   tokenAPI,
   workspaceAPI,
@@ -50,20 +50,24 @@ import apiClient, {
 import { showWarning } from '../utils/toast.js';
 import { showAutoSyncEnableError } from '../utils/autoSyncActivation.jsx';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
-import {
-  FiDownload,
-  FiShield,
-  FiKey,
-  FiUsers,
-  FiAlertTriangle,
-} from 'react-icons/fi';
+import { FiDownload, FiShield, FiAlertTriangle } from 'react-icons/fi';
 import IntegrationImportTable from './IntegrationImportTable';
 import BulkIntegrationAssignment from './BulkIntegrationAssignment';
+import {
+  ImportSourceLogo,
+  isSourceVisible,
+  resolveStartSource,
+} from './imports/importSources.jsx';
+import { EmbeddedImportContext } from './imports/embeddedImportContext.js';
+import { resolveImportWorkspaceId } from './imports/resolveImportWorkspaceId.js';
 import {
   canonicalContactGroupFields,
   contactGroupFieldsForImportDefaults,
   hydrateContactGroupIds,
+  normalizeContactGroupIds,
 } from '../utils/contactGroupAssignment.js';
+import AutoSyncGroupLine from './imports/AutoSyncGroupLine.jsx';
+import { formatNextSync } from './imports/syncGroupLine.js';
 import CopyableCodeBlock from './CopyableCodeBlock';
 import ImportVaultForm from './imports/ImportVaultForm';
 import ImportGitLabForm from './imports/ImportGitLabForm';
@@ -168,6 +172,12 @@ function coerceArray(value) {
     .split(',')
     .map(v => v.trim())
     .filter(Boolean);
+}
+
+// Arrays from json or a split csv cell; keep a separator between entries.
+function formatSection(section) {
+  if (Array.isArray(section)) return section.join(', ');
+  return section || '';
 }
 
 function coerceIdList(value) {
@@ -466,6 +476,107 @@ async function parseFile(file) {
   );
 }
 
+// Files are parsed and previewed in the browser and created one request per
+// row, so both limits protect the page. Split bigger inventories into files.
+const MAX_IMPORT_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_IMPORT_ROWS = 5000;
+
+// Keeps rows with all four required fields. Each kept row carries `line`, its
+// spreadsheet line in the file, so errors point at the right row even when
+// earlier rows were left out. Left-out rows are returned with what is missing.
+function splitParsedRows(parsed, firstLine = 2) {
+  const rows = [];
+  const skipped = [];
+  (parsed || []).forEach((raw, idx) => {
+    const row = normalizeRow(raw);
+    const missing = ['name', 'category', 'type', 'expiresAt'].filter(
+      k => !(row && row[k])
+    );
+    if (missing.length === 0) rows.push({ ...row, line: idx + firstLine });
+    else skipped.push({ line: idx + firstLine, missing });
+  });
+  return { rows, skipped };
+}
+
+// Memoized so a progress tick during a large import does not re-render
+// every row of the preview.
+const FilePreviewRow = React.memo(function FilePreviewRow({
+  row,
+  index,
+  checked,
+  duplicate,
+  onToggle,
+}) {
+  return (
+    <Tr>
+      <Td>
+        <HStack spacing={1}>
+          <Checkbox isChecked={checked} onChange={() => onToggle(index)} />
+          {duplicate && (
+            <Tooltip
+              label='This token already exists in this workspace. Importing will update the existing token with the new data.'
+              hasArrow
+              placement='top'
+            >
+              <Box as='span' color='orange.500' cursor='help'>
+                <FiAlertTriangle size={14} />
+              </Box>
+            </Tooltip>
+          )}
+        </HStack>
+      </Td>
+      <Td>{row.name}</Td>
+      <Td>{row.category}</Td>
+      <Td>{row.type}</Td>
+      <Td>{row.expiresAt}</Td>
+      <Td>{formatSection(row.section)}</Td>
+    </Tr>
+  );
+});
+
+const FilePreviewTable = React.memo(function FilePreviewTable({
+  rows,
+  selected,
+  duplicates,
+  onToggle,
+  borderColor,
+}) {
+  return (
+    <Box
+      maxH='260px'
+      overflowY='auto'
+      border='1px solid'
+      borderColor={borderColor}
+      borderRadius='md'
+    >
+      <Table size='sm' variant='simple'>
+        <Thead>
+          <Tr>
+            <Th w='36px'></Th>
+            <Th>Name</Th>
+            <Th>Category</Th>
+            <Th>Type</Th>
+            <Th>Expires</Th>
+            <Th>Section</Th>
+          </Tr>
+        </Thead>
+        <Tbody>
+          {rows.map((r, i) => (
+            <FilePreviewRow
+              key={i}
+              row={r}
+              index={i}
+              checked={selected.has(i)}
+              duplicate={duplicates.has(i)}
+              onToggle={onToggle}
+            />
+          ))}
+        </Tbody>
+      </Table>
+    </Box>
+  );
+});
+
 async function importWithConcurrency(
   rows,
   workspaceId,
@@ -496,14 +607,15 @@ async function importWithConcurrency(
         }
 
         running++;
+        // Rows the preview already flagged as existing skip the 409 round trip,
+        // which halves requests and keeps big re-imports under API rate limits.
+        const knownDuplicate = raw.knownDuplicate === true;
+        if (knownDuplicate) payload.confirm_duplicate = true;
         tokenAPI
           .createToken(payload)
           .then(tok => {
-            // Check if token was updated (status 200) or created (status 201)
-            // The API returns 200 for updates, 201 for creates
-            // We can't distinguish from the response, so we'll track all as created
-            // and let the backend handle it
-            created.push(tok);
+            if (knownDuplicate) updated.push(tok);
+            else created.push(tok);
             onProgress &&
               onProgress({
                 done: created.length + updated.length + errors.length,
@@ -800,14 +912,29 @@ async function pollAutoSyncAfterRun({
   return 'timeout';
 }
 
-export default function ImportTokensModal({
+function ImportTokensModalContent({
   isOpen,
   onClose,
   onImported,
   openRequest,
   onOpenRequestHandled,
+  // The onboarding step already shows its own Learn more panel.
+  hideDocs = false,
+  // Source keys the dialog may show. Unset means every source.
+  sourceChoices = null,
+  // Source keys to hide, e.g. ['file', 'cert-pem'] for integrations only.
+  hiddenSources = null,
+  // Source the dialog opens on (and returns to after a reset). Default File.
+  initialSource = null,
+  // Workspace the setup guide is configuring; the URL may not carry it.
+  embeddedWorkspaceId = null,
 }) {
-  const { workspaceId } = useWorkspace();
+  const { workspaceId: contextWorkspaceId } = useWorkspace();
+  // Forms and auto-sync get the same id the import handlers resolve.
+  const workspaceId = resolveImportWorkspaceId({
+    embeddedWorkspaceId,
+    contextWorkspaceId,
+  });
   const {
     ready: certOpsReady,
     enabled: certOpsEnabled,
@@ -870,7 +997,12 @@ export default function ImportTokensModal({
     }
   }, []);
 
-  const [source, setSource] = React.useState('file'); // 'file' | 'vault' | 'gitlab' | 'github' | 'aws' | 'azure' | 'azure-ad' | 'gcp'
+  const startSource = resolveStartSource({
+    initialSource,
+    sourceChoices,
+    hiddenSources,
+  });
+  const [source, setSource] = React.useState(startSource); // 'file' | 'vault' | 'gitlab' | 'github' | 'aws' | 'azure' | 'azure-ad' | 'gcp'
   const [isViewer, setIsViewer] = React.useState(false);
   // Integration quota state
   const [integrationQuota, setIntegrationQuota] = React.useState({
@@ -896,7 +1028,15 @@ export default function ImportTokensModal({
   const gcpFormRef = React.useRef(null);
   const certPemFormRef = React.useRef(null);
   const [fileName, setFileName] = React.useState('');
-
+  const [noRowsRead, setNoRowsRead] = React.useState(false);
+  const [skippedRows, setSkippedRows] = React.useState([]);
+  const toggleFileRow = React.useCallback(i => {
+    setSelectedRowsFile(prev => {
+      const n = new Set(prev);
+      n.has(i) ? n.delete(i) : n.add(i);
+      return n;
+    });
+  }, []);
   // Vault integration state
   const [vaultAddress, setVaultAddress] = React.useState(() => {
     try {
@@ -940,6 +1080,9 @@ export default function ImportTokensModal({
     type: 'other',
   });
   const [contactGroups, setContactGroups] = React.useState([]);
+  const [defaultContactGroupId, setDefaultContactGroupId] = React.useState('');
+  // Groups for assets that scheduled syncs add. Starts from the import choice.
+  const [autoSyncGroupIds, setAutoSyncGroupIds] = React.useState([]);
 
   // Shared bulk assignment state (used across all integrations)
   const [bulkSection, setBulkSection] = React.useState('');
@@ -1028,7 +1171,7 @@ export default function ImportTokensModal({
   const [_gcpSummary, _setGcpSummary] = React.useState([]);
   const [_selectedRowsGcp, setSelectedRowsGcp] = React.useState(new Set());
 
-  // Azure AD state
+  // Microsoft Entra ID state
   const [azureADToken, setAzureADToken] = React.useState('');
   const [azureADAuthMethod, setAzureADAuthMethod] = React.useState('token');
   const [azureADTenantId, setAzureADTenantId] = React.useState('');
@@ -1161,6 +1304,7 @@ export default function ImportTokensModal({
         // Restore non-secret form fields from scan_params when auto-sync is already configured
         if (existing && existing.scan_params) {
           const sp = existing.scan_params;
+          setAutoSyncGroupIds(normalizeContactGroupIds(sp.contactGroupIds));
           // Forms (GitLab/GitHub) own their field state; hand them the full
           // saved scan_params so reopening the modal shows the configured
           // values instead of the defaults.
@@ -1533,6 +1677,18 @@ export default function ImportTokensModal({
     setEnableSyncFrequency('daily');
     setEnableSyncTime('09:00');
     setEnableSyncTz(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+    // The provider form owns the group picked for the import; start from it.
+    const formRef =
+      source === 'github'
+        ? githubFormRef
+        : source === 'gitlab'
+          ? gitlabFormRef
+          : null;
+    setAutoSyncGroupIds(
+      normalizeContactGroupIds(
+        formRef?.current?.getContactGroupIds?.() ?? bulkContactGroupIds
+      )
+    );
     onEnableAutoSyncOpen();
   };
 
@@ -1572,7 +1728,7 @@ export default function ImportTokensModal({
       schedule_tz: enableSyncTz,
       // scan_params (filters) never contain secrets, so they're always sent,
       // even if the user didn't re-enter the token.
-      scan_params: scanParams,
+      scan_params: { ...scanParams, contactGroupIds: autoSyncGroupIds },
       cleanup_obsolete: scanParams?.cleanupObsolete === true,
     };
     if (credentialsHasSecrets(credentials, source)) {
@@ -1684,14 +1840,19 @@ export default function ImportTokensModal({
           provider: source,
           name: autoSyncName,
           credentials,
-          scan_params: scanParams,
+          scan_params: { ...scanParams, contactGroupIds: autoSyncGroupIds },
           frequency: enableSyncFrequency,
           schedule_time: enableSyncTime,
           schedule_tz: enableSyncTz,
           cleanup_obsolete: scanParams?.cleanupObsolete === true,
         }
       );
-      showSuccess(`Auto-sync enabled for ${source}`);
+      const firstRun = formatNextSync(created.data?.next_sync_at);
+      showSuccess(
+        firstRun
+          ? `Auto-sync enabled for ${source}. First scan: ${firstRun}. Use Sync now to run it immediately.`
+          : `Auto-sync enabled for ${source}`
+      );
       const res = await apiClient.get(
         `/api/v1/workspaces/${workspaceId}/auto-sync`
       );
@@ -1746,7 +1907,9 @@ export default function ImportTokensModal({
       });
       setIntegrationSubTab('scan');
       setPendingManageTab(false);
-      showSuccess(`Auto-sync disabled for ${source}`);
+      showSuccess(
+        `Auto-sync removed for ${source}. Saved credentials were deleted; assets already imported were kept.`
+      );
       dispatchNotificationsRefresh();
     } catch (e) {
       showWarning(e?.response?.data?.error || 'Failed to disable auto-sync');
@@ -1774,12 +1937,13 @@ export default function ImportTokensModal({
   // Users can still manually set a bulk section to override all selected tokens
 
   const reset = React.useCallback(() => {
-    setSource('file');
+    setSource(startSource);
     setFile(null);
     setRows([]);
     setParsing(false);
     setError(null);
     setFailedRows([]);
+    setSkippedRows([]);
     setIsImporting(false);
     setProgress({ done: 0, total: 0 });
     abortRef.current = null;
@@ -1821,12 +1985,15 @@ export default function ImportTokensModal({
     setAzureADDuplicates(new Set());
     setIntegrationSubTab('scan');
     setPendingManageTab(false);
-  }, []);
+  }, [startSource]);
 
   const onSelectFile = async e => {
     const f = e?.target?.files?.[0];
     setError(null);
+    setNoRowsRead(false);
     setRows([]);
+    setSkippedRows([]);
+    setFailedRows([]);
     setSelectedRowsFile(new Set());
     setFileDuplicates(new Set());
     if (!f) return;
@@ -1836,19 +2003,34 @@ export default function ImportTokensModal({
     } catch (_) {
       setFileName('');
     }
+    if (f.size > MAX_IMPORT_FILE_BYTES) {
+      setError(
+        `This file is ${(f.size / 1048576).toFixed(1)} MB. The limit is ${MAX_IMPORT_FILE_BYTES / 1048576} MB. Split it into smaller files and import them one at a time.`
+      );
+      return;
+    }
     setParsing(true);
     try {
       const parsed = await parseFile(f);
-      const normalized = (parsed || [])
-        .map(normalizeRow)
-        .filter(r => r && r.name && r.category && r.type && r.expiresAt);
+      if (parsed && parsed.length > MAX_IMPORT_ROWS) {
+        setError(
+          `This file has ${parsed.length} rows. The limit is ${MAX_IMPORT_ROWS} rows per file. Split it into smaller files and import them one at a time.`
+        );
+        return;
+      }
+      const { rows: normalized, skipped } = splitParsedRows(
+        parsed,
+        // Spreadsheet-style files have a header row; JSON and YAML do not.
+        /\.(csv|xlsx|xls)$/i.test(f.name || '') ? 2 : 1
+      );
       setRows(normalized);
+      setSkippedRows(skipped);
+      setNoRowsRead(normalized.length === 0);
       // Auto-select all rows
       setSelectedRowsFile(new Set(normalized.map((_, i) => i)));
 
       // Check for duplicates after parsing
-      const params = new URLSearchParams(window.location.search);
-      const workspaceId = params.get('workspace');
+      const workspaceId = getWorkspaceId();
       if (workspaceId && normalized.length > 0) {
         try {
           const items = normalized.map(r => ({
@@ -1891,10 +2073,11 @@ export default function ImportTokensModal({
     try {
       setError(null);
       setIsImporting(true);
-      const selectedRows = rows.filter((_, i) => selectedRowsFile.has(i));
+      const selectedRows = rows
+        .map((r, i) => ({ ...r, knownDuplicate: fileDuplicates.has(i) }))
+        .filter((_, i) => selectedRowsFile.has(i));
       setProgress({ done: 0, total: selectedRows.length });
-      const params = new URLSearchParams(window.location.search);
-      const workspaceId = params.get('workspace');
+      const workspaceId = getWorkspaceId();
       if (!workspaceId) {
         setError('Please select a workspace first.');
         setIsImporting(false);
@@ -1922,6 +2105,7 @@ export default function ImportTokensModal({
         // Keep a sanitized, concise preview of errors
         const safeErrors = errors.map(e => ({
           index: e.index,
+          line: selectedRows[e.index]?.line ?? e.index + 2,
           error: String(e.error || 'Unknown error').slice(0, 200),
         }));
         setFailedRows(safeErrors);
@@ -2109,11 +2293,9 @@ export default function ImportTokensModal({
     return false; // No quota in error response
   };
 
-  // Helper to get workspaceId from URL params
-  const getWorkspaceId = () => {
-    const params = new URLSearchParams(window.location.search);
-    return params.get('workspace');
-  };
+  // Read live so a handler never acts on a stale render.
+  const getWorkspaceId = () =>
+    resolveImportWorkspaceId({ embeddedWorkspaceId, contextWorkspaceId });
 
   const updateAzureADItem = (index, updates) => {
     setAzureADItems(prev => {
@@ -2123,7 +2305,7 @@ export default function ImportTokensModal({
     });
   };
 
-  // Azure AD scan and import
+  // Microsoft Entra ID scan and import
   const doAzureADScan = async () => {
     const workspaceId = getWorkspaceId();
     if (!workspaceId) {
@@ -2189,7 +2371,7 @@ export default function ImportTokensModal({
       if (isQuotaExceededError(e)) {
         setError(formatQuotaError(e));
       } else {
-        setError(e?.message || 'Azure AD scan failed');
+        setError(e?.message || 'Microsoft Entra ID scan failed');
       }
       // Extract quota from error response, or refresh if not present
       if (!extractQuotaFromError(e)) {
@@ -2210,8 +2392,7 @@ export default function ImportTokensModal({
           section: bulkSection || item.section || null,
           ...canonicalContactGroupFields(bulkContactGroupIds),
         }));
-      const params = new URLSearchParams(window.location.search);
-      const workspaceId = params.get('workspace');
+      const workspaceId = getWorkspaceId();
       if (!workspaceId) {
         setError('Please select a workspace first.');
         setIsImporting(false);
@@ -2237,7 +2418,7 @@ export default function ImportTokensModal({
       });
       onImported && onImported(selected);
     } catch (e) {
-      setError(e?.message || 'Azure AD import failed');
+      setError(e?.message || 'Microsoft Entra ID import failed');
     } finally {
       setIsImporting(false);
     }
@@ -2247,9 +2428,7 @@ export default function ImportTokensModal({
   React.useEffect(() => {
     logger.info('[ImportModal] useEffect triggered, isOpen:', isOpen);
     if (!isOpen) return;
-    const params = new URLSearchParams(window.location.search);
-    const workspaceId = params.get('workspace');
-    logger.info('[ImportModal] Workspace ID from URL:', workspaceId);
+    logger.info('[ImportModal] Workspace ID:', workspaceId);
     if (!workspaceId) {
       setIsViewer(false);
       setContactGroups([]);
@@ -2322,6 +2501,9 @@ export default function ImportTokensModal({
             ? alertSettings.contact_groups
             : [];
           setContactGroups(groups);
+          setDefaultContactGroupId(
+            String(alertSettings?.default_contact_group_id || '')
+          );
         } catch (_) {
           setContactGroups([]);
         }
@@ -2357,7 +2539,7 @@ export default function ImportTokensModal({
         }
       }
     })();
-  }, [isOpen]);
+  }, [isOpen, workspaceId]);
 
   const renderErrorAlert = () =>
     error ? (
@@ -2444,7 +2626,7 @@ export default function ImportTokensModal({
                 <Tbody>
                   {failedRows.slice(0, 10).map(fr => (
                     <Tr key={fr.index}>
-                      <Td>{fr.index + 2}</Td>
+                      <Td>{fr.line ?? fr.index + 2}</Td>
                       <Td>{fr.error}</Td>
                     </Tr>
                   ))}
@@ -2465,7 +2647,7 @@ export default function ImportTokensModal({
                       const rows = [
                         ['row', 'error'],
                         ...failedRows.map(fr => [
-                          String(fr.index + 2),
+                          String(fr.line ?? fr.index + 2),
                           String(fr.error),
                         ]),
                       ];
@@ -2493,18 +2675,24 @@ export default function ImportTokensModal({
               </HStack>
             </Box>
           ) : null}
-          <Text fontSize='xs'>
-            Need help? See{' '}
-            <ChakraLink
-              href={IMPORT_DOCS.integrations}
-              textDecoration='underline'
-              color='blue.500'
-              isExternal
-            >
-              import docs
-            </ChakraLink>
-            .
-          </Text>
+          {hideDocs ? null : (
+            <Text fontSize='xs'>
+              Need help? See{' '}
+              <ChakraLink
+                href={
+                  source === 'file'
+                    ? IMPORT_DOCS.file
+                    : IMPORT_DOCS.integrations
+                }
+                textDecoration='underline'
+                color='blue.500'
+                isExternal
+              >
+                import docs
+              </ChakraLink>
+              .
+            </Text>
+          )}
         </VStack>
       </Alert>
     ) : null;
@@ -2523,7 +2711,7 @@ export default function ImportTokensModal({
         <DashboardModalFrame maxW='960px'>
           <ModalHeader {...headerProps}>
             <DashboardModalTitle color={modalTokens.text}>
-              Import tokens
+              {hideDocs ? 'Import assets' : 'Import tokens'}
             </DashboardModalTitle>
             <DashboardModalDescription>
               Import assets from files or connected infrastructure providers.
@@ -2554,43 +2742,36 @@ export default function ImportTokensModal({
                       key: 'vault',
                       label: 'HashiCorp Vault',
                       alt: 'HashiCorp Vault',
-                      src: '/Branding/vendor-logos/hashicorp.png',
                     },
                     {
                       key: 'gitlab',
                       label: 'GitLab',
                       alt: 'GitLab',
-                      src: '/Branding/vendor-logos/gitlab.png',
                     },
                     {
                       key: 'github',
                       label: 'GitHub',
                       alt: 'GitHub',
-                      src: '/Branding/vendor-logos/github.png',
                     },
                     {
                       key: 'aws',
                       label: 'AWS',
                       alt: 'AWS',
-                      src: '/Branding/vendor-logos/aws.png',
                     },
                     {
                       key: 'azure',
                       label: 'Azure KV',
                       alt: 'Azure Key Vault',
-                      src: '/Branding/vendor-logos/azure.svg',
                     },
                     {
                       key: 'azure-ad',
-                      label: 'Azure AD',
-                      alt: 'Azure Active Directory',
-                      src: '/Branding/vendor-logos/azure.svg',
+                      label: 'Microsoft Entra ID',
+                      alt: 'Microsoft Entra ID',
                     },
                     {
                       key: 'gcp',
                       label: 'GCP',
                       alt: 'Google Cloud',
-                      src: '/Branding/vendor-logos/google-cloud-icon.png',
                     },
                     {
                       key: 'cert-pem',
@@ -2599,196 +2780,154 @@ export default function ImportTokensModal({
                       type: 'icon',
                       icon: 'shield',
                     },
-                  ].map(card => {
-                    const isCertPemCard = card.key === 'cert-pem';
-                    const isIntegration = card.key !== 'file' && !isCertPemCard;
-                    const hasQuotaRemaining =
-                      integrationQuota.remaining === null ||
-                      integrationQuota.remaining > 0;
-                    const isCertPemDisabled =
-                      isCertPemCard && certOpsReady && certOpsEnabled === false;
-                    const isLocked = isCertPemCard
-                      ? isViewer ||
-                        !certOpsReady ||
-                        isCertPemDisabled ||
-                        certOpsAvailabilityError
-                      : isIntegration && (isViewer || !hasQuotaRemaining);
-                    const lockReason = isCertPemCard
-                      ? isViewer
-                        ? 'Viewers cannot import certificates'
-                        : !certOpsReady
-                          ? 'Checking certificate operations availability...'
-                          : certOpsAvailabilityError
-                            ? certOpsAvailabilityError
-                            : certOpsEnabled === false
-                              ? 'Certificate operations are not enabled for this workspace'
-                              : ''
-                      : isIntegration
+                  ]
+                    .filter(card =>
+                      isSourceVisible(card.key, {
+                        sourceChoices,
+                        hiddenSources,
+                      })
+                    )
+                    .map(card => {
+                      const isCertPemCard = card.key === 'cert-pem';
+                      const isIntegration =
+                        card.key !== 'file' && !isCertPemCard;
+                      const hasQuotaRemaining =
+                        integrationQuota.remaining === null ||
+                        integrationQuota.remaining > 0;
+                      const isCertPemDisabled =
+                        isCertPemCard &&
+                        certOpsReady &&
+                        certOpsEnabled === false;
+                      const isLocked = isCertPemCard
+                        ? isViewer ||
+                          !certOpsReady ||
+                          isCertPemDisabled ||
+                          certOpsAvailabilityError
+                        : isIntegration && (isViewer || !hasQuotaRemaining);
+                      const lockReason = isCertPemCard
                         ? isViewer
-                          ? 'Viewers cannot use integrations'
-                          : integrationQuota.remaining === 0
-                            ? `Monthly scan limit reached (${integrationQuota.limit}/month).`
-                            : ''
-                        : '';
-                    const selectCard = () => {
-                      if (!isLocked) setSource(card.key);
-                    };
+                          ? 'Viewers cannot import certificates'
+                          : !certOpsReady
+                            ? 'Checking certificate operations availability...'
+                            : certOpsAvailabilityError
+                              ? certOpsAvailabilityError
+                              : certOpsEnabled === false
+                                ? 'Certificate operations are not enabled for this workspace'
+                                : ''
+                        : isIntegration
+                          ? isViewer
+                            ? 'Viewers cannot use integrations'
+                            : integrationQuota.remaining === 0
+                              ? `Monthly scan limit reached (${integrationQuota.limit}/month).`
+                              : ''
+                          : '';
+                      const selectCard = () => {
+                        if (!isLocked) setSource(card.key);
+                      };
 
-                    const cardContent = (
-                      <VStack
-                        spacing={2}
-                        align='center'
-                        justify='center'
-                        p={3}
-                        minH={{ base: '116px', md: '132px' }}
-                        w='100%'
-                        bg={modalTokens.fieldBg}
-                        border='1px solid'
-                        borderColor={
-                          source === card.key
-                            ? modalTokens.focusBorder
-                            : modalTokens.border
-                        }
-                        borderRadius='12px'
-                        boxShadow={
-                          source === card.key
-                            ? '0 0 0 1px rgba(59, 130, 246, 0.35)'
-                            : 'none'
-                        }
-                        cursor={isLocked ? 'not-allowed' : 'pointer'}
-                        opacity={isLocked ? 0.6 : 1}
-                        onClick={selectCard}
-                        onKeyDown={e => {
-                          if (
-                            !isLocked &&
-                            (e.key === 'Enter' || e.key === ' ')
-                          ) {
-                            e.preventDefault();
-                            selectCard();
+                      const cardContent = (
+                        <VStack
+                          spacing={2}
+                          align='center'
+                          justify='center'
+                          p={3}
+                          minH={{ base: '116px', md: '132px' }}
+                          w='100%'
+                          bg={modalTokens.fieldBg}
+                          border='1px solid'
+                          borderColor={
+                            source === card.key
+                              ? modalTokens.focusBorder
+                              : modalTokens.border
                           }
-                        }}
-                        tabIndex={isLocked ? -1 : 0}
-                        role='button'
-                        aria-label={card.alt}
-                        aria-disabled={isLocked}
-                        aria-pressed={source === card.key}
-                        transition='border-color 0.15s ease, box-shadow 0.15s ease'
-                        _hover={
-                          isLocked
-                            ? undefined
-                            : {
-                                borderColor: modalTokens.focusBorder,
-                                bg: modalTokens.fieldBg,
-                              }
-                        }
-                        _focusVisible={{
-                          outline: '2px solid',
-                          outlineColor: modalTokens.focusBorder,
-                          outlineOffset: '2px',
-                        }}
-                      >
-                        <HStack spacing={1}>
-                          <Text
-                            fontSize='sm'
-                            fontWeight='semibold'
-                            color={modalTokens.text}
-                          >
-                            {card.label}
-                          </Text>
-                          {isLocked ? (
-                            <Tooltip label={lockReason} fontSize='xs'>
-                              <Badge colorScheme='orange'>
-                                {isViewer ? 'ADMIN' : 'LIMIT'}
-                              </Badge>
-                            </Tooltip>
-                          ) : null}
-                        </HStack>
-                        {card.type === 'icon' ? (
-                          <Box p={2}>
-                            <Box
-                              as={
-                                card.icon === 'shield' ? FiShield : FiDownload
-                              }
-                              boxSize={{ base: '40px', md: '56px' }}
-                              color={
-                                source === card.key
-                                  ? modalTokens.focusBorder
-                                  : modalTokens.muted
-                              }
-                            />
-                          </Box>
-                        ) : (
-                          <Box position='relative'>
-                            <Image
-                              src={card.src}
-                              alt=''
-                              aria-hidden
-                              maxH={{ base: '56px', md: '72px' }}
-                              maxW='100%'
-                              objectFit='contain'
-                              opacity={isLocked ? 0.4 : 1}
-                              filter={isLocked ? 'grayscale(100%)' : 'none'}
-                            />
-                            {/* Icon badge to differentiate Azure services */}
-                            {card.key === 'azure' && (
-                              <Tooltip label='Azure Key Vault' fontSize='xs'>
-                                <Box
-                                  position='absolute'
-                                  top='-6px'
-                                  right='-6px'
-                                  bg='blue.500'
-                                  borderRadius='full'
-                                  p={1.5}
-                                  boxShadow='md'
-                                  border='2px solid white'
-                                >
-                                  <Box
-                                    as={FiKey}
-                                    boxSize='14px'
-                                    color='white'
-                                  />
-                                </Box>
+                          borderRadius='12px'
+                          boxShadow={
+                            source === card.key
+                              ? '0 0 0 1px rgba(59, 130, 246, 0.35)'
+                              : 'none'
+                          }
+                          cursor={isLocked ? 'not-allowed' : 'pointer'}
+                          opacity={isLocked ? 0.6 : 1}
+                          onClick={selectCard}
+                          onKeyDown={e => {
+                            if (
+                              !isLocked &&
+                              (e.key === 'Enter' || e.key === ' ')
+                            ) {
+                              e.preventDefault();
+                              selectCard();
+                            }
+                          }}
+                          tabIndex={isLocked ? -1 : 0}
+                          role='button'
+                          aria-label={card.alt}
+                          aria-disabled={isLocked}
+                          aria-pressed={source === card.key}
+                          transition='border-color 0.15s ease, box-shadow 0.15s ease'
+                          _hover={
+                            isLocked
+                              ? undefined
+                              : {
+                                  borderColor: modalTokens.focusBorder,
+                                  bg: modalTokens.fieldBg,
+                                }
+                          }
+                          _focusVisible={{
+                            outline: '2px solid',
+                            outlineColor: modalTokens.focusBorder,
+                            outlineOffset: '2px',
+                          }}
+                        >
+                          <HStack spacing={1}>
+                            <Text
+                              fontSize='sm'
+                              fontWeight='semibold'
+                              color={modalTokens.text}
+                            >
+                              {card.label}
+                            </Text>
+                            {isLocked ? (
+                              <Tooltip label={lockReason} fontSize='xs'>
+                                <Badge colorScheme='orange'>
+                                  {isViewer ? 'ADMIN' : 'LIMIT'}
+                                </Badge>
                               </Tooltip>
-                            )}
-                            {card.key === 'azure-ad' && (
-                              <Tooltip
-                                label='Azure Active Directory'
-                                fontSize='xs'
-                              >
-                                <Box
-                                  position='absolute'
-                                  top='-6px'
-                                  right='-6px'
-                                  bg='purple.500'
-                                  borderRadius='full'
-                                  p={1.5}
-                                  boxShadow='md'
-                                  border='2px solid white'
-                                >
-                                  <Box
-                                    as={FiUsers}
-                                    boxSize='14px'
-                                    color='white'
-                                  />
-                                </Box>
-                              </Tooltip>
-                            )}
-                          </Box>
-                        )}
-                      </VStack>
-                    );
+                            ) : null}
+                          </HStack>
+                          {card.type === 'icon' ? (
+                            <Box p={2}>
+                              <Box
+                                as={
+                                  card.icon === 'shield' ? FiShield : FiDownload
+                                }
+                                boxSize={{ base: '40px', md: '56px' }}
+                                color={
+                                  source === card.key
+                                    ? modalTokens.focusBorder
+                                    : modalTokens.muted
+                                }
+                              />
+                            </Box>
+                          ) : (
+                            <ImportSourceLogo
+                              sourceKey={card.key}
+                              dimmed={isLocked}
+                            />
+                          )}
+                        </VStack>
+                      );
 
-                    return (
-                      <Tooltip
-                        key={card.key}
-                        label={lockReason}
-                        fontSize='xs'
-                        isDisabled={!isLocked || !lockReason}
-                      >
-                        {cardContent}
-                      </Tooltip>
-                    );
-                  })}
+                      return (
+                        <Tooltip
+                          key={card.key}
+                          label={lockReason}
+                          fontSize='xs'
+                          isDisabled={!isLocked || !lockReason}
+                        >
+                          {cardContent}
+                        </Tooltip>
+                      );
+                    })}
                 </Box>
               </Box>
 
@@ -2924,7 +3063,19 @@ export default function ImportTokensModal({
                           No sync run yet
                         </Text>
                       )}
+                      {autoSyncConfig.enabled && autoSyncConfig.next_sync_at ? (
+                        <Text fontSize='sm' data-testid='next-sync'>
+                          Next sync:{' '}
+                          {formatNextSync(autoSyncConfig.next_sync_at)}
+                        </Text>
+                      ) : null}
                     </Box>
+                    <AutoSyncGroupLine
+                      groupIds={autoSyncGroupIds}
+                      onChange={setAutoSyncGroupIds}
+                      contactGroups={contactGroups}
+                      defaultGroupId={defaultContactGroupId}
+                    />
                     <Box>
                       <Text fontSize='sm' fontWeight='semibold' mb={2}>
                         Recent runs
@@ -3032,16 +3183,18 @@ export default function ImportTokensModal({
                       Upload a file in .csv, .xlsx, .json, .yaml or .yml format.
                       Required fields per row: name, category, type, expiresAt.
                     </Text>
-                    <Text fontSize='sm' mt={1}>
-                      <ChakraLink
-                        href={IMPORT_DOCS.file}
-                        color='blue.500'
-                        textDecoration='underline'
-                        isExternal
-                      >
-                        Learn more about importing from files →
-                      </ChakraLink>
-                    </Text>
+                    {hideDocs ? null : (
+                      <LearnMorePanel
+                        variant='compact'
+                        mt={2}
+                        links={[
+                          {
+                            label: 'Importing from files',
+                            url: IMPORT_DOCS.file,
+                          },
+                        ]}
+                      />
+                    )}
                   </Box>
                   <Input
                     ref={fileInputRef}
@@ -3109,6 +3262,7 @@ export default function ImportTokensModal({
 
               {source === 'vault' && !autoSyncManageMode ? (
                 <ImportVaultForm
+                  hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={vaultFormRef}
                   workspaceId={workspaceId}
@@ -3138,6 +3292,7 @@ export default function ImportTokensModal({
 
               {source === 'gitlab' ? (
                 <ImportGitLabForm
+                  hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={gitlabFormRef}
                   workspaceId={workspaceId}
@@ -3183,6 +3338,7 @@ export default function ImportTokensModal({
 
               {source === 'github' ? (
                 <ImportGitHubForm
+                  hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={githubFormRef}
                   workspaceId={workspaceId}
@@ -3228,6 +3384,7 @@ export default function ImportTokensModal({
 
               {source === 'aws' && !autoSyncManageMode ? (
                 <ImportAWSForm
+                  hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={awsFormRef}
                   initialAutoSyncScanParams={awsAutoSyncScanParams}
@@ -3258,6 +3415,7 @@ export default function ImportTokensModal({
 
               {source === 'azure' ? (
                 <ImportAzureForm
+                  hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={azureFormRef}
                   workspaceId={workspaceId}
@@ -3289,6 +3447,7 @@ export default function ImportTokensModal({
 
               {source === 'gcp' && !autoSyncManageMode ? (
                 <ImportGCPForm
+                  hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={gcpFormRef}
                   workspaceId={workspaceId}
@@ -3321,23 +3480,25 @@ export default function ImportTokensModal({
                   {!autoSyncManageMode ? (
                     <Box>
                       <Text fontSize='sm' color={muted}>
-                        Scans Azure AD for app registrations and service
-                        principals with expiring client secrets and
+                        Scans Microsoft Entra ID for app registrations and
+                        service principals with expiring client secrets and
                         certificates. Pasted Graph tokens and Entra app client
                         credentials are stored encrypted if auto-sync is
                         enabled. Application.Read.All is the recommended Graph
                         application permission.
                       </Text>
-                      <Text fontSize='sm' mt={1}>
-                        <ChakraLink
-                          href={IMPORT_DOCS.entraId}
-                          color='blue.500'
-                          textDecoration='underline'
-                          isExternal
-                        >
-                          Learn more about importing from Azure AD →
-                        </ChakraLink>
-                      </Text>
+                      {hideDocs ? null : (
+                        <LearnMorePanel
+                          variant='compact'
+                          mt={2}
+                          links={[
+                            {
+                              label: 'Importing from Microsoft Entra ID',
+                              url: IMPORT_DOCS.entraId,
+                            },
+                          ]}
+                        />
+                      )}
                     </Box>
                   ) : null}
                   <AzureInventoryAuthFields
@@ -3525,6 +3686,16 @@ export default function ImportTokensModal({
                 </VStack>
               ) : null}
 
+              {source === 'file' && noRowsRead && !parsing ? (
+                <Alert status='warning' borderRadius='md' py={2}>
+                  <AlertIcon />
+                  <Text fontSize='sm'>
+                    No rows could be read from this file. Check the columns
+                    against the template.
+                  </Text>
+                </Alert>
+              ) : null}
+
               {source === 'file' && parsing ? (
                 <HStack>
                   <Text>Parsing…</Text>
@@ -3543,6 +3714,25 @@ export default function ImportTokensModal({
               ].includes(source)
                 ? renderErrorAlert()
                 : null}
+
+              {source === 'file' && skippedRows.length > 0 ? (
+                <Alert status='warning' borderRadius='md' py={2}>
+                  <AlertIcon />
+                  <Text fontSize='sm' data-testid='skipped-rows-note'>
+                    {skippedRows.length} row
+                    {skippedRows.length === 1 ? '' : 's'} left out because a
+                    required field is empty:{' '}
+                    {skippedRows
+                      .slice(0, 5)
+                      .map(s => `row ${s.line} (${s.missing.join(', ')})`)
+                      .join('; ')}
+                    {skippedRows.length > 5
+                      ? `; and ${skippedRows.length - 5} more`
+                      : ''}
+                    . Add the missing values to the file to import them.
+                  </Text>
+                </Alert>
+              ) : null}
 
               {source === 'file' && rows.length > 0 ? (
                 <Box>
@@ -3581,66 +3771,13 @@ export default function ImportTokensModal({
                         </Text>
                       </Alert>
                     )}
-                  <Box
-                    maxH='260px'
-                    overflowY='auto'
-                    border='1px solid'
+                  <FilePreviewTable
+                    rows={rows}
+                    selected={selectedRowsFile}
+                    duplicates={fileDuplicates}
+                    onToggle={toggleFileRow}
                     borderColor={border}
-                    borderRadius='md'
-                  >
-                    <Table size='sm' variant='simple'>
-                      <Thead>
-                        <Tr>
-                          <Th w='36px'></Th>
-                          <Th>Name</Th>
-                          <Th>Category</Th>
-                          <Th>Type</Th>
-                          <Th>Expires</Th>
-                          <Th>Section</Th>
-                        </Tr>
-                      </Thead>
-                      <Tbody>
-                        {rows.map((r, i) => (
-                          <Tr key={i}>
-                            <Td>
-                              <HStack spacing={1}>
-                                <Checkbox
-                                  isChecked={selectedRowsFile.has(i)}
-                                  onChange={() =>
-                                    setSelectedRowsFile(prev => {
-                                      const n = new Set(prev);
-                                      n.has(i) ? n.delete(i) : n.add(i);
-                                      return n;
-                                    })
-                                  }
-                                />
-                                {fileDuplicates.has(i) && (
-                                  <Tooltip
-                                    label='This token already exists in this workspace. Importing will update the existing token with the new data.'
-                                    hasArrow
-                                    placement='top'
-                                  >
-                                    <Box
-                                      as='span'
-                                      color='orange.500'
-                                      cursor='help'
-                                    >
-                                      <FiAlertTriangle size={14} />
-                                    </Box>
-                                  </Tooltip>
-                                )}
-                              </HStack>
-                            </Td>
-                            <Td>{r.name}</Td>
-                            <Td>{r.category}</Td>
-                            <Td>{r.type}</Td>
-                            <Td>{r.expiresAt}</Td>
-                            <Td>{r.section || ''}</Td>
-                          </Tr>
-                        ))}
-                      </Tbody>
-                    </Table>
-                  </Box>
+                  />
                 </Box>
               ) : null}
 
@@ -3924,6 +4061,12 @@ export default function ImportTokensModal({
                   maxLength={255}
                 />
               </FormControl>
+              <AutoSyncGroupLine
+                groupIds={autoSyncGroupIds}
+                onChange={setAutoSyncGroupIds}
+                contactGroups={contactGroups}
+                defaultGroupId={defaultContactGroupId}
+              />
               <HStack spacing={4} align='flex-end'>
                 <FormControl flex='1'>
                   <FormLabel fontSize='sm'>Frequency</FormLabel>
@@ -4049,5 +4192,15 @@ export default function ImportTokensModal({
         </DashboardModalFrame>
       </Modal>
     </>
+  );
+}
+
+// The setup guide opens this dialog with hideDocs. Fields that overlap with a
+// later guide step read that flag through context to explain themselves.
+export default function ImportTokensModal(props) {
+  return (
+    <EmbeddedImportContext.Provider value={Boolean(props.hideDocs)}>
+      <ImportTokensModalContent {...props} />
+    </EmbeddedImportContext.Provider>
   );
 }

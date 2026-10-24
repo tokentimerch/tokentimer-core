@@ -397,6 +397,7 @@ async function runAutoSync() {
                 scanId,
                 cleanup,
                 autoSyncRun: runContext(config),
+                contactGroupIds: scan_params?.contactGroupIds,
               }),
               { timeout: 60000, headers: authHeaders },
             );

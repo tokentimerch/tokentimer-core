@@ -87,14 +87,15 @@ Top level:
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `serverUrl` | string | required | Control plane base URL. Env override: `TOKENTIMER_AGENT_SERVER_URL`. |
-| `agentId` | string or null | null | Assigned at registration; matches `^[A-Za-z0-9_.:-]{1,128}$`. |
+| `agentId` | string or null | null | Assigned at registration; matches `^[A-Za-z0-9_.:-]{1,128}$`. When you replace or regenerate `config.json`, keep the `agentId` line: a stored credential without it stops the service at start. |
 | `protocolVersion` | string | `"1.0.0"` | Semver `x.y.z`. |
 | `heartbeatIntervalMs` | positive int | 30000 | Env override: `TOKENTIMER_AGENT_HEARTBEAT_MS`. |
 | `pollIntervalMs` | positive int | 15000 | Claim loop interval. Env override: `TOKENTIMER_AGENT_POLL_MS`. |
 | `declaredTargetSelectors` | string[] | `[]` | Target names this agent accepts. A non-empty list is sent again on every heartbeat, so adding a DNS name and restarting the agent publishes it. An empty list does not clear the stored names. |
-| `declaredCommandProfileNames` | string[] | `[]` | Reported at registration. |
+| `declaredCommandProfileNames` | string[] | `[]` | Sent at registration and on every heartbeat (a list, even an empty one), so adding or removing a profile and restarting the agent updates the control plane. An agent older than 0.18.0 sends it only at registration. |
 | `policy` | object or null | null | Agent-local allowlists (below). Null means every allowlist is empty: default deny. |
 | `discovery` | object or null | null | Null disables discovery entirely. |
+| `windowsDiscovery` | object or null | enabled | Windows only: `{ "enabled": true, "intervalMs": 1800000, "stores": ["My"] }`. Omit it to use these defaults; it does nothing on other platforms. |
 | `execution` | object or null | null | Null is treated as `{ enabled: false }` (observe-only mode). |
 | `caBundlePath` | string or null | null | Path to a PEM CA bundle trusted for the agent-to-control-plane HTTPS channel (private-CA control planes). Env override: `TOKENTIMER_AGENT_CA_BUNDLE`. Fail-loud at startup: a missing/unreadable file, a file without a `BEGIN CERTIFICATE` block, or a file containing private key material aborts before any network call. When set, the bundle replaces the default trust store for control-plane requests (it does not extend it); plain `http` URLs are unaffected. When unset, the OS trust store applies (`NODE_EXTRA_CA_CERTS` remains a coarser process-wide alternative). |
 | `dnsProviders` | object or null | null | Native DNS-01 solver configuration (see "DNS-01 providers" in [DNS and ACME](dns-and-acme.md)). Maps provider id to `{ credentialsFile: <absolute path>, ...non-secret options }`, plus a reserved `zoneProviderMap` key (zone to provider id). Credentials never live in `config.json`, only the path to a 0600 credentials file does. Fail-loud validation: unknown provider ids, relative paths, and `zoneProviderMap` entries naming unconfigured providers abort startup. |
@@ -108,7 +109,7 @@ Top level:
 | Field | Type | Notes |
 |-------|------|-------|
 | `allowedCommands` | object | Maps profile name to `{ argv: string[] }`. `argv` is the allowlisted **executable plus any fixed leading flags you want to require**, not the whole command line: for the built-in certbot/acme.sh CSR flows the adapter appends the subcommand and its own flags (`certonly`/`--signcsr`, `--csr <path>`, the DNS hook flags, `--server <caEndpoint>`, output paths) itself, so repeating them in `argv` duplicates them and the tool fails to parse. See the argv table in `src/acme/index.js`. Every argv element is rejected at load time if it contains a shell metacharacter (`; \| & $ ` > <` or CR/LF). |
-| `allowedPaths` | string[] | Normalized to absolute paths; containment is segment-aware (no sibling-prefix collisions). |
+| `allowedPaths` | string[] | Normalized to absolute paths; containment is segment-aware (no sibling-prefix collisions). Deploys also read the private key from `execution.keysDir`, so list that directory next to every certificate destination (on the Linux installer layout: `/opt/tokentimer-agent/state/keys`). With only the certificate folder allowed, the deploy was rejected. |
 | `allowedCaEndpoints` | string[] | Full-URL exact match after trailing-slash normalization. |
 | `allowedDnsZones` | string[] | Suffix match with dot boundary (`sub.example.com` covered by `example.com`, `evilexample.com` is not). |
 | `allowedDnsProviders` | string[] | Exact match. |

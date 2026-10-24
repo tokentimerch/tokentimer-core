@@ -33,7 +33,9 @@ import {
   dispatchIssuerPreflight,
   listIssuers,
 } from './certopsEnrollmentsApi';
-import AdcsDocsLink from './AdcsDocsLink.jsx';
+import LearnMorePanel from '../LearnMorePanel.jsx';
+import { getJob } from './certopsJobsApi.js';
+import { failedPreflightMessage } from './adcsPreflightJob.js';
 import { ADCS_DOCS } from '../../utils/docsUrls.js';
 import { showError, showSuccess } from '../../utils/toast.js';
 
@@ -86,7 +88,7 @@ function adviceFor(issuer, agents) {
   if (!agents.length) {
     return {
       status: 'warning',
-      text: 'No Windows agent is registered. Install the agent on a domain machine that can reach the CA, then open this wizard again.',
+      text: 'No Windows agent is registered. Install the agent on a domain machine that can reach the CA, then open this dialog again.',
     };
   }
   const preflight = issuer?.lastPreflight;
@@ -138,8 +140,15 @@ export default function AdcsIssuerWizard({
   agents,
   paused,
   onChanged,
+  initialName = '',
+  initialAgentId = '',
+  initialCaConfig = '',
+  initialTemplate = '',
 }) {
   const modal = useDashboardModalProps();
+  const seedRef = useRef({});
+  seedRef.current = { initialName, initialCaConfig, initialTemplate };
+  const agentSeededRef = useRef(false);
   const [step, setStep] = useState(0);
   const [name, setName] = useState('');
   const [issuer, setIssuer] = useState(null);
@@ -152,6 +161,7 @@ export default function AdcsIssuerWizard({
   const draftIdRef = useRef(null);
   const finishedRef = useRef(false);
   const expectedPairRef = useRef(null);
+  const preflightJobIdRef = useRef(null);
 
   useEffect(() => {
     if (!isOpen) {
@@ -164,11 +174,25 @@ export default function AdcsIssuerWizard({
       setBusy(false);
       setWaiting(false);
       setLocalError('');
+      agentSeededRef.current = false;
       return;
     }
     finishedRef.current = false;
     draftIdRef.current = null;
+    // Callers may prefill the form; the operator can still change it.
+    const seed = seedRef.current;
+    setName(seed.initialName || '');
+    setCaConfig(seed.initialCaConfig || '');
+    setTemplate(seed.initialTemplate || '');
   }, [isOpen]);
+
+  // The agent list can arrive after the dialog opens, so seed it once.
+  useEffect(() => {
+    if (!isOpen || agentSeededRef.current || !initialAgentId) return;
+    if (!agents.some(agent => agent.id === initialAgentId)) return;
+    agentSeededRef.current = true;
+    setAgentId(initialAgentId);
+  }, [isOpen, initialAgentId, agents]);
 
   useEffect(() => {
     if (!isOpen || !waiting || !issuer?.id) return undefined;
@@ -185,19 +209,45 @@ export default function AdcsIssuerWizard({
         );
         if (cancelled) return;
         if (current) setIssuer(current);
+        // An agent refusal never updates the issuer, so read the job itself.
+        // A job that cannot be read must not stop the wait for the verdict.
+        const jobId = preflightJobIdRef.current;
+        if (jobId) {
+          let failure = '';
+          try {
+            failure = failedPreflightMessage(
+              (await getJob(workspaceId, jobId))?.job
+            );
+          } catch {
+            failure = '';
+          }
+          if (cancelled) return;
+          if (failure) {
+            setWaiting(false);
+            setLocalError(failure);
+            return;
+          }
+        }
         const expected = expectedPairRef.current;
-        const pairMatches =
+        const pairMatches = Boolean(
           current?.lastPreflight?.caConfig === expected?.caConfig &&
           current?.lastPreflight?.template === expected?.template &&
           current?.lastPreflightJobId &&
-          current.lastPreflightJobId !== expected?.previousJobId;
+          current.lastPreflightJobId !== expected?.previousJobId
+        );
         const safe =
           pairMatches &&
           current?.lastPreflight?.templateCheck?.verdict === 'safe' &&
           current?.lastPreflight?.caCheck?.verdict === 'safe';
-        if (safe || attempts >= 20) {
+        if (safe || pairMatches || attempts >= 20) {
           setWaiting(false);
           if (safe) setStep(2);
+          else if (!pairMatches) {
+            // Without this the dialog just stops waiting and says nothing.
+            setLocalError(
+              'The agent has not reported a verdict yet. Check that it is online, that its enrollment rule names this CA config and template, and that TokenTimerAgent was restarted after the rule was saved. Then run the check again.'
+            );
+          }
         }
       } catch (err) {
         if (!cancelled) {
@@ -253,14 +303,15 @@ export default function AdcsIssuerWizard({
         template: template.trim(),
         previousJobId: issuer?.lastPreflightJobId || null,
       };
-      await dispatchIssuerPreflight(workspaceId, issuerId, {
+      const dispatched = await dispatchIssuerPreflight(workspaceId, issuerId, {
         agentId,
         caConfig: caConfig.trim(),
         template: template.trim(),
       });
+      preflightJobIdRef.current = dispatched?.job?.id || null;
       setWaiting(true);
       showSuccess(
-        'Preflight dispatched. This wizard updates when the agent reports.'
+        'Preflight dispatched. This dialog updates when the agent reports.'
       );
     } catch (err) {
       setLocalError(errorText(err, 'Could not dispatch preflight.'));
@@ -350,7 +401,7 @@ export default function AdcsIssuerWizard({
                   onChange={event => setName(event.target.value)}
                 />
                 <FormHelperText>
-                  A name you will recognize later, such as TTLab Issuing CA.
+                  A name you will recognize later, such as Corp Issuing CA.
                 </FormHelperText>
               </FormControl>
             ) : null}
@@ -386,7 +437,7 @@ export default function AdcsIssuerWizard({
                   <Input
                     {...modal.fieldProps}
                     aria-label='CA config'
-                    placeholder='ca01.corp.example.com\\Corp Issuing CA'
+                    placeholder='ca01.corp.example.com\Corp Issuing CA'
                     value={caConfig}
                     onChange={event => setCaConfig(event.target.value)}
                   />
@@ -395,9 +446,6 @@ export default function AdcsIssuerWizard({
                     Certification Authority console. Use the same string as this
                     agent's enrollment rule.
                   </FormHelperText>
-                  <AdcsDocsLink href={ADCS_DOCS.caConfig}>
-                    Where the CA name comes from
-                  </AdcsDocsLink>
                 </FormControl>
                 <FormControl isRequired>
                   <FormLabel {...modal.labelProps}>Template</FormLabel>
@@ -415,13 +463,24 @@ export default function AdcsIssuerWizard({
                     name must be in the agent's enrollment rule or the check
                     never contacts the CA.
                   </FormHelperText>
-                  <AdcsDocsLink href={ADCS_DOCS.template}>
-                    Where the template name comes from
-                  </AdcsDocsLink>
-                  <AdcsDocsLink href={ADCS_DOCS.enrollmentRules}>
-                    How the agent allows this CA
-                  </AdcsDocsLink>
                 </FormControl>
+                <LearnMorePanel
+                  variant='compact'
+                  links={[
+                    {
+                      label: 'Where the CA name comes from',
+                      url: ADCS_DOCS.caConfig,
+                    },
+                    {
+                      label: 'Where the template name comes from',
+                      url: ADCS_DOCS.template,
+                    },
+                    {
+                      label: 'How the agent allows this CA',
+                      url: ADCS_DOCS.enrollmentRules,
+                    },
+                  ]}
+                />
               </Stack>
             ) : null}
             {step === 2 ? (
@@ -466,8 +525,10 @@ export default function AdcsIssuerWizard({
                 New AD CS profile there. The last step attaches the profile to a
                 certificate already in inventory and turns automation on. The
                 sweep enrolls when that certificate is inside the profile lead
-                time and an agent that declares the DNS name has passed the CA
-                check and is online.
+                time and an agent that declares the DNS name has passed a CA
+                check taken after you pinned the certificate and is online. The
+                check you just ran came before the pin, so on the issuer choose
+                Check again once more.
               </Text>
             ) : null}
           </Stack>

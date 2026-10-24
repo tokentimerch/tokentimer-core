@@ -13,7 +13,6 @@ import {
   FormLabel,
   HStack,
   Input,
-  Link as ChakraLink,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -31,6 +30,7 @@ import {
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
 import CopyableCodeBlock from '../CopyableCodeBlock.jsx';
+import LearnMorePanel from '../LearnMorePanel.jsx';
 import ContactGroupCheckboxGroup from '../ContactGroupCheckboxGroup.jsx';
 import { canonicalAgentContactGroupFields } from '../../utils/contactGroupAssignment.js';
 import { resolveApiBaseUrl } from '../../utils/resolveApiBaseUrl.js';
@@ -38,6 +38,7 @@ import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { workspaceAPI } from '../../utils/apiClient';
 import { showError, showSuccess } from '../../utils/toast.js';
 import { useDashboardThemeColors } from '../../hooks/useDashboardTheme.js';
+import { SELF_HOSTED_DOCS_BASE } from '../../utils/docsUrls.js';
 import {
   AGENT_BOOTSTRAP_TOKEN_NAME_MAX_LENGTH,
   createBootstrapToken,
@@ -92,8 +93,8 @@ function buildTokenlessInstallCommand({ apiUrl, workspaceId, os }) {
   }
   return [
     // `bash` keeps older release tarballs working, where the installer
-    // shipped without the executable bit.
-    `sudo bash ./install-agent.sh \\`,
+    // shipped without the executable bit. The script sits under scripts/ in the package.
+    `sudo bash ./scripts/install-agent.sh \\`,
     `  --api-url '${apiUrl}' \\`,
     `  --workspace-id '${workspaceId}' \\`,
     `  --trust-store`,
@@ -106,7 +107,7 @@ function buildTokenlessInstallCommand({ apiUrl, workspaceId, os }) {
  * cloud: this file lives in the self-hosted dashboard bundle.
  */
 function buildInstallDocsUrl(os) {
-  const base = 'https://tokentimer.ch/docs/self-hosted/runbooks';
+  const base = `${SELF_HOSTED_DOCS_BASE}/runbooks`;
   return os === 'windows'
     ? `${base}/certops-agent-install-windows#windows-install`
     : `${base}/certops-agent-install#install`;
@@ -164,7 +165,7 @@ export default function DeployAgentModal({
 }) {
   const { workspaceId } = useWorkspace();
   const canManage = useCertOpsCanManage();
-  const { muted, dashboard } = useDashboardThemeColors();
+  const { muted } = useDashboardThemeColors();
   const {
     overlayProps,
     headerProps,
@@ -457,24 +458,15 @@ export default function DeployAgentModal({
                   TOKENTIMER_AGENT_BOOTSTRAP_TOKEN environment variable before
                   running.
                 </Text>
-                <Text fontSize='xs'>
-                  <ChakraLink
-                    onClick={() =>
-                      window.open(
-                        buildInstallDocsUrl(targetOs),
-                        '_blank',
-                        'noopener,noreferrer'
-                      )
-                    }
-                    cursor='pointer'
-                    color={dashboard.accent.interactiveForeground}
-                    textDecoration='underline'
-                    isExternal
-                  >
-                    Full install guide (
-                    {targetOs === 'windows' ? 'Windows' : 'Linux'})
-                  </ChakraLink>
-                </Text>
+                <LearnMorePanel
+                  variant='compact'
+                  links={[
+                    {
+                      label: `Install guide (${targetOs === 'windows' ? 'Windows' : 'Linux'})`,
+                      url: buildInstallDocsUrl(targetOs),
+                    },
+                  ]}
+                />
               </VStack>
             </Box>
 

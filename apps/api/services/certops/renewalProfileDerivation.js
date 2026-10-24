@@ -334,6 +334,7 @@ function deriveRenewalProfileFromIssuedCertificate({
     "keyPath",
     "chainPath",
     "reloadService",
+    "reloadCommandRefs",
     "certMode",
     "keyMode",
     "chainMode",

@@ -271,6 +271,28 @@ function validateTarget(value, fieldName) {
             RELOAD_SERVICE_PATTERN,
           );
   }
+  if (Object.prototype.hasOwnProperty.call(value, "reloadCommandRefs")) {
+    const refs = value.reloadCommandRefs;
+    if (refs !== null && refs !== undefined) {
+      if (typeof refs !== "object" || Array.isArray(refs)) {
+        throw profileError(`renewalProfile.${fieldName}.reloadCommandRefs is invalid`);
+      }
+      result.reloadCommandRefs = {
+        validate: requireString(
+          refs.validate,
+          `${fieldName}.reloadCommandRefs.validate`,
+          128,
+          RELOAD_SERVICE_PATTERN,
+        ),
+        reload: requireString(
+          refs.reload,
+          `${fieldName}.reloadCommandRefs.reload`,
+          128,
+          RELOAD_SERVICE_PATTERN,
+        ),
+      };
+    }
+  }
   if (Object.prototype.hasOwnProperty.call(value, "keyPath")) {
     result.keyPath = optionalAbsolutePath(value.keyPath, `${fieldName}.keyPath`);
   }
@@ -717,7 +739,13 @@ function executionFieldsFromRenewalProfile(profile) {
     }
   }
   const reload = profile.deploymentTargets.find((t) => t.reloadService);
-  if (reload?.reloadService) fields.reloadService = reload.reloadService;
+  if (reload?.reloadService) {
+    fields.reloadService = reload.reloadService;
+    // The agent refuses a reload job that names no command references.
+    if (reload.reloadCommandRefs) {
+      fields.reloadCommandRefs = { ...reload.reloadCommandRefs };
+    }
+  }
   if (profile.verification.host) {
     fields.verifyHost = profile.verification.host;
     if (profile.verification.port != null) {

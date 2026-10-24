@@ -12,6 +12,7 @@ import { useNavigate } from 'react-router';
 import { trackEvent } from '../utils/analytics';
 import { logger } from '../utils/logger';
 import { readSessionLastWorkspaceId } from '../utils/lastWorkspacePreference.js';
+import { SELF_HOSTED_DOCS_BASE } from '../utils/docsUrls';
 
 /** Chakra lg breakpoint: sidebar/topbar vs legacy nav drawer split */
 const LAYOUT_LG_BREAKPOINT_PX = 992;
@@ -358,11 +359,7 @@ const CustomTooltip = ({
     if (closeProps?.onClick) {
       closeProps.onClick(e);
     }
-    window.open(
-      'https://tokentimer.ch/docs/self-hosted',
-      '_blank',
-      'noopener,noreferrer'
-    );
+    window.open(SELF_HOSTED_DOCS_BASE, '_blank', 'noopener,noreferrer');
   };
 
   return (

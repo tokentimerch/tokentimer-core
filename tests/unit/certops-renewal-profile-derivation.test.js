@@ -9,6 +9,7 @@ const {
 } = require("../../apps/api/services/certops/renewalProfileDerivation");
 const {
   CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
+  executionFieldsFromRenewalProfile,
 } = require("../../apps/api/services/certops/renewalProfile");
 
 const WORKSPACE = "11111111-1111-4111-8111-111111111111";
@@ -100,6 +101,18 @@ describe("renewal profile derivation from an issued certificate", () => {
       true,
       "an issued certificate is agent-local custody, so renewal can rotate the key",
     );
+  });
+
+  it("keeps the reload command references so a renewal can reload the server", () => {
+    const refs = { validate: "nginx-validate", reload: "nginx-reload" };
+    const profile = deriveRenewalProfileFromIssuedCertificate({
+      payload: issuePayload({ reloadCommandRefs: refs }),
+      certificate: issuedCertificate(),
+    });
+    assert.deepEqual(profile.deploymentTargets[0].reloadCommandRefs, refs);
+    const fields = executionFieldsFromRenewalProfile(profile);
+    assert.equal(fields.reloadService, "nginx");
+    assert.deepEqual(fields.reloadCommandRefs, refs);
   });
 
   it("pins the SAN set to what the CA issued, not what the job requested", () => {

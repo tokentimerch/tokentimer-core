@@ -90,7 +90,6 @@ the origins users and integrations actually use in the browser.
 | `DB_NAME`               | PostgreSQL database name                | `tokentimer`                                 | API, worker |
 | `DB_USER`               | PostgreSQL user                         | `tokentimer`                                 | API, worker |
 | `DB_PASSWORD`           | PostgreSQL password                     | `password` (dev fallback), `required` (prod) | API, worker |
-| `DATABASE_URL`          | Full PostgreSQL connection URL override | `unset`                                      | API, worker |
 | `DB_SSL`                | DB SSL mode (`require` or `verify`)     | `unset (disabled)`                           | API, worker |
 | `PGSSLROOTCERT`         | Path to CA cert for DB SSL verify mode  | `unset`                                      | API, worker |
 | `DB_POOL_MAX`           | Max DB pool connections                 | `10`                                         | API, worker |

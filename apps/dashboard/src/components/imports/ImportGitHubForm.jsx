@@ -11,12 +11,12 @@ import {
   InputGroup,
   InputRightElement,
   IconButton,
-  Link as ChakraLink,
 } from '@chakra-ui/react';
 import { FiEye, FiEyeOff } from 'react-icons/fi';
 import { githubAPI, integrationAPI, formatDate } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 import { IMPORT_DOCS } from '../../utils/docsUrls';
+import LearnMorePanel from '../LearnMorePanel';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 import {
@@ -95,6 +95,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
     onScanSuccess,
     borderColor,
     helpTextColor,
+    hideDocs = false,
     autoSyncTokenPlaceholder,
     updateQuotaFromResponse,
     refreshIntegrationQuota,
@@ -323,6 +324,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
   React.useImperativeHandle(ref, () => ({
     importSelected: importGithubSelected,
     getSelectedCount: () => selectedRowsGithub.size,
+    getContactGroupIds: () => bulkContactGroupIds,
     getCredentials: () => ({
       credentials: {
         baseUrl: githubBaseUrl || 'https://api.github.com',
@@ -351,16 +353,15 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
             read-only PAT is used for scanning and stored encrypted if auto-sync
             is enabled.
           </Text>
-          <Text fontSize='sm' mt={1}>
-            <ChakraLink
-              href={IMPORT_DOCS.github}
-              color='blue.500'
-              textDecoration='underline'
-              isExternal
-            >
-              Learn more about importing from GitHub →
-            </ChakraLink>
-          </Text>
+          {hideDocs ? null : (
+            <LearnMorePanel
+              variant='compact'
+              mt={2}
+              links={[
+                { label: 'Importing from GitHub', url: IMPORT_DOCS.github },
+              ]}
+            />
+          )}
         </Box>
       ) : null}
       <HStack spacing={3} align='flex-end' flexWrap='wrap'>

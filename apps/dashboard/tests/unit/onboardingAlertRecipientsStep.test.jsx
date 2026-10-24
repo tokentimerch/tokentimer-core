@@ -1,0 +1,1725 @@
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
+import { ChakraProvider } from '@chakra-ui/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { actions, store, editor } = vi.hoisted(() => ({
+  actions: {
+    getAlertSettings: vi.fn(),
+    putAlertSettings: vi.fn(),
+    listContacts: vi.fn(),
+    getToken: vi.fn(),
+    setTokenContactGroups: vi.fn(),
+  },
+  store: { settings: null, tokens: {}, plural: true },
+  editor: { props: null },
+}));
+
+vi.mock('../../src/utils/onboardingActions.js', () => ({
+  onboardingActions: actions,
+}));
+
+// The test setup forces plural writes on; this suite also needs them off.
+vi.mock('../../src/utils/contactGroupPluralWrites.jsx', () => ({
+  useContactGroupPluralWrites: () => store.plural,
+}));
+
+// The editor is the shared Alert Preferences dialog (needs a router and the
+// full page). The journey test covers it for real; here it is a marker with
+// one button that saves a new group the way the dialog does.
+vi.mock('../../src/components/onboarding/alertGroupEditor.jsx', () => ({
+  default: props => {
+    editor.props = props;
+    return (
+      <div data-testid='group-editor'>
+        <button
+          type='button'
+          onClick={() => {
+            store.settings.contact_groups.push({
+              id: 'legal',
+              name: 'Legal',
+              email_contact_ids: ['c1'],
+              whatsapp_contact_ids: [],
+              webhook_names: [],
+            });
+            props.onSaved();
+          }}
+        >
+          Save new group
+        </button>
+      </div>
+    );
+  },
+}));
+
+import { RecipientsStep } from '../../src/components/onboarding/alertRecipientsStep.jsx';
+import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
+
+const clone = v => JSON.parse(JSON.stringify(v));
+const group = (id, name, emails = ['c1']) => ({
+  id,
+  name,
+  email_contact_ids: emails,
+  whatsapp_contact_ids: [],
+  webhook_names: [],
+});
+const token = (id, groups = [], name = `site-${id}.example.com`) => ({
+  id,
+  name,
+  contact_group_ids: groups,
+});
+
+// Websites are tokens 11 and 12; assets are 21 and 22.
+function makeCtx({
+  goal = 'monitor_https',
+  websiteIds = [11, 12],
+  assetIds = [],
+  certificates = [],
+  certops = {},
+  progress = {},
+} = {}) {
+  const tokenIds = [...websiteIds, ...assetIds];
+  const monitorIds = websiteIds.map(id => `m${id}`);
+  return {
+    workspaceId: 'ws-1',
+    docs: () => [],
+    refresh: vi.fn().mockResolvedValue(undefined),
+    skip: vi.fn().mockResolvedValue(undefined),
+    release: vi.fn(),
+    userEmail: 'ana@example.com',
+    userName: 'Ana',
+    summary: {
+      monitors: { items: [] },
+      certops: { sessionCertificates: certificates, ...certops },
+      references: {
+        tokenIds: { existing: tokenIds },
+        assetTokenIds: { existing: assetIds },
+        monitorIds: { existing: monitorIds },
+      },
+    },
+    session: {
+      intent: { goal },
+      progress,
+      operationRefs: { tokenIds, assetTokenIds: assetIds, monitorIds },
+    },
+    controller: { update: vi.fn() },
+  };
+}
+
+const mount = (ctx, props = {}) =>
+  render(
+    <ChakraProvider>
+      <DashboardThemeProvider>
+        <RecipientsStep ctx={ctx} {...props} />
+      </DashboardThemeProvider>
+    </ChakraProvider>
+  );
+
+const row = id => screen.getByTestId(`group-${id}`);
+const box = name => screen.findByRole('checkbox', { name });
+const GOALS = [
+  'monitor_https',
+  'track_asset',
+  'import_file',
+  'import_integration',
+  'alerting',
+  'certops_observe',
+];
+
+beforeEach(() => {
+  editor.props = null;
+  store.plural = true;
+  store.settings = {
+    alert_thresholds: [30, 14, 7],
+    webhook_urls: [],
+    contact_groups: [group('ops', 'Ops'), group('billing', 'Billing', ['c2'])],
+    default_contact_group_id: 'ops',
+  };
+  store.tokens = {
+    11: token(11, ['ops']),
+    12: token(12, ['ops', 'billing']),
+    21: token(21, [], 'Asset one'),
+    22: token(22, [], 'Asset two'),
+  };
+  actions.getAlertSettings
+    .mockReset()
+    .mockImplementation(() => Promise.resolve(clone(store.settings)));
+  actions.putAlertSettings.mockReset().mockImplementation((_w, body) => {
+    Object.assign(store.settings, clone(body));
+    return Promise.resolve(clone(store.settings));
+  });
+  actions.listContacts.mockReset().mockResolvedValue([
+    { id: 'c1', details: { email: 'ana@example.com' } },
+    { id: 'c2', details: { email: 'bill@example.com' } },
+  ]);
+  actions.getToken.mockReset().mockImplementation(id => {
+    const found = store.tokens[id];
+    return found
+      ? Promise.resolve(clone(found))
+      : Promise.reject(new Error('Token not found'));
+  });
+  actions.setTokenContactGroups.mockReset().mockImplementation((id, ids) => {
+    store.tokens[id].contact_group_ids = clone(ids);
+    return Promise.resolve(clone(store.tokens[id]));
+  });
+});
+
+describe('RecipientsStep layout', () => {
+  it('lists the groups with creation and no used-for-setup block', async () => {
+    mount(makeCtx());
+    expect(
+      await screen.findByRole('heading', { name: 'Groups in this workspace' })
+    ).toBeVisible();
+    expect(
+      screen.getByRole('button', { name: 'Create a new group' })
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        'Creating a group does not send alerts to it until it is the default or is selected on an asset.'
+      )
+    ).toBeVisible();
+    expect(screen.queryByTestId('used-for-setup')).toBeNull();
+    expect(
+      screen.queryByRole('heading', { name: 'Used for this setup' })
+    ).toBeNull();
+    expect(screen.queryByText('Used for this setup')).toBeNull();
+  });
+
+  it('hides Skip for now while a finished step is reviewed', async () => {
+    mount(makeCtx(), { reviewing: true });
+    await screen.findByRole('button', { name: 'Create a new group' });
+    expect(screen.queryByRole('button', { name: 'Skip for now' })).toBeNull();
+  });
+
+  it('keeps Skip for now on the live step', async () => {
+    mount(makeCtx());
+    expect(
+      await screen.findByRole('button', { name: 'Skip for now' })
+    ).toBeVisible();
+  });
+
+  it('makes Create a new group an outline button', async () => {
+    mount(makeCtx());
+    const button = await screen.findByRole('button', {
+      name: 'Create a new group',
+    });
+    const skip = screen.getByRole('button', { name: 'Skip for now' });
+    // Both are outline buttons, so neither carries the solid primary fill.
+    expect(getComputedStyle(button).backgroundColor).toBe(
+      getComputedStyle(skip).backgroundColor
+    );
+  });
+  it('keeps the Default and Reaches nobody badges', async () => {
+    store.settings.contact_groups = [
+      group('ops', 'Ops'),
+      group('billing', 'Billing', []),
+    ];
+    mount(makeCtx());
+    await box('Ops');
+    expect(within(row('ops')).getByText('Default')).toBeVisible();
+    expect(within(row('billing')).queryByText('Default')).toBeNull();
+    expect(within(row('billing')).getByText('Reaches nobody')).toBeVisible();
+    expect(within(row('ops')).queryByText('Reaches nobody')).toBeNull();
+  });
+
+  it.each(GOALS)(
+    'has no Make default or Use for this setup (%s)',
+    async goal => {
+      mount(makeCtx({ goal, websiteIds: [], assetIds: [21] }));
+      await screen.findByRole('heading', { name: 'Groups in this workspace' });
+      expect(screen.queryByRole('button', { name: /Make default/ })).toBeNull();
+      expect(
+        screen.queryByRole('button', { name: /Use for this setup/ })
+      ).toBeNull();
+      expect(screen.queryByText('Make default')).toBeNull();
+    }
+  );
+
+  it('opens the editor from Create a new group with the creation note', async () => {
+    mount(makeCtx());
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Create a new group' })
+    );
+    expect(await screen.findByTestId('group-editor')).toBeVisible();
+    expect(
+      screen.getByText(/Creating a group does not send alerts to it/)
+    ).toBeVisible();
+  });
+
+  it('still lets the person skip', async () => {
+    const ctx = makeCtx();
+    mount(ctx);
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Skip for now' })
+    );
+    await waitFor(() => expect(ctx.skip).toHaveBeenCalledWith('recipients'));
+  });
+});
+
+describe('RecipientsStep ticks', () => {
+  beforeEach(() => {
+    store.settings.contact_groups.push(group('legal', 'Legal'));
+  });
+
+  it('derives all, some and none from the real groups of the items', async () => {
+    mount(makeCtx());
+    const ops = await box('Ops');
+    const billing = await box('Billing');
+    const legal = await box('Legal');
+    expect(ops).toHaveAttribute('aria-checked', 'true');
+    expect(billing).toHaveAttribute('aria-checked', 'mixed');
+    expect(legal).toHaveAttribute('aria-checked', 'false');
+    expect(row('ops')).toHaveAttribute('data-selected', 'all');
+    expect(row('billing')).toHaveAttribute('data-selected', 'some');
+    expect(row('legal')).toHaveAttribute('data-selected', 'none');
+    expect(actions.getToken).toHaveBeenCalledWith('11');
+    expect(actions.getToken).toHaveBeenCalledWith('12');
+  });
+
+  it('highlights the selected row and a tick keeps a visible check', async () => {
+    mount(makeCtx());
+    await box('Ops');
+    const selected = within(row('ops')).getByRole('checkbox');
+    expect(selected.querySelector('svg')).not.toBeNull();
+    expect(
+      within(row('legal')).getByRole('checkbox').querySelector('svg')
+    ).toBeNull();
+  });
+
+  it('ticking writes only the items that lack the group, then reads back', async () => {
+    const ctx = makeCtx();
+    mount(ctx);
+    fireEvent.click(await box('Billing'));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Billing' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    );
+    expect(actions.setTokenContactGroups).toHaveBeenCalledTimes(1);
+    expect(actions.setTokenContactGroups).toHaveBeenCalledWith(
+      '11',
+      ['billing', 'ops'],
+      {}
+    );
+    expect(store.tokens[11].contact_group_ids).toEqual(['billing', 'ops']);
+    // Two reads at the start, two more after the write.
+    expect(actions.getToken).toHaveBeenCalledTimes(4);
+    expect(ctx.refresh).toHaveBeenCalled();
+    expect(actions.putAlertSettings).not.toHaveBeenCalled();
+  });
+
+  it('sends cost and key size back so the update does not clear them', async () => {
+    store.tokens[11].cost = 12.5;
+    store.tokens[11].key_size = 2048;
+    mount(makeCtx({ websiteIds: [11] }));
+    fireEvent.click(await box('Billing'));
+    await waitFor(() =>
+      expect(actions.setTokenContactGroups).toHaveBeenCalledWith(
+        '11',
+        ['billing', 'ops'],
+        { cost: 12.5, key_size: 2048 }
+      )
+    );
+  });
+  it('unticking removes the group from every item and says who falls back', async () => {
+    const ctx = makeCtx();
+    mount(ctx);
+    fireEvent.click(await box('Ops'));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Ops' })).toHaveAttribute(
+        'aria-checked',
+        'false'
+      )
+    );
+    expect(actions.setTokenContactGroups).toHaveBeenCalledTimes(2);
+    expect(actions.setTokenContactGroups).toHaveBeenCalledWith('11', [], {});
+    expect(actions.setTokenContactGroups).toHaveBeenCalledWith(
+      '12',
+      ['billing'],
+      {}
+    );
+    expect(screen.getByTestId('tick-sentence').textContent).toBe(
+      'Ticked groups receive alerts for the websites you added in this guide. 1 website has no group and uses the workspace default group "Ops".'
+    );
+    expect(ctx.refresh).toHaveBeenCalled();
+  });
+
+  it('says there is no recipient when untick leaves items without any default', async () => {
+    store.settings.default_contact_group_id = null;
+    mount(makeCtx());
+    fireEvent.click(await box('Ops'));
+    await waitFor(() =>
+      expect(screen.getByTestId('tick-sentence')).toHaveTextContent(
+        /1 website has no group and no default group is set, so there is no recipient until a group is set/
+      )
+    );
+  });
+
+  it('shows which items failed, keeps the ticks true and re-reads', async () => {
+    actions.setTokenContactGroups.mockImplementation((id, ids) => {
+      if (id === '11') return Promise.reject(new Error('Forbidden'));
+      store.tokens[id].contact_group_ids = clone(ids);
+      return Promise.resolve({});
+    });
+    mount(makeCtx());
+    // Legal is on neither item, so ticking it writes to both.
+    fireEvent.click(await box('Legal'));
+    expect(
+      await screen.findByText(
+        /1 of 2 items could not be updated: site-11\.example\.com\. The ticks show what is saved\./
+      )
+    ).toBeVisible();
+    expect(screen.getByRole('checkbox', { name: 'Legal' })).toHaveAttribute(
+      'aria-checked',
+      'mixed'
+    );
+    expect(store.tokens[12].contact_group_ids).toContain('legal');
+    expect(store.tokens[11].contact_group_ids).not.toContain('legal');
+    expect(actions.getToken).toHaveBeenCalledTimes(4);
+  });
+
+  it('reports a write the server did not keep', async () => {
+    actions.setTokenContactGroups.mockResolvedValue({});
+    mount(makeCtx());
+    fireEvent.click(await box('Legal'));
+    expect(
+      await screen.findByText(/The server did not keep the change for/)
+    ).toBeVisible();
+    expect(screen.getByRole('checkbox', { name: 'Legal' })).toHaveAttribute(
+      'aria-checked',
+      'false'
+    );
+  });
+
+  it('turns ticks off when an item cannot be read', async () => {
+    delete store.tokens[12];
+    mount(makeCtx());
+    expect(
+      await screen.findByText(
+        'The groups of your items could not be read, so ticking is turned off.'
+      )
+    ).toBeVisible();
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    expect(
+      screen.getByRole('button', { name: 'Create a new group' })
+    ).toBeVisible();
+  });
+
+  it('turns ticks off past the cap without reading anything', async () => {
+    const ids = Array.from({ length: 51 }, (_, i) => 100 + i);
+    mount(makeCtx({ goal: 'track_asset', websiteIds: [], assetIds: ids }));
+    expect(
+      await screen.findByText(/more than 50 items, so groups cannot be ticked/)
+    ).toBeVisible();
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    expect(actions.getToken).not.toHaveBeenCalled();
+  });
+
+  it('ticks the rest and says which websites have no certificate record', async () => {
+    const ctx = makeCtx();
+    ctx.session.operationRefs.monitorIds.push('m99');
+    ctx.summary.monitors.items.push({ id: 'm99', tokenId: null });
+    mount(ctx);
+    expect(await screen.findByTestId('no-token-note')).toHaveTextContent(
+      '1 website you added has no certificate record yet, so its groups cannot be set here.'
+    );
+    expect(await box('Ops')).toHaveAttribute('aria-checked', 'true');
+    expect(actions.getToken).not.toHaveBeenCalledWith('m99');
+  });
+  it('shows a new group unticked and attaches nothing to it', async () => {
+    mount(makeCtx());
+    await box('Ops');
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Create a new group' })
+    );
+    store.settings.contact_groups = store.settings.contact_groups.filter(
+      g => g.id !== 'legal'
+    );
+    fireEvent.click(await screen.findByText('Save new group'));
+    const legal = await box('Legal');
+    expect(legal).toHaveAttribute('aria-checked', 'false');
+    expect(row('legal')).toHaveAttribute('data-selected', 'none');
+    expect(actions.setTokenContactGroups).not.toHaveBeenCalled();
+  });
+
+  it('toggles with the Space key', async () => {
+    mount(makeCtx());
+    const legal = await box('Legal');
+    legal.focus();
+    fireEvent.keyDown(legal, { key: ' ' });
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Legal' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    );
+    expect(actions.setTokenContactGroups).toHaveBeenCalledTimes(2);
+  });
+
+  it('is busy per group while saving and blocks other ticks', async () => {
+    let release;
+    actions.setTokenContactGroups.mockImplementation(
+      (id, ids) =>
+        new Promise(resolve => {
+          release = () => {
+            store.tokens[id].contact_group_ids = clone(ids);
+            resolve({});
+          };
+        })
+    );
+    mount(makeCtx({ websiteIds: [11] }));
+    fireEvent.click(await box('Legal'));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Legal' })).toHaveAttribute(
+        'aria-busy',
+        'true'
+      )
+    );
+    expect(screen.getByRole('checkbox', { name: 'Ops' })).toHaveAttribute(
+      'aria-disabled',
+      'true'
+    );
+    release();
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Legal' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    );
+    expect(screen.getByRole('checkbox', { name: 'Legal' })).not.toHaveAttribute(
+      'aria-busy'
+    );
+  });
+
+  it('replaces the group when the workspace allows one group per item', async () => {
+    store.plural = false;
+    mount(makeCtx({ websiteIds: [11] }));
+    fireEvent.click(await box('Billing'));
+    await waitFor(() =>
+      expect(store.tokens[11].contact_group_ids).toEqual(['billing'])
+    );
+    expect(actions.setTokenContactGroups).toHaveBeenCalledWith(
+      '11',
+      ['billing'],
+      {}
+    );
+  });
+
+  it('ticks websites and assets together when the session has both', async () => {
+    mount(
+      makeCtx({
+        goal: 'track_asset',
+        websiteIds: [11],
+        assetIds: [21],
+      })
+    );
+    fireEvent.click(await box('Billing'));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Billing' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    );
+    expect(actions.setTokenContactGroups).toHaveBeenCalledWith(
+      '11',
+      ['billing', 'ops'],
+      {}
+    );
+    expect(actions.setTokenContactGroups).toHaveBeenCalledWith(
+      '21',
+      ['billing'],
+      {}
+    );
+  });
+});
+
+describe('RecipientsStep sentence', () => {
+  const sentence = () => screen.findByTestId('tick-sentence');
+
+  it('names the websites and the default group', async () => {
+    mount(makeCtx());
+    expect((await sentence()).textContent).toBe(
+      'Ticked groups receive alerts for the websites you added in this guide. Anything without a group uses the workspace default group "Ops".'
+    );
+  });
+
+  it('names the assets for the asset goal', async () => {
+    mount(makeCtx({ goal: 'track_asset', websiteIds: [], assetIds: [21] }));
+    expect((await sentence()).textContent).toMatch(
+      /receive alerts for the assets you added in this guide\./
+    );
+  });
+
+  it('says "assets" and never "websites" for the asset goal when assets have no group', async () => {
+    store.tokens[21].contact_group_ids = [];
+    mount(makeCtx({ goal: 'track_asset', websiteIds: [], assetIds: [21] }));
+    const text = (await sentence()).textContent;
+    expect(text).toBe(
+      'Ticked groups receive alerts for the assets you added in this guide. 1 asset has no group and uses the workspace default group "Ops".'
+    );
+    expect(text).not.toMatch(/website/);
+  });
+
+  it('names both when the session has both', async () => {
+    mount(makeCtx({ goal: 'track_asset', websiteIds: [11], assetIds: [21] }));
+    expect((await sentence()).textContent).toMatch(
+      /for the websites and assets you added in this guide\./
+    );
+  });
+
+  it('says so when there is no default group', async () => {
+    store.settings.default_contact_group_id = null;
+    mount(makeCtx());
+    expect((await sentence()).textContent).toMatch(
+      /No default group is set, so anything without a group has no recipient\./
+    );
+  });
+
+  it('asks to add something first when the session has no items', async () => {
+    mount(makeCtx({ websiteIds: [] }));
+    expect((await sentence()).textContent).toBe(
+      'Add something first, then choose its groups here.'
+    );
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+  });
+
+  it.each(['alerting'])(
+    'explains there is nothing to tick for %s',
+    async goal => {
+      mount(makeCtx({ goal, websiteIds: [11], assetIds: [21] }));
+      expect(await screen.findByTestId('default-only-note')).toHaveTextContent(
+        'This setup does not create items that carry their own group. Alerts use the groups below as the workspace default: set the default group and make sure it reaches someone.'
+      );
+      expect(screen.queryByTestId('tick-sentence')).toBeNull();
+      expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+      expect(actions.getToken).not.toHaveBeenCalled();
+      expect(
+        screen.getByRole('button', { name: 'Create a new group' })
+      ).toBeVisible();
+    }
+  );
+
+  it.each(['import_file', 'monitor_https', 'certops_vault', 'certops_observe'])(
+    'shows no default-only panel for %s',
+    async goal => {
+      mount(makeCtx({ goal, websiteIds: [], assetIds: [] }));
+      await screen.findByRole('heading', { name: 'Groups in this workspace' });
+      expect(screen.queryByTestId('default-only-note')).toBeNull();
+    }
+  );
+
+  it.each([
+    [
+      'import_file',
+      'Imported rows use the groups named in your file (contact_group_ids), or the workspace default group "Ops".',
+    ],
+    [
+      'import_integration',
+      'Imported assets use the groups chosen in the import dialog, or the workspace default group "Ops".',
+    ],
+  ])('says where imports get their groups for %s', async (goal, expected) => {
+    mount(makeCtx({ goal, websiteIds: [], assetIds: [21] }));
+    expect((await sentence()).textContent).toBe(expected);
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    expect(actions.getToken).not.toHaveBeenCalled();
+  });
+});
+
+describe.each(['track_asset', 'import_file', 'import_integration'])(
+  'RecipientsStep %s goal',
+  goal => {
+    it('still deletes a non-default group', async () => {
+      mount(makeCtx({ goal, websiteIds: [], assetIds: [21] }));
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'Delete Billing' })
+      );
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'Delete group' })
+      );
+      await waitFor(() =>
+        expect(screen.queryByTestId('group-billing')).toBeNull()
+      );
+    });
+  }
+);
+
+describe('RecipientsStep delete', () => {
+  it('asks for confirmation naming the group before changing anything', async () => {
+    mount(makeCtx());
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete Billing' })
+    );
+    expect(
+      await screen.findByText('Delete the group "Billing"?')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/will use the default group "Ops" instead/)
+    ).toBeInTheDocument();
+    expect(screen.getByText('This cannot be undone.')).toBeInTheDocument();
+    expect(actions.putAlertSettings).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the confirmation is cancelled', async () => {
+    mount(makeCtx());
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete Billing' })
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+    await waitFor(() =>
+      expect(screen.queryByText('Delete the group "Billing"?')).toBeNull()
+    );
+    expect(actions.putAlertSettings).not.toHaveBeenCalled();
+    expect(row('billing')).toBeVisible();
+  });
+
+  it('removes only that group, reads settings back and refreshes the wizard', async () => {
+    const ctx = makeCtx();
+    mount(ctx);
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete Billing' })
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete group' })
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('group-billing')).toBeNull()
+    );
+    expect(actions.putAlertSettings).toHaveBeenCalledTimes(1);
+    const [, body] = actions.putAlertSettings.mock.calls[0];
+    expect(body.contact_groups.map(g => g.id)).toEqual(['ops']);
+    // The default group is left alone.
+    expect(body).not.toHaveProperty('default_contact_group_id');
+    expect(store.settings.default_contact_group_id).toBe('ops');
+    // Fresh read before, read-back after, and a reload for the list.
+    expect(actions.getAlertSettings.mock.calls.length).toBeGreaterThanOrEqual(
+      3
+    );
+    expect(ctx.refresh).toHaveBeenCalled();
+    expect(within(row('ops')).getByText('Default')).toBeVisible();
+  });
+
+  it('blocks deleting the default group and explains why', async () => {
+    mount(makeCtx());
+    const button = await screen.findByRole('button', { name: 'Delete Ops' });
+    expect(button).toBeDisabled();
+    const why = within(row('ops')).getByText(
+      /You cannot delete this group yet\. It is the default group\. Make another group the default in Alert Preferences first\./
+    );
+    expect(button).toHaveAttribute('aria-describedby', why.id);
+    // The default is managed elsewhere, so the explanation links there.
+    const link = within(why).getByRole('link', {
+      name: 'Open Alert Preferences',
+    });
+    expect(link).toHaveAttribute('href', '/workspace-preferences');
+    expect(
+      screen.getByRole('button', { name: 'Delete Billing' })
+    ).toBeEnabled();
+  });
+
+  it('blocks deleting the only group, which leaves nobody to alert', async () => {
+    store.settings.contact_groups = [group('ops', 'Ops')];
+    mount(makeCtx());
+    const button = await screen.findByRole('button', { name: 'Delete Ops' });
+    expect(button).toBeDisabled();
+    expect(
+      screen.getByText(
+        /default and only group\. Create another group, then make it the default in Alert Preferences\./
+      )
+    ).toBeVisible();
+  });
+
+  it('shows the error and keeps the group when the write fails', async () => {
+    actions.putAlertSettings.mockRejectedValueOnce(new Error('Server said no'));
+    const ctx = makeCtx();
+    mount(ctx);
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete Billing' })
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete group' })
+    );
+    expect(await screen.findByText('Server said no')).toBeVisible();
+    expect(row('billing')).toBeVisible();
+    expect(ctx.refresh).not.toHaveBeenCalled();
+  });
+
+  it('reports a delete that the server did not keep', async () => {
+    // The read-back still lists the group, as if the write had been trimmed.
+    actions.putAlertSettings.mockImplementation(() => Promise.resolve({}));
+    const ctx = makeCtx();
+    mount(ctx);
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete Billing' })
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete group' })
+    );
+    expect(
+      await screen.findByText('The group could not be deleted.')
+    ).toBeVisible();
+    expect(row('billing')).toBeVisible();
+  });
+
+  it('refuses to delete a group that became the default meanwhile', async () => {
+    mount(makeCtx());
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete Billing' })
+    );
+    // Another tab made Billing the default after this page was drawn.
+    store.settings.default_contact_group_id = 'billing';
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete group' })
+    );
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /It is the default group\. Make another group the default in Alert Preferences first/
+    );
+    expect(actions.putAlertSettings).not.toHaveBeenCalled();
+  });
+
+  it('does not claim a recipient when the default reaches nobody after a delete', async () => {
+    store.settings.contact_groups = [
+      group('ops', 'Ops', []),
+      group('billing', 'Billing', ['c2']),
+    ];
+    mount(makeCtx());
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete Billing' })
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete group' })
+    );
+    await waitFor(() =>
+      expect(screen.queryByTestId('group-billing')).toBeNull()
+    );
+    expect(within(row('ops')).getByText('Reaches nobody')).toBeVisible();
+  });
+
+  it('treats a group that is already gone as deleted without writing', async () => {
+    mount(makeCtx());
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete Billing' })
+    );
+    store.settings.contact_groups = [group('ops', 'Ops')];
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete group' })
+    );
+    await waitFor(() =>
+      expect(screen.queryByTestId('group-billing')).toBeNull()
+    );
+    expect(actions.putAlertSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe('RecipientsStep confirmation for goals without ticks', () => {
+  const confirmButton = () =>
+    screen.findByRole('button', { name: 'Use these groups' });
+
+  it.each(['import_file', 'import_integration', 'alerting', 'certops_observe'])(
+    'records the confirmation for %s',
+    async goal => {
+      const ctx = makeCtx({ goal, websiteIds: [], assetIds: [] });
+      mount(ctx);
+      fireEvent.click(await confirmButton());
+      await waitFor(() => expect(ctx.controller.update).toHaveBeenCalled());
+      const patch = ctx.controller.update.mock.calls[0][0]({
+        progress: { skipped: [] },
+      });
+      expect(patch.progress).toEqual({
+        skipped: [],
+        recipientsConfirmedFor: goal,
+      });
+      await waitFor(() => expect(ctx.refresh).toHaveBeenCalled());
+    }
+  );
+
+  it.each(['monitor_https', 'track_asset'])(
+    'offers no confirmation for %s, ticks decide',
+    async goal => {
+      mount(makeCtx({ goal, websiteIds: [11], assetIds: [] }));
+      await screen.findByRole('button', { name: 'Skip for now' });
+      expect(
+        screen.queryByRole('button', { name: 'Use these groups' })
+      ).toBeNull();
+    }
+  );
+
+  it('keeps the button off while the default group reaches nobody', async () => {
+    store.settings.contact_groups = [group('ops', 'Ops', [])];
+    mount(makeCtx({ goal: 'certops_observe', websiteIds: [] }));
+    expect(await confirmButton()).toBeDisabled();
+    expect(screen.getByTestId('continue-hint')).toHaveTextContent(
+      'set a default group that has a recipient'
+    );
+  });
+
+  it('shows no confirmation while a finished step is reviewed', async () => {
+    mount(makeCtx({ goal: 'import_file', websiteIds: [] }), {
+      reviewing: true,
+    });
+    await screen.findByRole('button', { name: 'Create a new group' });
+    expect(
+      screen.queryByRole('button', { name: 'Use these groups' })
+    ).toBeNull();
+  });
+});
+
+describe('RecipientsStep Continue for goals with ticks', () => {
+  const doneGroups = { 11: ['ops'], 12: ['ops', 'billing'] };
+  const withGroups = (ctx, groups) => {
+    ctx.summary.references.tokenGroups = groups;
+    return ctx;
+  };
+  const continueButton = () =>
+    screen.findByRole('button', { name: 'Continue' });
+
+  beforeEach(() => {
+    store.settings.contact_groups.push(group('legal', 'Legal'));
+  });
+
+  it.each(['monitor_https', 'track_asset'])(
+    'offers Continue for %s',
+    async goal => {
+      const ctx = makeCtx({ goal, websiteIds: [11], assetIds: [21] });
+      mount(ctx);
+      await continueButton();
+      // The step only offers Continue; it never ends by itself.
+      expect(screen.getByRole('button', { name: 'Continue' })).toBeVisible();
+    }
+  );
+
+  it('keeps Continue off until every item carries a group', async () => {
+    mount(makeCtx());
+    expect(await continueButton()).toBeDisabled();
+    expect(screen.getByTestId('continue-hint')).toHaveTextContent(
+      'tick a group'
+    );
+  });
+
+  it('enables Continue once every item reaches a group, without leaving', async () => {
+    const ctx = withGroups(makeCtx(), doneGroups);
+    mount(ctx);
+    const button = await continueButton();
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(screen.getByTestId('continue-hint').textContent).toBe(
+      'Continue when the groups are right.'
+    );
+    expect(ctx.release).not.toHaveBeenCalled();
+    expect(ctx.controller.update).not.toHaveBeenCalled();
+  });
+
+  it('shows the default group already ticked and does not finish on arrival', async () => {
+    // The product attaches the workspace default group to a new certificate.
+    store.tokens[11] = token(11, ['ops']);
+    store.tokens[12] = token(12, ['ops']);
+    const ctx = withGroups(makeCtx(), { 11: ['ops'], 12: ['ops'] });
+    mount(ctx);
+    expect(await box('Ops')).toHaveAttribute('aria-checked', 'true');
+    expect(await box('Billing')).toHaveAttribute('aria-checked', 'false');
+    expect(ctx.release).not.toHaveBeenCalled();
+    expect(ctx.controller.update).not.toHaveBeenCalled();
+    expect(await continueButton()).toBeEnabled();
+  });
+
+  it('Continue releases the hold and saves the confirmation for this goal', async () => {
+    const ctx = withGroups(makeCtx(), doneGroups);
+    const order = [];
+    ctx.controller.update.mockImplementation(() => {
+      order.push('save');
+      return Promise.resolve();
+    });
+    ctx.refresh.mockImplementation(() => {
+      order.push('refresh');
+      return Promise.resolve();
+    });
+    ctx.release.mockImplementation(() => order.push('release'));
+    mount(ctx);
+    const button = await continueButton();
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    await waitFor(() => expect(order).toContain('refresh'));
+    expect(ctx.release).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['release', 'save', 'refresh']);
+    const patch = ctx.controller.update.mock.calls[0][0]({
+      progress: { skipped: ['smtp'] },
+    });
+    expect(patch.progress).toEqual({
+      skipped: ['smtp'],
+      recipientsConfirmedFor: 'monitor_https',
+    });
+    expect(ctx.skip).not.toHaveBeenCalled();
+  });
+
+  it('shows the error and stays usable when the confirmation cannot be saved', async () => {
+    const ctx = withGroups(makeCtx(), doneGroups);
+    ctx.controller.update.mockRejectedValue(new Error('offline'));
+    mount(ctx);
+    const button = await continueButton();
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    expect(await screen.findByText('offline')).toBeVisible();
+    expect(ctx.refresh).not.toHaveBeenCalled();
+    await waitFor(() => expect(button).toBeEnabled());
+  });
+
+  it('Continue on an already confirmed step only releases', async () => {
+    const ctx = withGroups(makeCtx(), doneGroups);
+    ctx.session.progress = { recipientsConfirmedFor: 'monitor_https' };
+    mount(ctx);
+    const button = await continueButton();
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    await waitFor(() => expect(ctx.release).toHaveBeenCalledTimes(1));
+    expect(ctx.controller.update).not.toHaveBeenCalled();
+  });
+
+  it('never leaves the step when groups are ticked one after the other', async () => {
+    const ctx = withGroups(makeCtx(), doneGroups);
+    mount(ctx);
+    fireEvent.click(await box('Billing'));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Billing' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    );
+    fireEvent.click(await box('Legal'));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Legal' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    );
+    expect(actions.setTokenContactGroups).toHaveBeenCalledTimes(3);
+    expect(ctx.release).not.toHaveBeenCalled();
+    expect(ctx.skip).not.toHaveBeenCalled();
+    fireEvent.click(await box('Legal'));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Legal' })).toHaveAttribute(
+        'aria-checked',
+        'false'
+      )
+    );
+    expect(actions.setTokenContactGroups).toHaveBeenCalledTimes(5);
+    expect(ctx.release).not.toHaveBeenCalled();
+    // Ticking and unticking never confirm the step.
+    expect(ctx.controller.update).not.toHaveBeenCalled();
+  });
+
+  it('shows no Continue while a finished step is reviewed', async () => {
+    const ctx = withGroups(makeCtx(), doneGroups);
+    mount(ctx, { reviewing: true });
+    await box('Ops');
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull();
+  });
+
+  it.each(['import_file', 'certops_observe'])(
+    'does not add Continue for %s',
+    async goal => {
+      const ctx = makeCtx({ goal, websiteIds: [], assetIds: [] });
+      mount(ctx);
+      await screen.findByRole('button', { name: 'Use these groups' });
+      expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull();
+    }
+  );
+});
+
+const certsFor = (source, ids = [31, 32]) =>
+  ids.map((tokenId, i) => ({ certificateId: `c${i}`, tokenId, source }));
+
+describe('RecipientsStep websites without a certificate record', () => {
+  const noTokenCtx = () => {
+    const ctx = makeCtx({ websiteIds: [] });
+    ctx.session.operationRefs.monitorIds = ['m99'];
+    ctx.summary.monitors.items = [{ id: 'm99', tokenId: null }];
+    return ctx;
+  };
+
+  it('explains why nothing can be ticked and offers the default group', async () => {
+    mount(noTokenCtx());
+    expect((await screen.findByTestId('tick-sentence')).textContent).toBe(
+      '1 website you added has no certificate record yet, so its groups cannot be set here. Until then it uses the workspace default group "Ops"; you can change that in Alert Preferences.'
+    );
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    expect(
+      await screen.findByRole('button', { name: 'Use these groups' })
+    ).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull();
+  });
+
+  it('records the confirmation for the website goal', async () => {
+    const ctx = noTokenCtx();
+    mount(ctx);
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Use these groups' })
+    );
+    await waitFor(() => expect(ctx.controller.update).toHaveBeenCalled());
+    const patch = ctx.controller.update.mock.calls[0][0]({ progress: {} });
+    expect(patch.progress).toEqual({ recipientsConfirmedFor: 'monitor_https' });
+  });
+
+  it('keeps the button off while the default group reaches nobody', async () => {
+    store.settings.contact_groups = [group('ops', 'Ops', [])];
+    mount(noTokenCtx());
+    expect(
+      await screen.findByRole('button', { name: 'Use these groups' })
+    ).toBeDisabled();
+    expect(screen.getByTestId('continue-hint')).toHaveTextContent(
+      'set a default group that has a recipient'
+    );
+  });
+
+  it('shows Continue instead once the confirmation is saved', async () => {
+    const ctx = noTokenCtx();
+    ctx.session.progress = { recipientsConfirmedFor: 'monitor_https' };
+    ctx.summary.alerts = { contactGroups: { defaultHasRecipient: true } };
+    mount(ctx);
+    const next = await screen.findByRole('button', { name: 'Continue' });
+    expect(next).toBeEnabled();
+    expect(
+      screen.queryByRole('button', { name: 'Use these groups' })
+    ).toBeNull();
+    fireEvent.click(next);
+    expect(ctx.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('ticks the websites that have a record and notes the others', async () => {
+    const ctx = makeCtx({ websiteIds: [11] });
+    ctx.session.operationRefs.monitorIds.push('m99');
+    ctx.summary.monitors.items.push({ id: 'm99', tokenId: null });
+    mount(ctx);
+    expect(await screen.findByTestId('no-token-note')).toHaveTextContent(
+      'has no certificate record yet'
+    );
+    expect(await box('Ops')).toHaveAttribute('aria-checked', 'true');
+    expect(
+      screen.queryByRole('button', { name: 'Use these groups' })
+    ).toBeNull();
+  });
+});
+
+describe.each([
+  ['certops_automate', 'issue'],
+  ['certops_vault', 'publish'],
+  ['certops_adcs', 'enrollment'],
+])('RecipientsStep %s certificates', (goal, source) => {
+  beforeEach(() => {
+    store.settings.contact_groups.push(group('legal', 'Legal'));
+    store.tokens[31] = token(31, ['ops'], 'app.example.com');
+    store.tokens[32] = token(32, ['ops'], 'api.example.com');
+  });
+  const mountCerts = (ctxOver = {}) => {
+    const ctx = makeCtx({
+      goal,
+      websiteIds: [],
+      certificates: certsFor(source),
+      ...ctxOver,
+    });
+    mount(ctx);
+    return ctx;
+  };
+
+  it('lists the groups with ticks for the certificates of this session', async () => {
+    mountCerts();
+    expect(await box('Ops')).toHaveAttribute('aria-checked', 'true');
+    expect(await box('Legal')).toHaveAttribute('aria-checked', 'false');
+    expect(actions.getToken).toHaveBeenCalledWith('31');
+    expect(actions.getToken).toHaveBeenCalledWith('32');
+    expect((await screen.findByTestId('tick-sentence')).textContent).toBe(
+      'Ticked groups receive alerts for the certificates you added in this guide. Anything without a group uses the workspace default group "Ops".'
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Use these groups' })
+    ).toBeNull();
+  });
+
+  it('attaches two groups and detaches one through the token update', async () => {
+    mountCerts();
+    fireEvent.click(await box('Billing'));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Billing' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    );
+    fireEvent.click(await box('Legal'));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Legal' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    );
+    expect(store.tokens[31].contact_group_ids).toEqual([
+      'billing',
+      'legal',
+      'ops',
+    ]);
+    expect(store.tokens[32].contact_group_ids).toEqual([
+      'billing',
+      'legal',
+      'ops',
+    ]);
+    fireEvent.click(await box('Ops'));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Ops' })).toHaveAttribute(
+        'aria-checked',
+        'false'
+      )
+    );
+    expect(store.tokens[31].contact_group_ids).toEqual(['billing', 'legal']);
+    expect(actions.setTokenContactGroups).toHaveBeenCalledWith(
+      '32',
+      ['billing', 'legal'],
+      {}
+    );
+  });
+
+  it('keeps Continue off until every certificate has a group, then releases', async () => {
+    const ctx = mountCerts();
+    ctx.summary.references.tokenGroups = { 31: ['ops'], 32: [] };
+    const off = await screen.findByRole('button', { name: 'Continue' });
+    expect(off).toBeDisabled();
+    expect(screen.getByTestId('continue-hint')).toHaveTextContent(
+      'tick a group'
+    );
+  });
+
+  it('enables Continue when both certificates carry a group', async () => {
+    const ctx = makeCtx({
+      goal,
+      websiteIds: [],
+      certificates: certsFor(source),
+    });
+    ctx.summary.references.tokenGroups = { 31: ['ops'], 32: ['ops'] };
+    mount(ctx);
+    const next = await screen.findByRole('button', { name: 'Continue' });
+    await waitFor(() => expect(next).toBeEnabled());
+    expect(ctx.release).not.toHaveBeenCalled();
+    fireEvent.click(next);
+    await waitFor(() => expect(ctx.release).toHaveBeenCalledTimes(1));
+    const patch = ctx.controller.update.mock.calls[0][0]({ progress: {} });
+    expect(patch.progress).toEqual({ recipientsConfirmedFor: goal });
+    expect(ctx.skip).not.toHaveBeenCalled();
+  });
+
+  it('turns ticks off when a certificate cannot be read', async () => {
+    delete store.tokens[32];
+    mountCerts();
+    expect(
+      await screen.findByText(
+        'The groups of your items could not be read, so ticking is turned off.'
+      )
+    ).toBeVisible();
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+  });
+
+  it('turns ticks off past the cap without reading anything', async () => {
+    const many = Array.from({ length: 51 }, (_, i) => 200 + i);
+    mountCerts({ certificates: certsFor(source, many) });
+    expect(
+      await screen.findByText(/more than 50 items, so groups cannot be ticked/)
+    ).toBeVisible();
+    expect(actions.getToken).not.toHaveBeenCalled();
+  });
+
+  it('ignores certificates of another pick and falls back to the default group', async () => {
+    const other = source === 'issue' ? 'enrollment' : 'issue';
+    mountCerts({ certificates: certsFor(other) });
+    if (goal === 'certops_adcs') {
+      expect(await screen.findByTestId('adcs-nothing-attached')).toBeVisible();
+    } else {
+      expect((await screen.findByTestId('tick-sentence')).textContent).toBe(
+        'Nothing was created yet that could carry a group: the workspace default group "Ops" is used.'
+      );
+    }
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    expect(
+      await screen.findByRole('button', { name: 'Use these groups' })
+    ).toBeEnabled();
+    expect(actions.getToken).not.toHaveBeenCalled();
+  });
+
+  it('records the confirmation when nothing was created yet', async () => {
+    const ctx = makeCtx({ goal, websiteIds: [] });
+    mount(ctx);
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Use these groups' })
+    );
+    await waitFor(() => expect(ctx.controller.update).toHaveBeenCalled());
+    const patch = ctx.controller.update.mock.calls[0][0]({ progress: {} });
+    expect(patch.progress).toEqual({ recipientsConfirmedFor: goal });
+  });
+
+  it('says a certificate without a token yet cannot take a group', async () => {
+    mountCerts({
+      certificates: [
+        ...certsFor(source, [31]),
+        { certificateId: 'cx', tokenId: null, source },
+      ],
+    });
+    expect(await screen.findByTestId('no-token-note')).toHaveTextContent(
+      '1 certificate from this setup has no inventory record yet'
+    );
+    expect(await box('Ops')).toHaveAttribute('aria-checked', 'true');
+  });
+});
+
+// The Discover goal: certificates the session's own agent found carry groups.
+describe.each([
+  ['linux', 'linux'],
+  ['windows', 'win32'],
+])('RecipientsStep certops_observe on %s', (infrastructure, platform) => {
+  const agent = (id, over = {}) => ({
+    id,
+    platform,
+    livenessState: 'live',
+    existedBeforeSession: false,
+    ...over,
+  });
+  const found = (n, agentId = 'a1', first = 31) =>
+    Array.from({ length: n }, (_, i) => ({
+      certificateId: `c${i}`,
+      tokenId: first + i,
+      source: platform === 'linux' ? 'agent_filesystem' : 'agent_windows',
+      agentId,
+    }));
+  const mountObserve = ({ items = [], total, agents, saved = {} } = {}) => {
+    const ctx = makeCtx({
+      goal: 'certops_observe',
+      websiteIds: [],
+      certops: {
+        agents: { items: agents || [agent('a1')] },
+        observedCertificates: { total: total ?? items.length, items },
+      },
+      progress: {
+        certops: { objective: 'observe', infrastructure, ...saved },
+      },
+    });
+    mount(ctx);
+    return ctx;
+  };
+  beforeEach(() => {
+    for (let id = 31; id < 31 + 60; id += 1) {
+      store.tokens[id] = token(id, ['ops'], `host-${id}.example.com`);
+    }
+  });
+
+  it('shows the group ticks, never the default-only text', async () => {
+    mountObserve({ items: found(3) });
+    expect(await box('Ops')).toHaveAttribute('aria-checked', 'true');
+    expect(await box('Billing')).toHaveAttribute('aria-checked', 'false');
+    expect(screen.queryByTestId('default-only-note')).toBeNull();
+    expect(
+      screen.queryByText(/does not create items that carry their own group/)
+    ).toBeNull();
+    expect((await screen.findByTestId('tick-sentence')).textContent).toBe(
+      'Ticked groups receive alerts for the certificates your agent found. Anything without a group uses the workspace default group "Ops".'
+    );
+  });
+
+  it('names the first certificates and counts the rest', async () => {
+    mountObserve({ items: found(12) });
+    await box('Ops');
+    const names = await screen.findByTestId('tick-item-names');
+    expect(names.textContent).toBe(
+      Array.from({ length: 10 }, (_, i) => `host-${31 + i}.example.com`).join(
+        ', '
+      ) + ' and 2 more'
+    );
+    expect(screen.getByTestId('tick-items')).toHaveTextContent(
+      '12 certificates your agent found'
+    );
+    expect(screen.getByTestId('tick-items')).toHaveTextContent(
+      'applies to all 12 of them at once'
+    );
+  });
+
+  it('applies one tick to every found certificate in bulk', async () => {
+    mountObserve({ items: found(12) });
+    const billing = await box('Billing');
+    fireEvent.click(billing);
+    await waitFor(() =>
+      expect(actions.setTokenContactGroups).toHaveBeenCalledTimes(12)
+    );
+    for (const [id, ids] of actions.setTokenContactGroups.mock.calls) {
+      expect(ids).toContain('billing');
+      expect(store.tokens[id].contact_group_ids).toContain('billing');
+    }
+  });
+
+  it("counts only the certificates of this session's agent", async () => {
+    const items = [
+      ...found(2, 'a1', 31),
+      ...found(2, 'old', 41),
+      ...found(1, 'other', 51),
+    ];
+    mountObserve({
+      items,
+      agents: [
+        agent('a1'),
+        agent('old', { existedBeforeSession: true }),
+        agent('other', { platform: platform === 'linux' ? 'win32' : 'linux' }),
+      ],
+    });
+    await box('Ops');
+    await waitFor(() => expect(actions.getToken).toHaveBeenCalledTimes(2));
+    expect(actions.getToken).toHaveBeenCalledWith('31');
+    expect(actions.getToken).toHaveBeenCalledWith('32');
+  });
+
+  it('counts an existing agent only when the operator chose it', async () => {
+    mountObserve({
+      items: found(2, 'old', 41),
+      agents: [agent('old', { existedBeforeSession: true })],
+      saved: { chosenAgentId: 'old' },
+    });
+    await box('Ops');
+    expect(actions.getToken).toHaveBeenCalledWith('41');
+  });
+
+  it('holds Continue until every found certificate reaches a group', async () => {
+    store.tokens[31].contact_group_ids = [];
+    const ctx = makeCtx({
+      goal: 'certops_observe',
+      websiteIds: [],
+      certops: {
+        agents: { items: [agent('a1')] },
+        observedCertificates: { total: 2, items: found(2) },
+      },
+      progress: { certops: { objective: 'observe', infrastructure } },
+    });
+    ctx.summary.references.tokenGroups = { 31: [], 32: ['ops'] };
+    mount(ctx);
+    expect(
+      await screen.findByRole('button', { name: 'Continue' })
+    ).toBeDisabled();
+    expect(
+      screen.getByText(/tick a group that reaches someone for everything/)
+    ).toBeVisible();
+  });
+
+  it('confirms with Continue once the found certificates carry a group', async () => {
+    const ctx = makeCtx({
+      goal: 'certops_observe',
+      websiteIds: [],
+      certops: {
+        agents: { items: [agent('a1')] },
+        observedCertificates: { total: 2, items: found(2) },
+      },
+      progress: { certops: { objective: 'observe', infrastructure } },
+    });
+    ctx.summary.references.tokenGroups = { 31: ['ops'], 32: ['ops'] };
+    mount(ctx);
+    const next = await screen.findByRole('button', { name: 'Continue' });
+    await waitFor(() => expect(next).toBeEnabled());
+    fireEvent.click(next);
+    await waitFor(() => expect(ctx.release).toHaveBeenCalledTimes(1));
+    const patch = ctx.controller.update.mock.calls[0][0]({ progress: {} });
+    expect(patch.progress).toEqual({
+      recipientsConfirmedFor: 'certops_observe',
+    });
+  });
+
+  it('says nothing was found yet, keeps the default group and lets the person go on', async () => {
+    const ctx = mountObserve({ items: [] });
+    const note = await screen.findByTestId('nothing-found-note');
+    expect(note).toHaveTextContent('No certificates found yet');
+    expect(note).toHaveTextContent('workspace default group "Ops"');
+    expect(screen.queryByTestId('default-only-note')).toBeNull();
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    expect((await screen.findByTestId('tick-sentence')).textContent).toBe(
+      'No certificates found yet. Certificates your agent finds later use the workspace default group "Ops".'
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Use these groups' })
+    );
+    await waitFor(() => expect(ctx.controller.update).toHaveBeenCalled());
+    const patch = ctx.controller.update.mock.calls[0][0]({ progress: {} });
+    expect(patch.progress).toEqual({
+      recipientsConfirmedFor: 'certops_observe',
+    });
+  });
+
+  it('turns ticks off past the cap and says why', async () => {
+    mountObserve({ items: found(50), total: 120 });
+    expect(
+      await screen.findByText(/found more than 50 certificates/)
+    ).toBeVisible();
+    expect(actions.getToken).not.toHaveBeenCalled();
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+  });
+});
+
+describe('RecipientsStep certops_observe on Kubernetes', () => {
+  it('ticks the certificates the cluster controller reported', async () => {
+    store.tokens[61] = token(61, ['ops'], 'ingress.example.com');
+    const ctx = makeCtx({
+      goal: 'certops_observe',
+      websiteIds: [],
+      certops: {
+        agents: { items: [] },
+        observedCertificates: {
+          total: 2,
+          items: [
+            {
+              certificateId: 'k1',
+              tokenId: 61,
+              source: 'cert_manager',
+              clusterId: 'prod-eu',
+            },
+            {
+              certificateId: 'k2',
+              tokenId: 62,
+              source: 'cert_manager',
+              clusterId: 'other',
+            },
+          ],
+        },
+      },
+      progress: {
+        certops: {
+          objective: 'observe',
+          infrastructure: 'kubernetes',
+          clusterId: 'prod-eu',
+        },
+      },
+    });
+    mount(ctx);
+    expect(await box('Ops')).toHaveAttribute('aria-checked', 'true');
+    await waitFor(() => expect(actions.getToken).toHaveBeenCalledTimes(1));
+    expect(actions.getToken).toHaveBeenCalledWith('61');
+  });
+});
+
+// AD CS has an item to tick as soon as the renewal profile is attached to a
+// certificate, long before the first enrollment.
+describe('RecipientsStep AD CS renewal profile coverage', () => {
+  const issuer = (over = {}) => ({
+    id: 'i1',
+    name: 'Corp CA',
+    confirmed: true,
+    safe: true,
+    profileCount: 1,
+    attachedCertificates: 1,
+    ...over,
+  });
+  const profileCert = (tokenId, id = `p${tokenId}`) => ({
+    certificateId: id,
+    tokenId,
+    source: 'profile',
+  });
+  const mountAdcs = ({ certificates = [], adcs, goToStep } = {}) => {
+    const ctx = makeCtx({
+      goal: 'certops_adcs',
+      websiteIds: [],
+      certificates,
+      certops: { adcs: adcs || { issuers: [issuer()], profiles: 1 } },
+      progress: { certops: { objective: 'adcs', infrastructure: 'windows' } },
+    });
+    if (goToStep) ctx.goToStep = goToStep;
+    mount(ctx);
+    return ctx;
+  };
+  beforeEach(() => {
+    store.settings.contact_groups.push(group('legal', 'Legal'));
+    store.tokens[31] = token(31, ['ops'], 'app.example.com');
+    store.tokens[32] = token(32, ['ops'], 'api.example.com');
+  });
+
+  it('ticks the certificate the profile is attached to, with no enrollment yet', async () => {
+    mountAdcs({ certificates: [profileCert(31)] });
+    expect(await box('Ops')).toHaveAttribute('aria-checked', 'true');
+    expect(await box('Legal')).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByTestId('tick-item-names')).toHaveTextContent(
+      'app.example.com'
+    );
+    expect(screen.getByTestId('tick-items')).toHaveTextContent(
+      '1 certificate from this setup'
+    );
+    expect(screen.queryByTestId('adcs-nothing-attached')).toBeNull();
+    expect(screen.queryByTestId('default-only-note')).toBeNull();
+    expect(
+      screen.queryByText(/does not create items that carry their own group/)
+    ).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: 'Use these groups' })
+    ).toBeNull();
+  });
+
+  it('ticks and unticks a group on that certificate', async () => {
+    mountAdcs({ certificates: [profileCert(31)] });
+    fireEvent.click(await box('Legal'));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Legal' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    );
+    expect(store.tokens[31].contact_group_ids).toEqual(['legal', 'ops']);
+    fireEvent.click(await box('Legal'));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Legal' })).toHaveAttribute(
+        'aria-checked',
+        'false'
+      )
+    );
+    expect(store.tokens[31].contact_group_ids).toEqual(['ops']);
+  });
+
+  it('needs the operator Continue once the certificate carries a group', async () => {
+    const ctx = makeCtx({
+      goal: 'certops_adcs',
+      websiteIds: [],
+      certificates: [profileCert(31)],
+      certops: { adcs: { issuers: [issuer()], profiles: 1 } },
+      progress: { certops: { objective: 'adcs', infrastructure: 'windows' } },
+    });
+    ctx.summary.references.tokenGroups = { 31: ['ops'] };
+    mount(ctx);
+    const next = await screen.findByRole('button', { name: 'Continue' });
+    await waitFor(() => expect(next).toBeEnabled());
+    expect(ctx.release).not.toHaveBeenCalled();
+    expect(ctx.controller.update).not.toHaveBeenCalled();
+    fireEvent.click(next);
+    await waitFor(() => expect(ctx.release).toHaveBeenCalledTimes(1));
+    const patch = ctx.controller.update.mock.calls[0][0]({ progress: {} });
+    expect(patch.progress).toEqual({ recipientsConfirmedFor: 'certops_adcs' });
+  });
+
+  it('adds enrollment certificates to the profile ones, each token once', async () => {
+    mountAdcs({
+      certificates: [
+        profileCert(31),
+        { certificateId: 'e1', tokenId: 32, source: 'enrollment' },
+        { certificateId: 'e2', tokenId: 31, source: 'enrollment' },
+      ],
+    });
+    await box('Ops');
+    expect(screen.getByTestId('tick-items')).toHaveTextContent(
+      '2 certificates from this setup'
+    );
+    expect(actions.getToken).toHaveBeenCalledTimes(2);
+  });
+
+  it('says what is missing when the profile is not attached, and links back', async () => {
+    const goToStep = vi.fn();
+    const ctx = mountAdcs({
+      goToStep,
+      adcs: {
+        issuers: [issuer({ attachedCertificates: 0 })],
+        profiles: 1,
+      },
+    });
+    const note = await screen.findByTestId('adcs-nothing-attached');
+    expect(note).toHaveTextContent(
+      'No certificate is attached to the renewal profile yet'
+    );
+    expect(note).toHaveTextContent('workspace default group "Ops" is used');
+    expect(note).toHaveTextContent('checks again every 10 seconds');
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    expect(screen.queryByTestId('default-only-note')).toBeNull();
+    fireEvent.click(screen.getByTestId('adcs-back-to-profile'));
+    expect(goToStep).toHaveBeenCalledWith('certops_adcs');
+    // The step is still shown once, with the explicit default confirmation.
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Use these groups' })
+    );
+    await waitFor(() => expect(ctx.controller.update).toHaveBeenCalled());
+    const patch = ctx.controller.update.mock.calls[0][0]({ progress: {} });
+    expect(patch.progress).toEqual({ recipientsConfirmedFor: 'certops_adcs' });
+  });
+
+  it('says so when there is no renewal profile at all', async () => {
+    mountAdcs({
+      adcs: { issuers: [issuer({ profileCount: 0 })], profiles: 0 },
+    });
+    expect(
+      await screen.findByTestId('adcs-nothing-attached')
+    ).toHaveTextContent('No renewal profile yet');
+  });
+
+  it('offers no way back while a finished step is only being reviewed', async () => {
+    const ctx = makeCtx({
+      goal: 'certops_adcs',
+      websiteIds: [],
+      certops: { adcs: { issuers: [issuer({ attachedCertificates: 0 })] } },
+    });
+    ctx.goToStep = vi.fn();
+    mount(ctx, { reviewing: true });
+    await screen.findByTestId('adcs-nothing-attached');
+    expect(screen.queryByTestId('adcs-back-to-profile')).toBeNull();
+  });
+
+  it('explains a profile certificate that has no inventory record yet', async () => {
+    mountAdcs({
+      certificates: [{ certificateId: 'p1', tokenId: null, source: 'profile' }],
+    });
+    expect(await screen.findByTestId('tick-sentence')).toHaveTextContent(
+      '1 certificate from this setup has no inventory record yet'
+    );
+    expect(screen.queryByTestId('adcs-nothing-attached')).toBeNull();
+  });
+
+  describe('while the page waits', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+      Object.defineProperty(document, 'hidden', {
+        configurable: true,
+        get: () => false,
+      });
+    });
+    const advance = ms =>
+      act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+
+    it('reads again every 10 seconds until a certificate is attached', async () => {
+      const ctx = mountAdcs({
+        adcs: { issuers: [issuer({ attachedCertificates: 0 })], profiles: 1 },
+      });
+      await screen.findByTestId('adcs-nothing-attached');
+      const before = ctx.refresh.mock.calls.length;
+      await advance(10000);
+      expect(ctx.refresh.mock.calls.length).toBeGreaterThan(before);
+    });
+
+    it('does not read while the tab is hidden', async () => {
+      Object.defineProperty(document, 'hidden', {
+        configurable: true,
+        get: () => true,
+      });
+      const ctx = mountAdcs({
+        adcs: { issuers: [issuer({ attachedCertificates: 0 })], profiles: 1 },
+      });
+      await screen.findByTestId('adcs-nothing-attached');
+      await advance(60000);
+      expect(ctx.refresh).not.toHaveBeenCalled();
+    });
+
+    it('stops reading once every certificate can carry a group', async () => {
+      const ctx = mountAdcs({ certificates: [profileCert(31)] });
+      await box('Ops');
+      await advance(60000);
+      expect(ctx.refresh).not.toHaveBeenCalled();
+    });
+
+    it('keeps reading while a certificate has no inventory record', async () => {
+      const ctx = mountAdcs({
+        certificates: [profileCert(31), profileCert(null, 'p2')],
+      });
+      await box('Ops');
+      await advance(10000);
+      expect(ctx.refresh).toHaveBeenCalled();
+    });
+  });
+});

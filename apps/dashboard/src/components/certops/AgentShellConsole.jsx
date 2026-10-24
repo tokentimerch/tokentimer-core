@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Badge, Box, HStack, Text, VStack } from '@chakra-ui/react';
+import {
+  Badge,
+  Box,
+  HStack,
+  IconButton,
+  Text,
+  Tooltip,
+  VStack,
+} from '@chakra-ui/react';
+import { FiCheck, FiChevronDown, FiChevronUp, FiCopy } from 'react-icons/fi';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { listAgentJobLog } from './certopsJobsApi';
 
@@ -283,6 +292,14 @@ export default function AgentShellConsole({
   pollMs,
   maxHeight = '280px',
   onComplete,
+  // Optional presentation and data hooks. All off by default so existing
+  // callers render exactly as before.
+  copyable = false,
+  collapsible = false,
+  lineNumbers = false,
+  stopWhenComplete = false,
+  onItems,
+  lineGuard,
 }) {
   const { muted, text, dashboard } = useDashboardTheme();
   // Keep the live cursor on the shell palette (theme accent fails contrast on #0f172a).
@@ -292,6 +309,11 @@ export default function AgentShellConsole({
   const [items, setItems] = useState([]);
   const [failed, setFailed] = useState(false);
   const bottomRef = useRef(null);
+  const boxRef = useRef(null);
+  // Follow new output only while the reader is at the bottom.
+  const pinnedRef = useRef(true);
+  const [copied, setCopied] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const doneRef = useRef(false);
   const useStatic = Array.isArray(staticEntries);
 
@@ -355,6 +377,7 @@ export default function AgentShellConsole({
     doneRef.current = false;
     if (!active || !workspaceId || !jobId) return undefined;
     let cancelled = false;
+    let stopped = false;
     let timer;
     let cursor;
     const controller = new AbortController();
@@ -393,6 +416,9 @@ export default function AgentShellConsole({
             onComplete?.(page);
           }
           delay = COMPLETED_REVALIDATE_MS;
+          // A finished job has nothing more to say. Opt-in: other screens keep
+          // revalidating access to retained output.
+          if (stopWhenComplete) stopped = true;
         } else if (page?.hasMore) delay = 0;
       } catch (error) {
         if (cancelled) return;
@@ -407,7 +433,7 @@ export default function AgentShellConsole({
         setFailed(true);
         delay = ERROR_POLL_MS;
       }
-      if (!cancelled) {
+      if (!cancelled && !stopped) {
         timer = setTimeout(tick, delay);
       }
     };
@@ -417,11 +443,50 @@ export default function AgentShellConsole({
       controller.abort();
       clearTimeout(timer);
     };
-  }, [active, workspaceId, jobId, fetcher, pollMs, onComplete, useStatic]);
+  }, [
+    active,
+    workspaceId,
+    jobId,
+    fetcher,
+    pollMs,
+    onComplete,
+    useStatic,
+    stopWhenComplete,
+  ]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'end' });
+    if (!pinnedRef.current) return;
+    const reduced =
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+    bottomRef.current?.scrollIntoView?.({
+      behavior: reduced ? 'auto' : 'smooth',
+      block: 'end',
+    });
   }, [displayLines.length, displayLines[displayLines.length - 1]?.id]);
+
+  useEffect(() => {
+    if (onItems) onItems(items);
+  }, [items, onItems]);
+
+  const onScroll = event => {
+    const el = event.currentTarget;
+    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  };
+
+  const guarded = msg => (lineGuard ? lineGuard(msg) : msg);
+
+  const copyAll = async () => {
+    try {
+      await navigator.clipboard.writeText(
+        displayLines.map(line => guarded(line.msg)).join('\n')
+      );
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch (_) {
+      setCopied(false);
+    }
+  };
 
   const badgeTone = toneForStatus(statusHint);
   const badgeScheme =
@@ -475,16 +540,47 @@ export default function AgentShellConsole({
             {title}
           </Text>
         </HStack>
-        <Badge
-          colorScheme={badgeScheme}
-          variant='subtle'
-          fontSize='0.7em'
-          role='status'
-        >
-          {STATUS_LABEL[statusHint] || statusHint}
-        </Badge>
+        <HStack spacing={1}>
+          {copyable && displayLines.length > 0 ? (
+            <Tooltip label={copied ? 'Copied' : 'Copy output'}>
+              <IconButton
+                size='xs'
+                variant='ghost'
+                aria-label='Copy output'
+                icon={copied ? <FiCheck /> : <FiCopy />}
+                onClick={copyAll}
+              />
+            </Tooltip>
+          ) : null}
+          {collapsible ? (
+            <IconButton
+              size='xs'
+              variant='ghost'
+              aria-label={collapsed ? 'Expand output' : 'Collapse output'}
+              aria-expanded={!collapsed}
+              icon={collapsed ? <FiChevronDown /> : <FiChevronUp />}
+              onClick={() => setCollapsed(c => !c)}
+            />
+          ) : null}
+          <Badge
+            colorScheme={badgeScheme}
+            variant='subtle'
+            fontSize='0.7em'
+            role='status'
+          >
+            {STATUS_LABEL[statusHint] || statusHint}
+          </Badge>
+        </HStack>
       </HStack>
       <Box
+        ref={boxRef}
+        role='log'
+        aria-label={title}
+        aria-live='polite'
+        aria-relevant='additions'
+        tabIndex={0}
+        onScroll={onScroll}
+        hidden={collapsed}
         bg={SHELL.bg}
         color={SHELL.body}
         borderRadius='12px'
@@ -518,15 +614,31 @@ export default function AgentShellConsole({
               : deliveryLabel(payload, failed)}
           </Text>
         ) : (
-          displayLines.map(line => (
+          displayLines.map((line, index) => (
             <Box
               key={line.id}
               as='div'
               data-shell-line
+              display={lineNumbers ? 'flex' : undefined}
+              gap={lineNumbers ? 3 : undefined}
               wordBreak='break-word'
               sx={{ color: `${colorForLine(line)} !important` }}
             >
-              {line.msg}
+              {lineNumbers ? (
+                <Box
+                  as='span'
+                  aria-hidden
+                  data-shell-muted
+                  data-testid='shell-line-number'
+                  flexShrink={0}
+                  minW='2ch'
+                  textAlign='right'
+                  userSelect='none'
+                >
+                  {index + 1}
+                </Box>
+              ) : null}
+              <span>{guarded(line.msg)}</span>
             </Box>
           ))
         )}
@@ -544,6 +656,11 @@ export default function AgentShellConsole({
       {limitNotice ? (
         <Text fontSize='xs' color={muted} role='status'>
           {limitNotice}
+        </Text>
+      ) : null}
+      {!useStatic && items.some(item => item?.redacted === true) ? (
+        <Text fontSize='xs' color={muted} data-testid='shell-redaction-note'>
+          Sensitive values were removed before this output was stored.
         </Text>
       ) : null}
       {payload &&

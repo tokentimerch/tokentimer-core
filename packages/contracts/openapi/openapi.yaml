@@ -2337,6 +2337,7 @@ paths:
                   additionalProperties: true
                 scan_params:
                   type: object
+                  description: Scan filters and scope. `contactGroupIds` (array of contact group IDs) sets the alert groups for assets this configuration creates; assets it already imported or later edited keep their groups, and an empty or missing list uses the workspace default. Changing it does not restart a scan.
                   additionalProperties: true
                 frequency:
                   type: string
@@ -2864,6 +2865,629 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/onboarding/capabilities:
+    get:
+      tags: [Workspaces]
+      summary: Onboarding capability facts
+      operationId: getOnboardingCapabilities
+      description: >-
+        Returns, per capability, separate tri-state facts (supported, entitled,
+        authorized, qualified, configured; each true, false or "unknown"),
+        blockers with remediation, available actions and the derived wizard
+        state. "unknown" means the source could not be read and must not be
+        treated as unavailable. An edition may add capability ids beyond the
+        ones core lists; clients ignore ids they do not know.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      responses:
+        "200":
+          description: Capability list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  docsBaseUrl:
+                    type: string
+                    format: uri
+                  viewer:
+                    type: object
+                    description: >-
+                      The caller's workspace role and whether they are a system
+                      administrator, so the wizard can pick between a form and
+                      an administrator handoff.
+                    properties:
+                      workspaceRole:
+                        type: string
+                        nullable: true
+                      isSystemAdmin:
+                        type: boolean
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/onboarding/{flow}:
+    get:
+      tags: [Workspaces]
+      summary: Get the caller's onboarding session
+      operationId: getOnboardingSession
+      description: >-
+        Returns the caller's persisted onboarding intent, progress and
+        non-secret operation references for this workspace. A session that has
+        never been written has revision 0.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/onboardingFlowParam"
+      responses:
+        "200":
+          description: Onboarding session
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session:
+                    type: object
+                    additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Workspaces]
+      summary: Write the caller's onboarding session
+      operationId: putOnboardingSession
+      description: >-
+        Replaces the supplied sections. `expectedRevision` is required; a
+        mismatch returns 409 REVISION_CONFLICT with the current session.
+        Credentials and secret-like keys or values are rejected.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/onboardingFlowParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision]
+              properties:
+                expectedRevision:
+                  type: integer
+                  minimum: 0
+                plannerVersion:
+                  type: integer
+                  minimum: 1
+                status:
+                  type: string
+                  enum: [in_progress, completed, dismissed]
+                intent:
+                  type: object
+                  additionalProperties: true
+                progress:
+                  type: object
+                  description: >-
+                    Free-form progress. For CertOps goals, `certops` holds the
+                    per-goal marks; `certops.chosenAgentId` (string, optional)
+                    is the id of a workspace agent the operator opted to reuse
+                    with "My agent is already set up", and
+                    `certops.chosenAgentConfirmed` echoes it once confirmed.
+                    Clients that do not know the fields ignore them.
+                  additionalProperties: true
+                operation_refs:
+                  type: object
+                  additionalProperties: true
+      responses:
+        "200":
+          description: Updated session
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session:
+                    type: object
+                    additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Session changed elsewhere (REVISION_CONFLICT)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/onboarding/{flow}/summary:
+    get:
+      tags: [Workspaces]
+      summary: Verified onboarding state
+      operationId: getOnboardingSummary
+      description: >-
+        Recomputes what actually exists in the workspace and which stored
+        operation references still resolve. Completion is always derived from
+        this, never from stored flags. Covers assets and auto-sync
+        configurations, endpoint monitors, alert contact groups and SMTP
+        readiness, and, for workspace managers and admins with CertOps on,
+        agents, the wizard's dry-run and issue jobs, certificate counts,
+        Vault distribution and AD CS issuer facts. `certops` is "unknown" when
+        the caller cannot see it, CertOps is off or the read failed; treat that
+        as not known, never as nothing installed. Responses are not cached.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/onboardingFlowParam"
+      responses:
+        "200":
+          description: Verified summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  summary:
+                    type: object
+                    description: >-
+                      Documented top-level keys are listed; objects may carry
+                      additional fields.
+                    additionalProperties: true
+                    properties:
+                      generatedAt:
+                        type: string
+                        format: date-time
+                      assets:
+                        type: object
+                        properties:
+                          total:
+                            type: integer
+                            description: Tokens in the workspace.
+                          syncManaged:
+                            type: integer
+                            description: Tokens linked to an auto-sync configuration.
+                        additionalProperties: true
+                      autoSync:
+                        type: object
+                        properties:
+                          total:
+                            type: integer
+                          items:
+                            type: array
+                            description: Up to 20 configurations, newest first. Credentials are never returned.
+                            items:
+                              type: object
+                              properties:
+                                id:
+                                  type: string
+                                provider:
+                                  type: string
+                                name:
+                                  type: string
+                                  nullable: true
+                                enabled:
+                                  type: boolean
+                                frequency:
+                                  type: string
+                                  nullable: true
+                                lastSyncAt:
+                                  type: string
+                                  format: date-time
+                                  nullable: true
+                                lastStatus:
+                                  type: string
+                                  nullable: true
+                                lastItems:
+                                  type: integer
+                                  nullable: true
+                                failures:
+                                  type: integer
+                                running:
+                                  type: boolean
+                              additionalProperties: true
+                        additionalProperties: true
+                      monitors:
+                        type: object
+                        properties:
+                          total:
+                            type: integer
+                            description: Number of items returned (at most 20), not the workspace total.
+                          items:
+                            type: array
+                            description: Newest endpoint monitors first.
+                            items:
+                              type: object
+                              properties:
+                                id:
+                                  type: string
+                                  format: uuid
+                                url:
+                                  type: string
+                                tokenId:
+                                  type: integer
+                                  nullable: true
+                                validated:
+                                  type: boolean
+                                  nullable: true
+                                healthCheckEnabled:
+                                  type: boolean
+                                  nullable: true
+                                lastHealthStatus:
+                                  type: string
+                                  nullable: true
+                                lastHealthCheckAt:
+                                  type: string
+                                  format: date-time
+                                  nullable: true
+                                certificateExpiresAt:
+                                  type: string
+                                  format: date-time
+                                  nullable: true
+                              additionalProperties: true
+                        additionalProperties: true
+                      certops:
+                        description: >-
+                          The string "unknown", or the CertOps facts below.
+                        oneOf:
+                          - type: string
+                            enum: [unknown]
+                          - type: object
+                            properties:
+                              agents:
+                                type: object
+                                description: >-
+                                  Agents that are not retired or diagnostic.
+                                  `registeredSinceToken` counts agents created
+                                  after the session started. Each item carries
+                                  `platform` and `declaredCapabilities`, so a
+                                  client can judge an agent against the exact
+                                  system and capabilities a setup needs, and
+                                  `existedBeforeSession` (true when the agent
+                                  was created before the session began).
+                                properties:
+                                  total:
+                                    type: integer
+                                  live:
+                                    type: integer
+                                  registeredSinceToken:
+                                    type: integer
+                                  executionEnabled:
+                                    type: boolean
+                                  items:
+                                    type: array
+                                    description: Up to 10 agents.
+                                    items:
+                                      type: object
+                                      additionalProperties: true
+                                additionalProperties: true
+                              certificates:
+                                type: object
+                                properties:
+                                  total:
+                                    type: integer
+                                  active:
+                                    type: integer
+                                  observed:
+                                    type: integer
+                                additionalProperties: true
+                              controllers:
+                                type: object
+                                description: >-
+                                  Kubernetes controllers that have reported
+                                  observations, newest first (up to 10
+                                  clusters).
+                                properties:
+                                  clusters:
+                                    type: array
+                                    items:
+                                      type: object
+                                      properties:
+                                        clusterId:
+                                          type: string
+                                        lastReportedAt:
+                                          type: string
+                                          format: date-time
+                                          nullable: true
+                                additionalProperties: true
+                              distribution:
+                                type: object
+                                description: >-
+                                  Vault distribution. `verified` is true only
+                                  after a rollout reached the verified state
+                                  with consumer evidence.
+                                properties:
+                                  groups:
+                                    type: integer
+                                  bindings:
+                                    type: integer
+                                  verified:
+                                    type: boolean
+                                  outboxBacklog:
+                                    type: object
+                                    description: >-
+                                      CertOps notifications and rollout
+                                      requests that have been due for over 5
+                                      minutes and are not claimed or backing
+                                      off. A non-zero count usually means the
+                                      CertOps worker is not running. Absent on
+                                      older servers.
+                                    properties:
+                                      count:
+                                        type: integer
+                                      oldestAt:
+                                        type: string
+                                        format: date-time
+                                        nullable: true
+                                    additionalProperties: true
+                                additionalProperties: true
+                              adcs:
+                                type: object
+                                properties:
+                                  issuers:
+                                    type: array
+                                    description: Up to 20 AD CS issuers, by name and state only.
+                                    items:
+                                      type: object
+                                      properties:
+                                        id:
+                                          type: string
+                                        name:
+                                          type: string
+                                        confirmed:
+                                          type: boolean
+                                        safe:
+                                          type: boolean
+                                        configured:
+                                          type: boolean
+                                          description: The issuer has a saved version (a CA certificate was chosen at least once).
+                                        checked:
+                                          type: boolean
+                                          description: A CA check has reported for this issuer.
+                                        caConfig:
+                                          type: string
+                                          nullable: true
+                                        template:
+                                          type: string
+                                          nullable: true
+                                        reasons:
+                                          type: array
+                                          description: Up to 6 reasons the last check gave, template then CA.
+                                          items:
+                                            type: string
+                                        createdAt:
+                                          type: string
+                                          format: date-time
+                                          nullable: true
+                                        existedBeforeSession:
+                                          type: boolean
+                                          description: >-
+                                            The issuer was created before the
+                                            session began. Absent on older
+                                            servers, read as false.
+                                        profileCount:
+                                          type: integer
+                                          description: Renewal profiles that use this issuer.
+                                        attachedCertificates:
+                                          type: integer
+                                          description: Certificates attached to a profile of this issuer.
+                                        revalidationRequired:
+                                          type: boolean
+                                        checkedAfterPin:
+                                          type: boolean
+                                          nullable: true
+                                          description: >-
+                                            Whether a CA check was taken after
+                                            the CA certificate was pinned,
+                                            which renewal needs. Null until a
+                                            certificate is pinned.
+                                      additionalProperties: true
+                                  profiles:
+                                    type: integer
+                                  installedEnrollments:
+                                    type: integer
+                                  enrollments:
+                                    type: object
+                                    properties:
+                                      overdue:
+                                        type: object
+                                        description: >-
+                                          Enrollments whose next poll date
+                                          passed by more than twice their poll
+                                          interval (at least 5 minutes) with no
+                                          job running and not waiting on a
+                                          person. A non-zero count usually
+                                          means the CertOps worker is not
+                                          running. Absent on older servers.
+                                        properties:
+                                          count:
+                                            type: integer
+                                          oldestDueAt:
+                                            type: string
+                                            format: date-time
+                                            nullable: true
+                                        additionalProperties: true
+                                    additionalProperties: true
+                                additionalProperties: true
+                              dryRun:
+                                allOf:
+                                  - $ref: "#/components/schemas/OnboardingJobStatus"
+                                nullable: true
+                              issueJob:
+                                allOf:
+                                  - $ref: "#/components/schemas/OnboardingJobStatus"
+                                nullable: true
+                              sessionCertificates:
+                                type: array
+                                description: >-
+                                  Managed certificates this setup session
+                                  produced (issue and publish jobs, AD CS
+                                  enrollments started since the session
+                                  began, and certificates attached to an AD CS
+                                  renewal profile of the session: the chosen
+                                  issuer's profiles when an existing issuer is
+                                  reused, else profiles created since the
+                                  session began). At most 20, each certificate
+                                  once. A `profile` entry exists as soon as the
+                                  profile is attached, long before the first
+                                  enrollment.
+                                items:
+                                  type: object
+                                  properties:
+                                    certificateId:
+                                      type: string
+                                      format: uuid
+                                    tokenId:
+                                      type: integer
+                                      nullable: true
+                                    source:
+                                      type: string
+                                      enum: [issue, publish, enrollment, profile]
+                                  additionalProperties: true
+                              observedCertificates:
+                                type: object
+                                description: >-
+                                  Certificates reported by an agent (the
+                                  chosen one, else those enrolled since the
+                                  session began) or by the Kubernetes
+                                  controller. `total` counts every match;
+                                  `items` holds at most 50. Absent on older
+                                  servers.
+                                properties:
+                                  total:
+                                    type: integer
+                                  items:
+                                    type: array
+                                    items:
+                                      type: object
+                                      properties:
+                                        certificateId:
+                                          type: string
+                                          format: uuid
+                                        tokenId:
+                                          type: integer
+                                          nullable: true
+                                        source:
+                                          type: string
+                                          enum: [agent_filesystem, agent_windows, cert_manager]
+                                        agentId:
+                                          type: string
+                                          format: uuid
+                                          nullable: true
+                                        clusterId:
+                                          type: string
+                                          nullable: true
+                                      additionalProperties: true
+                                additionalProperties: true
+                            additionalProperties: true
+                      alerts:
+                        type: object
+                        properties:
+                          smtpConfigured:
+                            description: Boolean, or "unknown" when it could not be read.
+                            oneOf:
+                              - type: boolean
+                              - type: string
+                                enum: [unknown]
+                          contactGroups:
+                            type: object
+                            properties:
+                              count:
+                                type: integer
+                              defaultId:
+                                type: string
+                                nullable: true
+                              defaultHasEmailRecipient:
+                                type: boolean
+                              defaultHasWebhookRecipient:
+                                type: boolean
+                              defaultHasRecipient:
+                                type: boolean
+                              withEmailRecipient:
+                                type: integer
+                              webhookCount:
+                                type: integer
+                              emailAlertsEnabled:
+                                type: boolean
+                                nullable: true
+                            additionalProperties: true
+                        additionalProperties: true
+                      edition:
+                        type: object
+                        description: >-
+                          Present only when the deployment's edition registered
+                          extra summary providers, keyed by provider id. Each
+                          value is a free-form object defined by the edition,
+                          or the string "unknown" when that provider failed;
+                          treat "unknown" as not known. Absent on a deployment
+                          with no provider. Never carries credentials.
+                        additionalProperties:
+                          oneOf:
+                            - type: object
+                              additionalProperties: true
+                            - type: string
+                              enum: [unknown]
+                      references:
+                        type: object
+                        description: >-
+                          Whether the ids stored in the session still exist in
+                          this workspace. At most 100 ids are checked per list.
+                        properties:
+                          tokenIds:
+                            $ref: "#/components/schemas/OnboardingReferenceCheck"
+                          assetTokenIds:
+                            $ref: "#/components/schemas/OnboardingReferenceCheck"
+                          monitorIds:
+                            $ref: "#/components/schemas/OnboardingReferenceCheck"
+                          tokenGroups:
+                            type: object
+                            description: >-
+                              Contact groups carried by the tokens this session
+                              created, by token id. Only groups that exist and
+                              reach a recipient are listed; an empty list means
+                              the token uses the workspace default group.
+                            additionalProperties:
+                              type: array
+                              items:
+                                type: string
+                        additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/onboarding/{flow}/reset:
+    post:
+      tags: [Workspaces]
+      summary: Reset the caller's onboarding session
+      operationId: resetOnboardingSession
+      description: Deletes the caller's session. Created assets are not touched.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/onboardingFlowParam"
+      responses:
+        "200":
+          description: Reset result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reset:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/contacts/{contactId}:
     put:
       tags: [Workspaces]
@@ -3173,9 +3797,22 @@ paths:
                       maxResults:
                         type: integer
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: The domain is missing or not a valid root domain (INVALID_DOMAIN)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: A valid root domain is required
+                code: INVALID_DOMAIN
         "409":
           description: A lookup is already running for this workspace and domain
+          headers:
+            Retry-After:
+              description: Seconds until the caller may retry.
+              schema:
+                type: integer
+                minimum: 1
           content:
             application/json:
               schema:
@@ -3186,8 +3823,21 @@ paths:
                   code:
                     type: string
                     example: DOMAIN_CHECKER_BUSY
+                  retry_after_seconds:
+                    type: integer
+                    minimum: 1
+              example:
+                error: A domain discovery scan is already running for this workspace.
+                code: DOMAIN_CHECKER_BUSY
+                retry_after_seconds: 60
         "429":
           description: Domain checker lookup rate limited
+          headers:
+            Retry-After:
+              description: Seconds until the caller may retry.
+              schema:
+                type: integer
+                minimum: 1
           content:
             application/json:
               schema:
@@ -3198,8 +3848,17 @@ paths:
                   code:
                     type: string
                     example: DOMAIN_CHECKER_RATE_LIMITED
+                  retry_after_seconds:
+                    type: integer
+                    minimum: 1
+              example:
+                error: Domain checker lookup is rate limited. Please wait before trying again.
+                code: DOMAIN_CHECKER_RATE_LIMITED
+                retry_after_seconds: 30
         "502":
-          description: Discovery tool error or invalid response
+          description: >-
+            Unexpected discovery failure that carries no more specific status
+            (DOMAIN_CHECKER_LOOKUP_FAILED).
           content:
             application/json:
               schema:
@@ -3209,8 +3868,12 @@ paths:
                     type: string
                   code:
                     type: string
+                    example: DOMAIN_CHECKER_LOOKUP_FAILED
         "503":
-          description: Discovery tools unavailable or all sources failed
+          description: >-
+            Discovery tools are not installed (DOMAIN_CHECKER_TOOL_MISSING; the
+            subfinder binary is looked up through SUBFINDER_BIN) or every
+            discovery source failed (DOMAIN_CHECKER_FAILED).
           content:
             application/json:
               schema:
@@ -3220,7 +3883,7 @@ paths:
                     type: string
                   code:
                     type: string
-                    example: DOMAIN_CHECKER_FAILED
+                    enum: [DOMAIN_CHECKER_TOOL_MISSING, DOMAIN_CHECKER_FAILED]
                   toolErrors:
                     type: array
                     items:
@@ -8602,6 +9265,13 @@ components:
       schema:
         type: string
         format: uuid
+    onboardingFlowParam:
+      in: path
+      name: flow
+      required: true
+      schema:
+        type: string
+        enum: [mega, certops]
     tokenIdParam:
       in: path
       name: id
@@ -9337,6 +10007,57 @@ components:
           type: integer
         offset:
           type: integer
+    OnboardingReferenceCheck:
+      type: object
+      properties:
+        existing:
+          type: array
+          items:
+            oneOf:
+              - type: integer
+              - type: string
+        missing:
+          type: array
+          items:
+            oneOf:
+              - type: integer
+              - type: string
+    OnboardingJobStatus:
+      type: object
+      description: Status of a job the setup guide created, read from the database.
+      properties:
+        id:
+          type: string
+          format: uuid
+        operation:
+          type: string
+        status:
+          type: string
+        mode:
+          type: string
+          nullable: true
+        errorCode:
+          type: string
+          nullable: true
+        errorMessage:
+          type: string
+          nullable: true
+          description: Truncated to 300 characters; the full text stays in the job log.
+        certificateStatus:
+          type: string
+          nullable: true
+        certificateId:
+          type: string
+          format: uuid
+          nullable: true
+          description: The managed certificate the job acts on.
+        tokenId:
+          type: integer
+          nullable: true
+          description: >-
+            Inventory token of that certificate, once it has one. Contact
+            groups are attached to this token.
+      additionalProperties: true
     ErrorResponse:
       type: object
       properties:

@@ -341,11 +341,23 @@ async function lookupDomain(domain, options = {}) {
           error.code,
         ),
       );
+      // A missing binary is a deployment problem, so report it with its own
+      // code instead of the generic "all sources failed".
+      const toolMissingOnly = toolErrors.every(
+        (error) => error.code === "DOMAIN_CHECKER_TOOL_MISSING",
+      );
+      const code = timeoutOnly
+        ? "DOMAIN_CHECKER_TIMEOUT"
+        : toolMissingOnly
+          ? "DOMAIN_CHECKER_TOOL_MISSING"
+          : "DOMAIN_CHECKER_FAILED";
       throw createDomainCheckerError(
         timeoutOnly
           ? "Domain checker lookup timed out"
-          : "All domain discovery sources failed",
-        timeoutOnly ? "DOMAIN_CHECKER_TIMEOUT" : "DOMAIN_CHECKER_FAILED",
+          : toolMissingOnly
+            ? "Domain discovery tools are not available"
+            : "All domain discovery sources failed",
+        code,
         { status: timeoutOnly ? 504 : 503, toolErrors },
       );
     }

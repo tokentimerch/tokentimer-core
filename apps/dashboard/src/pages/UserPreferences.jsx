@@ -33,6 +33,11 @@ import {
 import SEO from '../components/SEO.jsx';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import { workspaceAPI } from '../utils/apiClient';
+import { onboardingAPI } from '../utils/onboardingApi.js';
+import { showError } from '../utils/toast.js';
+import { useWorkspace } from '../utils/WorkspaceContext.jsx';
+import { resetTourCompleted } from '../utils/tourStorage.js';
+import { SELF_HOSTED_DOCS_BASE } from '../utils/docsUrls';
 
 function ThemePreviewStrip({ isDarkMode, border, bodySecondary, text }) {
   const shellBg = useColorModeValue('#e2e8f0', '#0f172a');
@@ -239,9 +244,26 @@ export default function UserPreferences({
   const appearanceIconColor = dashboard.accent.interactiveForeground;
   const [viewerOnly, setViewerOnly] = useState(isViewer);
 
+  const { workspaceId } = useWorkspace();
+  const [restartingSetup, setRestartingSetup] = useState(false);
+
+  // Starting over only clears the guide's own progress. Assets, monitors and
+  // contact groups it created are untouched.
+  const handleRestartSetup = async () => {
+    setRestartingSetup(true);
+    try {
+      if (workspaceId) await onboardingAPI.resetSession(workspaceId, 'mega');
+      navigate('/onboarding');
+    } catch (e) {
+      showError(e?.message || 'Could not restart the setup guide.');
+    } finally {
+      setRestartingSetup(false);
+    }
+  };
+
   const handleRestartTour = () => {
     try {
-      localStorage.removeItem('tt_tour_dashboard_v1');
+      resetTourCompleted('dashboard');
     } catch (_) {
       /* ignore */
     }
@@ -368,6 +390,37 @@ export default function UserPreferences({
               >
                 {!viewerOnly ? (
                   <DisplayActionRow
+                    label='Setup guide'
+                    description='Configure assets, alerts and Certificate Management step by step. Starting over keeps everything already created.'
+                    text={text}
+                    bodySecondary={bodySecondary}
+                    showDivider
+                  >
+                    <HStack
+                      spacing={2}
+                      w={{ base: 'full', sm: 'auto' }}
+                      flexWrap='wrap'
+                    >
+                      <DashboardActionButton
+                        leftIcon={<Icon as={FiPlay} aria-hidden />}
+                        onClick={() => navigate('/onboarding')}
+                        w={{ base: 'full', sm: 'auto' }}
+                      >
+                        Open setup guide
+                      </DashboardActionButton>
+                      <DashboardActionButton
+                        onClick={handleRestartSetup}
+                        isLoading={restartingSetup}
+                        variant='outline'
+                        w={{ base: 'full', sm: 'auto' }}
+                      >
+                        Start over
+                      </DashboardActionButton>
+                    </HStack>
+                  </DisplayActionRow>
+                ) : null}
+                {!viewerOnly ? (
+                  <DisplayActionRow
                     label='Product tour'
                     description='Walk through the dashboard features step by step.'
                     text={text}
@@ -392,7 +445,7 @@ export default function UserPreferences({
                 >
                   <DashboardActionButton
                     as='a'
-                    href='https://tokentimer.ch/docs/self-hosted'
+                    href={SELF_HOSTED_DOCS_BASE}
                     target='_blank'
                     rel='noopener noreferrer'
                     leftIcon={<Icon as={FiBookOpen} aria-hidden />}

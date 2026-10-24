@@ -64,11 +64,15 @@ TXT record before the hook proceeds. Set it to `quorum` with a
 proceed once that many independent server checks confirm — useful when one
 of several public resolvers is flaky or slow to pick up the record.
 
+Set `checkAuthoritative` to `false` and list `resolvers` when the zone is not
+publicly delegated, uses split-horizon DNS, or the host's own resolver sees the
+TXT record late. Raise `timeoutMs` (default 120000) for slow providers.
+
 ```json
 {
   "dnsProviders": {
-    "cloudflare": { "credentialsFile": "/etc/tokentimer-agent/dns/cloudflare.json" },
-    "rfc2136": { "credentialsFile": "/etc/tokentimer-agent/dns/rfc2136.json" },
+    "cloudflare": { "credentialsFile": "/etc/tokentimer-agent/cloudflare.json" },
+    "rfc2136": { "credentialsFile": "/etc/tokentimer-agent/rfc2136.json" },
     "zoneProviderMap": {
       "example.com": "cloudflare",
       "internal.example.net": "rfc2136"
@@ -78,7 +82,14 @@ of several public resolvers is flaky or slow to pick up the record.
 ```
 
 Credentials files are JSON objects, must be `0600` (the agent refuses
-group/other-readable files on POSIX), and never leave the host:
+group/other-readable files on POSIX), and never leave the host. The Linux
+installer does not create `/etc/tokentimer-agent`: create it first with
+`sudo install -d -m 0755 /etc/tokentimer-agent`, then give the credentials file
+to the agent user (`sudo chown tokentimer-agent:tokentimer-agent <file>` and
+`sudo chmod 0600 <file>`). On Windows the agent refuses a file whose access
+list is wider than SYSTEM and Administrators; restrict it with
+`icacls <file> /inheritance:r /grant:r 'SYSTEM:(F)' '*S-1-5-32-544:(F)'` and save
+it as UTF-8 without a byte order mark (see [Windows installation](install-windows.md)):
 
 | Provider | Credentials file fields |
 |----------|-------------------------|

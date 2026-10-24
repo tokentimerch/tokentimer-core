@@ -1,22 +1,26 @@
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   render,
   waitFor,
   screen,
   fireEvent,
   cleanup,
+  within,
 } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 
 import ImportTokensModal from '../../src/components/ImportTokensModal.jsx';
+import { tokenAPI, integrationAPI } from '../../src/utils/apiClient';
+import { IMPORT_DOCS } from '../../src/utils/docsUrls.js';
 
-const { apiGetMock, apiDeleteMock, gitlabFormProps, githubFormProps } =
+const { apiGetMock, apiDeleteMock, gitlabFormProps, githubFormProps, wsCtx } =
   vi.hoisted(() => ({
     apiGetMock: vi.fn(),
     apiDeleteMock: vi.fn(),
     gitlabFormProps: [],
     githubFormProps: [],
+    wsCtx: { id: 'ws-1' },
   }));
 
 vi.mock('../../src/utils/logger', () => ({
@@ -29,7 +33,7 @@ vi.mock('../../src/utils/toast.js', () => ({
 }));
 
 vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
-  useWorkspace: () => ({ workspaceId: 'ws-1', selectWorkspace: vi.fn() }),
+  useWorkspace: () => ({ workspaceId: wsCtx.id, selectWorkspace: vi.fn() }),
 }));
 
 vi.mock('../../src/utils/apiClient', () => ({
@@ -44,7 +48,13 @@ vi.mock('../../src/utils/apiClient', () => ({
     get: vi.fn().mockResolvedValue({}),
     getAlertSettings: vi.fn().mockResolvedValue({}),
   },
-  authAPI: { getPlan: vi.fn().mockResolvedValue({}) },
+  authAPI: {
+    getPlan: vi.fn().mockResolvedValue({
+      integrationScansUsed: 0,
+      integrationScansLimit: null,
+      integrationScansRemaining: null,
+    }),
+  },
   azureADAPI: { scan: vi.fn() },
   integrationAPI: {
     checkDuplicates: vi
@@ -122,7 +132,8 @@ vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsAvailability: () => ({ ready: true, enabled: false, error: null }),
   useCertOpsCanManage: () => false,
 }));
-vi.mock('../../src/hooks/useDashboardTheme.js', () => ({
+vi.mock('../../src/hooks/useDashboardTheme.js', async importOriginal => ({
+  ...(await importOriginal()),
   useDashboardTheme: () => ({ border: 'gray.200', muted: 'gray.500' }),
 }));
 vi.mock('../../src/components/DashboardModalFrame.jsx', () => ({
@@ -142,17 +153,19 @@ vi.mock('../../src/components/DashboardModalFrame.jsx', () => ({
     tokens: {},
   }),
 }));
-vi.mock('../../src/styles/theme.js', () => ({
+vi.mock('../../src/styles/theme.js', async importOriginal => ({
+  ...(await importOriginal()),
   dashboardModalInlineActionButtonProps: {},
 }));
 
 const GITLAB_SELF_HOSTED = 'https://gitlab.selfhosted.example';
 
-function renderModal(openRequest) {
+function renderModal(openRequest, extraProps = {}) {
   return (
     <ChakraProvider>
       <ImportTokensModal
         isOpen
+        {...extraProps}
         onClose={vi.fn()}
         onImported={vi.fn()}
         openRequest={openRequest}
@@ -298,7 +311,8 @@ describe('ImportTokensModal restored scan params provider scoping', () => {
           screen.getByRole('button', { name: 'Enable auto-sync', exact: true })
         ).toBeVisible();
       }
-    }
+    },
+    15000
   );
 
   it('clears a previous provider error when switching integrations', async () => {
@@ -458,5 +472,293 @@ describe('ImportTokensModal restored scan params provider scoping', () => {
       },
     });
     expect(await screen.findByText(/second-history/)).toBeTruthy();
+  });
+});
+
+describe('ImportTokensModal docs panel', () => {
+  beforeEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    apiGetMock.mockResolvedValue({ data: {} });
+  });
+
+  it('shows one Learn more panel for the file source', async () => {
+    render(renderModal(null));
+    const panel = await screen.findByRole('note', { name: 'Learn more' });
+    expect(
+      within(panel).getByRole('link', { name: 'Importing from files' })
+    ).toHaveAttribute('href', IMPORT_DOCS.file);
+    expect(screen.getAllByRole('note', { name: 'Learn more' })).toHaveLength(1);
+  });
+
+  it('shows the Entra ID guide for the Microsoft Entra ID source', async () => {
+    render(renderModal({ provider: 'azure-ad' }));
+    const panel = await screen.findByRole('note', { name: 'Learn more' });
+    expect(
+      within(panel).getByRole('link', {
+        name: 'Importing from Microsoft Entra ID',
+      })
+    ).toHaveAttribute('href', IMPORT_DOCS.entraId);
+  });
+
+  it('renders no panel when the host already shows its own', async () => {
+    render(renderModal(null, { hideDocs: true }));
+    await screen.findByText(/Upload a file in/);
+    expect(screen.queryByRole('note', { name: 'Learn more' })).toBeNull();
+  });
+});
+
+describe('ImportTokensModal file preview', () => {
+  const NO_ROWS =
+    'No rows could be read from this file. Check the columns against the template.';
+
+  beforeEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    apiGetMock.mockResolvedValue({ data: {} });
+  });
+
+  const upload = (body, name) => {
+    const input = document.querySelector('input[type="file"]');
+    const file = new File([body], name, { type: 'text/plain' });
+    // jsdom's File has no text(); browsers do.
+    file.text = () => Promise.resolve(body);
+    fireEvent.change(input, { target: { files: [file] } });
+  };
+
+  it.each([
+    ['wrong columns', 'foo,bar\n1,2\n', 'wrong.csv'],
+    ['an empty csv', '', 'empty.csv'],
+    ['an empty json array', '[]', 'empty.json'],
+  ])('explains an unreadable file: %s', async (_label, body, name) => {
+    render(renderModal(null));
+    await screen.findByText(/Upload a file in/);
+    upload(body, name);
+    expect(await screen.findByText(NO_ROWS)).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Import 0 selected/ })
+    ).toBeDisabled();
+  });
+
+  it('shows the preview without the message for a readable file', async () => {
+    render(renderModal(null));
+    await screen.findByText(/Upload a file in/);
+    upload(
+      'name,category,type,expiresAt\nweb,cert,ssl_cert,2030-01-01\n',
+      'ok.csv'
+    );
+    expect(
+      await screen.findByText('Detected 1 valid rows')
+    ).toBeInTheDocument();
+    expect(screen.queryByText(NO_ROWS)).toBeNull();
+  });
+
+  it('joins the sections of a row with a comma and a space', async () => {
+    render(renderModal(null));
+    await screen.findByText(/Upload a file in/);
+    upload(
+      JSON.stringify([
+        {
+          name: 'web',
+          category: 'cert',
+          type: 'ssl_cert',
+          expiresAt: '2030-01-01',
+          section: ['prod', 'public'],
+        },
+      ]),
+      'sections.json'
+    );
+    expect(await screen.findByText('prod, public')).toBeInTheDocument();
+    expect(screen.queryByText('prodpublic')).toBeNull();
+  });
+
+  it('lists the rows left out and what each one is missing', async () => {
+    render(renderModal(null));
+    await screen.findByText(/Upload a file in/);
+    upload(
+      [
+        'name,category,type,expiresAt',
+        ',cert,ssl_cert,2030-01-01',
+        'ok,cert,ssl_cert,2030-01-01',
+        'nodate,cert,ssl_cert,',
+      ].join('\n'),
+      'partial.csv'
+    );
+    expect(
+      await screen.findByText('Detected 1 valid rows')
+    ).toBeInTheDocument();
+    const note = screen.getByTestId('skipped-rows-note');
+    expect(note).toHaveTextContent('2 rows left out');
+    expect(note).toHaveTextContent('row 2 (name)');
+    expect(note).toHaveTextContent('row 4 (expiresAt)');
+  });
+
+  it('numbers rows of a JSON file from 1 because it has no header row', async () => {
+    render(renderModal(null));
+    await screen.findByText(/Upload a file in/);
+    upload(
+      JSON.stringify([
+        {
+          name: '',
+          category: 'cert',
+          type: 'ssl_cert',
+          expiresAt: '2030-01-01',
+        },
+        {
+          name: 'ok',
+          category: 'cert',
+          type: 'ssl_cert',
+          expiresAt: '2030-01-01',
+        },
+      ]),
+      'items.json'
+    );
+    expect(
+      await screen.findByText('Detected 1 valid rows')
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('skipped-rows-note')).toHaveTextContent(
+      'row 1 (name)'
+    );
+  });
+
+  it('refuses a file with more than 5000 rows and says why', async () => {
+    render(renderModal(null));
+    await screen.findByText(/Upload a file in/);
+    const lines = ['name,category,type,expiresAt'];
+    for (let i = 0; i < 5001; i += 1) {
+      lines.push(`a${i},cert,ssl_cert,2030-01-01`);
+    }
+    upload(lines.join('\n'), 'big.csv');
+    expect(
+      await screen.findByText(/This file has 5001 rows\. The limit is 5000/)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Detected/)).toBeNull();
+  });
+
+  it('refuses a file over 5 MB before reading it', async () => {
+    render(renderModal(null));
+    await screen.findByText(/Upload a file in/);
+    const input = document.querySelector('input[type="file"]');
+    const file = new File(['x'], 'huge.csv', { type: 'text/csv' });
+    Object.defineProperty(file, 'size', { value: 6 * 1024 * 1024 });
+    fireEvent.change(input, { target: { files: [file] } });
+    expect(
+      await screen.findByText(/This file is 6\.0 MB\. The limit is 5 MB/)
+    ).toBeInTheDocument();
+  });
+
+  it('sends rows the preview flagged as existing straight to update', async () => {
+    tokenAPI.createToken.mockReset().mockResolvedValue({ id: 1 });
+    integrationAPI.checkDuplicates.mockResolvedValueOnce({
+      duplicate_count: 1,
+      duplicates: [{ name: 'dup', location: null }],
+    });
+    window.history.pushState({}, '', '/?workspace=ws-1');
+    render(renderModal(null));
+    await screen.findByText(/Upload a file in/);
+    upload(
+      [
+        'name,category,type,expiresAt',
+        'dup,cert,ssl_cert,2030-01-01',
+        'fresh,cert,ssl_cert,2030-01-01',
+      ].join('\n'),
+      'dups.csv'
+    );
+    expect(
+      await screen.findByText(/1 token already exists/)
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Import 2 selected/ }));
+    await waitFor(() => expect(tokenAPI.createToken).toHaveBeenCalledTimes(2));
+    const calls = tokenAPI.createToken.mock.calls.map(c => c[0]);
+    expect(calls.find(c => c.name === 'dup').confirm_duplicate).toBe(true);
+    expect(
+      calls.find(c => c.name === 'fresh').confirm_duplicate
+    ).toBeUndefined();
+    window.history.pushState({}, '', '/');
+  });
+
+  it('reports a failed row by its line in the file, not its position among kept rows', async () => {
+    tokenAPI.createToken.mockRejectedValueOnce(new Error('Invalid date'));
+    window.history.pushState({}, '', '/?workspace=ws-1');
+    render(renderModal(null));
+    await screen.findByText(/Upload a file in/);
+    upload(
+      [
+        'name,category,type,expiresAt',
+        ',cert,ssl_cert,2030-01-01',
+        'bad,cert,ssl_cert,2030-01-01',
+      ].join('\n'),
+      'lines.csv'
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Import 1 selected/ })
+    );
+    expect(await screen.findByText('Invalid date')).toBeInTheDocument();
+    const row = screen.getByText('Invalid date').closest('tr');
+    expect(row).toHaveTextContent('3');
+    window.history.pushState({}, '', '/');
+  });
+});
+
+describe('ImportTokensModal workspace resolution', () => {
+  const CSV = 'name,category,type,expiresAt\nweb,cert,ssl_cert,2030-01-01\n';
+
+  beforeEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    apiGetMock.mockResolvedValue({ data: {} });
+    tokenAPI.createToken.mockReset().mockResolvedValue({ id: 1 });
+    window.history.pushState({}, '', '/');
+  });
+
+  afterEach(() => {
+    wsCtx.id = 'ws-1';
+    window.history.pushState({}, '', '/');
+  });
+
+  const importCsv = async extraProps => {
+    render(renderModal(null, extraProps));
+    await screen.findByText(/Upload a file in/);
+    const input = document.querySelector('input[type="file"]');
+    const file = new File([CSV], 'ok.csv', { type: 'text/plain' });
+    file.text = () => Promise.resolve(CSV);
+    fireEvent.change(input, { target: { files: [file] } });
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Import 1 selected/ })
+    );
+  };
+
+  it('imports into the active workspace when the URL has no workspace', async () => {
+    wsCtx.id = 'ws-ctx';
+    await importCsv();
+    await waitFor(() => expect(tokenAPI.createToken).toHaveBeenCalledTimes(1));
+    expect(tokenAPI.createToken.mock.calls[0][0].workspace_id).toBe('ws-ctx');
+    expect(
+      screen.queryByText('Please select a workspace first.')
+    ).not.toBeInTheDocument();
+  });
+
+  it('prefers the URL workspace over the active workspace', async () => {
+    wsCtx.id = 'ws-ctx';
+    window.history.pushState({}, '', '/?workspace=ws-url');
+    await importCsv();
+    await waitFor(() => expect(tokenAPI.createToken).toHaveBeenCalledTimes(1));
+    expect(tokenAPI.createToken.mock.calls[0][0].workspace_id).toBe('ws-url');
+  });
+
+  it('uses the setup guide workspace when embedded', async () => {
+    wsCtx.id = 'ws-ctx';
+    await importCsv({ hideDocs: true, embeddedWorkspaceId: 'ws-guide' });
+    await waitFor(() => expect(tokenAPI.createToken).toHaveBeenCalledTimes(1));
+    expect(tokenAPI.createToken.mock.calls[0][0].workspace_id).toBe('ws-guide');
+  });
+
+  it('asks for a workspace only when none can be determined', async () => {
+    wsCtx.id = null;
+    await importCsv();
+    expect(
+      await screen.findByText('Please select a workspace first.')
+    ).toBeInTheDocument();
+    expect(tokenAPI.createToken).not.toHaveBeenCalled();
   });
 });

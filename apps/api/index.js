@@ -656,6 +656,8 @@ app.use(require("./routes/usage"));
 app.use(require("./routes/controlCenter"));
 // --- ALERTS (extracted to routes/alerts.js) ---
 app.use(require("./routes/alerts"));
+// --- ONBOARDING (extracted to routes/onboarding.js) ---
+app.use(require("./routes/onboarding"));
 // --- ACCOUNT (extracted to routes/account.js) ---
 app.use(require("./routes/account"));
 // --- INTEGRATIONS (extracted to routes/integrations.js) ---
