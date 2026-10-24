@@ -5,7 +5,8 @@ capability selection is never a released build claim.
 #>
 param([Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{40}$')][string]$CandidateSha,
   [Parameter(Mandatory)][string]$ApiPublicPemBase64,
-  [ValidateSet('2019','2022','2025')][string]$WindowsVersion = '2022')
+  [ValidateSet('2019','2022','2025')][string]$WindowsVersion = '2022',
+  [ValidateNotNullOrEmpty()][string]$QualificationRoot = 'C:\ttqualification')
 $ErrorActionPreference = 'Stop'
 # Keep transfer progress local to this noninteractive bootstrap.
 $script:ProgressPreference = 'SilentlyContinue'
@@ -13,7 +14,7 @@ $toolsStage='membership'
 try{
 if ((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test') { throw 'Tool bootstrap requires isolated qualification domain member' }
 $toolsStage='workspace'
-$root='C:\ttqualification'
+$root=$QualificationRoot
 if (Test-Path $root) { throw 'Refusing existing qualification workspace' }
 New-Item -ItemType Directory -Path "$root\tools" -Force | Out-Null
 # Enumerate REST arrays before filtering; Windows PowerShell otherwise pipes the whole array.

@@ -235,12 +235,8 @@ test("member bootstrap refuses existing membership, missing or ambiguous IPs, an
 
 test("Windows tools bootstrap selects one Node and Go release from REST arrays", t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "certops-tools-selection-"));
-  const qualificationRoot = "C:\\ttqualification";
-  t.after(() => {
-    fs.rmSync(dir, { recursive: true, force: true });
-    fs.rmSync(qualificationRoot, { recursive: true, force: true });
-  });
-  fs.rmSync(qualificationRoot, { recursive: true, force: true });
+  const qualificationRoot = path.join(dir, "qualification");
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const probe = path.join(dir, "probe.ps1");
   // Get-FileHash is a Microsoft.PowerShell.Utility module function that
   // cannot be overridden by a global: double, so the probe writes real
@@ -252,7 +248,12 @@ $global:certopsMetadata=0
 $fixtureBytes=[byte[]](1..32)
 $fixtureHash=[BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($fixtureBytes)).Replace('-','').ToLowerInvariant()
 function global:Get-CimInstance { [pscustomobject]@{Domain='lab.certops.test'} }
-function global:Expand-Archive { }
+function global:Expand-Archive {
+  param($Path,$DestinationPath)
+  # Stop after production has verified both real fixture archive hashes.
+  $nativePath=$ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+  if([IO.Path]::GetFileName($nativePath) -eq 'go.zip'){throw 'TEST_SELECTION_COMPLETE'}
+}
 function global:Invoke-RestMethod {
   param($Uri,[switch]$UseBasicParsing,[int]$TimeoutSec)
   if(-not $UseBasicParsing -or $TimeoutSec -ne 60 -or $ProgressPreference -ne 'SilentlyContinue'){throw 'Metadata requires bounded noninteractive transfer'}
@@ -272,16 +273,24 @@ function global:Invoke-WebRequest {
   param($Uri,$OutFile,[switch]$UseBasicParsing,[int]$TimeoutSec)
   if(-not $UseBasicParsing -or $TimeoutSec -ne 300 -or $ProgressPreference -ne 'SilentlyContinue'){throw 'Archives require bounded noninteractive transfer'}
   $global:certopsDownloads+= $Uri
-  $parent=[IO.Path]::GetDirectoryName($OutFile)
+  # PowerShell accepts provider paths and Windows separators on Linux;
+  # .NET file APIs need the resolved native path for the same file.
+  $nativeOutFile=$ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutFile)
+  $parent=[IO.Path]::GetDirectoryName($nativeOutFile)
   if($parent){[void][IO.Directory]::CreateDirectory($parent)}
-  [IO.File]::WriteAllBytes($OutFile,$fixtureBytes)
+  [IO.File]::WriteAllBytes($nativeOutFile,$fixtureBytes)
   if($Uri -eq 'https://nodejs.org/dist/v24.9.0/node-v24.9.0-win-x64.zip'){return}
-  if($Uri -eq 'https://go.dev/dl/go1.29.1.windows-amd64.zip'){throw 'TEST_SELECTION_COMPLETE'}
+  if($Uri -eq 'https://go.dev/dl/go1.29.1.windows-amd64.zip'){return}
   throw 'Unexpected archive request'
 }
-try { & $env:CERTOPS_TOOLS_SCRIPT -CandidateSha ('a'*40) -ApiPublicPemBase64 'AA==' }
+try { & $env:CERTOPS_TOOLS_SCRIPT -CandidateSha ('a'*40) -ApiPublicPemBase64 'AA==' -QualificationRoot $env:CERTOPS_QUALIFICATION_ROOT }
 catch {
   if($_.Exception.Message -ne 'Windows qualification tools bootstrap failed; inspect bounded step receipt'){throw ('Guest release selection failed: '+$_.Exception.Message)}
+  if($env:CERTOPS_EXPECT_EXISTING -eq '1'){
+    if($global:certopsMetadata -ne 0 -or $global:certopsDownloads.Count -ne 0){throw 'Existing workspace was reused'}
+    Write-Output 'EXISTING_WORKSPACE_REFUSED'
+    exit 0
+  }
   if($global:certopsMetadata -ne 3){throw ('Expected exactly three bounded metadata requests; got '+$global:certopsMetadata)}
   if($global:certopsDownloads.Count -ne 2){throw ('Expected exactly two selected downloads; got '+$global:certopsDownloads.Count)}
   Write-Output 'RELEASE_ARRAY_SELECTION_PASSED'
@@ -292,7 +301,7 @@ throw 'Expected bounded test completion'
   const started = Date.now();
   const result = spawnSync(process.platform === "win32" ? "powershell.exe" : "pwsh", ["-NoProfile", "-NonInteractive", "-File", probe], {
     encoding: "utf8", windowsHide: true, timeout: 30000,
-    env: { ...process.env, CERTOPS_TOOLS_SCRIPT: path.resolve(__dirname, "../infra/certops-adcs/windows-tools.ps1") },
+    env: { ...process.env, CERTOPS_TOOLS_SCRIPT: path.resolve(__dirname, "../infra/certops-adcs/windows-tools.ps1"), CERTOPS_QUALIFICATION_ROOT: qualificationRoot },
   });
   const elapsedMs = Date.now() - started;
   assert.equal(
@@ -301,6 +310,16 @@ throw 'Expected bounded test completion'
     `status=${result.status} error=${result.error && result.error.code} signal=${result.signal} elapsedMs=${elapsedMs}\n${result.stdout}${result.stderr}`,
   );
   assert.match(result.stdout, /RELEASE_ARRAY_SELECTION_PASSED/);
-  assert.match(result.stdout, /CERTOPS_TOOLS_FAILURE=go-download:RuntimeException:Unclassified:0/);
+  assert.match(result.stdout, /CERTOPS_TOOLS_FAILURE=go-extract:RuntimeException:Unclassified:0/);
   assert.doesNotMatch(result.stdout + result.stderr, /TEST_SELECTION_COMPLETE/);
+  const archivePaths = ["node.zip", "go.zip"].map(file => path.join(qualificationRoot, "tools", file));
+  const archives = archivePaths.map(file => fs.readFileSync(file));
+  const refusal = spawnSync(process.platform === "win32" ? "powershell.exe" : "pwsh", ["-NoProfile", "-NonInteractive", "-File", probe], {
+    encoding: "utf8", windowsHide: true, timeout: 30000,
+    env: { ...process.env, CERTOPS_TOOLS_SCRIPT: path.resolve(__dirname, "../infra/certops-adcs/windows-tools.ps1"), CERTOPS_QUALIFICATION_ROOT: qualificationRoot, CERTOPS_EXPECT_EXISTING: "1" },
+  });
+  assert.equal(refusal.status, 0, refusal.stdout + refusal.stderr);
+  assert.match(refusal.stdout, /EXISTING_WORKSPACE_REFUSED/);
+  assert.match(refusal.stdout, /CERTOPS_TOOLS_FAILURE=workspace:/);
+  archivePaths.forEach((file, index) => assert.deepEqual(fs.readFileSync(file), archives[index], "Refused workspace must be unchanged"));
 });
