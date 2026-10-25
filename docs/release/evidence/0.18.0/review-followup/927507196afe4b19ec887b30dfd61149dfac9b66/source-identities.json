@@ -1,0 +1,14 @@
+{
+  "files": [
+    {
+      "sha256": "778cb57d2a2d3b14bafcb3e538b3d9896148f44427db7cbd7f9718dff855b979",
+      "path": "scripts/rehearse-windows-boundaries.js"
+    },
+    {
+      "sha256": "3bbfc84be618e5e1a2f3747261972d76f1650873a4a7b29fbc95c71d14ca5731",
+      "path": "scripts/rehearse-windows-boundaries.test.js"
+    }
+  ],
+  "archiveSha256": "062f48b1960685b247b0114b2f7086b7accda23f8788895078da627f8844507c",
+  "sourceSha": "927507196afe4b19ec887b30dfd61149dfac9b66"
+}

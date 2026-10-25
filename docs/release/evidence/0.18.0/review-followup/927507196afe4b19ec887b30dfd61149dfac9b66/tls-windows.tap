@@ -1,0 +1,64 @@
+TAP version 13
+# Subtest: Windows boundary smoke requires independently supplied archive and source identities
+ok 1 - Windows boundary smoke requires independently supplied archive and source identities
+  ---
+  duration_ms: 3.4457
+  type: 'test'
+  ...
+# Subtest: native cleanup identity cannot escape its unique site, pool, store or directory
+ok 2 - native cleanup identity cannot escape its unique site, pool, store or directory
+  ---
+  duration_ms: 131.5736
+  type: 'test'
+  ...
+# Subtest: archive extraction refuses traversal, links and nonpackage paths
+ok 3 - archive extraction refuses traversal, links and nonpackage paths
+  ---
+  duration_ms: 0.6568
+  type: 'test'
+  ...
+# Subtest: a store query only passes for the exact SAN-only public certificate observation
+ok 4 - a store query only passes for the exact SAN-only public certificate observation
+  ---
+  duration_ms: 0.689
+  type: 'test'
+  ...
+# Subtest: IIS TLS probe verifies its explicit self-signed leaf and hostname over real TLS
+ok 5 - IIS TLS probe verifies its explicit self-signed leaf and hostname over real TLS
+  ---
+  duration_ms: 326.0766
+  type: 'test'
+  ...
+# Subtest: IIS TLS probe rejects an untrusted certificate before sending HTTP
+ok 6 - IIS TLS probe rejects an untrusted certificate before sending HTTP
+  ---
+  duration_ms: 22.9982
+  type: 'test'
+  ...
+# Subtest: IIS TLS probe rejects a trusted certificate for the wrong hostname before HTTP
+ok 7 - IIS TLS probe rejects a trusted certificate for the wrong hostname before HTTP
+  ---
+  duration_ms: 8.3391
+  type: 'test'
+  ...
+# Subtest: IIS TLS probe retains its exact certificate pin after TLS verification
+ok 8 - IIS TLS probe retains its exact certificate pin after TLS verification
+  ---
+  duration_ms: 10.0608
+  type: 'test'
+  ...
+# Subtest: IIS TLS probe rejects content belonging to another site
+ok 9 - IIS TLS probe rejects content belonging to another site
+  ---
+  duration_ms: 9.0436
+  type: 'test'
+  ...
+1..9
+# tests 9
+# suites 0
+# pass 9
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1102.8079

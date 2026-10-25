@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "scope": "windows-iis-wildcard-and-san-store-discovery",
+  "sourceSha": "927507196afe4b19ec887b30dfd61149dfac9b66",
+  "archiveSha256": "062f48b1960685b247b0114b2f7086b7accda23f8788895078da627f8844507c",
+  "startedAt": "2026-10-25T07:46:18.340Z",
+  "status": "passed",
+  "checks": [
+    {
+      "name": "selected-source-and-actual-package",
+      "status": "passed",
+      "evidence": {
+        "matchedPackageSourceFiles": 96,
+        "version": "0.18.0"
+      }
+    },
+    {
+      "name": "create-owned-self-signed-iis-and-public-san-store",
+      "status": "passed",
+      "evidence": {
+        "port": 58607,
+        "osVersion": "10.0.20348.0",
+        "language": "en-US",
+        "site": "tt-core-delta-d30a9ae8326743a8bf5e39a1",
+        "identity": "runnervma5ucf\\runneradmin"
+      }
+    },
+    {
+      "name": "real-wildcard-iis-rebind-and-independent-tls",
+      "status": "passed",
+      "evidence": {
+        "selector": "0.0.0.0:58607",
+        "outgoingThumbprint": "034F1740A5691E20AE018622CFEC8BEF02CC482E",
+        "boundThumbprint": "F49F309245566AE94B1E6AFEC30203ACCADE2459",
+        "peerFingerprintSha256": "2e44a0b57ca5c4a2dbea6c85a388f7d7e11c2fada265db41098e0115a985ff16",
+        "ownedIisContent": true,
+        "fixtureCertificateVerified": true,
+        "verifiedServername": "tt-core-delta-d30a9ae8326743a8bf5e39a1.invalid"
+      }
+    },
+    {
+      "name": "real-san-only-windows-store-discovery",
+      "status": "passed",
+      "evidence": {
+        "store": "TokenTimerSmoked30a9ae8326743a8bf5e39a1",
+        "subject": null,
+        "fingerprintSha256": "e1e11b467c63949342e5040ba70c98b38bf963cd7141e1f0f1a34112f900cfea",
+        "subjectAltNames": [
+          "nginx.wildcard.test",
+          "haproxy.wildcard.test"
+        ],
+        "keyPresent": false,
+        "warningCount": 0
+      }
+    },
+    {
+      "name": "native-discovery-through-production-evidence-builder",
+      "status": "passed",
+      "evidence": {
+        "eventType": "certificate.observed",
+        "fingerprintSha256": "e1e11b467c63949342e5040ba70c98b38bf963cd7141e1f0f1a34112f900cfea",
+        "subject": null,
+        "transport": "captured locally; no API ingestion claim"
+      }
+    }
+  ],
+  "notQualifiedByThisRun": [
+    "AD CS or domain authentication",
+    "Windows service install/upgrade",
+    "arm64 execution",
+    "other Windows versions or languages",
+    "system trust-store or public-CA validation",
+    "network evidence ingestion",
+    "whole-release qualification"
+  ],
+  "environment": {
+    "port": 58607,
+    "osVersion": "10.0.20348.0",
+    "language": "en-US",
+    "site": "tt-core-delta-d30a9ae8326743a8bf5e39a1",
+    "identity": "runnervma5ucf\\runneradmin"
+  },
+  "cleanup": {
+    "complete": true,
+    "errors": []
+  },
+  "finishedAt": "2026-10-25T07:46:36.186Z"
+}
