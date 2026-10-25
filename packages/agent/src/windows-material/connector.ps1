@@ -56,8 +56,8 @@ try {
   # Exception messages may include paths or provider diagnostics. Never emit.
   $stage = 'input'
   if ('TokenTimer.MaterialImport' -as [type]) { $stage = [TokenTimer.MaterialImport]::FailureStage }
-  $allowed = @('input','store-open','existing-key','pfx-import','key-association','key-custody','key-acl','store-add','verify-cert','verify-key','verify-acl','verify-signature')
-  if ($stage -notin $allowed) { $stage = 'input' }
+  $allowed = @('input','store-open','existing-key','pfx-import','key-association','key-custody','key-acl','store-add','verify-cert','verify-key','verify-acl','verify-signature','acl-presence','acl-protection','acl-shape','acl-principal','acl-membership')
+  if ($stage -notin $allowed -and $stage -cnotmatch '^acl-access-mask-[0-9A-F]{8}$') { $stage = 'input' }
   $code = $_.Exception.GetBaseException().HResult.ToString('X8')
   [Console]::Error.WriteLine(('material_windows_connector_failed:{0}:{1}' -f $stage,$code))
   exit 1

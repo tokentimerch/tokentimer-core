@@ -54,16 +54,23 @@ namespace TokenTimer {
     }
     static void CheckAcl(CngKey key,string[] sids) {
       var descriptor=new RawSecurityDescriptor(key.GetProperty("Security Descr",(CngPropertyOptions)4).GetValue(),0);
-      if(descriptor.DiscretionaryAcl==null || (descriptor.ControlFlags & ControlFlags.DiscretionaryAclProtected)==0) throw new CryptographicException();
+      FailureStage="acl-presence";
+      if(descriptor.DiscretionaryAcl==null)throw new CryptographicException();
+      FailureStage="acl-protection";
+      if((descriptor.ControlFlags & ControlFlags.DiscretionaryAclProtected)==0) throw new CryptographicException();
       var expected=new RawSecurityDescriptor(Descriptor(sids));
       foreach(GenericAce ace in descriptor.DiscretionaryAcl) {
+        FailureStage="acl-shape";
         var actual=ace as CommonAce;bool match=false;
         if(actual==null || actual.AceQualifier!=AceQualifier.AccessAllowed || actual.IsInherited) throw new CryptographicException();
+        bool principal=false;
         foreach(CommonAce allowed in expected.DiscretionaryAcl) {
-          if(actual.SecurityIdentifier==allowed.SecurityIdentifier && actual.AccessMask==allowed.AccessMask) match=true;
+          if(actual.SecurityIdentifier==allowed.SecurityIdentifier) {principal=true;if(actual.AccessMask==allowed.AccessMask) match=true;}
         }
+        FailureStage=principal?"acl-access-mask-"+actual.AccessMask.ToString("X8"):"acl-principal";
         if(!match) throw new CryptographicException();
       }
+      FailureStage="acl-membership";
       foreach(CommonAce allowed in expected.DiscretionaryAcl) {
         bool present=false;
         foreach(CommonAce actual in descriptor.DiscretionaryAcl) if(actual.SecurityIdentifier==allowed.SecurityIdentifier && actual.AccessMask==allowed.AccessMask)present=true;

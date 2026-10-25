@@ -205,7 +205,7 @@ test(
             execFile(file, args, options, (error, stdout, stderr) => {
               // Only the helper's fixed phase/HRESULT may enter CI diagnostics.
               const diagnostic = String(stderr || "").match(
-                /^material_windows_connector_failed:[a-z-]+:[0-9A-F]{8}$/m,
+                /^material_windows_connector_failed:[a-z0-9A-F-]+:[0-9A-F]{8}$/m,
               );
               if (error && diagnostic)
                 process.stderr.write(diagnostic[0] + "\n");
