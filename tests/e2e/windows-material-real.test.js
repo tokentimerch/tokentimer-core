@@ -326,10 +326,40 @@ test(
       true,
     );
     assert.equal((await execute(interruptedJob)).status, "succeeded");
-    const renewedCertificate = fs.readFileSync(
+    const caCertificate = fs.readFileSync(
       path.join(
         __dirname,
         "../../packages/agent/src/verify/fixtures/selfsigned.crt.pem",
+      ),
+      "utf8",
+    );
+    const invalidCa = {
+      ...bundle,
+      materialVersionId: crypto.randomUUID(),
+      certificatePem: caCertificate,
+      fingerprintSha256: computeCertificateFingerprint(caCertificate),
+    };
+    bundles.set(invalidCa.materialVersionId, invalidCa);
+    await assert.rejects(execute(jobFor(0, 4, invalidCa)), {
+      code: "material_bundle_invalid",
+    });
+    assert.equal(
+      JSON.parse(
+        readProtectedFile(
+          path.join(
+            stateDir,
+            "material-bindings",
+            `${interruptedJob.materialDeployment.bindingId}.json`,
+          ),
+        ),
+      ).generation,
+      3,
+      "invalid CA material is rejected before binding state or native mutation",
+    );
+    const renewedCertificate = fs.readFileSync(
+      path.join(
+        __dirname,
+        "../../packages/agent/src/verify/fixtures/material-renewed.crt.pem",
       ),
       "utf8",
     );

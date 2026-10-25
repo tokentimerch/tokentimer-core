@@ -258,7 +258,7 @@ describe("CertOps material provider references on PostgreSQL", function () {
         const nextPem = fs.readFileSync(
           path.join(
             __dirname,
-            "../../packages/agent/src/verify/fixtures/selfsigned.crt.pem",
+          "../../packages/agent/src/verify/fixtures/material-renewed.crt.pem",
           ),
           "utf8",
         );
