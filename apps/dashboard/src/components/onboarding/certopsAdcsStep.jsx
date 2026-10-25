@@ -34,6 +34,7 @@ import { listIssuers } from '../certops/certopsEnrollmentsApi.js';
 import { getWorkspaceCertOpsPauseState } from '../certops/certopsApi.js';
 import { listAllIssuers } from '../certops/certopsFormat.js';
 import { adcsRecheckLink } from '../certops/adcsIssuerLink.js';
+import AdcsPostPinCheck from './AdcsPostPinCheck.jsx';
 
 /**
  * Status of the part of AD CS setup the server can see. Enrollment itself
@@ -41,7 +42,9 @@ import { adcsRecheckLink } from '../certops/adcsIssuerLink.js';
  */
 export function adcsStatus({ adcs, agentDeclares }) {
   const issuers = adcs?.issuers || [];
-  const confirmed = issuers.filter(i => i.confirmed && i.safe);
+  const confirmed = issuers.filter(
+    i => i.confirmed && i.safe && !issuerNeedsRecheck(i)
+  );
   return {
     agent: Boolean(agentDeclares),
     issuer: confirmed.length > 0,
@@ -115,6 +118,8 @@ function IssuerBody({
   disabledReason,
   onOpen,
   workspaceId,
+  agent,
+  onChanged,
 }) {
   const { muted } = useDashboardTheme();
   if (ready) {
@@ -128,18 +133,14 @@ function IssuerBody({
           {pair ? ` ${pair}.` : ''}
         </Text>
         {issuerNeedsRecheck(i) ? (
-          <StatusPanel
-            status='info'
-            title='Check again once more'
-            testId='adcs-issuer-recheck'
-          >
-            Renewal needs a CA check taken after the CA certificate was pinned.
-            The check you ran came before the pin. In Renewals, open {i.name}{' '}
-            and choose Check again.
-            <PageLink to={adcsRecheckLink({ workspaceId, issuerId: i.id })}>
-              Open {i.name} in Renewals
-            </PageLink>
-          </StatusPanel>
+          <AdcsPostPinCheck
+            key={`${workspaceId}:${i.id}:${agent?.id || ''}`}
+            workspaceId={workspaceId}
+            issuer={i}
+            agent={agent}
+            disabledReason={disabledReason}
+            onChanged={onChanged}
+          />
         ) : null}
       </VStack>
     );
@@ -453,12 +454,14 @@ export default function AdcsStep({ ctx }) {
           <IssuerBody
             workspaceId={ctx.workspaceId}
             state={state}
-            ready={status.issuer}
+            ready={state.kind === 'ready'}
             ca={ca}
             saved={saved}
             agentName={agentName}
             disabledReason={issuerDisabled}
             onOpen={() => setIssuerOpen(true)}
+            agent={chosen}
+            onChanged={ctx.refresh}
           />
         </Row>
         <Row

@@ -21,7 +21,7 @@ import {
   viewerHasScope,
 } from './editionModules.js';
 import { recipientsSatisfied } from './groupAttachment.js';
-import { scopeAdcs } from './adcsModel.js';
+import { issuerNeedsRecheck, scopeAdcs } from './adcsModel.js';
 import { scopeDistribution } from './distributionModel.js';
 import { scopeCertops } from './certopsScope.js';
 import { GUIDED_IMPORT_STEPS } from './importFlow.js';
@@ -239,7 +239,9 @@ function certopsDone(stepId, { reality, progress, objective }) {
       // and is not verified here.
       const adcs = scopeAdcs(certops?.adcs, saved.chosenIssuerId);
       return (
-        (adcs?.issuers || []).some(i => i.confirmed && i.safe) &&
+        (adcs?.issuers || []).some(
+          i => i.confirmed && i.safe && !issuerNeedsRecheck(i)
+        ) &&
         (adcs?.profiles || 0) > 0 &&
         (!saved.chosenIssuerId ||
           saved.chosenIssuerConfirmed === saved.chosenIssuerId)
