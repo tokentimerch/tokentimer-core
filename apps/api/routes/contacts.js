@@ -2,7 +2,8 @@ const express = require("express");
 const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
-const { maskPhone, hashPhone } = require("../utils/sanitize");
+const { maskPhone } = require("../utils/sanitize");
+const verification = require("../../../packages/recipient-verification");
 const { getApiLimiter } = require("../middleware/rateLimit");
 const { isValidEmail } = require("../utils/emailAddress");
 const { requireAuth } = require("../middleware/auth");
@@ -29,7 +30,8 @@ router.get(
           ORDER BY last_name, first_name`,
         [req.workspace.id],
       );
-      res.json({ items: rows });
+      const attached = await verification.attachVerification(pool, req.workspace.id, rows);
+      res.json(attached);
     } catch (e) {
       logger.error("Workspace contacts list error", { error: e.message });
       res
@@ -100,31 +102,6 @@ router.post(
       );
 
       try {
-        if (phoneE164) {
-          const phoneHash = hashPhone(phoneE164);
-          if (phoneHash) {
-            const evidence = {
-              method: "contact_created",
-              ip: req.ip || null,
-              user_agent: req.get("user-agent") || null,
-              at: new Date().toISOString(),
-              created_by: req.user.id,
-            };
-            await pool.query(
-              `INSERT INTO contact_opt_ins (workspace_id, channel, phone_hash, evidence)
-             VALUES ($1, 'whatsapp', $2, $3)
-             ON CONFLICT (workspace_id, channel, phone_hash) DO NOTHING`,
-              [req.workspace.id, phoneHash, JSON.stringify(evidence)],
-            );
-          }
-        }
-      } catch (optinErr) {
-        logger.warn("Failed to record opt-in evidence", {
-          error: optinErr.message,
-        });
-      }
-
-      try {
         await writeAudit({
           actorUserId: req.user.id,
           subjectUserId: req.user.id,
@@ -141,7 +118,8 @@ router.post(
         logger.debug("Non-critical operation failed", { error: _err.message });
       }
 
-      res.status(201).json(rows[0]);
+      const attached = await verification.attachVerification(pool, req.workspace.id, rows);
+      res.status(201).json(attached.items[0]);
     } catch (e) {
       if (e.code === "23505")
         return res.status(400).json({
@@ -203,6 +181,13 @@ router.put(
           code: "VALIDATION_ERROR",
         });
       }
+      const existing = await pool.query(
+        `SELECT phone_e164, details FROM workspace_contacts WHERE workspace_id = $1 AND id = $2`,
+        [req.workspace.id, req.params.contactId],
+      );
+      if (existing.rows.length === 0) {
+        return res.status(404).json({ error: "Contact not found", code: "CONTACT_NOT_FOUND" });
+      }
       const fields = [];
       const params = [];
       let p = 1;
@@ -246,6 +231,32 @@ router.put(
           .json({ error: "Contact not found", code: "CONTACT_NOT_FOUND" });
       }
 
+      const previous = existing.rows[0];
+      const previousEmail = previous.details?.email || "";
+      const nextEmail = details !== undefined ? emailStr : previousEmail;
+      try {
+        await verification.invalidateChangedDestination({
+          client: pool,
+          workspaceId: req.workspace.id,
+          contactId: req.params.contactId,
+          channel: "email",
+          previousDestination: previousEmail,
+          nextDestination: nextEmail,
+        });
+        if (hasPhoneField) {
+          await verification.invalidateChangedDestination({
+            client: pool,
+            workspaceId: req.workspace.id,
+            contactId: req.params.contactId,
+            channel: "whatsapp",
+            previousDestination: previous.phone_e164,
+            nextDestination: phoneE164,
+          });
+        }
+      } catch (invalidateError) {
+        logger.warn("Contact verification invalidation failed", { error: invalidateError.message });
+      }
+
       // Audit event for contact update
       try {
         await writeAudit({
@@ -264,7 +275,8 @@ router.put(
         logger.debug("Non-critical operation failed", { error: _err.message });
       }
 
-      res.json(rows[0]);
+      const attached = await verification.attachVerification(pool, req.workspace.id, rows);
+      res.json(attached.items[0]);
     } catch (e) {
       if (e.code === "23505") {
         return res.status(400).json({

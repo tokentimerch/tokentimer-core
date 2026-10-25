@@ -17,6 +17,7 @@ import {
   pushMetrics,
 } from "./metrics.js";
 import { computeDaysLeft } from "./shared/thresholds.js";
+import { destinationAllowed, verificationMode } from "./shared/recipientDeliveryGate.js";
 import {
   buildWeeklyDigestWhatsAppTemplateVariables,
   sanitizeWhatsAppTemplateVars,
@@ -1007,6 +1008,28 @@ export async function weeklyDigestJob() {
 
       for (const row of inverted) {
         processed++;
+        if (row.channel === "email" || row.channel === "whatsapp") {
+          const decision = await destinationAllowed(
+            client,
+            ws.workspace_id,
+            row.channel,
+            row.recipientKey,
+          );
+          if (verificationMode() === "enforce" && !decision.allowed) {
+            skipped++;
+            continue;
+          }
+          if (decision.shadowBlocked) {
+            logger.warn(
+              JSON.stringify({
+                message: "recipient-verification-shadow",
+                channel: row.channel,
+                workspaceId: ws.workspace_id,
+                code: decision.code,
+              }),
+            );
+          }
+        }
         const claim = await claimWeeklyDigestRecipient(client, {
           workspaceId: ws.workspace_id,
           weekStartDate,

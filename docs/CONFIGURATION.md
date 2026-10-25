@@ -142,6 +142,34 @@ IP/network instead of credentials. Setting only one of the two is treated as
 an incomplete configuration and SMTP is reported as not configured. With no
 `SMTP_USER`, set `FROM_EMAIL` so there is still an address to send from.
 
+## Recipient verification
+
+Workspace email and WhatsApp alerts are separate from account email verification. A contact can be saved and placed in a contact group while a destination is still `pending`. Operational alerts, weekly digests, and workspace test messages are sent only after that recipient confirms the exact destination. Account verification, password reset, billing, waitlist, workspace invites, and operator incident mail are not gated by this check.
+
+Self-hosted deployments evaluate the policy in `shadow` mode until an operator sets `RECIPIENT_VERIFICATION_MODE=enforce`. Shadow still delivers and logs `recipient-verification-shadow`. `off` is available only for self-hosted rollback. TokenTimer Cloud ignores `off` and enforces unless an operator explicitly sets `shadow` for a temporary rollout. There is no workspace setting for this mode.
+
+Set `RECIPIENT_FINGERPRINT_SECRET` (or rely on `PHONE_HASH_SALT` or `SESSION_SECRET`) before creating invitations. Set `PUBLIC_BASE_URL` or `API_URL` to the externally visible API origin. Invitation links and the Twilio inbound signature both use that origin.
+
+| Variable | Description | Default value | Scope |
+| --- | --- | --- | --- |
+| `RECIPIENT_VERIFICATION_MODE` | `enforce`, `shadow`, or, self-hosted only, `off` | `shadow` self-hosted, `enforce` on Cloud | API, worker |
+| `TT_DEPLOYMENT` | `cloud` ignores `off` | `self-hosted` in Core, `cloud` in the Cloud copy | API, worker |
+| `RECIPIENT_FINGERPRINT_SECRET` | HMAC key for destination fingerprints and token hashes | falls back to `PHONE_HASH_SALT`, then `SESSION_SECRET` | API, worker |
+| `PUBLIC_BASE_URL` | External origin for invitation links and Twilio signature validation | falls back to `API_URL` | API |
+| `RECIPIENT_VERIFY_EMAIL_DEST_PER_DAY` | Email invitations per destination | `1` | API |
+| `RECIPIENT_VERIFY_EMAIL_DEST_PER_WEEK` | Email invitations per destination | `3` | API |
+| `RECIPIENT_VERIFY_WHATSAPP_DEST_PER_DAY` | WhatsApp challenges per destination | `1` | API |
+| `RECIPIENT_VERIFY_WHATSAPP_DEST_PER_WEEK` | WhatsApp challenges per destination | `3` | API |
+| `RECIPIENT_VERIFY_WORKSPACE_PER_DAY` | Invitations per workspace | `50` | API |
+| `RECIPIENT_VERIFY_USER_PER_DAY` | Invitations per user | `20` | API |
+| `RECIPIENT_TEST_PER_CONTACT_PER_DAY` | Workspace notification tests per contact | `3` | API |
+| `RECIPIENT_TEST_COOLDOWN_SECONDS` | Minimum gap between tests of one contact | `120` | API |
+| `RECIPIENT_VERIFICATION_ADMIN_PROVIDER_TEST` | Set to `1` to allow an enforce-mode operator WhatsApp provider probe to an arbitrary number | unset | API |
+
+Point Twilio's inbound WhatsApp webhook at `POST /webhooks/twilio/whatsapp/inbound`. The signature is checked against `PUBLIC_BASE_URL` or `API_URL` plus the request path and the raw form body. A missing base URL or auth token returns 503 and does not confirm a number. Delivery status callbacks are not consent.
+
+Migration `recipient_channel_verification` adds the verification tables and does not mark existing contacts verified. See [recipient verification](recipient-verification.md).
+
 ## Alerts, limits, and webhooks
 
 | Variable                                  | Description                                                                 | Default value                         | Scope                |

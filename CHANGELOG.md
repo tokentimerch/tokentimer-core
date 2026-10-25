@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Recipient confirmation before workspace email and WhatsApp alerts.** Contacts can be saved and grouped while a destination is pending. Alerts, weekly digests, and workspace tests send only after that person confirms the exact address or number. Email confirmation is a single-use link and an explicit accept or decline. WhatsApp confirmation is a link the administrator shares; the recipient messages the official WhatsApp number. Declines survive contact deletion. Self-hosted stays in shadow mode until `RECIPIENT_VERIFICATION_MODE=enforce`. **Operator action:** apply migration `recipient_channel_verification`, set `RECIPIENT_FINGERPRINT_SECRET` and `PUBLIC_BASE_URL` or `API_URL`, then invite existing recipients before enforcing. See [recipient verification](docs/recipient-verification.md).
+
 ## [0.18.1] - 2026-10-25
 
 ### Fixed

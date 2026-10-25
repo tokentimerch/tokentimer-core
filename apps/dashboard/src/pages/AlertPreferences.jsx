@@ -56,6 +56,12 @@ import {
   SimpleGrid,
 } from '@chakra-ui/react';
 import apiClient, { alertAPI, workspaceAPI } from '../utils/apiClient';
+import ContactVerificationControls from './ContactVerificationControls';
+import {
+  canTestSavedWhatsApp,
+  formatRetry,
+  groupEligibilityNote,
+} from './contactVerificationStatus';
 import { showSuccess, showWarning, showError } from '../utils/toast.js';
 import DashboardPageLayout from '../components/DashboardPageLayout';
 import {
@@ -950,6 +956,7 @@ export default function AlertPreferences({
   const [newContactDetailsOpen, setNewContactDetailsOpen] = useState(false);
   const [newContactDetails, setNewContactDetails] = useState({});
   const [testingContact, setTestingContact] = useState(null);
+  const [verificationBusy, setVerificationBusy] = useState('');
   const [contactPhoneError, setContactPhoneError] = useState('');
   const [editingContactId, setEditingContactId] = useState(null);
   const [editContactFirstName, setEditContactFirstName] = useState('');
@@ -1125,6 +1132,12 @@ export default function AlertPreferences({
     [editContactPhone]
   );
   const isEditContactPhoneValid = isValidContactPhoneE164(editContactPhone);
+  const editingContact =
+    contacts.find(item => item.id === editingContactId) || null;
+  const canTestEditingContactWhatsApp = canTestSavedWhatsApp(
+    editingContact,
+    editContactPhoneE164
+  );
 
   useEffect(() => {
     const hasActiveCooldown = () =>
@@ -2647,8 +2660,93 @@ export default function AlertPreferences({
     }
   }
 
-  async function handleTestWhatsappPhone(phoneE164, cooldownKey) {
-    if (!phoneE164) return;
+  async function refreshContacts() {
+    if (!workspaceId) return;
+    const refreshed = await apiClient.get(
+      `/api/v1/workspaces/${workspaceId}/contacts`
+    );
+    setContacts(refreshed?.data?.items || []);
+  }
+
+  function verificationErrorMessage(error) {
+    const code = error?.response?.data?.code;
+    const retryAfter = error?.response?.data?.retryAfter;
+    if (
+      code === 'RECIPIENT_VERIFICATION_RATE_LIMITED' ||
+      code === 'RECIPIENT_SUPPRESSED'
+    ) {
+      return formatRetry(retryAfter);
+    }
+    if (code === 'RECIPIENT_VERIFICATION_UNAVAILABLE') {
+      return 'Verification is not available until the server address is configured.';
+    }
+    return error?.response?.data?.error || error?.message || 'Verification failed';
+  }
+
+  async function handleInviteEmail(contact) {
+    if (!workspaceId || !contact?.id || isViewer) return;
+    setVerificationBusy(`${contact.id}:email`);
+    try {
+      await apiClient.post(
+        `/api/v1/workspaces/${workspaceId}/contacts/${contact.id}/verifications/email`
+      );
+      showSuccess(
+        'Verification email sent. Nothing is confirmed until that person accepts.'
+      );
+      await refreshContacts();
+    } catch (error) {
+      showError(verificationErrorMessage(error));
+    } finally {
+      setVerificationBusy('');
+    }
+  }
+
+  async function handleShareWhatsApp(contact) {
+    if (!workspaceId || !contact?.id || isViewer) return;
+    setVerificationBusy(`${contact.id}:whatsapp`);
+    try {
+      const response = await apiClient.post(
+        `/api/v1/workspaces/${workspaceId}/contacts/${contact.id}/verifications/whatsapp`
+      );
+      const shareUrl = response?.data?.share_url;
+      if (!shareUrl) throw new Error('Confirmation link was not returned');
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+        showSuccess(
+          'Confirmation link copied. Send it through a channel you already trust. The person confirms from their own WhatsApp.'
+        );
+      } else {
+        window.prompt('Send this confirmation link to the recipient', shareUrl);
+      }
+      await refreshContacts();
+    } catch (error) {
+      showError(verificationErrorMessage(error));
+    } finally {
+      setVerificationBusy('');
+    }
+  }
+
+  async function handleRevokeVerification(contact, channel) {
+    if (!workspaceId || !contact?.id || isViewer) return;
+    setVerificationBusy(`${contact.id}:${channel}`);
+    try {
+      await apiClient.post(
+        `/api/v1/workspaces/${workspaceId}/contacts/${contact.id}/verifications/${channel}/revoke`
+      );
+      showSuccess('Notifications to this destination are stopped.');
+      await refreshContacts();
+    } catch (error) {
+      showError(verificationErrorMessage(error));
+    } finally {
+      setVerificationBusy('');
+    }
+  }
+
+  async function handleTestWhatsappPhone(phoneE164, cooldownKey, contactId) {
+    if (!phoneE164 || !contactId) {
+      showError('Save the contact and confirm WhatsApp before sending a test.');
+      return;
+    }
     try {
       const now = Date.now();
       const until = waContactCooldowns[cooldownKey] || 0;
@@ -2660,7 +2758,7 @@ export default function AlertPreferences({
       setTestingContact(cooldownKey);
       await apiClient.post(
         `/api/test-whatsapp?workspace_id=${encodeURIComponent(workspaceId)}&use_template=true`,
-        { phone_e164: phoneE164 }
+        { phone_e164: phoneE164, contact_id: contactId }
       );
       showSuccess('Test message sent');
       setWaContactCooldowns(prev => ({
@@ -2685,6 +2783,15 @@ export default function AlertPreferences({
           'WhatsApp template not configured. Set TWILIO_WHATSAPP_TEST_CONTENT_SID or configure the test template SID in System Settings.';
       } else if (code === 'INVALID_RECIPIENT') {
         msg = 'Invalid recipient. Verify the phone number and try again.';
+      } else if (
+        code === 'CONTACT_REQUIRED' ||
+        code === 'RECIPIENT_NOT_VERIFIED' ||
+        code === 'RECIPIENT_OPTED_OUT' ||
+        code === 'RECIPIENT_REVOKED' ||
+        code === 'RECIPIENT_SUPPRESSED' ||
+        code === 'DESTINATION_MISMATCH'
+      ) {
+        msg = 'Confirm this saved number before sending a test.';
       }
       showError(msg);
     } finally {
@@ -2724,6 +2831,14 @@ export default function AlertPreferences({
             details={detailDisplay}
             labelColor={bodySecondary}
             valueColor={text}
+          />
+          <ContactVerificationControls
+            contact={contact}
+            isViewer={isViewer}
+            busyKey={verificationBusy}
+            onInviteEmail={handleInviteEmail}
+            onShareWhatsApp={handleShareWhatsApp}
+            onRevoke={handleRevokeVerification}
           />
 
           <Stack direction={{ base: 'column', sm: 'row' }} spacing={2}>
@@ -3123,7 +3238,7 @@ export default function AlertPreferences({
             <DashboardPanel data-tour='preferences-contacts' minW={0}>
               <PreferencesPanelHeader
                 title='Contacts'
-                description='Manage people and contact details that can receive workspace alerts.'
+                description='Manage people who can receive workspace alerts. A contact can be saved before they confirm. Email and WhatsApp alerts wait until that person confirms the exact address or number.'
                 muted={bodySecondary}
                 action={
                   !isViewer ? (
@@ -3245,6 +3360,14 @@ export default function AlertPreferences({
                                 <Text fontSize='sm' fontWeight='medium'>
                                   {c.first_name} {c.last_name}
                                 </Text>
+                                <ContactVerificationControls
+                                  contact={c}
+                                  isViewer={isViewer}
+                                  busyKey={verificationBusy}
+                                  onInviteEmail={handleInviteEmail}
+                                  onShareWhatsApp={handleShareWhatsApp}
+                                  onRevoke={handleRevokeVerification}
+                                />
                               </Td>
                               <Td
                                 pr={2}
@@ -3667,7 +3790,7 @@ export default function AlertPreferences({
                   mb={2}
                   lineHeight='1.5'
                 >
-                  Select per-contact which channels to use.
+                  Select per-contact which channels to use. Unverified people stay in the group and do not receive email or WhatsApp until they confirm.
                   {whatsappAvailable
                     ? ' Each person can have both email and WhatsApp.'
                     : ''}
@@ -3689,6 +3812,15 @@ export default function AlertPreferences({
                     Add contact
                   </Button>
                 )}
+                {groupEligibilityNote(
+                  contacts,
+                  groupEmailContactIds,
+                  groupWhatsappContactIds
+                ).map(note => (
+                  <Text key={note} fontSize='xs' color={bodySecondary} mb={2}>
+                    {note}
+                  </Text>
+                ))}
                 {contacts.length === 0 ? (
                   <Text fontSize='sm' color={bodySecondary}>
                     {groupCreationOnly
@@ -4202,7 +4334,7 @@ export default function AlertPreferences({
               Add contact
             </DashboardModalTitle>
             <DashboardModalDescription>
-              Add someone who can receive workspace alert notifications.
+              Add someone who can receive workspace alert notifications. Saving does not confirm email or WhatsApp.
             </DashboardModalDescription>
           </ModalHeader>
           <ModalCloseButton {...closeButtonProps} isDisabled={addingContact} />
@@ -4265,7 +4397,7 @@ export default function AlertPreferences({
                   <FormErrorMessage>{contactPhoneError}</FormErrorMessage>
                 ) : (
                   <Text fontSize='xs' color={modalTokens.subtleText} mt={1}>
-                    Provide a valid email or phone number.
+                    Save the contact first. A WhatsApp test is available only after this number is confirmed.
                   </Text>
                 )}
                 {whatsappAvailable ? (
@@ -4278,7 +4410,7 @@ export default function AlertPreferences({
                       )
                     }
                     isLoading={testingContact === ADD_CONTACT_WHATSAPP_TEST_KEY}
-                    isDisabled={isViewer || !isNewContactPhoneValid}
+                    isDisabled
                     cooldownUntil={
                       waContactCooldowns[ADD_CONTACT_WHATSAPP_TEST_KEY] || 0
                     }
@@ -4403,6 +4535,14 @@ export default function AlertPreferences({
           <ModalCloseButton {...closeButtonProps} />
           <ModalBody {...bodyProps}>
             <VStack align='stretch' spacing={4}>
+              <ContactVerificationControls
+                contact={editingContact}
+                isViewer={isViewer}
+                busyKey={verificationBusy}
+                onInviteEmail={handleInviteEmail}
+                onShareWhatsApp={handleShareWhatsApp}
+                onRevoke={handleRevokeVerification}
+              />
               <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
                 <FormControl>
                   <FormLabel>First name</FormLabel>
@@ -4454,7 +4594,7 @@ export default function AlertPreferences({
                   <FormErrorMessage>{editContactPhoneError}</FormErrorMessage>
                 ) : (
                   <Text fontSize='xs' color={modalTokens.subtleText} mt={1}>
-                    Provide a valid email or phone number.
+                    Provide a valid email or phone number. A test is available only while this saved number stays confirmed.
                   </Text>
                 )}
                 {whatsappAvailable ? (
@@ -4463,13 +4603,18 @@ export default function AlertPreferences({
                     onClick={() =>
                       handleTestWhatsappPhone(
                         editContactPhoneE164,
-                        EDIT_CONTACT_WHATSAPP_TEST_KEY
+                        EDIT_CONTACT_WHATSAPP_TEST_KEY,
+                        editingContactId
                       )
                     }
                     isLoading={
                       testingContact === EDIT_CONTACT_WHATSAPP_TEST_KEY
                     }
-                    isDisabled={isViewer || !isEditContactPhoneValid}
+                    isDisabled={
+                      isViewer ||
+                      !isEditContactPhoneValid ||
+                      !canTestEditingContactWhatsApp
+                    }
                     cooldownUntil={
                       waContactCooldowns[EDIT_CONTACT_WHATSAPP_TEST_KEY] || 0
                     }

@@ -356,8 +356,11 @@ router.post(
   async (req, res) => {
     try {
       const { email } = req.body || {};
-      const recipient =
-        email && isValidEmail(String(email).trim())
+      const recipientPolicy = require("../../../packages/recipient-verification");
+      const enforceRecipientVerification = recipientPolicy.resolveEnforcementMode() === "enforce";
+      const recipient = enforceRecipientVerification
+        ? req.user.email
+        : email && isValidEmail(String(email).trim())
           ? String(email).trim()
           : req.user.email;
       if (!(await isSMTPConfiguredAsync())) {
@@ -399,6 +402,16 @@ router.post(
         return res.status(400).json({
           error: "Valid phone number required (E.164 format)",
           code: "INVALID_PHONE_FORMAT",
+        });
+      }
+      const recipientPolicy = require("../../../packages/recipient-verification");
+      if (
+        recipientPolicy.resolveEnforcementMode() === "enforce" &&
+        process.env.RECIPIENT_VERIFICATION_ADMIN_PROVIDER_TEST !== "1"
+      ) {
+        return res.status(403).json({
+          error: "Arbitrary provider tests are disabled. Test a verified workspace contact, or set RECIPIENT_VERIFICATION_ADMIN_PROVIDER_TEST=1 for an operator diagnostic.",
+          code: "PROVIDER_TEST_DISABLED",
         });
       }
       const sid = await systemSettings.getSettingValue(

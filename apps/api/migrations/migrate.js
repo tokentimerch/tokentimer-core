@@ -5127,6 +5127,15 @@ migrations.push({
   `,
 });
 
+migrations.push({
+  version: 78,
+  name: "recipient_channel_verification",
+  sql: fs.readFileSync(
+    require("path").join(__dirname, "../../../packages/recipient-verification/migration.sql"),
+    "utf8",
+  ),
+});
+
 // Main may already contain v60 when PR #140's v58-v59 migrations arrive.
 // Apply by version rather than declaration position so each dependency exists.
 migrations.sort((a, b) => a.version - b.version);

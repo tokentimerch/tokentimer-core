@@ -343,6 +343,7 @@ app.use((error, req, res, next) => {
 // delayed by speedLimiter or double-counted against GLOBAL_RATE_LIMIT_MAX.
 app.use(require("./routes/contacts"));
 app.use(require("./routes/whatsapp"));
+app.use(require("./routes/recipientVerification"));
 
 // Apply global rate limiting (excluding auth routes)
 app.use(applyGlobalRateLimit);
