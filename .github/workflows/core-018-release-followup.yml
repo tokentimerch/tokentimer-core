@@ -22,39 +22,85 @@ concurrency:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  CORE_SOURCE_SHA: fcc681c19314b7c2432973ce99d517af36e10238
+  TRUSTED_MAIN_SHA: fcc681c19314b7c2432973ce99d517af36e10238
+  CORE_SOURCE_SHA: b1b92cb36de0ef0d8647f1122d18b075d06c17ea
   ARTIFACT_SOURCE_SHA: 69387d85231f242d00f653bbde94ead373fefe1e
 
 jobs:
-  stable-helm:
-    name: Preserve validated stable Helm candidate
+  dashboard-artifact:
+    name: Corrected production dashboard image without publication
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ env.CORE_SOURCE_SHA }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Package the trusted chart without publication
+      - name: Verify reviewed dashboard source
         run: |
-          test "$(git rev-parse HEAD)" = "$CORE_SOURCE_SHA"
-          git merge-base --is-ancestor "$CORE_SOURCE_SHA" origin/main
-          curl --fail --silent --show-error --location https://get.helm.sh/helm-v3.20.1-linux-amd64.tar.gz -o "$RUNNER_TEMP/helm.tar.gz"
-          echo "0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3  $RUNNER_TEMP/helm.tar.gz" | sha256sum --check
-          tar -xzf "$RUNNER_TEMP/helm.tar.gz" -C "$RUNNER_TEMP" linux-amd64/helm
-          helm="$RUNNER_TEMP/linux-amd64/helm"
-          mkdir -p stable-helm
-          "$helm" package deploy/helm --destination stable-helm
-          "$helm" lint stable-helm/tokentimer-0.18.0.tgz --set config.adminEmail=ci@example.com
-          "$helm" template tokentimer stable-helm/tokentimer-0.18.0.tgz --set config.adminEmail=ci@example.com > stable-helm/rendered.yaml
-          "$helm" show chart stable-helm/tokentimer-0.18.0.tgz > stable-helm/chart-metadata.yaml
-          (cd stable-helm && sha256sum tokentimer-0.18.0.tgz > tokentimer-0.18.0.tgz.sha256)
-          printf '%s\n' "$CORE_SOURCE_SHA" > stable-helm/source-sha.txt
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$TRUSTED_MAIN_SHA" origin/main
+          git merge-base --is-ancestor "$TRUSTED_MAIN_SHA" "$CORE_SOURCE_SHA"
+          git merge-base --is-ancestor "$CORE_SOURCE_SHA" HEAD
+          git diff --exit-code "$CORE_SOURCE_SHA" HEAD -- apps/dashboard package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc .dockerignore deploy/compose
+      - name: Build the actual production Dockerfile locally
+        run: |
+          mkdir -p dashboard-acceptance
+          docker build --pull --file deploy/compose/Dockerfile.dashboard --tag "tt-core-018-dashboard:$GITHUB_SHA" .
+          docker image inspect --format '{{json .}}' "tt-core-018-dashboard:$GITHUB_SHA" > "$RUNNER_TEMP/dashboard-inspect.json"
+          node <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const raw = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/dashboard-inspect.json'));
+          const files = ['deploy/compose/Dockerfile.dashboard', 'deploy/compose/nginx.conf', 'deploy/compose/docker-entrypoint-dashboard.sh', 'apps/dashboard/src/pages/UserPreferences.jsx', 'package.json', 'pnpm-lock.yaml'];
+          const sourceFiles = files.map(file => ({file, sha256: crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}));
+          fs.writeFileSync('dashboard-acceptance/image-provenance.json', JSON.stringify({
+            schemaVersion: 1, sourceSha: process.env.GITHUB_SHA, reviewedProductSourceSha: process.env.CORE_SOURCE_SHA,
+            runId: Number(process.env.GITHUB_RUN_ID), runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+            imageConfigDigest: raw.Id, architecture: raw.Architecture, os: raw.Os,
+            rootFsLayers: raw.RootFS.Layers, user: raw.Config.User, sourceFiles,
+            published: false, registryManifestDigestClaimed: false
+          }, null, 2));
+          NODE
+      - name: Smoke the owned production container
+        run: |
+          container="tt-core-018-dashboard-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          docker run --detach --name "$container" --publish 127.0.0.1::8080 "tt-core-018-dashboard:$GITHUB_SHA"
+          trap 'docker rm --force "$container" >/dev/null' EXIT
+          address="$(docker port "$container" 8080/tcp)"
+          curl --fail --silent --show-error --retry 20 --retry-connrefused --retry-delay 1 --max-time 5 "http://$address/" > dashboard-acceptance/index.html
+          node <<'NODE'
+          const fs = require('node:fs');
+          const assert = require('node:assert/strict');
+          const html = fs.readFileSync('dashboard-acceptance/index.html', 'utf8');
+          const asset = [...html.matchAll(/src="([^"]+)"/g)].map(match => match[1]).find(src => src.startsWith('/assets/') && src.endsWith('.js'));
+          assert.ok(asset, 'Production HTML must reference its actual built application');
+          fs.writeFileSync('dashboard-acceptance/entry-asset-path.txt', asset);
+          NODE
+          asset="$(cat dashboard-acceptance/entry-asset-path.txt)"
+          curl --fail --silent --show-error "http://$address$asset" > dashboard-acceptance/entry-asset.js
+          test -s dashboard-acceptance/entry-asset.js
+          sha256sum dashboard-acceptance/index.html dashboard-acceptance/entry-asset.js > dashboard-acceptance/smoke.sha256
+      - name: Scan the actual local production image
+        env:
+          GRYPE_CHECK_FOR_APP_UPDATE: "false"
+        run: |
+          curl --fail --silent --show-error --location https://github.com/anchore/grype/releases/download/v0.112.0/grype_0.112.0_linux_amd64.tar.gz -o "$RUNNER_TEMP/grype.tar.gz"
+          echo "acb14a030010fe9bdb9594b4ae108d9d14ef2f926d936aa0916dc62c89c058ea  $RUNNER_TEMP/grype.tar.gz" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/dashboard-grype"
+          tar -xzf "$RUNNER_TEMP/grype.tar.gz" -C "$RUNNER_TEMP/dashboard-grype" grype
+          "$RUNNER_TEMP/dashboard-grype/grype" "docker:tt-core-018-dashboard:$GITHUB_SHA" --output json --file dashboard-acceptance/security-all.json
+          GRYPE_DB_AUTO_UPDATE=false "$RUNNER_TEMP/dashboard-grype/grype" "docker:tt-core-018-dashboard:$GITHUB_SHA" --fail-on high --only-fixed --output json --file dashboard-acceptance/security-gate.json
+      - name: Preserve the exact unpublished image archive
+        run: |
+          docker save "tt-core-018-dashboard:$GITHUB_SHA" | gzip -n > dashboard-acceptance/dashboard-image.tar.gz
+          (cd dashboard-acceptance && sha256sum dashboard-image.tar.gz > dashboard-image.tar.gz.sha256)
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
         with:
-          name: core-018-stable-helm
-          path: stable-helm/
+          name: core-018-corrected-dashboard
+          path: dashboard-acceptance/
           if-no-files-found: error
 
   postgres:
@@ -74,8 +120,11 @@ jobs:
       - name: Verify actual fixture source and unchanged trusted product
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          git merge-base --is-ancestor "$CORE_SOURCE_SHA" origin/main
-          git diff --exit-code "$CORE_SOURCE_SHA" HEAD -- apps packages package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc .dockerignore deploy/compose ':!packages/agent/windows-service-host/host_test.go' ':!packages/agent/windows-service-host/testdata/mock-agent.js'
+          git merge-base --is-ancestor "$TRUSTED_MAIN_SHA" origin/main
+          git merge-base --is-ancestor "$TRUSTED_MAIN_SHA" "$CORE_SOURCE_SHA"
+          git merge-base --is-ancestor "$CORE_SOURCE_SHA" HEAD
+          git diff --exit-code "$TRUSTED_MAIN_SHA" "$CORE_SOURCE_SHA" -- apps packages package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc .dockerignore deploy/compose ':!apps/dashboard/src/pages/UserPreferences.jsx' ':!apps/dashboard/tests/unit/UserPreferences.workspaceReset.test.jsx' ':!packages/agent/windows-service-host/host_test.go' ':!packages/agent/windows-service-host/testdata/mock-agent.js'
+          git diff --exit-code "$CORE_SOURCE_SHA" HEAD -- apps packages package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc .dockerignore deploy/compose deploy/helm
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: '11.13.0'
@@ -129,8 +178,11 @@ jobs:
       - name: Verify actual fixture source and unchanged trusted product
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          git merge-base --is-ancestor "$CORE_SOURCE_SHA" origin/main
-          git diff --exit-code "$CORE_SOURCE_SHA" HEAD -- apps packages package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc .dockerignore deploy/compose ':!packages/agent/windows-service-host/host_test.go' ':!packages/agent/windows-service-host/testdata/mock-agent.js'
+          git merge-base --is-ancestor "$TRUSTED_MAIN_SHA" origin/main
+          git merge-base --is-ancestor "$TRUSTED_MAIN_SHA" "$CORE_SOURCE_SHA"
+          git merge-base --is-ancestor "$CORE_SOURCE_SHA" HEAD
+          git diff --exit-code "$TRUSTED_MAIN_SHA" "$CORE_SOURCE_SHA" -- apps packages package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc .dockerignore deploy/compose ':!apps/dashboard/src/pages/UserPreferences.jsx' ':!apps/dashboard/tests/unit/UserPreferences.workspaceReset.test.jsx' ':!packages/agent/windows-service-host/host_test.go' ':!packages/agent/windows-service-host/testdata/mock-agent.js'
+          git diff --exit-code "$CORE_SOURCE_SHA" HEAD -- apps packages package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc .dockerignore deploy/compose deploy/helm
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: '11.13.0'
