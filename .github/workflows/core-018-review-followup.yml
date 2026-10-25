@@ -1,0 +1,89 @@
+name: "Core 0.18 / Review follow-up"
+
+# Temporary validation for PR #453. Removed after the recorded run completes.
+on:
+  push:
+    branches: [release-prep/core-0.18.0-evidence]
+    paths:
+      - .github/workflows/core-018-review-followup.yml
+      - scripts/rehearse-windows-boundaries.js
+      - scripts/rehearse-windows-boundaries.test.js
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: core-018-review-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  AGENT_ARCHIVE_SHA256: 062f48b1960685b247b0114b2f7086b7accda23f8788895078da627f8844507c
+
+jobs:
+  tls-linux:
+    name: TLS trust and hostname regressions (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '24'
+      - name: Exercise actual TLS success and refusal paths
+        run: |
+          mkdir -p review-results
+          node --version
+          node --test --test-reporter=tap --test-reporter-destination=review-results/tls-tests.tap scripts/rehearse-windows-boundaries.test.js
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: core-018-review-tls-linux
+          path: review-results/
+          if-no-files-found: error
+
+  windows-boundaries:
+    name: Verified TLS and actual packaged IIS boundaries (Windows)
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '24'
+      - name: Exercise actual TLS success and refusal paths
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force review-results | Out-Null
+          node --version
+          node --test --test-reporter=tap --test-reporter-destination=review-results/tls-tests.tap scripts/rehearse-windows-boundaries.test.js
+          if ($LASTEXITCODE -ne 0) { throw 'TLS trust and hostname regressions failed' }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          github-token: ${{ github.token }}
+          run-id: 40144872189
+          name: core-018-agent-candidate
+          path: candidate-archive
+      - name: Enable IIS only on the disposable runner
+        shell: powershell
+        run: |
+          $result = Install-WindowsFeature Web-Server,Web-Static-Content,Web-Scripting-Tools -IncludeManagementTools
+          if (-not $result.Success -or $result.RestartNeeded -eq 'Yes') { throw 'IIS requires successful installation without a reboot' }
+      - name: Verify the actual packaged native boundaries and owned cleanup
+        shell: pwsh
+        run: |
+          if ((git rev-parse HEAD) -ne $env:GITHUB_SHA) { throw 'Selected source moved' }
+          node scripts/rehearse-windows-boundaries.js --archive "$env:GITHUB_WORKSPACE/candidate-archive/tokentimer-agent-0.18.0.tgz" --archive-sha256 $env:AGENT_ARCHIVE_SHA256 --source-sha $env:GITHUB_SHA --out "$env:GITHUB_WORKSPACE/review-results/windows-boundaries.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Windows native boundary smoke failed' }
+          @{ sourceSha=$env:GITHUB_SHA; archiveSha256=$env:AGENT_ARCHIVE_SHA256; files=@(@('scripts/rehearse-windows-boundaries.js','scripts/rehearse-windows-boundaries.test.js') | ForEach-Object { @{ path=$_; sha256=(Get-FileHash $_ -Algorithm SHA256).Hash.ToLowerInvariant() } }) } | ConvertTo-Json -Depth 5 | Set-Content review-results/source-identities.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: core-018-review-windows-boundaries
+          path: review-results/
+          if-no-files-found: error

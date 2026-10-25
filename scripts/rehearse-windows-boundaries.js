@@ -182,10 +182,13 @@ async function reservePort() {
   return port;
 }
 
-async function inspectTls(port, expectedFingerprint, owner) {
+async function inspectTls({ port, certificatePem, expectedFingerprint, servername, owner }) {
   return new Promise((resolve, reject) => {
-    const request = https.get({ host: "127.0.0.1", port, path: "/index.html", rejectUnauthorized: false, agent: false, timeout: 15000 }, (response) => {
+    // Trust only the locally created fixture for this request. The connection
+    // stays on loopback; servername retains normal certificate hostname checks.
+    const request = https.get({ host: "127.0.0.1", port, path: "/index.html", ca: certificatePem, servername, rejectUnauthorized: true, agent: false, timeout: 15000 }, (response) => {
       try {
+        assert.equal(response.socket.authorized, true, "TLS fixture certificate was not verified");
         const peer = response.socket.getPeerCertificate();
         assert.ok(peer.raw, "TLS peer sent no certificate");
         assert.equal(hash(peer.raw), expectedFingerprint, "TLS served a different certificate");
@@ -195,7 +198,7 @@ async function inspectTls(port, expectedFingerprint, owner) {
       response.setEncoding("utf8");
       response.on("data", (chunk) => { body += chunk; if (body.length > 4096) response.destroy(new Error("Unexpected response size")); });
       response.on("error", reject);
-      response.on("end", () => { try { assert.equal(body, owner); resolve({ peerFingerprintSha256: expectedFingerprint, ownedIisContent: true }); } catch (error) { reject(error); } });
+      response.on("end", () => { try { assert.equal(body, owner, "TLS served unexpected site content"); resolve({ peerFingerprintSha256: expectedFingerprint, ownedIisContent: true, fixtureCertificateVerified: true, verifiedServername: servername }); } catch (error) { reject(error); } });
     });
     request.on("timeout", () => request.destroy(new Error("TLS probe timed out")));
     request.on("error", reject);
@@ -210,7 +213,7 @@ async function main(argv = process.argv.slice(2)) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), owner + "-"));
   const manifest = path.join(directory, "owned-resources.json");
   let state = { owner, site: owner, pool: owner, store: "TokenTimerSmoke" + owner.slice("tt-core-delta-".length), directory, port: await reservePort(), certificates: [], siteCreated: false, poolCreated: false, storeCreated: false, allowIisRemoval: false, protectedThumbprints: [] };
-  const receipt = { schemaVersion: 1, scope: "windows-iis-wildcard-and-san-store-discovery", sourceSha: options["source-sha"], archiveSha256: options["archive-sha256"], startedAt: new Date().toISOString(), status: "failed", checks: [], notQualifiedByThisRun: ["AD CS or domain authentication", "Windows service install/upgrade", "arm64 execution", "other Windows versions or languages", "trusted-chain validation of the self-signed fixture", "network evidence ingestion", "whole-release qualification"] };
+  const receipt = { schemaVersion: 1, scope: "windows-iis-wildcard-and-san-store-discovery", sourceSha: options["source-sha"], archiveSha256: options["archive-sha256"], startedAt: new Date().toISOString(), status: "failed", checks: [], notQualifiedByThisRun: ["AD CS or domain authentication", "Windows service install/upgrade", "arm64 execution", "other Windows versions or languages", "system trust-store or public-CA validation", "network evidence ingestion", "whole-release qualification"] };
   const saveState = () => { assertOwnedState(state, directory); fs.writeFileSync(manifest, JSON.stringify(state), { mode: 0o600 }); };
   const readState = () => { state = JSON.parse(fs.readFileSync(manifest, "utf8").replace(/^\uFEFF/, "")); assertOwnedState(state, directory); return state; };
   function command(file, args, { timeout = 120000, env = process.env } = {}) {
@@ -261,7 +264,7 @@ async function main(argv = process.argv.slice(2)) {
     const binding = { address: "*", port: state.port, site: state.site, store: "My" };
     const oldCertificate = new crypto.X509Certificate(Buffer.from(state.certificates[0].publicDer, "base64"));
     const newCertificate = new crypto.X509Certificate(Buffer.from(state.certificates[1].publicDer, "base64"));
-    await inspectTls(state.port, hash(oldCertificate.raw), owner);
+    await inspectTls({ port: state.port, certificatePem: oldCertificate.toString(), expectedFingerprint: hash(oldCertificate.raw), servername: owner + ".invalid", owner });
     lock = require(path.join(directory, "package/src/windows-cert-store")).acquireStoreLock(path.join(directory, "agent-state"), "My");
     await check("real-wildcard-iis-rebind-and-independent-tls", async () => {
       const result = await lock.run((signal) => iis.deployIisBinding({ binding, certificatePem: newCertificate.toString(), signal }));
@@ -271,7 +274,7 @@ async function main(argv = process.argv.slice(2)) {
       assert.equal(result.skippedMutation, undefined, "Expected an actual rebind");
       const rawNetsh = command("netsh.exe", ["http", "show", "sslcert", "ipport=0.0.0.0:" + state.port]);
       assert.ok(rawNetsh.toUpperCase().includes(state.certificates[1].thumbprint), "Independent netsh query found a different certificate");
-      const tls = await inspectTls(state.port, hash(newCertificate.raw), owner);
+      const tls = await inspectTls({ port: state.port, certificatePem: newCertificate.toString(), expectedFingerprint: hash(newCertificate.raw), servername: owner + ".invalid", owner });
       return { selector: "0.0.0.0:" + state.port, outgoingThumbprint: result.outgoingThumbprint, boundThumbprint: result.boundThumbprint, ...tls };
     });
     lock.release(); lock = null;
@@ -343,5 +346,5 @@ async function main(argv = process.argv.slice(2)) {
   return receipt;
 }
 
-module.exports = { parseArgs, assertOwnedState, assertArchivePaths, assertOwnedObservation };
+module.exports = { parseArgs, assertOwnedState, assertArchivePaths, assertOwnedObservation, inspectTls };
 if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 1; });
