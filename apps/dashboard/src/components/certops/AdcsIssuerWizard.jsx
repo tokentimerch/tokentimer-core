@@ -140,6 +140,7 @@ export default function AdcsIssuerWizard({
   agents,
   paused,
   onChanged,
+  setupGuide = false,
   initialName = '',
   initialAgentId = '',
   initialCaConfig = '',
@@ -521,14 +522,27 @@ export default function AdcsIssuerWizard({
             ) : null}
             {step === 3 ? (
               <Text fontSize='sm'>
-                Issuer saved. Renewal profiles is the shared list, above. Choose
-                New AD CS profile there. The last step attaches the profile to a
-                certificate already in inventory and turns automation on. The
-                sweep enrolls when that certificate is inside the profile lead
-                time and an agent that declares the DNS name has passed a CA
-                check taken after you pinned the certificate and is online. The
-                check you just ran came before the pin, so on the issuer choose
-                Check again once more.
+                {setupGuide ? (
+                  <>
+                    Issuer saved and CA certificate pinned. Close this dialog to
+                    return to the setup guide. Continue with the renewal profile
+                    step there and attach the profile to your certificate. A new
+                    CA check must pass after pinning before enrollment can
+                    proceed.
+                  </>
+                ) : (
+                  <>
+                    Issuer saved. Renewal profiles is the shared list, above.
+                    Choose New AD CS profile there. The last step attaches the
+                    profile to a certificate already in inventory and turns
+                    automation on. The sweep enrolls when that certificate is
+                    inside the profile lead time and an agent that declares the
+                    DNS name has passed a CA check taken after you pinned the
+                    certificate and is online. The check you just ran came
+                    before the pin, so on the issuer choose Check again once
+                    more.
+                  </>
+                )}
               </Text>
             ) : null}
           </Stack>
