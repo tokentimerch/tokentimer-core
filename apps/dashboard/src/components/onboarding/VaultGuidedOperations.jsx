@@ -387,6 +387,15 @@ export function VaultRolloutGuide({
       if (alive.current) setBusy('');
     }
   };
+  // Rollout and deployment projections can reference the same job. Keep
+  // each job's evidence once, while retaining every consumer's own status.
+  const deploymentEvidenceOwners = new Map();
+  for (const target of targets) {
+    const jobId = bindingFor(target)?.latest_deployment?.jobId;
+    if (jobId && jobId !== rolloutId && !deploymentEvidenceOwners.has(jobId)) {
+      deploymentEvidenceOwners.set(jobId, target.bindingId);
+    }
+  }
   const published = state.versions.filter(
     v => v.state === 'published' && Date.parse(v.valid_to) > Date.now()
   );
@@ -621,12 +630,21 @@ export function VaultRolloutGuide({
                     Deployment:{' '}
                     {binding.latest_deployment?.stage || 'Not requested yet'}
                   </Text>
-                  {binding.latest_deployment?.jobId ? (
+                  {binding.latest_deployment?.jobId &&
+                  deploymentEvidenceOwners.get(
+                    binding.latest_deployment.jobId
+                  ) === target.bindingId ? (
                     <JobActivity
                       workspaceId={ctx.workspaceId}
                       jobId={binding.latest_deployment.jobId}
                       title={`Deployment: ${label(agent)}`}
                     />
+                  ) : binding.latest_deployment?.jobId ? (
+                    <Text fontSize='xs' color={muted}>
+                      {binding.latest_deployment.jobId === rolloutId
+                        ? 'Evidence for this deployment is shown in the rollout timeline below.'
+                        : 'This deployment shares the job evidence shown with another consumer.'}
+                    </Text>
                   ) : null}
                   {['failed', 'blocked', 'orphaned_unknown_effect'].includes(
                     binding.latest_deployment?.stage

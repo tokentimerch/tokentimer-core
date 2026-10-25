@@ -308,6 +308,40 @@ describe('Vault jobs stay in onboarding', () => {
     expect(api.requestRollout).not.toHaveBeenCalled();
   });
 
+  it.each(['rollout-job', 'consumer-job'])(
+    'shows shared job evidence only once when consumer job is %s',
+    async deploymentId => {
+      const context = ctx();
+      context.session.progress.certops.vaultRolloutJobId = 'rollout-job';
+      context.session.progress.certops.vaultConsumers = [first, second].map(
+        (agent, index) => ({
+          agentId: agent.id,
+          bindingId: `binding-${index}`,
+          deploymentProfileRef: 'nginx-public',
+        })
+      );
+      api.readDistribution.mockResolvedValue({
+        versions: [],
+        consumers: [first, second].map((agent, index) => ({
+          binding_id: `binding-${index}`,
+          assigned_agent_id: agent.id,
+          binding_state: 'active',
+          authorization_revision: 1,
+          profile_revision: 1,
+          deployment_profile_ref: 'nginx-public',
+          verification_policy: 'trust',
+          latest_deployment: { jobId: deploymentId, stage: 'trust_validated' },
+        })),
+      });
+      wrap(<VaultRolloutGuide {...props(context)} />);
+      await screen.findAllByText('Authorization revision 1');
+      expect(screen.getAllByText(`Timeline for ${deploymentId}`)).toHaveLength(
+        1
+      );
+      expect(screen.getAllByText('Timeline for rollout-job')).toHaveLength(1);
+    }
+  );
+
   it('pins the chosen published version and keeps rollout success separate from live consumer verification', async () => {
     const context = ctx();
     const version = {
