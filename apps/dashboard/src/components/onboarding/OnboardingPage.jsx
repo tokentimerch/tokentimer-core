@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -677,6 +678,12 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
     () => resolveNavigation(plan, viewStepId),
     [plan, viewStepId]
   );
+  // A new step opens at its heading. Summary polling must not move the
+  // operator away from the fields or evidence they are currently reading.
+  useLayoutEffect(() => {
+    const scroller = document.scrollingElement || document.documentElement;
+    scroller.scrollTop = 0;
+  }, [nav.shownId]);
   const titleOf = useCallback(
     id => plan?.steps.find(s => s.id === id)?.title || id,
     [plan]

@@ -133,6 +133,42 @@ describe('execution step', () => {
     );
   });
 
+  it('uses a fresh setup request and recovers the same key after a lost response', async () => {
+    const context = makeCtx('certops_automate', { ...automate }, ready);
+    createJob.mockRejectedValueOnce(new Error('Response lost'));
+    mount(ExecutionStep, context);
+    fireEvent.click(screen.getByRole('button', { name: 'Send a test job' }));
+    await screen.findByText('Response lost');
+    const key = createJob.mock.calls[0][1].idempotencyKey;
+    expect(key).toMatch(/^wizard-dryrun-a1-[a-f0-9-]{36}$/);
+    expect(context.session.progress.certops.dryRunRequestKey).toBe(key);
+    expect(context.session.progress.certops.dryRunRequestAgentId).toBe(
+      agent.id
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Send a test job' }));
+    await waitFor(() => expect(createJob).toHaveBeenCalledTimes(2));
+    expect(createJob.mock.calls[1][1].idempotencyKey).toBe(key);
+    expect(createJob.mock.calls[1][1]).not.toHaveProperty('requiresApproval');
+  });
+
+  it("does not reuse another agent's persisted request key", async () => {
+    const context = makeCtx(
+      'certops_automate',
+      {
+        ...automate,
+        dryRunRequestKey: 'another-agent-request',
+        dryRunRequestAgentId: 'other-agent',
+      },
+      ready
+    );
+    mount(ExecutionStep, context);
+    fireEvent.click(screen.getByRole('button', { name: 'Send a test job' }));
+    await waitFor(() => expect(createJob).toHaveBeenCalledOnce());
+    expect(createJob.mock.calls[0][1].idempotencyKey).not.toBe(
+      'another-agent-request'
+    );
+  });
+
   it('tells the reader to set dryRun to false in the same block after a passing dry run', async () => {
     mount(
       ExecutionStep,

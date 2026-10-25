@@ -76,6 +76,8 @@ const VARIANT_KEYS = [
   'chosenDistributionId',
   'chosenDistributionConfirmed',
   'dryRunJobId',
+  'dryRunRequestKey',
+  'dryRunRequestAgentId',
   'issueJobId',
   'issueAttempt',
   'issueReloadService',
