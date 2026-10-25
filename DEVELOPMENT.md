@@ -417,3 +417,7 @@ CronJobs, CI, tests, and manual operations.
 curl http://localhost:4000/health
 curl http://localhost:5173
 ```
+
+## Auto-sync implementation and regression checks
+
+Maintainers can use [Auto-sync internals](docs/maintainers/AUTO_SYNC_INTERNALS.md) for transaction fencing, ownership, cleanup and disposable-database regression procedures. The customer setup path is [Import assets and keep them current](docs/AUTO_SYNC.md).

@@ -98,8 +98,15 @@ what the policy allows: set `declaredTargetSelectors` (issuer: the SANs;
 consumer: the binding ID) and, for the issuer, `declaredCommandProfileNames`.
 Without them the agent registers but never claims work.
 
-The examples ship `"dryRun": true`. Real jobs are refused until a signed dry run
-has passed and you set `"dryRun": false` and restart the agent. For the nginx
+The examples ship `"dryRun": true`. Before allocating the first publication,
+complete signed no-op smoke checks with execution enabled and local dry-run
+protection on. They prove dispatch/reporting, not later external effects.
+If ordinary approval is off, then disable issuer polling and restart before
+allocation. Prepare the returned group, Vault policy and host bindings while
+polling is off; once ready, restart with `"enabled": true` and `"dryRun": false`
+directly. A dry-run polling phase after allocation can claim and block the queued
+real publication. With approval on, keep that publication unapproved until ready.
+For the nginx
 consumer, `nginx -t` fails for the unprivileged agent user, so the example
 validates with `systemctl is-active` and reloads through `systemctl reload nginx`
 with a one-time systemd drop-in that tests the configuration as root; see
@@ -116,9 +123,7 @@ issuer or consumer credentials. Protect Vault backups as private keys.
 
 ## Public workflow
 
-Distribution administration is mostly API-first. The Renewals dashboard presents
-groups and consumer status alongside renewal profiles and AD CS issuer
-management. The setup guide creates the publication job. Consumer assignment,
+Start with [First Vault distribution](vault-first-distribution.md). Distribution administration is mostly API-first. Inspect status in **Certificates → certificate → Deployments**; **Renewals** contains profiles and AD CS issuers. The setup guide creates the publication job. Consumer assignment,
 editing consumer bindings, requesting and approving rollouts, containment, retry
 and verification-only checks use the API below and the existing job approval
 endpoints.
@@ -161,7 +166,7 @@ endpoints.
    Every locally configured listener must pass. A certificate renewed at the
    source does not mark an offline consumer current.
 
-The consumer matrix at `GET .../{groupId}/consumers` and in the Renewals page
+The consumer matrix at `GET .../{groupId}/consumers` and **Certificates → Deployments**
 shows desired/observed logical versions, generation, fingerprint, deployed
 expiry, verification method/time and latest deployment failure. Convergence
 requires a fresh, unexpired proof for the current binding revision and active
