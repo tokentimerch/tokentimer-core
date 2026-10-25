@@ -6,6 +6,7 @@
 // callers must treat null as "unknown", never as "nothing installed".
 
 const { listAgents } = require("../certops/agentRegistry");
+const { consumerMatrix } = require("../certops/materialDistribution");
 const {
   CONTINUATION_STATES,
   DEFAULT_POLL_INTERVAL_SECONDS,
@@ -65,8 +66,9 @@ function summarizeAgents(items, { now = Date.now(), since = null } = {}) {
 }
 
 /**
- * Distribution is verified only when a rollout reached the verified state,
- * which requires consumer evidence. Existing groups alone prove nothing.
+ * Service distribution is verified only with live consumer evidence. Files-only
+ * installation can complete its policy without claiming a served certificate.
+ * Existing groups or a publication alone prove neither result.
  * Each group carries session facts so the guide can ignore a distribution that
  * was already verified before the session began, unless the operator opts in.
  */
@@ -78,59 +80,74 @@ async function loadDistributionReality(
   const sinceMs = since ? new Date(since).getTime() : null;
   const { rows } = await pool.query(
     `SELECT (SELECT COUNT(*)::int FROM certops_distribution_groups WHERE workspace_id = $1) AS groups,
-            (SELECT COUNT(*)::int FROM certops_consumer_bindings WHERE workspace_id = $1) AS bindings,
-            (SELECT COUNT(*)::int FROM certops_distribution_rollouts
-              WHERE workspace_id = $1 AND state = 'verified' AND verification_only = false) AS verified_rollouts`,
+            (SELECT COUNT(*)::int FROM certops_consumer_bindings WHERE workspace_id = $1) AS bindings`,
     [workspaceId],
   );
   const row = rows[0] || {};
   const items = await pool.query(
     `SELECT g.id, g.material_store_ref, g.created_at,
-            EXISTS (
-              SELECT 1 FROM certops_distribution_rollouts r
-               WHERE r.workspace_id = g.workspace_id AND r.group_id = g.id
-                 AND r.state = 'verified' AND r.verification_only = false
-            ) AS verified,
-            (SELECT MAX(r.created_at) FROM certops_distribution_rollouts r
-              WHERE r.workspace_id = g.workspace_id AND r.group_id = g.id
-                AND r.state = 'verified' AND r.verification_only = false
-            ) AS last_verified_at
+            latest.generation AS latest_generation, latest.state AS latest_rollout_state,
+            latest.verification_only,
+            CASE WHEN latest.state='verified' AND latest.verification_only=false THEN latest.observed_at END AS last_verified_at,
+            CASE WHEN latest.state IN ('installed','verified') AND latest.verification_only=false THEN latest.observed_at END AS last_completed_at
        FROM certops_distribution_groups g
+       LEFT JOIN LATERAL (
+         SELECT r.generation,r.state,r.verification_only,
+           COALESCE((SELECT MAX(d.observed_at) FROM certops_consumer_deployments d
+             WHERE d.workspace_id=r.workspace_id AND d.rollout_id=r.id),r.created_at) AS observed_at
+         FROM certops_distribution_rollouts r WHERE r.workspace_id=g.workspace_id AND r.group_id=g.id
+         ORDER BY r.generation DESC,r.created_at DESC,r.id DESC LIMIT 1
+       ) latest ON true
       WHERE g.workspace_id = $1
       ORDER BY g.created_at DESC
       LIMIT 20`,
     [workspaceId],
   );
-  return {
-    groups: row.groups || 0,
-    bindings: row.bindings || 0,
-    verified: (row.verified_rollouts || 0) > 0,
-    items: items.rows.map((g) => {
+  const consumers = items.rows.length ? await consumerMatrix({ client: pool, workspaceId, groupIds: items.rows.map(g => g.id) }) : [];
+  const facts = items.rows.map((g) => {
+      const bindings = consumers.filter(c => c.group_id === g.id && c.binding_state === "active");
+      const completed = ["installed", "verified"].includes(g.latest_rollout_state) && g.verification_only === false &&
+        bindings.length > 0 && bindings.every(c => c.converged === true && Number(c.desired_generation) === Number(g.latest_generation) &&
+          !["failed", "orphaned_unknown_effect"].includes(c.latest_deployment?.stage));
+      const verified = completed && g.latest_rollout_state === "verified" && bindings.every(c => c.live_verified === true);
       const createdMs = g.created_at ? new Date(g.created_at).getTime() : null;
       const lastVerifiedMs = g.last_verified_at
         ? new Date(g.last_verified_at).getTime()
+        : null;
+      const lastCompletedMs = g.last_completed_at
+        ? new Date(g.last_completed_at).getTime()
         : null;
       // Work of this session: the group was created after the session began, or
       // a verified rollout was recorded after it began.
       const sessionWork =
         sinceMs === null ||
         (createdMs !== null && createdMs >= sinceMs) ||
-        (lastVerifiedMs !== null && lastVerifiedMs >= sinceMs);
+        (lastVerifiedMs !== null && lastVerifiedMs >= sinceMs) ||
+        (lastCompletedMs !== null && lastCompletedMs >= sinceMs);
       return {
         id: g.id,
         materialStoreRef: g.material_store_ref,
         createdAt:
           createdMs === null ? null : new Date(createdMs).toISOString(),
-        verified: g.verified === true,
+        verified,
+        completed,
         lastVerifiedAt:
           lastVerifiedMs === null
             ? null
             : new Date(lastVerifiedMs).toISOString(),
+        lastCompletedAt:
+          lastCompletedMs === null ? null : new Date(lastCompletedMs).toISOString(),
         // True when nothing about this group is work of the current session, so
         // the guide never counts it unless the operator chose it.
         existedBeforeSession: sinceMs !== null && !sessionWork,
       };
-    }),
+    });
+  return {
+    groups: row.groups || 0,
+    bindings: row.bindings || 0,
+    verified: facts.some(item => item.verified),
+    completed: facts.some(item => item.completed),
+    items: facts,
     outboxBacklog: await loadOutboxBacklog(pool, workspaceId, { now }),
   };
 }

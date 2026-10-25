@@ -4835,6 +4835,11 @@ const migrations = [
         ON onboarding_sessions(workspace_id);
     `,
   },
+  {
+    version: 78,
+    name: "certops_installed_file_distribution",
+    sql: fs.readFileSync(require("path").join(__dirname, "078-certops-installed-file-distribution.sql"), "utf8"),
+  },
 ];
 
 

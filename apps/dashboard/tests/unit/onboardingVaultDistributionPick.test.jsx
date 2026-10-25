@@ -80,10 +80,7 @@ describe('distributions a session may use', () => {
   });
 
   it('keeps workspace aggregates from a server that has no items', () => {
-    const scoped = scopeDistribution(
-      { groups: 2, verified: true },
-      ''
-    );
+    const scoped = scopeDistribution({ groups: 2, verified: true }, '');
     expect(scoped.groups).toBe(2);
     expect(scoped.verified).toBe(true);
   });
@@ -103,6 +100,14 @@ describe('distributions a session may use', () => {
 });
 
 describe('Share a certificate through Vault in the planner', () => {
+  it('finishes file-only delivery from fresh backend evidence without live TLS, never from an unrelated or earlier setup', () => {
+    expect(done([fresh({ verified: false, completed: true })])).toBe(true);
+    expect(done([old({ verified: false, completed: true })])).toBe(false);
+    expect(
+      done([fresh({ verified: false, completed: true })], { groupId: GROUP_A })
+    ).toBe(false);
+    expect(done([fresh({ verified: false, completed: false })])).toBe(false);
+  });
   it('stays open when the only verified group was there before the session', () => {
     expect(done([old()])).toBe(false);
   });
@@ -166,10 +171,12 @@ describe('the distribution choice', () => {
     const a = chooseDistribution(saved(), 'vault', GROUP_A);
     const confirmed = { ...a, chosenDistributionConfirmed: GROUP_A };
     expect(
-      chooseDistribution(confirmed, 'vault', GROUP_A).chosenDistributionConfirmed
+      chooseDistribution(confirmed, 'vault', GROUP_A)
+        .chosenDistributionConfirmed
     ).toBe(GROUP_A);
     expect(
-      chooseDistribution(confirmed, 'vault', GROUP_B).chosenDistributionConfirmed
+      chooseDistribution(confirmed, 'vault', GROUP_B)
+        .chosenDistributionConfirmed
     ).toBeUndefined();
   });
 
@@ -189,7 +196,9 @@ describe('the distribution choice', () => {
 
   it('does not leak into another goal', () => {
     const picked = { ...saved(), chosenDistributionId: GROUP_A };
-    expect(scopeCertops(picked, 'observe').chosenDistributionId).toBeUndefined();
+    expect(
+      scopeCertops(picked, 'observe').chosenDistributionId
+    ).toBeUndefined();
   });
 
   it('waits for Continue only when a distribution was chosen', () => {
@@ -255,9 +264,11 @@ describe('Share a certificate through Vault with a distribution from before', ()
   it('offers the guide and does not call the old distribution done', () => {
     show(ctxFor([old()]));
     expect(screen.getByTestId('existing-distributions-note')).toHaveTextContent(
-      '1 verified distribution is already in this workspace'
+      '1 completed distribution is already in this workspace'
     );
-    expect(screen.queryByRole('combobox', { name: /distribution/i })).toBeNull();
+    expect(
+      screen.queryByRole('combobox', { name: /distribution/i })
+    ).toBeNull();
     expect(screen.queryByTestId('vault-use-distribution')).toBeNull();
   });
 

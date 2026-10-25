@@ -308,7 +308,6 @@ export default function AgentShellConsole({
   const [payload, setPayload] = useState(null);
   const [items, setItems] = useState([]);
   const [failed, setFailed] = useState(false);
-  const bottomRef = useRef(null);
   const boxRef = useRef(null);
   // Follow new output only while the reader is at the bottom.
   const pinnedRef = useRef(true);
@@ -455,15 +454,16 @@ export default function AgentShellConsole({
   ]);
 
   useEffect(() => {
-    if (!pinnedRef.current) return;
-    const reduced =
-      typeof window !== 'undefined' &&
-      window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-    bottomRef.current?.scrollIntoView?.({
-      behavior: reduced ? 'auto' : 'smooth',
-      block: 'end',
-    });
-  }, [displayLines.length, displayLines[displayLines.length - 1]?.id]);
+    if (!pinnedRef.current || collapsed) return;
+    // Only follow inside the log viewport. scrollIntoView also moves every
+    // scrollable ancestor, pulling the operator away from the setup form.
+    const box = boxRef.current;
+    if (box) box.scrollTop = box.scrollHeight;
+  }, [
+    displayLines.length,
+    displayLines[displayLines.length - 1]?.id,
+    collapsed,
+  ]);
 
   useEffect(() => {
     if (onItems) onItems(items);
@@ -651,7 +651,6 @@ export default function AgentShellConsole({
             ▍
           </Box>
         ) : null}
-        <div ref={bottomRef} />
       </Box>
       {limitNotice ? (
         <Text fontSize='xs' color={muted} role='status'>

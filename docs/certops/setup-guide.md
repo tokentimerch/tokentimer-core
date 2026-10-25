@@ -23,7 +23,7 @@ Core and Enterprise share the host workflow. Cloud 0.18 uses the wizard with hos
 4. Deliberately allow real mutating execution only when ready for issuance/enrollment/deployment. Restart only the agent, then continue the same saved guide.
 5. Follow the operation's evidence and verify the [certificate actually served](verify-live-service.md). A completed form or job is not proof that a listener uses the replacement.
 
-Continue with [Linux](agent/install-linux.md), [Windows/IIS](agent/install-windows.md), [Microsoft AD CS](agent/adcs.md#operator-sequence) or [Vault distribution](vault-first-distribution.md). The AD CS post-pin check currently uses **Renewals → issuer → Check again**; the guide's own refresh does not dispatch it. Vault consumer assignment and rollout use the supported API handoff. Trust anchors use **Agents → Trust anchors**, not a separate onboarding goal.
+Continue with [Linux](agent/install-linux.md), [Windows/IIS](agent/install-windows.md), [Microsoft AD CS](agent/adcs.md#operator-sequence) or [Vault distribution](vault-first-distribution.md). The guide runs the AD CS post-pin check inline. Vault offers signed tests, consumer assignment, configuration revisions and exact-version rollout in the guide. Choose **Distribute certificate files only** or **Distribute and reload a service** at consumer preparation; the first needs no web service or live TLS listener. Its completion confirms installation, not live use. Use hosts for configuration and independent verification, rather than terminal TokenTimer API commands. Trust anchors use **Agents → Trust anchors**, not a separate onboarding goal.
 
 ## Start again
 

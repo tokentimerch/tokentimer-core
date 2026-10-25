@@ -59,6 +59,7 @@ test("an installation at main's AD CS migration 72 upgrades to distribution with
       { version: 75, name: "certops_distribution_review" },
       { version: 76, name: "certops_distribution_transfer" },
       { version: 77, name: "onboarding_sessions" },
+      { version: 78, name: "certops_installed_file_distribution" },
     ]);
     const constraints =
       await pool.query(`SELECT conname, pg_get_constraintdef(oid) AS definition
@@ -92,6 +93,40 @@ test("an installation at main's AD CS migration 72 upgrades to distribution with
       ).rows[0].table_name,
       "certops_distribution_groups",
     );
+    const filePolicies = await pool.query(`SELECT conname,pg_get_constraintdef(oid) AS definition FROM pg_constraint
+      WHERE conname=ANY($1::text[])`, [["certops_consumer_bindings_verification_policy_check",
+      "certops_consumer_deployments_verification_policy_check", "certops_consumer_current_state_verification_method_check",
+      "certops_distribution_rollouts_state_check"]]);
+    assert.equal(filePolicies.rows.length, 4);
+    for (const constraint of filePolicies.rows) {
+      assert.match(constraint.definition, /installed/);
+      assert.match(constraint.definition, /served|verified/);
+    }
+    // Exercise the exact additive DDL against retained legacy assurance rows.
+    // Temporary tables shadow the public tables only on this dedicated client.
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const tables = [
+        ["certops_consumer_bindings", "verification_policy", ["served", "trust"]],
+        ["certops_consumer_deployments", "verification_policy", ["served", "trust"]],
+        ["certops_consumer_current_state", "verification_method", ["served", "trust"]],
+        ["certops_distribution_rollouts", "state", ["pending", "deploying", "verified", "degraded", "paused", "retired"]],
+      ];
+      for (const [table, column, values] of tables) {
+        await client.query(`CREATE TEMP TABLE ${table} (${column} TEXT CHECK (${column} IN (${values.map(value => `'${value}'`).join(",")}))) ON COMMIT DROP`);
+        await client.query(`INSERT INTO ${table} (${column}) VALUES ($1)`, [values[0]]);
+      }
+      await client.query(migrations.find(entry => entry.version === 78).sql);
+      for (const [table, column, values] of tables) {
+        assert.deepEqual((await client.query(`SELECT ${column} FROM ${table}`)).rows, [{ [column]: values[0] }]);
+        await client.query(`INSERT INTO ${table} (${column}) VALUES ('installed')`);
+        await client.query("SAVEPOINT invalid_policy");
+        await assert.rejects(client.query(`INSERT INTO ${table} (${column}) VALUES ('pretend_verified')`), { code: "23514" });
+        await client.query("ROLLBACK TO SAVEPOINT invalid_policy");
+      }
+      await client.query("ROLLBACK");
+    } finally { client.release(); }
   } finally {
     if (migrations.at(-1).version === 72) migrations.push(...pending);
     await pool.end();

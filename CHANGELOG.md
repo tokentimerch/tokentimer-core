@@ -9,6 +9,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Vault setup stays in the guide.** Send signed agent checks, assign consumers, copy their returned configuration revisions, and deploy a selected published version without running TokenTimer API commands in a terminal. Choose file distribution alone or also reload NGINX, Apache or HAProxy; file-only completion confirms installation without requiring or claiming live TLS verification. The guide shows each deployment's evidence; starting over creates a fresh publication attempt while preserving existing records. **Operator action:** apply migration 78 and deploy matching API/worker and consumer agents for file-only delivery; older agents reject that policy before mutation.
+
+### Fixed
+
+- **Restarted setup guides can run a new signed test.** A fresh setup no longer reuses another attempt's job request. New steps open at their heading, while background status refreshes keep the current reading position.
+
 ## [0.18.1] - 2026-10-25
 
 ### Fixed

@@ -152,18 +152,55 @@ function probeListener(probe, fingerprintSha256, verificationPolicy) {
 function resolveBindingPolicy(job, bindings, policyEngine) {
   const intent = intentFromJob(job);
   const binding = Object.hasOwn(bindings || {}, intent.bindingId) ? bindings[intent.bindingId] : null;
+  const filesOnly = intent.verificationPolicy === "installed";
   if (!UUID.test(intent.bindingId) || !Number.isSafeInteger(intent.generation) || intent.generation < 1 ||
+    !["installed", "served", "trust"].includes(intent.verificationPolicy) ||
     !binding || binding.workspaceId !== intent.workspaceId || binding.groupId !== intent.groupId ||
     binding.agentId !== job.agentId || binding.materialStoreRef !== intent.materialStoreRef ||
     binding.deploymentProfileRef !== intent.deploymentProfileRef || binding.profileRevision !== intent.profileRevision ||
     binding.authorizationRevision !== intent.authorizationRevision || binding.verificationPolicy !== intent.verificationPolicy ||
-    binding.target?.type !== "endpoint" || !Array.isArray(binding.probes) || binding.probes.length < 1 || binding.probes.length > 16 ||
+    binding.target?.type !== "endpoint" ||
+    (!filesOnly && (!Array.isArray(binding.probes) || binding.probes.length < 1 || binding.probes.length > 16)) ||
+    (filesOnly && (binding.probes !== undefined && (!Array.isArray(binding.probes) || binding.probes.length !== 0) ||
+      binding.reloadService !== undefined || binding.reloadCommandRefs !== undefined)) ||
     typeof binding.target.certPath !== "string" || typeof binding.target.keyPath !== "string") throw failure("material_binding_policy_denied");
   // Destination/reload/probes all come from approved local configuration.
   for (const file of [binding.target.certPath, binding.target.keyPath, binding.target.chainPath].filter(Boolean)) {
     if (!policyEngine.checkPath(file).allowed) throw failure("material_destination_denied");
   }
   return { intent,binding };
+}
+
+// A successful file install is a read-back statement about customer-local
+// files, never a statement about a listener. Do not follow a substituted link
+// or read outside the same allowlisted roots used by the writer.
+function installedPairMatches(binding, policyEngine, fingerprintSha256, bundle = null) {
+  const readPublic = file => {
+    const stat = fs.lstatSync(file);
+    const real = fs.realpathSync(file);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 256 * 1024 ||
+      !policyEngine.checkPath(real)?.allowed) throw failure("material_install_readback_failed");
+    const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    try {
+      const opened = fs.fstatSync(fd);
+      if (opened.ino !== stat.ino || opened.dev !== stat.dev || opened.size > 256 * 1024) throw failure("material_install_readback_failed");
+      return fs.readFileSync(fd, "utf8");
+    } finally { fs.closeSync(fd); }
+  };
+  const certPem = readPublic(binding.target.certPath);
+  const realKey = fs.realpathSync(binding.target.keyPath);
+  if (!policyEngine.checkPath(realKey)?.allowed) throw failure("material_install_readback_failed");
+  const cert = new crypto.X509Certificate(certPem);
+  const key = crypto.createPrivateKey(readProtectedFile(binding.target.keyPath));
+  if (!cert.checkPrivateKey(key) || crypto.createHash("sha256").update(cert.raw).digest("hex") !== fingerprintSha256) return false;
+  const chainPem = binding.target.chainPath ? readPublic(binding.target.chainPath) : "";
+  if (bundle) {
+    const certificates = pem => (pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) || [])
+      .map(block => crypto.createHash("sha256").update(new crypto.X509Certificate(block).raw).digest("hex"));
+    // Compare every installed chain certificate as well as the leaf/key pair.
+    if (JSON.stringify(certificates(certPem + "\n" + chainPem)) !== JSON.stringify(certificates(bundle.certificatePem))) return false;
+  }
+  return true;
 }
 
 async function executePinnedDeployment({ job, stores, bindings, stateDir, policyEngine, checkLease, reload, recoveryOnly = false, fixtureLoopbackHttp = false }) {
@@ -189,10 +226,8 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
         materialVersionId:intent.materialVersionId,generation:intent.generation,fetched:true,installed:false,bound:false,
         servedVerified:false,trustValidated:false,...facts,observedAt:new Date().toISOString()};
       try {
-        const installed=new crypto.X509Certificate(fs.readFileSync(binding.target.certPath));
-        const key=crypto.createPrivateKey(readProtectedFile(binding.target.keyPath));
-        receipt.installed=installed.checkPrivateKey(key) && crypto.createHash("sha256").update(installed.raw).digest("hex")===facts.fingerprintSha256;
-        if (receipt.installed) {
+        receipt.installed=installedPairMatches(binding,policyEngine,facts.fingerprintSha256,bundle);
+        if (receipt.installed && binding.verificationPolicy !== "installed") {
           const probes=[];for(const p of binding.probes)probes.push(await probeListener(p,facts.fingerprintSha256,binding.verificationPolicy));
           receipt.servedVerified=probes.every(p=>p.servedVerified);receipt.trustValidated=probes.every(p=>p.trustValidated);
           receipt.bound=receipt.servedVerified;
@@ -201,7 +236,8 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
       await checkLease();
       receipt.observedAt=new Date().toISOString();
       writeProtectedJson(record,{generation:intent.generation,intentHash:hash,intent,uncertain:false,receipt});
-      const verified=receipt.servedVerified && (binding.verificationPolicy!=="trust" || receipt.trustValidated);
+      const verified=binding.verificationPolicy === "installed" ? receipt.installed
+        : receipt.servedVerified && (binding.verificationPolicy!=="trust" || receipt.trustValidated);
       return {status:verified?"succeeded":"failed",deploymentReceipt:receipt,errorMessage:verified?null:"material_drift_detected"};
     }
     const stageDir = path.join(stateDir, "material-consumer-staging", intent.bindingId);
@@ -240,16 +276,19 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
         }
         throw failure("material_install_failed");
       }
+      if (!installedPairMatches(binding, policyEngine, facts.fingerprintSha256, bundle)) throw failure("material_install_readback_failed");
       receipt.installed = true;
       await checkLease();
-      if (typeof reload !== "function" || !(await reload(binding.reloadService, binding.reloadCommandRefs))) throw failure("material_reload_failed");
-      receipt.bound = true;
-      const probes = [];
-      for (const probe of binding.probes) probes.push(await probeListener(probe, facts.fingerprintSha256, binding.verificationPolicy));
-      receipt.servedVerified = probes.every((probe) => probe.servedVerified);
-      receipt.trustValidated = probes.every((probe) => probe.trustValidated);
+      if (binding.verificationPolicy !== "installed") {
+        if (typeof reload !== "function" || !(await reload(binding.reloadService, binding.reloadCommandRefs))) throw failure("material_reload_failed");
+        receipt.bound = true;
+        const probes = [];
+        for (const probe of binding.probes) probes.push(await probeListener(probe, facts.fingerprintSha256, binding.verificationPolicy));
+        receipt.servedVerified = probes.every((probe) => probe.servedVerified);
+        receipt.trustValidated = probes.every((probe) => probe.trustValidated);
+        if (!receipt.servedVerified || (binding.verificationPolicy === "trust" && !receipt.trustValidated)) throw failure("material_service_verification_failed");
+      }
       receipt.observedAt = new Date().toISOString();
-      if (!receipt.servedVerified || (binding.verificationPolicy === "trust" && !receipt.trustValidated)) throw failure("material_service_verification_failed");
       await checkLease();
       writeProtectedJson(record, { generation: intent.generation, intentHash: hash, intent, uncertain: false, receipt });
       return { status: "succeeded", deploymentReceipt: receipt, errorMessage: null };
@@ -262,8 +301,8 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
 }
 
 // Explicit customer-side reconciliation only: no install/reload and no server
-// current-state promotion. Prove the installed pair AND every configured TLS
-// listener before clearing an uncertain local marker. The subsequent signed
+// current-state promotion. Prove the installed pair and, for service policies,
+// every configured TLS listener before clearing an uncertain local marker. The subsequent signed
 // retry still needs a live claim and the original approved generation.
 async function reconcilePinnedDeployment({ job,bindings,stateDir,policyEngine }) {
   const { intent,binding }=resolveBindingPolicy(job,bindings,policyEngine);
@@ -272,10 +311,8 @@ async function reconcilePinnedDeployment({ job,bindings,stateDir,policyEngine })
     const previous=JSON.parse(readProtectedFile(record,16384));
     const intentHash=crypto.createHash("sha256").update(canonicalizeJobPayload(intent)).digest("hex");
     if(previous.generation!==intent.generation || previous.intentHash!==intentHash)throw failure("material_stale_generation");
-    const cert=new crypto.X509Certificate(fs.readFileSync(binding.target.certPath));
-    const key=crypto.createPrivateKey(readProtectedFile(binding.target.keyPath));
-    if(!cert.checkPrivateKey(key) || crypto.createHash("sha256").update(cert.raw).digest("hex")!==intent.fingerprintSha256)throw failure("material_reconciliation_mismatch");
-    for(const p of binding.probes){const proof=await probeListener(p,intent.fingerprintSha256,binding.verificationPolicy);if(!proof.servedVerified || binding.verificationPolicy==="trust"&&!proof.trustValidated)throw failure("material_reconciliation_mismatch");}
+    if(!installedPairMatches(binding,policyEngine,intent.fingerprintSha256))throw failure("material_reconciliation_mismatch");
+    if(binding.verificationPolicy!=="installed")for(const p of binding.probes){const proof=await probeListener(p,intent.fingerprintSha256,binding.verificationPolicy);if(!proof.servedVerified || binding.verificationPolicy==="trust"&&!proof.trustValidated)throw failure("material_reconciliation_mismatch");}
     writeProtectedJson(record,{...previous,uncertain:false,reconciledAt:new Date().toISOString()});
     return { reconciled:true,bindingId:intent.bindingId,generation:intent.generation,fingerprintSha256:intent.fingerprintSha256 };
   });
