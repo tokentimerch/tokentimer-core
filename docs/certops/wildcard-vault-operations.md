@@ -116,9 +116,7 @@ issuer or consumer credentials. Protect Vault backups as private keys.
 
 ## Public workflow
 
-Distribution administration is mostly API-first. The Renewals dashboard presents
-groups and consumer status alongside renewal profiles and AD CS issuer
-management. The setup guide creates the publication job. Consumer assignment,
+Start with [First Vault distribution](vault-first-distribution.md). Distribution administration is mostly API-first. Inspect status in **Certificates → certificate → Deployments**; **Renewals** contains profiles and AD CS issuers. The setup guide creates the publication job. Consumer assignment,
 editing consumer bindings, requesting and approving rollouts, containment, retry
 and verification-only checks use the API below and the existing job approval
 endpoints.
@@ -161,7 +159,7 @@ endpoints.
    Every locally configured listener must pass. A certificate renewed at the
    source does not mark an offline consumer current.
 
-The consumer matrix at `GET .../{groupId}/consumers` and in the Renewals page
+The consumer matrix at `GET .../{groupId}/consumers` and **Certificates → Deployments**
 shows desired/observed logical versions, generation, fingerprint, deployed
 expiry, verification method/time and latest deployment failure. Convergence
 requires a fresh, unexpired proof for the current binding revision and active

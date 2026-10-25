@@ -1,19 +1,22 @@
 # TokenTimer Agent
 
-The agent runs on the host that holds certificate keys. TokenTimer plans and audits work; the agent enforces local policy and executes allowed jobs. It connects outbound to the control plane over HTTPS and does not accept inbound connections. Private keys stay on the host.
+The agent runs on the host that holds certificate keys. TokenTimer plans and audits work; the agent enforces local policy and executes allowed jobs. It connects outbound to the control plane over HTTPS and does not accept inbound connections. Agent-local private keys stay on that host. Explicitly configured Vault publication transfers a certificate/key bundle to your own Vault and consumer hosts, while keeping it outside TokenTimer's control plane.
 
 ## Start here
 
 1. Enable CLM on the control plane and prepare a workspace bootstrap token.
-2. Follow [Install on Linux](agent/install-linux.md) or [Install on Windows](agent/install-windows.md).
-3. Prepare [local policy and configuration](agent/configuration.md), verify a signed dry-run, then opt into real execution.
+2. Open the [setup guide](setup-guide.md) and select the result you need. Prepare [local policy](agent/configuration.md) before allowing certificate work.
+3. Follow [Linux](agent/install-linux.md) or [Windows](agent/install-windows.md) installation when the guide requests it, verify signed dispatch with a no-op, then opt into the selected operation.
 
-An agent with `execution.enabled: false` registers, heartbeats, and can report configured certificate discovery; it does not poll for or claim jobs. To test signed jobs, set `execution.enabled: true` and keep `execution.dryRun: true`, then restart and request a job with `mode: "dry_run"`. Real jobs are refused while that local safety switch is on. Enabling execution does not bypass local policy.
+An agent with `execution.enabled: false` registers, heartbeats, and can report configured certificate discovery; it does not poll for or claim jobs. To test signed jobs, set `execution.enabled: true` and keep `execution.dryRun: true`, then restart and request a job with `mode: "dry_run"`. Real mutating jobs are refused while that safety switch is on. AD CS preflight is a separate real read-only check and can run with local dry-run protection enabled; signed preflight `mode: "dry_run"` is blocked. A no-op proves dispatch/reporting, not the permissions or success of later issuance. Enabling execution does not bypass local policy.
 
 ## Task guides
 
 - [DNS and ACME](agent/dns-and-acme.md): provider credentials, zone routing, DNS-01, and the external HTTP-01 workflow.
 - [Microsoft AD CS](agent/adcs.md): domain-joined Windows enrollment from an enterprise CA. The agent contacts a CA only when a local enrollment rule names that CA and template. Linux and non-domain hosts do not enroll over DCOM. Use a domain-joined Windows agent, or an ACME gateway.
+- [Vault publication and distribution](vault-first-distribution.md): publish once, approve two consumers and verify each listener.
+- [Verify the live certificate](verify-live-service.md): compare the actual served identity after installation or renewal.
+- [Windows configuration maintenance](windows-maintenance.md): preserve enrolled identity, protected state and private-CA trust.
 - [Trust and signing-key rotation](agent/trust-and-key-rotation.md): CA distribution/revocation and signing-key changes.
 - [Operations](agent/operations.md): upgrades, troubleshooting, compatibility, and retirement.
 

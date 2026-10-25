@@ -12,11 +12,15 @@ Linux hosts, and Windows hosts that are not domain-joined, do not enroll over DC
 
 ## Operator sequence
 
-1. Join a Windows member to the domain and install the agent there. Grant Enroll on the template to that computer account, or to a group that contains it.
-2. Add an [enrollment rule](#enrollment-rules) that names the CA config and the template common name. Restart `TokenTimerAgent`.
-3. In **Renewals**, open **AD CS issuers** and choose **New issuer**. Name the issuer, pick the agent that can read the CA, enter the CA config and template, wait for the check, and pin one CA certificate.
-4. Open **Renewal profiles** and choose **New AD CS profile**. Select that confirmed issuer, then the certificate DNS name, IIS site, port, optional SNI hostname, certificate store, key, and lead time.
-5. On **Attach**, if inventory already has that DNS name, choose **Attach and enable automation**. If nothing matches, open the certificate in **Certificates** and attach the profile there. The renewal sweep enrolls when the certificate is inside the lead time.
+Use a workspace administrator for issuer confirmation and profile creation. Start the dashboard's **Preferences → Setup guide** or **Certificate Management → Settings → CertOps quickstart**, choose the Microsoft CA goal and Windows Server, and select your existing agent when appropriate.
+
+1. Prepare a domain-joined Windows member, existing IIS site/HTTPS binding and a published server-authentication template. Give its computer account, or a dedicated group, **Read and Enroll** on that template.
+2. Merge one complete [enrollment rule](#enrollment-rules) into the existing config; preserve `agentId`, credentials, pins and custody state. Declare the target DNS name, enable store discovery and confirm the actual IIS registration appears in **Certificates**.
+3. Complete the [signed no-op smoke check](install-windows.md#verify). Keep local `execution.enabled: true` and `execution.dryRun: true` through the CA checks. The no-op proves signed dispatch/reporting; it does not validate later enrollment permissions.
+4. Add the issuer and run its real **read-only** CA/template check on the agent that will enroll. Compare the returned certificate/key with one obtained independently through your trusted CA administration channel, then pin the selected CA key. Do not choose solely because a certificate is newest.
+5. Run a **fresh check after pinning** on that same agent: follow **Renewals → AD CS issuers → Check again**, then return to the saved guide. The guide's summary refresh is not a new CA check. After the safe result, set local `execution.dryRun: false` and restart before enrollment. A signed preflight in `mode: dry_run` is blocked; the real read-only check is allowed with local protection on.
+6. Create **New AD CS profile** with the confirmed issuer, DNS name, existing IIS site/port/SNI, store, approved key and lead time. The form does not select an agent; an eligible online agent must declare the name and have passed that issuer's check.
+7. Attach and enable automation on the **actual IIS management registration**. A same-name stored copy may be a different record. When eligible and due, follow the enrollment/job evidence and read-only **Agent output**, then verify Personal, **IIS rebinding** and the [certificate actually served](../verify-live-service.md). Creating the profile alone does not enroll a certificate.
 
 **Renewal profiles** is the shared list on that page, and it is listed first. ACME profiles appear there after an issuance. **AD CS issuers**, further down, only prepares a private CA. Confirm an issuer there before **New AD CS profile** can select it.
 
@@ -41,7 +45,7 @@ Set `adcs.validationTimeoutSeconds` in the agent's protected `config.json` to an
 
 ## Where the agent runs
 
-Install the agent on a domain-joined Windows member. The service runs as `LocalSystem` and authenticates to the CA with Kerberos as `DOMAIN\HOST$`. Grant Enroll on the template to that computer account, or to a group that contains it.
+Install the agent on a domain-joined Windows member. The service runs as `LocalSystem` and authenticates to the CA with Kerberos as `DOMAIN\HOST$`. Grant Read and Enroll on the template to that computer account, or to a group that contains it.
 
 Do not install the agent on a domain controller. That placement is not qualified.
 
@@ -67,7 +71,7 @@ The member needs outbound TCP 135 (the RPC endpoint mapper) and the CA's dynamic
 
 The template name in the issuer wizard is not created by TokenTimer. It is the template common name already published on the enterprise CA.
 
-In Certificate Templates (`certtmpl.msc`), copy the **Template name**. A display name such as "Web Server" can hide a template name such as `WebServer`. Publish that template on the issuing CA, and grant Enroll to the agent computer account (`DOMAIN\HOST$`) or to a group that contains it.
+In Certificate Templates (`certtmpl.msc`), copy the **Template name**. A display name such as "Web Server" can hide a template name such as `WebServer`. Publish that template on the issuing CA, and grant Read and Enroll to the agent computer account (`DOMAIN\HOST$`) or to a group that contains it.
 
 Type that same template name in the wizard. The dashboard does not list the CA catalog. The name must also appear, with the same CA, in the agent [enrollment rule](#enrollment-rules). A pair that is not in that rule is rejected before the CA is contacted.
 
@@ -106,7 +110,7 @@ The CA name may use letters, digits, spaces and `. _ ( ) -`, up to 64 characters
 
 <a id="enrollment-rules"></a>
 
-On the agent, `config.json` lists the only CA and template pairs that host may contact:
+Merge this rule into the enrolled agent's `config.json`; do not replace the file. `TokenTimerWebServer` is an example of a custom, published schema-2-or-later server-authentication template that permits RSA. Match its actual name, DNS scope and key policy:
 
 ```json
 {
@@ -114,9 +118,9 @@ On the agent, `config.json` lists the only CA and template pairs that host may c
     "enrollmentRules": [
       {
         "caConfig": "ca01.corp.example.com\\Corp Issuing CA",
-        "template": "WebServer",
+        "template": "TokenTimerWebServer",
         "dnsScopes": ["corp.example.com"],
-        "keyAlgorithms": ["rsa", "ecdsa"]
+        "keyAlgorithms": ["rsa"]
       }
     ]
   }
@@ -137,9 +141,9 @@ In **Renewals**, open **AD CS issuers**, then **New issuer**.
 
 1. **Name.** A name you will recognize later. This is not the CA name.
 2. **Check the CA.** Choose the Windows agent that will enroll the certificate. Enter the CA config and the template common name, then **Run check**. The check reads the template and the CA certificates, and it stores the CA certificate and the template OID on that agent. It does not issue a certificate. A different agent cannot enroll until it has run the same check.
-3. **Choose a certificate.** When both checks are safe, choose the newest CA certificate with **Use this certificate**. Enrollment accepts only the certificate you pin. Closing the wizard before the check finishes, or closing a safe check without pinning, discards the draft.
+3. **Choose a certificate.** When both checks are safe, independently compare the returned certificate/key with your trusted CA administration source, then choose **Use this certificate**. Enrollment is pinned to that CA public key; newest alone is not a trust decision. Closing the wizard before the check finishes, or closing a safe check without pinning, discards the draft.
 
-The issuer is ready when it shows a chosen certificate. After you pin the CA certificate, choose **Check again** on the issuer once more: renewal starts only from a CA check taken after the pin. A later CA renewal that keeps the same key needs no action. A check that comes back unsafe is not pinned. That issuer stays hidden until **Show N unsafe issuers** is checked.
+After you pin the CA certificate, choose **Check again** on that issuer under **Renewals** once more: renewal starts only from a CA check taken after the pin. A later CA renewal that keeps the same key needs no action. A check that comes back unsafe is not pinned. That issuer stays hidden until **Show N unsafe issuers** is checked.
 
 ## Renewal profile
 
@@ -165,7 +169,7 @@ The renewal sweep enrolls when that certificate is inside the lead time, automat
 | Issuer configuration | An AD CS issuer exists with CA config and template under **Renewals → AD CS issuers**. | Complete CA/template preflight and pin a CA certificate before **New AD CS profile** can select it. This alone does not enroll. |
 | CA/template preflight | The chosen agent ran **Run check** for that CA config and template. Verdicts and CA certificates are stored for that agent. | Fix unsafe template or CA flags, or add the matching enrollment rule, then run the check again on the agent that will enroll. |
 | Confirmed CA public-key pin | You chose **Use this certificate** on a safe check. Enrollment accepts only that pin. | After a CA key change, run the check again and pin the new certificate. Same-key CA renewals need no action. |
-| Agent readiness | A domain-joined Windows agent is online, has the enrollment rule, declares the certificate DNS name, and can reach the CA. | Join the domain, install the agent, grant Enroll, add the rule and target selector, restart `TokenTimerAgent`. |
+| Agent readiness | A domain-joined Windows agent is online, has the enrollment rule, declares the certificate DNS name, and can reach the CA. | Join the domain, install the agent, grant template Read and Enroll, add the rule and target selector, restart `TokenTimerAgent`. |
 | Preflight freshness (24h) | A safe preflight older than 24 hours is not usable for renewal start or cached pin reuse. | Run **Run check** again on the enrolling agent. Dashboard may show **Waiting for CA check**. |
 | Enrollment eligibility | Renewal can create an enrollment when the profile is attached, automation is on, lead time applies, preflight is fresh and pinned, and an agent declares a fresh `adcs-enroll-v1`. | Confirm the agent is online, heartbeating, and declares `adcs-enroll-v1`. Issuer or profile setup alone does not start enrollment. |
 | Pending CA approval | Dashboard **Awaiting CA approval**: the CA accepted the request and holds it. Polled about every 15 minutes; not resubmitted. | Approve or deny on the CA. The 14-day limit starts when the CA accepts the request. |
@@ -228,7 +232,7 @@ An explicit `install_failed` result waits for an operator decision. After correc
 
 Enrollment accepts only the CA certificate you pinned. A CA renewal that keeps the same key needs no action. A renewal that uses a new key fails the enrollment with `ADCS_CA_KEY_CHANGED`. The issuer shows that the CA key changed.
 
-Open that issuer under **AD CS issuers**, pick an agent that can reach the CA, choose **Run check**, and **Use this certificate** on the new certificate. The CA config and template stay the same. A different pair is a new issuer. New profiles cannot select the issuer until the new certificate is pinned.
+Open that issuer under **AD CS issuers**, pick the enrolling agent that can reach the CA and choose **Run check**. Independently verify the new CA certificate/key through your trusted administration channel before **Use this certificate**, then run a fresh check after the pin. The CA config and template stay the same. A different pair is a new issuer. New profiles cannot select the issuer until the new certificate is pinned.
 
 ## Revocation
 
@@ -254,7 +258,7 @@ A denied request can also carry a CA result. Console text is localized and is no
 | HRESULT | When | What to do |
 |---|---|---|
 | `0x80094014` `CERTSRV_E_ADMIN_DENIED_REQUEST` | submit or retrieve | A CA manager denied the request. |
-| `0x80094012` `CERTSRV_E_TEMPLATE_DENIED` | submit | Grant Enroll on the template to the computer account, or to a group that contains it. |
+| `0x80094012` `CERTSRV_E_TEMPLATE_DENIED` | submit | Grant Read and Enroll on the template to the computer account, or to a group that contains it. |
 | `0x80094800` `CERTSRV_E_UNSUPPORTED_CERT_TYPE` | submit | Publish the template on that CA, and use the template common name. |
 | `0x80094811` `CERTSRV_E_KEY_LENGTH` | submit | Choose a key the template allows. |
 | `0x80094003` `CERTSRV_E_BAD_REQUESTSTATUS` | submit | Choose the key algorithm the template allows. |

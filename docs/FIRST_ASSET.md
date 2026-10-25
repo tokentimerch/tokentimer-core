@@ -3,6 +3,8 @@
 
 After installation, create a harmless sample and check that its reminder reaches your inbox. This workflow verifies both inventory and notification routing.
 
+For the interactive first-result path, open **Preferences → Setup guide → Open setup guide** and follow [Use the setup guide](certops/setup-guide.md#first-asset-and-alert-route). Keep the delivery checks below: saved setup state does not prove a message reached your inbox.
+
 ## Before you start
 
 - Sign in to your deployment with the administrator account created at first startup. Open your own dashboard URL, not the Cloud sign-in page.

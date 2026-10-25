@@ -222,14 +222,18 @@ jobs run step 5 only; `noop` reports a `validation.passed` evidence item and
 succeeds.
 
 Dry-run mode is driven by the signed job's immutable `mode` field (see
-"Dry-run and reconciliation statuses" in [Protocol](protocol.md)). When `mode` is
+"Dry-run and reconciliation statuses" in [Protocol](protocol.md)). For supported mutating actions with `mode`
 `dry_run`, all trust gates still run, then instead of executing the agent
 reports one `policy.checked` evidence item per step the action would run
 (with `dryRun: true` metadata) and returns `dry_run_complete` with
 `keyRotated` null. Zero filesystem or exec side effects; the
 keys/acme/deploy/reload/verify modules are never called. Local
 `execution.dryRun` (default true) remains a safety refusal for
-`mode:"real"` jobs only — it reports `blocked`, never a silent success.
+real mutating jobs — it reports `blocked`, never a silent success.
+Read-only AD CS preflight is dispatched separately and can run with local
+dry-run enabled; a signed preflight in dry-run mode is blocked. A `noop` is
+also handled separately: its completion proves signed dispatch/reporting,
+not the action-specific policy plan or result of later issuance.
 
 ## Related
 

@@ -257,8 +257,11 @@ silently requeued.
 
 Dry-run jobs must never terminate as `succeeded`; the agent reports
 `dry_run_complete` instead. Local `execution.dryRun: true` is a separate
-safety refusal: it **blocks** a `mode:"real"` job outright and never
-silently downgrades it to a successful plan-only report.
+safety refusal for real mutating actions: it **blocks** those jobs and never
+silently downgrades them to successful plans. Read-only AD CS preflight and
+no-op dispatch are handled separately. Preflight uses `mode:"real"`, can run
+with local dry-run protection enabled, and rejects signed dry-run mode. A
+signed no-op confirms transport/reporting rather than an issuance plan.
 
 <a id="7-contract-status-and-forward-compatible-fields"></a>
 
