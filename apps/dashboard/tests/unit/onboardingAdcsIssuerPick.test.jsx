@@ -404,17 +404,19 @@ describe('Connect your Microsoft CA merged instructions', () => {
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
-  it('asks for a new check after the pin, with a button to the issuer', () => {
+  it('runs the post-pin check in the guide and blocks profile setup until it passes', () => {
     show(ctxFor([fresh({ checkedAfterPin: false })]));
     const panel = screen.getByTestId('adcs-issuer-recheck');
     expect(panel).toHaveTextContent('Renewal needs a CA check taken after');
-    expect(panel).toHaveTextContent('choose Check again');
     expect(
-      screen.getByRole('link', { name: 'Open New CA in Renewals' })
-    ).toHaveAttribute(
-      'href',
-      `/certops/renewals?workspace=ws-1&action=check-adcs-issuer&issuerId=${ISSUER_B}`
-    );
+      screen.getByRole('button', { name: 'Run post-pin check' })
+    ).toBeEnabled();
+    expect(
+      screen.queryByRole('link', { name: 'Open New CA in Renewals' })
+    ).toBeNull();
+    expect(done([fresh({ checkedAfterPin: false })])).toBe(false);
+    expect(done([fresh({ revalidationRequired: true })])).toBe(false);
+    expect(screen.queryByTestId('adcs-real-enrollment')).toBeNull();
   });
 
   it('does not ask once the check came after the pin, or on an older server', () => {
