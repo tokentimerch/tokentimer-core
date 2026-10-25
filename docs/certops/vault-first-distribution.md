@@ -4,7 +4,7 @@ Publish one certificate version, install it on two Linux consumers and verify bo
 
 ## Prepare
 
-Use an HTTPS Vault KV v2 mount, reachable CA/DNS, registered issuer/consumer agents and two existing web services. Arrange a second authorized manager for rollout approval. Keep one workspace throughout.
+Use an HTTPS Vault KV v2 mount, reachable CA/DNS, registered issuer/consumer agents and two existing web services. Job approval is off by default, so one authorized operator can complete this workflow. If your workspace requires approval, arrange another authorized manager. Keep one workspace throughout.
 
 Open the [setup guide](setup-guide.md) and choose **Share one certificate across servers with Vault → Linux server**. Select existing agents where appropriate. Preserve their identity, allowlists and local custody state.
 
@@ -21,11 +21,11 @@ Keep Vault credentials, private bundles, filesystem destinations and reload comm
 
 In the Vault GUI, inspect the KV v2 engine, group-scoped policies and published version metadata/history. Issuers need the intended create/read access; consumers need read access. Use metadata for status checks; bundle Data/raw JSON contains private keys.
 
-## Publish, assign and approve
+## Publish, assign and roll out
 
 After readiness checks, deliberately set `execution.enabled: true` and `execution.dryRun: false` on the prepared hosts and restart their agents. Do not insert another dry-run polling phase while the real publication is queued. Approve the held job if required and follow the original publication under the actual workspace policy. Inspect its public receipt; publication alone is not installation.
 
-Follow the [publication and consumer API sequence](wildcard-vault-operations.md#public-workflow) for both destinations. Apply each returned authorization revision to the matching host-local binding before rollout. Request the intended material version and have a **different authorized manager** approve the rollout even when ordinary job approval is off. Child-job approval still follows workspace policy.
+Follow the [publication and consumer API sequence](wildcard-vault-operations.md#public-workflow) for both destinations. Apply each returned authorization revision to the matching host-local binding before rollout. Request the intended material version. With workspace Job approval off, the rollout starts without a second user; explicit `requiresApproval: true` can opt in for that request. With workspace approval on, another authorized manager must approve it. Child-job approval also follows workspace policy. Keep the setting off for unattended execution; publishing a renewed version does not automatically request a new rollout.
 
 ## Verify both services
 

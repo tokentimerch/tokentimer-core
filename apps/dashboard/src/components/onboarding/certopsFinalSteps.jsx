@@ -578,7 +578,7 @@ export function VaultStep({ ctx }) {
             The issuing agent orders the certificate and publishes it to Vault.
             The group id appears on the job and is filled in below.
             {approvalRequired === false && !publishJobId
-              ? ' Create it once the issuing agent is configured and out of dry run (parts 2 to 5).'
+              ? ' Complete signed no-op smoke checks first. Stop only the issuing TokenTimer agent service before creating this job, and keep it stopped while you apply the returned group id to Vault policy and the local configuration in parts 2 to 5. Once ready, restart with execution enabled and dryRun false; do not start another dry-run polling phase while this real job is queued.'
               : ''}
           </Text>
           {!publishJobId ? (
@@ -927,7 +927,7 @@ export function VaultStep({ ctx }) {
             <Part
               n={6}
               title='Test, assign and roll out'
-              who='You, with the API (a different workspace manager approves the rollout)'
+              who='You, with the API (workspace manager)'
             >
               <Text fontSize='sm'>
                 These calls need a signed-in workspace manager, not a machine
@@ -943,11 +943,13 @@ export function VaultStep({ ctx }) {
                 data-testid='vault-dry-run-note'
               >
                 A signed dry run proves that an agent receives and verifies
-                jobs. Run it once for each agent before you set execution.dryRun
-                to false in its config and restart it. A rollout itself has no
-                dry run: the first one installs the certificate for real, and a
-                later check-only rollout (verificationOnly: true) just compares
-                what is installed.
+                jobs. Run these checks for each agent before creating the first
+                publication, with execution enabled and local dryRun true. Once
+                real work is queued, finish its configuration and restart with
+                dryRun false directly. A rollout itself has no dry run: the
+                first one installs the certificate for real, and a later
+                check-only rollout (verificationOnly: true) just compares what
+                is installed.
               </Text>
               {approvalRequired === true ? (
                 <Text
@@ -983,13 +985,14 @@ export function VaultStep({ ctx }) {
               />
               <Text fontSize='sm'>
                 Once both agents are registered, assign the consumer and request
-                a rollout. A rollout always needs approval from a different
-                user, whatever the workspace approval setting, and a running
-                CertOps worker (the worker-certops service in Compose, the
-                certops cron job in Helm). Without the worker an approved
-                rollout stays pending and nothing is deployed, and renewals are
-                never scheduled.
+                a rollout. It follows the workspace Job approval policy, as do
+                its consumer deployment jobs. A running CertOps worker is also
+                required (the worker-certops service in Compose, the certops
+                cron job in Helm). Without it, rollouts do not advance and
+                renewals are never scheduled. Publishing a renewed version does
+                not automatically request another rollout.
               </Text>
+              <ApprovalPolicyNote required={approvalRequired} noun='rollout' />
               <CopyBlock
                 label={`Assign the consumer to group ${groupPath}`}
                 text={buildApiCall({

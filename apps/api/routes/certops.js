@@ -4391,7 +4391,7 @@ router.put("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumer
 router.post("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollouts", ...distributionWriteGuards,
   requireWorkspaceCertOpsActive,
   csrRoute(async (req) => ({ statusCode:201,body:await distribution.requestRollout({ workspaceId:req.workspace.id,
-    groupId:req.params.groupId,materialVersionId:req.body?.materialVersionId,maxParallel:req.body?.maxParallel,verificationOnly:req.body?.verificationOnly,
+    groupId:req.params.groupId,materialVersionId:req.body?.materialVersionId,maxParallel:req.body?.maxParallel,verificationOnly:req.body?.verificationOnly,requiresApproval:req.body?.requiresApproval,
     actorUserId:req.user?.id,idempotencyKey:req.get("Idempotency-Key") }) })));
 router.post("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollouts/:rolloutId/state", ...distributionWriteGuards,
   (req, res, next) => req.body?.state === "deploying" ? requireWorkspaceCertOpsActive(req, res, next) : next(),

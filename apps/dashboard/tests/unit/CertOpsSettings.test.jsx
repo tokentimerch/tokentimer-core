@@ -83,8 +83,9 @@ describe('CertOpsSettings job approval policy', () => {
       screen.getByText(/Require approval before every new job can run/)
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/machine API token calls, bulk renew, scheduled renewal/)
+      screen.getByText(/scheduled renewals, Vault rollouts and their deployment jobs/)
     ).toBeInTheDocument();
+    expect(screen.getByText(/renewal is not unattended/)).toBeInTheDocument();
     expect(
       screen.getByLabelText('Require approval for every new job')
     ).toBeInTheDocument();

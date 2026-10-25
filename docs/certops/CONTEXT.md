@@ -234,7 +234,12 @@ the shared detector scans every outbound envelope.
 - **Workspace Job approval** - `certOpsRequireApprovalAlways` on
   `GET`/`PUT /api/v1/workspaces/:id/certops/settings`. When on, every new job
   starts at `pending_approval`: dashboard, session-authenticated manual requests, bulk renew,
-  scheduled renewal, and trust-anchor distribute or revoke. Fail-closed: the
+  scheduled renewal, Vault rollouts and their deployment jobs, and trust-anchor
+  distribute or revoke. Scheduled execution is not unattended while this is on.
+  With the setting off, a rollout freezes and queues its intent without a second
+  user, unless that request explicitly opts in with `requiresApproval: true`.
+  Publication of a renewed version alone does not start a new consumer rollout.
+  Fail-closed: the
   per-job `requiresApproval` checkbox cannot override it, and an explicit
   `false` from a caller cannot override a true workspace column. Off by
   default. Not an env var; workspace admins toggle it from the **Certificate Management → Settings** tab (**Job approval** panel). Turning it on or off is audited

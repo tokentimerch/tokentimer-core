@@ -9,6 +9,12 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-10-25
+
+### Fixed
+
+- **Vault rollouts honor Job approval.** With workspace approval off, a single operator can start a rollout and its consumer deployments without a second account. Explicit per-request approval remains available; workspace-forced approval still requires another authorized user. Existing pending approvals are preserved. Settings and operator guidance clarify that enabling Job approval also holds scheduled renewal jobs, and that publishing a renewed certificate does not automatically request a consumer rollout.
+
 ## [0.18.0] - 2026-10-25
 
 ### Added

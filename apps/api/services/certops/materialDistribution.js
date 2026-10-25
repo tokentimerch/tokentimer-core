@@ -197,7 +197,7 @@ async function assertDeployableVersion(client, workspaceId, groupId, materialVer
   if (!version.rowCount) fail("CERTOPS_ROLLOUT_VERSION_INVALID");
 }
 
-async function createRolloutSnapshot({ client, workspaceId, groupId, materialVersionId, approvalJobId, approvedIntentHash, maxParallel = 1, verificationOnly = false }) {
+async function createRolloutSnapshot({ client, workspaceId, groupId, materialVersionId, approvalJobId, approvedIntentHash, maxParallel = 1, verificationOnly = false, approvalRequired = true }) {
   const existing = (await client.query(`SELECT id FROM certops_distribution_rollouts WHERE workspace_id=$1 AND approval_job_id=$2`, [workspaceId, approvalJobId])).rows[0];
   if (existing) return { rolloutId: existing.id, duplicate: true };
   const { bindings, intent } = await buildRolloutIntent({ client, workspaceId, groupId, materialVersionId, maxParallel, verificationOnly });
@@ -206,9 +206,18 @@ async function createRolloutSnapshot({ client, workspaceId, groupId, materialVer
   const approval = (await client.query(`SELECT approved_canonical_intent_hash, approved_payload_hash, status, payload
     FROM certificate_jobs WHERE workspace_id=$1 AND id=$2 FOR SHARE`, [workspaceId, approvalJobId])).rows[0];
   const { computeJobPayloadApprovalHash } = require("./jobApprovals");
-  if (!approval || approval.status !== "pending" || !approval.approved_payload_hash ||
-    computeJobPayloadApprovalHash(approval.payload) !== approval.approved_payload_hash ||
+  if (!approval || approval.status !== "pending" ||
     hashIntent(approval.payload.distributionRollout) !== approvedIntentHash) fail("CERTOPS_ROLLOUT_APPROVAL_REQUIRED");
+  if (approvalRequired) {
+    if (!approval.approved_payload_hash ||
+      computeJobPayloadApprovalHash(approval.payload) !== approval.approved_payload_hash) fail("CERTOPS_ROLLOUT_APPROVAL_REQUIRED");
+  } else {
+    // The opt-out is internal and applies only to a new, ungated request while
+    // the authoritative workspace policy is off. Keep the workspace locked
+    // through the snapshot; a concurrent policy change cannot bypass it.
+    const workspace = (await client.query("SELECT certops_require_approval_always FROM workspaces WHERE id=$1 FOR SHARE",[workspaceId])).rows[0];
+    if (!workspace || workspace.certops_require_approval_always !== false || approval.approved_payload_hash) fail("CERTOPS_ROLLOUT_APPROVAL_REQUIRED");
+  }
   const rolloutId = crypto.randomUUID();
   await client.query(`INSERT INTO certops_distribution_rollouts(id,workspace_id,group_id,material_version_id,
     generation,approved_intent_hash,approval_job_id,max_parallel,verification_only) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,

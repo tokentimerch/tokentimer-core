@@ -3047,6 +3047,11 @@
       "source": "tests/wildcard-vault/pr329-review.test.cjs",
       "requiredTests": [
         "manual renewal serializes same-key snapshot lookup with PostgreSQL transaction locks",
+        "approval-off rollout starts for its requester without a second user or a fabricated approval",
+        "turning approval off does not silently release an already gated rollout",
+        "workspace approval cannot be overridden by a false rollout flag or internal snapshot opt-out",
+        "explicit rollout approval remains available with workspace approval off and is part of idempotency",
+        "the actual settings API consistently gates rollouts and children when enabled and permits new unattended work when disabled",
         "retired pending deployment cannot starve the next approved rollout with maxJobs one",
         "public material versions never expose publishing claims to administrators or managers",
         "paused workspaces allow authorized rollout containment without admitting execution",

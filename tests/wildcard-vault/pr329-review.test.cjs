@@ -85,7 +85,7 @@ test("manual renewal serializes same-key snapshot lookup with PostgreSQL transac
   }
 });
 
-async function fixture({ expired = false, validFor = "1 day", required = true } = {}) {
+async function fixture({ expired = false, validFor = "1 day", required = true, requireApproval = false } = {}) {
   const workspaceId = uuid();
   async function user() {
     return (
@@ -101,8 +101,8 @@ async function fixture({ expired = false, validFor = "1 day", required = true } 
     viewer = await user(),
     outsider = await user();
   await pool.query(
-    "INSERT INTO workspaces(id,name,created_by,plan) VALUES($1,'PR329 isolated review',$2,'oss')",
-    [workspaceId, actor],
+    "INSERT INTO workspaces(id,name,created_by,plan,certops_require_approval_always) VALUES($1,'PR329 isolated review',$2,'oss',$3)",
+    [workspaceId, actor, requireApproval],
   );
   for (const [id, role] of [
     [manager, "workspace_manager"],
@@ -229,7 +229,7 @@ async function fixture({ expired = false, validFor = "1 day", required = true } 
     idempotencyKey: uuid(),
   };
   async function approved() {
-    const job = await operations.requestRollout({
+    const job = await requestApprovedRollout({
       ...rolloutRequest,
       idempotencyKey: uuid(),
     });
@@ -278,6 +278,117 @@ async function deploymentFixture(f) {
     fingerprintSha256: version.fingerprint_sha256, validTo: new Date(version.valid_to).toISOString(), observedAt: new Date().toISOString() };
   return { snapshot, child, receipt };
 }
+
+test("approval-off rollout starts for its requester without a second user or a fabricated approval", async () => {
+  const f = await fixture({ requireApproval: false });
+  const key = uuid();
+  const response = await request(f.app)
+    .post(`${f.base}/distribution-groups/${f.groupId}/rollouts`)
+    .set("X-Test-Session", String(f.actor))
+    .set("Idempotency-Key", key)
+    .send({ materialVersionId: f.materialVersionId });
+  assert.equal(response.status, 201);
+  assert.equal(response.body.status, "succeeded");
+  const jobId = response.body.id;
+  const job = (await pool.query("SELECT * FROM certificate_jobs WHERE id=$1", [jobId])).rows[0];
+  assert.equal(job.approved_by_user_id, null);
+  assert.equal(job.approved_at, null);
+  assert.equal(job.approved_payload_hash, null);
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM certops_job_approvals WHERE job_id=$1", [jobId])).rows[0].n, 0);
+  const snapshots = (await pool.query("SELECT * FROM certops_distribution_rollouts WHERE approval_job_id=$1", [jobId])).rows;
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0].approved_intent_hash, material.hashIntent(job.payload.distributionRollout));
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM certops_consumer_deployments WHERE rollout_id=$1", [snapshots[0].id])).rows[0].n, 1);
+  const replay = await operations.requestRollout({ ...f.rolloutRequest, idempotencyKey: key });
+  assert.equal(replay.id, jobId);
+  assert.equal(replay.status, "succeeded");
+  await worker.drainCertOpsOutbox({ dbPool: pool, batchSize: 100 });
+  const child = (await pool.query("SELECT j.* FROM certificate_jobs j JOIN certops_consumer_deployments d ON d.job_id=j.id WHERE d.rollout_id=$1", [snapshots[0].id])).rows[0];
+  assert.ok(child);
+  assert.equal(child.status, "pending");
+  assert.equal(child.approved_by_user_id, null);
+});
+
+test("turning approval off does not silently release an already gated rollout", async () => {
+  const f = await fixture({ requireApproval: true });
+  const job = await operations.requestRollout(f.rolloutRequest);
+  assert.equal(job.status, "pending_approval");
+  await pool.query("UPDATE workspaces SET certops_require_approval_always=false WHERE id=$1", [f.workspaceId]);
+  const replay = await operations.requestRollout(f.rolloutRequest);
+  assert.equal(replay.id, job.id);
+  assert.equal(replay.status, "pending_approval");
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM certops_distribution_rollouts WHERE approval_job_id=$1", [job.id])).rows[0].n, 0);
+});
+
+test("workspace approval cannot be overridden by a false rollout flag or internal snapshot opt-out", async () => {
+  const f = await fixture({ requireApproval: true });
+  const job = await operations.requestRollout({ ...f.rolloutRequest, requiresApproval: false });
+  assert.equal(job.status, "pending_approval");
+  await assert.rejects(approveJob({ workspaceId: f.workspaceId, jobId: job.id, approverUserId: f.actor }),
+    { code: "CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN" });
+  await assert.rejects(operations.transaction(client => material.createRolloutSnapshot({ client, ...f,
+    approvalJobId: job.id, approvedIntentHash: material.hashIntent(job.payload.distributionRollout), approvalRequired: false })),
+    { code: "CERTOPS_ROLLOUT_APPROVAL_REQUIRED" });
+  await approveJob({ workspaceId: f.workspaceId, jobId: job.id, approverUserId: f.approver });
+  await worker.drainCertOpsOutbox({ dbPool: pool, batchSize: 100 });
+  await worker.drainCertOpsOutbox({ dbPool: pool, batchSize: 100 });
+  const children = (await pool.query("SELECT j.status FROM certificate_jobs j JOIN certops_consumer_deployments d ON d.job_id=j.id WHERE d.workspace_id=$1", [f.workspaceId])).rows;
+  assert.equal(children.length, 1);
+  assert.equal(children[0].status, "pending_approval");
+});
+
+test("explicit rollout approval remains available with workspace approval off and is part of idempotency", async () => {
+  const f = await fixture({ requireApproval: false });
+  const key = uuid();
+  const response = await request(f.app)
+    .post(`${f.base}/distribution-groups/${f.groupId}/rollouts`)
+    .set("X-Test-Session", String(f.actor)).set("Idempotency-Key", key)
+    .send({ materialVersionId: f.materialVersionId, requiresApproval: true });
+  assert.equal(response.status, 201);
+  assert.equal(response.body.status, "pending_approval");
+  await assert.rejects(operations.requestRollout({ ...f.rolloutRequest, idempotencyKey: key, requiresApproval: false }),
+    { code: "CERTOPS_JOB_IDEMPOTENCY_CONFLICT" });
+  await assert.rejects(operations.requestRollout({ ...f.rolloutRequest, idempotencyKey: uuid(), requiresApproval: "false" }),
+    { code: "CERTOPS_JOB_INVALID" });
+});
+
+test("the actual settings API consistently gates rollouts and children when enabled and permits new unattended work when disabled", async () => {
+  const f = await fixture({ requireApproval: false });
+  const setting = value => request(f.app).put(`${f.base}/settings`)
+    .set("X-Test-Session", String(f.actor)).send({ certOpsRequireApprovalAlways: value });
+  const rollout = (body = {}) => request(f.app).post(`${f.base}/distribution-groups/${f.groupId}/rollouts`)
+    .set("X-Test-Session", String(f.actor)).set("Idempotency-Key", uuid())
+    .send({ materialVersionId: f.materialVersionId, ...body });
+  const enabled = await setting(true);
+  assert.equal(enabled.status, 200);
+  assert.equal(enabled.body.certOpsRequireApprovalAlways, true);
+  const gated = await rollout({ requiresApproval: false });
+  assert.equal(gated.status, 201);
+  assert.equal(gated.body.status, "pending_approval");
+  const self = await request(f.app).post(`${f.base}/jobs/${gated.body.id}/approve`)
+    .set("X-Test-Session", String(f.actor)).send({ reason: "cannot self-approve" });
+  assert.equal(self.status, 403);
+  assert.equal(self.body.code, "CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN");
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM certops_distribution_rollouts WHERE approval_job_id=$1", [gated.body.id])).rows[0].n, 0);
+  const decision = await request(f.app).post(`${f.base}/jobs/${gated.body.id}/approve`)
+    .set("X-Test-Session", String(f.manager)).send({ reason: "reviewed rollout" });
+  assert.equal(decision.status, 200);
+  await worker.drainCertOpsOutbox({ dbPool: pool, batchSize: 100 });
+  await worker.drainCertOpsOutbox({ dbPool: pool, batchSize: 100 });
+  const child = (await pool.query("SELECT j.* FROM certificate_jobs j JOIN certops_consumer_deployments d ON d.job_id=j.id WHERE d.workspace_id=$1", [f.workspaceId])).rows[0];
+  assert.equal(child.status, "pending_approval");
+  const disabled = await setting(false);
+  assert.equal(disabled.status, 200);
+  assert.equal(disabled.body.certOpsRequireApprovalAlways, false);
+  assert.equal((await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [child.id])).rows[0].status, "pending_approval");
+  const ungated = await rollout();
+  assert.equal(ungated.status, 201);
+  assert.equal(ungated.body.status, "succeeded");
+  assert.equal(ungated.body.approvedByUserId, null);
+  const optedIn = await rollout({ requiresApproval: true });
+  assert.equal(optedIn.status, 201);
+  assert.equal(optedIn.body.status, "pending_approval");
+});
 
 test("retired pending deployment cannot starve the next approved rollout with maxJobs one", async () => {
   const f=await fixture();
@@ -595,7 +706,7 @@ test("a valid active rollout expires while waiting for its offline consumer", as
     count,
   );
   await assert.rejects(
-    operations.requestRollout({ ...f.rolloutRequest, idempotencyKey: uuid() }),
+    requestApprovedRollout({ ...f.rolloutRequest, idempotencyKey: uuid() }),
     { code: "CERTOPS_ROLLOUT_VERSION_INVALID" },
   );
   const child = (
@@ -870,7 +981,7 @@ test("binding changes terminally invalidate approval, preserve snapshots and per
     ).rows[0].n,
     0,
   );
-  const replay = await operations.requestRollout({
+  const replay = await requestApprovedRollout({
     ...f.rolloutRequest,
     idempotencyKey: job.idempotencyKey,
   });
@@ -900,7 +1011,7 @@ test("binding changes terminally invalidate approval, preserve snapshots and per
     .post(`${f.base}/distribution-groups/${f.groupId}/rollouts`)
     .set("X-Test-Session", String(f.manager))
     .set("Idempotency-Key", uuid())
-    .send({ materialVersionId: f.materialVersionId });
+    .send({ materialVersionId: f.materialVersionId, requiresApproval: true });
   assert.equal(response.status, 201);
   assert.equal(response.body.status, "pending_approval");
   const recovered = response.body;
@@ -1232,7 +1343,7 @@ async function waveLab(f, specs, { maxParallel = 3 } = {}) {
       capabilities_updated_at=clock_timestamp() WHERE id=$1`, [agentId, JSON.stringify([bindingId]), JSON.stringify(DEPLOY_CAPABILITIES)]);
     nodes[spec.name] = { name: spec.name, agentId, bindingId };
   }
-  const job = await operations.requestRollout({ ...f.rolloutRequest, idempotencyKey: uuid(), maxParallel });
+  const job = await requestApprovedRollout({ ...f.rolloutRequest, idempotencyKey: uuid(), maxParallel });
   await approveJob({ workspaceId: f.workspaceId, jobId: job.id, approverUserId: f.approver });
   const snapshot = await operations.transaction((client) => material.createRolloutSnapshot({ client, ...f, maxParallel,
     approvalJobId: job.id, approvedIntentHash: material.hashIntent(job.payload.distributionRollout) }));
@@ -1452,3 +1563,7 @@ test("an optional destination failure never blocks the rollout, a required one d
     assert.equal(await lab.rolloutState(), "paused");
   });
 });
+
+function requestApprovedRollout(options) {
+  return operations.requestRollout({ ...options, requiresApproval: true });
+}

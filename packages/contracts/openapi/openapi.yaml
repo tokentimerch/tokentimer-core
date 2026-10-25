@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: TokenTimer Core API Contract
-  version: 0.18.0
+  version: 0.18.1
   description: |
     TokenTimer Core API for authentication, workspaces, token lifecycle management,
     alerts, audit, and integration import/scan workflows.
@@ -9133,10 +9133,13 @@ paths:
     post:
       tags:
         - CertOps
-      summary: Request approval of a frozen rollout or explicit rollback
+      summary: Request a frozen rollout or explicit rollback
       description: >-
         Workspace membership and CertOps manager authorization required. Writes require an active workspace.
         Cloud additionally applies paid-plan and frozen-workspace policy. Public metadata only.
+        The workspace Job approval policy applies. With approval off, the request freezes
+        its intent and queues the rollout without a second user. With approval on or
+        requiresApproval true, a different authorized user must approve it first.
       parameters:
         - in: header
           name: Idempotency-Key
@@ -9177,6 +9180,10 @@ paths:
                   minimum: 1
                   maximum: 16
                   default: 1
+                requiresApproval:
+                  type: boolean
+                  default: false
+                  description: Opt in to human approval for this rollout. False cannot override workspace Job approval.
       responses:
         '201':
           description: Public distribution metadata

@@ -165,6 +165,17 @@ async function extend(c) {
   await externalProof(current);
   // Change membership through the actual admin route; the same authenticated
   // manager session must immediately lose mutation/approval rights as a viewer.
+  // The default workspace policy must allow unattended execution. Exercise
+  // the real API, enrolled agents and both listeners without an approval call.
+  const policy = await owner.request(api() + "/settings");
+  assert.equal(policy.certOpsRequireApprovalAlways, false);
+  const unattended = await rollout("qualified-approval-off", current.id, { requiresApproval: false });
+  assert.equal(unattended.status, "succeeded");
+  assert.equal(unattended.approvedByUserId, null);
+  await converge();
+  await externalProof(current);
+  check("approval-off rollout and both enrolled consumers complete without a second user; fresh strict TLS matches the selected version");
+
   const session = await approver.request("/api/session");
   const member =
     "/api/v1/workspaces/" + state.workspaceId + "/members/" + session.user.id;
