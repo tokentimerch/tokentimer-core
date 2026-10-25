@@ -155,10 +155,24 @@ describe('agent satisfaction is a function of the pick', () => {
         chosenAgentId: lin.id,
         chosenAgentConfirmed: lin.id,
         dryRunJobId: 'check',
+        vaultIssuerAgentId: lin.id,
         vaultPublishJobId: 'publication',
       },
     };
     expect(status(plan(pick, [offline], args), 'certops_agent')).toBe('done');
+    expect(
+      status(
+        plan(pick, [offline], {
+          ...args,
+          progress: {
+            ...args.progress,
+            chosenAgentId: undefined,
+            chosenAgentConfirmed: undefined,
+          },
+        }),
+        'certops_agent'
+      )
+    ).toBe('done');
     expect(
       status(
         plan(pick, [offline], {

@@ -165,12 +165,14 @@ function agentStepDone(certops, saved, objective) {
   const preparingVault =
     objective === 'vault' &&
     Boolean(saved.vaultPublishJobId) &&
-    saved.chosenAgentConfirmed === saved.chosenAgentId &&
-    Boolean(saved.chosenAgentId) &&
+    Boolean(saved.vaultIssuerAgentId) &&
+    (!saved.chosenAgentId ||
+      (saved.chosenAgentConfirmed === saved.chosenAgentId &&
+        saved.chosenAgentId === saved.vaultIssuerAgentId)) &&
     certops?.dryRun?.id === saved.dryRunJobId &&
     certops.dryRun.status === 'dry_run_complete' &&
     agentFitsSetup(
-      agents?.items?.find(a => a.id === saved.chosenAgentId),
+      agents?.items?.find(a => a.id === saved.vaultIssuerAgentId),
       objective,
       infra
     );
