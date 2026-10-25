@@ -1,6 +1,6 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { VaultStep } from '../../src/components/onboarding/certopsFinalSteps.jsx';
 import {
   buildApiCall,
@@ -14,6 +14,18 @@ vi.mock('../../src/components/certops/certopsJobsApi.js', () => ({
   createJob: vi.fn(),
   getJob: vi.fn(),
 }));
+
+const policy = vi.hoisted(() => ({ required: null }));
+vi.mock(
+  '../../src/components/onboarding/approvalPolicy.jsx',
+  async original => ({
+    ...(await original()),
+    useJobApprovalPolicy: () => ({ required: policy.required }),
+  })
+);
+beforeEach(() => {
+  policy.required = null;
+});
 
 const WS = '11111111-1111-4111-8111-111111111111';
 const GROUP = '22222222-2222-4222-8222-222222222222';
@@ -70,6 +82,35 @@ const ready = {
 };
 
 describe('Vault step structure', () => {
+  it.each([true, false])(
+    'explains the loaded rollout approval policy (%s) without an unconditional second-user requirement',
+    required => {
+      policy.required = required;
+      show(ctxWith(ready));
+      const part = screen.getByTestId('vault-part-6');
+      expect(
+        within(part).getByTestId(
+          required ? 'approval-policy-on' : 'approval-policy-off'
+        )
+      ).toBeInTheDocument();
+      expect(part.textContent).not.toMatch(
+        /always needs approval|whatever the workspace/
+      );
+      if (!required) {
+        expect(screen.getByTestId('vault-part-1').textContent).toMatch(
+          /Stop only the issuing TokenTimer agent service/
+        );
+        expect(part.textContent).toMatch(
+          /Approval is off for this workspace, jobs start right away/
+        );
+      } else {
+        expect(part.textContent).toMatch(
+          /workspace manager other than the person who creates it/
+        );
+      }
+    }
+  );
+
   it('splits the work into numbered parts that say who does what', () => {
     show(ctxWith(ready));
     const parts = [1, 2, 3, 4, 5, 6].map(n =>
@@ -81,7 +122,13 @@ describe('Vault step structure', () => {
     expect(parts[3].textContent).toMatch(/issuing server/);
     expect(parts[4].textContent).toMatch(/consumer server/);
     expect(parts[5].textContent).toMatch(
-      /a different workspace manager approves/
+      /You, with the API \(workspace manager\)/
+    );
+    expect(parts[5].textContent).toMatch(
+      /follows the workspace Job approval policy/
+    );
+    expect(parts[5].textContent).not.toMatch(
+      /always needs approval|whatever the workspace/
     );
   });
 
