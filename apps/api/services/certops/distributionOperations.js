@@ -120,7 +120,7 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
   const rollout = (await client.query(`SELECT r.*,v.provider_version,v.fingerprint_sha256,v.valid_to FROM certops_distribution_rollouts r
     JOIN certops_material_versions v ON v.workspace_id=r.workspace_id AND v.id=r.material_version_id
     WHERE r.workspace_id=$1 AND r.group_id=$2 AND r.id=$3 FOR UPDATE OF r`,[workspaceId,groupId,rolloutId])).rows[0];
-  if (!rollout || ["retired","verified"].includes(rollout.state)) return { queued: false,reason:"rollout_inactive" };
+  if (!rollout || ["retired","installed","verified"].includes(rollout.state)) return { queued: false,reason:"rollout_inactive" };
   let stale = group.state !== "active" || !!group.ended_at || Number(group.generation)!==Number(rollout.generation);
   if (!stale) {
     try { await material.assertDeployableVersion(client,workspaceId,groupId,rollout.material_version_id); }
@@ -138,7 +138,8 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
     FROM certops_consumer_deployments d LEFT JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=d.job_id
     JOIN certops_consumer_bindings b ON b.workspace_id=d.workspace_id AND b.id=d.binding_id
     WHERE d.workspace_id=$1 AND d.rollout_id=$2 ORDER BY d.wave,d.binding_id FOR UPDATE OF d`,[workspaceId,rolloutId])).rows;
-  const done = (d) => d.stage === "trust_validated" || d.stage === "served_verified" && d.verification_policy === "served";
+  const done = (d) => d.verification_policy === "installed" ? d.stage === "installed"
+    : d.stage === "trust_validated" || d.stage === "served_verified" && d.verification_policy === "served";
   const failed = (d) => ["failed","blocked","cancelled","rejected","orphaned_unknown_effect"].includes(d.job_status) || d.binding_state !== "active" || d.current_revision !== d.authorization_revision;
   if (rows.some((d)=>d.required && failed(d))) {
     await client.query(`UPDATE certops_distribution_rollouts SET state='paused' WHERE workspace_id=$1 AND id=$2`,[workspaceId,rolloutId]);
@@ -148,7 +149,9 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
   if (!outstanding.length) {
     // Historical verification cannot authorize a changed or inactive binding.
     // Keep its receipt, but report optional failures as degraded.
-    await client.query(`UPDATE certops_distribution_rollouts SET state=$3 WHERE workspace_id=$1 AND id=$2`,[workspaceId,rolloutId,rows.every((d)=>done(d) && !failed(d))?"verified":"degraded"]);
+    const complete = rows.length > 0 && rows.every((d)=>done(d) && !failed(d));
+    const state = !complete ? "degraded" : rows.some(d=>d.verification_policy==="installed") ? "installed" : "verified";
+    await client.query(`UPDATE certops_distribution_rollouts SET state=$3 WHERE workspace_id=$1 AND id=$2`,[workspaceId,rolloutId,state]);
     return { queued:true,reason:"rollout_completed" };
   }
   const wave = Math.min(...outstanding.map((d)=>d.wave));

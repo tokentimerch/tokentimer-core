@@ -480,7 +480,17 @@ export function DoneCard({ ctx, guidedImportSteps = GUIDED_IMPORT_STEPS }) {
     )?.items?.some(
       item => item.id === distributionId && item.verified === true
     );
-  const unverified = goal?.doneUnverified === true && !vaultVerified;
+  const vaultFilesInstalled =
+    goal?.certopsObjective === 'vault' &&
+    Boolean(distributionId) &&
+    scopeDistribution(
+      ctx.summary?.certops?.distribution,
+      distributionId
+    )?.items?.some(
+      item => item.id === distributionId && item.completed === true
+    );
+  const unverified =
+    goal?.doneUnverified === true && !vaultVerified && !vaultFilesInstalled;
   const restart = async () => {
     await ctx.controller.update(session => ({
       intent: { ...session.intent, goal: '' },
@@ -496,6 +506,8 @@ export function DoneCard({ ctx, guidedImportSteps = GUIDED_IMPORT_STEPS }) {
       description={
         (vaultVerified &&
           'Your certificate was published to Vault and its distribution has current verification evidence. Review each consumer in the certificate details, and verify the live service independently.') ||
+        (vaultFilesInstalled &&
+          'Your certificate was published to Vault and its files were installed on the selected consumers. File-only delivery does not reload a service or verify the certificate in use.') ||
         (windows && goal?.doneTextWindows) ||
         (modalImport && goal.doneTextModal) ||
         goal?.doneText ||

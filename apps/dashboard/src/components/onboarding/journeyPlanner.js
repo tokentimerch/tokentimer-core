@@ -272,11 +272,11 @@ function certopsDone(stepId, { reality, progress, objective }) {
       // already in the workspace never finishes the step on its own.
       const dist = scopeDistribution(
         certops?.distribution,
-        saved.chosenDistributionId
+        saved.chosenDistributionId || saved.groupId
       );
       return (
         (dist?.groups || 0) > 0 &&
-        dist?.verified === true &&
+        (dist?.completed === true || dist?.verified === true) &&
         (!saved.chosenDistributionId ||
           saved.chosenDistributionConfirmed === saved.chosenDistributionId)
       );

@@ -153,7 +153,7 @@ describe('Vault consumer folder', () => {
   it('passes --write-path for the deploy folder and explains the files', () => {
     showVault(ctxWith({ groups: 0, bindings: 0 }));
     expect(document.body.textContent).toMatch(
-      /--write-path '\/etc\/nginx\/tokentimer'/
+      /--write-path '\/etc\/tokentimer\/certificates'/
     );
     expect(document.body.textContent).toMatch(/material_install_failed/);
     expect(document.body.textContent).toMatch(

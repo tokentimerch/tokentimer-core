@@ -250,6 +250,38 @@ it('expires exactly the affected verified counts between polls, including certif
   expect(get).toHaveBeenCalledTimes(1);
 });
 
+it('expires file installation evidence separately from live service verification', async () => {
+  vi.useFakeTimers();
+  const now = Date.now();
+  get.mockResolvedValue(
+    response([
+      group({
+        total: 2,
+        verified: 1,
+        installed: 1,
+        verification_expirations: [now + 20000],
+        installation_expirations: [now + 5000],
+      }),
+    ])
+  );
+  const { result } = renderHook(() =>
+    useDistributionSummaries('workspace', [cert])
+  );
+  await flush();
+  expect(result.current.getSummary(cert)).toMatchObject({
+    verified: 1,
+    installed: 1,
+    status: 'completed',
+  });
+  await act(async () => vi.advanceTimersByTimeAsync(5000));
+  expect(result.current.getSummary(cert)).toMatchObject({
+    verified: 1,
+    installed: 0,
+    stale: 1,
+    status: 'stale',
+  });
+});
+
 it('never promotes backend non-convergence even with a successful historical job', async () => {
   get.mockResolvedValue(
     response([

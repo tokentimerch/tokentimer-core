@@ -7,6 +7,8 @@ import {
   FormLabel,
   HStack,
   Input,
+  Radio,
+  RadioGroup,
   Select,
   Text,
   VStack,
@@ -36,6 +38,8 @@ import {
   buildVaultAgentHostSetup,
   buildVaultRoleCommands,
   buildConsumerNginxServer,
+  buildServerSnippet,
+  RELOAD_SERVICES,
   buildConsumerPlaceholderCommand,
   buildReconcileCommand,
   AGENT_STATE_DIR,
@@ -204,6 +208,7 @@ export function vaultOutcome({ declaredByAgents, distribution }) {
   const required = requiredCapabilities('vault', 'linux');
   const missing = required.filter(c => !declaredByAgents.includes(c));
   if (distribution?.verified) return { level: 'verified', missing: [] };
+  if (distribution?.completed) return { level: 'installed', missing: [] };
   if (missing.length === 0 && distribution?.groups > 0) {
     return { level: 'ready_to_roll_out', missing: [] };
   }
@@ -239,6 +244,15 @@ export function VaultStep({ ctx }) {
     groupId: saved.groupId || '',
     caFile: saved.vaultCaFile || '',
     probeCa: saved.vaultProbeCa || '',
+    deliveryMode:
+      saved.vaultConsumerDeliveryMode ||
+      (saved.vaultConsumers?.length ? 'service' : 'files'),
+    reloadService: saved.vaultConsumerReloadService || 'nginx',
+    deployPath:
+      saved.vaultConsumerDeployPath ||
+      (saved.vaultConsumers?.length
+        ? CONSUMER_DEPLOY_PATH
+        : '/etc/tokentimer/certificates'),
     // Chosen by the operator and used in the consumer config and the
     // assignment call, so it is generated once and kept.
     bindingId: saved.vaultBindingId || newBindingId(),
@@ -252,6 +266,26 @@ export function VaultStep({ ctx }) {
     setForm(f => ({ ...f, [key]: e.target.value }));
   };
   const names = (saved.names || '').split(/[\s,]+/).filter(Boolean);
+  const reloadConsumer = form.deliveryMode === 'service';
+  const consumerSetupLocked = Boolean(
+    saved.vaultConsumers?.length ||
+    saved.vaultRolloutJobId ||
+    saved.vaultRolloutRequestKey
+  );
+  const changeConsumerSetup = async patch => {
+    setChoiceError('');
+    try {
+      const next = { ...form, ...patch };
+      await saveCertops(ctx, {
+        vaultConsumerDeliveryMode: next.deliveryMode,
+        vaultConsumerReloadService: next.reloadService,
+        vaultConsumerDeployPath: next.deployPath,
+      });
+      setForm(current => ({ ...current, ...patch }));
+    } catch (error) {
+      setChoiceError(error.message || 'Could not save the consumer setup.');
+    }
+  };
   // Vault runs on Linux: a Windows agent is neither an issuer nor a consumer.
   // The consumer is a second server the operator picks by name, so every
   // Linux agent is listed; only the default issuer follows the agent choice.
@@ -286,7 +320,7 @@ export function VaultStep({ ctx }) {
   );
   const reusable = reusableDistributions(ctx.summary?.certops?.distribution);
   const [reuseTicked, setReuseTicked] = useState(Boolean(chosenDistributionId));
-  const out = buildVaultConfigs({
+  const configInput = {
     issuerAgentId: issuerWireId,
     consumerAgentId: consumerWireId,
     vaultAddress: form.vaultAddress,
@@ -300,6 +334,17 @@ export function VaultStep({ ctx }) {
     caFile: form.caFile.trim(),
     probeTrustCaFile: form.probeCa.trim(),
     consumerBindingId: form.bindingId,
+    consumerDeliveryMode: form.deliveryMode,
+    consumerReloadService: form.reloadService,
+    deployPath: form.deployPath,
+  };
+  const out = buildVaultConfigs(configInput);
+  // Consumer input errors must not remove the fields needed to correct them.
+  const issuerOut = buildVaultConfigs({
+    ...configInput,
+    consumerDeliveryMode: 'files',
+    deployPath: '/etc/tokentimer/certificates',
+    probeTrustCaFile: '',
   });
   let policies = null;
   try {
@@ -471,6 +516,9 @@ export function VaultStep({ ctx }) {
       vaultConsumerAgentId: consumerId,
       groupId: form.groupId,
       configReviewed: true,
+      vaultConsumerDeliveryMode: form.deliveryMode,
+      vaultConsumerReloadService: form.reloadService,
+      vaultConsumerDeployPath: form.deployPath,
     });
     setSavedOk(true);
   };
@@ -480,8 +528,8 @@ export function VaultStep({ ctx }) {
       os: 'linux',
       apiUrl: ctx.apiUrl,
       workspaceId: ctx.workspaceId,
-      writePaths: [CONSUMER_DEPLOY_PATH],
-      reloadServices: ['nginx'],
+      writePaths: out.ok ? [form.deployPath] : [],
+      reloadServices: reloadConsumer ? [form.reloadService] : [],
     });
   } catch (e) {
     consumerInstall = e.message;
@@ -502,7 +550,7 @@ export function VaultStep({ ctx }) {
           {chosenDistributionId && !confirmed ? (
             <PrimaryButton
               onClick={confirmDistribution}
-              isDisabled={!distribution?.verified}
+              isDisabled={!distribution?.verified && !distribution?.completed}
               data-testid='vault-use-distribution'
             >
               Continue
@@ -555,8 +603,8 @@ export function VaultStep({ ctx }) {
             data-testid='existing-distributions-note'
           >
             {reusable.length === 1
-              ? '1 verified distribution is already in this workspace. Follow the guide below for a new one, or tick the box to use it.'
-              : `${reusable.length} verified distributions are already in this workspace. Follow the guide below for a new one, or tick the box to use one.`}
+              ? '1 completed distribution is already in this workspace. Follow the guide below for a new one, or tick the box to use it.'
+              : `${reusable.length} completed distributions are already in this workspace. Follow the guide below for a new one, or tick the box to use one.`}
           </Text>
         ) : null}
         {backlogMessage ? (
@@ -565,10 +613,18 @@ export function VaultStep({ ctx }) {
           </WorkerWarning>
         ) : null}
         <HStack>
-          <StatusTag tone={outcome.level === 'verified' ? 'green' : 'orange'}>
+          <StatusTag
+            tone={
+              ['verified', 'installed'].includes(outcome.level)
+                ? 'green'
+                : 'orange'
+            }
+          >
             {outcome.level === 'verified'
               ? 'Distribution verified'
-              : 'Setup in progress'}
+              : outcome.level === 'installed'
+                ? 'Certificate files distributed'
+                : 'Setup in progress'}
           </StatusTag>
           {gap.length ? (
             <Text fontSize='xs' color={muted}>
@@ -832,7 +888,7 @@ export function VaultStep({ ctx }) {
           ) : null}
         </Part>
 
-        {out.ok ? (
+        {issuerOut.ok ? (
           <>
             <Part
               n={3}
@@ -876,7 +932,7 @@ export function VaultStep({ ctx }) {
               </Text>
               <CopyBlock
                 label='Issuer agent config.json (merge into the existing file)'
-                text={JSON.stringify(out.issuer, null, 2)}
+                text={JSON.stringify(issuerOut.issuer, null, 2)}
                 language='json'
               />
               <Text fontSize='xs' color={muted} data-testid='vault-auth-note'>
@@ -907,46 +963,155 @@ export function VaultStep({ ctx }) {
               title='Prepare the consumer server'
               who='root (sudo) on the consumer server, then the agent user'
             >
+              <FormControl as='fieldset'>
+                <FormLabel as='legend' fontSize='sm'>
+                  Consumer delivery
+                </FormLabel>
+                <RadioGroup
+                  value={form.deliveryMode}
+                  onChange={deliveryMode =>
+                    changeConsumerSetup({ deliveryMode })
+                  }
+                  isDisabled={consumerSetupLocked}
+                >
+                  <VStack align='start' spacing={2}>
+                    <Radio value='files'>
+                      Distribute certificate files only
+                    </Radio>
+                    <Radio value='service'>
+                      Distribute and reload a service
+                    </Radio>
+                  </VStack>
+                </RadioGroup>
+                <Text fontSize='xs' color={muted}>
+                  File distribution does not require a web server, reload or TLS
+                  listener. Service reload also checks the certificate served by
+                  that service.
+                  {consumerSetupLocked
+                    ? ' Existing consumer assignments keep their selected delivery policy.'
+                    : ''}
+                </Text>
+              </FormControl>
+              {reloadConsumer ? (
+                <FormControl>
+                  <FormLabel fontSize='sm' htmlFor='vault-consumer-service'>
+                    Service to reload
+                  </FormLabel>
+                  <Select
+                    id='vault-consumer-service'
+                    size='sm'
+                    value={form.reloadService}
+                    isDisabled={consumerSetupLocked}
+                    onChange={event =>
+                      changeConsumerSetup({ reloadService: event.target.value })
+                    }
+                  >
+                    {Object.entries(RELOAD_SERVICES).map(([id, service]) => (
+                      <option key={id} value={id}>
+                        {service.label}
+                      </option>
+                    ))}
+                  </Select>
+                </FormControl>
+              ) : null}
+              <FormControl
+                isInvalid={Boolean(out.fieldErrors?.deployPath?.length)}
+              >
+                <FormLabel fontSize='sm' htmlFor='vault-consumer-directory'>
+                  Certificate destination directory
+                </FormLabel>
+                <Input
+                  id='vault-consumer-directory'
+                  size='sm'
+                  value={form.deployPath}
+                  isDisabled={consumerSetupLocked}
+                  onChange={event =>
+                    setForm(current => ({
+                      ...current,
+                      deployPath: event.target.value,
+                    }))
+                  }
+                  onBlur={() =>
+                    changeConsumerSetup({ deployPath: form.deployPath })
+                  }
+                />
+                <FormErrorMessage>
+                  {out.fieldErrors?.deployPath?.join(' ')}
+                </FormErrorMessage>
+              </FormControl>
               <Text fontSize='sm'>
-                Install nginx and the Vault binary first, then run the install
+                Install the Vault binary first, then run the agent install
                 command. Its --write-path makes the installer create{' '}
-                {CONSUMER_DEPLOY_PATH} owned by tokentimer-agent with mode 0750.
-                That folder is the only place the agent writes for this rollout:
-                fullchain.pem and privkey.pem (mode 0600, replaced in place) and
-                a .bak copy of the previous pair after each change. The Vault CA
-                file and the CA file for the check above only need to be
+                {form.deployPath} owned by tokentimer-agent with mode 0750. That
+                folder is the only place the agent writes for this rollout:
+                fullchain.pem and{' '}
+                {reloadConsumer && form.reloadService === 'haproxy'
+                  ? 'fullchain.pem.key'
+                  : 'privkey.pem'}{' '}
+                (mode 0600, replaced in place) and a .bak copy of the previous
+                pair after each change. The Vault CA file only needs to be
                 readable by tokentimer-agent.
+                {reloadConsumer
+                  ? ' Install and configure the selected service; its TLS check also needs the issuing CA when that CA is private.'
+                  : ' Installation is verified on disk. No service is contacted or reloaded, and success does not claim the certificate is in use.'}
               </Text>
-              <CopyBlock
-                label='Consumer install command'
-                text={consumerInstall}
-              />
-              <Text fontSize='sm'>
-                Then create a placeholder pair as the agent user, so nginx can
-                start its TLS listener before the first rollout. Do not create
-                these files as root: the agent reads the files it replaces, and
-                root-owned placeholders make the first rollout fail (see the
-                troubleshooting panel at the end). nginx reads the files as
-                root, so it needs nothing else.
-              </Text>
-              <CopyBlock
-                label='Placeholder certificate (consumer host, as the agent user)'
-                text={buildConsumerPlaceholderCommand({
-                  host: probeHostFor(names) || undefined,
-                })}
-              />
-              <CopyBlock
-                label='nginx server block (consumer host)'
-                text={buildConsumerNginxServer({ names })}
-              />
-              <Text fontSize='xs' color={muted}>
-                The stock nginx unit does not test its configuration on reload,
-                so run the one-time setup below as well.
-              </Text>
-              <CopyBlock
-                label='One-time nginx setup (consumer host)'
-                text={NGINX_RELOAD_DROPIN}
-              />
+              {out.ok ? (
+                <CopyBlock
+                  label='Consumer install command'
+                  text={consumerInstall}
+                />
+              ) : null}
+              {reloadConsumer && out.ok ? (
+                <>
+                  <Text fontSize='sm'>
+                    Then create a placeholder pair as the agent user, so the
+                    service can start its TLS listener before the first rollout.
+                    Do not create these files as root: the agent reads the files
+                    it replaces, and root-owned placeholders make the first
+                    rollout fail (see the troubleshooting panel at the end).
+                    Give the selected service the appropriate read access
+                    without making the private key broadly readable.
+                  </Text>
+                  <CopyBlock
+                    label='Placeholder certificate (consumer host, as the agent user)'
+                    text={buildConsumerPlaceholderCommand({
+                      host: probeHostFor(names) || undefined,
+                      deployPath: form.deployPath,
+                      keyFileName:
+                        form.reloadService === 'haproxy'
+                          ? 'fullchain.pem.key'
+                          : 'privkey.pem',
+                    })}
+                  />
+                  <CopyBlock
+                    label={`${RELOAD_SERVICES[form.reloadService]?.label} configuration (consumer host)`}
+                    text={
+                      form.reloadService === 'nginx'
+                        ? buildConsumerNginxServer({
+                            names,
+                            deployPath: form.deployPath,
+                          })
+                        : buildServerSnippet({
+                            reloadService: form.reloadService,
+                            certPath: `${form.deployPath}/fullchain.pem`,
+                            keyPath: `${form.deployPath}/${form.reloadService === 'haproxy' ? 'fullchain.pem.key' : 'privkey.pem'}`,
+                          })
+                    }
+                  />
+                  {form.reloadService === 'nginx' ? (
+                    <>
+                      <Text fontSize='xs' color={muted}>
+                        The stock nginx unit does not test its configuration on
+                        reload, so run the one-time setup below as well.
+                      </Text>
+                      <CopyBlock
+                        label='One-time nginx setup (consumer host)'
+                        text={NGINX_RELOAD_DROPIN}
+                      />
+                    </>
+                  ) : null}
+                </>
+              ) : null}
               <Text fontSize='sm'>
                 Assign each consumer in the next part to generate its matching
                 agent configuration, including the returned authorization
@@ -973,27 +1138,37 @@ export function VaultStep({ ctx }) {
                 running CertOps worker is required to advance deployments;
                 publication alone does not change a consumer service.
               </Text>
-              <VaultRolloutGuide
-                key={`${workspaceId}/${form.groupId}/${consumerId}`}
-                ctx={ctx}
-                groupId={form.groupId}
-                firstAgentId={consumerId}
-                firstBindingId={form.bindingId}
-                agents={consumerChoices}
-                approvalRequired={approvalRequired}
-                config={{
-                  vaultAddress: form.vaultAddress,
-                  mount: form.mount,
-                  workspaceId,
-                  groupId: form.groupId,
-                  names,
-                  zone: saved.zone,
-                  dnsProvider: saved.dnsProvider || 'cloudflare',
-                  caEndpoint: saved.caEndpoint || undefined,
-                  caFile: form.caFile.trim(),
-                  probeTrustCaFile: form.probeCa.trim(),
-                }}
-              />
+              {out.ok ? (
+                <VaultRolloutGuide
+                  key={`${workspaceId}/${form.groupId}/${consumerId}`}
+                  ctx={ctx}
+                  groupId={form.groupId}
+                  firstAgentId={consumerId}
+                  firstBindingId={form.bindingId}
+                  agents={consumerChoices}
+                  approvalRequired={approvalRequired}
+                  config={{
+                    vaultAddress: form.vaultAddress,
+                    mount: form.mount,
+                    workspaceId,
+                    groupId: form.groupId,
+                    names,
+                    zone: saved.zone,
+                    dnsProvider: saved.dnsProvider || 'cloudflare',
+                    caEndpoint: saved.caEndpoint || undefined,
+                    caFile: form.caFile.trim(),
+                    probeTrustCaFile: form.probeCa.trim(),
+                    consumerDeliveryMode: form.deliveryMode,
+                    consumerReloadService: form.reloadService,
+                    deployPath: form.deployPath,
+                  }}
+                />
+              ) : (
+                <Text fontSize='sm'>
+                  Correct the consumer destination above before assigning or
+                  deploying.
+                </Text>
+              )}
             </Part>
 
             <DetailsSection
@@ -1008,13 +1183,15 @@ export function VaultStep({ ctx }) {
                 Before the consumer agent touches a file it records an uncertain
                 marker for the binding in {AGENT_STATE_DIR}
                 /material-bindings. It clears the marker only after the files
-                are installed, nginx is reloaded and every probe serves the new
-                certificate. If any of that fails (for example a file the agent
-                cannot overwrite, or a CA file the check cannot read or does not
-                trust, reported as material_service_verification_failed), the
-                rollout ends as orphaned_unknown_effect and every later attempt
-                for this binding fails with material_binding_uncertain until the
-                marker is cleared.
+                are installed and checked on disk. With service reload selected,
+                the service must also reload and every probe must serve the new
+                certificate. If any required action fails (for example a file
+                the agent cannot overwrite, or a CA file the check cannot read
+                or does not trust, reported as
+                material_service_verification_failed), the rollout ends as
+                orphaned_unknown_effect and every later attempt for this binding
+                fails with material_binding_uncertain until the marker is
+                cleared.
               </Text>
               <Text fontSize='xs' color={muted}>
                 Repair the cause on the host first. Then run this as the agent

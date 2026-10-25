@@ -203,6 +203,10 @@ export function VaultRolloutGuide({
 }) {
   const { muted } = useDashboardTheme();
   const saved = certopsProgress(ctx);
+  const filesOnly = config.consumerDeliveryMode === 'files';
+  const defaultProfile = filesOnly
+    ? 'certificate-files'
+    : `${config.consumerReloadService || 'nginx'}-public`;
   const [targets, setTargets] = useState(() =>
     saved.vaultConsumers?.length
       ? saved.vaultConsumers
@@ -211,7 +215,7 @@ export function VaultRolloutGuide({
             {
               agentId: firstAgentId,
               bindingId: firstBindingId,
-              deploymentProfileRef: 'nginx-public',
+              deploymentProfileRef: defaultProfile,
             },
           ]
         : []
@@ -279,6 +283,9 @@ export function VaultRolloutGuide({
     await updateVault(ctx, () => ({
       vaultConsumers: next,
       vaultConsumerAgentId: firstAgentId,
+      vaultConsumerDeliveryMode: filesOnly ? 'files' : 'service',
+      vaultConsumerReloadService: config.consumerReloadService || 'nginx',
+      vaultConsumerDeployPath: config.deployPath,
     }));
     setTargets(next);
   };
@@ -293,7 +300,7 @@ export function VaultRolloutGuide({
         {
           agentId: pick,
           bindingId: identifier(),
-          deploymentProfileRef: 'nginx-public',
+          deploymentProfileRef: defaultProfile,
         },
       ]);
       setPick('');
@@ -308,7 +315,9 @@ export function VaultRolloutGuide({
       c =>
         c.binding_id === target.bindingId &&
         c.assigned_agent_id === target.agentId &&
-        c.binding_state === 'active'
+        c.binding_state === 'active' &&
+        (c.verification_policy || 'trust') ===
+          (filesOnly ? 'installed' : 'trust')
     );
   const assign = async (target, index) => {
     setBusy(target.bindingId);
@@ -321,7 +330,8 @@ export function VaultRolloutGuide({
         {
           ...buildVaultConsumerAssignment({
             agentRowId: target.agentId,
-            deploymentProfileRef: target.deploymentProfileRef || 'nginx-public',
+            deploymentProfileRef: target.deploymentProfileRef || defaultProfile,
+            consumerDeliveryMode: filesOnly ? 'files' : 'service',
           }),
           wave: index,
         }
@@ -332,7 +342,9 @@ export function VaultRolloutGuide({
         row.id !== target.bindingId ||
         row.assigned_agent_id !== target.agentId ||
         row.deployment_profile_ref !==
-          (target.deploymentProfileRef || 'nginx-public') ||
+          (target.deploymentProfileRef || defaultProfile) ||
+        (row.verification_policy || 'trust') !==
+          (filesOnly ? 'installed' : 'trust') ||
         !Number.isInteger(row.authorization_revision)
       )
         throw new Error(
@@ -375,7 +387,7 @@ export function VaultRolloutGuide({
         t.confirmedRevision === b.authorization_revision
       );
     });
-  const allVerified =
+  const allComplete =
     Boolean(selected) &&
     targets.length > 0 &&
     targets.every(t => {
@@ -484,7 +496,7 @@ export function VaultRolloutGuide({
                 <Input
                   id={`profile-${target.bindingId}`}
                   size='sm'
-                  value={target.deploymentProfileRef ?? 'nginx-public'}
+                  value={target.deploymentProfileRef ?? defaultProfile}
                   isDisabled={
                     Boolean(binding) || rolloutLocked || Boolean(busy)
                   }
@@ -514,7 +526,7 @@ export function VaultRolloutGuide({
                   Boolean(binding) ||
                   !agent?.wireAgentId ||
                   !/^[A-Za-z0-9_-]{1,64}$/.test(
-                    target.deploymentProfileRef ?? 'nginx-public'
+                    target.deploymentProfileRef ?? defaultProfile
                   ) ||
                   rolloutLocked
                 }
@@ -529,8 +541,12 @@ export function VaultRolloutGuide({
                   <Text fontSize='sm'>
                     Merge this configuration into this consumer&apos;s existing
                     agent file. Keep its enrolled identity and credential
-                    settings. Use its own Vault Agent role, prepare NGINX and
-                    the paths in the preceding step, then restart the agent.
+                    settings. Use its own Vault Agent role and prepare the
+                    destination paths in the preceding step, then restart the
+                    agent.
+                    {filesOnly
+                      ? ' No web server, reload command or TLS probe is required.'
+                      : ' Configure the selected service to use these paths.'}
                   </Text>
                   {local?.ok ? (
                     <CopyBlock
@@ -548,7 +564,8 @@ export function VaultRolloutGuide({
                   <Text fontSize='sm'>
                     After the signed check completes, set execution.dryRun to
                     false in the saved configuration and restart this consumer.
-                    This enables real file installation and service reload.
+                    This enables real file installation
+                    {filesOnly ? '.' : ' and service reload.'}
                   </Text>
                   <CopyBlock
                     label={`Restart ${label(agent)}`}
@@ -630,9 +647,10 @@ export function VaultRolloutGuide({
       })}
       <Text fontSize='sm' data-testid='vault-dry-run-note'>
         A rollout itself has no dry run: deployment changes the configured
-        certificate files and reloads the service. A signed test job only checks
-        dispatch and local planning. Before deployment, set local dryRun to
-        false and restart the prepared consumers.
+        certificate files{filesOnly ? '.' : ' and reloads the service.'} A
+        signed test job only checks dispatch and local planning. Before
+        deployment, set local dryRun to false and restart the prepared
+        consumers.
       </Text>
       <FormControl>
         <FormLabel fontSize='sm'>Published certificate version</FormLabel>
@@ -728,18 +746,27 @@ export function VaultRolloutGuide({
           />
         </>
       ) : null}
-      {allVerified ? (
-        <StatusPanel status='success' title='All selected consumers verified'>
-          The server reports current convergence on the selected version.
-          Inspect each deployment&apos;s evidence and make an independent TLS
-          connection to the live services.
+      {allComplete ? (
+        <StatusPanel
+          status='success'
+          title={
+            filesOnly
+              ? 'Certificate files installed on all selected consumers'
+              : 'All selected consumers verified'
+          }
+        >
+          {filesOnly
+            ? 'The agents checked the installed certificate and key on disk against the selected version. No service was reloaded or checked; this does not prove the certificate is in use.'
+            : 'The server reports current convergence on the selected version. Inspect each deployment’s evidence and make an independent TLS connection to the live services.'}
         </StatusPanel>
       ) : (
         <StatusTag tone='gray'>
-          Waiting for verified consumer deployments
+          {filesOnly
+            ? 'Waiting for confirmed file installations'
+            : 'Waiting for verified consumer deployments'}
         </StatusTag>
       )}
-      {allVerified ||
+      {allComplete ||
       ['failed', 'rejected', 'cancelled', 'blocked'].includes(
         observedRollout.job?.status
       ) ? (

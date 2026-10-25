@@ -322,12 +322,19 @@ export function evaluateVerification({
                 CHECK_STATUS.PASS,
                 'Distribution verified by a rollout'
               )
-            : check(
-                'distribution',
-                CHECK_STATUS.WARN,
-                'Distribution is not verified',
-                'Configuration may be prepared, but no rollout has been verified yet.'
-              )
+            : dist?.completed
+              ? check(
+                  'distribution',
+                  CHECK_STATUS.PASS,
+                  'Certificate files distributed',
+                  'The selected rollout completed file installation. This does not verify that a service is using the certificate.'
+                )
+              : check(
+                  'distribution',
+                  CHECK_STATUS.WARN,
+                  'Distribution is not verified',
+                  'Configuration may be prepared, but no rollout has been verified yet.'
+                )
         );
       }
       // Waiting work with nobody processing it is the one visible sign that

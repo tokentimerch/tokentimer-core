@@ -5,7 +5,7 @@ import { distributionExistedBefore } from './distributionModel.js';
 /** Verified distributions the operator may reuse: already in the workspace. */
 export function reusableDistributions(distribution) {
   return (distribution?.items || []).filter(
-    i => distributionExistedBefore(i) && i.verified
+    i => distributionExistedBefore(i) && (i.verified || i.completed)
   );
 }
 
@@ -57,7 +57,8 @@ export default function ExistingDistributionPick({
             ))}
           </Select>
           <Text fontSize='xs' color={muted} mt={1}>
-            Only distribution groups with a verified rollout are listed.
+            Only completed distributions are listed. File-only completion does
+            not verify a live service.
           </Text>
         </Box>
       ) : null}

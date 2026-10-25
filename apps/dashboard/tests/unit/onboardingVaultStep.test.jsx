@@ -252,7 +252,13 @@ describe('Vault step structure', () => {
   });
 
   it('keeps every proven command', () => {
-    show(ctxWith(ready));
+    show(
+      ctxWith({
+        ...ready,
+        vaultConsumerDeliveryMode: 'service',
+        vaultConsumerDeployPath: '/etc/nginx/tokentimer',
+      })
+    );
     const text = document.body.textContent;
     expect(text).toMatch(/--write-path '\/etc\/nginx\/tokentimer'/);
     expect(text).toMatch(/sudo -u tokentimer-agent openssl req/);
