@@ -12,10 +12,19 @@ and the [operator runbook](distribution-extensions.md).
 | HashiCorp Vault regression | Real Vault 1.21.0 Docker service | The same KV v2 compatibility scenarios passed. Existing Vault configuration and numeric wire references remain valid. |
 | Provider orchestration | Real PostgreSQL 17 | All three provider types passed claim-bound publication, immutable provider authority, numeric/opaque version constraints, public reads, approval snapshots, exact deployment pins, failure evidence, and a retained-version rollback while the source has a newer identity. |
 | Existing distribution governance | Real PostgreSQL 17, unchanged distribution regression suites | 55 tests passed across publication/renewal, approvals, frozen waves, retirement, concurrency, late receipts, transfer containment, required/optional failures and rollback. |
-| Windows PKCS#12 and key handles | Native Windows 11 CryptoAPI/CNG | Encrypted PKCS#12 parsing, private-key signing association, and independent CNG handle lifetime passed. The parser test creates no persisted production key. This is **not IIS qualification**. |
-| Windows shared consumer | Disposable Windows Server 2022 evaluation VM in Docker/QEMU | Native IIS campaign pending. The gated test creates two distinct IIS SNI consumers, imports into a unique machine personal store, checks non-exportable CNG/ACL/key association and served TLS, then exercises repeat, read-only verify, interruption/reconciliation, newer material and retained rollback. |
+| Windows PKCS#12 and key handles | Native Windows 11 CryptoAPI/CNG | Encrypted PKCS#12 parsing, private-key signing association, independent CNG handle lifetime, and effective ACL mask comparison passed. The parser test creates no persisted production key. |
+| Windows shared consumer | Real Windows Server 2022 GitHub Actions VM with IIS installed | The native campaign passed: two distinct IIS SNI consumers, non-exportable machine CNG import, exact protected ACLs, actual key use as NetworkService, exact IIS/HTTP.sys and served TLS, idempotent retry, read-only verify, lease interruption after import, reconciliation/original retry, stale/unauthorized rejection, CA-material rejection before mutation, new leaf activation and retained rollback. The material-store transport in this cohort is a local fixture. |
 | Azure Key Vault | Local bounded HTTP fixtures and injected identity transport | Token sink rotation/expiry, workload federation renewal, fixed IMDS scope/headers, authorization denial, opaque pins, ambiguous writes, no blind PUT retry, conflicting versions, hostile paging, metadata-only material and unsupported configuration rejection passed. **No real Azure vault was tested.** |
 | Linux consumers | Existing agent suite plus real local TLS listener fixtures | Existing file deployment, listener verification, journals, fencing and reconciliation remain covered. This run does not replace the separate containerized nginx/Apache/HAProxy release campaign. |
+
+The real Windows campaign passed against implementation commit
+`2de2a6a50f22a2716720a6ba269b3fe10797e0c5` in
+[the Server/IIS CI job](https://github.com/tokentimerch/tokentimer-core/actions/runs/40233848306/job/121291185028).
+The test ran without skips. It exposed and fixed a CNG ACL comparison bug:
+the Microsoft Software KSP returns generic rights alongside expanded file
+rights. Verification now compares effective rights and still rejects extra
+rights/principals, inherited ACEs and missing ACL protection. The service-account
+probe proves the configured read grant permits actual key use without export.
 
 The candidate manifest includes OpenBao compatibility. Azure
 `material-store-azure-key-vault-v1` and Windows `windows-material-iis-v1` remain
@@ -44,6 +53,16 @@ validation, and the CI Helm 3.20.1 template verification. Existing lint warnings
 and frontend chunk-size warnings remain. A successful main CI Docker/security
 scan was inspected; this change does not modify Dockerfiles. See the PR for
 final suite totals and any execution-specific caveats.
+
+The [implementation CI run](https://github.com/tokentimerch/tokentimer-core/actions/runs/40233848306)
+also passed 1,395 integration tests and the full native Windows agent package
+suite (2,007 passed, 15 explicit platform/environment skips), backend/frontend
+coverage, and Helm smoke testing. The local Node 24 Linux run includes every
+recursive source test (1,943 passed, 26 explicit skips). Production capabilities
+remain subject to the separate release gates above.
+All 20 jobs in that implementation run passed, including Docker image build,
+boot verification and Grype security scans. This evidence-report update changes
+documentation only; it does not change the tested implementation.
 
 ## Repeat the real provider compatibility tests
 
@@ -115,6 +134,9 @@ job gated off. The ordinary native Windows agent unit suite remains separate.
 
 The test reserves port 45443, uses uniquely named IIS sites and a unique
 machine personal store, and removes only its own sites/certificates/keys.
+It also owns a temporary NetworkService scheduled task and a separate directory
+containing only public helper files and an output marker; it never grants that
+identity access to PFX, token or bundle staging.
 Its material-store transport is a local fixture: the **store import,
 private-key permissions, IIS metadata, HTTP.sys and TLS handshakes are native**.
 It does not claim a live CA order or a signed server/worker journey.
@@ -126,6 +148,9 @@ container cannot supply Windows CNG or IIS. The development lab used
 The evaluation ISO is downloaded by that image. Hardware KVM can be used when
 available; software emulation is substantially slower. Do not change the
 workstation's virtualization settings or restart it to run this test.
+The local software-emulated VM reached first-boot setup during this development
+run; no passing IIS result is attributed to that Docker VM. The passing native
+evidence above comes from the separate Server 2022 CI VM.
 
 Mount a dedicated OEM directory at `/oem` containing `node.exe`, the agent's
 `src`/`vendor` trees and this test at their repository-relative paths. Its
