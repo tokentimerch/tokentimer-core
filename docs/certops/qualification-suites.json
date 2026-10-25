@@ -2876,6 +2876,7 @@
       "requiredSources": [
         "tests/wildcard-vault/ux-lab/qualification.cjs",
         "tests/wildcard-vault/ux-lab/browser.cjs",
+        "tests/wildcard-vault/ux-lab/onboarding-redo.cjs",
         "tests/wildcard-vault/ux-lab/customer-host.cjs",
         "tests/wildcard-vault/ux-lab/reload.cjs",
         "tests/wildcard-vault/ux-lab/compose.yaml",
@@ -2928,6 +2929,7 @@
       "requiredSources": [
         "tests/wildcard-vault/ux-lab/qualification.cjs",
         "tests/wildcard-vault/ux-lab/browser.cjs",
+        "tests/wildcard-vault/ux-lab/onboarding-redo.cjs",
         "tests/wildcard-vault/ux-lab/customer-host.cjs",
         "tests/wildcard-vault/ux-lab/reload.cjs",
         "tests/wildcard-vault/ux-lab/compose.yaml",
@@ -2980,6 +2982,7 @@
       "requiredSources": [
         "tests/wildcard-vault/ux-lab/qualification.cjs",
         "tests/wildcard-vault/ux-lab/browser.cjs",
+        "tests/wildcard-vault/ux-lab/onboarding-redo.cjs",
         "tests/wildcard-vault/ux-lab/customer-host.cjs",
         "tests/wildcard-vault/ux-lab/reload.cjs",
         "tests/wildcard-vault/ux-lab/compose.yaml",

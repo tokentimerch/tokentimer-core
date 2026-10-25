@@ -8,6 +8,9 @@ x-api-env: &api-env
   DB_PASSWORD: lab-only-database-password
   SESSION_SECRET: lab-only-session-secret-change-in-real-installations
   CERTOPS_ENABLED: "true"
+  # This disposable lab deliberately scans its private "customers" service.
+  # Production private-address protection remains enabled by default.
+  INTEGRATION_ALLOW_PRIVATE_IPS: "true"
   CERTOPS_SIGNING_ENCRYPTION_KEY: "1111111111111111111111111111111111111111111111111111111111111111"
   CERTOPS_REGISTRATION_ENCRYPTION_KEY: "2222222222222222222222222222222222222222222222222222222222222222"
   APP_URL: http://127.0.0.1:${TT_UX_WEB_PORT:-58801}
