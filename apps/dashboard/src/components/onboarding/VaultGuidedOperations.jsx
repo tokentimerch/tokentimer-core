@@ -145,9 +145,9 @@ export function VaultAgentTest({
       );
       const job = result.job || result;
       setCreatedId(job.id);
+      // Vault retries must not invalidate the earlier execution step's check.
       await updateVault(ctx, current => ({
         vaultDryRunJobIds: { ...current.vaultDryRunJobIds, [agent.id]: job.id },
-        ...(isIssuer ? { dryRunJobId: job.id } : {}),
       }));
     } catch (e) {
       setError(message(e));
@@ -157,18 +157,28 @@ export function VaultAgentTest({
   };
   return (
     <VStack align='stretch' spacing={3}>
-      <DashboardActionButton
-        variant='outline'
-        onClick={send}
-        isLoading={busy}
-        isDisabled={
-          disabled ||
-          !agent ||
-          (Boolean(jobId) && !isJobFinal(observed.job?.status))
-        }
-      >
-        Send a test job to {label(agent)}
-      </DashboardActionButton>
+      {!passed ? (
+        <DashboardActionButton
+          variant='outline'
+          onClick={send}
+          isLoading={busy}
+          isDisabled={
+            disabled ||
+            !agent ||
+            (Boolean(jobId) && !isJobFinal(observed.job?.status))
+          }
+        >
+          {jobId
+            ? `${isJobFinal(observed.job?.status) ? 'Retry test' : 'Checking test'} for ${label(agent)}`
+            : `Send a test job to ${label(agent)}`}
+        </DashboardActionButton>
+      ) : null}
+      {passed ? (
+        <Text fontSize='sm'>
+          This agent has passed its signed check. Continue below; no new test is
+          needed.
+        </Text>
+      ) : null}
       {jobId ? (
         <>
           <Text fontSize='sm'>

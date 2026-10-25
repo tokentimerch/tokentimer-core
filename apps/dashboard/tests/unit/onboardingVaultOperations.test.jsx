@@ -84,6 +84,56 @@ beforeEach(() => {
 });
 
 describe('Vault jobs stay in onboarding', () => {
+  it('reuses a passed issuer check without offering the same send action again', async () => {
+    const context = ctx();
+    context.session.progress.certops.dryRunJobId = 'setup-check';
+    api.getJob.mockResolvedValue({
+      job: {
+        id: 'setup-check',
+        status: 'dry_run_complete',
+        operation: 'noop',
+        assignedAgentId: first.id,
+      },
+    });
+    wrap(<VaultAgentTest ctx={context} agent={first} isIssuer />);
+    await screen.findByText('Signed dry run completed');
+    expect(
+      screen.queryByRole('button', { name: /Send a test job/ })
+    ).toBeNull();
+    expect(api.createJob).not.toHaveBeenCalled();
+  });
+
+  it('keeps the completed setup check when retrying a failed Vault issuer check', async () => {
+    const context = ctx();
+    context.session.progress.certops.dryRunJobId = 'setup-check';
+    context.session.progress.certops.vaultDryRunJobIds = {
+      [first.id]: 'failed-vault-check',
+    };
+    api.getJob.mockResolvedValue({
+      job: {
+        id: 'failed-vault-check',
+        status: 'failed',
+        assignedAgentId: first.id,
+      },
+    });
+    api.createJob.mockResolvedValue({
+      job: { id: 'vault-retry', status: 'pending' },
+    });
+    wrap(<VaultAgentTest ctx={context} agent={first} isIssuer />);
+    await screen.findByText('Test status: failed');
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: /(?:Send a test job to|Retry test for) First web server/,
+      })
+    );
+    await waitFor(() => expect(context.controller.update).toHaveBeenCalled());
+    const updated = context.controller.update.mock.calls[0][0](context.session);
+    expect(updated.progress.certops.dryRunJobId).toBe('setup-check');
+    expect(updated.progress.certops.vaultDryRunJobIds[first.id]).toBe(
+      'vault-retry'
+    );
+  });
+
   it('sends an attributed signed dry run and shows its real result without a CLI', async () => {
     const context = ctx();
     api.createJob.mockResolvedValue({
