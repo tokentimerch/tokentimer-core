@@ -40,13 +40,23 @@ async function inspect({ state, owner, base, api, versions, matrix, customer, wa
     const materialVersions = (await versions()).map((v) => ({ id: v.id, state: v.state, fingerprint: v.fingerprint_sha256 })).sort((a, b) => a.id.localeCompare(b.id));
     const consumers = (await matrix()).map((row) => ({
       bindingId: row.binding_id,
+      bindingState: row.binding_state,
+      deploymentProfileRef: row.deployment_profile_ref,
       desiredVersion: row.desired_material_version_id,
       observedVersion: row.observed_material_version_id,
       converged: row.converged,
       deploymentJobId: row.latest_deployment?.jobId || null,
     })).sort((a, b) => a.bindingId.localeCompare(b.bindingId));
-    assert.equal(consumers.length, state.bindings.length);
-    assert.ok(consumers.every((row) => row.converged === true), "Real consumers must remain converged");
+    const active = consumers.filter((row) => row.bindingState === "active");
+    assert.deepEqual(active.map((row) => row.bindingId), state.bindings.map((binding) => binding.id).sort(), "The exact enrolled lab consumers must remain active");
+    assert.ok(active.every((row) => row.converged === true), "Real active consumers must remain converged");
+    // The earlier membership replay test deliberately removes a third binding.
+    // The public matrix retains that history; preserve it in the snapshot too.
+    const historical = consumers.filter((row) => row.bindingState !== "active");
+    assert.equal(historical.length, 1, "The removed membership-test binding must remain in history");
+    assert.equal(historical[0].bindingState, "removed");
+    assert.equal(historical[0].deploymentProfileRef, "extra-membership-check");
+    assert.equal(historical[0].converged, false);
     return { jobs: jobs.sort(), groups, materialVersions, consumers, acmeOrders: (await customer("facts", "issuer")).orders.length };
   }
   const before = await inventory();
@@ -75,14 +85,20 @@ async function inspect({ state, owner, base, api, versions, matrix, customer, wa
       assert.equal(await vaultRow().getByText("Done", { exact: true }).count(), 0);
     };
     const requestFor = (response, method, pathname) => response.request().method() === method && new URL(response.url()).pathname === pathname;
+    async function checkChoice(input) {
+      // Chakra renders a clipped native input inside a visible label. Click
+      // that real label without force, then verify the semantic input state.
+      if (!(await input.isChecked())) await input.locator("xpath=ancestor::label[1]").click();
+      assert.equal(await input.isChecked(), true, "The visible choice must check its associated input");
+    }
 
     async function reachVault() {
       const goal = frame("What do you want to do first?");
-      await goal.getByRole("radio", { name: "Share one certificate across servers with Vault", exact: true }).check();
+      await checkChoice(goal.getByRole("radio", { name: "Share one certificate across servers with Vault", exact: true }));
       await goal.getByRole("button", { name: "Continue", exact: true }).click();
       const objective = frame("Where will the certificates live?");
-      await objective.getByRole("radio", { name: /^Linux server/ }).check();
-      await objective.getByRole("checkbox", { name: "My agent is already set up", exact: true }).check();
+      await checkChoice(objective.getByRole("radio", { name: /^Linux server/ }));
+      await checkChoice(objective.getByRole("checkbox", { name: "My agent is already set up", exact: true }));
       await objective.getByRole("combobox", { name: "Choose your agent", exact: true }).selectOption(state.agents.issuer.id);
       await objective.getByRole("button", { name: "Continue", exact: true }).click();
       const config = frame("Prepare the agent configuration");
@@ -113,7 +129,7 @@ async function inspect({ state, owner, base, api, versions, matrix, customer, wa
 
     async function chooseAndConfirm() {
       const vault = frame(VAULT_TITLE);
-      await vault.getByRole("checkbox", { name: "My Vault distribution is already set up", exact: true }).check();
+      await checkChoice(vault.getByRole("checkbox", { name: "My Vault distribution is already set up", exact: true }));
       const saved = page.waitForResponse((response) => requestFor(response, "PUT", route));
       await vault.getByRole("combobox", { name: "Choose your distribution", exact: true }).selectOption(state.groupId);
       assert.equal((await saved).status(), 200);
