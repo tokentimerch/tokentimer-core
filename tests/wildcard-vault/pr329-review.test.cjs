@@ -352,6 +352,44 @@ test("explicit rollout approval remains available with workspace approval off an
     { code: "CERTOPS_JOB_INVALID" });
 });
 
+test("the actual settings API consistently gates rollouts and children when enabled and permits new unattended work when disabled", async () => {
+  const f = await fixture({ requireApproval: false });
+  const setting = value => request(f.app).put(`${f.base}/settings`)
+    .set("X-Test-Session", String(f.actor)).send({ certOpsRequireApprovalAlways: value });
+  const rollout = (body = {}) => request(f.app).post(`${f.base}/distribution-groups/${f.groupId}/rollouts`)
+    .set("X-Test-Session", String(f.actor)).set("Idempotency-Key", uuid())
+    .send({ materialVersionId: f.materialVersionId, ...body });
+  const enabled = await setting(true);
+  assert.equal(enabled.status, 200);
+  assert.equal(enabled.body.certOpsRequireApprovalAlways, true);
+  const gated = await rollout({ requiresApproval: false });
+  assert.equal(gated.status, 201);
+  assert.equal(gated.body.status, "pending_approval");
+  const self = await request(f.app).post(`${f.base}/jobs/${gated.body.id}/approve`)
+    .set("X-Test-Session", String(f.actor)).send({ reason: "cannot self-approve" });
+  assert.equal(self.status, 403);
+  assert.equal(self.body.code, "CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN");
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM certops_distribution_rollouts WHERE approval_job_id=$1", [gated.body.id])).rows[0].n, 0);
+  const decision = await request(f.app).post(`${f.base}/jobs/${gated.body.id}/approve`)
+    .set("X-Test-Session", String(f.manager)).send({ reason: "reviewed rollout" });
+  assert.equal(decision.status, 200);
+  await worker.drainCertOpsOutbox({ dbPool: pool, batchSize: 100 });
+  await worker.drainCertOpsOutbox({ dbPool: pool, batchSize: 100 });
+  const child = (await pool.query("SELECT j.* FROM certificate_jobs j JOIN certops_consumer_deployments d ON d.job_id=j.id WHERE d.workspace_id=$1", [f.workspaceId])).rows[0];
+  assert.equal(child.status, "pending_approval");
+  const disabled = await setting(false);
+  assert.equal(disabled.status, 200);
+  assert.equal(disabled.body.certOpsRequireApprovalAlways, false);
+  assert.equal((await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [child.id])).rows[0].status, "pending_approval");
+  const ungated = await rollout();
+  assert.equal(ungated.status, 201);
+  assert.equal(ungated.body.status, "succeeded");
+  assert.equal(ungated.body.approvedByUserId, null);
+  const optedIn = await rollout({ requiresApproval: true });
+  assert.equal(optedIn.status, 201);
+  assert.equal(optedIn.body.status, "pending_approval");
+});
+
 test("retired pending deployment cannot starve the next approved rollout with maxJobs one", async () => {
   const f=await fixture();
   await pool.query("UPDATE certops_agents SET declared_target_selectors=$2::jsonb,declared_capabilities=$3::jsonb,capabilities_updated_at=clock_timestamp() WHERE id=$1",[f.consumer,JSON.stringify([f.bindingId]),JSON.stringify(["material-store-vault-kv2-v1","deploy-from-store-v1","evidence-claim-binding-v1","signed-payload-b64-v1"])]);
