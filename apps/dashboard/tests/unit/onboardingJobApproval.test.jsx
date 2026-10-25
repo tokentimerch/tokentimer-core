@@ -98,12 +98,20 @@ describe('Vault publish job approval', () => {
       job: { id: 'j1', status: 'pending', payload: {} },
     });
     await showVault(vaultCtx());
-    expect(screen.getByTestId('approval-policy-off').textContent).toMatch(
-      /Approval is off for this workspace, jobs start right away/
-    );
-    expect(
-      screen.getByRole('link', { name: 'CertOps settings' })
-    ).toHaveAttribute('href', '/certops/settings');
+    const notes = screen.getAllByTestId('approval-policy-off');
+    expect(notes).toHaveLength(2);
+    for (const note of notes) {
+      expect(note.textContent).toMatch(
+        /Approval is off for this workspace, jobs start right away/
+      );
+    }
+    const settingsLinks = screen.getAllByRole('link', {
+      name: 'CertOps settings',
+    });
+    expect(settingsLinks).toHaveLength(2);
+    for (const link of settingsLinks) {
+      expect(link).toHaveAttribute('href', '/certops/settings');
+    }
     expect(screen.queryByTestId('approval-policy-on')).toBeNull();
     expect(screen.queryByTestId('approval-wait')).toBeNull();
     expect(document.body.textContent).not.toMatch(/held for approval/);
@@ -119,8 +127,18 @@ describe('Vault publish job approval', () => {
   it('explains approval before the job exists when the policy is on', async () => {
     policy(true);
     await showVault(vaultCtx());
-    expect(screen.getByTestId('approval-policy-on').textContent).toMatch(
-      /waits until a workspace manager other than the person who creates it approves/
+    const notes = screen.getAllByTestId('approval-policy-on');
+    expect(notes).toHaveLength(2);
+    for (const note of notes) {
+      expect(note.textContent).toMatch(
+        /waits until a workspace manager other than the person who creates it approves/
+      );
+    }
+    expect(notes.map(note => note.textContent).join(' ')).toMatch(
+      /this job waits/
+    );
+    expect(notes.map(note => note.textContent).join(' ')).toMatch(
+      /this rollout waits/
     );
     expect(screen.queryByTestId('approval-policy-off')).toBeNull();
     expect(screen.getByTestId('vault-dry-run-approval')).toBeTruthy();
@@ -147,8 +165,12 @@ describe('Vault publish job approval', () => {
       expect(screen.getByTestId('approval-wait').textContent).toMatch(
         /cannot approve your own job/
       );
-      // Already created: the before-you-create note is gone.
-      expect(screen.queryByTestId('approval-policy-on')).toBeNull();
+      // The created publication has its waiting panel; the later rollout still
+      // describes its own workspace policy.
+      expect(screen.getAllByTestId('approval-policy-on')).toHaveLength(1);
+      expect(screen.getByTestId('approval-policy-on').textContent).toMatch(
+        /this rollout waits/
+      );
 
       getJob.mockResolvedValue({ job: { id: 'j1', status: 'running' } });
       await act(async () => {
@@ -171,7 +193,10 @@ describe('Vault publish job approval', () => {
       getJob.mockResolvedValue({ job: { id: 'j1', status: 'running' } });
       await showVault(vaultCtx({ vaultPublishJobId: 'j1' }));
       expect(screen.queryByTestId('approval-wait')).toBeNull();
-      expect(screen.queryByTestId('approval-policy-on')).toBeNull();
+      expect(screen.getAllByTestId('approval-policy-on')).toHaveLength(1);
+      expect(screen.getByTestId('approval-policy-on').textContent).toMatch(
+        /this rollout waits/
+      );
       expect(screen.queryByTestId('approval-policy-off')).toBeNull();
     });
   });
