@@ -497,6 +497,29 @@ failure partway through leaves neither changed. Enabling or disabling it is
 audited (`CERTOPS_WORKSPACE_APPROVAL_POLICY_ENABLED` /
 `CERTOPS_WORKSPACE_APPROVAL_POLICY_DISABLED`).
 
+Leave **Job approval off** for unattended scheduled renewals. Enabling it also
+gates automation-created jobs: scheduling still happens, but execution waits
+for a different authorized user's approval. Vault rollout requests and their
+consumer deployment jobs follow the same workspace policy. A rollout can
+individually opt in with `requiresApproval: true`; `false` cannot override an
+enabled workspace policy. Turning the setting off affects new jobs and does
+not silently release existing jobs already waiting for approval.
+
+**Operator guidance for upgrades from 0.18.0:** if a Vault rollout is already
+waiting for approval and you want to proceed alone, cancel that pending job,
+leave workspace Job approval off, and submit a new rollout with a new
+`Idempotency-Key`. Reusing the old key returns the original gated request.
+
+Vault publication and rollout are separate operations. A scheduled renewal can
+publish a new version, but publication alone does not request a rollout to
+consumers. Request that rollout explicitly; approval-off execution does not
+add an automatic distribution schedule.
+
+This setting governs TokenTimer jobs. Approving an issuer or trust anchor, or
+a CA's own enrollment-approval policy, are separate controls. Turning Job
+approval off does not approve a CA, change an AD CS template, or release a
+request awaiting the CA's decision.
+
 ### CertOps maintenance sweeps (worker)
 
 The `certops` worker target runs eleven independent sweeps. Each has an enable

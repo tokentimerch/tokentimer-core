@@ -46,16 +46,17 @@ async function putBinding({ workspaceId, groupId, bindingId = crypto.randomUUID(
     return row;
   });
 }
-async function requestRollout({ workspaceId, groupId, materialVersionId, maxParallel = 1, verificationOnly = false, actorUserId, idempotencyKey }) {
+async function requestRollout({ workspaceId, groupId, materialVersionId, maxParallel = 1, verificationOnly = false, requiresApproval = false, actorUserId, idempotencyKey }) {
   workspaceId = material.normalizeDistributionId(workspaceId);
   groupId = material.normalizeDistributionId(groupId);
   materialVersionId = material.normalizeDistributionId(materialVersionId);
+  if (typeof requiresApproval !== "boolean") fail("CERTOPS_JOB_INVALID",422);
   if (idempotencyKey !== undefined && idempotencyKey !== null) {
     if (typeof idempotencyKey !== "string" || idempotencyKey.trim().length > 128) fail("CERTOPS_JOB_INVALID",422);
     idempotencyKey = idempotencyKey.trim() || null;
     if (idempotencyKey) assertSafePublicValue(idempotencyKey);
   }
-  const requestHash = rolloutRequestHash({groupId,materialVersionId,maxParallel,verificationOnly,actorUserId});
+  const requestHash = rolloutRequestHash({groupId,materialVersionId,maxParallel,verificationOnly,requiresApproval,actorUserId});
   return transaction(async (client) => {
     await lockWorkspaceForCertOpsSideEffect({client,workspaceId});
     if (idempotencyKey) {
@@ -74,14 +75,24 @@ async function requestRollout({ workspaceId, groupId, materialVersionId, maxPara
     const { group, intent } = await material.buildRolloutIntent({ client, workspaceId, groupId, materialVersionId, maxParallel, verificationOnly });
     const job = await createCertificateJob({ client, workspaceId, operation: "noop", source: "control-plane",
       subjectType: "managed_certificate", subjectId: group.managed_certificate_id,
-      assignedAgentId: group.issuer_agent_id, requestedByUserId: actorUserId, requiresApproval: true,
+      assignedAgentId: group.issuer_agent_id, requestedByUserId: actorUserId, requiresApproval,
       idempotencyKey, payload: { distributionRollout: intent } });
     await client.query("UPDATE certificate_jobs SET distribution_request_hash=$3 WHERE workspace_id=$1 AND id=$2",[workspaceId,job.id,requestHash]);
+    if (job.status === "pending") {
+      // With approval off, authorize and freeze the exact intent in this same
+      // transaction. Do not invent a human decision or an approval ledger row.
+      await material.createRolloutSnapshot({ client, workspaceId, groupId,
+        materialVersionId, maxParallel, verificationOnly, approvalJobId: job.id,
+        approvedIntentHash: material.hashIntent(intent), approvalRequired: false });
+      await client.query("UPDATE certificate_jobs SET status='succeeded',completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE workspace_id=$1 AND id=$2 AND status='pending'",[workspaceId,job.id]);
+      return getCertificateJobById({ client, workspaceId, jobId: job.id });
+    }
     return job;
   });
 }
-function rolloutRequestHash({groupId,materialVersionId,maxParallel=1,verificationOnly=false,actorUserId}) {
-  return material.hashIntent({groupId:groupId.toLowerCase(),materialVersionId:materialVersionId.toLowerCase(),maxParallel,verificationOnly,actorUserId:actorUserId==null?null:String(actorUserId)});
+function rolloutRequestHash({groupId,materialVersionId,maxParallel=1,verificationOnly=false,requiresApproval=false,actorUserId}) {
+  // Keep the legacy/default request hash stable across the upgrade.
+  return material.hashIntent({groupId:groupId.toLowerCase(),materialVersionId:materialVersionId.toLowerCase(),maxParallel,verificationOnly,...(requiresApproval?{requiresApproval:true}:{}),actorUserId:actorUserId==null?null:String(actorUserId)});
 }
 async function setRolloutState({ workspaceId, groupId, rolloutId, state, actorUserId }) {
   if (!["paused","deploying","retired"].includes(state)) fail("CERTOPS_ROLLOUT_STATE_INVALID",422);

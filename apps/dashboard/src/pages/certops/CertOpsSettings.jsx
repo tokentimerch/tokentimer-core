@@ -67,7 +67,7 @@ function JobApprovalPolicyRow() {
       description='Require approval before every new job can run, regardless of the per-job setting.'
       note={
         isAdmin
-          ? 'Applies to dashboard-created jobs, machine API token calls, bulk renew, scheduled renewal, and trust-anchor distribute or revoke. The per-job approval checkbox cannot override it.'
+          ? 'Applies to manual jobs, scheduled renewals, Vault rollouts and their deployment jobs, and trust-anchor distribution or removal. When enabled, scheduled jobs wait for another manager: renewal is not unattended. Leave this off for unattended execution; individual requests can still require approval.'
           : 'Only workspace admins can enable or disable job approval.'
       }
     >

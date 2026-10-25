@@ -227,7 +227,7 @@ async function rollout(
   return owner.request(
     group() + "/rollouts",
     "POST",
-    { materialVersionId: version, maxParallel: 1, ...extra },
+    { materialVersionId: version, maxParallel: 1, requiresApproval: true, ...extra },
     expected,
     { "Idempotency-Key": state.runId + "-" + key },
   );

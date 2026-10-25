@@ -154,11 +154,18 @@ endpoints.
    canary; subsequent waves wait for earlier required consumers. Optional
    failures remain visible and do not count as verified consumers.
 5. `POST .../{groupId}/rollouts` with an `Idempotency-Key` header and body
-   `{ "materialVersionId": "UUID", "maxParallel": 1 }` creates a pending
-   approval job. A different authorized user approves it using the existing job
-   approval endpoint. The worker freezes membership, policy revisions,
+   `{ "materialVersionId": "UUID", "maxParallel": 1 }` follows workspace
+   **Job approval**, which is off by default. With approval off, the request
+   freezes the rollout and queues it without a second user. With approval on,
+   or an explicit `"requiresApproval": true` in this request, a different
+   authorized user approves the job using the existing approval endpoint.
+   A rollout's authorization freezes membership, policy revisions,
    verification policy, material version, provider version, fingerprint,
-   generation and concurrency. Any change before expansion invalidates approval.
+   generation and concurrency. Any change before approved expansion invalidates approval.
+   Consumer deployment jobs also follow workspace Job approval; the rollout's
+   approval does not release separately gated children. Keep the workspace
+   setting off for unattended execution. Publication of a renewed version does
+   not automatically request a rollout: submit the new version explicitly.
 6. Children are signed `deploy-from-store` jobs assigned to one agent/binding.
    Fetch, pair/identity validation, installation, reload, served verification
    and trust validation have separate receipt fields. `served` verifies the
