@@ -52,6 +52,24 @@ namespace TokenTimer {
       byte[] bytes=new byte[descriptor.BinaryLength];descriptor.GetBinaryForm(bytes,0);
       key.SetProperty(new CngProperty("Security Descr",bytes,CngPropertyOptions.Persist | (CngPropertyOptions)4));
     }
+    static int EffectiveMask(int accessMask) {
+      // The Microsoft Software KSP returns generic rights together with their
+      // expanded file rights (for example GA becomes D01F01FF). Compare the
+      // effective rights, retaining every unexpected specific bit. These are
+      // the Windows FILE_GENERIC_* / FILE_ALL_ACCESS mappings used by this KSP.
+      uint mask=unchecked((uint)accessMask);
+      if((mask & 0x10000000)!=0)mask=(mask & ~0x10000000u)|0x001f01ff;
+      if((mask & 0x80000000)!=0)mask=(mask & ~0x80000000u)|0x00120089;
+      if((mask & 0x40000000)!=0)mask=(mask & ~0x40000000u)|0x00120116;
+      if((mask & 0x20000000)!=0)mask=(mask & ~0x20000000u)|0x001200a0;
+      return unchecked((int)mask);
+    }
+    static void CheckCustody(CngKey key) {
+      // Shared import uses this file-backed KSP. Do not apply its ACL mapping
+      // to a TPM/HSM or another provider with different access semantics.
+      if(!key.IsMachineKey || key.IsEphemeral || key.ExportPolicy!=CngExportPolicies.None ||
+        !key.Provider.Equals(CngProvider.MicrosoftSoftwareKeyStorageProvider))throw new CryptographicException();
+    }
     static void CheckAcl(CngKey key,string[] sids) {
       var descriptor=new RawSecurityDescriptor(key.GetProperty("Security Descr",(CngPropertyOptions)4).GetValue(),0);
       FailureStage="acl-presence";
@@ -65,7 +83,7 @@ namespace TokenTimer {
         if(actual==null || actual.AceQualifier!=AceQualifier.AccessAllowed || actual.IsInherited) throw new CryptographicException();
         bool principal=false;
         foreach(CommonAce allowed in expected.DiscretionaryAcl) {
-          if(actual.SecurityIdentifier==allowed.SecurityIdentifier) {principal=true;if(actual.AccessMask==allowed.AccessMask) match=true;}
+          if(actual.SecurityIdentifier==allowed.SecurityIdentifier) {principal=true;if(EffectiveMask(actual.AccessMask)==EffectiveMask(allowed.AccessMask)) match=true;}
         }
         FailureStage=principal?"acl-access-mask-"+actual.AccessMask.ToString("X8"):"acl-principal";
         if(!match) throw new CryptographicException();
@@ -73,7 +91,7 @@ namespace TokenTimer {
       FailureStage="acl-membership";
       foreach(CommonAce allowed in expected.DiscretionaryAcl) {
         bool present=false;
-        foreach(CommonAce actual in descriptor.DiscretionaryAcl) if(actual.SecurityIdentifier==allowed.SecurityIdentifier && actual.AccessMask==allowed.AccessMask)present=true;
+        foreach(CommonAce actual in descriptor.DiscretionaryAcl) if(actual.SecurityIdentifier==allowed.SecurityIdentifier && EffectiveMask(actual.AccessMask)==EffectiveMask(allowed.AccessMask))present=true;
         if(!present) throw new CryptographicException();
       }
     }
@@ -102,7 +120,7 @@ namespace TokenTimer {
             if(leaf==null || !leaf.HasPrivateKey)throw new CryptographicException();
             using(var key=Key(leaf)) {
               FailureStage="key-custody";
-              if(!key.IsMachineKey || key.IsEphemeral || key.ExportPolicy!=CngExportPolicies.None)throw new CryptographicException();
+              CheckCustody(key);
               FailureStage="key-acl";
               SetAcl(key,sids);CheckAcl(key,sids);
             }
@@ -125,7 +143,7 @@ namespace TokenTimer {
         }
         using(var key=Key(cert)) {
           FailureStage="verify-key";
-          if(!key.IsMachineKey || key.IsEphemeral || key.ExportPolicy!=CngExportPolicies.None)throw new CryptographicException();
+          CheckCustody(key);
           FailureStage="verify-acl";
           CheckAcl(key,sids);
         }

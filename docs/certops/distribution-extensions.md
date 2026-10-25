@@ -182,7 +182,11 @@ Resolve application-pool/service identities to explicit SIDs locally. Do not
 grant Everyone, Users or Authenticated Users. HTTP.sys uses SYSTEM; the example
 also grants NetworkService read access. Imported CNG private keys are persisted
 as non-exportable; SYSTEM/Administrators retain full control, and the configured
-service SIDs receive read access. An existing identical certificate is reused
+service SIDs receive read access. Shared import uses the Microsoft Software
+Key Storage Provider; TPM/HSM and custom KSP imports are unsupported. Windows
+may expand generic ACL masks, so verification compares their effective rights
+while still rejecting additional permissions and inheritance.
+An existing identical certificate is reused
 only when key association and the exact protected key ACL already match.
 
 Activation reuses the existing IIS rebind/compensation helper, preserves binding

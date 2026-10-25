@@ -216,6 +216,46 @@ test(
     const first = await execute(jobFor(0));
     assert.equal(first.status, "succeeded", first.errorMessage);
     assert.equal(first.deploymentReceipt.servedVerified, true);
+    // Prove the configured service identity can actually use the persisted
+    // non-exportable key. This isolated task has only public helper/source
+    // files and an output marker, never access to PFX or credential staging.
+    const probeDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "tt-service-key-"),
+    );
+    const taskName = `TTMaterialProbe${suffix}`;
+    const probeFile = path.join(probeDirectory, "probe.ps1");
+    const outputFile = path.join(probeDirectory, "result.txt");
+    const helperFile = path.join(probeDirectory, "MaterialImport.cs");
+    const quote = (value) => "'" + value.replace(/'/g, "''") + "'";
+    fs.copyFileSync(
+      path.join(
+        __dirname,
+        "../../packages/agent/src/windows-material/MaterialImport.cs",
+      ),
+      helperFile,
+    );
+    fs.writeFileSync(outputFile, "");
+    fs.writeFileSync(
+      probeFile,
+      `$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';try{Add-Type -Path ${quote(helperFile)};[TokenTimer.MaterialImport]::Verify('${store}','${new crypto.X509Certificate(certificatePem).fingerprint.replace(/:/g, "")}','${bundle.fingerprintSha256}',[string[]]@('S-1-5-20'));[IO.File]::WriteAllText(${quote(outputFile)},'verified')}catch{[IO.File]::WriteAllText(${quote(outputFile)},'failed')}`,
+    );
+    t.after(() => {
+      ps(
+        `Unregister-ScheduledTask -TaskName '${taskName}' -Confirm:$false -ErrorAction SilentlyContinue`,
+      );
+      fs.rmSync(probeDirectory, { recursive: true, force: true });
+    });
+    ps(
+      `$ErrorActionPreference='Stop';$sid=New-Object Security.Principal.SecurityIdentifier('S-1-5-20');$acl=Get-Acl -LiteralPath ${quote(probeDirectory)};$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,'ReadAndExecute','ContainerInherit,ObjectInherit','None','Allow'));Set-Acl -LiteralPath ${quote(probeDirectory)} -AclObject $acl;$output=Get-Acl -LiteralPath ${quote(outputFile)};$output.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,'Write','Allow'));Set-Acl -LiteralPath ${quote(outputFile)} -AclObject $output;$action=New-ScheduledTaskAction -Execute ${quote(powershell)} -Argument ${quote('-NoProfile -NonInteractive -File "' + probeFile + '"')};$principal=New-ScheduledTaskPrincipal -UserId 'S-1-5-20' -LogonType ServiceAccount;Register-ScheduledTask -TaskName '${taskName}' -Action $action -Principal $principal | Out-Null;Start-ScheduledTask -TaskName '${taskName}'`,
+    );
+    const probeDeadline = Date.now() + 60000;
+    while (!fs.readFileSync(outputFile, "utf8") && Date.now() < probeDeadline)
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    assert.equal(
+      fs.readFileSync(outputFile, "utf8"),
+      "verified",
+      "NetworkService can sign with the imported key under its read ACL",
+    );
     const second = await execute(jobFor(1));
     assert.equal(second.status, "succeeded", second.errorMessage);
     assert.equal(
