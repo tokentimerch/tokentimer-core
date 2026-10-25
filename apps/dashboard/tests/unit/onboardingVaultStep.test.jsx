@@ -299,7 +299,7 @@ describe('Vault API examples', () => {
     show(ctxWith(ready));
     const text = document.body.textContent;
     expect(
-      screen.getByRole('button', { name: 'Assign agent' })
+      screen.getByRole('button', { name: 'Assign consumer-1' })
     ).toBeInTheDocument();
     expect(
       screen.getByLabelText('Published certificate version')

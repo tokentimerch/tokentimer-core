@@ -308,7 +308,9 @@ export function VaultStep({ ctx }) {
     saved.vaultConsumerAgentId || ''
   );
   const consumerChoices = agentItems.filter(a => a.id !== issuerId);
-  const consumerId = consumerPick || consumerChoices[0]?.id || '';
+  const consumerId = consumerChoices.some(agent => agent.id === consumerPick)
+    ? consumerPick
+    : consumerChoices[0]?.id || '';
   const consumerWireId =
     consumerChoices.find(a => a.id === consumerId)?.wireAgentId || undefined;
   // Only a distribution with work from this session counts, or the one the
@@ -463,7 +465,15 @@ export function VaultStep({ ctx }) {
     saved.chosenDistributionConfirmed === chosenDistributionId;
 
   const createPublishJob = async () => {
-    if (pub.busy || publishJobId || !issuerStopped) return;
+    if (
+      pub.busy ||
+      publishJobId ||
+      !issuerStopped ||
+      !issuerId ||
+      !names.length ||
+      !saved.zone
+    )
+      return;
     setPub(p => ({ ...p, busy: true, error: '' }));
     try {
       // Persist the exact request key before submission. A lost response can
@@ -666,33 +676,15 @@ export function VaultStep({ ctx }) {
               ))}
             </Select>
           </FormControl>
-          <FormControl>
-            <FormLabel fontSize='sm'>Consumer agent</FormLabel>
-            <Select
-              size='sm'
-              value={consumerId}
-              onChange={e => setConsumerPick(e.target.value)}
-              isDisabled={Boolean(publishJobId || saved.vaultPublishRequestKey)}
-              placeholder={
-                consumerChoices.length
-                  ? undefined
-                  : 'Register the consumer agent first'
-              }
-            >
-              {consumerChoices.map(a => (
-                <option key={a.id} value={a.id}>
-                  {a.name || a.hostname || 'agent'} ({a.wireAgentId})
-                </option>
-              ))}
-            </Select>
-          </FormControl>
           <VStack align='stretch' spacing={3}>
             <Text fontSize='sm'>
               With local execution enabled and dryRun true, send a signed test
-              to each agent here. If you already tested the issuer in this
-              guide, its existing result is shown. Tests do not issue or deploy
-              certificates. After they complete, stop the issuing TokenTimer
-              service while you prepare the group-specific configuration below.
+              to the issuer here. If you already tested it in this guide, its
+              existing result is shown. This does not issue or deploy
+              certificates. Consumer checks belong to their assigned host
+              configurations in part 6. After the issuer check completes, stop
+              the issuing TokenTimer service while you prepare the
+              group-specific configuration below.
             </Text>
             <VaultAgentTest
               key={`issuer/${issuerId}`}
@@ -701,19 +693,19 @@ export function VaultStep({ ctx }) {
               isIssuer
               disabled={Boolean(publishJobId)}
             />
-            <VaultAgentTest
-              key={`consumer/${consumerId}`}
-              ctx={ctx}
-              agent={agentItems.find(a => a.id === consumerId)}
-              disabled={Boolean(publishJobId)}
-            />
             {!publishJobId ? (
-              <Checkbox
-                isChecked={issuerStopped}
-                onChange={e => setIssuerStopped(e.target.checked)}
-              >
-                The issuing TokenTimer agent is stopped while I prepare Vault
-              </Checkbox>
+              <>
+                <CopyBlock
+                  label='Stop the issuing agent while preparing Vault'
+                  text='sudo systemctl stop tokentimer-agent'
+                />
+                <Checkbox
+                  isChecked={issuerStopped}
+                  onChange={e => setIssuerStopped(e.target.checked)}
+                >
+                  The issuing TokenTimer agent is stopped while I prepare Vault
+                </Checkbox>
+              </>
             ) : null}
           </VStack>
           <HStack align='center' spacing={3} flexWrap='wrap'>
@@ -724,7 +716,6 @@ export function VaultStep({ ctx }) {
               isDisabled={
                 Boolean(publishJobId) ||
                 !issuerId ||
-                !consumerId ||
                 !issuerStopped ||
                 names.length === 0 ||
                 !saved.zone
@@ -744,6 +735,21 @@ export function VaultStep({ ctx }) {
               </Text>
             ) : null}
           </HStack>
+          {!publishJobId ? (
+            <Text
+              fontSize='xs'
+              color={muted}
+              data-testid='vault-publication-prerequisites'
+            >
+              {!issuerId
+                ? 'Select the issuing agent before creating publication.'
+                : names.length === 0 || !saved.zone
+                  ? 'Complete the certificate names and DNS zone before creating publication.'
+                  : !issuerStopped
+                    ? 'Stop only the issuing agent using the command above, then confirm the checkbox to enable publication.'
+                    : 'Ready to create publication. Consumers can be registered and assigned later in part 6.'}
+            </Text>
+          ) : null}
           {pub.error ? <ErrorText>{pub.error}</ErrorText> : null}
           <ApprovalWaitPanel job={pub.job} />
           {pub.job?.status === 'pending_approval' ? (
@@ -1138,6 +1144,45 @@ export function VaultStep({ ctx }) {
                 running CertOps worker is required to advance deployments;
                 publication alone does not change a consumer service.
               </Text>
+              <FormControl>
+                <FormLabel fontSize='sm' htmlFor='vault-first-consumer'>
+                  First consumer agent
+                </FormLabel>
+                <Select
+                  id='vault-first-consumer'
+                  size='sm'
+                  value={consumerId}
+                  onChange={event => setConsumerPick(event.target.value)}
+                  isDisabled={consumerSetupLocked || !consumerChoices.length}
+                  placeholder={
+                    consumerChoices.length
+                      ? undefined
+                      : 'Register a consumer using the install command above'
+                  }
+                >
+                  {consumerChoices.map(agent => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.name ||
+                        agent.hostname ||
+                        agent.wireAgentId ||
+                        'agent'}
+                    </option>
+                  ))}
+                </Select>
+              </FormControl>
+              {!consumerChoices.length ? (
+                <Text fontSize='sm'>
+                  No consumer is registered yet. Prepare and register its agent
+                  in part 5, then check again. This does not block creating the
+                  publication job.
+                </Text>
+              ) : null}
+              <DashboardActionButton
+                variant='outline'
+                onClick={() => ctx.refresh()}
+              >
+                Check registered consumers
+              </DashboardActionButton>
               {out.ok ? (
                 <VaultRolloutGuide
                   key={`${workspaceId}/${form.groupId}/${consumerId}`}

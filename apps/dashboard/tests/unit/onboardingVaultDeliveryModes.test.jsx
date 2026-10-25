@@ -9,7 +9,10 @@ import { ChakraProvider } from '@chakra-ui/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { VaultStep } from '../../src/components/onboarding/certopsFinalSteps.jsx';
-import { VaultRolloutGuide } from '../../src/components/onboarding/VaultGuidedOperations.jsx';
+import {
+  VaultAgentTest,
+  VaultRolloutGuide,
+} from '../../src/components/onboarding/VaultGuidedOperations.jsx';
 import { DoneCard } from '../../src/components/onboarding/OnboardingPage.jsx';
 import {
   buildVaultConfigs,
@@ -121,6 +124,56 @@ beforeEach(() => {
 });
 
 describe('Vault consumer delivery choices', () => {
+  it('never adopts or passes the issuer job for an empty consumer selection', async () => {
+    const ctx = context({ dryRunJobId: 'issuer-test' });
+    api.getJob.mockResolvedValue({
+      job: { id: 'issuer-test', status: 'dry_run_complete', operation: 'noop' },
+    });
+    await act(async () => show(<VaultAgentTest ctx={ctx} agent={undefined} />));
+    expect(api.getJob).not.toHaveBeenCalled();
+    expect(screen.queryByText('Signed dry run completed')).toBeNull();
+    expect(screen.queryByText('Actual job evidence')).toBeNull();
+  });
+  it('shows only the issuer test during publication preparation, even before a consumer is registered', () => {
+    const ctx = context();
+    ctx.summary.certops.agents.items = [agents[0]];
+    show(<VaultStep ctx={ctx} />);
+    expect(
+      screen.getAllByRole('button', { name: /^Send a test job to/ })
+    ).toHaveLength(1);
+  });
+  it('can create publication with an issuer alone after the issuer-stop confirmation', async () => {
+    const ctx = context();
+    ctx.summary.certops.agents.items = [agents[0]];
+    api.createJob.mockResolvedValue({
+      job: {
+        id: 'publication',
+        status: 'pending',
+        payload: { publication: { groupId: GROUP } },
+      },
+    });
+    show(<VaultStep ctx={ctx} />);
+    const publish = screen.getByRole('button', {
+      name: 'Create the publish job',
+    });
+    expect(publish).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: 'The issuing TokenTimer agent is stopped while I prepare Vault',
+      })
+    );
+    expect(publish).toBeEnabled();
+    fireEvent.click(publish);
+    await waitFor(() =>
+      expect(api.createJob).toHaveBeenCalledWith(
+        WS,
+        expect.objectContaining({
+          operation: 'issue',
+          assignedAgentId: 'issuer',
+        })
+      )
+    );
+  });
   it('generates actual file-only configuration without reload commands, probes or NGINX paths', () => {
     const result = buildVaultConfigs({
       ...base,

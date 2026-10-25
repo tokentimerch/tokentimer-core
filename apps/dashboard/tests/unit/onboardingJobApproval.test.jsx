@@ -154,7 +154,7 @@ describe('Vault publish job approval', () => {
     expect(screen.queryByTestId('approval-policy-off')).toBeNull();
     expect(
       screen.getAllByRole('button', { name: /Send a test job/ })
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 
   it('says nothing about approval while the policy is unknown', async () => {

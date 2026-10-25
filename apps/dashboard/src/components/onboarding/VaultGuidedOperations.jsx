@@ -33,7 +33,8 @@ import JobActivity from './JobActivity.jsx';
 import { isJobFinal } from './jobTimeline.js';
 import { StatusPanel, StatusTag } from './panels.jsx';
 
-const label = agent => agent?.name || agent?.hostname || 'agent';
+const label = agent =>
+  agent?.name || agent?.hostname || agent?.wireAgentId || 'agent';
 const message = error =>
   error?.response?.data?.error ||
   error?.message ||
@@ -103,16 +104,19 @@ export function VaultAgentTest({
   disabled = false,
 }) {
   const saved = certopsProgress(ctx);
-  const savedId =
-    saved.vaultDryRunJobIds?.[agent?.id] ||
-    (isIssuer || agent?.id === saved.chosenAgentId ? saved.dryRunJobId : '') ||
-    '';
+  const savedId = agent?.id
+    ? saved.vaultDryRunJobIds?.[agent.id] ||
+      (isIssuer || agent.id === saved.chosenAgentId ? saved.dryRunJobId : '') ||
+      ''
+    : '';
   const [createdId, setCreatedId] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const jobId = createdId || savedId;
   const observed = useObservedJob(ctx.workspaceId, jobId);
-  const sameAgent = observed.job?.assignedAgentId === agent?.id;
+  const sameAgent = Boolean(
+    agent?.id && observed.job?.assignedAgentId === agent.id
+  );
   const passed =
     observed.job?.status === 'dry_run_complete' &&
     observed.job?.operation === 'noop' &&
