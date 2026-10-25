@@ -4839,6 +4839,12 @@ const migrations = [
 
 
 
+migrations.push({
+  version: 78,
+  name: "certops_material_providers",
+  sql: fs.readFileSync(require("path").join(__dirname, "078-certops-material-providers.sql"), "utf8"),
+});
+
 const { composeMigrations } = require("./compose-migrations");
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored

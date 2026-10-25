@@ -63,6 +63,9 @@ describe("pack-release (H10)", () => {
     assert.equal(list.status, 0);
     assert.doesNotMatch(list.stdout, /\.key\.pem$/m);
     assert.doesNotMatch(list.stdout, /fixtures\//);
+    assert.match(list.stdout,/package\/src\/windows-material\/connector\.ps1/);
+    assert.match(list.stdout,/package\/src\/windows-material\/MaterialImport\.cs/);
+    assert.match(list.stdout,/package\/src\/material-store\/azure\.js/);
   });
 
   it("ships Windows service host binaries under package/bin, not --out-dir", () => {

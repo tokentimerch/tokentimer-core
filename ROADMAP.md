@@ -45,6 +45,10 @@ called stable while they are open.
   certificate, including ordinary and wildcard certificates, shipped in 0.18.0
   (see [CHANGELOG.md](CHANGELOG.md)); the remaining destination scope stays
   open on the issue.
+  Provider/consumer extensions add explicit OpenBao KV v2 compatibility,
+  Azure Key Vault Secrets version references, and an exact Windows/IIS shared
+  import connector. Azure and Windows remain subject to independent production
+  qualification; see [implementation and evidence](docs/certops/distribution-extensions-qualification.md).
 - **Shared outbound policy**
   ([#233](https://github.com/tokentimerch/tokentimer-core/issues/233)).
   Wire offline mode and outbound allowlists into API and worker egress.

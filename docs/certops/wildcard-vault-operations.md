@@ -1,5 +1,10 @@
 # Certificate material distribution candidate
 
+For explicit OpenBao compatibility, Azure Key Vault Secrets and Windows/IIS
+shared import, see [distribution extensions](distribution-extensions.md) and
+their [qualification status](distribution-extensions-qualification.md). Existing
+Vault and Linux instructions below retain their original defaults.
+
 Customer issuer → existing native ACME DNS-01 → customer Vault KV v2 →
 explicitly assigned Linux consumers → concrete TLS listeners → public receipts.
 The API, workers, inventory scanners, dashboards and queues never receive the

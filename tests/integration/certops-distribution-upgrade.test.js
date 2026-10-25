@@ -135,7 +135,7 @@ describe("Core distribution and lifecycle migration histories", function () {
         ];
         const mainlineOrder = history === "distribution-first" ? [canonical[4],canonical[5],canonical[6],canonical[0],canonical[1],canonical[2],canonical[3]] : history === "enrollment-first" ? [canonical[0],canonical[4],canonical[5],canonical[6],canonical[1],canonical[2],canonical[3]] : history === "previous-distribution" ? [canonical[0],canonical[1],canonical[2],canonical[4],canonical[5],canonical[6],canonical[3]] : canonical;
         // Migration 77 lands after every supported history.
-        const expected = [...mainlineOrder, "onboarding_sessions"];
+        const expected = [...mainlineOrder, "onboarding_sessions", "certops_material_providers"];
         assert.deepEqual(
           after.filter((row) => row.version >= 70).map((row) => row.name),
           expected,

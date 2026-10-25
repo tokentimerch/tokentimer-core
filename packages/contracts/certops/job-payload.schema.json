@@ -109,7 +109,11 @@
         },
         "terminalState": {
           "type": "string",
-          "enum": ["expired", "cancelled", "abandoned"],
+          "enum": [
+            "expired",
+            "cancelled",
+            "abandoned"
+          ],
           "description": "Control-plane-only signed directive to free an uninstalled enrollment key in a continuation. Derived from the current durable enrollment state; never supplied by a job request."
         },
         "reconcileRequestId": {
@@ -622,30 +626,92 @@
   "allOf": [
     {
       "description": "Windows CNG renewal cannot reuse an existing private key; omission retains fresh-key behavior.",
-      "if": { "required": ["action", "keyMode", "target"], "properties": { "action": { "const": "renew" }, "keyMode": { "const": "os-store-managed" }, "target": { "required": ["type"], "properties": { "type": { "const": "windows-iis" } } } } },
-      "then": { "properties": { "keyRotation": { "const": true } } }
-    },
-    {
       "if": {
-        "required": ["enrollment"],
-        "properties": { "enrollment": { "required": ["reconcileRequestId"] } }
+        "required": [
+          "action",
+          "keyMode",
+          "target"
+        ],
+        "properties": {
+          "action": {
+            "const": "renew"
+          },
+          "keyMode": {
+            "const": "os-store-managed"
+          },
+          "target": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "windows-iis"
+              }
+            }
+          }
+        }
       },
       "then": {
-        "required": ["action"],
         "properties": {
-          "action": { "const": "continue-enrollment" },
-          "enrollment": { "not": { "required": ["terminalState"] } }
+          "keyRotation": {
+            "const": true
+          }
         }
       }
     },
     {
       "if": {
-        "required": ["enrollment"],
-        "properties": { "enrollment": { "required": ["terminalState"] } }
+        "required": [
+          "enrollment"
+        ],
+        "properties": {
+          "enrollment": {
+            "required": [
+              "reconcileRequestId"
+            ]
+          }
+        }
       },
       "then": {
-        "required": ["action"],
-        "properties": { "action": { "const": "continue-enrollment" } }
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "const": "continue-enrollment"
+          },
+          "enrollment": {
+            "not": {
+              "required": [
+                "terminalState"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "enrollment"
+        ],
+        "properties": {
+          "enrollment": {
+            "required": [
+              "terminalState"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "const": "continue-enrollment"
+          }
+        }
       }
     },
     {
@@ -935,7 +1001,7 @@
       ],
       "properties": {
         "type": {
-          "const": "vault-kv2"
+          "$ref": "#/definitions/materialDistribution_provider"
         },
         "groupId": {
           "$ref": "#/definitions/materialDistribution_uuid"
@@ -991,7 +1057,7 @@
           "$ref": "#/definitions/materialDistribution_alias"
         },
         "providerVersion": {
-          "$ref": "#/definitions/materialDistribution_revision"
+          "$ref": "#/definitions/materialDistribution_providerVersion"
         },
         "fingerprintSha256": {
           "$ref": "#/definitions/materialDistribution_fingerprint"
@@ -1017,8 +1083,40 @@
         "verificationOnly": {
           "type": "boolean",
           "description": "Approved read-only verification of the pinned version; no install or reload."
+        },
+        "provider": {
+          "$ref": "#/definitions/materialDistribution_provider"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "provider"
+            ],
+            "properties": {
+              "provider": {
+                "const": "azure-key-vault"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "providerVersion": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{32}$"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "providerVersion": {
+                "$ref": "#/definitions/materialDistribution_revision"
+              }
+            }
+          }
+        }
+      ]
     },
     "materialDistribution_publicationReceipt": {
       "type": "object",
@@ -1050,7 +1148,7 @@
           "$ref": "#/definitions/materialDistribution_alias"
         },
         "providerVersion": {
-          "$ref": "#/definitions/materialDistribution_revision"
+          "$ref": "#/definitions/materialDistribution_providerVersion"
         },
         "fingerprintSha256": {
           "$ref": "#/definitions/materialDistribution_fingerprint"
@@ -1059,8 +1157,40 @@
           "type": "string",
           "format": "date-time",
           "maxLength": 40
+        },
+        "provider": {
+          "$ref": "#/definitions/materialDistribution_provider"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "provider"
+            ],
+            "properties": {
+              "provider": {
+                "const": "azure-key-vault"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "providerVersion": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{32}$"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "providerVersion": {
+                "$ref": "#/definitions/materialDistribution_revision"
+              }
+            }
+          }
+        }
+      ]
     },
     "materialDistribution_deploymentReceipt": {
       "type": "object",
@@ -1143,7 +1273,7 @@
       ],
       "properties": {
         "type": {
-          "const": "vault-kv2"
+          "$ref": "#/definitions/materialDistribution_provider"
         },
         "groupId": {
           "$ref": "#/definitions/materialDistribution_uuid"
@@ -1211,6 +1341,24 @@
           ]
         }
       }
+    },
+    "materialDistribution_provider": {
+      "enum": [
+        "vault-kv2",
+        "openbao-kv2",
+        "azure-key-vault"
+      ]
+    },
+    "materialDistribution_providerVersion": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$"
+        }
+      ]
     }
   }
 }

@@ -781,7 +781,7 @@ describe("registerIfNeeded", () => {
         : [
             ...(AGENT_TRUST_STORE_PREREQUISITES.candidate ? ["trust-anchor-deploy-v1"] : []),
             ...(process.platform === "linux"
-              ? ["material-store-vault-kv2-v1", "certificate-publication-v1", "deploy-from-store-v1"]
+              ? ["material-store-vault-kv2-v1", "material-store-openbao-kv2-v1", "certificate-publication-v1", "deploy-from-store-v1"]
               : []),
           ]),
       "agent-id-binding-v1",
@@ -4228,7 +4228,7 @@ describe("renew chain deployment", () => {
     assert.equal(publication.status, "blocked");
     assert.match(
       publication.errorMessage,
-      /has not qualified material-store-vault-kv2-v1; material distribution jobs are refused/,
+      /has not qualified (material-store-vault-kv2-v1|certificate-publication-v1); material distribution jobs are refused/,
     );
 
     const deployment = await executeJob({
@@ -4238,7 +4238,7 @@ describe("renew chain deployment", () => {
     assert.equal(deployment.status, "blocked");
     assert.match(
       deployment.errorMessage,
-      /has not qualified material-store-vault-kv2-v1; material distribution jobs are refused/,
+      /has not qualified (material-store-vault-kv2-v1|windows-material-iis-v1); material distribution jobs are refused/,
     );
     assert.equal(shared.client.calls.reportEvidence.length, 0);
   });

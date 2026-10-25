@@ -2480,14 +2480,14 @@ async function ingestResult({
     let acceptedDeployment = null;
     if (body.deploymentReceipt) {
       acceptedDeployment = await require("./materialDistribution").acceptDeploymentReceipt({ client, workspaceId: agent.workspaceId,
-        agentId: agent.id, job, receipt: body.deploymentReceipt, jobStatus });
+        agentId: agent.id, job, receipt: body.deploymentReceipt, jobStatus, errorMessage: body.errorMessage });
     } else if (jobStatus === "succeeded" && job.payload?.materialDeployment) {
       throw serviceError("Missing deployment receipt", "CERTOPS_MATERIAL_RECEIPT_REQUIRED");
     } else if (job.payload?.materialDeployment && !["succeeded","dry_run_complete"].includes(jobStatus)) {
       const intent = job.payload.materialDeployment;
       await client.query(`UPDATE certops_consumer_deployments SET stage=$3,failure_code=$4
         WHERE workspace_id=$1 AND job_id=$2`, [agent.workspaceId,job.id,
-        jobStatus === "orphaned_unknown_effect" ? jobStatus : "failed", `agent_result_${jobStatus}`]);
+        jobStatus === "orphaned_unknown_effect" ? jobStatus : "failed", require("./materialDistribution").publicFailureCode(body.errorMessage,jobStatus)]);
       await require("./materialDistribution").enqueueDistributionEvent(client,agent.workspaceId,
         "distribution_rollout_requested",`${intent.rolloutId}:${job.id}:${job.claim_id}`,
         {groupId:intent.groupId,rolloutId:intent.rolloutId});

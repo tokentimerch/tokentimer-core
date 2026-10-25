@@ -103,6 +103,8 @@ function validateBundle(bundle, intent, scope) {
       certificate.publicKey.asymmetricKeyType !== scope.keyAlgorithm ||
       Date.parse(certificate.validFrom) > Date.now() || Date.parse(certificate.validTo) <= Date.now()) throw failure("material_bundle_invalid");
     if (scope.keyAlgorithm === "rsa" && certificate.publicKey.asymmetricKeyDetails.modulusLength < 2048) throw failure("material_bundle_invalid");
+    if (certificate.keyUsage?.length && !certificate.keyUsage.some(oid=>["1.3.6.1.5.5.7.3.1","2.5.29.37.0"].includes(oid))) throw failure("material_bundle_invalid");
+    if (scope.keyAlgorithm === "ec" && !["prime256v1","secp384r1","secp521r1"].includes(certificate.publicKey.asymmetricKeyDetails.namedCurve)) throw failure("material_bundle_invalid");
     const fingerprint = computeCertificateFingerprint(bundle.certificatePem);
     if (fingerprint !== bundle.fingerprintSha256 || (intent.fingerprintSha256 && fingerprint !== intent.fingerprintSha256)) throw failure("material_fingerprint_mismatch");
     return { fingerprintSha256: fingerprint, validTo: new Date(certificate.validTo).toISOString() };
@@ -116,6 +118,10 @@ function resolveStore(stores, intent, { fixtureLoopbackHttp = false } = {}) {
   if (!intent || !UUID.test(intent.workspaceId) || !UUID.test(intent.groupId) ||
     !UUID.test(intent.materialVersionId) || !ALIAS.test(intent.materialStoreRef)) throw failure("material_intent_invalid");
   const config = Object.hasOwn(stores || {}, intent.materialStoreRef) ? stores[intent.materialStoreRef] : null;
+  const provider = config?.provider || "vault-kv2";
+  if (!["vault-kv2", "openbao-kv2", "azure-key-vault"].includes(provider) ||
+    (intent.type || intent.provider || "vault-kv2") !== provider) throw failure("material_provider_mismatch");
+  if(provider==="openbao-kv2" && config.namespace)throw failure("material_store_config_invalid");
   const scope = config && Object.hasOwn(config.groups || {}, intent.groupId) ? config.groups[intent.groupId] : null;
   if (!scope || scope.workspaceId !== intent.workspaceId || !safePath(scope.prefix) ||
     !["rsa", "ec"].includes(scope.keyAlgorithm) || !sameSans(scope.sans, scope.sans)) throw failure("material_scope_denied");
@@ -124,17 +130,19 @@ function resolveStore(stores, intent, { fixtureLoopbackHttp = false } = {}) {
   const fixtureHttp = fixtureLoopbackHttp && address.protocol === "http:" &&
     (address.hostname === "127.0.0.1" || address.hostname === "[::1]");
   if ((!fixtureHttp && address.protocol !== "https:") || address.username || address.password ||
-    address.search || address.hash || address.pathname !== "/" || !SEGMENT.test(config.mount) ||
+    address.search || address.hash || address.pathname !== "/" ||
+    (provider !== "azure-key-vault" && !SEGMENT.test(config.mount)) ||
     (config.namespace && !safePath(config.namespace))) throw failure("material_store_config_invalid");
   const timeoutMs = config.timeoutMs ?? 10000;
   if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30000) throw failure("material_store_config_invalid");
   const objectRef = `${scope.prefix}/bundles/${intent.materialVersionId}`;
-  return { config, scope, address, objectRef, timeoutMs, fixtureHttp };
+  return { config, scope, address, objectRef, timeoutMs, fixtureHttp, provider };
 }
 
 function createVaultStore(stores, intent, options = {}) {
   const resolved = resolveStore(stores, intent, options);
   const { config, scope, address, objectRef, timeoutMs, fixtureHttp } = resolved;
+  if (resolved.provider === "azure-key-vault") throw failure("material_provider_mismatch");
   const apiPath = `/v1/${config.mount}/data/${objectRef}`;
 
   async function request(method, suffix = "", body = null) {
@@ -149,7 +157,7 @@ function createVaultStore(stores, intent, options = {}) {
     const transport = fixtureHttp ? http : https;
     return new Promise((resolve, reject) => {
       const req = transport.request(new URL(apiPath + suffix, address), {
-        method, ca, rejectUnauthorized: true,
+        method, ca, rejectUnauthorized: true, agent: false,
         headers: { "X-Vault-Token": token,
           ...(config.namespace ? { "X-Vault-Namespace": config.namespace } : {}),
           ...(payload ? { "Content-Type": "application/json", "Content-Length": payload.length } : {}) },
@@ -205,11 +213,19 @@ function createVaultStore(stores, intent, options = {}) {
     if (stored.privateKeyPem !== bundle.privateKeyPem || stored.certificatePem !== bundle.certificatePem) throw failure("material_cas_conflict");
     return { schemaVersion: 1, workspaceId: intent.workspaceId, groupId: intent.groupId,
       materialVersionId: intent.materialVersionId, materialStoreRef: intent.materialStoreRef,
+      ...(resolved.provider !== "vault-kv2" ? { provider: resolved.provider } : {}),
       providerVersion: 1, fingerprintSha256: facts.fingerprintSha256,
       validTo: facts.validTo };
   }
 
-  return Object.freeze({ publish, fetch, scope, objectRef });
+  return Object.freeze({ publish, fetch, recover: () => fetch(1), scope, objectRef });
 }
 
-module.exports = { createVaultStore, resolveStore, validateBundle, readProtectedFile, writeProtectedFile, writeProtectedJson, protectDirectory, sameSans, failure, UUID, ALIAS, MAX_BUNDLE_BYTES };
+function createMaterialStore(stores, intent, options = {}) {
+  const resolved = resolveStore(stores, intent, options);
+  return resolved.provider === "azure-key-vault"
+    ? require("./azure").createAzureStore(resolved, intent)
+    : createVaultStore(stores, intent, options);
+}
+
+module.exports = { createMaterialStore, createVaultStore, resolveStore, validateBundle, readProtectedFile, writeProtectedFile, writeProtectedJson, protectDirectory, sameSans, failure, UUID, ALIAS, MAX_BUNDLE_BYTES };

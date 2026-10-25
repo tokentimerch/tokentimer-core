@@ -7,14 +7,14 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `no-host`: skipped because it needs real hardware/OS/IIS not available in CI
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 75
+Total skips found: 79
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
 | `packages/agent/scripts/install-agent-sh.test.js` | 34 | install-agent.sh polkit grants on re-run | describe(..., { skip }) option-object | `no-host` |
 | `packages/agent/scripts/installer-smoke.test.js` | 370 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `no-host` |
-| `packages/agent/scripts/pack-release.test.js` | 204 | tracks install-agent.sh as executable in git (mode 100755) | dynamic (this.skip() / t.skip()) | `no-host` |
-| `packages/agent/scripts/pack-release.test.js` | 213 | assertExecutableEntries rejects a tarball whose installer lost the exec bit | dynamic (this.skip() / t.skip()) | `no-host` |
+| `packages/agent/scripts/pack-release.test.js` | 207 | tracks install-agent.sh as executable in git (mode 100755) | dynamic (this.skip() / t.skip()) | `no-host` |
+| `packages/agent/scripts/pack-release.test.js` | 216 | assertExecutableEntries rejects a tarball whose installer lost the exec bit | dynamic (this.skip() / t.skip()) | `no-host` |
 | `packages/agent/src/acme/acme.test.js` | 250 | POSIX hook executes non-executable archive bytes with spaces and quotes in the path | test(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/config/config.test.js` | 121 | sets 0700 permissions on non-win32 platforms | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/config/config.test.js` | 129 | re-asserts 0700 on every call even if the mode was loosened | it(..., { skip }) option-object | `no-host` |
@@ -57,6 +57,7 @@ Total skips found: 75
 | `packages/agent/src/platform/platform.test.js` | 468 | enforces a real restricted ACL end to end on win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/replay/replay.test.js` | 144 | writes the store file with 0600 permissions on non-win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/trust-store/receipt.test.js` | 559 | reports {corrupt: true} for a symlink at the receipt path, never following it | dynamic (this.skip() / t.skip()) | `no-host` |
+| `packages/agent/src/windows-material/pkcs12.test.js` | 14 | Windows CryptoAPI parses encrypted PKCS#12 and proves private-key association without persisting a key | test(..., { skip }) option-object | `no-host` |
 | `tests/e2e/certops-adcs-gates-api-e2e.test.js` | 17 | unqualified AD CS onboarding and dispatch gates through real API | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-e2e.test.js` | 424 | happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-e2e.test.js` | 540 | tamper: mutating a signed field fails agent-side verification | dynamic (this.skip() / t.skip()) | `no-host` |
@@ -71,6 +72,9 @@ Total skips found: 75
 | `tests/e2e/certops-agent-e2e.test.js` | 827 | sequence enforcement: monotonic accepted, regression 409, re-register resets the generation, sequence-less accepted | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-enrollment-policy-api-e2e.test.js` | 15 | public AD CS enrollment policy bounds and immutable snapshots | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-enrollment-recovery-api-e2e.test.js` | 20 | AD CS installation retry through real API and PostgreSQL | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/material-providers-real.test.js` | 74 | real KV v2: AppRole, ACLs, rotation, exact versions, CAS and uncertain writes | test(..., { skip }) option-object | `no-host` |
+| `tests/e2e/material-providers-real.test.js` | 238 | real Azure Key Vault Secrets: publication, recovery and exact immutable retrieval | test(..., { skip }) option-object | `no-host` |
+| `tests/e2e/windows-material-real.test.js` | 27 | real Windows/IIS: shared import, service ACL, exact SNI consumers, interruption, reconciliation and retained rollback | test(..., { skip }) option-object | `no-host` |
 | `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 50 | (unknown - no enclosing it()/test() title found above this line) | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 135 | sweepStaleAgents flips a real stale agent to offline and queues exactly one real down alert_queue row | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 177 | a second sweep tick over the same still-offline agent does not queue a duplicate down alert (transition, not level) | dynamic (this.skip() / t.skip()) | `no-host` |

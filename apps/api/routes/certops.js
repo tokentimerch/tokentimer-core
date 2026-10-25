@@ -4381,7 +4381,8 @@ router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumer
   }));
 router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/versions", ...csrReadGuards,
   csrRoute(async (req) => ({ versions: (await pool.query(`SELECT id,workspace_id,group_id,management_period_id,
-    publishing_job_id,profile_revision,state,certificate_identity_id,provider_version,
+    publishing_job_id,profile_revision,state,certificate_identity_id,
+    COALESCE(to_jsonb(provider_version_ref),to_jsonb(provider_version)) AS provider_version,
     fingerprint_sha256,valid_to,published_at,created_at,allocation_released_at,allocation_release_reason
     FROM certops_material_versions WHERE workspace_id=$1 AND group_id=$2 ORDER BY created_at DESC LIMIT 1000`,[req.workspace.id,materialDistribution.normalizeDistributionId(req.params.groupId)])).rows })));
 router.put("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers/:bindingId", ...distributionWriteGuards,
