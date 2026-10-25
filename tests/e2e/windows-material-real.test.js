@@ -6,7 +6,10 @@ const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const http = require("node:http");
-const { execFileSync } = require("node:child_process");
+const { execFile, execFileSync } = require("node:child_process");
+const {
+  createWindowsConnector,
+} = require("../../packages/agent/src/windows-material");
 const {
   writeProtectedFile,
   readProtectedFile,
@@ -195,6 +198,20 @@ test(
         policyEngine,
         checkLease,
         fixtureLoopbackHttp: true,
+        windowsConnector: createWindowsConnector({
+          binding: bindings[job.materialDeployment.bindingId],
+          stateDir,
+          execFileImpl: (file, args, options, callback) =>
+            execFile(file, args, options, (error, stdout, stderr) => {
+              // Only the helper's fixed phase/HRESULT may enter CI diagnostics.
+              const diagnostic = String(stderr || "").match(
+                /^material_windows_connector_failed:[a-z-]+:[0-9A-F]{8}$/m,
+              );
+              if (error && diagnostic)
+                process.stderr.write(diagnostic[0] + "\n");
+              callback(error, stdout, stderr);
+            }),
+        }),
       });
     const first = await execute(jobFor(0));
     assert.equal(first.status, "succeeded", first.errorMessage);

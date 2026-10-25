@@ -54,6 +54,11 @@ try {
   } finally { $manager.Dispose() }
 } catch {
   # Exception messages may include paths or provider diagnostics. Never emit.
-  [Console]::Error.WriteLine('material_windows_connector_failed')
+  $stage = 'input'
+  if ('TokenTimer.MaterialImport' -as [type]) { $stage = [TokenTimer.MaterialImport]::FailureStage }
+  $allowed = @('input','store-open','existing-key','pfx-import','key-association','key-custody','key-acl','store-add','verify-cert','verify-key','verify-acl','verify-signature')
+  if ($stage -notin $allowed) { $stage = 'input' }
+  $code = $_.Exception.GetBaseException().HResult.ToString('X8')
+  [Console]::Error.WriteLine(('material_windows_connector_failed:{0}:{1}' -f $stage,$code))
   exit 1
 }

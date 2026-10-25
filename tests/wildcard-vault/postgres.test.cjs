@@ -181,7 +181,7 @@ test("real PostgreSQL publication, renewal identities, approvals, frozen waves, 
   assert.equal(checkedIntent.materialDeployment.generation,2);
   await dispatch.ingestResult({agent:agentInfo,body:{jobId:checkedIntent.jobId,claimId:checkedIntent.claimId,nonce:checkedIntent.nonce,status:"failed",errorMessage:"material_drift_detected"}});
   const failedProof=(await pool.query("SELECT stage,failure_code,job_id FROM certops_consumer_deployments WHERE rollout_id=$1 AND binding_id=$2",[checkSnapshot.rolloutId,bindingA])).rows[0];
-  assert.equal(failedProof.stage,"failed");assert.equal(failedProof.failure_code,"agent_result_failed");
+  assert.equal(failedProof.stage,"failed");assert.equal(failedProof.failure_code,"material_drift_detected");
   const retry=await operations.retryDistributionJob({workspaceId,jobId:failedProof.job_id,actorUserId:actor});
   assert.equal(retry.materialVersionId,materialVersionId);
   assert.equal((await material.consumerMatrix({client:pool,workspaceId,groupId})).find(r=>r.binding_id===bindingA).converged,false);

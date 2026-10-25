@@ -9,6 +9,8 @@ namespace TokenTimer {
   // Shared-material import is deliberately separate from CNG enrollment.
   // No existing local-key/non-exportable enrollment code is changed.
   public static class MaterialImport {
+    // Fixed diagnostic vocabulary only; never certificate/key/config values.
+    public static string FailureStage = "input";
     [StructLayout(LayoutKind.Sequential)] struct Blob { public int Size; public IntPtr Data; }
     [DllImport("crypt32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
     static extern IntPtr PFXImportCertStore(ref Blob blob, string password, uint flags);
@@ -71,35 +73,42 @@ namespace TokenTimer {
     public static void Install(byte[] pfx,string password,string storeName,string thumbprint,string[] sids) {
       // Validate every configured SID before creating a persisted key or store.
       Descriptor(sids);
+      FailureStage="store-open";
       using(var destination=new X509Store(storeName,StoreLocation.LocalMachine)) {
         destination.Open(OpenFlags.ReadWrite);
         var existing=Find(destination,thumbprint);
         // An existing key is adopted only if its key association, CNG custody
         // and exact service ACL can be proven. Never rewrite a foreign ACL.
-        if(existing!=null) { using(var key=Key(existing))CheckAcl(key,sids);return; }
+        if(existing!=null) { FailureStage="existing-key";using(var key=Key(existing))CheckAcl(key,sids);return; }
         GCHandle pinned=GCHandle.Alloc(pfx,GCHandleType.Pinned);
         IntPtr handle=IntPtr.Zero;
         try {
           var blob=new Blob { Size=pfx.Length,Data=pinned.AddrOfPinnedObject() };
           // Machine key set, prefer and require CNG; omit EXPORTABLE and
           // ALLOW_OVERWRITE_KEY. There is no user profile or UI dependency.
+          FailureStage="pfx-import";
           handle=PFXImportCertStore(ref blob,password,0x20|0x100|0x200);
-          if(handle==IntPtr.Zero)throw new CryptographicException();
+          if(handle==IntPtr.Zero)throw new CryptographicException(Marshal.GetLastWin32Error());
           using(var imported=new X509Store(handle)) {
+            FailureStage="key-association";
             var leaf=Find(imported,thumbprint);
             if(leaf==null || !leaf.HasPrivateKey)throw new CryptographicException();
             using(var key=Key(leaf)) {
+              FailureStage="key-custody";
               if(!key.IsMachineKey || key.IsEphemeral || key.ExportPolicy!=CngExportPolicies.None)throw new CryptographicException();
+              FailureStage="key-acl";
               SetAcl(key,sids);CheckAcl(key,sids);
             }
             // Chain certificates remain in the selected personal store. No
             // trust roots are installed or changed by shared-material import.
+            FailureStage="store-add";
             foreach(var cert in imported.Certificates)destination.Add(cert);
           }
         } finally { if(handle!=IntPtr.Zero)CertCloseStore(handle,0);pinned.Free(); }
       }
     }
     public static void Verify(string storeName,string thumbprint,string fingerprint,string[] sids) {
+      FailureStage="verify-cert";
       using(var store=new X509Store(storeName,StoreLocation.LocalMachine)) {
         store.Open(OpenFlags.ReadOnly);var cert=Find(store,thumbprint);
         if(cert==null || !cert.HasPrivateKey)throw new CryptographicException();
@@ -108,11 +117,14 @@ namespace TokenTimer {
           if(actual!=fingerprint)throw new CryptographicException();
         }
         using(var key=Key(cert)) {
+          FailureStage="verify-key";
           if(!key.IsMachineKey || key.IsEphemeral || key.ExportPolicy!=CngExportPolicies.None)throw new CryptographicException();
+          FailureStage="verify-acl";
           CheckAcl(key,sids);
         }
         // HasPrivateKey alone is insufficient: prove the acquired key matches
         // the certificate and is usable by the executing service identity.
+        FailureStage="verify-signature";
         byte[] nonce=new byte[32];using(var random=RandomNumberGenerator.Create())random.GetBytes(nonce);
         using(var rsa=cert.GetRSAPrivateKey()) {
           if(rsa!=null) { using(var pub=cert.GetRSAPublicKey())if(!pub.VerifyData(nonce,rsa.SignData(nonce,HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1),HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1))throw new CryptographicException(); }
