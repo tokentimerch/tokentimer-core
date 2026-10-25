@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "scope": "distribution-functional-support",
+  "status": "passed",
+  "candidateSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+  "nativeAgentQualified": false,
+  "qualificationStatus": "not-qualified",
+  "experimental": true,
+  "allFeaturesQualified": false,
+  "cohorts": [
+    {
+      "id": "distribution-postgres-postgres",
+      "status": "passed",
+      "executed": 2
+    },
+    {
+      "id": "distribution-postgres-pr329-review",
+      "status": "passed",
+      "executed": 17
+    },
+    {
+      "id": "distribution-postgres-transfer",
+      "status": "passed",
+      "executed": 11
+    },
+    {
+      "id": "distribution-vault-adapter",
+      "status": "passed",
+      "executed": 9
+    },
+    {
+      "id": "distribution-agent-ordinary",
+      "status": "passed",
+      "executed": 15
+    },
+    {
+      "id": "distribution-agent-san",
+      "status": "passed",
+      "executed": 15
+    },
+    {
+      "id": "distribution-agent-wildcard",
+      "status": "passed",
+      "executed": 15
+    }
+  ],
+  "fixtureSource": {
+    "file": "scripts/certops-distribution-functional-summary.js",
+    "sha256": "2ad232e24c1a076fef9fc4d932d9e9c9b9f1f86069f22a881c6bc3b5bf7b83d9"
+  }
+}

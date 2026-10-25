@@ -1,0 +1,511 @@
+{
+  "schemaVersion": 1,
+  "reviewedProductSourceSha": "b1b92cb36de0ef0d8647f1122d18b075d06c17ea",
+  "acceptanceWorkflowSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+  "priorImageBuildSourceSha": "69387d85231f242d00f653bbde94ead373fefe1e",
+  "agentAndHelmSourceSha": "fcc681c19314b7c2432973ce99d517af36e10238",
+  "checks": [
+    {
+      "component": "api",
+      "sourceIdentityPreserved": "69387d85231f242d00f653bbde94ead373fefe1e",
+      "comparedPaths": [
+        "apps/api",
+        "packages",
+        "deploy/compose/Dockerfile.api",
+        "scripts/certops-rotate-signing-key.js",
+        "scripts/load-root-env.js",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        ".npmrc",
+        ".dockerignore"
+      ],
+      "changesAtCheckpoint": [
+        "M\tpackages/agent/windows-service-host/host_test.go",
+        "M\tpackages/agent/windows-service-host/testdata/mock-agent.js"
+      ],
+      "runtimeSourceChanges": [],
+      "completeCopiedSourceIdentical": false,
+      "note": "The two changed Windows helper test files are copied as dormant source by API/worker Dockerfiles; they are not production execution inputs. Prior images retain original source identity."
+    },
+    {
+      "component": "worker",
+      "sourceIdentityPreserved": "69387d85231f242d00f653bbde94ead373fefe1e",
+      "comparedPaths": [
+        "apps/worker",
+        "packages",
+        "apps/api/services/certops",
+        "apps/api/src/shared",
+        "apps/api/services/audit.js",
+        "apps/api/utils/secretMaterial.js",
+        "apps/api/utils/logger.js",
+        "apps/api/config/runtime-labels.js",
+        "apps/api/db/database.js",
+        "deploy/compose/Dockerfile.worker",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        ".npmrc",
+        ".dockerignore"
+      ],
+      "changesAtCheckpoint": [
+        "M\tpackages/agent/windows-service-host/host_test.go",
+        "M\tpackages/agent/windows-service-host/testdata/mock-agent.js"
+      ],
+      "runtimeSourceChanges": [],
+      "completeCopiedSourceIdentical": false,
+      "note": "The two changed Windows helper test files are copied as dormant source by API/worker Dockerfiles; they are not production execution inputs. Prior images retain original source identity."
+    },
+    {
+      "component": "k8s-controller",
+      "sourceIdentityPreserved": "69387d85231f242d00f653bbde94ead373fefe1e",
+      "comparedPaths": [
+        "apps/k8s-controller",
+        "packages/log-scrub",
+        "apps/api/utils/secretMaterial.js",
+        "apps/api/services/certops/parser.js",
+        "apps/api/services/certops/identitySafety.js",
+        "apps/api/services/certops/controllerObservationLimits.js",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        ".npmrc",
+        ".dockerignore"
+      ],
+      "changesAtCheckpoint": [],
+      "runtimeSourceChanges": [],
+      "completeCopiedSourceIdentical": true,
+      "note": "Compared build/source paths are byte-identical."
+    },
+    {
+      "component": "helm",
+      "sourceIdentityPreserved": "fcc681c19314b7c2432973ce99d517af36e10238",
+      "comparedPaths": [
+        "deploy/helm"
+      ],
+      "changesAtCheckpoint": [],
+      "runtimeSourceChanges": [],
+      "completeCopiedSourceIdentical": true,
+      "note": "Compared build/source paths are byte-identical."
+    }
+  ],
+  "agent": {
+    "archiveSha256": "062f48b1960685b247b0114b2f7086b7accda23f8788895078da627f8844507c",
+    "nonbinaryFilesCompared": 100,
+    "nonbinaryFilesDifferent": [],
+    "files": [
+      {
+        "path": "LICENSE",
+        "sha256": "eea1d2b24e1cac5baaaa178c0664ef549b8b84632c49765f32ef575939aa4d42"
+      },
+      {
+        "path": "vendor/contracts/adcs-preflight-freshness.cjs",
+        "sha256": "c0de29b4e9677d52c5b42e47e1d0cb2502b03feb420e360ca3736c5a51510658"
+      },
+      {
+        "path": "vendor/contracts/canonical-json.cjs",
+        "sha256": "b27b411ac8510c0ebb45425b24425461699d24016fd8a9343516d9305752f4a2"
+      },
+      {
+        "path": "src/dns/providers/acme-dns.js",
+        "sha256": "4f37b2041865daee946851c297b183af0f76900b5b1b647c35704ef87f593ae7"
+      },
+      {
+        "path": "src/issuers/acme.js",
+        "sha256": "a83ff5dda0e49c9b355fadab60e6c7819c9e8dfbd855c72c4f93ace4eb500dea"
+      },
+      {
+        "path": "src/issuers/adcs-disposition.js",
+        "sha256": "762c1be973bde4c5e943d4dbf337d1ef0cc6c2dc56a204ea5143acfa9b23e2ad"
+      },
+      {
+        "path": "src/issuers/adcs-enrollment-journal.js",
+        "sha256": "3409bda28830aecc5c2ce9dbd9f34a01b8cf1733fa52337bd32c1dae38fde57d"
+      },
+      {
+        "path": "src/issuers/adcs-enrollment-reconcile.js",
+        "sha256": "b0052efe7aed573add2111977a9e71a57aa5743668c0f568709597978cfc125c"
+      },
+      {
+        "path": "src/issuers/adcs-enrollment-rules.js",
+        "sha256": "37e1eb5753b92f18f37dacc0e45a2fede203fdc2cc5693a4e1ba52321cf9b7da"
+      },
+      {
+        "path": "src/issuers/adcs-enrollment.js",
+        "sha256": "7a3b259b21ef136c2f28a2db97c271197efe8e59b1c8e25958ff08356613c115"
+      },
+      {
+        "path": "src/issuers/adcs-preflight.js",
+        "sha256": "b3dc5c87bd5055d648f5b6659f3c95b94aab0323d437e1553b11f1f5cffac9b1"
+      },
+      {
+        "path": "src/issuers/adcs-safety.js",
+        "sha256": "34b0c9ca497e75e588b50404df1255a62233365d1e6d4551e6d5471be2f6a281"
+      },
+      {
+        "path": "src/issuers/adcs-validation-deadline.js",
+        "sha256": "bab8fa157b364625364bd3f4c40e4263e4a7d81199d7ca75f51ba8d2dddac189"
+      },
+      {
+        "path": "src/adcs-windows-iis.js",
+        "sha256": "1c9ffef6f5b77eea1c6df5d17e04dea17e6b53a6a31a55f7fc54d7b967051ac5"
+      },
+      {
+        "path": "src/issuers/adcs.js",
+        "sha256": "c5d8a831add5f8c36bc16ae5cb5784dc1be53f118b5a0963209ee8f80d0f7c09"
+      },
+      {
+        "path": "vendor/log-scrub/agent-log-text.js",
+        "sha256": "1743941f90ade4c860e41e89ef3947f7e457820557d374da14bd668933c73ec7"
+      },
+      {
+        "path": "vendor/contracts/agent-protocol-validator.generated.js",
+        "sha256": "4ad4a85eb693123f0516d6b3a601382b2576077904caf8a0443988d2476c69dc"
+      },
+      {
+        "path": "src/dns/providers/azure-dns.js",
+        "sha256": "91d05a959f7603503fa44608f743b20378ebca5fb540d31b3bc40eba525f3842"
+      },
+      {
+        "path": "bin/certops-dns-hook.js",
+        "sha256": "651de52cee112956eed40de6619c4b06ebf38482dbedcf3e24f710369a73253e"
+      },
+      {
+        "path": "src/issuers/chain-helper.js",
+        "sha256": "e16bd3860a16c9c138aa381f2a5da50b2fba55ee11ac587d2cf1e23b8f721b78"
+      },
+      {
+        "path": "scripts/check-shipped-sources.js",
+        "sha256": "0fd57165483188729e7b33f04e09e1e663827c8e15b406ec01045e8f127a1b3b"
+      },
+      {
+        "path": "src/dns/providers/cloudflare.js",
+        "sha256": "02ce637940a4da9bf13dd88d902ac60b9fdec32a75474b55e8361ae8e7fa611b"
+      },
+      {
+        "path": "src/issuers/cmc-helper.js",
+        "sha256": "4b85aab08bb4b68004cde0dddca4c946ed72d15d70a8f34a138c47df648a27ac"
+      },
+      {
+        "path": "src/acme/command.js",
+        "sha256": "f3a7691eadda53fa123181a29fba757015b8c2f43ecdcb60ff01f7719db6df00"
+      },
+      {
+        "path": "src/issuers/csr-certificate-key.js",
+        "sha256": "32031facbbe2dd5a64e4d8ce64d8612f513cf46214d6fdff8ed47489c2ad86ea"
+      },
+      {
+        "path": "src/issuers/der-extensions.js",
+        "sha256": "4bba0bfaf36941d40f689a159e889efde9728ab261ceaa5c83425bf87990c61f"
+      },
+      {
+        "path": "src/platform/durability.js",
+        "sha256": "e5004e8b947f3a55886342bec466378952181eb6d6505fc9714bca07bc7bbe13"
+      },
+      {
+        "path": "src/windows-cert-store/exclusive-lock-reclaim-gate.js",
+        "sha256": "e71d8410ea8d2ab6bd0dd4ecf4aef40ed0be61d18694fbebeaed5ec4feda91f0"
+      },
+      {
+        "path": "src/windows-cert-store/exclusive-lock-worker.js",
+        "sha256": "2cfa8c97cae07ef15fc51a3615aa8e9a53fd5d4e4b7c770c072ce6ec0c173201"
+      },
+      {
+        "path": "src/exec-env.js",
+        "sha256": "fae6e0070655df314a3ebe2aa4d90211ee95db280605c7ac71e17098b5a2eac5"
+      },
+      {
+        "path": "src/dns/providers/exoscale.js",
+        "sha256": "089c79cea21eda564def4ca6bf8488013ecf41e47f06d24db28e7cea552bec02"
+      },
+      {
+        "path": "src/capabilities/gated-capabilities.js",
+        "sha256": "dbaa17cd8d3967d06534fa1e92da7e925510b1a82dde21913687443bf0caf576"
+      },
+      {
+        "path": "src/dns/providers/google-cloud-dns.js",
+        "sha256": "13d43e28968b02f8e4e6969c984898fc1b75b1b262240c1d50cf11c2594f14bb"
+      },
+      {
+        "path": "src/dns/providers/hetzner.js",
+        "sha256": "48f0633809707aa04abab3da7c6ba11e96b3fd912635fab9246add326460a7b1"
+      },
+      {
+        "path": "src/dns/hook.js",
+        "sha256": "42d279a5f651517544bb88fc482381f9c6407e275ecfee42dd759de5390e58a6"
+      },
+      {
+        "path": "scripts/host-sandbox.js",
+        "sha256": "2a479b465024b930902c37ead56bd886eb484b55f3ebd8e454f7d307b79e4f87"
+      },
+      {
+        "path": "src/acme/index.js",
+        "sha256": "371e444ac8a5a5eff878087b5ce2b06b8d4c772810dec889a37fffb5cad4b82e"
+      },
+      {
+        "path": "src/capabilities/index.js",
+        "sha256": "bfa1eb7abd0ea68a5431ae581feb68b15d628a7cd9717bf151682ded7bde6e3b"
+      },
+      {
+        "path": "src/claimed-job/index.js",
+        "sha256": "3b32e787d77deb506ea93346d9443af2c5a326f3f1c01c99ca8804fbb8337bb8"
+      },
+      {
+        "path": "src/clock/index.js",
+        "sha256": "2d549c205bf741e15e96def43da248798ed6828450430fcd4a07d80e0caad9c8"
+      },
+      {
+        "path": "src/config/index.js",
+        "sha256": "2df6f3357cdd690e116c83a130ebccc4c22b410df1d881973e050eaa3561b73b"
+      },
+      {
+        "path": "src/deploy/index.js",
+        "sha256": "e030747d894e5177c8843fa1de256569d6375744d3fe8bd97580c79472830ee1"
+      },
+      {
+        "path": "src/discovery/index.js",
+        "sha256": "a9e8601a7c6404fd33a8b22dc82d907a069c95a9bf5fc5572619833cbb0d998c"
+      },
+      {
+        "path": "src/dns/index.js",
+        "sha256": "52062fe3cd3a87a403221ec4214a5e6c34389454a00dc206ae53587d2ffc211f"
+      },
+      {
+        "path": "src/evidence/index.js",
+        "sha256": "b551c0a3283e5b133325cbffb146eb0883f624b4fddd724bb19d67393f9f4e83"
+      },
+      {
+        "path": "src/index.js",
+        "sha256": "30ad7d3f2be3356af502057c81b35b6860b315379835f5e25f8e720b70d5f887"
+      },
+      {
+        "path": "src/issuers/index.js",
+        "sha256": "12e74691db7191354a5a9d116b85f27cbef71c07b19ecc9e782492de1375afa0"
+      },
+      {
+        "path": "src/job-journal/index.js",
+        "sha256": "a93b539825c1450be1219f18bd7c34e9bd27f7c5068dd8ea1ee9bfd3500b3d17"
+      },
+      {
+        "path": "src/job-log-stream/index.js",
+        "sha256": "ceb0cbadf6e8f69500ef44544cdcd0fdf8e405a209036e22d37f62c8515c09a8"
+      },
+      {
+        "path": "src/keys/index.js",
+        "sha256": "67e9fa471e77996699e4191af36ed17c362e29f01d211a144f72502fb57bf981"
+      },
+      {
+        "path": "src/logging/index.js",
+        "sha256": "2b3b16831843adaff94c6c5279eda39aeedfce5c9e1510a52c1bab4ff5fe3bbc"
+      },
+      {
+        "path": "src/material-store/index.js",
+        "sha256": "c49f581db99958b8910bbbe58e761315dbc56bd9dda588af28d4de1929648dc3"
+      },
+      {
+        "path": "src/ntp/index.js",
+        "sha256": "1907d47bb67db10f3f2c4ecc479e7c5584ee9fc25b00efb6eafb63efc209b05b"
+      },
+      {
+        "path": "src/outbox/index.js",
+        "sha256": "a9d2a1d8b258f23e28f5a96dcd50259c2d38797291e4e472cc92226dc4c26fb4"
+      },
+      {
+        "path": "src/platform/index.js",
+        "sha256": "de94a93a9c258f345f98791aa7b7b5f9a93d663c0f5c2973b960ba87289118ff"
+      },
+      {
+        "path": "src/policy/index.js",
+        "sha256": "0fbb400e058da8ecbb829ad7d27d0e8bae3418a79c41b608d13fc5e5e56b0439"
+      },
+      {
+        "path": "src/protocol/index.js",
+        "sha256": "5c0d0eef8b497f5be0182543f04e331237bcafaf21a1ef54bd6488623d58abab"
+      },
+      {
+        "path": "src/reload/index.js",
+        "sha256": "02c23a186276435fcaabbf30b4b36761c1f8d4c6e4e6a51d22658745ae6d1925"
+      },
+      {
+        "path": "src/replay/index.js",
+        "sha256": "bb73f3b447e707e83da0098408c646cf494a1917cf0342bde581c9b9891eb74d"
+      },
+      {
+        "path": "src/signing/index.js",
+        "sha256": "d909bbf78453b85b71e3d1ff26f7ea9694502459b632864f4816eb0abdf9c967"
+      },
+      {
+        "path": "src/trust-store/index.js",
+        "sha256": "6600702097fe37933205aa3768fa50a9066060a0b00ddff845d130d709e2b2dc"
+      },
+      {
+        "path": "src/verify/index.js",
+        "sha256": "5adddbd2a0e9c1c4434cecf2ab40b1ac7fb6b11c8e68851dc7368181c33a8f4f"
+      },
+      {
+        "path": "src/windows-cert-store/index.js",
+        "sha256": "588a106718015bfd6bc2444c1c4ac438a140ae52b38481a1b6d0ee35aa9e3ea6"
+      },
+      {
+        "path": "src/windows-discovery/index.js",
+        "sha256": "6cddc354ecdcd4d9a6acd940d7b7831f5768313d48aa871c2194964beca8ce75"
+      },
+      {
+        "path": "src/windows-iis/index.js",
+        "sha256": "ccae63b0914a6165e574fc78fe198595c035516398d2f15370048c63a548ff48"
+      },
+      {
+        "path": "src/windows-key-survivors/index.js",
+        "sha256": "aa1d9dc1fcf3b5dc7ff62f3b08d9b62213ffa90c3d07efe9073494207350f680"
+      },
+      {
+        "path": "src/windows-retention/index.js",
+        "sha256": "a44d3c4005007ecc153e66d51474ff9be001b914291c3ee0ee545b2740cbd764"
+      },
+      {
+        "path": "src/dns/providers/infomaniak.js",
+        "sha256": "62550f607e84253276a61295d9f1c8e58eba4891d81ff420129424d8fa8f0e84"
+      },
+      {
+        "path": "src/dns/internal.js",
+        "sha256": "e05538053bb4585f5309e035bd1de208bf4681bf6df8bef85d5960d16a9c60f1"
+      },
+      {
+        "path": "src/issuers/issued-certificate-validation.js",
+        "sha256": "cc0395efcf92f8045c13631e213d0e28ef61595eaf617de04b06fc5107ae856b"
+      },
+      {
+        "path": "src/material-store/lifecycle.js",
+        "sha256": "0e6c5f25d8d0efac0625432ce8760e512cacea714bcad020d039922e036d78c3"
+      },
+      {
+        "path": "src/dns/lockfile.js",
+        "sha256": "11b1221818aca8c64cbfdd2dd5920c5f62b58a70cf9f872ef31757eea97153cd"
+      },
+      {
+        "path": "src/dns/providers/ovhcloud.js",
+        "sha256": "1e7f85d11ce25eac464812fc715a1e146450db5b10eacc23ecf2524b66c77389"
+      },
+      {
+        "path": "scripts/pack-release.js",
+        "sha256": "fc8b2b4cb497726d50f16439acb6e8cd280fffa1b33f796f2a3a56396b883248"
+      },
+      {
+        "path": "src/dns/providers/pebble-challtestsrv.js",
+        "sha256": "004aa490b81b371df9635a325b2f3e13569f5916ae2bb440576ccd85ee4b30e6"
+      },
+      {
+        "path": "src/dns/providers/powerdns.js",
+        "sha256": "c5e4980398661a84d87196b8e092f28c06b7e9813dcc3ffee89de2520d7aa4e7"
+      },
+      {
+        "path": "src/dns/propagate.js",
+        "sha256": "b4248924417f8b5e411fc5692a4fa350f1eae3aed9432bf1cbeed0f3415280ec"
+      },
+      {
+        "path": "src/capabilities/qualified-capabilities.generated.js",
+        "sha256": "701d87f2080fdcf22c9dc5ab0fd9f34634133d5867135af72cf7e392c10e7bf9"
+      },
+      {
+        "path": "src/trust-store/receipt.js",
+        "sha256": "231365d0062f96fea7a3b75a6333874caf9da33e7aa212c4fc3d58ed3a11a734"
+      },
+      {
+        "path": "bin/reconcile-material-binding.js",
+        "sha256": "3514d2ab9e40e473395092800f542fc2e77b7fb7b5b4bafb3497cdb1d1ef3b50"
+      },
+      {
+        "path": "src/dns/providers/rfc2136.js",
+        "sha256": "f824fe0c0e72a0e78b8c64f1d4ad4575c2b3240a7f84ed4b9dcf7e92ab1986e4"
+      },
+      {
+        "path": "src/dns/providers/route53.js",
+        "sha256": "12f1120dbe9df011fc14bdd11840a673381187330fb901a865f903a06c327e3a"
+      },
+      {
+        "path": "src/protocol/schemaValidation.js",
+        "sha256": "f39c95d9682be799eb887b88fa5b9e543b2c6068312f3e76b290a6ae02c39f36"
+      },
+      {
+        "path": "vendor/log-scrub/secret-material.js",
+        "sha256": "d9067d1a3b0b2595b4f301e753e9c6710647afd808732b8ee9cb1c702db16ef2"
+      },
+      {
+        "path": "scripts/sync-vendor.js",
+        "sha256": "136f57f205abf621705a99dcb5f261ef4dce1099a3cb7a3167f60d87837b3ae7"
+      },
+      {
+        "path": "bin/tokentimer-agent.js",
+        "sha256": "cad972d79e69d16649ccfc47b1569c64868e8fc2dfbf36fd43768ca4816b1633"
+      },
+      {
+        "path": "vendor/ajv-runtime/ucs2length.js",
+        "sha256": "ee3965cbbebec15b04bef78ca40267a1b3496df8f126800e45bc1a69922d20d5"
+      },
+      {
+        "path": "scripts/validate-server-url.js",
+        "sha256": "95c5541a7f856dc74a1e180486a9fc29a99ab42a1ce7fb09bf2f3990eb193295"
+      },
+      {
+        "path": "src/discovery/windows.js",
+        "sha256": "c5dbb5914e353f28806d2e3ddea5e63fd55f1d6f64b96649518ebd563958658e"
+      },
+      {
+        "path": "src/dns/zone.js",
+        "sha256": "66fd431aa059f26ad2a22e01e9b86b5e3dc1d6ef24eb8f40c6071031dbd0ded3"
+      },
+      {
+        "path": "vendor/contracts/agent-protocol.schema.json",
+        "sha256": "9314400bec3492edb70dd0b2f8373d68aaabe3483677d487287901e64211a507"
+      },
+      {
+        "path": "package.json",
+        "sha256": "e2433e47c6d6fc9bfe2dd6811433de7bd06c1bbecca90b1a4c7aef43e4535acd"
+      },
+      {
+        "path": "src/capabilities/qualified-capabilities.json",
+        "sha256": "dcf23a84d941e6ae6a289dcdd30581b1722e0a5826860c682a96cec72cd5ebe6"
+      },
+      {
+        "path": "README.md",
+        "sha256": "ed88727072d56d49b66b72b21222b4b22db83ca8cdecd582370406c850b44671"
+      },
+      {
+        "path": "vendor/README.md",
+        "sha256": "a989a079f78c52dda3da9dc458b6e4a4b925a4979d8a1a4c705271dfebe78d82"
+      },
+      {
+        "path": "scripts/install-agent.ps1",
+        "sha256": "fe8184eaa43ac659a4f91e555b1c1b9bb9cb9e10a84e1a720320801a681a9bfc"
+      },
+      {
+        "path": "src/acme/windows-command.ps1",
+        "sha256": "cf390dd6fb943ca33e279f0995203e4a9127ef73cfbdbf6ed0ad3525aaba0e8b"
+      },
+      {
+        "path": "scripts/tokentimer-agent.service",
+        "sha256": "b3cb6eff603aaf21c978bcc06b0699572763f4fe4fb5445e504b4ccb13b1745a"
+      },
+      {
+        "path": "bin/dns_certops.sh",
+        "sha256": "c0b73b98f1a6c838117ea4483a53e945f3106382e89bcf92bf66b363c55d1d99"
+      },
+      {
+        "path": "scripts/install-agent.sh",
+        "sha256": "a3dc26958b547fabe95998891ae8c92cc6a48b8dfa1c1b26dc4166900724692e"
+      }
+    ],
+    "runtimeAndBuildSourceChangesFromTrusted": [],
+    "excludedTestOnlyChanges": [
+      "packages/agent/windows-service-host/host_test.go",
+      "packages/agent/windows-service-host/testdata/mock-agent.js"
+    ],
+    "embeddedExecutableProvenanceNotRelabeled": true
+  },
+  "dashboard": {
+    "reuseAllowed": false,
+    "supersededRegistryReference": "ghcr.io/tokentimerch/tokentimer-core-dashboard@sha256:0083d81f53e6492b93538fcba17600c4846c11221c17081757286e9081dd6168",
+    "reason": "UserPreferences production navigation changed; corrected production image is being built from reviewed product source."
+  },
+  "actualPriorArtifactIdentitiesPreserved": true
+}

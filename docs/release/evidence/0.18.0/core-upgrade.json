@@ -1,0 +1,628 @@
+{
+  "schemaVersion": 1,
+  "scope": "packaged-control-plane-and-linux-agent-upgrade",
+  "startedAt": "2026-10-25T00:07:53.079Z",
+  "status": "passed",
+  "baseline": {
+    "version": "0.17.3",
+    "sourceSha": "813b0b111c7b2d6e4a5a3cbfdb458bd0b4572ecd",
+    "agentSha256": "ec74ed8e1026b7a76b50e0ddc843ee8dc42d1283923ff01be11603069f94c6bb"
+  },
+  "candidate": {
+    "version": "0.18.0",
+    "selectedSourceSha": "fcc681c19314b7c2432973ce99d517af36e10238",
+    "imageBuildSourceSha": "69387d85231f242d00f653bbde94ead373fefe1e",
+    "agentBuildSourceSha": "fcc681c19314b7c2432973ce99d517af36e10238",
+    "agentSha256": "062f48b1960685b247b0114b2f7086b7accda23f8788895078da627f8844507c"
+  },
+  "checks": [
+    {
+      "name": "source-and-artifact-inputs",
+      "status": "passed",
+      "evidence": {
+        "selectedSourceSha": "fcc681c19314b7c2432973ce99d517af36e10238",
+        "originalImageBuildSourceSha": "69387d85231f242d00f653bbde94ead373fefe1e",
+        "agentBuildSourceSha": "fcc681c19314b7c2432973ce99d517af36e10238",
+        "sourceAncestriesVerified": true,
+        "productAndBuildInputsEqual": true
+      }
+    },
+    {
+      "name": "actual-agent-archives-verified",
+      "status": "passed",
+      "evidence": {
+        "baselineVersion": "0.17.3",
+        "candidateVersion": "0.18.0",
+        "candidateSourceFilesMatched": 96,
+        "nativeBinaryProvenance": "archive checksum and separately recorded artifact build"
+      }
+    },
+    {
+      "name": "immutable-runtime-images",
+      "status": "passed",
+      "evidence": {
+        "oldApi": {
+          "reference": "ghcr.io/tokentimerch/tokentimer-core-api:0.17.3",
+          "imageId": "sha256:3e3e2189507b9c3d1c5889fadfa0576407e517013cac5e82cc07622c30c0bb0e",
+          "repositoryDigests": [
+            "ghcr.io/tokentimerch/tokentimer-core-api@sha256:84fc893c1c384e570d1514b9b9bb475849f83deb3561de8d1695147f40cbd5ea"
+          ]
+        },
+        "oldWorker": {
+          "reference": "ghcr.io/tokentimerch/tokentimer-core-worker:0.17.3",
+          "imageId": "sha256:ba035643489d4396444ef86fea393e343a8f4e1dff47f02c27f2b23d23658e2c",
+          "repositoryDigests": [
+            "ghcr.io/tokentimerch/tokentimer-core-worker@sha256:bae972f2a2d518745b8eff852e35f5902b58166b137ac447f5fcbdac66eb32d2"
+          ]
+        },
+        "candidateApi": {
+          "reference": "ghcr.io/tokentimerch/tokentimer-core-api@sha256:b426671327577936f0666952047553aa7e8e5ec7369a5e5b0cf654127eaa235d",
+          "imageId": "sha256:c2c07b36d8c26117f35bdb3e50aa47e74baa9fe4f20897bce26af3c2be7888a6",
+          "repositoryDigests": [
+            "ghcr.io/tokentimerch/tokentimer-core-api@sha256:b426671327577936f0666952047553aa7e8e5ec7369a5e5b0cf654127eaa235d"
+          ]
+        },
+        "candidateWorker": {
+          "reference": "ghcr.io/tokentimerch/tokentimer-core-worker@sha256:5cfe19338693d24eb912e213a19012f3ffc8f066fae49df9bf16d5de4a38f536",
+          "imageId": "sha256:db10bf35364fd7a6c2537984f0f52e34bd77b33f7a69dacd9f6597c4dae78b13",
+          "repositoryDigests": [
+            "ghcr.io/tokentimerch/tokentimer-core-worker@sha256:5cfe19338693d24eb912e213a19012f3ffc8f066fae49df9bf16d5de4a38f536"
+          ]
+        },
+        "postgres": {
+          "reference": "postgres:17-alpine",
+          "imageId": "sha256:ab20e934b27ba3ff927c1b4c9ff8cf6c32f315f743efe68dd3441182a87fb085",
+          "repositoryDigests": [
+            "postgres@sha256:eee6c6e1b0894fa4fe0075eb054af9fd1cf39a35321c2d4110626cfe506411fb"
+          ]
+        }
+      }
+    },
+    {
+      "name": "candidate-image-runtime-source-match",
+      "status": "passed",
+      "evidence": {
+        "api": {
+          "files": 311,
+          "sourceManifestSha256": "a67c40e12e656f483d7f0281811a42852326435b3a8826434432c92e6caaba19"
+        },
+        "worker": {
+          "files": 248,
+          "sourceManifestSha256": "e2f533d57fc957e19a6e2120665e0a96f2b17ec4240f71cd8c2dcf56a3f45702"
+        }
+      }
+    },
+    {
+      "name": "released-0.17.3-migrations-and-fixtures",
+      "status": "passed"
+    },
+    {
+      "name": "released-runtime-auth-and-state",
+      "status": "passed",
+      "evidence": {
+        "rowDigests": {
+          "user": "02c2a94898af96bdc82e2cfd1b185b0513b5e7166cbda07c0809888bf1ed3eca",
+          "workspace": "61c5953ae521588242a7ce3bbe4514100ff15620336a03e6b5be1a3174b77b4a",
+          "membership": "443b1b259085b07141e443b1c84cdac576fe94c05fe114c229d155742553a80a",
+          "token": "8029537d97039e1aefad42332be35992c99fb687b4a24dca4dc3eb1edb2c31a3",
+          "profile": "edf9fd52fa30a05a3f57ad05fca47b69649bdae060a25ba475990025aa6a6e29",
+          "certificate": "7719598eef2828eb5e70632e6891fb4fd372997f0b2d23596e9f6f4c9a7650c6",
+          "job": "505096f63feedda100fb0029119715a510945ab934f12a5e5594f405753711c6"
+        },
+        "ledger": [
+          {
+            "version": 1,
+            "name": "core_schema",
+            "executed_at": "2026-10-25T00:08:59.477Z"
+          },
+          {
+            "version": 2,
+            "name": "workspaces_and_rbac",
+            "executed_at": "2026-10-25T00:08:59.512Z"
+          },
+          {
+            "version": 3,
+            "name": "audit_schema",
+            "executed_at": "2026-10-25T00:08:59.534Z"
+          },
+          {
+            "version": 4,
+            "name": "alerting_schema",
+            "executed_at": "2026-10-25T00:08:59.542Z"
+          },
+          {
+            "version": 5,
+            "name": "contacts_and_optin",
+            "executed_at": "2026-10-25T00:08:59.558Z"
+          },
+          {
+            "version": 6,
+            "name": "weekly_digest_and_integration_usage",
+            "executed_at": "2026-10-25T00:08:59.565Z"
+          },
+          {
+            "version": 7,
+            "name": "system_settings",
+            "executed_at": "2026-10-25T00:08:59.574Z"
+          },
+          {
+            "version": 8,
+            "name": "auto_sync_and_domain_monitors",
+            "executed_at": "2026-10-25T00:08:59.579Z"
+          },
+          {
+            "version": 9,
+            "name": "tokens_workspace_expiration_index",
+            "executed_at": "2026-10-25T00:08:59.592Z"
+          },
+          {
+            "version": 10,
+            "name": "certops_inventory_schema",
+            "executed_at": "2026-10-25T00:08:59.594Z"
+          },
+          {
+            "version": 11,
+            "name": "certops_token_lifecycle_status",
+            "executed_at": "2026-10-25T00:08:59.633Z"
+          },
+          {
+            "version": 12,
+            "name": "certops_api_tokens_schema",
+            "executed_at": "2026-10-25T00:08:59.638Z"
+          },
+          {
+            "version": 13,
+            "name": "certops_jobs_evidence_schema",
+            "executed_at": "2026-10-25T00:08:59.651Z"
+          },
+          {
+            "version": 14,
+            "name": "certops_executor_event_idempotency",
+            "executed_at": "2026-10-25T00:08:59.675Z"
+          },
+          {
+            "version": 15,
+            "name": "certops_managed_certificate_monitor_identity",
+            "executed_at": "2026-10-25T00:08:59.684Z"
+          },
+          {
+            "version": 16,
+            "name": "endpoint_monitor_check_claim_lease",
+            "executed_at": "2026-10-25T00:08:59.695Z"
+          },
+          {
+            "version": 17,
+            "name": "worker_owner_scoped_claim_ids",
+            "executed_at": "2026-10-25T00:08:59.696Z"
+          },
+          {
+            "version": 18,
+            "name": "tokens_certops_api_token_link",
+            "executed_at": "2026-10-25T00:08:59.698Z"
+          },
+          {
+            "version": 19,
+            "name": "certops_workspace_kill_switch",
+            "executed_at": "2026-10-25T00:08:59.701Z"
+          },
+          {
+            "version": 20,
+            "name": "certops_job_creation_request_fingerprint",
+            "executed_at": "2026-10-25T00:08:59.702Z"
+          },
+          {
+            "version": 21,
+            "name": "certops_controller_observation_reporting",
+            "executed_at": "2026-10-25T00:08:59.704Z"
+          },
+          {
+            "version": 22,
+            "name": "certops_controller_provisioning",
+            "executed_at": "2026-10-25T00:08:59.717Z"
+          },
+          {
+            "version": 23,
+            "name": "certops_controller_provisioning_event_timestamps",
+            "executed_at": "2026-10-25T00:08:59.724Z"
+          },
+          {
+            "version": 24,
+            "name": "certops_agent_protocol_schema",
+            "executed_at": "2026-10-25T00:08:59.726Z"
+          },
+          {
+            "version": 25,
+            "name": "certops_job_approvals",
+            "executed_at": "2026-10-25T00:08:59.761Z"
+          },
+          {
+            "version": 26,
+            "name": "certops_job_mode_and_dry_run_complete",
+            "executed_at": "2026-10-25T00:08:59.769Z"
+          },
+          {
+            "version": 27,
+            "name": "certops_dispatch_executor_lanes_and_routing",
+            "executed_at": "2026-10-25T00:08:59.773Z"
+          },
+          {
+            "version": 28,
+            "name": "certops_agent_inventory_evidence_integrity",
+            "executed_at": "2026-10-25T00:08:59.782Z"
+          },
+          {
+            "version": 29,
+            "name": "certops_agent_registration_idempotency",
+            "executed_at": "2026-10-25T00:08:59.800Z"
+          },
+          {
+            "version": 30,
+            "name": "certops_registration_replay_credential_encryption",
+            "executed_at": "2026-10-25T00:08:59.807Z"
+          },
+          {
+            "version": 31,
+            "name": "certops_agents_agent_id_scoped_to_workspace",
+            "executed_at": "2026-10-25T00:08:59.810Z"
+          },
+          {
+            "version": 32,
+            "name": "certificate_targets_target_type_agent_host",
+            "executed_at": "2026-10-25T00:08:59.813Z"
+          },
+          {
+            "version": 33,
+            "name": "managed_certificates_provisioning_issuance",
+            "executed_at": "2026-10-25T00:08:59.814Z"
+          },
+          {
+            "version": 34,
+            "name": "certificate_jobs_issue_operation",
+            "executed_at": "2026-10-25T00:08:59.819Z"
+          },
+          {
+            "version": 35,
+            "name": "certops_outbox",
+            "executed_at": "2026-10-25T00:08:59.821Z"
+          },
+          {
+            "version": 36,
+            "name": "certops_evidence_claim_binding",
+            "executed_at": "2026-10-25T00:08:59.827Z"
+          },
+          {
+            "version": 37,
+            "name": "domain_monitors_workspace_url_dedup",
+            "executed_at": "2026-10-25T00:08:59.833Z"
+          },
+          {
+            "version": 38,
+            "name": "managed_certificates_cross_source_monitor_dedup",
+            "executed_at": "2026-10-25T00:08:59.842Z"
+          },
+          {
+            "version": 39,
+            "name": "certops_agents_capabilities_freshness_epoch",
+            "executed_at": "2026-10-25T00:08:59.846Z"
+          },
+          {
+            "version": 40,
+            "name": "certops_diagnostic_agent_isolation",
+            "executed_at": "2026-10-25T00:08:59.848Z"
+          },
+          {
+            "version": 41,
+            "name": "certops_diagnostic_bootstrap_requests",
+            "executed_at": "2026-10-25T00:08:59.851Z"
+          },
+          {
+            "version": 42,
+            "name": "certops_windows_iis_target_descriptors",
+            "executed_at": "2026-10-25T00:08:59.858Z"
+          },
+          {
+            "version": 43,
+            "name": "certops_trust_anchors",
+            "executed_at": "2026-10-25T00:08:59.861Z"
+          },
+          {
+            "version": 44,
+            "name": "certops_trust_anchor_jobs",
+            "executed_at": "2026-10-25T00:08:59.873Z"
+          },
+          {
+            "version": 45,
+            "name": "certops_agent_observation_locality_and_downtime_alerts",
+            "executed_at": "2026-10-25T00:08:59.877Z"
+          },
+          {
+            "version": 46,
+            "name": "alert_queue_agent_health_anchor",
+            "executed_at": "2026-10-25T00:08:59.884Z"
+          },
+          {
+            "version": 47,
+            "name": "agent_health_incidents_and_alert_anchor_xor",
+            "executed_at": "2026-10-25T00:08:59.887Z"
+          },
+          {
+            "version": 48,
+            "name": "certops_trust_anchor_installation_agent_linkage",
+            "executed_at": "2026-10-25T00:08:59.895Z"
+          },
+          {
+            "version": 49,
+            "name": "certops_trust_reference_release_idempotency",
+            "executed_at": "2026-10-25T00:08:59.904Z"
+          },
+          {
+            "version": 50,
+            "name": "import_cleanup_scan_provenance",
+            "executed_at": "2026-10-25T00:08:59.909Z"
+          },
+          {
+            "version": 51,
+            "name": "certops_workspace_approval_policy",
+            "executed_at": "2026-10-25T00:08:59.921Z"
+          },
+          {
+            "version": 52,
+            "name": "multi_contact_groups_per_asset",
+            "executed_at": "2026-10-25T00:08:59.924Z"
+          },
+          {
+            "version": 53,
+            "name": "bootstrap_contact_group_ids",
+            "executed_at": "2026-10-25T00:08:59.938Z"
+          },
+          {
+            "version": 54,
+            "name": "rebuild_contact_group_join_from_singular",
+            "executed_at": "2026-10-25T00:08:59.941Z"
+          },
+          {
+            "version": 55,
+            "name": "latest_token_expiry_and_historical_enqueue_indexes",
+            "executed_at": "2026-10-25T00:08:59.943Z"
+          },
+          {
+            "version": 56,
+            "name": "operational_notifications_schema",
+            "executed_at": "2026-10-25T00:08:59.946Z"
+          },
+          {
+            "version": 57,
+            "name": "operational_notification_lifecycle",
+            "executed_at": "2026-10-25T00:08:59.956Z"
+          },
+          {
+            "version": 58,
+            "name": "repair_certops_observation_locality_history",
+            "executed_at": "2026-10-25T00:08:59.960Z"
+          },
+          {
+            "version": 59,
+            "name": "repair_partial_pr72_migration_history",
+            "executed_at": "2026-10-25T00:08:59.979Z"
+          },
+          {
+            "version": 60,
+            "name": "certops_public_csr_workflows",
+            "executed_at": "2026-10-25T00:08:59.987Z"
+          },
+          {
+            "version": 61,
+            "name": "auto_sync_multi_configuration",
+            "executed_at": "2026-10-25T00:09:00.000Z"
+          },
+          {
+            "version": 62,
+            "name": "certops_certificate_identity_and_management_periods",
+            "executed_at": "2026-10-25T00:09:00.024Z"
+          },
+          {
+            "version": 63,
+            "name": "certops_identity_invariants_hardening",
+            "executed_at": "2026-10-25T00:09:00.065Z"
+          },
+          {
+            "version": 64,
+            "name": "certops_rotation_quota_overage",
+            "executed_at": "2026-10-25T00:09:00.093Z"
+          },
+          {
+            "version": 65,
+            "name": "certops_scoped_observation_locks",
+            "executed_at": "2026-10-25T00:09:00.094Z"
+          },
+          {
+            "version": 66,
+            "name": "certops_identity_detail_history",
+            "executed_at": "2026-10-25T00:09:00.097Z"
+          },
+          {
+            "version": 67,
+            "name": "inventory_and_auto_sync_name_length",
+            "executed_at": "2026-10-25T00:09:00.108Z"
+          }
+        ]
+      }
+    },
+    {
+      "name": "released-agent-registration-and-heartbeat",
+      "status": "passed",
+      "evidence": {
+        "id": "96894350-c71f-45d6-b506-301802defae8",
+        "version": "0.17.3",
+        "lastSequence": "3"
+      }
+    },
+    {
+      "name": "released-agent-signed-noop",
+      "status": "passed",
+      "evidence": {
+        "operation": "noop",
+        "mode": "real",
+        "terminalStatus": "succeeded",
+        "claimBoundEvidence": true,
+        "sideEffectsRequested": false
+      }
+    },
+    {
+      "name": "candidate-migrations-preserve-history-and-data",
+      "status": "passed",
+      "evidence": {
+        "preservedRows": [
+          "user",
+          "workspace",
+          "membership",
+          "token",
+          "profile",
+          "certificate",
+          "job"
+        ],
+        "migrationVersions": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+          63,
+          64,
+          65,
+          66,
+          67,
+          68,
+          69,
+          70,
+          71,
+          72,
+          73,
+          74,
+          75,
+          76,
+          77
+        ],
+        "historicalLedgerPreserved": true,
+        "secondBootNoOp": true
+      }
+    },
+    {
+      "name": "upgraded-control-plane-auth-and-new-schema",
+      "status": "passed",
+      "evidence": {
+        "authenticated": true,
+        "preservedWorkspace": true,
+        "preservedInventory": true,
+        "schema": {
+          "enrollments": "certificate_enrollments",
+          "distribution": "certops_distribution_groups",
+          "onboarding": "onboarding_sessions"
+        }
+      }
+    },
+    {
+      "name": "packaged-agent-upgrade-preserves-identity-and-state",
+      "status": "passed",
+      "evidence": {
+        "id": "96894350-c71f-45d6-b506-301802defae8",
+        "version": "0.18.0",
+        "credentialPreserved": true,
+        "signingPinPreserved": true,
+        "configPreserved": true,
+        "sequenceAdvanced": true
+      }
+    },
+    {
+      "name": "upgraded-agent-signed-dry-run",
+      "status": "passed",
+      "evidence": {
+        "operation": "noop",
+        "mode": "dry_run",
+        "terminalStatus": "dry_run_complete",
+        "claimBoundEvidence": true,
+        "sideEffectsRequested": false
+      }
+    },
+    {
+      "name": "upgraded-runtime-restart-preserves-state",
+      "status": "passed",
+      "evidence": {
+        "databaseStatePreserved": true,
+        "authenticationPassed": true,
+        "workerRunning": true
+      }
+    }
+  ],
+  "notQualifiedByThisRun": [
+    "Windows installer or service upgrade",
+    "Linux systemd installer or service upgrade",
+    "native AD CS or real ACME renewal",
+    "Vault publication and distribution",
+    "worker maintenance business logic (worker boot only)",
+    "Helm upgrade",
+    "whole-release sign-off"
+  ],
+  "cleanup": {
+    "complete": true,
+    "errors": []
+  },
+  "finishedAt": "2026-10-25T00:09:44.362Z"
+}

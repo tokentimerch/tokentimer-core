@@ -1,0 +1,222 @@
+{
+  "schemaVersion": 1,
+  "inspectedAt": "2026-10-25T00:18:14Z",
+  "candidateSha": "fcc681c19314b7c2432973ce99d517af36e10238",
+  "purpose": "Map existing current-source CI to the eight agent runtime paths changed since preserved native AD CS qualification; do not imply fresh native CA qualification.",
+  "runs": {
+    "windowsAgent": {
+      "runId": 40143519278,
+      "jobId": 121019984974,
+      "url": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40143519278/job/121019984974",
+      "platform": "Windows Server 2025, 10.0.26100, Datacenter",
+      "testCommand": "node --test --test-concurrency=2 \"src/**/*.test.js\" \"scripts/**/*.test.js\"",
+      "tests": 2004,
+      "passed": 1989,
+      "failed": 0,
+      "skipped": 15,
+      "separateNativeArgumentTest": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "completedTestOutput": "2026-10-24T23:45:04Z",
+      "fullWorkflowAtInspection": "completed_success",
+      "fullWorkflowCompletedAt": "2026-10-24T23:54:42Z",
+      "fullWorkflowJobs": {
+        "total": 16,
+        "success": 16,
+        "failed": 0,
+        "skipped": 0
+      }
+    },
+    "supporting": {
+      "runId": 40143519277,
+      "url": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40143519277",
+      "windows": {
+        "jobId": 121019984706,
+        "tests": 391,
+        "passed": 391,
+        "failed": 0,
+        "skipped": 0,
+        "collectorPythonTests": 38
+      },
+      "ubuntu": {
+        "jobId": 121019984873,
+        "tests": 391,
+        "passed": 388,
+        "failed": 0,
+        "skipped": 3,
+        "collectorPythonTests": 38
+      },
+      "integrationJob": "skipped",
+      "conclusion": "success",
+      "scope": "tooling/inventory/collector self-tests; no real native CA execution"
+    },
+    "focusedWindowsBoundaries": {
+      "runId": 40145857569,
+      "jobId": 121026917611,
+      "url": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40145857569/job/121026917611",
+      "conclusion": "success",
+      "completedAt": "2026-10-25T00:18:13Z",
+      "fixtureSource": "edb0d829d1abea1e49736e8c74653e62d19020d3",
+      "productSource": "fcc681c19314b7c2432973ce99d517af36e10238",
+      "archiveSha256": "062f48b1960685b247b0114b2f7086b7accda23f8788895078da627f8844507c",
+      "environment": {
+        "port": 55263,
+        "osVersion": "10.0.20348.0",
+        "language": "en-US",
+        "site": "tt-core-delta-4815a28464c5e63fb64a94c0",
+        "identity": "runnervma5ucf\\runneradmin"
+      },
+      "passedChecks": 5,
+      "cleanup": {
+        "complete": true,
+        "errors": []
+      },
+      "receiptFile": "windows-boundaries-receipt.json"
+    },
+    "patchedWindowsHelpers": {
+      "runId": 40145857569,
+      "jobId": 121026917830,
+      "url": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40145857569/job/121026917830",
+      "conclusion": "success",
+      "completedAt": "2026-10-25T00:15:30Z",
+      "fixtureSource": "edb0d829d1abea1e49736e8c74653e62d19020d3",
+      "productSource": "fcc681c19314b7c2432973ce99d517af36e10238",
+      "goVersion": "go1.26.10",
+      "goPassingTestEvents": 92,
+      "goTopLevelPassingTestEvents": 46,
+      "failed": 0,
+      "skipped": 0,
+      "actualArchiveCmcSignedFixture": "passed",
+      "actualArchiveCmcWrongPinRefusal": "passed",
+      "archiveSha256": "062f48b1960685b247b0114b2f7086b7accda23f8788895078da627f8844507c",
+      "receiptFile": "windows-helpers-receipt.json"
+    }
+  },
+  "deltaGroups": [
+    {
+      "paths": [
+        "packages/agent/src/issuers/adcs-enrollment-journal.js"
+      ],
+      "behavior": "Skip repeated directory ACL application only after ensureEnrollmentDir has applied the directory ACL; preserve per-file restrictive permissions, atomic rename and fsync.",
+      "evidenceType": "actual Windows filesystem and production permission calls",
+      "sources": [
+        "packages/agent/src/issuers/adcs-enrollment-journal.js:133-178",
+        "packages/agent/src/issuers/adcs-enrollment-journal.test.js:67-124",
+        "packages/agent/src/issuers/adcs-enrollment-journal.test.js:344-379",
+        "packages/agent/src/issuers/adcs-enrollment-journal.test.js:491-532"
+      ],
+      "passingTestNames": [
+        "writes keygen intent and protects the container before prepared",
+        "requires csr.pem for prepared and verifies hash on read",
+        "hashes the exact CSR bytes persisted (including normalized newline)",
+        "persists issued leaf before validation_deferred can be journaled",
+        "reloads a deferred tier-2 candidate leaf after restart without CA retrieve",
+        "fails closed when a deferred candidate is missing its leaf artifact",
+        "re-asserts the ACL when a foreign principal was granted (win32)",
+        "enforces a real restricted ACL end to end on win32"
+      ],
+      "establishes": "The changed journal persistence path executes on a real Windows OS with real restrictive-permission operations; journal readback/restart/corruption invariants pass.",
+      "doesNotEstablish": "A new LocalSystem/domain-member/live-CA end-to-end campaign or new packaged Windows service qualification.",
+      "disposition": "Use this existing focused real-OS evidence together with prior native qualification; no evidence-based need for a blanket AD CS rerun due to this JavaScript delta."
+    },
+    {
+      "paths": [
+        "packages/agent/src/discovery/index.js",
+        "packages/agent/src/discovery/windows.js",
+        "packages/agent/src/windows-discovery/index.js",
+        "packages/agent/src/index.js"
+      ],
+      "behavior": "Normalize empty certificate subject and issuer to null in parsers, observations, and evidence.",
+      "evidenceType": "Real X509 bytes/filesystem scan plus actual packaged Windows certificate-store collection and production evidence construction on Windows Server 2022/en-US.",
+      "sources": [
+        "packages/agent/src/index.test.js:312-324",
+        "packages/agent/src/windows-discovery/windows-discovery.test.js:251-268"
+      ],
+      "passingTestNames": [
+        "reports SAN-only certificates with an empty subject through the evidence contract",
+        "reports an empty subject as null",
+        "decodes subject and issuer from UTF-16 code units, including non-ASCII names",
+        "reads real SAN entries directly from a certificate's own raw DER bytes"
+      ],
+      "establishes": "The actual verified package enumerated an owned real LocalMachine Windows store containing the SAN-only certificate; preserved null subject, both SANs, fingerprint and keyPresent=false; then emitted certificate.observed through the production evidence builder. Zero collector warnings. Earlier fixture/filesystem coverage remains valid.",
+      "doesNotEstablish": "Fresh API ingestion over the network, domain/CA acceptance, LocalSystem service context, other Windows OS/language cells, or the formal stock collector profile.",
+      "disposition": "The changed Windows store boundary is now demonstrated on the real OS with the exact replacement archive; carry the original native CA evidence and this narrow delta receipt without a blanket native campaign rerun.",
+      "previousEvidenceType": "real X509 fixture bytes and filesystem scan; mocked transport/Windows-store boundary",
+      "nativeBoundaryReceipt": "windows-boundaries-receipt.json"
+    },
+    {
+      "paths": [
+        "packages/agent/src/windows-iis/index.js"
+      ],
+      "behavior": "Map IIS wildcard '*' to http.sys '0.0.0.0' for netsh ipport selectors.",
+      "evidenceType": "Actual packaged wildcard IIS/http.sys binding mutation, independent netsh query, and real TLS handshake with exact certificate and owned IIS content.",
+      "sources": [
+        "packages/agent/src/windows-iis/windows-iis.test.js:237-245"
+      ],
+      "passingTestNames": [
+        "writes the IIS wildcard as 0.0.0.0 because netsh rejects an asterisk"
+      ],
+      "establishes": "On Windows Server 2022/en-US/admin, the actual package replaced an owned wildcard HTTPS binding from an old certificate to a new self-signed certificate. Independent netsh reported the expected 0.0.0.0 selector/new thumbprint, and HTTPS returned the exact new certificate fingerprint and owned IIS content. All owned resources and private keys were removed with cleanup complete.",
+      "doesNotEstablish": "Trusted-chain validation for the self-signed fixture, AD CS or domain authentication, SCM service installation/upgrade, arm64 execution, or other Windows versions/languages.",
+      "disposition": "The precise changed live wildcard-binding edge is now covered; a full native CA campaign is not implied by this JavaScript delta.",
+      "previousEvidenceType": "direct formatter and selector regression",
+      "nativeBoundaryReceipt": "windows-boundaries-receipt.json"
+    },
+    {
+      "paths": [
+        "packages/agent/src/dns/propagate.js"
+      ],
+      "behavior": "Keep IPv4 and IPv6 nameservers when interface enumeration throws instead of aborting verification.",
+      "evidenceType": "injected interface enumeration exception",
+      "sources": [
+        "packages/agent/src/dns/propagate.test.js:343-351"
+      ],
+      "passingTestNames": [
+        "filterServersByUsableAddressFamily keeps every server when the interface list is unavailable"
+      ],
+      "establishes": "The changed fallback branch executes and preserves both address families.",
+      "doesNotEstablish": "Running under a systemd netlink restriction or a real DNS propagation campaign.",
+      "disposition": "Focused unit regression covers the deterministic branch; not an AD CS-specific source change."
+    },
+    {
+      "paths": [
+        "packages/agent/vendor/log-scrub/secret-material.js"
+      ],
+      "behavior": "Detect short/nested/compressed private-key material while preserving safe header-shaped identifiers and bounded decompression.",
+      "evidenceType": "real zlib compression/decompression and production logger/scrubber",
+      "sources": [
+        "packages/agent/src/logging/logging.test.js:108-175"
+      ],
+      "passingTestNames": [
+        "agent logger redacts compact zlib-deflate Ed25519 material in message and metadata",
+        "agent logger and console reject short nested private material in both alphabets",
+        "agent logger and console redact compact gzip private material with a truncated trailer",
+        "agent logger and console retain the short-stream output budget",
+        "agent logger and console preserve short header-shaped identifiers"
+      ],
+      "establishes": "Real compression and logger output cover the security-sensitive changed branches without native-process mocks.",
+      "doesNotEstablish": "Whole-agent privacy under every native operational scenario.",
+      "disposition": "Existing focused code regression is relevant evidence; no native CA rerun required for this pure parsing/logging delta."
+    }
+  ],
+  "newQualificationToolingDelta": {
+    "files": [
+      "infra/certops-adcs/windows-tools.ps1",
+      "scripts/certops-adcs-domain-member.test.js"
+    ],
+    "behavior": "Explicitly import inbox Microsoft.PowerShell.Utility by PSHOME path so Get-FileHash remains available when module auto-loading is disabled.",
+    "evidence": "Current supporting Windows tooling passes all391 tests. The regression executes a PowerShell probe with module auto-loading disabled and real Get-FileHash while network/download edges are stubbed.",
+    "sources": [
+      "infra/certops-adcs/windows-tools.ps1:13-16",
+      "scripts/certops-adcs-domain-member.test.js:241-298"
+    ],
+    "limitation": "Tooling self-test; not a new native CA campaign."
+  },
+  "exclusions": [
+    "This mapping does not automatically qualify rebuilt Go/native binaries. Any new compiler/runtime build must be covered by its separate artifact provenance/security and focused binary acceptance receipts.",
+    "Prior 169 distinct native scenario passes remain preserved on their historical sources and environment; this mapping does not relabel them as a stock nine-environment collector pass.",
+    "Focused hosted execution used disposable self-signed certificates and a public SAN-only certificate in owned IIS/store resources; no domain/CA lab or new AD CS campaign was started."
+  ]
+}

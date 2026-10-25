@@ -1,0 +1,270 @@
+{
+  "schemaVersion": 1,
+  "evaluatedAtUtc": "2026-10-24T23:51:20.761182+00:00",
+  "scanner": {
+    "name": "grype",
+    "version": "0.112.0",
+    "linuxAmd64ReleaseArchiveSha256": "acb14a030010fe9bdb9594b4ae108d9d14ef2f926d936aa0916dc62c89c058ea"
+  },
+  "gateArguments": [
+    "--fail-on",
+    "high",
+    "--only-fixed"
+  ],
+  "gateExitCodesObserved": {
+    "api": 0,
+    "worker": 0,
+    "dashboard": 0,
+    "k8s-controller": 0,
+    "agent": 2
+  },
+  "targets": [
+    {
+      "name": "api",
+      "sourceType": "image",
+      "source": {
+        "userInput": "ghcr.io/tokentimerch/tokentimer-core-api@sha256:b426671327577936f0666952047553aa7e8e5ec7369a5e5b0cf654127eaa235d",
+        "manifestDigest": "sha256:3c860e17c6b7587a55de576f4a6439dc578d3237e936d8d08d0aa1849a3e269a",
+        "imageID": "sha256:c2c07b36d8c26117f35bdb3e50aa47e74baa9fe4f20897bce26af3c2be7888a6",
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "scanTimestamp": "2026-10-25T02:45:01.333229935+03:00",
+      "allMatches": 7,
+      "allSeverityCounts": {
+        "Medium": 3,
+        "Unknown": 4
+      },
+      "gatedMatches": 3,
+      "gatedSeverityCounts": {
+        "Unknown": 3
+      },
+      "gateExitCode": 0,
+      "gatePassed": true,
+      "reports": {
+        "all.json": {
+          "path": "image-scans/api-all.json",
+          "sha256": "609329e0b5a4b536b220729fc18dd585b716e286ac0f31e58399b03b03e3b2ea"
+        },
+        "all.sarif": {
+          "path": "image-scans/api-all.sarif",
+          "sha256": "18b8f64c46ae5fda60d5a91544af198cedd4f6f9bcd606f2690070cca41c6f01"
+        },
+        "gate.json": {
+          "path": "image-scans/api-gate.json",
+          "sha256": "9a3ea2fda236149d9a0a52f0f5882a3812ce239cdff1b6aee356f36cacd10513"
+        }
+      },
+      "highCriticalAllFindings": []
+    },
+    {
+      "name": "worker",
+      "sourceType": "image",
+      "source": {
+        "userInput": "ghcr.io/tokentimerch/tokentimer-core-worker@sha256:5cfe19338693d24eb912e213a19012f3ffc8f066fae49df9bf16d5de4a38f536",
+        "manifestDigest": "sha256:0f6a8e8fea84deb63399d93286ce3b2e9dfbbb15ff5f82060ac270ae6ee5ff15",
+        "imageID": "sha256:db10bf35364fd7a6c2537984f0f52e34bd77b33f7a69dacd9f6597c4dae78b13",
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "scanTimestamp": "2026-10-25T02:46:18.746523464+03:00",
+      "allMatches": 7,
+      "allSeverityCounts": {
+        "High": 1,
+        "Medium": 4,
+        "Unknown": 2
+      },
+      "gatedMatches": 2,
+      "gatedSeverityCounts": {
+        "Unknown": 2
+      },
+      "gateExitCode": 0,
+      "gatePassed": true,
+      "reports": {
+        "all.json": {
+          "path": "image-scans/worker-all.json",
+          "sha256": "fc35bdbdd2df9317e9840903d05031d260065c9959df235b195ba740299ed86d"
+        },
+        "all.sarif": {
+          "path": "image-scans/worker-all.sarif",
+          "sha256": "e1c6ee0e52510be0452c919874f0c06e6015026c5f555f1df5ce30cce7b68a52"
+        },
+        "gate.json": {
+          "path": "image-scans/worker-gate.json",
+          "sha256": "fcc937b25d0491bcb18f8da815933a47341a35b47be87f620cbe81e2d632fdac"
+        }
+      },
+      "highCriticalAllFindings": [
+        {
+          "id": "CVE-2026-92392",
+          "severity": "High",
+          "package": "curl",
+          "version": "8.22.0-r0",
+          "fix": {
+            "versions": [],
+            "state": "unknown"
+          }
+        }
+      ]
+    },
+    {
+      "name": "dashboard",
+      "sourceType": "image",
+      "source": {
+        "userInput": "ghcr.io/tokentimerch/tokentimer-core-dashboard@sha256:0083d81f53e6492b93538fcba17600c4846c11221c17081757286e9081dd6168",
+        "manifestDigest": "sha256:428c87a8b5b966d636ef850f8396b4a4193eadf86e1203223f2b98e49c5a6a42",
+        "imageID": "sha256:69c138d31c8900232fd08e4ed3c4fe2e5c13ead44d6c28c152bc012122652ece",
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "scanTimestamp": "2026-10-25T02:46:05.871411992+03:00",
+      "allMatches": 8,
+      "allSeverityCounts": {
+        "High": 2,
+        "Critical": 1,
+        "Medium": 5
+      },
+      "gatedMatches": 0,
+      "gatedSeverityCounts": {},
+      "gateExitCode": 0,
+      "gatePassed": true,
+      "reports": {
+        "all.json": {
+          "path": "image-scans/dashboard-all.json",
+          "sha256": "01e06eb367400927e2837d6d030ff2abb366652d4482d32d8582ccfd187b283c"
+        },
+        "all.sarif": {
+          "path": "image-scans/dashboard-all.sarif",
+          "sha256": "439f6e72abfa37a3b1f68032a3d0726b48600feab8ceb987b95553306f289c91"
+        },
+        "gate.json": {
+          "path": "image-scans/dashboard-gate.json",
+          "sha256": "63ce34becbdf3d3fb817935a7ba053bfed3eb4033a9daaa22a6704d86994eb0f"
+        }
+      },
+      "highCriticalAllFindings": [
+        {
+          "id": "CVE-2026-92392",
+          "severity": "High",
+          "package": "curl",
+          "version": "8.22.0-r0",
+          "fix": {
+            "versions": [],
+            "state": "unknown"
+          }
+        },
+        {
+          "id": "CVE-2026-15176",
+          "severity": "Critical",
+          "package": "nginx",
+          "version": "1.28.3-r7",
+          "fix": {
+            "versions": [],
+            "state": "unknown"
+          }
+        },
+        {
+          "id": "CVE-2026-97629",
+          "severity": "High",
+          "package": "nginx",
+          "version": "1.28.3-r7",
+          "fix": {
+            "versions": [],
+            "state": "unknown"
+          }
+        }
+      ]
+    },
+    {
+      "name": "k8s-controller",
+      "sourceType": "image",
+      "source": {
+        "userInput": "ghcr.io/tokentimerch/tokentimer-core-k8s-controller@sha256:bc0db7b6c813a73e3d097fce8ac3a23498ca501a551e54ad2776fcf83c39446a",
+        "manifestDigest": "sha256:aafc61900e6ec90f0169c85d85fe41c3b48a73a9e9a1b39b232e6d40a980abef",
+        "imageID": "sha256:edc064635af1a4eb9112ea3fdb312d4a28ec671b1b7b34c6936e99b2d15b4493",
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "scanTimestamp": "2026-10-25T02:46:11.491408704+03:00",
+      "allMatches": 5,
+      "allSeverityCounts": {
+        "Medium": 3,
+        "Unknown": 2
+      },
+      "gatedMatches": 2,
+      "gatedSeverityCounts": {
+        "Unknown": 2
+      },
+      "gateExitCode": 0,
+      "gatePassed": true,
+      "reports": {
+        "all.json": {
+          "path": "image-scans/k8s-controller-all.json",
+          "sha256": "6a16a1e48644d9aaf65bc79024392944594188201c60d2564df64e4ac4ce0411"
+        },
+        "all.sarif": {
+          "path": "image-scans/k8s-controller-all.sarif",
+          "sha256": "0ee80a91be499e69a3a5adebc9fcd305d9acfc92ecc6817765fa022f228a071e"
+        },
+        "gate.json": {
+          "path": "image-scans/k8s-controller-gate.json",
+          "sha256": "2c09749047e789a455ec9f25c0505a6501358572f84aeeede9aa573ed9fea501"
+        }
+      },
+      "highCriticalAllFindings": []
+    },
+    {
+      "name": "agent",
+      "sourceType": "directory",
+      "source": "/workspace/scratch/f9a42a83177f/core-release-prep/artifacts/candidate-agent-69387/extracted/package",
+      "scanTimestamp": "2026-10-25T02:46:20.283734137+03:00",
+      "allMatches": 646,
+      "allSeverityCounts": {
+        "High": 384,
+        "Critical": 34,
+        "Medium": 208,
+        "Unknown": 6,
+        "Low": 14
+      },
+      "gatedMatches": 646,
+      "gatedSeverityCounts": {
+        "High": 384,
+        "Critical": 34,
+        "Medium": 208,
+        "Unknown": 6,
+        "Low": 14
+      },
+      "gateExitCode": 2,
+      "gatePassed": false,
+      "reports": {
+        "all.json": {
+          "path": "image-scans/agent-all.json",
+          "sha256": "12999d45fa5f098957e6f9c73940e8a7ff4d9f9219b4feb702eeb9e932ea879d"
+        },
+        "all.sarif": {
+          "path": "image-scans/agent-all.sarif",
+          "sha256": "c96cdde62e36a46b2aa5b77f77fcbc32b2d0bddacb3d01176c9c974bdb2ae5a5"
+        },
+        "gate.json": {
+          "path": "image-scans/agent-gate.json",
+          "sha256": "69aa23642d1bf45dcfbf1b6bcb6e2bdf870b0030d450caa7499f5d375aff49e2"
+        }
+      },
+      "distinctGoHighCriticalAdvisories": 35
+    }
+  ],
+  "database": {
+    "schemaVersion": "v6.1.10",
+    "from": "https://grype.anchore.io/databases/v6/vulnerability-db_v6.1.10_2026-10-24T00:30:17Z_1792863929.tar.zst?checksum=sha256%3A44f318e4a6dbba9a870bb84470ed20bf4cc24ffa41c0882dfe0ebd5a3ff771c5",
+    "built": "2026-10-24T17:45:29Z",
+    "path": "/workspace/scratch/f9a42a83177f/core-release-prep/packaging/grype-cache/6/vulnerability.db",
+    "valid": true
+  },
+  "limitations": [
+    "Scanner matches are package/version evidence, not proof of exploitability. Multiple advisory aliases and separate binaries produce repeated matches.",
+    "Image scans selected the linux/amd64 child manifest of each immutable index; no claim about additional platform variants.",
+    "Only-fixed High/Critical policy passes do not exclude unfixed High/Critical findings or fixes assigned Unknown severity.",
+    "No image or Windows native binary was executed during these scans.",
+    "The old agent package is blocked for reuse by the applied artifact security gate; a rebuilt package and its exact native acceptance require fresh receipts."
+  ]
+}

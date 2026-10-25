@@ -1,0 +1,441 @@
+{
+  "schemaVersion": 1,
+  "scope": "corrected-source-postgresql-and-real-vault-support",
+  "status": "passed",
+  "runId": 40149240400,
+  "runAttempt": 1,
+  "runUrl": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40149240400",
+  "jobId": 121037055302,
+  "jobUrl": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40149240400/job/121037055302",
+  "completedAt": "2026-10-25T01:06:39Z",
+  "candidateSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+  "reviewedProductSourceSha": "b1b92cb36de0ef0d8647f1122d18b075d06c17ea",
+  "trustedRuntimeSourceSha": "fcc681c19314b7c2432973ce99d517af36e10238",
+  "artifact": {
+    "id": 12581966371,
+    "name": "distribution-postgres",
+    "zipSha256": "6d12896ba8d6b095686a9cae1bdd9aeec714b7b4c4b3f147fdb696812eb94397",
+    "githubDigestMatches": true
+  },
+  "reportGuards": {
+    "passed": 13,
+    "failed": 0,
+    "skipped": 0,
+    "todo": 0
+  },
+  "summaries": [
+    {
+      "path": "distribution-postgres-3470a9193af7cd164034f87c347cb5d9/summary.json",
+      "sha256": "6faf9cc00253ce6000005d1473f18a334b1550b8f2784264ad5896d9873195de",
+      "report": {
+        "schemaVersion": 1,
+        "scope": "distribution-functional-support",
+        "kind": "postgres",
+        "qualificationStatus": "not-qualified",
+        "startedAt": "2026-10-25T01:05:46.991Z",
+        "fixtureSources": [
+          {
+            "file": ".github/workflows/certops-distribution-qualification.yml",
+            "sha256": "cd9e2534bd2f8dbbd525bf5d9b8e6bbe0ce5a42601959fffc3ab47c130e3839c"
+          },
+          {
+            "file": "apps/api/services/certops/distributionOperations.js",
+            "sha256": "ea8000b4fc257e2d7193d642c05831cac7c0dbc37dc464d7b5a88d115f5cd49b"
+          },
+          {
+            "file": "apps/api/services/certops/distributionPolicy.js",
+            "sha256": "b422f20dd06744fdb8e850d3ef1c8f3760897a807c3f3ceaedd76969d20109b5"
+          },
+          {
+            "file": "apps/api/services/certops/distributionRead.js",
+            "sha256": "5b4d109098e80ae73ef6c5c662812866bdf357bb304b3286e6702ec57038611f"
+          },
+          {
+            "file": "apps/api/services/certops/materialDistribution.js",
+            "sha256": "38b270eca5f496cca36d2efe01d95e0a1d8a028cd90e508b52e5f8285b11ed9d"
+          },
+          {
+            "file": "packages/agent/src/material-store/index.js",
+            "sha256": "c49f581db99958b8910bbbe58e761315dbc56bd9dda588af28d4de1929648dc3"
+          },
+          {
+            "file": "packages/agent/src/material-store/lifecycle.js",
+            "sha256": "0e6c5f25d8d0efac0625432ce8760e512cacea714bcad020d039922e036d78c3"
+          },
+          {
+            "file": "packages/agent/src/material-store/lifecycle.test.js",
+            "sha256": "ec82306d162544c2b2c63c13cfb9057224c94c24974f0c4a30e311da57462a6b"
+          },
+          {
+            "file": "packages/agent/src/material-store/material-store.test.js",
+            "sha256": "8735761d0190423cf2ff4d6b42422fc8961f5fb7242b303e3bdc2c1934b66ba7"
+          },
+          {
+            "file": "scripts/certops-distribution-functional-summary.js",
+            "sha256": "2ad232e24c1a076fef9fc4d932d9e9c9b9f1f86069f22a881c6bc3b5bf7b83d9"
+          },
+          {
+            "file": "scripts/certops-distribution-postgres.js",
+            "sha256": "5d42dbd90579bdfa0549c4e682cdfbb465810cb0ce33d787197c98e433338d20"
+          },
+          {
+            "file": "tests/wildcard-vault/postgres.test.cjs",
+            "sha256": "a743486e541da2b06df51660a1849becb98838f9354b6e7a59d62b7abc396840"
+          },
+          {
+            "file": "tests/wildcard-vault/pr329-review.test.cjs",
+            "sha256": "65bc9dce2a2843708938a170bc498778a00b0fadc8e306d0af72d114f57eb7df"
+          },
+          {
+            "file": "tests/wildcard-vault/qualification-database.cjs",
+            "sha256": "a9d9ddc05f9567fc7446bf2ee78d461ff819e2e2f3c97cbefd79a733d7e70a9b"
+          },
+          {
+            "file": "tests/wildcard-vault/transfer.test.cjs",
+            "sha256": "5afb0c3df04536ea159e65efbbfb1471689618f858c4240af7ffa56e438ded1a"
+          }
+        ],
+        "candidateSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+        "evidenceLevel": "integration",
+        "nativeAgentQualified": false,
+        "tests": [
+          {
+            "suite": "distribution-postgres-postgres",
+            "status": "passed",
+            "report": "postgres.jsonl"
+          },
+          {
+            "suite": "distribution-postgres-pr329-review",
+            "status": "passed",
+            "report": "pr329-review.jsonl"
+          },
+          {
+            "suite": "distribution-postgres-transfer",
+            "status": "passed",
+            "report": "transfer.jsonl"
+          }
+        ],
+        "status": "passed",
+        "cleanup": "passed",
+        "finishedAt": "2026-10-25T01:06:11.524Z"
+      }
+    },
+    {
+      "path": "distribution-vault-12e77818755ab13f64d2e997/summary.json",
+      "sha256": "62ce31eebc963ca5701b4ad373e7e2f2b1bc32dbb5fdff152d53a6fcd50fb55d",
+      "report": {
+        "schemaVersion": 1,
+        "scope": "distribution-functional-support",
+        "kind": "vault",
+        "qualificationStatus": "not-qualified",
+        "startedAt": "2026-10-25T01:06:11.576Z",
+        "fixtureSources": [
+          {
+            "file": ".github/workflows/certops-distribution-qualification.yml",
+            "sha256": "cd9e2534bd2f8dbbd525bf5d9b8e6bbe0ce5a42601959fffc3ab47c130e3839c"
+          },
+          {
+            "file": "packages/agent/src/material-store/index.js",
+            "sha256": "c49f581db99958b8910bbbe58e761315dbc56bd9dda588af28d4de1929648dc3"
+          },
+          {
+            "file": "packages/agent/src/material-store/lifecycle.js",
+            "sha256": "0e6c5f25d8d0efac0625432ce8760e512cacea714bcad020d039922e036d78c3"
+          },
+          {
+            "file": "packages/agent/src/material-store/lifecycle.test.js",
+            "sha256": "ec82306d162544c2b2c63c13cfb9057224c94c24974f0c4a30e311da57462a6b"
+          },
+          {
+            "file": "packages/agent/src/material-store/material-store.test.js",
+            "sha256": "8735761d0190423cf2ff4d6b42422fc8961f5fb7242b303e3bdc2c1934b66ba7"
+          },
+          {
+            "file": "scripts/certops-distribution-functional-summary.js",
+            "sha256": "2ad232e24c1a076fef9fc4d932d9e9c9b9f1f86069f22a881c6bc3b5bf7b83d9"
+          },
+          {
+            "file": "scripts/certops-distribution-vault.js",
+            "sha256": "6618da4a25e0c9ca72e5091ea6c3d38e44d3b6411383aead36e2f4bf6e7ffde5"
+          },
+          {
+            "file": "tests/wildcard-vault/Dockerfile.fixture",
+            "sha256": "d844a0757fc36546960687938cb5c1aed2c3574b2d190878128ffe1d9082d86f"
+          }
+        ],
+        "tests": [
+          {
+            "suite": "distribution-vault-adapter",
+            "status": "passed",
+            "report": "adapter.jsonl"
+          }
+        ],
+        "status": "passed",
+        "evidenceLevel": "integration",
+        "nativeAgentQualified": false,
+        "candidateSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+        "cleanup": "passed",
+        "finishedAt": "2026-10-25T01:06:34.405Z"
+      }
+    }
+  ],
+  "testReports": [
+    {
+      "path": "distribution-postgres-3470a9193af7cd164034f87c347cb5d9/postgres.jsonl",
+      "sha256": "426f3514d7ec628091e05caf47dd3c61ee13db30f56c54cbce8d6b74956d537c",
+      "scope": "distribution-postgres-postgres",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "todo": 0,
+      "environment": {
+        "osFamily": "linux",
+        "osVersion": "6.17.0-1022-azure",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04",
+        "executionSurface": "host",
+        "libc": "glibc",
+        "nativeLanguage": "en-US",
+        "identity": "uid:1001",
+        "measurement": "native"
+      },
+      "primarySource": {
+        "file": "tests/wildcard-vault/postgres.test.cjs",
+        "sha256": "a743486e541da2b06df51660a1849becb98838f9354b6e7a59d62b7abc396840"
+      },
+      "passingTests": [
+        "real PostgreSQL publication, renewal identities, approvals, frozen waves, stale results and scope",
+        "terminal never-executed publications release transactionally; uncertain attempts remain fenced"
+      ]
+    },
+    {
+      "path": "distribution-postgres-3470a9193af7cd164034f87c347cb5d9/pr329-review.jsonl",
+      "sha256": "bcf640d604deb3a8a109ed9b9021c4b56c6acf8a63e30323d62675bf9349dda9",
+      "scope": "distribution-postgres-pr329-review",
+      "passed": 29,
+      "failed": 0,
+      "skipped": 0,
+      "todo": 0,
+      "environment": {
+        "osFamily": "linux",
+        "osVersion": "6.17.0-1022-azure",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04",
+        "executionSurface": "host",
+        "libc": "glibc",
+        "nativeLanguage": "en-US",
+        "identity": "uid:1001",
+        "measurement": "native"
+      },
+      "primarySource": {
+        "file": "tests/wildcard-vault/pr329-review.test.cjs",
+        "sha256": "65bc9dce2a2843708938a170bc498778a00b0fadc8e306d0af72d114f57eb7df"
+      },
+      "passingTests": [
+        "manual renewal serializes same-key snapshot lookup with PostgreSQL transaction locks",
+        "retired pending deployment cannot starve the next approved rollout with maxJobs one",
+        "public material versions never expose publishing claims to administrators or managers",
+        "paused workspaces allow authorized rollout containment without admitting execution",
+        "receipt commits first",
+        "binding commits first",
+        "optional authorization changes concurrent with successful receipts yield a degraded rollout and retain audit proof",
+        "distribution mutations require session managers through real upstream worker/workspace middleware",
+        "malformed distribution identifiers return 422 without creating jobs",
+        "a valid active rollout expires while waiting for its offline consumer",
+        "expired",
+        "revoked",
+        "decommissioned",
+        "superseded",
+        "period_closed",
+        "group_disabled",
+        "stale rollouts retire without queuing offline consumers or exhausting outbox retries",
+        "renewal health returns one current-period issuer across single, workspace and page projections",
+        "binding changes terminally invalidate approval, preserve snapshots and permit a fresh API request",
+        "expansion serializes a concurrent binding edit and preserves the approved snapshot",
+        "workspace transfer retains source history and creates no destination issuer dependency",
+        "every distribution write route rejects private-key material before any handler runs and persists or logs none of it",
+        "a required failure in a later wave pauses the rollout, keeps earlier waves current and starts nothing further",
+        "a required failure inside a wave pauses the rollout without disturbing its verified sibling or later waves",
+        "optional canary failure: later required waves still deploy and the rollout ends degraded",
+        "optional failure in the final wave completes the required destinations and reports degraded",
+        "a required failure still pauses when an optional destination succeeded",
+        "a required failure after an earlier optional failure pauses rather than degrades",
+        "an optional destination failure never blocks the rollout, a required one does"
+      ]
+    },
+    {
+      "path": "distribution-postgres-3470a9193af7cd164034f87c347cb5d9/transfer.jsonl",
+      "sha256": "78385a0c73180563856d04c62ef16bdefaf2c6fea0ff3d17bddd95560cbbb222",
+      "scope": "distribution-postgres-transfer",
+      "passed": 19,
+      "failed": 0,
+      "skipped": 0,
+      "todo": 0,
+      "environment": {
+        "osFamily": "linux",
+        "osVersion": "6.17.0-1022-azure",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04",
+        "executionSurface": "host",
+        "libc": "glibc",
+        "nativeLanguage": "en-US",
+        "identity": "uid:1001",
+        "measurement": "native"
+      },
+      "primarySource": {
+        "file": "tests/wildcard-vault/transfer.test.cjs",
+        "sha256": "5afb0c3df04536ea159e65efbbfb1471689618f858c4240af7ffa56e438ded1a"
+      },
+      "passingTests": [
+        "ordinary certificate/token transfer remains functional",
+        "published Vault certificate transfers public inventory without source authorizations or a destination integration",
+        "historical groups, completed rollouts and their approval/evidence retain source provenance",
+        "unclaimed pending deployment is cancelled, not moved or reauthorized",
+        "claimed",
+        "running",
+        "orphaned_unknown_effect",
+        "claimed/running/uncertain distribution work requires reconciliation with an actionable API error",
+        "an active result/job lock yields a bounded reconciliation response rather than a deadlock",
+        "never-started initial publication is cancelled and releases only its unused allocation",
+        "pending",
+        "pending_approval",
+        "approved",
+        "transfer terminalizes every unstarted publication admission state and leaves no claimable source work",
+        "pending retry",
+        "allocated publication",
+        "attempted pending renewal and unresolved publication require reconciliation",
+        "transfer serializes a concurrent rollout and leaves no new executable source work",
+        "destination authorization denial and quota failure roll back inventory and source authority"
+      ]
+    },
+    {
+      "path": "distribution-vault-12e77818755ab13f64d2e997/adapter.jsonl",
+      "sha256": "35d8df500371f8a589328f7535b744e60d17807345eb8ea1991e0a4760fbb43e",
+      "scope": "distribution-vault-adapter",
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "todo": 0,
+      "environment": {
+        "osFamily": "linux",
+        "osVersion": "6.17.0-1022-azure",
+        "distributionId": "debian",
+        "distributionVersion": "12",
+        "executionSurface": "container",
+        "libc": "glibc",
+        "nativeLanguage": "en-US",
+        "identity": "uid:0",
+        "measurement": "native"
+      },
+      "primarySource": {
+        "file": "packages/agent/src/material-store/material-store.test.js",
+        "sha256": "8735761d0190423cf2ff4d6b42422fc8961f5fb7242b303e3bdc2c1934b66ba7"
+      },
+      "passingTests": [
+        "publication uses CAS=0, reconciles lost response, and fetch pins version",
+        "local authority rejects cross-customer, arbitrary aliases and HTTP",
+        "real isolated Vault KV v2: pinned publication and idempotent CAS",
+        "CAS conflict never adopts unrelated existing bytes or returns Vault errors",
+        "real Vault ACL separates issuer, consumer, scanner and customer prefixes",
+        "checkpoint without validated material exposes uncertainty and never permits a new order",
+        "local binding lock excludes concurrent deployment and releases after failure",
+        "custom issuer custody survives lost responses and recovery; next CSR reuses the promoted key",
+        "bounded transport times out a stalled Vault body without exposing contents"
+      ]
+    }
+  ],
+  "counts": {
+    "postgresPassingEvents": 50,
+    "vaultAdapterPassingEvents": 9,
+    "passingEvents": 59,
+    "supportingCohorts": 4,
+    "failed": 0,
+    "skipped": 0,
+    "todo": 0
+  },
+  "sourceVerification": {
+    "supportingInventoryEntriesVerified": 23,
+    "testEventSourceEntriesVerified": 59,
+    "distinctPrimaryTestFilesVerified": 4,
+    "uniqueFilesVerified": 17,
+    "allMatchActualCandidate": true,
+    "sourceHashes": [
+      {
+        "file": ".github/workflows/certops-distribution-qualification.yml",
+        "sha256": "cd9e2534bd2f8dbbd525bf5d9b8e6bbe0ce5a42601959fffc3ab47c130e3839c"
+      },
+      {
+        "file": "apps/api/services/certops/distributionOperations.js",
+        "sha256": "ea8000b4fc257e2d7193d642c05831cac7c0dbc37dc464d7b5a88d115f5cd49b"
+      },
+      {
+        "file": "apps/api/services/certops/distributionPolicy.js",
+        "sha256": "b422f20dd06744fdb8e850d3ef1c8f3760897a807c3f3ceaedd76969d20109b5"
+      },
+      {
+        "file": "apps/api/services/certops/distributionRead.js",
+        "sha256": "5b4d109098e80ae73ef6c5c662812866bdf357bb304b3286e6702ec57038611f"
+      },
+      {
+        "file": "apps/api/services/certops/materialDistribution.js",
+        "sha256": "38b270eca5f496cca36d2efe01d95e0a1d8a028cd90e508b52e5f8285b11ed9d"
+      },
+      {
+        "file": "packages/agent/src/material-store/index.js",
+        "sha256": "c49f581db99958b8910bbbe58e761315dbc56bd9dda588af28d4de1929648dc3"
+      },
+      {
+        "file": "packages/agent/src/material-store/lifecycle.js",
+        "sha256": "0e6c5f25d8d0efac0625432ce8760e512cacea714bcad020d039922e036d78c3"
+      },
+      {
+        "file": "packages/agent/src/material-store/lifecycle.test.js",
+        "sha256": "ec82306d162544c2b2c63c13cfb9057224c94c24974f0c4a30e311da57462a6b"
+      },
+      {
+        "file": "packages/agent/src/material-store/material-store.test.js",
+        "sha256": "8735761d0190423cf2ff4d6b42422fc8961f5fb7242b303e3bdc2c1934b66ba7"
+      },
+      {
+        "file": "scripts/certops-distribution-functional-summary.js",
+        "sha256": "2ad232e24c1a076fef9fc4d932d9e9c9b9f1f86069f22a881c6bc3b5bf7b83d9"
+      },
+      {
+        "file": "scripts/certops-distribution-postgres.js",
+        "sha256": "5d42dbd90579bdfa0549c4e682cdfbb465810cb0ce33d787197c98e433338d20"
+      },
+      {
+        "file": "scripts/certops-distribution-vault.js",
+        "sha256": "6618da4a25e0c9ca72e5091ea6c3d38e44d3b6411383aead36e2f4bf6e7ffde5"
+      },
+      {
+        "file": "tests/wildcard-vault/Dockerfile.fixture",
+        "sha256": "d844a0757fc36546960687938cb5c1aed2c3574b2d190878128ffe1d9082d86f"
+      },
+      {
+        "file": "tests/wildcard-vault/postgres.test.cjs",
+        "sha256": "a743486e541da2b06df51660a1849becb98838f9354b6e7a59d62b7abc396840"
+      },
+      {
+        "file": "tests/wildcard-vault/pr329-review.test.cjs",
+        "sha256": "65bc9dce2a2843708938a170bc498778a00b0fadc8e306d0af72d114f57eb7df"
+      },
+      {
+        "file": "tests/wildcard-vault/qualification-database.cjs",
+        "sha256": "a9d9ddc05f9567fc7446bf2ee78d461ff819e2e2f3c97cbefd79a733d7e70a9b"
+      },
+      {
+        "file": "tests/wildcard-vault/transfer.test.cjs",
+        "sha256": "5afb0c3df04536ea159e65efbbfb1471689618f858c4240af7ffa56e438ded1a"
+      }
+    ]
+  },
+  "interpretation": {
+    "vault": "The real Vault adapter ran and passed its9 tests, including enabled real KVv2/CAS/ACL paths and bounded HTTP fault fixtures; no readiness bypass or acceptance relaxation.",
+    "postgres": "Three migrated real PostgreSQL suites passed with no skipped/todo events.",
+    "fixtureAccounting": "lifecycle.test.js appears in source inventory, but this dedicated adapter command executes material-store.test.js; source inventory membership is not a claim that every listed test file ran.",
+    "cleanup": "Both bounded support summaries assert cleanup passed.",
+    "priorReadinessFailure": "67a run40147496567 failed before adapter execution with cause unestablished; it remains preserved separately in followup-vault-readiness-initial-attempt.json. This corrected-source success does not retroactively establish that prior startup cause.",
+    "nativeScope": "nativeAgentQualified remains false and qualificationStatus remains not-qualified; this supports distribution functional acceptance only."
+  }
+}

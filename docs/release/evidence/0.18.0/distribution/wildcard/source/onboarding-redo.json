@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "scenario": "owner-vault-start-over-explicit-reuse",
+  "passed": true,
+  "coreCommit": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+  "runId": "0e974348-7e14-40fd-af0c-44b11fa1f300",
+  "certificateMode": "wildcard",
+  "fixtureSource": {
+    "file": "tests/wildcard-vault/ux-lab/onboarding-redo.cjs",
+    "sha256": "9ff4e4fc04182b31b64316c5838b10a8d85edbec98266a55aa07ae94a68c06ef"
+  },
+  "workspaceId": "b7ea6db0-19de-4810-aa32-1ddeb4dccaeb",
+  "distributionGroupId": "7764f11a-116b-4e8e-92b1-be07fb4e2898",
+  "firstSessionCreatedAt": "2026-10-25T01:18:08.344Z",
+  "restartedSessionCreatedAt": "2026-10-25T01:18:17.764Z",
+  "finalSessionRevision": 6,
+  "verifiedBeforeStartOver": true,
+  "ownerStartOverResetSession": true,
+  "existingDistributionStillVerified": true,
+  "oldDistributionDidNotCompleteNewSession": true,
+  "reloadBeforeChoiceRemainedIncomplete": true,
+  "choiceWithoutContinueRemainedIncomplete": true,
+  "explicitReuseCompletedStep": true,
+  "completedChoiceSurvivedReload": true,
+  "inventoryUnchanged": true,
+  "inventorySha256": "8aadbb11d336c4a7816bd2fea3dc20c7c43a59c3b41a39448a65f868a019f5dc",
+  "counts": {
+    "jobs": 60,
+    "groups": 2,
+    "materialVersions": 4,
+    "consumers": 3,
+    "acmeOrders": 3
+  },
+  "browserRuntimeErrors": 0,
+  "unexpectedProductWrites": 0,
+  "databaseInjection": false,
+  "responseInterception": false,
+  "configurationRunbookOnly": true,
+  "installationQualified": false,
+  "publishedReleaseQualified": false,
+  "scope": "Disposable Core lab, existing verified distribution and already enrolled issuer; runbook acknowledgement only, no production provider configuration or installation qualification.",
+  "screenshot": {
+    "file": "distribution-onboarding-redo.png",
+    "sha256": "3ecb60e29d7f214b73a556d495b611327bc109ad034925941ea8fe91b1fada15"
+  },
+  "finishedAt": "2026-10-25T01:18:29.593Z"
+}

@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "scope": "owned-vault-readiness-before-adapter-execution",
+  "runId": 40147496567,
+  "runAttempt": 1,
+  "jobId": 121031868341,
+  "jobUrl": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40147496567/job/121031868341",
+  "candidateSha": "67a085fa61547139372cbbeb446b3a7caa52826e",
+  "artifact": {
+    "id": 12581174109,
+    "name": "distribution-postgres",
+    "zipSha256": "0ad0abd63214a79d936df660310f347f0dd4f7bcf4f8dec4a539a5ea6b0d5128",
+    "githubDigestMatches": true
+  },
+  "status": "failed",
+  "firstError": "Owned Vault never became ready",
+  "errorTime": "2026-10-25T00:40:39.430Z",
+  "adapterExecutionStarted": false,
+  "adapterJsonlPresent": false,
+  "vaultTestsExecuted": 0,
+  "rootCause": "Not established: readiness probes discard stderr and container state; no startup or OOM diagnostic is retained.",
+  "readinessImplementation": {
+    "image": "hashicorp/vault:1.21",
+    "cpuLimit": 0.5,
+    "memoryMiB": 384,
+    "maximumProbes": 60,
+    "pauseMilliseconds": 500,
+    "individualProbeTimeoutMilliseconds": 10000,
+    "probe": "owned container vault status at http://127.0.0.1:58200",
+    "source": "scripts/certops-distribution-vault.js"
+  },
+  "reportGuards": {
+    "passed": 13,
+    "failed": 0,
+    "skipped": 0
+  },
+  "postgres": {
+    "status": "passed",
+    "testReports": [
+      {
+        "file": "distribution-postgres-5a9fd68d79224c4f3110ce37d019ab0c/pr329-review.jsonl",
+        "passed": 29,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "file": "distribution-postgres-5a9fd68d79224c4f3110ce37d019ab0c/postgres.jsonl",
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "file": "distribution-postgres-5a9fd68d79224c4f3110ce37d019ab0c/transfer.jsonl",
+        "passed": 19,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    ],
+    "passingEvents": 50,
+    "cleanup": "passed"
+  },
+  "vault": {
+    "path": "distribution-vault-42175ba7d3bdbb71f9ccb844/summary.json",
+    "sha256": "7522070905e010744f299d2d1065d12896551585649da99fbf64fcf75ceea0ab",
+    "report": {
+      "schemaVersion": 1,
+      "scope": "distribution-functional-support",
+      "kind": "vault",
+      "qualificationStatus": "not-qualified",
+      "startedAt": "2026-10-25T00:39:45.175Z",
+      "fixtureSources": [
+        {
+          "file": ".github/workflows/certops-distribution-qualification.yml",
+          "sha256": "cd9e2534bd2f8dbbd525bf5d9b8e6bbe0ce5a42601959fffc3ab47c130e3839c"
+        },
+        {
+          "file": "packages/agent/src/material-store/index.js",
+          "sha256": "c49f581db99958b8910bbbe58e761315dbc56bd9dda588af28d4de1929648dc3"
+        },
+        {
+          "file": "packages/agent/src/material-store/lifecycle.js",
+          "sha256": "0e6c5f25d8d0efac0625432ce8760e512cacea714bcad020d039922e036d78c3"
+        },
+        {
+          "file": "packages/agent/src/material-store/lifecycle.test.js",
+          "sha256": "ec82306d162544c2b2c63c13cfb9057224c94c24974f0c4a30e311da57462a6b"
+        },
+        {
+          "file": "packages/agent/src/material-store/material-store.test.js",
+          "sha256": "8735761d0190423cf2ff4d6b42422fc8961f5fb7242b303e3bdc2c1934b66ba7"
+        },
+        {
+          "file": "scripts/certops-distribution-functional-summary.js",
+          "sha256": "2ad232e24c1a076fef9fc4d932d9e9c9b9f1f86069f22a881c6bc3b5bf7b83d9"
+        },
+        {
+          "file": "scripts/certops-distribution-vault.js",
+          "sha256": "f186211dc06e9a70e968e3fac321a9bdf400399f4f358a75b46d4b48e67fb812"
+        },
+        {
+          "file": "tests/wildcard-vault/Dockerfile.fixture",
+          "sha256": "d844a0757fc36546960687938cb5c1aed2c3574b2d190878128ffe1d9082d86f"
+        }
+      ],
+      "tests": [],
+      "status": "failed",
+      "evidenceLevel": "integration",
+      "nativeAgentQualified": false,
+      "candidateSha": "67a085fa61547139372cbbeb446b3a7caa52826e",
+      "cleanup": "passed",
+      "finishedAt": "2026-10-25T00:40:39.429Z"
+    }
+  },
+  "supportingSourceEntriesVerified": 23,
+  "sameSupportImplementationPreviouslyPassed": {
+    "runId": 40146293049,
+    "jobId": 121028239308,
+    "candidateSha": "4ce098be13c7fb9cd3636bfed3dcba87b03abe0f",
+    "vaultPassingEvents": 9
+  },
+  "cleanup": "owned Vault label matched and container removal completed; summary cleanup passed",
+  "retry": {
+    "scope": "superseded by corrected-product-source coherent supporting run",
+    "status": "awaiting reviewed dashboard workspace-continuity fix and bounded readiness diagnostics",
+    "schedulingHistory": "An earlier same-source targeted rerun attempt was rejected with HTTP403 while the containing workflow was running. No access-permission conclusion. After the confirmed dashboard defect, parent elected a corrected-source coherent run instead.",
+    "priorFailurePreserved": true,
+    "futureDiagnostics": "On recurrence, retain only last readiness probe status/timedOut and owned-container bounded state; no logs, env or credentials."
+  },
+  "interpretation": "Pre-adapter test-fixture readiness failure; no product test assertion was executed or failed. Preserve this result even if a later corrected-source run succeeds."
+}

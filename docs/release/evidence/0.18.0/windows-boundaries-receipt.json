@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "scope": "windows-iis-wildcard-and-san-store-discovery",
+  "status": "passed",
+  "runId": 40145857569,
+  "runUrl": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40145857569",
+  "runConclusion": "success",
+  "runCompletedAt": "2026-10-25T00:18:14Z",
+  "workflowSource": "edb0d829d1abea1e49736e8c74653e62d19020d3",
+  "jobId": 121026917611,
+  "jobUrl": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40145857569/job/121026917611",
+  "jobCompletedAt": "2026-10-25T00:18:13Z",
+  "artifact": {
+    "id": 12580147772,
+    "name": "core-018-windows-native-boundaries",
+    "zipSha256": "5d0a6a9a9a30e81068175022fabefdbdd45bdce8d86e8497f63f4b9997507d6c",
+    "githubDigestMatches": true,
+    "reportSha256": "8d6da0203ad37a53a56c0b0b36087117c28ce110eba61d07a540965939fac34c"
+  },
+  "runner": {
+    "image": "windows-2022",
+    "imageVersion": "20261022.344.1",
+    "nodeVersion": "24.22.1"
+  },
+  "receipt": {
+    "schemaVersion": 1,
+    "scope": "windows-iis-wildcard-and-san-store-discovery",
+    "sourceSha": "fcc681c19314b7c2432973ce99d517af36e10238",
+    "archiveSha256": "062f48b1960685b247b0114b2f7086b7accda23f8788895078da627f8844507c",
+    "startedAt": "2026-10-25T00:17:40.721Z",
+    "status": "passed",
+    "checks": [
+      {
+        "name": "selected-source-and-actual-package",
+        "status": "passed",
+        "evidence": {
+          "matchedPackageSourceFiles": 96,
+          "version": "0.18.0"
+        }
+      },
+      {
+        "name": "create-owned-self-signed-iis-and-public-san-store",
+        "status": "passed",
+        "evidence": {
+          "port": 55263,
+          "osVersion": "10.0.20348.0",
+          "language": "en-US",
+          "site": "tt-core-delta-4815a28464c5e63fb64a94c0",
+          "identity": "runnervma5ucf\\runneradmin"
+        }
+      },
+      {
+        "name": "real-wildcard-iis-rebind-and-independent-tls",
+        "status": "passed",
+        "evidence": {
+          "selector": "0.0.0.0:55263",
+          "outgoingThumbprint": "1C6CA46160F1A086D3A24E39F685EA260C83E811",
+          "boundThumbprint": "BC603443F5D94DEDCB9614E52EEFC773F72E6EB5",
+          "peerFingerprintSha256": "1d43f88c9e82c367975d5063f4c2f787cc18df7e8bed659649dc2fed90c90e58",
+          "ownedIisContent": true
+        }
+      },
+      {
+        "name": "real-san-only-windows-store-discovery",
+        "status": "passed",
+        "evidence": {
+          "store": "TokenTimerSmoke4815a28464c5e63fb64a94c0",
+          "subject": null,
+          "fingerprintSha256": "e1e11b467c63949342e5040ba70c98b38bf963cd7141e1f0f1a34112f900cfea",
+          "subjectAltNames": [
+            "nginx.wildcard.test",
+            "haproxy.wildcard.test"
+          ],
+          "keyPresent": false,
+          "warningCount": 0
+        }
+      },
+      {
+        "name": "native-discovery-through-production-evidence-builder",
+        "status": "passed",
+        "evidence": {
+          "eventType": "certificate.observed",
+          "fingerprintSha256": "e1e11b467c63949342e5040ba70c98b38bf963cd7141e1f0f1a34112f900cfea",
+          "subject": null,
+          "transport": "captured locally; no API ingestion claim"
+        }
+      }
+    ],
+    "notQualifiedByThisRun": [
+      "AD CS or domain authentication",
+      "Windows service install/upgrade",
+      "arm64 execution",
+      "other Windows versions or languages",
+      "trusted-chain validation of the self-signed fixture",
+      "network evidence ingestion",
+      "whole-release qualification"
+    ],
+    "environment": {
+      "port": 55263,
+      "osVersion": "10.0.20348.0",
+      "language": "en-US",
+      "site": "tt-core-delta-4815a28464c5e63fb64a94c0",
+      "identity": "runnervma5ucf\\runneradmin"
+    },
+    "cleanup": {
+      "complete": true,
+      "errors": []
+    },
+    "finishedAt": "2026-10-25T00:18:07.656Z"
+  }
+}

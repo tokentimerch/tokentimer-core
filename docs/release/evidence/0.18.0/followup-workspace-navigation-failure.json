@@ -1,0 +1,230 @@
+{
+  "schemaVersion": 1,
+  "scope": "distribution-followup-confirmed-workspace-navigation-failure",
+  "runId": 40147496567,
+  "runAttempt": 1,
+  "runUrl": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40147496567",
+  "candidateSha": "67a085fa61547139372cbbeb446b3a7caa52826e",
+  "trustedProductSource": "fcc681c19314b7c2432973ce99d517af36e10238",
+  "status": "failed",
+  "failureClassification": "confirmed product workspace-continuity defect during Preferences Start over",
+  "cohorts": [
+    {
+      "mode": "ordinary",
+      "jobId": 121031868539,
+      "jobUrl": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40147496567/job/121031868539",
+      "completedAt": "2026-10-25T00:52:22Z",
+      "artifact": {
+        "id": 12582340161,
+        "name": "distribution-agent-ordinary",
+        "zipSha256": "43663e7e5655635a3a75f8fb3dcf1726182e77750d2375af2782a3fb9879339b",
+        "githubDigestMatches": true
+      },
+      "reportSha256": "e214d467d9017cad4804ebfc5df99dcdb0e13d9835a33e52315f57f7bcb12022",
+      "fixtureInventoryEntriesVerified": 41,
+      "primaryFixture": {
+        "file": "tests/wildcard-vault/ux-lab/journey.cjs",
+        "sha256": "8fbfbcb606e7c989291d57be382e51a8a10153a692015258d93973551458ebc8"
+      },
+      "passedScenarios": [
+        "distribution-setup",
+        "distribution-publish",
+        "distribution-bindings",
+        "distribution-validation",
+        "distribution-scanner",
+        "distribution-rejection",
+        "distribution-authorization",
+        "distribution-recovery",
+        "distribution-deployment-recovery",
+        "distribution-qualification",
+        "distribution-security",
+        "distribution-runtime-controls"
+      ],
+      "failedScenarios": [
+        "distribution-browser"
+      ],
+      "unexecutedScenarios": [
+        "distribution-privacy",
+        "distribution-transfer"
+      ],
+      "qualificationStatus": "not-qualified",
+      "experimental": true,
+      "packageAcceptanceExecuted": false,
+      "cleanupSteps": {
+        "Stop owned package lab": "success",
+        "Stop owned source lab": "success"
+      }
+    },
+    {
+      "mode": "san",
+      "jobId": 121031868432,
+      "jobUrl": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40147496567/job/121031868432",
+      "completedAt": "2026-10-25T00:52:26Z",
+      "artifact": {
+        "id": 12582150365,
+        "name": "distribution-agent-san",
+        "zipSha256": "a8d3327ccd64b732ccb68727ab02cf40bef48983825296dd233585a79e323b2f",
+        "githubDigestMatches": true
+      },
+      "reportSha256": "db8de5eab19148ef05cbf6d2d90cbb67666ac557547620ebb24505ec3780fd49",
+      "fixtureInventoryEntriesVerified": 41,
+      "primaryFixture": {
+        "file": "tests/wildcard-vault/ux-lab/journey.cjs",
+        "sha256": "8fbfbcb606e7c989291d57be382e51a8a10153a692015258d93973551458ebc8"
+      },
+      "passedScenarios": [
+        "distribution-setup",
+        "distribution-publish",
+        "distribution-bindings",
+        "distribution-validation",
+        "distribution-scanner",
+        "distribution-rejection",
+        "distribution-authorization",
+        "distribution-recovery",
+        "distribution-deployment-recovery",
+        "distribution-qualification",
+        "distribution-security",
+        "distribution-runtime-controls"
+      ],
+      "failedScenarios": [
+        "distribution-browser"
+      ],
+      "unexecutedScenarios": [
+        "distribution-privacy",
+        "distribution-transfer"
+      ],
+      "qualificationStatus": "not-qualified",
+      "experimental": true,
+      "packageAcceptanceExecuted": false,
+      "cleanupSteps": {
+        "Stop owned package lab": "success",
+        "Stop owned source lab": "success"
+      }
+    },
+    {
+      "mode": "wildcard",
+      "jobId": 121031868510,
+      "jobUrl": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40147496567/job/121031868510",
+      "completedAt": "2026-10-25T00:52:06Z",
+      "artifact": {
+        "id": 12582220276,
+        "name": "distribution-agent-wildcard",
+        "zipSha256": "85152a3be5ef7fcdc4d62f5f52dfa3e045ed52d2b9c1b5f7f9adc429bcc52ee6",
+        "githubDigestMatches": true
+      },
+      "reportSha256": "065a4880db896e4a06b0037ee8bdf69ca97c3a7cb6b519eb23ccedc9e2ae6754",
+      "fixtureInventoryEntriesVerified": 41,
+      "primaryFixture": {
+        "file": "tests/wildcard-vault/ux-lab/journey.cjs",
+        "sha256": "8fbfbcb606e7c989291d57be382e51a8a10153a692015258d93973551458ebc8"
+      },
+      "passedScenarios": [
+        "distribution-setup",
+        "distribution-publish",
+        "distribution-bindings",
+        "distribution-validation",
+        "distribution-scanner",
+        "distribution-rejection",
+        "distribution-authorization",
+        "distribution-recovery",
+        "distribution-deployment-recovery",
+        "distribution-qualification",
+        "distribution-security",
+        "distribution-runtime-controls"
+      ],
+      "failedScenarios": [
+        "distribution-browser"
+      ],
+      "unexecutedScenarios": [
+        "distribution-privacy",
+        "distribution-transfer"
+      ],
+      "qualificationStatus": "not-qualified",
+      "experimental": true,
+      "packageAcceptanceExecuted": false,
+      "cleanupSteps": {
+        "Stop owned package lab": "success",
+        "Stop owned source lab": "success"
+      }
+    }
+  ],
+  "diagnosis": {
+    "observedError": "Normal click on My agent is already set up cannot proceed because the checkbox is disabled in the second reachVault after Start over.",
+    "observedInAllModes": true,
+    "failureLocation": {
+      "file": "tests/wildcard-vault/ux-lab/onboarding-redo.cjs",
+      "lines": [
+        91,
+        101,
+        166
+      ],
+      "sourceSha256": "9ff4e4fc04182b31b64316c5838b10a8d85edbec98266a55aa07ae94a68c06ef"
+    },
+    "priorAssertionsProvenBySequentialControlFlow": {
+      "scope": "The failure stack reached line166; preceding awaited calls and assertions at lines150-164 completed. No standalone passed owner-redo receipt was produced.",
+      "firstOwnerVaultChoiceAndContinue": true,
+      "resetResponseStatus": 200,
+      "resetResponseReset": true,
+      "originalSessionAfterReset": {
+        "exists": false,
+        "revision": 0,
+        "progress": {},
+        "operationRefs": {}
+      }
+    },
+    "cause": "UserPreferences resets the selected workspace and navigates to bare /onboarding. WorkspaceProvider restores again on pathname change; an explicit deep link had not populated last-workspace storage. The API returns newest-first accessible workspaces, so a fresh browser switches to the newer empty transfer workspace.",
+    "sourceReferences": [
+      {
+        "file": "apps/dashboard/src/pages/UserPreferences.jsx",
+        "sourceSha": "fcc681c19314b7c2432973ce99d517af36e10238",
+        "behavior": "navigate(/onboarding) omits the reset workspace query"
+      },
+      {
+        "file": "apps/dashboard/src/utils/WorkspaceContext.jsx",
+        "sourceSha": "fcc681c19314b7c2432973ce99d517af36e10238",
+        "behavior": "pathname-triggered restore; matching explicit URL returns before preference write"
+      },
+      {
+        "file": "apps/dashboard/src/utils/lastWorkspacePreference.js",
+        "sourceSha": "fcc681c19314b7c2432973ce99d517af36e10238",
+        "behavior": "without valid URL or stored preference choose first accessible workspace"
+      },
+      {
+        "file": "apps/api/routes/workspaces.js",
+        "sourceSha": "fcc681c19314b7c2432973ce99d517af36e10238",
+        "behavior": "list ordered by workspace created_at DESC"
+      }
+    ],
+    "correctionScope": "Preserve the captured reset workspace in UserPreferences onboarding URL. Actual page/provider/router regression and newly built dashboard acceptance are required; no fixture navigation or storage bypass."
+  },
+  "aggregate": {
+    "jobId": 121034537983,
+    "conclusion": "failure",
+    "passedReceiptCreated": false,
+    "supportingCohortDefinition": {
+      "sourceAgentModes": 3,
+      "postgresSuites": 3,
+      "vaultAdapter": 1,
+      "total": 7
+    },
+    "separateOperatorPackageCohorts": 3,
+    "reason": "Three source lab jobs and Vault readiness failed; aggregate correctly refused success. Operator-package phases were not executed."
+  },
+  "postgresVault": {
+    "receipt": "followup-vault-readiness-initial-attempt.json",
+    "postgresPassingEvents": 50,
+    "reportGuardsPassed": 13,
+    "vaultAdapterExecuted": false,
+    "vaultFailure": "Owned Vault never became ready; cause unestablished."
+  },
+  "sourceVerification": {
+    "inventoryEntries": 123,
+    "primaryFixtureEntries": 3,
+    "totalEntries": 126,
+    "uniqueFiles": 42,
+    "allMatchActualCandidate": true,
+    "changedSourcesVerifiedFromExactRemote67aCopies": true
+  },
+  "cleanupScope": "Successful Stop steps use docker compose down to remove owned containers/networks; named volumes/evidence remain on disposable hosted runners. Package labs were not started.",
+  "evidenceDisposition": "Keep this failed attempt independently of the corrected-source rerun. Historical native, API, worker and agent evidence remains attached to its original source and package; only source-equivalent behavior may carry."
+}

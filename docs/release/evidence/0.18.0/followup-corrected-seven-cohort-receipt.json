@@ -1,0 +1,1130 @@
+{
+  "schemaVersion": 1,
+  "scope": "seven-cohort-source-and-three-operator-package-followup",
+  "runId": 40149240400,
+  "runUrl": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40149240400",
+  "candidateSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+  "trustedRuntimeSource": "fcc681c19314b7c2432973ce99d517af36e10238",
+  "reviewedProductSource": "b1b92cb36de0ef0d8647f1122d18b075d06c17ea",
+  "productEquivalenceReceipt": "followup-corrected-source-equivalence.json",
+  "postgresVaultReceipt": "followup-corrected-postgres-vault-receipt.json",
+  "labs": [
+    {
+      "kind": "source",
+      "certificateMode": "ordinary",
+      "artifact": {
+        "id": 12581968385,
+        "name": "distribution-agent-ordinary",
+        "zipSha256": "980777a55dcdf22e76b68028466e0b87ba2de017fc86ca30d5ced3cf74ee73b4",
+        "githubDigestMatches": true
+      },
+      "reportSha256": "139d5cd86ee251ea839c6aa97535da422118c1da9c6dba9acba54fa2dce2a5d1",
+      "candidateSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+      "scope": "source-mounted-enrolled-agent-lab",
+      "environment": {
+        "osFamily": "linux",
+        "osVersion": "6.17.0-1022-azure",
+        "measurement": "native",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04",
+        "executionSurface": "host",
+        "libc": "glibc",
+        "certificateMode": "ordinary"
+      },
+      "nodeVersion": "v24.21.0",
+      "startedAt": "2026-10-25T01:08:44.162Z",
+      "finishedAt": "2026-10-25T01:18:39.720Z",
+      "passedScenarios": 15,
+      "failed": 0,
+      "skipped": 0,
+      "scenarioIds": [
+        "distribution-setup",
+        "distribution-publish",
+        "distribution-bindings",
+        "distribution-validation",
+        "distribution-scanner",
+        "distribution-rejection",
+        "distribution-authorization",
+        "distribution-recovery",
+        "distribution-deployment-recovery",
+        "distribution-qualification",
+        "distribution-security",
+        "distribution-runtime-controls",
+        "distribution-browser",
+        "distribution-privacy",
+        "distribution-transfer"
+      ],
+      "fixtureInventoryEntriesVerified": 41,
+      "primaryFixtureVerified": {
+        "file": "tests/wildcard-vault/ux-lab/journey.cjs",
+        "sha256": "8fbfbcb606e7c989291d57be382e51a8a10153a692015258d93973551458ebc8"
+      },
+      "privacy": {
+        "sha256": "98482fe2d6b27da32747998b7f78893b4f255b7052aad035cf84f8c8e1a8e649",
+        "status": "passed",
+        "coreDatabaseAndLogsScanned": true,
+        "customerAgentLogsScanned": true,
+        "privateNeedlesExported": false,
+        "dnsCredentialQualification": false,
+        "privateKeys": 8,
+        "credentials": 13,
+        "historicalVaultCredentialsChecked": 10,
+        "historicalVaultVersionsChecked": 3
+      },
+      "ownerBrowserRedo": {
+        "receiptSha256": "2047c36be7e6dae9ac9c98a83afb873b702ecfe26902501d629ec2d039f204a6",
+        "labRunUuid": "5c6e9cf8-f88b-44de-928f-8774f48df1d6",
+        "supportingRunId": "tt-wildcard-ux-ci-40149240400-1-ordinary",
+        "fixtureSource": {
+          "file": "tests/wildcard-vault/ux-lab/onboarding-redo.cjs",
+          "sha256": "9ff4e4fc04182b31b64316c5838b10a8d85edbec98266a55aa07ae94a68c06ef"
+        },
+        "allNineBehaviorAssertionsPassed": true,
+        "browserRuntimeErrors": 0,
+        "unexpectedProductWrites": 0,
+        "databaseInjection": false,
+        "responseInterception": false,
+        "configurationRunbookOnly": true,
+        "installationQualified": false,
+        "publishedReleaseQualified": false,
+        "inventorySha256": "0903c6f42d9ee4175a5fc46b645d0f09a5f6260e472f04f40e464e95c2ad8b99",
+        "counts": {
+          "jobs": 60,
+          "groups": 2,
+          "materialVersions": 4,
+          "consumers": 3,
+          "acmeOrders": 3
+        },
+        "screenshot": {
+          "file": "distribution-onboarding-redo.png",
+          "sha256": "d86429d82e4d9b88651a157c887a04e21946ad98dc181c7e0e31480c31495bdf"
+        }
+      }
+    },
+    {
+      "kind": "package",
+      "certificateMode": "ordinary",
+      "artifact": {
+        "id": 12581613539,
+        "name": "operator-acceptance-vault-ordinary",
+        "zipSha256": "aacd9e812b9ab2db059976c4315232547294c8abdd35aa3d84ee844609ea64bb",
+        "githubDigestMatches": true
+      },
+      "reportSha256": "93ed1fa076dc30cd590db420d6a64c350f9e0fbc3b18ff07659a526e9f0dbb0a",
+      "candidateSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+      "scope": "packaged-enrolled-agent-lab",
+      "environment": {
+        "osFamily": "linux",
+        "osVersion": "6.17.0-1022-azure",
+        "measurement": "native",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04",
+        "executionSurface": "host",
+        "libc": "glibc",
+        "certificateMode": "ordinary"
+      },
+      "nodeVersion": "v24.21.0",
+      "startedAt": "2026-10-25T01:19:32.710Z",
+      "finishedAt": "2026-10-25T01:29:40.021Z",
+      "passedScenarios": 15,
+      "failed": 0,
+      "skipped": 0,
+      "scenarioIds": [
+        "distribution-setup",
+        "distribution-publish",
+        "distribution-bindings",
+        "distribution-validation",
+        "distribution-scanner",
+        "distribution-rejection",
+        "distribution-authorization",
+        "distribution-recovery",
+        "distribution-deployment-recovery",
+        "distribution-qualification",
+        "distribution-security",
+        "distribution-runtime-controls",
+        "distribution-browser",
+        "distribution-privacy",
+        "distribution-transfer"
+      ],
+      "fixtureInventoryEntriesVerified": 41,
+      "primaryFixtureVerified": {
+        "file": "tests/wildcard-vault/ux-lab/journey.cjs",
+        "sha256": "8fbfbcb606e7c989291d57be382e51a8a10153a692015258d93973551458ebc8"
+      },
+      "privacy": {
+        "sha256": "dd44e848183a713e1df506333ed0cd77f3c2c7b9a3f78f626abd3c68c9584c34",
+        "status": "passed",
+        "coreDatabaseAndLogsScanned": true,
+        "customerAgentLogsScanned": true,
+        "privateNeedlesExported": false,
+        "dnsCredentialQualification": false,
+        "privateKeys": 8,
+        "credentials": 25,
+        "historicalVaultCredentialsChecked": 9,
+        "historicalVaultVersionsChecked": 3
+      },
+      "ownerBrowserRedo": {
+        "receiptSha256": "a4e9580cb359593ca1759302e8a768a5114aa2b8702568796edcd85a30866f89",
+        "labRunUuid": "d9ba7b65-fdb0-4e35-9edf-d055d1fcec9f",
+        "supportingRunId": "tt-wildcard-ux-ci-40149240400-1-ordinary-package",
+        "fixtureSource": {
+          "file": "tests/wildcard-vault/ux-lab/onboarding-redo.cjs",
+          "sha256": "9ff4e4fc04182b31b64316c5838b10a8d85edbec98266a55aa07ae94a68c06ef"
+        },
+        "allNineBehaviorAssertionsPassed": true,
+        "browserRuntimeErrors": 0,
+        "unexpectedProductWrites": 0,
+        "databaseInjection": false,
+        "responseInterception": false,
+        "configurationRunbookOnly": true,
+        "installationQualified": false,
+        "publishedReleaseQualified": false,
+        "inventorySha256": "4a55352995d32024848ed71e0c6fb16a632a3c48b76e61888c28e63577a452e2",
+        "counts": {
+          "jobs": 63,
+          "groups": 2,
+          "materialVersions": 4,
+          "consumers": 3,
+          "acmeOrders": 3
+        },
+        "screenshot": {
+          "file": "distribution-onboarding-redo.png",
+          "sha256": "65b041c9591ecbc897c14e759dc1f8a6a8c21f9b4a24e5628bdcb45dc11f6ed9"
+        }
+      },
+      "packageArtifactReceipt": {
+        "sha256": "064c2396abe18ce503f2c34a6b51b9091cde0f9ed81faf101a856606ae458556",
+        "report": {
+          "candidateSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+          "archive": "tokentimer-agent-0.18.0.tgz",
+          "sha256": "82769c419b45407011424dc004b75ef7a061663bec37c46180dbaa66c5fd5adb",
+          "sourceKind": "workflow-checkout",
+          "buildMode": "qualification-only-not-release",
+          "capabilities": [
+            "windows-cert-store-v1",
+            "iis-binding-v1",
+            "trust-anchor-deploy-v1",
+            "adcs-enroll-v1",
+            "material-store-vault-kv2-v1",
+            "certificate-publication-v1",
+            "deploy-from-store-v1"
+          ],
+          "packagerSha256": "fc8b2b4cb497726d50f16439acb6e8cd280fffa1b33f796f2a3a56396b883248"
+        }
+      },
+      "packageAcceptance": {
+        "candidateSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+        "packageSha256": "82769c419b45407011424dc004b75ef7a061663bec37c46180dbaa66c5fd5adb",
+        "buildMode": "qualification-only-not-release",
+        "packageFilesUnmodified": true,
+        "authentication": "vault-agent-approle",
+        "vaultTlsVerified": true,
+        "separateRolesAndSinks": true,
+        "rolePermissionsChecked": true,
+        "roleIsolationChecked": true,
+        "credentialRotationCount": 7,
+        "supervision": "documented-node-process",
+        "vaultAgentUid": 10001,
+        "systemdQualified": false,
+        "publishedReleaseQualified": false,
+        "agentAccountUid": 10001
+      }
+    },
+    {
+      "kind": "source",
+      "certificateMode": "san",
+      "artifact": {
+        "id": 12582484536,
+        "name": "distribution-agent-san",
+        "zipSha256": "aca13b01f0e447afd1d228b6cacb2bc4f74ecda695a27693914593a2e1fb9904",
+        "githubDigestMatches": true
+      },
+      "reportSha256": "285ade4459fd396859cc2725c485b3f5fff7fbf86f195d6487051062edc2b9e0",
+      "candidateSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+      "scope": "source-mounted-enrolled-agent-lab",
+      "environment": {
+        "osFamily": "linux",
+        "osVersion": "6.17.0-1022-azure",
+        "measurement": "native",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04",
+        "executionSurface": "host",
+        "libc": "glibc",
+        "certificateMode": "san"
+      },
+      "nodeVersion": "v24.21.0",
+      "startedAt": "2026-10-25T01:08:36.934Z",
+      "finishedAt": "2026-10-25T01:18:40.684Z",
+      "passedScenarios": 15,
+      "failed": 0,
+      "skipped": 0,
+      "scenarioIds": [
+        "distribution-setup",
+        "distribution-publish",
+        "distribution-bindings",
+        "distribution-validation",
+        "distribution-scanner",
+        "distribution-rejection",
+        "distribution-authorization",
+        "distribution-recovery",
+        "distribution-deployment-recovery",
+        "distribution-qualification",
+        "distribution-security",
+        "distribution-runtime-controls",
+        "distribution-browser",
+        "distribution-privacy",
+        "distribution-transfer"
+      ],
+      "fixtureInventoryEntriesVerified": 41,
+      "primaryFixtureVerified": {
+        "file": "tests/wildcard-vault/ux-lab/journey.cjs",
+        "sha256": "8fbfbcb606e7c989291d57be382e51a8a10153a692015258d93973551458ebc8"
+      },
+      "privacy": {
+        "sha256": "30593e13bca3866feee7c25c657f2e2b114429ed306cb68c07f0cd330e293fbd",
+        "status": "passed",
+        "coreDatabaseAndLogsScanned": true,
+        "customerAgentLogsScanned": true,
+        "privateNeedlesExported": false,
+        "dnsCredentialQualification": false,
+        "privateKeys": 8,
+        "credentials": 13,
+        "historicalVaultCredentialsChecked": 10,
+        "historicalVaultVersionsChecked": 3
+      },
+      "ownerBrowserRedo": {
+        "receiptSha256": "456963f221c6a73f004571a61583a83d5a8dce3fc51f32dc770c122c524b5755",
+        "labRunUuid": "fadcb618-8096-4c80-85ac-bb93cfad256d",
+        "supportingRunId": "tt-wildcard-ux-ci-40149240400-1-san",
+        "fixtureSource": {
+          "file": "tests/wildcard-vault/ux-lab/onboarding-redo.cjs",
+          "sha256": "9ff4e4fc04182b31b64316c5838b10a8d85edbec98266a55aa07ae94a68c06ef"
+        },
+        "allNineBehaviorAssertionsPassed": true,
+        "browserRuntimeErrors": 0,
+        "unexpectedProductWrites": 0,
+        "databaseInjection": false,
+        "responseInterception": false,
+        "configurationRunbookOnly": true,
+        "installationQualified": false,
+        "publishedReleaseQualified": false,
+        "inventorySha256": "e7b11cbb86cec2563841df25b82b39d5e5ebcde25a074571ba8b055268e8a661",
+        "counts": {
+          "jobs": 60,
+          "groups": 2,
+          "materialVersions": 4,
+          "consumers": 3,
+          "acmeOrders": 3
+        },
+        "screenshot": {
+          "file": "distribution-onboarding-redo.png",
+          "sha256": "815bea56f12c67e71bb97b9cf9119bfdc82d88044911e54c66504276add61da5"
+        }
+      }
+    },
+    {
+      "kind": "package",
+      "certificateMode": "san",
+      "artifact": {
+        "id": 12581438730,
+        "name": "operator-acceptance-vault-san",
+        "zipSha256": "b7e033e33dd1311561d0a4e6e3f4c0bd7907b30e460767d2b320094313fb3c07",
+        "githubDigestMatches": true
+      },
+      "reportSha256": "2d65925744ac991e72300dc870c1f165697421dd2282788a2e38d4816219ec25",
+      "candidateSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+      "scope": "packaged-enrolled-agent-lab",
+      "environment": {
+        "osFamily": "linux",
+        "osVersion": "6.17.0-1022-azure",
+        "measurement": "native",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04",
+        "executionSurface": "host",
+        "libc": "glibc",
+        "certificateMode": "san"
+      },
+      "nodeVersion": "v24.21.0",
+      "startedAt": "2026-10-25T01:19:35.996Z",
+      "finishedAt": "2026-10-25T01:29:45.077Z",
+      "passedScenarios": 15,
+      "failed": 0,
+      "skipped": 0,
+      "scenarioIds": [
+        "distribution-setup",
+        "distribution-publish",
+        "distribution-bindings",
+        "distribution-validation",
+        "distribution-scanner",
+        "distribution-rejection",
+        "distribution-authorization",
+        "distribution-recovery",
+        "distribution-deployment-recovery",
+        "distribution-qualification",
+        "distribution-security",
+        "distribution-runtime-controls",
+        "distribution-browser",
+        "distribution-privacy",
+        "distribution-transfer"
+      ],
+      "fixtureInventoryEntriesVerified": 41,
+      "primaryFixtureVerified": {
+        "file": "tests/wildcard-vault/ux-lab/journey.cjs",
+        "sha256": "8fbfbcb606e7c989291d57be382e51a8a10153a692015258d93973551458ebc8"
+      },
+      "privacy": {
+        "sha256": "bd01390936f37792a2cf53a0e4a6739b9ead22b24dd7336f34ecb8b38e278fdf",
+        "status": "passed",
+        "coreDatabaseAndLogsScanned": true,
+        "customerAgentLogsScanned": true,
+        "privateNeedlesExported": false,
+        "dnsCredentialQualification": false,
+        "privateKeys": 8,
+        "credentials": 25,
+        "historicalVaultCredentialsChecked": 9,
+        "historicalVaultVersionsChecked": 3
+      },
+      "ownerBrowserRedo": {
+        "receiptSha256": "829f3905bedf0f93fc89c39bb9508c033bacd7181283ce868ea999c486243af7",
+        "labRunUuid": "f52986bc-3d11-4bae-a64e-1b97e97d8c37",
+        "supportingRunId": "tt-wildcard-ux-ci-40149240400-1-san-package",
+        "fixtureSource": {
+          "file": "tests/wildcard-vault/ux-lab/onboarding-redo.cjs",
+          "sha256": "9ff4e4fc04182b31b64316c5838b10a8d85edbec98266a55aa07ae94a68c06ef"
+        },
+        "allNineBehaviorAssertionsPassed": true,
+        "browserRuntimeErrors": 0,
+        "unexpectedProductWrites": 0,
+        "databaseInjection": false,
+        "responseInterception": false,
+        "configurationRunbookOnly": true,
+        "installationQualified": false,
+        "publishedReleaseQualified": false,
+        "inventorySha256": "f07cd767c84a0573804475fdb3992e0633f8dc02d9c6405fc67a7c9b6d6a547c",
+        "counts": {
+          "jobs": 63,
+          "groups": 2,
+          "materialVersions": 4,
+          "consumers": 3,
+          "acmeOrders": 3
+        },
+        "screenshot": {
+          "file": "distribution-onboarding-redo.png",
+          "sha256": "b1309be2490b019c1687a488461cd1e0ab6479904ad7715d1b6efe49fe5451e3"
+        }
+      },
+      "packageArtifactReceipt": {
+        "sha256": "064c2396abe18ce503f2c34a6b51b9091cde0f9ed81faf101a856606ae458556",
+        "report": {
+          "candidateSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+          "archive": "tokentimer-agent-0.18.0.tgz",
+          "sha256": "82769c419b45407011424dc004b75ef7a061663bec37c46180dbaa66c5fd5adb",
+          "sourceKind": "workflow-checkout",
+          "buildMode": "qualification-only-not-release",
+          "capabilities": [
+            "windows-cert-store-v1",
+            "iis-binding-v1",
+            "trust-anchor-deploy-v1",
+            "adcs-enroll-v1",
+            "material-store-vault-kv2-v1",
+            "certificate-publication-v1",
+            "deploy-from-store-v1"
+          ],
+          "packagerSha256": "fc8b2b4cb497726d50f16439acb6e8cd280fffa1b33f796f2a3a56396b883248"
+        }
+      },
+      "packageAcceptance": {
+        "candidateSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+        "packageSha256": "82769c419b45407011424dc004b75ef7a061663bec37c46180dbaa66c5fd5adb",
+        "buildMode": "qualification-only-not-release",
+        "packageFilesUnmodified": true,
+        "authentication": "vault-agent-approle",
+        "vaultTlsVerified": true,
+        "separateRolesAndSinks": true,
+        "rolePermissionsChecked": true,
+        "roleIsolationChecked": true,
+        "credentialRotationCount": 7,
+        "supervision": "documented-node-process",
+        "vaultAgentUid": 10001,
+        "systemdQualified": false,
+        "publishedReleaseQualified": false,
+        "agentAccountUid": 10001
+      }
+    },
+    {
+      "kind": "source",
+      "certificateMode": "wildcard",
+      "artifact": {
+        "id": 12582845016,
+        "name": "distribution-agent-wildcard",
+        "zipSha256": "8e17c13ed80ee2f3a6854afd552cc62790b3c4ea5aac3026c6828c7c5521e591",
+        "githubDigestMatches": true
+      },
+      "reportSha256": "9341dbf4b91c3c288d525ed5dfff20154e20f6b4e8b00e966cfe4ffc98f91bcc",
+      "candidateSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+      "scope": "source-mounted-enrolled-agent-lab",
+      "environment": {
+        "osFamily": "linux",
+        "osVersion": "6.17.0-1022-azure",
+        "measurement": "native",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04",
+        "executionSurface": "host",
+        "libc": "glibc",
+        "certificateMode": "wildcard"
+      },
+      "nodeVersion": "v24.21.0",
+      "startedAt": "2026-10-25T01:08:43.900Z",
+      "finishedAt": "2026-10-25T01:18:35.656Z",
+      "passedScenarios": 15,
+      "failed": 0,
+      "skipped": 0,
+      "scenarioIds": [
+        "distribution-setup",
+        "distribution-publish",
+        "distribution-bindings",
+        "distribution-validation",
+        "distribution-scanner",
+        "distribution-rejection",
+        "distribution-authorization",
+        "distribution-recovery",
+        "distribution-deployment-recovery",
+        "distribution-qualification",
+        "distribution-security",
+        "distribution-runtime-controls",
+        "distribution-browser",
+        "distribution-privacy",
+        "distribution-transfer"
+      ],
+      "fixtureInventoryEntriesVerified": 41,
+      "primaryFixtureVerified": {
+        "file": "tests/wildcard-vault/ux-lab/journey.cjs",
+        "sha256": "8fbfbcb606e7c989291d57be382e51a8a10153a692015258d93973551458ebc8"
+      },
+      "privacy": {
+        "sha256": "f393d76d59e9468a02fea16ee21717b49321837b0ae28426159a1463fa616230",
+        "status": "passed",
+        "coreDatabaseAndLogsScanned": true,
+        "customerAgentLogsScanned": true,
+        "privateNeedlesExported": false,
+        "dnsCredentialQualification": false,
+        "privateKeys": 8,
+        "credentials": 13,
+        "historicalVaultCredentialsChecked": 10,
+        "historicalVaultVersionsChecked": 3
+      },
+      "ownerBrowserRedo": {
+        "receiptSha256": "7f8ed8251f06c4e79712b3c79114e50fbc824e0ad87299228557800d1e7ce021",
+        "labRunUuid": "0e974348-7e14-40fd-af0c-44b11fa1f300",
+        "supportingRunId": "tt-wildcard-ux-ci-40149240400-1-wildcard",
+        "fixtureSource": {
+          "file": "tests/wildcard-vault/ux-lab/onboarding-redo.cjs",
+          "sha256": "9ff4e4fc04182b31b64316c5838b10a8d85edbec98266a55aa07ae94a68c06ef"
+        },
+        "allNineBehaviorAssertionsPassed": true,
+        "browserRuntimeErrors": 0,
+        "unexpectedProductWrites": 0,
+        "databaseInjection": false,
+        "responseInterception": false,
+        "configurationRunbookOnly": true,
+        "installationQualified": false,
+        "publishedReleaseQualified": false,
+        "inventorySha256": "8aadbb11d336c4a7816bd2fea3dc20c7c43a59c3b41a39448a65f868a019f5dc",
+        "counts": {
+          "jobs": 60,
+          "groups": 2,
+          "materialVersions": 4,
+          "consumers": 3,
+          "acmeOrders": 3
+        },
+        "screenshot": {
+          "file": "distribution-onboarding-redo.png",
+          "sha256": "3ecb60e29d7f214b73a556d495b611327bc109ad034925941ea8fe91b1fada15"
+        }
+      }
+    },
+    {
+      "kind": "package",
+      "certificateMode": "wildcard",
+      "artifact": {
+        "id": 12582039976,
+        "name": "operator-acceptance-vault-wildcard",
+        "zipSha256": "0c43e59d5cb9311e09e53d136e0e2e188291c6f669729e9757319e9ac7154ee3",
+        "githubDigestMatches": true
+      },
+      "reportSha256": "c061012c8ae6c19b6678a99e448d8250499d27e9cee2a8aca3404ec0409b24a8",
+      "candidateSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+      "scope": "packaged-enrolled-agent-lab",
+      "environment": {
+        "osFamily": "linux",
+        "osVersion": "6.17.0-1022-azure",
+        "measurement": "native",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04",
+        "executionSurface": "host",
+        "libc": "glibc",
+        "certificateMode": "wildcard"
+      },
+      "nodeVersion": "v24.21.0",
+      "startedAt": "2026-10-25T01:19:30.954Z",
+      "finishedAt": "2026-10-25T01:29:56.037Z",
+      "passedScenarios": 15,
+      "failed": 0,
+      "skipped": 0,
+      "scenarioIds": [
+        "distribution-setup",
+        "distribution-publish",
+        "distribution-bindings",
+        "distribution-validation",
+        "distribution-scanner",
+        "distribution-rejection",
+        "distribution-authorization",
+        "distribution-recovery",
+        "distribution-deployment-recovery",
+        "distribution-qualification",
+        "distribution-security",
+        "distribution-runtime-controls",
+        "distribution-browser",
+        "distribution-privacy",
+        "distribution-transfer"
+      ],
+      "fixtureInventoryEntriesVerified": 41,
+      "primaryFixtureVerified": {
+        "file": "tests/wildcard-vault/ux-lab/journey.cjs",
+        "sha256": "8fbfbcb606e7c989291d57be382e51a8a10153a692015258d93973551458ebc8"
+      },
+      "privacy": {
+        "sha256": "6fb35f2ea79b5d490ad8294832fceaaf2e522f7a638a436a6111bc9c94451d38",
+        "status": "passed",
+        "coreDatabaseAndLogsScanned": true,
+        "customerAgentLogsScanned": true,
+        "privateNeedlesExported": false,
+        "dnsCredentialQualification": false,
+        "privateKeys": 8,
+        "credentials": 25,
+        "historicalVaultCredentialsChecked": 9,
+        "historicalVaultVersionsChecked": 3
+      },
+      "ownerBrowserRedo": {
+        "receiptSha256": "bf5ebad5af8a374b63d267a3c3c58768fb981e660b9b2ad6b69c9a846ac74a88",
+        "labRunUuid": "cfc3cf54-9e32-4052-800a-fdd88d221043",
+        "supportingRunId": "tt-wildcard-ux-ci-40149240400-1-wildcard-package",
+        "fixtureSource": {
+          "file": "tests/wildcard-vault/ux-lab/onboarding-redo.cjs",
+          "sha256": "9ff4e4fc04182b31b64316c5838b10a8d85edbec98266a55aa07ae94a68c06ef"
+        },
+        "allNineBehaviorAssertionsPassed": true,
+        "browserRuntimeErrors": 0,
+        "unexpectedProductWrites": 0,
+        "databaseInjection": false,
+        "responseInterception": false,
+        "configurationRunbookOnly": true,
+        "installationQualified": false,
+        "publishedReleaseQualified": false,
+        "inventorySha256": "d2752e0b188c963fa010cbb3c4483b7af4402f5402bca8ab1cd27fb93fc0a193",
+        "counts": {
+          "jobs": 63,
+          "groups": 2,
+          "materialVersions": 4,
+          "consumers": 3,
+          "acmeOrders": 3
+        },
+        "screenshot": {
+          "file": "distribution-onboarding-redo.png",
+          "sha256": "00ebf914f15986cbcd1fec9c6312deb31be31338f16b0bded6c2fa36784afbd4"
+        }
+      },
+      "packageArtifactReceipt": {
+        "sha256": "064c2396abe18ce503f2c34a6b51b9091cde0f9ed81faf101a856606ae458556",
+        "report": {
+          "candidateSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+          "archive": "tokentimer-agent-0.18.0.tgz",
+          "sha256": "82769c419b45407011424dc004b75ef7a061663bec37c46180dbaa66c5fd5adb",
+          "sourceKind": "workflow-checkout",
+          "buildMode": "qualification-only-not-release",
+          "capabilities": [
+            "windows-cert-store-v1",
+            "iis-binding-v1",
+            "trust-anchor-deploy-v1",
+            "adcs-enroll-v1",
+            "material-store-vault-kv2-v1",
+            "certificate-publication-v1",
+            "deploy-from-store-v1"
+          ],
+          "packagerSha256": "fc8b2b4cb497726d50f16439acb6e8cd280fffa1b33f796f2a3a56396b883248"
+        }
+      },
+      "packageAcceptance": {
+        "candidateSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+        "packageSha256": "82769c419b45407011424dc004b75ef7a061663bec37c46180dbaa66c5fd5adb",
+        "buildMode": "qualification-only-not-release",
+        "packageFilesUnmodified": true,
+        "authentication": "vault-agent-approle",
+        "vaultTlsVerified": true,
+        "separateRolesAndSinks": true,
+        "rolePermissionsChecked": true,
+        "roleIsolationChecked": true,
+        "credentialRotationCount": 7,
+        "supervision": "documented-node-process",
+        "vaultAgentUid": 10001,
+        "systemdQualified": false,
+        "publishedReleaseQualified": false,
+        "agentAccountUid": 10001
+      }
+    }
+  ],
+  "aggregate": {
+    "artifact": {
+      "id": 12581413773,
+      "name": "distribution-functional-summary",
+      "zipSha256": "da25dcfdecad0175fb0e79b2d7a706c50148d6e28ca8fdff77802a03493a3578",
+      "githubDigestMatches": true
+    },
+    "reportSha256": "a14515c23b311e2cd02a562051a6ffbd8e98e169ebdd02c490d6b428bd334a53",
+    "report": {
+      "schemaVersion": 1,
+      "scope": "distribution-functional-support",
+      "status": "passed",
+      "candidateSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+      "nativeAgentQualified": false,
+      "qualificationStatus": "not-qualified",
+      "experimental": true,
+      "allFeaturesQualified": false,
+      "cohorts": [
+        {
+          "id": "distribution-postgres-postgres",
+          "status": "passed",
+          "executed": 2
+        },
+        {
+          "id": "distribution-postgres-pr329-review",
+          "status": "passed",
+          "executed": 17
+        },
+        {
+          "id": "distribution-postgres-transfer",
+          "status": "passed",
+          "executed": 11
+        },
+        {
+          "id": "distribution-vault-adapter",
+          "status": "passed",
+          "executed": 9
+        },
+        {
+          "id": "distribution-agent-ordinary",
+          "status": "passed",
+          "executed": 15
+        },
+        {
+          "id": "distribution-agent-san",
+          "status": "passed",
+          "executed": 15
+        },
+        {
+          "id": "distribution-agent-wildcard",
+          "status": "passed",
+          "executed": 15
+        }
+      ],
+      "fixtureSource": {
+        "file": "scripts/certops-distribution-functional-summary.js",
+        "sha256": "2ad232e24c1a076fef9fc4d932d9e9c9b9f1f86069f22a881c6bc3b5bf7b83d9"
+      }
+    }
+  },
+  "fixtureSourceVerification": {
+    "uniqueFilesVerified": 53,
+    "inventoryEntriesAcrossSixLabs": 246,
+    "primaryFixtureEntriesAcrossSixLabs": 6,
+    "onboardingFixtureEntriesAcrossSixLabs": 6,
+    "aggregateFixtureEntries": 1,
+    "sourceHashes": [
+      {
+        "file": ".github/workflows/certops-distribution-qualification.yml",
+        "sha256": "cd9e2534bd2f8dbbd525bf5d9b8e6bbe0ce5a42601959fffc3ab47c130e3839c"
+      },
+      {
+        "file": "apps/api/routes/certops-agent.js",
+        "sha256": "d42c22e624f6c6fb3bf309788b7412f520b78689934670bd923f2090e77f4cca"
+      },
+      {
+        "file": "apps/api/routes/certops.js",
+        "sha256": "7308a401077482f8669ce2efd9ab7e3d5efe322df93acf0137358d1d1610f078"
+      },
+      {
+        "file": "apps/api/services/certops/agentDispatch.js",
+        "sha256": "8e89ffd64c82063ab31d20f74eed47e699616ab7ebf9d3a85f080e2bec87dc19"
+      },
+      {
+        "file": "apps/api/services/certops/distributionOperations.js",
+        "sha256": "ea8000b4fc257e2d7193d642c05831cac7c0dbc37dc464d7b5a88d115f5cd49b"
+      },
+      {
+        "file": "apps/api/services/certops/distributionPolicy.js",
+        "sha256": "b422f20dd06744fdb8e850d3ef1c8f3760897a807c3f3ceaedd76969d20109b5"
+      },
+      {
+        "file": "apps/api/services/certops/distributionRead.js",
+        "sha256": "5b4d109098e80ae73ef6c5c662812866bdf357bb304b3286e6702ec57038611f"
+      },
+      {
+        "file": "apps/api/services/certops/jobApprovals.js",
+        "sha256": "dea61473ea125da15a6943862853f15ab11f34cb717d11eac73b71c6e1e9e4fb"
+      },
+      {
+        "file": "apps/api/services/certops/jobSigning.js",
+        "sha256": "8c15c3fe9c80fe719fdf7a5a5b0d06e5447ad7dc31539ab706a4779a455fbb35"
+      },
+      {
+        "file": "apps/api/services/certops/materialDistribution.js",
+        "sha256": "38b270eca5f496cca36d2efe01d95e0a1d8a028cd90e508b52e5f8285b11ed9d"
+      },
+      {
+        "file": "apps/api/services/certops/workspaceKillSwitch.js",
+        "sha256": "dbec7765c85f9ba5e17a0a84189022de208c857c3f8754cc385aeccb3560dc4a"
+      },
+      {
+        "file": "deploy/compose/Dockerfile.api",
+        "sha256": "2732468bfc653229856a8e485b64e98ba04b422438d9daf87523b395e821995b"
+      },
+      {
+        "file": "deploy/compose/Dockerfile.worker",
+        "sha256": "8b51f5ceadff53a06fc4edb9f86d7ee54315a7888fb2789c6109371eec4cd1ee"
+      },
+      {
+        "file": "packages/agent/package.json",
+        "sha256": "e2433e47c6d6fc9bfe2dd6811433de7bd06c1bbecca90b1a4c7aef43e4535acd"
+      },
+      {
+        "file": "packages/agent/scripts/pack-release.js",
+        "sha256": "fc8b2b4cb497726d50f16439acb6e8cd280fffa1b33f796f2a3a56396b883248"
+      },
+      {
+        "file": "packages/agent/src/acme/index.js",
+        "sha256": "371e444ac8a5a5eff878087b5ce2b06b8d4c772810dec889a37fffb5cad4b82e"
+      },
+      {
+        "file": "packages/agent/src/config/index.js",
+        "sha256": "2df6f3357cdd690e116c83a130ebccc4c22b410df1d881973e050eaa3561b73b"
+      },
+      {
+        "file": "packages/agent/src/deploy/index.js",
+        "sha256": "e030747d894e5177c8843fa1de256569d6375744d3fe8bd97580c79472830ee1"
+      },
+      {
+        "file": "packages/agent/src/index.js",
+        "sha256": "30ad7d3f2be3356af502057c81b35b6860b315379835f5e25f8e720b70d5f887"
+      },
+      {
+        "file": "packages/agent/src/material-store/index.js",
+        "sha256": "c49f581db99958b8910bbbe58e761315dbc56bd9dda588af28d4de1929648dc3"
+      },
+      {
+        "file": "packages/agent/src/material-store/lifecycle.js",
+        "sha256": "0e6c5f25d8d0efac0625432ce8760e512cacea714bcad020d039922e036d78c3"
+      },
+      {
+        "file": "packages/agent/src/material-store/lifecycle.test.js",
+        "sha256": "ec82306d162544c2b2c63c13cfb9057224c94c24974f0c4a30e311da57462a6b"
+      },
+      {
+        "file": "packages/agent/src/material-store/material-store.test.js",
+        "sha256": "8735761d0190423cf2ff4d6b42422fc8961f5fb7242b303e3bdc2c1934b66ba7"
+      },
+      {
+        "file": "packages/agent/src/outbox/index.js",
+        "sha256": "a9d2a1d8b258f23e28f5a96dcd50259c2d38797291e4e472cc92226dc4c26fb4"
+      },
+      {
+        "file": "packages/agent/src/protocol/index.js",
+        "sha256": "5c0d0eef8b497f5be0182543f04e331237bcafaf21a1ef54bd6488623d58abab"
+      },
+      {
+        "file": "packages/agent/src/reload/index.js",
+        "sha256": "02c23a186276435fcaabbf30b4b36761c1f8d4c6e4e6a51d22658745ae6d1925"
+      },
+      {
+        "file": "packages/agent/src/replay/index.js",
+        "sha256": "bb73f3b447e707e83da0098408c646cf494a1917cf0342bde581c9b9891eb74d"
+      },
+      {
+        "file": "packages/agent/src/signing/index.js",
+        "sha256": "d909bbf78453b85b71e3d1ff26f7ea9694502459b632864f4816eb0abdf9c967"
+      },
+      {
+        "file": "packages/agent/src/verify/index.js",
+        "sha256": "5adddbd2a0e9c1c4434cecf2ab40b1ac7fb6b11c8e68851dc7368181c33a8f4f"
+      },
+      {
+        "file": "pnpm-lock.yaml",
+        "sha256": "1349acba01ca882f958240d165985ce2f81a1514eaa0bff4f11269ed00908005"
+      },
+      {
+        "file": "scripts/certops-agent-package.js",
+        "sha256": "bd7176f73b55d00cddf6e61a0456691c0746bf4f59bf690355042b61ec9a4772"
+      },
+      {
+        "file": "scripts/certops-distribution-functional-summary.js",
+        "sha256": "2ad232e24c1a076fef9fc4d932d9e9c9b9f1f86069f22a881c6bc3b5bf7b83d9"
+      },
+      {
+        "file": "scripts/certops-distribution-postgres.js",
+        "sha256": "5d42dbd90579bdfa0549c4e682cdfbb465810cb0ce33d787197c98e433338d20"
+      },
+      {
+        "file": "scripts/certops-distribution-privacy.js",
+        "sha256": "82bac52d3ed61b583b26212a647ddde2a75dedeea02aa2737bfba0b31e2041a2"
+      },
+      {
+        "file": "scripts/certops-distribution-report.js",
+        "sha256": "5368f8b1c15685eb569f508eebe884b9782cf105e6584a96e4a626651079c1ac"
+      },
+      {
+        "file": "scripts/certops-distribution-vault.js",
+        "sha256": "6618da4a25e0c9ca72e5091ea6c3d38e44d3b6411383aead36e2f4bf6e7ffde5"
+      },
+      {
+        "file": "tests/wildcard-vault/Dockerfile.fixture",
+        "sha256": "d844a0757fc36546960687938cb5c1aed2c3574b2d190878128ffe1d9082d86f"
+      },
+      {
+        "file": "tests/wildcard-vault/postgres.test.cjs",
+        "sha256": "a743486e541da2b06df51660a1849becb98838f9354b6e7a59d62b7abc396840"
+      },
+      {
+        "file": "tests/wildcard-vault/pr329-review.test.cjs",
+        "sha256": "65bc9dce2a2843708938a170bc498778a00b0fadc8e306d0af72d114f57eb7df"
+      },
+      {
+        "file": "tests/wildcard-vault/qualification-database.cjs",
+        "sha256": "a9d9ddc05f9567fc7446bf2ee78d461ff819e2e2f3c97cbefd79a733d7e70a9b"
+      },
+      {
+        "file": "tests/wildcard-vault/transfer.test.cjs",
+        "sha256": "5afb0c3df04536ea159e65efbbfb1471689618f858c4240af7ffa56e438ded1a"
+      },
+      {
+        "file": "tests/wildcard-vault/ux-lab/adversarial.cjs",
+        "sha256": "643e40c9430b11a0390b5e46cffbbe6d723ef77b976f85cdf38716411442a10b"
+      },
+      {
+        "file": "tests/wildcard-vault/ux-lab/browser.cjs",
+        "sha256": "b49696ea38c6a60c1414442931b47e37b38f1f20b71a0c99110c108d6557d4db"
+      },
+      {
+        "file": "tests/wildcard-vault/ux-lab/compose.yaml",
+        "sha256": "a9694a07ed8c903ffa0e8d92df390a5518c83f3cfdf91138053e117fb4023a15"
+      },
+      {
+        "file": "tests/wildcard-vault/ux-lab/customer-host.cjs",
+        "sha256": "99202e57e6d7251b5d50f8b970b02b062c9cceaee6c8f6d2fa031d2d13f58001"
+      },
+      {
+        "file": "tests/wildcard-vault/ux-lab/journey.cjs",
+        "sha256": "8fbfbcb606e7c989291d57be382e51a8a10153a692015258d93973551458ebc8"
+      },
+      {
+        "file": "tests/wildcard-vault/ux-lab/onboarding-redo.cjs",
+        "sha256": "9ff4e4fc04182b31b64316c5838b10a8d85edbec98266a55aa07ae94a68c06ef"
+      },
+      {
+        "file": "tests/wildcard-vault/ux-lab/package-acceptance.cjs",
+        "sha256": "bb30adea4629cd2b8baa5e59365648b8e23c5473cc9d6a5928706a05c4085a4e"
+      },
+      {
+        "file": "tests/wildcard-vault/ux-lab/privacy-audit.cjs",
+        "sha256": "3087b367fe497fa9e5066f3922e8f5aefb9238763fae8916eb9e13b02b1f5412"
+      },
+      {
+        "file": "tests/wildcard-vault/ux-lab/qualification.cjs",
+        "sha256": "c816f74fed799ad69e2f886bf1b5a290560c6de225d10c5b8cc662f76dbc849d"
+      },
+      {
+        "file": "tests/wildcard-vault/ux-lab/reload.cjs",
+        "sha256": "b5c9aaf0ddc9907b35799894706b87b8a29a042664d25eb9e6b5505614eead10"
+      },
+      {
+        "file": "tests/wildcard-vault/ux-lab/run.ps1",
+        "sha256": "85aa0485a39355e6474a94abc465c2a4e40c917d57a49b51f8c2d01ff61d7807"
+      },
+      {
+        "file": "tests/wildcard-vault/ux-lab/worker-loop.cjs",
+        "sha256": "04738c3f40dcc41a8e12f3efb8a0613dde7f4e0bcd05e3364b0deebfda64d5af"
+      }
+    ]
+  },
+  "counts": {
+    "supportingCohortsPassed": 7,
+    "sourceLabScenariosPassed": 45,
+    "operatorPackageScenariosPassed": 45,
+    "sourceAndPackageBrowserRedoReceiptsPassed": 6,
+    "failedScenarios": 0,
+    "skippedScenarios": 0,
+    "postgresPassingEvents": 50,
+    "vaultAdapterPassingEvents": 9
+  },
+  "cleanupScope": {
+    "postgresAndVaultSupport": "Both bounded support summaries assert cleanup passed.",
+    "sourceAndPackageLabs": "Check actual successful Stop steps in recorded jobs: docker compose down removes owned containers and networks. Existing runner explicitly retains named volumes/evidence on the disposable hosted runner.",
+    "allVolumesDeletedByScript": false
+  },
+  "packageDistinction": {
+    "finalAgentSha256": "062f48b1960685b247b0114b2f7086b7accda23f8788895078da627f8844507c",
+    "operatorPackagesAreFinalReleaseArchive": false,
+    "scope": "Qualification-only capability-enabled operator packages; actual package hashes and source are preserved above. No systemd or published-release qualification.",
+    "operatorArchiveBytesUploaded": false,
+    "operatorPackageHashVerification": "The passing hosted operator tests bind their actual package receipt and packageFilesUnmodified assertion to the reported archive hash. Public artifact ZIPs contain receipts and screenshots, not the qualification-only tgz; no local rehash of those operator archive bytes is claimed. The separate final agent062f archive was locally rehashed and source-compared."
+  },
+  "jobs": [
+    {
+      "id": 121037055302,
+      "name": "Current source PostgreSQL and real Vault",
+      "url": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40149240400/job/121037055302",
+      "completedAt": "2026-10-25T01:06:39Z",
+      "conclusion": "success",
+      "cleanupSteps": {}
+    },
+    {
+      "id": 121037055261,
+      "name": "Current source distribution (ordinary)",
+      "url": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40149240400/job/121037055261",
+      "completedAt": "2026-10-25T01:29:56Z",
+      "conclusion": "success",
+      "cleanupSteps": {
+        "Stop owned package lab": "success",
+        "Stop owned source lab": "success"
+      }
+    },
+    {
+      "id": 121037055063,
+      "name": "Current source distribution (san)",
+      "url": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40149240400/job/121037055063",
+      "completedAt": "2026-10-25T01:30:05Z",
+      "conclusion": "success",
+      "cleanupSteps": {
+        "Stop owned package lab": "success",
+        "Stop owned source lab": "success"
+      }
+    },
+    {
+      "id": 121037055336,
+      "name": "Current source distribution (wildcard)",
+      "url": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40149240400/job/121037055336",
+      "completedAt": "2026-10-25T01:30:15Z",
+      "conclusion": "success",
+      "cleanupSteps": {
+        "Stop owned package lab": "success",
+        "Stop owned source lab": "success"
+      }
+    },
+    {
+      "id": 121042001566,
+      "name": "functional-summary",
+      "url": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40149240400/job/121042001566",
+      "completedAt": "2026-10-25T01:30:26Z",
+      "conclusion": "success",
+      "cleanupSteps": {}
+    }
+  ],
+  "workflow": {
+    "id": 40149240400,
+    "status": "completed",
+    "conclusion": "success",
+    "startedAt": "2026-10-25T01:05:16Z",
+    "updatedAt": "2026-10-25T01:30:26Z",
+    "allSixJobsSuccessful": true
+  },
+  "supportingCohortComposition": {
+    "sourceAgentModes": 3,
+    "postgresSuites": 3,
+    "vaultAdapter": 1,
+    "total": 7,
+    "operatorPackageCohortsAreSeparate": 3
+  },
+  "canonicalAggregateCountMeaning": {
+    "postgresRequiredTestNames": 30,
+    "vaultRequiredTestNames": 9,
+    "sourceAgentRequiredScenarios": 45,
+    "totalRequiredNamesAndScenarios": 84,
+    "note": "For support cohorts the canonical executed field is slot.requiredTests.length (PG2/17/11 and Vault9), not all JSONL test:pass events. Actual JSONL passes are PG2/29/19 and Vault9, retained separately."
+  },
+  "supportSourceVerification": {
+    "supportingInventoryEntriesVerified": 23,
+    "testEventSourceEntriesVerified": 59,
+    "distinctPrimaryTestFilesVerified": 4,
+    "uniqueFilesVerified": 17,
+    "allMatchActualCandidate": true,
+    "sourceHashes": [
+      {
+        "file": ".github/workflows/certops-distribution-qualification.yml",
+        "sha256": "cd9e2534bd2f8dbbd525bf5d9b8e6bbe0ce5a42601959fffc3ab47c130e3839c"
+      },
+      {
+        "file": "apps/api/services/certops/distributionOperations.js",
+        "sha256": "ea8000b4fc257e2d7193d642c05831cac7c0dbc37dc464d7b5a88d115f5cd49b"
+      },
+      {
+        "file": "apps/api/services/certops/distributionPolicy.js",
+        "sha256": "b422f20dd06744fdb8e850d3ef1c8f3760897a807c3f3ceaedd76969d20109b5"
+      },
+      {
+        "file": "apps/api/services/certops/distributionRead.js",
+        "sha256": "5b4d109098e80ae73ef6c5c662812866bdf357bb304b3286e6702ec57038611f"
+      },
+      {
+        "file": "apps/api/services/certops/materialDistribution.js",
+        "sha256": "38b270eca5f496cca36d2efe01d95e0a1d8a028cd90e508b52e5f8285b11ed9d"
+      },
+      {
+        "file": "packages/agent/src/material-store/index.js",
+        "sha256": "c49f581db99958b8910bbbe58e761315dbc56bd9dda588af28d4de1929648dc3"
+      },
+      {
+        "file": "packages/agent/src/material-store/lifecycle.js",
+        "sha256": "0e6c5f25d8d0efac0625432ce8760e512cacea714bcad020d039922e036d78c3"
+      },
+      {
+        "file": "packages/agent/src/material-store/lifecycle.test.js",
+        "sha256": "ec82306d162544c2b2c63c13cfb9057224c94c24974f0c4a30e311da57462a6b"
+      },
+      {
+        "file": "packages/agent/src/material-store/material-store.test.js",
+        "sha256": "8735761d0190423cf2ff4d6b42422fc8961f5fb7242b303e3bdc2c1934b66ba7"
+      },
+      {
+        "file": "scripts/certops-distribution-functional-summary.js",
+        "sha256": "2ad232e24c1a076fef9fc4d932d9e9c9b9f1f86069f22a881c6bc3b5bf7b83d9"
+      },
+      {
+        "file": "scripts/certops-distribution-postgres.js",
+        "sha256": "5d42dbd90579bdfa0549c4e682cdfbb465810cb0ce33d787197c98e433338d20"
+      },
+      {
+        "file": "scripts/certops-distribution-vault.js",
+        "sha256": "6618da4a25e0c9ca72e5091ea6c3d38e44d3b6411383aead36e2f4bf6e7ffde5"
+      },
+      {
+        "file": "tests/wildcard-vault/Dockerfile.fixture",
+        "sha256": "d844a0757fc36546960687938cb5c1aed2c3574b2d190878128ffe1d9082d86f"
+      },
+      {
+        "file": "tests/wildcard-vault/postgres.test.cjs",
+        "sha256": "a743486e541da2b06df51660a1849becb98838f9354b6e7a59d62b7abc396840"
+      },
+      {
+        "file": "tests/wildcard-vault/pr329-review.test.cjs",
+        "sha256": "65bc9dce2a2843708938a170bc498778a00b0fadc8e306d0af72d114f57eb7df"
+      },
+      {
+        "file": "tests/wildcard-vault/qualification-database.cjs",
+        "sha256": "a9d9ddc05f9567fc7446bf2ee78d461ff819e2e2f3c97cbefd79a733d7e70a9b"
+      },
+      {
+        "file": "tests/wildcard-vault/transfer.test.cjs",
+        "sha256": "5afb0c3df04536ea159e65efbbfb1471689618f858c4240af7ffa56e438ded1a"
+      }
+    ]
+  },
+  "status": "passed"
+}

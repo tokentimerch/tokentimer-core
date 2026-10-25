@@ -1,0 +1,9 @@
+
+ RUN  v4.1.12 /workspace/scratch/f9a42a83177f/core-release-prep/repo/apps/dashboard
+
+
+ Test Files  3 passed (3)
+      Tests  27 passed (27)
+   Start at  03:03:20
+   Duration  2.48s (transform 173ms, setup 143ms, import 660ms, tests 497ms, environment 826ms)
+

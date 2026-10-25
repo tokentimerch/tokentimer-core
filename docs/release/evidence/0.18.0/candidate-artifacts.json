@@ -1,0 +1,1020 @@
+{
+  "schemaVersion": 1,
+  "status": "Corrected dashboard production archive and carried artifact provenance verified; overall release decision and live cohort acceptance remain owned by the gate record.",
+  "candidateSourceSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+  "sourceEquivalence": [
+    {
+      "path": "packages/agent",
+      "sourceTree": "bd82861354ff58b82d7ff8ad270d8b14d1d3c1e5",
+      "identicalAt": [
+        "69387d85231f242d00f653bbde94ead373fefe1e",
+        "fcc681c19314b7c2432973ce99d517af36e10238"
+      ]
+    },
+    {
+      "path": "packages/agent/windows-service-host",
+      "sourceTree": "a7b59d5897f5db01ad921f918e84800ce5fe9360",
+      "identicalAt": [
+        "69387d85231f242d00f653bbde94ead373fefe1e",
+        "fcc681c19314b7c2432973ce99d517af36e10238"
+      ]
+    },
+    {
+      "path": "packages/agent/reference/adcs-chain",
+      "sourceTree": "f8d6687bf14c41535829da789dfc534802ff85e0",
+      "identicalAt": [
+        "69387d85231f242d00f653bbde94ead373fefe1e",
+        "fcc681c19314b7c2432973ce99d517af36e10238"
+      ]
+    },
+    {
+      "path": "packages/agent/reference/adcs-cmc",
+      "sourceTree": "96502ba6e83950833a3e98341f323408904c52a3",
+      "identicalAt": [
+        "69387d85231f242d00f653bbde94ead373fefe1e",
+        "fcc681c19314b7c2432973ce99d517af36e10238"
+      ]
+    },
+    {
+      "path": "deploy/helm",
+      "sourceTree": "dda6a03dd36060b97785100d3b71e37e3e0ec928",
+      "identicalAt": [
+        "69387d85231f242d00f653bbde94ead373fefe1e",
+        "fcc681c19314b7c2432973ce99d517af36e10238"
+      ]
+    }
+  ],
+  "actionsTakenHere": {
+    "tagged": false,
+    "published": false,
+    "deployed": false,
+    "nativeExecutablesRun": false,
+    "scope": "Local artifact inspection and packaging evidence work represented by this manifest; successful hosted Windows/native execution is recorded in separate acceptance evidence."
+  },
+  "priorReleaseRun": {
+    "id": 40142567511,
+    "sourceSha": "69387d85231f242d00f653bbde94ead373fefe1e",
+    "trigger": "push v0.18.0-beta.1",
+    "conclusion": "cancelled",
+    "imagesPushedAndSigned": true,
+    "helmPublished": false,
+    "githubReleaseCreated": false,
+    "currentV018TagQueryEmpty": true
+  },
+  "agent": {
+    "relativePath": "artifacts/candidate-agent-fcc-go12610/tokentimer-agent-0.18.0.tgz",
+    "version": "0.18.0",
+    "sha256": "062f48b1960685b247b0114b2f7086b7accda23f8788895078da627f8844507c",
+    "bytes": 8460275,
+    "artifactSourceSha": "fcc681c19314b7c2432973ce99d517af36e10238",
+    "preparationWorkflowSha": "c77145b64012698e8d1d2c9a48a1cd05fe0137c0",
+    "githubRunId": 40144872189,
+    "githubJobId": 121023957655,
+    "githubArtifactId": 12579539875,
+    "archiveZipSha256": "0b756caadd6633b64e85a0dfacfb8ae2454b2c06999c97807a46979c210d1ce7",
+    "locallyDownloadedAndChecksumVerified": true,
+    "reuseStatus": "current prepared artifact; packaging provenance and security gate passed; overall release acceptance tracked separately",
+    "goVersion": "go1.26.10",
+    "goToolchain": "local",
+    "checksPassed": [
+      "canonical verified extraction with106 regular files, no links/unsafe paths",
+      "canonical private-key material scan and executable-mode check",
+      "100 packaged nonbinary files byte-identical to product source fcc",
+      "exactly6 PE executable architectures, modules and pure-Go Windows settings",
+      "all6 packed PE build versions go1.26.10, matching hosted provenance hashes",
+      "hosted unchanged-source and shipped JavaScript checks passed",
+      "independent unfiltered and fixed High/Critical scans passed;2 Low findings retained"
+    ],
+    "qualifiedCapabilities": [
+      "windows-cert-store-v1",
+      "iis-binding-v1",
+      "trust-anchor-deploy-v1",
+      "adcs-enroll-v1",
+      "material-store-vault-kv2-v1",
+      "certificate-publication-v1",
+      "deploy-from-store-v1"
+    ],
+    "nativeExecutableMetadata": [
+      {
+        "path": "bin/tokentimer-adcs-chain-amd64.exe",
+        "sha256": "c5c37c94bbdb35f78380cee2924ba327a33a64086bcf4934003b4b91959bdaac",
+        "bytes": 3611648,
+        "goVersion": "go1.26.10",
+        "architecture": "amd64",
+        "modulePath": "tokentimer-adcs-chain",
+        "settings": {
+          "-buildmode": "exe",
+          "-compiler": "gc",
+          "-trimpath": "true",
+          "DefaultGODEBUG": "asynctimerchan=1,containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,gotestjsonbuildtext=1,gotypesalias=0,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,httpservecontentmaxranges=1,multipathtcp=0,randseednop=0,rsa1024min=0,tls10server=1,tls3des=1,tlsmlkem=0,tlsrsakex=1,tlssecpmlkem=0,tlssha1=1,tlsunsafeekm=1,updatemaxprocs=0,urlmaxqueryparams=0,urlstrictcolons=0,winreadlinkvolume=0,winsymlink=0,x509keypairleaf=0,x509negativeserial=1,x509rsacrt=0,x509sha256skid=0,x509usepolicies=0",
+          "CGO_ENABLED": "0",
+          "GOARCH": "amd64",
+          "GOOS": "windows",
+          "GOAMD64": "v1"
+        },
+        "moduleBuildInfo": [
+          "path\ttokentimer-adcs-chain",
+          "mod\ttokentimer-adcs-chain\t(devel)\t",
+          "dep\tgolang.org/x/sys\tv0.28.0\th1:Fksou7UEQUWlKvIdsqzJmUmCX3cZuD2+P3XyyzwMhlA=",
+          "build\t-buildmode=exe",
+          "build\t-compiler=gc",
+          "build\t-trimpath=true",
+          "build\tDefaultGODEBUG=asynctimerchan=1,containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,gotestjsonbuildtext=1,gotypesalias=0,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,httpservecontentmaxranges=1,multipathtcp=0,randseednop=0,rsa1024min=0,tls10server=1,tls3des=1,tlsmlkem=0,tlsrsakex=1,tlssecpmlkem=0,tlssha1=1,tlsunsafeekm=1,updatemaxprocs=0,urlmaxqueryparams=0,urlstrictcolons=0,winreadlinkvolume=0,winsymlink=0,x509keypairleaf=0,x509negativeserial=1,x509rsacrt=0,x509sha256skid=0,x509usepolicies=0",
+          "build\tCGO_ENABLED=0",
+          "build\tGOARCH=amd64",
+          "build\tGOOS=windows",
+          "build\tGOAMD64=v1"
+        ]
+      },
+      {
+        "path": "bin/tokentimer-adcs-chain-arm64.exe",
+        "sha256": "27b6ff4c2af961c1402b13f44fb22622e2694816412256a402786312463dbd88",
+        "bytes": 3305984,
+        "goVersion": "go1.26.10",
+        "architecture": "arm64",
+        "modulePath": "tokentimer-adcs-chain",
+        "settings": {
+          "-buildmode": "exe",
+          "-compiler": "gc",
+          "-trimpath": "true",
+          "DefaultGODEBUG": "asynctimerchan=1,containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,gotestjsonbuildtext=1,gotypesalias=0,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,httpservecontentmaxranges=1,multipathtcp=0,randseednop=0,rsa1024min=0,tls10server=1,tls3des=1,tlsmlkem=0,tlsrsakex=1,tlssecpmlkem=0,tlssha1=1,tlsunsafeekm=1,updatemaxprocs=0,urlmaxqueryparams=0,urlstrictcolons=0,winreadlinkvolume=0,winsymlink=0,x509keypairleaf=0,x509negativeserial=1,x509rsacrt=0,x509sha256skid=0,x509usepolicies=0",
+          "CGO_ENABLED": "0",
+          "GOARCH": "arm64",
+          "GOOS": "windows",
+          "GOARM64": "v8.0"
+        },
+        "moduleBuildInfo": [
+          "path\ttokentimer-adcs-chain",
+          "mod\ttokentimer-adcs-chain\t(devel)\t",
+          "dep\tgolang.org/x/sys\tv0.28.0\th1:Fksou7UEQUWlKvIdsqzJmUmCX3cZuD2+P3XyyzwMhlA=",
+          "build\t-buildmode=exe",
+          "build\t-compiler=gc",
+          "build\t-trimpath=true",
+          "build\tDefaultGODEBUG=asynctimerchan=1,containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,gotestjsonbuildtext=1,gotypesalias=0,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,httpservecontentmaxranges=1,multipathtcp=0,randseednop=0,rsa1024min=0,tls10server=1,tls3des=1,tlsmlkem=0,tlsrsakex=1,tlssecpmlkem=0,tlssha1=1,tlsunsafeekm=1,updatemaxprocs=0,urlmaxqueryparams=0,urlstrictcolons=0,winreadlinkvolume=0,winsymlink=0,x509keypairleaf=0,x509negativeserial=1,x509rsacrt=0,x509sha256skid=0,x509usepolicies=0",
+          "build\tCGO_ENABLED=0",
+          "build\tGOARCH=arm64",
+          "build\tGOOS=windows",
+          "build\tGOARM64=v8.0"
+        ]
+      },
+      {
+        "path": "bin/tokentimer-adcs-cmc-amd64.exe",
+        "sha256": "c24992124cb7667ab5ba7c1082dd582ac273805706c1262770bffa95a2f96126",
+        "bytes": 3735552,
+        "goVersion": "go1.26.10",
+        "architecture": "amd64",
+        "modulePath": "tokentimer-adcs-cmc",
+        "settings": {
+          "-buildmode": "exe",
+          "-compiler": "gc",
+          "-trimpath": "true",
+          "DefaultGODEBUG": "asynctimerchan=1,containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,gotestjsonbuildtext=1,gotypesalias=0,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,httpservecontentmaxranges=1,multipathtcp=0,randseednop=0,rsa1024min=0,tls10server=1,tls3des=1,tlsmlkem=0,tlsrsakex=1,tlssecpmlkem=0,tlssha1=1,tlsunsafeekm=1,updatemaxprocs=0,urlmaxqueryparams=0,urlstrictcolons=0,winreadlinkvolume=0,winsymlink=0,x509keypairleaf=0,x509negativeserial=1,x509rsacrt=0,x509sha256skid=0,x509usepolicies=0",
+          "CGO_ENABLED": "0",
+          "GOARCH": "amd64",
+          "GOOS": "windows",
+          "GOAMD64": "v1"
+        },
+        "moduleBuildInfo": [
+          "path\ttokentimer-adcs-cmc",
+          "mod\ttokentimer-adcs-cmc\t(devel)\t",
+          "dep\tgo.mozilla.org/pkcs7\tv0.10.0\th1:jmljzDzNYFzaP1dFlgmCiQml9e+iEMmv8/NNs4evQbg=",
+          "build\t-buildmode=exe",
+          "build\t-compiler=gc",
+          "build\t-trimpath=true",
+          "build\tDefaultGODEBUG=asynctimerchan=1,containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,gotestjsonbuildtext=1,gotypesalias=0,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,httpservecontentmaxranges=1,multipathtcp=0,randseednop=0,rsa1024min=0,tls10server=1,tls3des=1,tlsmlkem=0,tlsrsakex=1,tlssecpmlkem=0,tlssha1=1,tlsunsafeekm=1,updatemaxprocs=0,urlmaxqueryparams=0,urlstrictcolons=0,winreadlinkvolume=0,winsymlink=0,x509keypairleaf=0,x509negativeserial=1,x509rsacrt=0,x509sha256skid=0,x509usepolicies=0",
+          "build\tCGO_ENABLED=0",
+          "build\tGOARCH=amd64",
+          "build\tGOOS=windows",
+          "build\tGOAMD64=v1"
+        ]
+      },
+      {
+        "path": "bin/tokentimer-adcs-cmc-arm64.exe",
+        "sha256": "8fda6133c66a4010bc539c985dc71597d57b2272a923452bc395ccc2603ab66c",
+        "bytes": 3395584,
+        "goVersion": "go1.26.10",
+        "architecture": "arm64",
+        "modulePath": "tokentimer-adcs-cmc",
+        "settings": {
+          "-buildmode": "exe",
+          "-compiler": "gc",
+          "-trimpath": "true",
+          "DefaultGODEBUG": "asynctimerchan=1,containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,gotestjsonbuildtext=1,gotypesalias=0,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,httpservecontentmaxranges=1,multipathtcp=0,randseednop=0,rsa1024min=0,tls10server=1,tls3des=1,tlsmlkem=0,tlsrsakex=1,tlssecpmlkem=0,tlssha1=1,tlsunsafeekm=1,updatemaxprocs=0,urlmaxqueryparams=0,urlstrictcolons=0,winreadlinkvolume=0,winsymlink=0,x509keypairleaf=0,x509negativeserial=1,x509rsacrt=0,x509sha256skid=0,x509usepolicies=0",
+          "CGO_ENABLED": "0",
+          "GOARCH": "arm64",
+          "GOOS": "windows",
+          "GOARM64": "v8.0"
+        },
+        "moduleBuildInfo": [
+          "path\ttokentimer-adcs-cmc",
+          "mod\ttokentimer-adcs-cmc\t(devel)\t",
+          "dep\tgo.mozilla.org/pkcs7\tv0.10.0\th1:jmljzDzNYFzaP1dFlgmCiQml9e+iEMmv8/NNs4evQbg=",
+          "build\t-buildmode=exe",
+          "build\t-compiler=gc",
+          "build\t-trimpath=true",
+          "build\tDefaultGODEBUG=asynctimerchan=1,containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,gotestjsonbuildtext=1,gotypesalias=0,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,httpservecontentmaxranges=1,multipathtcp=0,randseednop=0,rsa1024min=0,tls10server=1,tls3des=1,tlsmlkem=0,tlsrsakex=1,tlssecpmlkem=0,tlssha1=1,tlsunsafeekm=1,updatemaxprocs=0,urlmaxqueryparams=0,urlstrictcolons=0,winreadlinkvolume=0,winsymlink=0,x509keypairleaf=0,x509negativeserial=1,x509rsacrt=0,x509sha256skid=0,x509usepolicies=0",
+          "build\tCGO_ENABLED=0",
+          "build\tGOARCH=arm64",
+          "build\tGOOS=windows",
+          "build\tGOARM64=v8.0"
+        ]
+      },
+      {
+        "path": "bin/tokentimer-agent-host-amd64.exe",
+        "sha256": "f6414356d5177b10293fa7f5f2b8d211a48686030515d0c8bbbe22ee083a496c",
+        "bytes": 2266112,
+        "goVersion": "go1.26.10",
+        "architecture": "amd64",
+        "modulePath": "github.com/tokentimerch/tokentimer-core/packages/agent/windows-service-host",
+        "settings": {
+          "-buildmode": "exe",
+          "-compiler": "gc",
+          "-trimpath": "true",
+          "DefaultGODEBUG": "cryptocustomrand=1,httpservecontentmaxranges=1,tlssecpmlkem=0,urlstrictcolons=0",
+          "CGO_ENABLED": "0",
+          "GOARCH": "amd64",
+          "GOOS": "windows",
+          "GOAMD64": "v1",
+          "vcs": "git",
+          "vcs.revision": "fcc681c19314b7c2432973ce99d517af36e10238",
+          "vcs.time": "2026-10-24T23:37:47Z",
+          "vcs.modified": "false"
+        },
+        "moduleBuildInfo": [
+          "path\tgithub.com/tokentimerch/tokentimer-core/packages/agent/windows-service-host",
+          "mod\tgithub.com/tokentimerch/tokentimer-core/packages/agent/windows-service-host\t(devel)\t",
+          "dep\tgolang.org/x/sys\tv0.47.0\th1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=",
+          "build\t-buildmode=exe",
+          "build\t-compiler=gc",
+          "build\t-trimpath=true",
+          "build\tDefaultGODEBUG=cryptocustomrand=1,httpservecontentmaxranges=1,tlssecpmlkem=0,urlstrictcolons=0",
+          "build\tCGO_ENABLED=0",
+          "build\tGOARCH=amd64",
+          "build\tGOOS=windows",
+          "build\tGOAMD64=v1",
+          "build\tvcs=git",
+          "build\tvcs.revision=fcc681c19314b7c2432973ce99d517af36e10238",
+          "build\tvcs.time=2026-10-24T23:37:47Z",
+          "build\tvcs.modified=false"
+        ]
+      },
+      {
+        "path": "bin/tokentimer-agent-host-arm64.exe",
+        "sha256": "ee9ada9d787e51a1714b37eda1f0c448b8d603fd88cf695f4df627a6dc25ee03",
+        "bytes": 2143232,
+        "goVersion": "go1.26.10",
+        "architecture": "arm64",
+        "modulePath": "github.com/tokentimerch/tokentimer-core/packages/agent/windows-service-host",
+        "settings": {
+          "-buildmode": "exe",
+          "-compiler": "gc",
+          "-trimpath": "true",
+          "DefaultGODEBUG": "cryptocustomrand=1,httpservecontentmaxranges=1,tlssecpmlkem=0,urlstrictcolons=0",
+          "CGO_ENABLED": "0",
+          "GOARCH": "arm64",
+          "GOOS": "windows",
+          "GOARM64": "v8.0",
+          "vcs": "git",
+          "vcs.revision": "fcc681c19314b7c2432973ce99d517af36e10238",
+          "vcs.time": "2026-10-24T23:37:47Z",
+          "vcs.modified": "false"
+        },
+        "moduleBuildInfo": [
+          "path\tgithub.com/tokentimerch/tokentimer-core/packages/agent/windows-service-host",
+          "mod\tgithub.com/tokentimerch/tokentimer-core/packages/agent/windows-service-host\t(devel)\t",
+          "dep\tgolang.org/x/sys\tv0.47.0\th1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=",
+          "build\t-buildmode=exe",
+          "build\t-compiler=gc",
+          "build\t-trimpath=true",
+          "build\tDefaultGODEBUG=cryptocustomrand=1,httpservecontentmaxranges=1,tlssecpmlkem=0,urlstrictcolons=0",
+          "build\tCGO_ENABLED=0",
+          "build\tGOARCH=arm64",
+          "build\tGOOS=windows",
+          "build\tGOARM64=v8.0",
+          "build\tvcs=git",
+          "build\tvcs.revision=fcc681c19314b7c2432973ce99d517af36e10238",
+          "build\tvcs.time=2026-10-24T23:37:47Z",
+          "build\tvcs.modified=false"
+        ]
+      }
+    ],
+    "securityScan": {
+      "allMatches": 2,
+      "allSeverityCounts": {
+        "Low": 2
+      },
+      "allScanObservedExitCode": 0,
+      "gateArguments": [
+        "--fail-on",
+        "high",
+        "--only-fixed"
+      ],
+      "gateObservedExitCode": 0,
+      "gatePassed": true,
+      "ciGatePassed": true,
+      "residualFindings": [
+        {
+          "id": "GO-2026-5024",
+          "severity": "Low",
+          "package": "golang.org/x/sys",
+          "version": "v0.28.0",
+          "locations": [
+            "/bin/tokentimer-adcs-chain-amd64.exe"
+          ],
+          "fix": {
+            "versions": [
+              "0.44.0"
+            ],
+            "state": "fixed",
+            "available": [
+              {
+                "version": "0.44.0",
+                "date": "2026-04-23",
+                "kind": "release"
+              }
+            ]
+          }
+        },
+        {
+          "id": "GO-2026-5024",
+          "severity": "Low",
+          "package": "golang.org/x/sys",
+          "version": "v0.28.0",
+          "locations": [
+            "/bin/tokentimer-adcs-chain-arm64.exe"
+          ],
+          "fix": {
+            "versions": [
+              "0.44.0"
+            ],
+            "state": "fixed",
+            "available": [
+              {
+                "version": "0.44.0",
+                "date": "2026-04-23",
+                "kind": "release"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "independentVerificationReceipt": "replacement-agent/verification-summary.json",
+    "nativeExecutionAcceptance": "Separate hosted Windows and release qualification receipts; not executed by this local inspection",
+    "carryForwardEvidence": "packaging/carry-forward-fd441765.json",
+    "reviewedCurrentProductSourceSha": "b1b92cb36de0ef0d8647f1122d18b075d06c17ea"
+  },
+  "helm": {
+    "relativePath": "artifacts/stable-helm-hosted/tokentimer-0.18.0.tgz",
+    "sourceSha": "fcc681c19314b7c2432973ce99d517af36e10238",
+    "version": "0.18.0",
+    "appVersion": "0.18.0",
+    "sha256": "bd8edaab42b196ae088d4871870a9acc148018673f5ac84caba564ed743a1bb0",
+    "bytes": 46848,
+    "toolVersion": "v3.20.1+ga2369ca",
+    "checksPassed": [
+      "helm package",
+      "helm lint package with config.adminEmail=ci@example.com",
+      "helm template package with config.adminEmail=ci@example.com",
+      "all4 Core image tags aligned0.18.0"
+    ],
+    "published": false,
+    "deployed": false,
+    "githubRunId": 40146293049,
+    "githubJobId": 121028239469,
+    "githubArtifactId": 12580642481,
+    "preparationWorkflowSha": "4ce098be13c7fb9cd3636bfed3dcba87b03abe0f",
+    "archiveZipSha256": "5564c18bfc6ecee045db60bea5141826affe86a0570187bb84c2c1cdedadf1c6",
+    "verificationEvidence": "packaging/hosted-stable-helm-evidence.json",
+    "allContentAndModesIdenticalToPreviouslyValidatedStableChart": true,
+    "previousLocalPackage": {
+      "relativePath": "artifacts/stable-helm/tokentimer-0.18.0.tgz",
+      "sha256": "0ee43c7fd0aaafe4456be4a46c4bdc362aebf5989dc7e859bcf28bafdd90cd18",
+      "bytes": 46850,
+      "archiveDifference": "Helm tar entry timestamps differ; all regular file bytes and modes are identical"
+    },
+    "carryForwardEvidence": "packaging/carry-forward-fd441765.json",
+    "reviewedCurrentProductSourceSha": "b1b92cb36de0ef0d8647f1122d18b075d06c17ea"
+  },
+  "images": [
+    {
+      "component": "api",
+      "immutableReference": "ghcr.io/tokentimerch/tokentimer-core-api@sha256:b426671327577936f0666952047553aa7e8e5ec7369a5e5b0cf654127eaa235d",
+      "priorTag": "0.18.0-beta.1",
+      "sourceSha": "69387d85231f242d00f653bbde94ead373fefe1e",
+      "buildPushJobId": 121017182426,
+      "signatureVerificationJobId": 121017919545,
+      "signatureVerification": "passed in priorReleaseRun logs",
+      "currentLocalRegistryScan": {
+        "name": "api",
+        "sourceType": "image",
+        "source": {
+          "userInput": "ghcr.io/tokentimerch/tokentimer-core-api@sha256:b426671327577936f0666952047553aa7e8e5ec7369a5e5b0cf654127eaa235d",
+          "manifestDigest": "sha256:3c860e17c6b7587a55de576f4a6439dc578d3237e936d8d08d0aa1849a3e269a",
+          "imageID": "sha256:c2c07b36d8c26117f35bdb3e50aa47e74baa9fe4f20897bce26af3c2be7888a6",
+          "architecture": "amd64",
+          "os": "linux"
+        },
+        "scanTimestamp": "2026-10-25T02:45:01.333229935+03:00",
+        "allMatches": 7,
+        "allSeverityCounts": {
+          "Medium": 3,
+          "Unknown": 4
+        },
+        "gatedMatches": 3,
+        "gatedSeverityCounts": {
+          "Unknown": 3
+        },
+        "gateExitCode": 0,
+        "gatePassed": true,
+        "reports": {
+          "all.json": {
+            "path": "image-scans/api-all.json",
+            "sha256": "609329e0b5a4b536b220729fc18dd585b716e286ac0f31e58399b03b03e3b2ea"
+          },
+          "all.sarif": {
+            "path": "image-scans/api-all.sarif",
+            "sha256": "18b8f64c46ae5fda60d5a91544af198cedd4f6f9bcd606f2690070cca41c6f01"
+          },
+          "gate.json": {
+            "path": "image-scans/api-gate.json",
+            "sha256": "9a3ea2fda236149d9a0a52f0f5882a3812ce239cdff1b6aee356f36cacd10513"
+          }
+        },
+        "highCriticalAllFindings": []
+      },
+      "carryForwardEvidence": "packaging/carry-forward-fd441765.json",
+      "carryForwardBasis": "Production runtime source and build instructions unchanged; two dormant Windows helper test source files differ in the complete COPY packages context."
+    },
+    {
+      "component": "worker",
+      "immutableReference": "ghcr.io/tokentimerch/tokentimer-core-worker@sha256:5cfe19338693d24eb912e213a19012f3ffc8f066fae49df9bf16d5de4a38f536",
+      "priorTag": "0.18.0-beta.1",
+      "sourceSha": "69387d85231f242d00f653bbde94ead373fefe1e",
+      "buildPushJobId": 121017182521,
+      "signatureVerificationJobId": 121017919446,
+      "signatureVerification": "passed in priorReleaseRun logs",
+      "currentLocalRegistryScan": {
+        "name": "worker",
+        "sourceType": "image",
+        "source": {
+          "userInput": "ghcr.io/tokentimerch/tokentimer-core-worker@sha256:5cfe19338693d24eb912e213a19012f3ffc8f066fae49df9bf16d5de4a38f536",
+          "manifestDigest": "sha256:0f6a8e8fea84deb63399d93286ce3b2e9dfbbb15ff5f82060ac270ae6ee5ff15",
+          "imageID": "sha256:db10bf35364fd7a6c2537984f0f52e34bd77b33f7a69dacd9f6597c4dae78b13",
+          "architecture": "amd64",
+          "os": "linux"
+        },
+        "scanTimestamp": "2026-10-25T02:46:18.746523464+03:00",
+        "allMatches": 7,
+        "allSeverityCounts": {
+          "High": 1,
+          "Medium": 4,
+          "Unknown": 2
+        },
+        "gatedMatches": 2,
+        "gatedSeverityCounts": {
+          "Unknown": 2
+        },
+        "gateExitCode": 0,
+        "gatePassed": true,
+        "reports": {
+          "all.json": {
+            "path": "image-scans/worker-all.json",
+            "sha256": "fc35bdbdd2df9317e9840903d05031d260065c9959df235b195ba740299ed86d"
+          },
+          "all.sarif": {
+            "path": "image-scans/worker-all.sarif",
+            "sha256": "e1c6ee0e52510be0452c919874f0c06e6015026c5f555f1df5ce30cce7b68a52"
+          },
+          "gate.json": {
+            "path": "image-scans/worker-gate.json",
+            "sha256": "fcc937b25d0491bcb18f8da815933a47341a35b47be87f620cbe81e2d632fdac"
+          }
+        },
+        "highCriticalAllFindings": [
+          {
+            "id": "CVE-2026-92392",
+            "severity": "High",
+            "package": "curl",
+            "version": "8.22.0-r0",
+            "fix": {
+              "versions": [],
+              "state": "unknown"
+            }
+          }
+        ]
+      },
+      "carryForwardEvidence": "packaging/carry-forward-fd441765.json",
+      "carryForwardBasis": "Production runtime source and build instructions unchanged; two dormant Windows helper test source files differ in the complete COPY packages context."
+    },
+    {
+      "component": "dashboard",
+      "artifactKind": "unpublished-docker-save-archive",
+      "sourceSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+      "reviewedProductSourceSha": "b1b92cb36de0ef0d8647f1122d18b075d06c17ea",
+      "relativePath": "artifacts/corrected-dashboard-fd441765/dashboard-image.tar.gz",
+      "sha256": "25e4412822c9e50604c0e3258cb2401eadc5d4d6a590e4a9e10180f7d4b592b0",
+      "bytes": 53806219,
+      "imageConfigDigest": "sha256:bc5290b3fc8773666d72ec39d9e2fef0928c1989fb9f5d1d20ec2187ccfed038",
+      "registryManifestDigestClaimed": false,
+      "published": false,
+      "deployed": false,
+      "signed": false,
+      "platform": "linux/amd64",
+      "user": "tokentimer",
+      "githubRunId": 40149240400,
+      "githubJobId": 121037055389,
+      "githubArtifactId": 12582481908,
+      "archiveZipSha256": "13003b930eb4678ea29aef969364cf2dd9149efc6e310e7080dab2c800f68acf",
+      "verificationEvidence": "packaging/corrected-dashboard/verification.json",
+      "reuseStatus": "current corrected production archive; checksum, config, all14 layers, exact fixed page source-map, HTTP smoke and hosted security policy gate verified",
+      "productionHttpSmoke": "passed; response HTML and entry JavaScript match exact archive bytes",
+      "securityGate": {
+        "scanner": "Grype 0.112.0",
+        "databaseBuilt": "2026-10-24T17:45:29Z",
+        "policy": [
+          "--fail-on",
+          "high",
+          "--only-fixed"
+        ],
+        "result": "passed",
+        "matches": 0,
+        "allMatches": 8,
+        "allSeverityCounts": {
+          "High": 2,
+          "Critical": 1,
+          "Medium": 5
+        },
+        "allFindings": [
+          {
+            "id": "CVE-2026-92392",
+            "severity": "High",
+            "package": "curl",
+            "version": "8.22.0-r0",
+            "fix": {
+              "versions": [],
+              "state": "unknown"
+            }
+          },
+          {
+            "id": "CVE-2026-15176",
+            "severity": "Critical",
+            "package": "nginx",
+            "version": "1.28.3-r7",
+            "fix": {
+              "versions": [],
+              "state": "unknown"
+            }
+          },
+          {
+            "id": "CVE-2025-60876",
+            "severity": "Medium",
+            "package": "busybox",
+            "version": "1.37.0-r30",
+            "fix": {
+              "versions": [],
+              "state": ""
+            }
+          },
+          {
+            "id": "CVE-2025-60876",
+            "severity": "Medium",
+            "package": "busybox-binsh",
+            "version": "1.37.0-r30",
+            "fix": {
+              "versions": [],
+              "state": ""
+            }
+          },
+          {
+            "id": "CVE-2025-60876",
+            "severity": "Medium",
+            "package": "ssl_client",
+            "version": "1.37.0-r30",
+            "fix": {
+              "versions": [],
+              "state": ""
+            }
+          },
+          {
+            "id": "CVE-2026-58055",
+            "severity": "Medium",
+            "package": "nghttp2-libs",
+            "version": "1.69.0-r0",
+            "fix": {
+              "versions": [],
+              "state": ""
+            }
+          },
+          {
+            "id": "CVE-2026-95101",
+            "severity": "Medium",
+            "package": "nginx",
+            "version": "1.28.3-r7",
+            "fix": {
+              "versions": [],
+              "state": "unknown"
+            }
+          },
+          {
+            "id": "CVE-2026-97629",
+            "severity": "High",
+            "package": "nginx",
+            "version": "1.28.3-r7",
+            "fix": {
+              "versions": [],
+              "state": "unknown"
+            }
+          }
+        ],
+        "reports": {
+          "security-all.json": {
+            "path": "artifacts/corrected-dashboard-fd441765/security-all.json",
+            "sha256": "ae9ac4fce813365860c5828fc435dd3a247be65cdf86547599a93049515c4ebc"
+          },
+          "security-gate.json": {
+            "path": "artifacts/corrected-dashboard-fd441765/security-gate.json",
+            "sha256": "a5ad67ed7fdc9f7d50795d492d8c7b38afbe068811035c8e003282954a563609"
+          }
+        }
+      },
+      "browserAcceptanceScope": "Corrected product source is under separate source/package lab acceptance; the production Docker archive itself has HTTP smoke, not a full browser journey."
+    },
+    {
+      "component": "k8s-controller",
+      "immutableReference": "ghcr.io/tokentimerch/tokentimer-core-k8s-controller@sha256:bc0db7b6c813a73e3d097fce8ac3a23498ca501a551e54ad2776fcf83c39446a",
+      "priorTag": "0.18.0-beta.1",
+      "sourceSha": "69387d85231f242d00f653bbde94ead373fefe1e",
+      "buildPushJobId": 121017182510,
+      "signatureVerificationJobId": 121017919529,
+      "signatureVerification": "passed in priorReleaseRun logs",
+      "currentLocalRegistryScan": {
+        "name": "k8s-controller",
+        "sourceType": "image",
+        "source": {
+          "userInput": "ghcr.io/tokentimerch/tokentimer-core-k8s-controller@sha256:bc0db7b6c813a73e3d097fce8ac3a23498ca501a551e54ad2776fcf83c39446a",
+          "manifestDigest": "sha256:aafc61900e6ec90f0169c85d85fe41c3b48a73a9e9a1b39b232e6d40a980abef",
+          "imageID": "sha256:edc064635af1a4eb9112ea3fdb312d4a28ec671b1b7b34c6936e99b2d15b4493",
+          "architecture": "amd64",
+          "os": "linux"
+        },
+        "scanTimestamp": "2026-10-25T02:46:11.491408704+03:00",
+        "allMatches": 5,
+        "allSeverityCounts": {
+          "Medium": 3,
+          "Unknown": 2
+        },
+        "gatedMatches": 2,
+        "gatedSeverityCounts": {
+          "Unknown": 2
+        },
+        "gateExitCode": 0,
+        "gatePassed": true,
+        "reports": {
+          "all.json": {
+            "path": "image-scans/k8s-controller-all.json",
+            "sha256": "6a16a1e48644d9aaf65bc79024392944594188201c60d2564df64e4ac4ce0411"
+          },
+          "all.sarif": {
+            "path": "image-scans/k8s-controller-all.sarif",
+            "sha256": "0ee80a91be499e69a3a5adebc9fcd305d9acfc92ecc6817765fa022f228a071e"
+          },
+          "gate.json": {
+            "path": "image-scans/k8s-controller-gate.json",
+            "sha256": "2c09749047e789a455ec9f25c0505a6501358572f84aeeede9aa573ed9fea501"
+          }
+        },
+        "highCriticalAllFindings": []
+      },
+      "carryForwardEvidence": "packaging/carry-forward-fd441765.json",
+      "carryForwardBasis": "All compared Dockerfile COPY input and build instruction paths are unchanged."
+    }
+  ],
+  "limitations": [
+    "The corrected dashboard is an unpublished Docker-save archive from fd441765 with product-source equivalence to b1b92cb. Its imageConfigDigest is not a registry manifest digest, and no registry reference or signature is claimed.",
+    "The current release agent retains actual fcc source provenance and Go1.26.10; all100 packed nonbinary files and native production/build sources match the reviewed candidate. Later test-only source changes do not rewrite embedded provenance.",
+    "API/worker/controller images retain actual69387 source identity. API/worker potential COPY packages inputs differ only in two dormant Windows helper test files; controller compared inputs are fully identical.",
+    "The superseded dashboard from the cancelled prior Release remains historical. That run had already pushed and signed beta images; current tag absence does not undo registry publication.",
+    "Stable chart names0.18.0 images, which must be resolved/promoted only during a separately authorized publication stage.",
+    "Production dashboard HTTP smoke, live source/package browser acceptance, native qualification and packaged upgrade acceptance are separate evidence scopes.",
+    "Image gate pass retains residual unscored/fix-unknown findings; the corrected dashboard retains8 unfiltered findings (2High,1Critical,5Medium), with0 findings after the fixed-only policy filter."
+  ],
+  "scannerEvidence": [
+    "image-scans/scan-summary.json",
+    "replacement-agent/verification-summary.json",
+    "packaging/corrected-dashboard/verification.json"
+  ],
+  "rejectedAgentArtifacts": [
+    {
+      "relativePath": "artifacts/candidate-agent-69387/tokentimer-agent-0.18.0.tgz",
+      "version": "0.18.0",
+      "sha256": "01c7f78e50f0c54b7ece509137492b16bcb1ddf27018f34b03682e5b3d47a4b5",
+      "artifactSourceSha": "69387d85231f242d00f653bbde94ead373fefe1e",
+      "githubArtifactId": 12580020199,
+      "archiveSha256": "a07d98beb746ad1db921a4439a8eba1b364a4aa295d324dc1adffbb9338e9774",
+      "locallyDownloadedAndChecksumVerified": true,
+      "checksPassed": [
+        "106 regular packaged files; no links or unsafe paths",
+        "canonical private-key material scan",
+        "installer executable bit",
+        "100 packaged nonbinary files byte-identical to candidate source",
+        "all6 PE executable architectures match filenames",
+        "84 shipped JavaScript syntax and self-contained imports",
+        "embedded qualified-capability module exactly matches manifest"
+      ],
+      "localPowerShellParse": "not run: no PowerShell interpreter",
+      "qualifiedCapabilities": [
+        "windows-cert-store-v1",
+        "iis-binding-v1",
+        "trust-anchor-deploy-v1",
+        "adcs-enroll-v1",
+        "material-store-vault-kv2-v1",
+        "certificate-publication-v1",
+        "deploy-from-store-v1"
+      ],
+      "nativeExecutableMetadata": [
+        {
+          "path": "bin/tokentimer-adcs-chain-amd64.exe",
+          "architecture": "amd64",
+          "sha256": "a39a0d61f23886ebf5c8fe9f946cbfedb4beb3acbf33d80b65415dfbc225977e",
+          "bytes": 3568128,
+          "goVersion": "go1.24.13",
+          "moduleBuildInfo": [
+            "path\ttokentimer-adcs-chain",
+            "mod\ttokentimer-adcs-chain\t(devel)\t",
+            "dep\tgolang.org/x/sys\tv0.28.0\th1:Fksou7UEQUWlKvIdsqzJmUmCX3cZuD2+P3XyyzwMhlA=",
+            "build\t-buildmode=exe",
+            "build\t-compiler=gc",
+            "build\t-trimpath=true",
+            "build\tDefaultGODEBUG=asynctimerchan=1,gotestjsonbuildtext=1,gotypesalias=0,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,multipathtcp=0,randseednop=0,rsa1024min=0,tls10server=1,tls3des=1,tlsmlkem=0,tlsrsakex=1,tlsunsafeekm=1,urlmaxqueryparams=0,winreadlinkvolume=0,winsymlink=0,x509keypairleaf=0,x509negativeserial=1,x509rsacrt=0,x509usepolicies=0",
+            "build\tCGO_ENABLED=0",
+            "build\tGOARCH=amd64",
+            "build\tGOOS=windows",
+            "build\tGOAMD64=v1"
+          ]
+        },
+        {
+          "path": "bin/tokentimer-adcs-chain-arm64.exe",
+          "architecture": "arm64",
+          "sha256": "67fee405fa4fd4fa1e8dbe33f6feaace74db4fdfdc0ad3d8e88995bb9a7888a8",
+          "bytes": 3292672,
+          "goVersion": "go1.24.13",
+          "moduleBuildInfo": [
+            "path\ttokentimer-adcs-chain",
+            "mod\ttokentimer-adcs-chain\t(devel)\t",
+            "dep\tgolang.org/x/sys\tv0.28.0\th1:Fksou7UEQUWlKvIdsqzJmUmCX3cZuD2+P3XyyzwMhlA=",
+            "build\t-buildmode=exe",
+            "build\t-compiler=gc",
+            "build\t-trimpath=true",
+            "build\tDefaultGODEBUG=asynctimerchan=1,gotestjsonbuildtext=1,gotypesalias=0,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,multipathtcp=0,randseednop=0,rsa1024min=0,tls10server=1,tls3des=1,tlsmlkem=0,tlsrsakex=1,tlsunsafeekm=1,urlmaxqueryparams=0,winreadlinkvolume=0,winsymlink=0,x509keypairleaf=0,x509negativeserial=1,x509rsacrt=0,x509usepolicies=0",
+            "build\tCGO_ENABLED=0",
+            "build\tGOARCH=arm64",
+            "build\tGOOS=windows",
+            "build\tGOARM64=v8.0"
+          ]
+        },
+        {
+          "path": "bin/tokentimer-adcs-cmc-amd64.exe",
+          "architecture": "amd64",
+          "sha256": "46ab3fd9b5737a9bfbd457be3bb823c64aa7e44ec3bf78776d2861f553dfc290",
+          "bytes": 3582464,
+          "goVersion": "go1.24.13",
+          "moduleBuildInfo": [
+            "path\ttokentimer-adcs-cmc",
+            "mod\ttokentimer-adcs-cmc\t(devel)\t",
+            "dep\tgo.mozilla.org/pkcs7\tv0.10.0\th1:jmljzDzNYFzaP1dFlgmCiQml9e+iEMmv8/NNs4evQbg=",
+            "build\t-buildmode=exe",
+            "build\t-compiler=gc",
+            "build\t-trimpath=true",
+            "build\tDefaultGODEBUG=asynctimerchan=1,gotestjsonbuildtext=1,gotypesalias=0,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,multipathtcp=0,randseednop=0,rsa1024min=0,tls10server=1,tls3des=1,tlsmlkem=0,tlsrsakex=1,tlsunsafeekm=1,urlmaxqueryparams=0,winreadlinkvolume=0,winsymlink=0,x509keypairleaf=0,x509negativeserial=1,x509rsacrt=0,x509usepolicies=0",
+            "build\tCGO_ENABLED=0",
+            "build\tGOARCH=amd64",
+            "build\tGOOS=windows",
+            "build\tGOAMD64=v1"
+          ]
+        },
+        {
+          "path": "bin/tokentimer-adcs-cmc-arm64.exe",
+          "architecture": "arm64",
+          "sha256": "3a2c64d294e435d067948463d6a941a8c16ffca6db843a731736370347d2367f",
+          "bytes": 3286016,
+          "goVersion": "go1.24.13",
+          "moduleBuildInfo": [
+            "path\ttokentimer-adcs-cmc",
+            "mod\ttokentimer-adcs-cmc\t(devel)\t",
+            "dep\tgo.mozilla.org/pkcs7\tv0.10.0\th1:jmljzDzNYFzaP1dFlgmCiQml9e+iEMmv8/NNs4evQbg=",
+            "build\t-buildmode=exe",
+            "build\t-compiler=gc",
+            "build\t-trimpath=true",
+            "build\tDefaultGODEBUG=asynctimerchan=1,gotestjsonbuildtext=1,gotypesalias=0,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,multipathtcp=0,randseednop=0,rsa1024min=0,tls10server=1,tls3des=1,tlsmlkem=0,tlsrsakex=1,tlsunsafeekm=1,urlmaxqueryparams=0,winreadlinkvolume=0,winsymlink=0,x509keypairleaf=0,x509negativeserial=1,x509rsacrt=0,x509usepolicies=0",
+            "build\tCGO_ENABLED=0",
+            "build\tGOARCH=arm64",
+            "build\tGOOS=windows",
+            "build\tGOARM64=v8.0"
+          ]
+        },
+        {
+          "path": "bin/tokentimer-agent-host-amd64.exe",
+          "architecture": "amd64",
+          "sha256": "57e65969838ea023f0885f3f634b6e5a65520ef7edbd56059800b0a1c371546c",
+          "bytes": 2165248,
+          "goVersion": "go1.25.0",
+          "moduleBuildInfo": [
+            "path\tgithub.com/tokentimerch/tokentimer-core/packages/agent/windows-service-host",
+            "mod\tgithub.com/tokentimerch/tokentimer-core/packages/agent/windows-service-host\t(devel)\t",
+            "dep\tgolang.org/x/sys\tv0.47.0\th1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=",
+            "build\t-buildmode=exe",
+            "build\t-compiler=gc",
+            "build\t-trimpath=true",
+            "build\tCGO_ENABLED=0",
+            "build\tGOARCH=amd64",
+            "build\tGOOS=windows",
+            "build\tGOAMD64=v1",
+            "build\tvcs=git",
+            "build\tvcs.revision=69387d85231f242d00f653bbde94ead373fefe1e",
+            "build\tvcs.time=2026-10-24T23:05:39Z",
+            "build\tvcs.modified=false"
+          ]
+        },
+        {
+          "path": "bin/tokentimer-agent-host-arm64.exe",
+          "architecture": "arm64",
+          "sha256": "9a89577152c25844eba5e77f97044009f63e6531d893dd9ee5e583de24b6fe45",
+          "bytes": 2080256,
+          "goVersion": "go1.25.0",
+          "moduleBuildInfo": [
+            "path\tgithub.com/tokentimerch/tokentimer-core/packages/agent/windows-service-host",
+            "mod\tgithub.com/tokentimerch/tokentimer-core/packages/agent/windows-service-host\t(devel)\t",
+            "dep\tgolang.org/x/sys\tv0.47.0\th1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=",
+            "build\t-buildmode=exe",
+            "build\t-compiler=gc",
+            "build\t-trimpath=true",
+            "build\tCGO_ENABLED=0",
+            "build\tGOARCH=arm64",
+            "build\tGOOS=windows",
+            "build\tGOARM64=v8.0",
+            "build\tvcs=git",
+            "build\tvcs.revision=69387d85231f242d00f653bbde94ead373fefe1e",
+            "build\tvcs.time=2026-10-24T23:05:39Z",
+            "build\tvcs.modified=false"
+          ]
+        }
+      ],
+      "nativeBehaviorQualification": "separate gate; not established by archive validation",
+      "reuseStatus": "rejected and superseded: fixed High/Critical scan failed; retain as historical provenance only",
+      "securityScan": {
+        "name": "agent",
+        "sourceType": "directory",
+        "source": "/workspace/scratch/f9a42a83177f/core-release-prep/artifacts/candidate-agent-69387/extracted/package",
+        "scanTimestamp": "2026-10-25T02:46:20.283734137+03:00",
+        "allMatches": 646,
+        "allSeverityCounts": {
+          "High": 384,
+          "Critical": 34,
+          "Medium": 208,
+          "Unknown": 6,
+          "Low": 14
+        },
+        "gatedMatches": 646,
+        "gatedSeverityCounts": {
+          "High": 384,
+          "Critical": 34,
+          "Medium": 208,
+          "Unknown": 6,
+          "Low": 14
+        },
+        "gateExitCode": 2,
+        "gatePassed": false,
+        "reports": {
+          "all.json": {
+            "path": "image-scans/agent-all.json",
+            "sha256": "12999d45fa5f098957e6f9c73940e8a7ff4d9f9219b4feb702eeb9e932ea879d"
+          },
+          "all.sarif": {
+            "path": "image-scans/agent-all.sarif",
+            "sha256": "c96cdde62e36a46b2aa5b77f77fcbc32b2d0bddacb3d01176c9c974bdb2ae5a5"
+          },
+          "gate.json": {
+            "path": "image-scans/agent-gate.json",
+            "sha256": "69aa23642d1bf45dcfbf1b6bcb6e2bdf870b0030d450caa7499f5d375aff49e2"
+          }
+        },
+        "distinctGoHighCriticalAdvisories": 35
+      },
+      "recommendedRebuildToolchain": "Go 1.26.10, GOTOOLCHAIN=local; verify all6 packed PE binaries and re-scan actual tgz extraction"
+    }
+  ],
+  "preparationWorkflowSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+  "preparationWorkflowRunId": 40149240400,
+  "sourceChangesSincePriorImageBuild": [
+    "M\t.github/workflows/ci.yml",
+    "A\t.github/workflows/core-018-release-followup.yml",
+    "A\t.github/workflows/core-018-release-preparation.yml",
+    "A\t.github/workflows/core-018-upgrade-acceptance.yml",
+    "A\t.github/workflows/core-018-windows-boundaries.yml",
+    "M\t.github/workflows/release.yml",
+    "M\tapps/dashboard/src/pages/UserPreferences.jsx",
+    "A\tapps/dashboard/tests/unit/UserPreferences.workspaceReset.test.jsx",
+    "M\tdocs/certops/qualification-suites.json",
+    "M\tinfra/certops-adcs/windows-tools.ps1",
+    "M\tpackages/agent/windows-service-host/host_test.go",
+    "M\tpackages/agent/windows-service-host/testdata/mock-agent.js",
+    "M\tscripts/certops-adcs-domain-member.test.js",
+    "M\tscripts/certops-distribution-vault.js",
+    "A\tscripts/rehearse-core-upgrade.js",
+    "A\tscripts/rehearse-core-upgrade.test.js",
+    "A\tscripts/rehearse-windows-boundaries.js",
+    "A\tscripts/rehearse-windows-boundaries.test.js",
+    "A\tscripts/verify-agent-native-package.js",
+    "A\tscripts/verify-agent-native-package.test.js",
+    "M\ttests/wildcard-vault/ux-lab/compose.yaml",
+    "M\ttests/wildcard-vault/ux-lab/journey.cjs",
+    "A\ttests/wildcard-vault/ux-lab/onboarding-redo.cjs"
+  ],
+  "supersededImages": [
+    {
+      "component": "dashboard",
+      "immutableReference": "ghcr.io/tokentimerch/tokentimer-core-dashboard@sha256:0083d81f53e6492b93538fcba17600c4846c11221c17081757286e9081dd6168",
+      "priorTag": "0.18.0-beta.1",
+      "sourceSha": "69387d85231f242d00f653bbde94ead373fefe1e",
+      "buildPushJobId": 121017182418,
+      "signatureVerificationJobId": 121017919450,
+      "signatureVerification": "passed in priorReleaseRun logs",
+      "currentLocalRegistryScan": {
+        "name": "dashboard",
+        "sourceType": "image",
+        "source": {
+          "userInput": "ghcr.io/tokentimerch/tokentimer-core-dashboard@sha256:0083d81f53e6492b93538fcba17600c4846c11221c17081757286e9081dd6168",
+          "manifestDigest": "sha256:428c87a8b5b966d636ef850f8396b4a4193eadf86e1203223f2b98e49c5a6a42",
+          "imageID": "sha256:69c138d31c8900232fd08e4ed3c4fe2e5c13ead44d6c28c152bc012122652ece",
+          "architecture": "amd64",
+          "os": "linux"
+        },
+        "scanTimestamp": "2026-10-25T02:46:05.871411992+03:00",
+        "allMatches": 8,
+        "allSeverityCounts": {
+          "High": 2,
+          "Critical": 1,
+          "Medium": 5
+        },
+        "gatedMatches": 0,
+        "gatedSeverityCounts": {},
+        "gateExitCode": 0,
+        "gatePassed": true,
+        "reports": {
+          "all.json": {
+            "path": "image-scans/dashboard-all.json",
+            "sha256": "01e06eb367400927e2837d6d030ff2abb366652d4482d32d8582ccfd187b283c"
+          },
+          "all.sarif": {
+            "path": "image-scans/dashboard-all.sarif",
+            "sha256": "439f6e72abfa37a3b1f68032a3d0726b48600feab8ceb987b95553306f289c91"
+          },
+          "gate.json": {
+            "path": "image-scans/dashboard-gate.json",
+            "sha256": "63ce34becbdf3d3fb817935a7ba053bfed3eb4033a9daaa22a6704d86994eb0f"
+          }
+        },
+        "highCriticalAllFindings": [
+          {
+            "id": "CVE-2026-92392",
+            "severity": "High",
+            "package": "curl",
+            "version": "8.22.0-r0",
+            "fix": {
+              "versions": [],
+              "state": "unknown"
+            }
+          },
+          {
+            "id": "CVE-2026-15176",
+            "severity": "Critical",
+            "package": "nginx",
+            "version": "1.28.3-r7",
+            "fix": {
+              "versions": [],
+              "state": "unknown"
+            }
+          },
+          {
+            "id": "CVE-2026-97629",
+            "severity": "High",
+            "package": "nginx",
+            "version": "1.28.3-r7",
+            "fix": {
+              "versions": [],
+              "state": "unknown"
+            }
+          }
+        ]
+      },
+      "reuseStatus": "superseded: does not contain the workspace-preserving Start over fix",
+      "supersededByReviewedProductSourceSha": "b1b92cb36de0ef0d8647f1122d18b075d06c17ea",
+      "supersededByGithubArtifactId": 12582481908
+    }
+  ],
+  "priorPreparedProductSourceSha": "fcc681c19314b7c2432973ce99d517af36e10238",
+  "currentSourceCarryForwardEvidence": "packaging/carry-forward-fd441765.json",
+  "acceptanceCheckpointSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+  "reviewedProductSourceSha": "b1b92cb36de0ef0d8647f1122d18b075d06c17ea"
+}

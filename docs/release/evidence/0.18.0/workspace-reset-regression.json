@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "67a085fa61547139372cbbeb446b3a7caa52826e",
+  "baseline": {
+    "exitCode": 1,
+    "testsPassed": 1,
+    "testsFailed": 1,
+    "failure": "Expected the workspace reset target in the onboarding URL; received the newer empty workspace selected by actual WorkspaceProvider fallback.",
+    "expectedRoute": "/onboarding?workspace=11111111-1111-4111-8111-111111111111",
+    "actualRoute": "/onboarding?workspace=22222222-2222-4222-8222-222222222222",
+    "log": "baseline-red.log"
+  },
+  "fixed": {
+    "exitCode": 0,
+    "testFilesPassed": 3,
+    "testsPassed": 27,
+    "testsFailed": 0,
+    "log": "fixed-green.log"
+  },
+  "testPath": "apps/dashboard/tests/unit/UserPreferences.workspaceReset.test.jsx",
+  "testSha256": "015326afb8bd31dd7e911584753ac1c9292da6b49ed69a5df6dfe25d49918481",
+  "sameTestBytesInBothRuns": true,
+  "sourceFiles": [
+    {
+      "path": "apps/dashboard/src/pages/UserPreferences.jsx",
+      "baselineSha256": "80351818084fddf625d8567989696daa6e0ae873a8b97e55479059d9c5ff0225",
+      "fixedSha256": "128b554d377051978e8db7de93104dc5d22c5f0fc13028d9568079c2028657ce",
+      "baselineArchiveMatchesGit": true
+    },
+    {
+      "path": "apps/dashboard/src/utils/WorkspaceContext.jsx",
+      "baselineSha256": "48466d82efde0af675a9d1d972f285fc81a2aba3130fa3c8d062c03407ce3f27",
+      "fixedSha256": "48466d82efde0af675a9d1d972f285fc81a2aba3130fa3c8d062c03407ce3f27",
+      "baselineArchiveMatchesGit": true
+    },
+    {
+      "path": "apps/dashboard/src/utils/lastWorkspacePreference.js",
+      "baselineSha256": "34d15757bb859fb51f668b068f63a9a87e3fdc315ae40c959389ad126783b361",
+      "fixedSha256": "34d15757bb859fb51f668b068f63a9a87e3fdc315ae40c959389ad126783b361",
+      "baselineArchiveMatchesGit": true
+    },
+    {
+      "path": "apps/dashboard/vite.config.js",
+      "baselineSha256": "240b288630811e3eda03c8e72c9e3ad0c2adb6bcd166c11b9f5a6c9fd901bfd7",
+      "fixedSha256": "240b288630811e3eda03c8e72c9e3ad0c2adb6bcd166c11b9f5a6c9fd901bfd7",
+      "baselineArchiveMatchesGit": true
+    }
+  ],
+  "dependencyInstall": "pnpm --filter @tokentimer/dashboard... install --frozen-lockfile --ignore-scripts (same frozen root dependency links used for both direct Vitest executions)",
+  "runner": {
+    "node": "v24.22.1",
+    "vitest": "4.1.12",
+    "command": "node <frozen-dashboard-node_modules>/vitest/vitest.mjs run tests/unit/UserPreferences.workspaceReset.test.jsx [tests/unit/WorkspaceContext.test.jsx tests/unit/lastWorkspacePreference.test.js for fixed run] --maxWorkers=1"
+  },
+  "formatting": "PASS: Prettier check for both modified files",
+  "gitDiffCheck": "PASS",
+  "scope": "Real UserPreferences, WorkspaceProvider, MemoryRouter and Chakra. Remote API I/O, toast and page chrome mocked; no browser/live-server or packaging acceptance claimed.",
+  "logs": {
+    "baseline-red.log": "0c381c05658f4215f21c242146c97d5015c854ae70fe1c1a7bd7eba9b66ee4df",
+    "fixed-green.log": "267ed8580a14fefc19606b52900d2ff26cebcd83756bcca79f96748959158996"
+  }
+}

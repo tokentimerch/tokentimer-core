@@ -1,0 +1,73 @@
+{
+  "id": 121037055389,
+  "run_id": 40149240400,
+  "run_attempt": 1,
+  "status": "completed",
+  "conclusion": "success",
+  "head_sha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+  "html_url": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40149240400/job/121037055389",
+  "started_at": "2026-10-25T01:05:20Z",
+  "completed_at": "2026-10-25T01:07:50Z",
+  "steps": [
+    {
+      "number": 1,
+      "name": "Set up job",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "number": 2,
+      "name": "Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "number": 3,
+      "name": "Verify reviewed dashboard source",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "number": 4,
+      "name": "Build the actual production Dockerfile locally",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "number": 5,
+      "name": "Smoke the owned production container",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "number": 6,
+      "name": "Scan the actual local production image",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "number": 7,
+      "name": "Preserve the exact unpublished image archive",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "number": 8,
+      "name": "Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "number": 16,
+      "name": "Post Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "number": 17,
+      "name": "Complete job",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ]
+}

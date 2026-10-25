@@ -1,0 +1,2424 @@
+{
+  "schema_version": 1,
+  "target_sha": "fcc681c19314b7c2432973ce99d517af36e10238",
+  "comparisons": [
+    {
+      "base_sha": "33e79f05b96aedfdc1fd6d022c7e15f29bfc33f4",
+      "target_sha": "fcc681c19314b7c2432973ce99d517af36e10238",
+      "compare_url": "https://github.com/tokentimerch/tokentimer-core/compare/33e79f05b96aedfdc1fd6d022c7e15f29bfc33f4...fcc681c19314b7c2432973ce99d517af36e10238",
+      "changed_path_count": 421,
+      "source_footprints": {
+        "native_helpers": {
+          "tracked_files": 29,
+          "identical": true,
+          "changed_paths": []
+        },
+        "adcs_issuer_logic": {
+          "tracked_files": 10,
+          "identical": true,
+          "changed_paths": []
+        },
+        "enrollment_control_plane": {
+          "tracked_files": 5,
+          "identical": false,
+          "changed_paths": [
+            "apps/api/services/certops/certificateEnrollments.js"
+          ]
+        },
+        "native_agent_source": {
+          "tracked_files": 137,
+          "identical": false,
+          "changed_paths": [
+            "packages/agent/src/capabilities/gated-capabilities.js",
+            "packages/agent/src/deploy/index.js",
+            "packages/agent/src/discovery/index.js",
+            "packages/agent/src/discovery/windows.js",
+            "packages/agent/src/dns/propagate.js",
+            "packages/agent/src/index.js",
+            "packages/agent/src/issuers/adcs-enrollment-journal.js",
+            "packages/agent/src/logging/index.js",
+            "packages/agent/src/material-store/lifecycle.js",
+            "packages/agent/src/windows-cert-store/exclusive-lock-worker.js",
+            "packages/agent/src/windows-cert-store/index.js",
+            "packages/agent/src/windows-discovery/index.js",
+            "packages/agent/src/windows-iis/index.js",
+            "packages/agent/vendor/log-scrub/secret-material.js"
+          ]
+        },
+        "agent_package_recipe": {
+          "tracked_files": 6,
+          "identical": false,
+          "changed_paths": [
+            "packages/agent/scripts/pack-release.js"
+          ]
+        },
+        "vault_distribution_runtime": {
+          "tracked_files": 4,
+          "identical": false,
+          "changed_paths": [
+            "packages/agent/src/deploy/index.js",
+            "packages/agent/src/logging/index.js",
+            "packages/agent/src/material-store/lifecycle.js"
+          ]
+        }
+      },
+      "native_catalog_required_source_changes": [
+        {
+          "path": ".github/workflows/certops-enterprise-adcs-qualification.yml",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "bfb6921346a655a4122a98fb1ea09509a85f6cd3"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "688e4e51b44083efecd7cf1c2a71aca85c244141"
+          }
+        },
+        {
+          "path": "apps/api/routes/certops-enrollments.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "85f6ce6734d286c929448edc0affd0aaac7db0e6"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "a0dbfb973aff85a3c596e02a479d4e0bede7f4c4"
+          }
+        },
+        {
+          "path": "apps/api/routes/certops.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "2b218a00c717ffc7280a89a301179774640d892d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "86d7053e5760c9dcbe9c4a2264ae81c678caa41b"
+          }
+        },
+        {
+          "path": "apps/api/routes/workspaces.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "a2b26f98a03da37c516a15482ead30c5bcc3c823"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "a4cf60a73b9e59cda2a057d38729d30bfbb850c9"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/certificateEnrollments.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "5609ae47e15e9a9f07905dcaf2eef69eb711a4f8"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "4b81fefc7883ca85f43007f772cce41c1b309aaf"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/renewalScheduler.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "c4dcbf69d3dbb6ac14976ef6ffbf5623efa3727d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "e39c93dda4590fdc98d0ac09d23ef34418a2d2d2"
+          }
+        },
+        {
+          "path": "apps/dashboard/src/components/certops/AdcsIssuerWizard.jsx",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "cd8ad796a031d8f82f3f068ac90b9885286a8457"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "5eb003cee53069f291b1f71d6aa841d9dbd342ee"
+          }
+        },
+        {
+          "path": "apps/dashboard/src/components/certops/AdcsProfileWizard.jsx",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "15bf5023f918a9ac8344420745d402590cbda537"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "8b75f85b09ec2e06717f40ae3192ad02e99b8f43"
+          }
+        },
+        {
+          "path": "apps/dashboard/src/components/certops/certopsJobsApi.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "c416e60475f734cad0c06731debfe0e1bb683ad3"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "07a919efde4a346c471e353dbbd8f002da77d54e"
+          }
+        },
+        {
+          "path": "apps/dashboard/src/pages/certops/CertOpsAdcs.jsx",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "84ae6625713ae0eac0400e43e36a41ee5037a119"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "9b4aeeeb6c0c1424961316acfad26dd65fb12b9f"
+          }
+        },
+        {
+          "path": "apps/dashboard/src/pages/certops/CertOpsRenewals.jsx",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "4ef528ed19201c51f95192c895f0cdeece75bc4c"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "85598e232d7e7154d64509e575e713f166d07671"
+          }
+        },
+        {
+          "path": "apps/worker/src/runner.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "f28bf0d8bc45838f19e05bc0688b2f1162f19a88"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "bd68386d8950bfd15abc804a74795b6561e35e72"
+          }
+        },
+        {
+          "path": "infra/certops-adcs/arm-operation.ps1",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "1764dbbbda9bbb3c3069148e6788227d723aa15b"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "4bd95186155cc5b253f56a47c54660a034f874d4"
+          }
+        },
+        {
+          "path": "infra/certops-adcs/ca-rekey.ps1",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "a90cb6eb07c2658706f35a1b6d144dbb207e4ace"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "c63078ba32dfa8c3d2a686fdf2d0d932ba9a56fd"
+          }
+        },
+        {
+          "path": "infra/certops-adcs/ocsp-member-operation.ps1",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "462602a32b05c6aa10a439565445824852951538"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "64946e7a0a12fb432bf757dabdc31430daf8021c"
+          }
+        },
+        {
+          "path": "infra/certops-adcs/ocsp-responder-fixture.ps1",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "799d1b6754fc17c3417752c407031791627bee8d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "39b97d918d3b1e7a0ac32c2cf0bcf12c0724b330"
+          }
+        },
+        {
+          "path": "infra/certops-adcs/ocsp-revoked-fixture.ps1",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "5d907885802b71570631533f7001fb5f4a9f168e"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "b9226385e129829640650ca3f068a2f896ceb92a"
+          }
+        },
+        {
+          "path": "infra/certops-adcs/provision-lab.ps1",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "df4637f2248915212b255fbf458562877844e0bb"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "3766715ad05838432c7541ecc52022acd455a812"
+          }
+        },
+        {
+          "path": "infra/certops-adcs/read-report.ps1",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "ab9ce62fc544365c67da941e659d5d7f89e55867"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "15f22117173303646100514c9724fe46a97ec2ed"
+          }
+        },
+        {
+          "path": "infra/certops-adcs/run-windows-tests.ps1",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "482db81d274e9c24a008d8246be73f2c308b931e"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "cfa77cffb7dcbbd7abcc1a6a7be6c8d416c6bc00"
+          }
+        },
+        {
+          "path": "packages/agent/src/discovery/windows.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "8bd86f57d563e21f56a5eecca834fa407265cf49"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "ade2de8c91e8fd1304e817579034dc11dfdb6cbb"
+          }
+        },
+        {
+          "path": "packages/agent/src/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "cb276c26e0dcc33e6332de1a2d31010801d49712"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "3315c5acbf820d02ae53e97c376878a40dc95646"
+          }
+        },
+        {
+          "path": "packages/agent/src/issuers/adcs-enrollment-journal.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "e34b83e6e23060d48b5a9c73dd06e3635ce7b55d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "3973b04fb8c4a0bd5cb7cc06959cf1155b40cf83"
+          }
+        },
+        {
+          "path": "packages/agent/src/windows-cert-store/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "db73f62930d8d8761d804208f715aff478389696"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "379ec9d222e32af26158b81d68dec9f0a73fdf75"
+          }
+        },
+        {
+          "path": "packages/agent/src/windows-iis/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "a5127d7c437bd0250a8e5f88863074e513566c06"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "48e237ffa188a9ad3e01755eb06c2f1cf1d83516"
+          }
+        },
+        {
+          "path": "packages/agent/vendor/log-scrub/secret-material.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "211a38e66d7f8bf3807489530157b4c83772b284"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "1c4c49203f1221c09f870e71705edda737ece9e2"
+          }
+        },
+        {
+          "path": "pnpm-lock.yaml",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "191c02a5fe71150e529050a9018d3d7ebb79ad00"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "2e8ff9008a36e4761fcd6369032ce3c3c3c04338"
+          }
+        },
+        {
+          "path": "tests/e2e/certops-adcs-real-e2e.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "195a464d1ddc3a1c5778ab785791fd014eb025b9"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "dd428a83efeedc6c4477512cfb5193d93bef774b"
+          }
+        },
+        {
+          "path": "tests/e2e/helpers/certops-adcs-browser-reconcile.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "cc5130b124b6e0786a28701fccf41a2fe336afff"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "0eab7eb79498373b5ac8c0ca4fd10a9adde0ffbd"
+          }
+        },
+        {
+          "path": "tests/e2e/helpers/certops-adcs-ocsp.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "b24960ffe76e0fb3d4e3ca007c0a25cb19e306b6"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "051771970c687a1b016229a875d8485a46e8a9d1"
+          }
+        },
+        {
+          "path": "tests/e2e/helpers/certops-adcs-pending-ca-key-change.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "a800f32edeb48aa1609fbe4262a173c990a297a8"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "fcdea19832e20dc52b816cc3c9c3cc5a74dae805"
+          }
+        },
+        {
+          "path": "tests/e2e/helpers/certops-adcs-result-outbox.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "c2bc5495cf0d733590d459f1239e33b641d943cd"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "3e36a0356152bfcd1f543ebf717ac3b540239993"
+          }
+        },
+        {
+          "path": "tests/e2e/helpers/certops-adcs-webhosting-renewal.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "3ace78a4b4b7635e351225ae7605e0ebac387e5b"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "ddd43657329d9a1545f34c335ef774c09e27869c"
+          }
+        }
+      ],
+      "changed_paths_scope": "Native and package runtime changes only in this compact record; full change set is recoverable from the immutable compared Git commits.",
+      "relevant_changed_paths": [
+        {
+          "path": "apps/api/routes/certops.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "2b218a00c717ffc7280a89a301179774640d892d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "86d7053e5760c9dcbe9c4a2264ae81c678caa41b"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/certificateEnrollments.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "5609ae47e15e9a9f07905dcaf2eef69eb711a4f8"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "4b81fefc7883ca85f43007f772cce41c1b309aaf"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/issuance.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "210285757a80094c5cf05891ce6f9adf88227507"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "6e554d4c5e0a3d570149565518d8ec36ef2b2737"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/renewalProfile.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "57e23aabba9523afeeb3713fdec47ff521147c9b"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "dcda87a8b33ef235c068eeaee928d1de673f7d76"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/renewalProfileDerivation.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "bcf906f4c697fcc26bdac36089f5a4634aa94da7"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "c082a111852303b77f23327dc75c4ce3f782f55d"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/renewalScheduler.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "c4dcbf69d3dbb6ac14976ef6ffbf5623efa3727d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "e39c93dda4590fdc98d0ac09d23ef34418a2d2d2"
+          }
+        },
+        {
+          "path": "packages/agent/README.md",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "a19e97df2dfc89c077a3cc3f8bf4afb9f9bd7b81"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "2cf9a872b9e926dd4bec6b26d46edb58615075e0"
+          }
+        },
+        {
+          "path": "packages/agent/scripts/host-gate.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "df29ef61174ec480a395570acdf84f1d79437867"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "2adfaa0aa36cf7dec7b90a2211a7a5fc971de2c8"
+          }
+        },
+        {
+          "path": "packages/agent/scripts/host-sandbox.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "f9af53216cdd6cc94eaf926729fe815565095d0d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "be75b38e0fd164a5a21776fb3c3c0984620f42b8"
+          }
+        },
+        {
+          "path": "packages/agent/scripts/host-sandbox.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "106cc52214dad27409485a37978e936a26211567"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "232e5cd66f2289e613f4808d6f43b10b4198b6d5"
+          }
+        },
+        {
+          "path": "packages/agent/scripts/install-agent-sh.test.js",
+          "status": "added",
+          "before": null,
+          "after": {
+            "mode": "100644",
+            "blob_sha": "94efc384a363ecdbf8ad0ca4b8a1519981f1e022"
+          }
+        },
+        {
+          "path": "packages/agent/scripts/install-agent.sh",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "219e09ddbde4184e2aac38ee4533247dcd8511ef"
+          },
+          "after": {
+            "mode": "100755",
+            "blob_sha": "e74863dae307c594c388e01a47155c43da6098be"
+          }
+        },
+        {
+          "path": "packages/agent/scripts/pack-release.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "dfc093bc9c38f83e787dbd75b83f861e8d17fcda"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "56370e6b37451b5d7eebfc45035b0c5e0d05f210"
+          }
+        },
+        {
+          "path": "packages/agent/scripts/pack-release.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "917527786fb8df87c882cf05ba0de786fc45b815"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "0213d8756ede03cfcd52ad0a3545fdd5665abb79"
+          }
+        },
+        {
+          "path": "packages/agent/src/capabilities/gated-capabilities.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "e73c07bc9a4d5decc994c1656d9c9e931389348b"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "a1a856788f7220729d8286627353f26316cea0c7"
+          }
+        },
+        {
+          "path": "packages/agent/src/deploy/deploy.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "67e156f444d373c07aa0bd05f1ba67a78c97c500"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "70e2389fa7ffda565d62c54a5818abb9a267c18d"
+          }
+        },
+        {
+          "path": "packages/agent/src/deploy/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "5a899a548395ec7471ae0942a94b7d3a192ce977"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "8c0af292a1cdafeb7a1fc1cc86780b8a43affc90"
+          }
+        },
+        {
+          "path": "packages/agent/src/discovery/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "a5a87d808ec4fd341362fa9950cb0f134c19f44b"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "90b344c1b9077a57fc94d7dbc85f58b3e449cdb0"
+          }
+        },
+        {
+          "path": "packages/agent/src/discovery/windows.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "8bd86f57d563e21f56a5eecca834fa407265cf49"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "ade2de8c91e8fd1304e817579034dc11dfdb6cbb"
+          }
+        },
+        {
+          "path": "packages/agent/src/dns/propagate.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "12b7dd4e53af0f9f53ef4bfa1ee79ba2f18ba7b4"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "bb9f503f95dc0b8a98dbe07906f2a346f5145d5b"
+          }
+        },
+        {
+          "path": "packages/agent/src/dns/propagate.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "ec590f538cfcee150a12a085054266f7529c212d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "ff1b90bf24cc7a340d06ad4ce43e46e9ff0ea867"
+          }
+        },
+        {
+          "path": "packages/agent/src/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "cb276c26e0dcc33e6332de1a2d31010801d49712"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "3315c5acbf820d02ae53e97c376878a40dc95646"
+          }
+        },
+        {
+          "path": "packages/agent/src/index.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "554eec6c52d2e3aba52248c04d9293e091ea16b0"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "a5b30d73d024b7efd40b1bb9267e1e90df52b346"
+          }
+        },
+        {
+          "path": "packages/agent/src/issuers/adcs-enrollment-journal.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "e34b83e6e23060d48b5a9c73dd06e3635ce7b55d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "3973b04fb8c4a0bd5cb7cc06959cf1155b40cf83"
+          }
+        },
+        {
+          "path": "packages/agent/src/logging/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "b7aa1ee087ccf1bbeb85596385db2472ca6cd737"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "1049b7af0e13249889cf3082985699b44060a436"
+          }
+        },
+        {
+          "path": "packages/agent/src/logging/logging.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "70ecb31d4ba792ad5022d74364a80027a381d916"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "f24004e65f0f172f60d9a5b3e1d17df85d500223"
+          }
+        },
+        {
+          "path": "packages/agent/src/material-store/lifecycle.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "ef6f496f3aee631faf817ac94476ba7693d4579b"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "2e426e186abb547d4f8d67d7e1ebcbb219d5a2d7"
+          }
+        },
+        {
+          "path": "packages/agent/src/material-store/lifecycle.test.js",
+          "status": "added",
+          "before": null,
+          "after": {
+            "mode": "100644",
+            "blob_sha": "2377564e72ffea30c147b02efad5fe57d3667e55"
+          }
+        },
+        {
+          "path": "packages/agent/src/windows-cert-store/exclusive-lock-worker.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "fb8817498373e922ec86792c53764844fc07583f"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "0e7515f96118881b4f5e0ad3e6ac959f965d5ea5"
+          }
+        },
+        {
+          "path": "packages/agent/src/windows-cert-store/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "db73f62930d8d8761d804208f715aff478389696"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "379ec9d222e32af26158b81d68dec9f0a73fdf75"
+          }
+        },
+        {
+          "path": "packages/agent/src/windows-cert-store/windows-cert-store.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "2d919ae0a53474ab8f444ecb160f81288ccdae33"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "351cc125a4431b1a98545975f7b38552761747e7"
+          }
+        },
+        {
+          "path": "packages/agent/src/windows-discovery/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "b5bef1f6468efe6dcd861886b8306a195cfc8f9f"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "ce536a032b04cb29e41229cf1acb5fbfdaceaf1a"
+          }
+        },
+        {
+          "path": "packages/agent/src/windows-iis/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "a5127d7c437bd0250a8e5f88863074e513566c06"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "48e237ffa188a9ad3e01755eb06c2f1cf1d83516"
+          }
+        },
+        {
+          "path": "packages/agent/src/windows-iis/windows-iis.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "99d7afa16c25ea703f0c46f476464851acf79f63"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "e399b92b24cfe3d0104658de1c24ccced25ce70d"
+          }
+        },
+        {
+          "path": "packages/agent/vendor/log-scrub/secret-material.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "211a38e66d7f8bf3807489530157b4c83772b284"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "1c4c49203f1221c09f870e71705edda737ece9e2"
+          }
+        },
+        {
+          "path": "packages/log-scrub/secret-material.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "10dc67f2a065671b1b97b7017dfcf2292e0ad54a"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "8ec9299533c0d4bd53ec2b1c8e7d997bdae107c0"
+          }
+        }
+      ]
+    },
+    {
+      "base_sha": "6854d8edf78ec56a8caae51aefe58ef4d412a0c3",
+      "target_sha": "fcc681c19314b7c2432973ce99d517af36e10238",
+      "compare_url": "https://github.com/tokentimerch/tokentimer-core/compare/6854d8edf78ec56a8caae51aefe58ef4d412a0c3...fcc681c19314b7c2432973ce99d517af36e10238",
+      "changed_path_count": 330,
+      "source_footprints": {
+        "native_helpers": {
+          "tracked_files": 29,
+          "identical": true,
+          "changed_paths": []
+        },
+        "adcs_issuer_logic": {
+          "tracked_files": 10,
+          "identical": true,
+          "changed_paths": []
+        },
+        "enrollment_control_plane": {
+          "tracked_files": 5,
+          "identical": true,
+          "changed_paths": []
+        },
+        "native_agent_source": {
+          "tracked_files": 137,
+          "identical": false,
+          "changed_paths": [
+            "packages/agent/src/discovery/index.js",
+            "packages/agent/src/discovery/windows.js",
+            "packages/agent/src/dns/propagate.js",
+            "packages/agent/src/index.js",
+            "packages/agent/src/issuers/adcs-enrollment-journal.js",
+            "packages/agent/src/windows-discovery/index.js",
+            "packages/agent/src/windows-iis/index.js",
+            "packages/agent/vendor/log-scrub/secret-material.js"
+          ]
+        },
+        "agent_package_recipe": {
+          "tracked_files": 6,
+          "identical": true,
+          "changed_paths": []
+        },
+        "vault_distribution_runtime": {
+          "tracked_files": 4,
+          "identical": true,
+          "changed_paths": []
+        }
+      },
+      "native_catalog_required_source_changes": [
+        {
+          "path": "apps/api/routes/certops.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "459daa544603fbd3fceec9792b7e605f515eac1d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "86d7053e5760c9dcbe9c4a2264ae81c678caa41b"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/renewalScheduler.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "6bb7eded95079248f60e2963afc42880a26b7539"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "e39c93dda4590fdc98d0ac09d23ef34418a2d2d2"
+          }
+        },
+        {
+          "path": "apps/dashboard/src/components/certops/AdcsIssuerWizard.jsx",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "cd8ad796a031d8f82f3f068ac90b9885286a8457"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "5eb003cee53069f291b1f71d6aa841d9dbd342ee"
+          }
+        },
+        {
+          "path": "apps/dashboard/src/components/certops/AdcsProfileWizard.jsx",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "15bf5023f918a9ac8344420745d402590cbda537"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "8b75f85b09ec2e06717f40ae3192ad02e99b8f43"
+          }
+        },
+        {
+          "path": "apps/dashboard/src/components/certops/certopsJobsApi.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "c416e60475f734cad0c06731debfe0e1bb683ad3"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "07a919efde4a346c471e353dbbd8f002da77d54e"
+          }
+        },
+        {
+          "path": "apps/dashboard/src/pages/certops/CertOpsAdcs.jsx",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "84ae6625713ae0eac0400e43e36a41ee5037a119"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "9b4aeeeb6c0c1424961316acfad26dd65fb12b9f"
+          }
+        },
+        {
+          "path": "apps/dashboard/src/pages/certops/CertOpsRenewals.jsx",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "4ef528ed19201c51f95192c895f0cdeece75bc4c"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "85598e232d7e7154d64509e575e713f166d07671"
+          }
+        },
+        {
+          "path": "apps/worker/src/runner.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "f28bf0d8bc45838f19e05bc0688b2f1162f19a88"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "bd68386d8950bfd15abc804a74795b6561e35e72"
+          }
+        },
+        {
+          "path": "infra/certops-adcs/read-report.ps1",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "acac2174bea18b81642e65c021f0f39088f9b9be"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "15f22117173303646100514c9724fe46a97ec2ed"
+          }
+        },
+        {
+          "path": "packages/agent/src/discovery/windows.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "8bd86f57d563e21f56a5eecca834fa407265cf49"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "ade2de8c91e8fd1304e817579034dc11dfdb6cbb"
+          }
+        },
+        {
+          "path": "packages/agent/src/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "68a89972511eb5c637101cfcb435c312fbc6ef31"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "3315c5acbf820d02ae53e97c376878a40dc95646"
+          }
+        },
+        {
+          "path": "packages/agent/src/issuers/adcs-enrollment-journal.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "e34b83e6e23060d48b5a9c73dd06e3635ce7b55d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "3973b04fb8c4a0bd5cb7cc06959cf1155b40cf83"
+          }
+        },
+        {
+          "path": "packages/agent/src/windows-iis/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "a5127d7c437bd0250a8e5f88863074e513566c06"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "48e237ffa188a9ad3e01755eb06c2f1cf1d83516"
+          }
+        },
+        {
+          "path": "packages/agent/vendor/log-scrub/secret-material.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "f55b7ff341203340e3e81c7fb78990bf7d0d3247"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "1c4c49203f1221c09f870e71705edda737ece9e2"
+          }
+        },
+        {
+          "path": "pnpm-lock.yaml",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "191c02a5fe71150e529050a9018d3d7ebb79ad00"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "2e8ff9008a36e4761fcd6369032ce3c3c3c04338"
+          }
+        }
+      ],
+      "changed_paths_scope": "Native and package runtime changes only in this compact record; full change set is recoverable from the immutable compared Git commits.",
+      "relevant_changed_paths": [
+        {
+          "path": "apps/api/routes/certops.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "459daa544603fbd3fceec9792b7e605f515eac1d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "86d7053e5760c9dcbe9c4a2264ae81c678caa41b"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/issuance.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "d48195258ab2852c1656aa9c4eb8eb81e8941575"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "6e554d4c5e0a3d570149565518d8ec36ef2b2737"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/renewalProfile.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "57e23aabba9523afeeb3713fdec47ff521147c9b"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "dcda87a8b33ef235c068eeaee928d1de673f7d76"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/renewalProfileDerivation.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "bcf906f4c697fcc26bdac36089f5a4634aa94da7"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "c082a111852303b77f23327dc75c4ce3f782f55d"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/renewalScheduler.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "6bb7eded95079248f60e2963afc42880a26b7539"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "e39c93dda4590fdc98d0ac09d23ef34418a2d2d2"
+          }
+        },
+        {
+          "path": "packages/agent/README.md",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "728ce575e02aa650d6045124d15206a901ad0cd0"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "2cf9a872b9e926dd4bec6b26d46edb58615075e0"
+          }
+        },
+        {
+          "path": "packages/agent/scripts/install-agent-sh.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "48e067d50e96418f9fc72e8930a411db343bcb1c"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "94efc384a363ecdbf8ad0ca4b8a1519981f1e022"
+          }
+        },
+        {
+          "path": "packages/agent/scripts/pack-release.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "3f8418c935b6c72cb90bdba111504c2caa03dd9e"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "0213d8756ede03cfcd52ad0a3545fdd5665abb79"
+          }
+        },
+        {
+          "path": "packages/agent/src/discovery/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "a5a87d808ec4fd341362fa9950cb0f134c19f44b"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "90b344c1b9077a57fc94d7dbc85f58b3e449cdb0"
+          }
+        },
+        {
+          "path": "packages/agent/src/discovery/windows.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "8bd86f57d563e21f56a5eecca834fa407265cf49"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "ade2de8c91e8fd1304e817579034dc11dfdb6cbb"
+          }
+        },
+        {
+          "path": "packages/agent/src/dns/propagate.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "12b7dd4e53af0f9f53ef4bfa1ee79ba2f18ba7b4"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "bb9f503f95dc0b8a98dbe07906f2a346f5145d5b"
+          }
+        },
+        {
+          "path": "packages/agent/src/dns/propagate.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "ec590f538cfcee150a12a085054266f7529c212d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "ff1b90bf24cc7a340d06ad4ce43e46e9ff0ea867"
+          }
+        },
+        {
+          "path": "packages/agent/src/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "68a89972511eb5c637101cfcb435c312fbc6ef31"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "3315c5acbf820d02ae53e97c376878a40dc95646"
+          }
+        },
+        {
+          "path": "packages/agent/src/issuers/adcs-enrollment-journal.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "e34b83e6e23060d48b5a9c73dd06e3635ce7b55d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "3973b04fb8c4a0bd5cb7cc06959cf1155b40cf83"
+          }
+        },
+        {
+          "path": "packages/agent/src/logging/logging.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "c340d66286b0d5b35d0fb44e9cde1f0d3d537c66"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "f24004e65f0f172f60d9a5b3e1d17df85d500223"
+          }
+        },
+        {
+          "path": "packages/agent/src/windows-discovery/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "b5bef1f6468efe6dcd861886b8306a195cfc8f9f"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "ce536a032b04cb29e41229cf1acb5fbfdaceaf1a"
+          }
+        },
+        {
+          "path": "packages/agent/src/windows-iis/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "a5127d7c437bd0250a8e5f88863074e513566c06"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "48e237ffa188a9ad3e01755eb06c2f1cf1d83516"
+          }
+        },
+        {
+          "path": "packages/agent/src/windows-iis/windows-iis.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "99d7afa16c25ea703f0c46f476464851acf79f63"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "e399b92b24cfe3d0104658de1c24ccced25ce70d"
+          }
+        },
+        {
+          "path": "packages/agent/vendor/log-scrub/secret-material.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "f55b7ff341203340e3e81c7fb78990bf7d0d3247"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "1c4c49203f1221c09f870e71705edda737ece9e2"
+          }
+        },
+        {
+          "path": "packages/log-scrub/secret-material.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "8922d8877cb038d878ae2e82e05e018320243a43"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "8ec9299533c0d4bd53ec2b1c8e7d997bdae107c0"
+          }
+        }
+      ]
+    },
+    {
+      "base_sha": "71a12b1e6e9fff84d915f7b6e73d7dc70b786c04",
+      "target_sha": "fcc681c19314b7c2432973ce99d517af36e10238",
+      "compare_url": "https://github.com/tokentimerch/tokentimer-core/compare/71a12b1e6e9fff84d915f7b6e73d7dc70b786c04...fcc681c19314b7c2432973ce99d517af36e10238",
+      "changed_path_count": 340,
+      "source_footprints": {
+        "native_helpers": {
+          "tracked_files": 29,
+          "identical": true,
+          "changed_paths": []
+        },
+        "adcs_issuer_logic": {
+          "tracked_files": 10,
+          "identical": true,
+          "changed_paths": []
+        },
+        "enrollment_control_plane": {
+          "tracked_files": 5,
+          "identical": true,
+          "changed_paths": []
+        },
+        "native_agent_source": {
+          "tracked_files": 137,
+          "identical": false,
+          "changed_paths": [
+            "packages/agent/src/discovery/index.js",
+            "packages/agent/src/discovery/windows.js",
+            "packages/agent/src/dns/propagate.js",
+            "packages/agent/src/index.js",
+            "packages/agent/src/issuers/adcs-enrollment-journal.js",
+            "packages/agent/src/windows-discovery/index.js",
+            "packages/agent/src/windows-iis/index.js",
+            "packages/agent/vendor/log-scrub/secret-material.js"
+          ]
+        },
+        "agent_package_recipe": {
+          "tracked_files": 6,
+          "identical": true,
+          "changed_paths": []
+        },
+        "vault_distribution_runtime": {
+          "tracked_files": 4,
+          "identical": true,
+          "changed_paths": []
+        }
+      },
+      "native_catalog_required_source_changes": [
+        {
+          "path": "apps/api/routes/certops.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "459daa544603fbd3fceec9792b7e605f515eac1d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "86d7053e5760c9dcbe9c4a2264ae81c678caa41b"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/renewalScheduler.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "6bb7eded95079248f60e2963afc42880a26b7539"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "e39c93dda4590fdc98d0ac09d23ef34418a2d2d2"
+          }
+        },
+        {
+          "path": "apps/dashboard/src/components/certops/AdcsIssuerWizard.jsx",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "cd8ad796a031d8f82f3f068ac90b9885286a8457"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "5eb003cee53069f291b1f71d6aa841d9dbd342ee"
+          }
+        },
+        {
+          "path": "apps/dashboard/src/components/certops/AdcsProfileWizard.jsx",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "15bf5023f918a9ac8344420745d402590cbda537"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "8b75f85b09ec2e06717f40ae3192ad02e99b8f43"
+          }
+        },
+        {
+          "path": "apps/dashboard/src/components/certops/certopsJobsApi.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "c416e60475f734cad0c06731debfe0e1bb683ad3"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "07a919efde4a346c471e353dbbd8f002da77d54e"
+          }
+        },
+        {
+          "path": "apps/dashboard/src/pages/certops/CertOpsAdcs.jsx",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "84ae6625713ae0eac0400e43e36a41ee5037a119"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "9b4aeeeb6c0c1424961316acfad26dd65fb12b9f"
+          }
+        },
+        {
+          "path": "apps/dashboard/src/pages/certops/CertOpsRenewals.jsx",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "4ef528ed19201c51f95192c895f0cdeece75bc4c"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "85598e232d7e7154d64509e575e713f166d07671"
+          }
+        },
+        {
+          "path": "apps/worker/src/runner.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "f28bf0d8bc45838f19e05bc0688b2f1162f19a88"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "bd68386d8950bfd15abc804a74795b6561e35e72"
+          }
+        },
+        {
+          "path": "infra/certops-adcs/read-report.ps1",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "acac2174bea18b81642e65c021f0f39088f9b9be"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "15f22117173303646100514c9724fe46a97ec2ed"
+          }
+        },
+        {
+          "path": "packages/agent/src/discovery/windows.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "8bd86f57d563e21f56a5eecca834fa407265cf49"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "ade2de8c91e8fd1304e817579034dc11dfdb6cbb"
+          }
+        },
+        {
+          "path": "packages/agent/src/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "68a89972511eb5c637101cfcb435c312fbc6ef31"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "3315c5acbf820d02ae53e97c376878a40dc95646"
+          }
+        },
+        {
+          "path": "packages/agent/src/issuers/adcs-enrollment-journal.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "e34b83e6e23060d48b5a9c73dd06e3635ce7b55d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "3973b04fb8c4a0bd5cb7cc06959cf1155b40cf83"
+          }
+        },
+        {
+          "path": "packages/agent/src/windows-iis/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "a5127d7c437bd0250a8e5f88863074e513566c06"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "48e237ffa188a9ad3e01755eb06c2f1cf1d83516"
+          }
+        },
+        {
+          "path": "packages/agent/vendor/log-scrub/secret-material.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "f55b7ff341203340e3e81c7fb78990bf7d0d3247"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "1c4c49203f1221c09f870e71705edda737ece9e2"
+          }
+        },
+        {
+          "path": "pnpm-lock.yaml",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "191c02a5fe71150e529050a9018d3d7ebb79ad00"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "2e8ff9008a36e4761fcd6369032ce3c3c3c04338"
+          }
+        }
+      ],
+      "changed_paths_scope": "Native and package runtime changes only in this compact record; full change set is recoverable from the immutable compared Git commits.",
+      "relevant_changed_paths": [
+        {
+          "path": "apps/api/routes/certops.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "459daa544603fbd3fceec9792b7e605f515eac1d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "86d7053e5760c9dcbe9c4a2264ae81c678caa41b"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/issuance.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "d48195258ab2852c1656aa9c4eb8eb81e8941575"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "6e554d4c5e0a3d570149565518d8ec36ef2b2737"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/renewalProfile.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "57e23aabba9523afeeb3713fdec47ff521147c9b"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "dcda87a8b33ef235c068eeaee928d1de673f7d76"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/renewalProfileDerivation.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "bcf906f4c697fcc26bdac36089f5a4634aa94da7"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "c082a111852303b77f23327dc75c4ce3f782f55d"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/renewalScheduler.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "6bb7eded95079248f60e2963afc42880a26b7539"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "e39c93dda4590fdc98d0ac09d23ef34418a2d2d2"
+          }
+        },
+        {
+          "path": "packages/agent/README.md",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "728ce575e02aa650d6045124d15206a901ad0cd0"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "2cf9a872b9e926dd4bec6b26d46edb58615075e0"
+          }
+        },
+        {
+          "path": "packages/agent/scripts/host-gate.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "df29ef61174ec480a395570acdf84f1d79437867"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "2adfaa0aa36cf7dec7b90a2211a7a5fc971de2c8"
+          }
+        },
+        {
+          "path": "packages/agent/scripts/install-agent-sh.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "48e067d50e96418f9fc72e8930a411db343bcb1c"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "94efc384a363ecdbf8ad0ca4b8a1519981f1e022"
+          }
+        },
+        {
+          "path": "packages/agent/scripts/pack-release.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "3f8418c935b6c72cb90bdba111504c2caa03dd9e"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "0213d8756ede03cfcd52ad0a3545fdd5665abb79"
+          }
+        },
+        {
+          "path": "packages/agent/src/discovery/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "a5a87d808ec4fd341362fa9950cb0f134c19f44b"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "90b344c1b9077a57fc94d7dbc85f58b3e449cdb0"
+          }
+        },
+        {
+          "path": "packages/agent/src/discovery/windows.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "8bd86f57d563e21f56a5eecca834fa407265cf49"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "ade2de8c91e8fd1304e817579034dc11dfdb6cbb"
+          }
+        },
+        {
+          "path": "packages/agent/src/dns/propagate.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "12b7dd4e53af0f9f53ef4bfa1ee79ba2f18ba7b4"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "bb9f503f95dc0b8a98dbe07906f2a346f5145d5b"
+          }
+        },
+        {
+          "path": "packages/agent/src/dns/propagate.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "ec590f538cfcee150a12a085054266f7529c212d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "ff1b90bf24cc7a340d06ad4ce43e46e9ff0ea867"
+          }
+        },
+        {
+          "path": "packages/agent/src/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "68a89972511eb5c637101cfcb435c312fbc6ef31"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "3315c5acbf820d02ae53e97c376878a40dc95646"
+          }
+        },
+        {
+          "path": "packages/agent/src/issuers/adcs-enrollment-journal.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "e34b83e6e23060d48b5a9c73dd06e3635ce7b55d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "3973b04fb8c4a0bd5cb7cc06959cf1155b40cf83"
+          }
+        },
+        {
+          "path": "packages/agent/src/logging/logging.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "c340d66286b0d5b35d0fb44e9cde1f0d3d537c66"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "f24004e65f0f172f60d9a5b3e1d17df85d500223"
+          }
+        },
+        {
+          "path": "packages/agent/src/windows-discovery/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "b5bef1f6468efe6dcd861886b8306a195cfc8f9f"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "ce536a032b04cb29e41229cf1acb5fbfdaceaf1a"
+          }
+        },
+        {
+          "path": "packages/agent/src/windows-iis/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "a5127d7c437bd0250a8e5f88863074e513566c06"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "48e237ffa188a9ad3e01755eb06c2f1cf1d83516"
+          }
+        },
+        {
+          "path": "packages/agent/src/windows-iis/windows-iis.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "99d7afa16c25ea703f0c46f476464851acf79f63"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "e399b92b24cfe3d0104658de1c24ccced25ce70d"
+          }
+        },
+        {
+          "path": "packages/agent/vendor/log-scrub/secret-material.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "f55b7ff341203340e3e81c7fb78990bf7d0d3247"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "1c4c49203f1221c09f870e71705edda737ece9e2"
+          }
+        },
+        {
+          "path": "packages/log-scrub/secret-material.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "8922d8877cb038d878ae2e82e05e018320243a43"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "8ec9299533c0d4bd53ec2b1c8e7d997bdae107c0"
+          }
+        }
+      ]
+    },
+    {
+      "base_sha": "e71d1d4de054dc2634cf142ef66f53d289729ce4",
+      "target_sha": "fcc681c19314b7c2432973ce99d517af36e10238",
+      "compare_url": "https://github.com/tokentimerch/tokentimer-core/compare/e71d1d4de054dc2634cf142ef66f53d289729ce4...fcc681c19314b7c2432973ce99d517af36e10238",
+      "changed_path_count": 346,
+      "source_footprints": {
+        "native_helpers": {
+          "tracked_files": 29,
+          "identical": true,
+          "changed_paths": []
+        },
+        "adcs_issuer_logic": {
+          "tracked_files": 10,
+          "identical": true,
+          "changed_paths": []
+        },
+        "enrollment_control_plane": {
+          "tracked_files": 5,
+          "identical": true,
+          "changed_paths": []
+        },
+        "native_agent_source": {
+          "tracked_files": 137,
+          "identical": false,
+          "changed_paths": [
+            "packages/agent/src/discovery/index.js",
+            "packages/agent/src/discovery/windows.js",
+            "packages/agent/src/dns/propagate.js",
+            "packages/agent/src/index.js",
+            "packages/agent/src/issuers/adcs-enrollment-journal.js",
+            "packages/agent/src/windows-discovery/index.js",
+            "packages/agent/src/windows-iis/index.js",
+            "packages/agent/vendor/log-scrub/secret-material.js"
+          ]
+        },
+        "agent_package_recipe": {
+          "tracked_files": 6,
+          "identical": true,
+          "changed_paths": []
+        },
+        "vault_distribution_runtime": {
+          "tracked_files": 4,
+          "identical": true,
+          "changed_paths": []
+        }
+      },
+      "native_catalog_required_source_changes": [
+        {
+          "path": "apps/api/routes/certops.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "459daa544603fbd3fceec9792b7e605f515eac1d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "86d7053e5760c9dcbe9c4a2264ae81c678caa41b"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/renewalScheduler.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "6bb7eded95079248f60e2963afc42880a26b7539"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "e39c93dda4590fdc98d0ac09d23ef34418a2d2d2"
+          }
+        },
+        {
+          "path": "apps/dashboard/src/components/certops/AdcsIssuerWizard.jsx",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "cd8ad796a031d8f82f3f068ac90b9885286a8457"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "5eb003cee53069f291b1f71d6aa841d9dbd342ee"
+          }
+        },
+        {
+          "path": "apps/dashboard/src/components/certops/AdcsProfileWizard.jsx",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "15bf5023f918a9ac8344420745d402590cbda537"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "8b75f85b09ec2e06717f40ae3192ad02e99b8f43"
+          }
+        },
+        {
+          "path": "apps/dashboard/src/components/certops/certopsJobsApi.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "c416e60475f734cad0c06731debfe0e1bb683ad3"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "07a919efde4a346c471e353dbbd8f002da77d54e"
+          }
+        },
+        {
+          "path": "apps/dashboard/src/pages/certops/CertOpsAdcs.jsx",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "84ae6625713ae0eac0400e43e36a41ee5037a119"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "9b4aeeeb6c0c1424961316acfad26dd65fb12b9f"
+          }
+        },
+        {
+          "path": "apps/dashboard/src/pages/certops/CertOpsRenewals.jsx",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "4ef528ed19201c51f95192c895f0cdeece75bc4c"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "85598e232d7e7154d64509e575e713f166d07671"
+          }
+        },
+        {
+          "path": "apps/worker/src/runner.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "f28bf0d8bc45838f19e05bc0688b2f1162f19a88"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "bd68386d8950bfd15abc804a74795b6561e35e72"
+          }
+        },
+        {
+          "path": "infra/certops-adcs/read-report.ps1",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "acac2174bea18b81642e65c021f0f39088f9b9be"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "15f22117173303646100514c9724fe46a97ec2ed"
+          }
+        },
+        {
+          "path": "packages/agent/src/discovery/windows.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "8bd86f57d563e21f56a5eecca834fa407265cf49"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "ade2de8c91e8fd1304e817579034dc11dfdb6cbb"
+          }
+        },
+        {
+          "path": "packages/agent/src/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "68a89972511eb5c637101cfcb435c312fbc6ef31"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "3315c5acbf820d02ae53e97c376878a40dc95646"
+          }
+        },
+        {
+          "path": "packages/agent/src/issuers/adcs-enrollment-journal.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "e34b83e6e23060d48b5a9c73dd06e3635ce7b55d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "3973b04fb8c4a0bd5cb7cc06959cf1155b40cf83"
+          }
+        },
+        {
+          "path": "packages/agent/src/windows-iis/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "a5127d7c437bd0250a8e5f88863074e513566c06"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "48e237ffa188a9ad3e01755eb06c2f1cf1d83516"
+          }
+        },
+        {
+          "path": "packages/agent/vendor/log-scrub/secret-material.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "f55b7ff341203340e3e81c7fb78990bf7d0d3247"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "1c4c49203f1221c09f870e71705edda737ece9e2"
+          }
+        },
+        {
+          "path": "pnpm-lock.yaml",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "191c02a5fe71150e529050a9018d3d7ebb79ad00"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "2e8ff9008a36e4761fcd6369032ce3c3c3c04338"
+          }
+        },
+        {
+          "path": "tests/e2e/certops-adcs-real-e2e.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "798fff8c5ba7be5fc3c1201656f5bf0b1b735b27"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "dd428a83efeedc6c4477512cfb5193d93bef774b"
+          }
+        },
+        {
+          "path": "tests/e2e/helpers/certops-adcs-webhosting-renewal.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "3ace78a4b4b7635e351225ae7605e0ebac387e5b"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "ddd43657329d9a1545f34c335ef774c09e27869c"
+          }
+        }
+      ],
+      "changed_paths_scope": "Native and package runtime changes only in this compact record; full change set is recoverable from the immutable compared Git commits.",
+      "relevant_changed_paths": [
+        {
+          "path": "apps/api/routes/certops.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "459daa544603fbd3fceec9792b7e605f515eac1d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "86d7053e5760c9dcbe9c4a2264ae81c678caa41b"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/issuance.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "d48195258ab2852c1656aa9c4eb8eb81e8941575"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "6e554d4c5e0a3d570149565518d8ec36ef2b2737"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/renewalProfile.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "57e23aabba9523afeeb3713fdec47ff521147c9b"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "dcda87a8b33ef235c068eeaee928d1de673f7d76"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/renewalProfileDerivation.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "bcf906f4c697fcc26bdac36089f5a4634aa94da7"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "c082a111852303b77f23327dc75c4ce3f782f55d"
+          }
+        },
+        {
+          "path": "apps/api/services/certops/renewalScheduler.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "6bb7eded95079248f60e2963afc42880a26b7539"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "e39c93dda4590fdc98d0ac09d23ef34418a2d2d2"
+          }
+        },
+        {
+          "path": "packages/agent/README.md",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "728ce575e02aa650d6045124d15206a901ad0cd0"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "2cf9a872b9e926dd4bec6b26d46edb58615075e0"
+          }
+        },
+        {
+          "path": "packages/agent/scripts/host-gate.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "df29ef61174ec480a395570acdf84f1d79437867"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "2adfaa0aa36cf7dec7b90a2211a7a5fc971de2c8"
+          }
+        },
+        {
+          "path": "packages/agent/scripts/install-agent-sh.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "48e067d50e96418f9fc72e8930a411db343bcb1c"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "94efc384a363ecdbf8ad0ca4b8a1519981f1e022"
+          }
+        },
+        {
+          "path": "packages/agent/scripts/pack-release.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "3f8418c935b6c72cb90bdba111504c2caa03dd9e"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "0213d8756ede03cfcd52ad0a3545fdd5665abb79"
+          }
+        },
+        {
+          "path": "packages/agent/src/discovery/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "a5a87d808ec4fd341362fa9950cb0f134c19f44b"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "90b344c1b9077a57fc94d7dbc85f58b3e449cdb0"
+          }
+        },
+        {
+          "path": "packages/agent/src/discovery/windows.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "8bd86f57d563e21f56a5eecca834fa407265cf49"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "ade2de8c91e8fd1304e817579034dc11dfdb6cbb"
+          }
+        },
+        {
+          "path": "packages/agent/src/dns/propagate.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "12b7dd4e53af0f9f53ef4bfa1ee79ba2f18ba7b4"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "bb9f503f95dc0b8a98dbe07906f2a346f5145d5b"
+          }
+        },
+        {
+          "path": "packages/agent/src/dns/propagate.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "ec590f538cfcee150a12a085054266f7529c212d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "ff1b90bf24cc7a340d06ad4ce43e46e9ff0ea867"
+          }
+        },
+        {
+          "path": "packages/agent/src/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "68a89972511eb5c637101cfcb435c312fbc6ef31"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "3315c5acbf820d02ae53e97c376878a40dc95646"
+          }
+        },
+        {
+          "path": "packages/agent/src/issuers/adcs-enrollment-journal.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "e34b83e6e23060d48b5a9c73dd06e3635ce7b55d"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "3973b04fb8c4a0bd5cb7cc06959cf1155b40cf83"
+          }
+        },
+        {
+          "path": "packages/agent/src/logging/logging.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "c340d66286b0d5b35d0fb44e9cde1f0d3d537c66"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "f24004e65f0f172f60d9a5b3e1d17df85d500223"
+          }
+        },
+        {
+          "path": "packages/agent/src/windows-discovery/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "b5bef1f6468efe6dcd861886b8306a195cfc8f9f"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "ce536a032b04cb29e41229cf1acb5fbfdaceaf1a"
+          }
+        },
+        {
+          "path": "packages/agent/src/windows-iis/index.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "a5127d7c437bd0250a8e5f88863074e513566c06"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "48e237ffa188a9ad3e01755eb06c2f1cf1d83516"
+          }
+        },
+        {
+          "path": "packages/agent/src/windows-iis/windows-iis.test.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "99d7afa16c25ea703f0c46f476464851acf79f63"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "e399b92b24cfe3d0104658de1c24ccced25ce70d"
+          }
+        },
+        {
+          "path": "packages/agent/vendor/log-scrub/secret-material.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "f55b7ff341203340e3e81c7fb78990bf7d0d3247"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "1c4c49203f1221c09f870e71705edda737ece9e2"
+          }
+        },
+        {
+          "path": "packages/log-scrub/secret-material.js",
+          "status": "modified",
+          "before": {
+            "mode": "100644",
+            "blob_sha": "8922d8877cb038d878ae2e82e05e018320243a43"
+          },
+          "after": {
+            "mode": "100644",
+            "blob_sha": "8ec9299533c0d4bd53ec2b1c8e7d997bdae107c0"
+          }
+        }
+      ]
+    }
+  ],
+  "baseline_delta": {
+    "base_sha": "69387d85231f242d00f653bbde94ead373fefe1e",
+    "target_sha": "fcc681c19314b7c2432973ce99d517af36e10238",
+    "compare_url": "https://github.com/tokentimerch/tokentimer-core/compare/69387d85231f242d00f653bbde94ead373fefe1e...fcc681c19314b7c2432973ce99d517af36e10238",
+    "changed_path_count": 2,
+    "source_footprints": {
+      "native_helpers": {
+        "tracked_files": 29,
+        "identical": true,
+        "changed_paths": []
+      },
+      "adcs_issuer_logic": {
+        "tracked_files": 10,
+        "identical": true,
+        "changed_paths": []
+      },
+      "enrollment_control_plane": {
+        "tracked_files": 5,
+        "identical": true,
+        "changed_paths": []
+      },
+      "native_agent_source": {
+        "tracked_files": 137,
+        "identical": true,
+        "changed_paths": []
+      },
+      "agent_package_recipe": {
+        "tracked_files": 6,
+        "identical": true,
+        "changed_paths": []
+      },
+      "vault_distribution_runtime": {
+        "tracked_files": 4,
+        "identical": true,
+        "changed_paths": []
+      }
+    },
+    "native_catalog_required_source_changes": [],
+    "changed_paths": [
+      {
+        "path": "infra/certops-adcs/windows-tools.ps1",
+        "status": "modified",
+        "before": {
+          "mode": "100644",
+          "blob_sha": "8daed78e3b9d6aaf8c37dca34ae9a0c7b2e05061"
+        },
+        "after": {
+          "mode": "100644",
+          "blob_sha": "e89d52c54ea02513463fcd9138c39e6f3ed0cd74"
+        }
+      },
+      {
+        "path": "scripts/certops-adcs-domain-member.test.js",
+        "status": "modified",
+        "before": {
+          "mode": "100644",
+          "blob_sha": "f92e22e3ebd547f782ba3106dc0c5070102b3837"
+        },
+        "after": {
+          "mode": "100644",
+          "blob_sha": "7819088f6646691b0ee76d87682a9eff25fd1d60"
+        }
+      }
+    ]
+  },
+  "reuse_rule": "Preserve successful historical evidence and its original source/package identity. Source equality permits scoped reuse; source changes require impact-specific acceptance, not automatic rerun of the full matrix."
+}

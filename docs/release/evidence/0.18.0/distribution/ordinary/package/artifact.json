@@ -1,0 +1,17 @@
+{
+  "candidateSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+  "archive": "tokentimer-agent-0.18.0.tgz",
+  "sha256": "82769c419b45407011424dc004b75ef7a061663bec37c46180dbaa66c5fd5adb",
+  "sourceKind": "workflow-checkout",
+  "buildMode": "qualification-only-not-release",
+  "capabilities": [
+    "windows-cert-store-v1",
+    "iis-binding-v1",
+    "trust-anchor-deploy-v1",
+    "adcs-enroll-v1",
+    "material-store-vault-kv2-v1",
+    "certificate-publication-v1",
+    "deploy-from-store-v1"
+  ],
+  "packagerSha256": "fc8b2b4cb497726d50f16439acb6e8cd280fffa1b33f796f2a3a56396b883248"
+}

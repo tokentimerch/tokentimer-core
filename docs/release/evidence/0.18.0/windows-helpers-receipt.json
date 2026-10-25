@@ -1,0 +1,474 @@
+{
+  "schemaVersion": 1,
+  "scope": "focused-windows-native-helper-regressions-and-actual-packaged-cmc",
+  "status": "passed",
+  "runId": 40145857569,
+  "runUrl": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40145857569",
+  "jobId": 121026917830,
+  "jobUrl": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40145857569/job/121026917830",
+  "artifact": {
+    "id": 12580182475,
+    "name": "core-018-patched-windows-helpers",
+    "zipSha256": "f0b18c51f4777d5ce9e092146b4c6f7b60d49103c52884d3ee78f0220bb0c6f3",
+    "githubDigestMatches": true
+  },
+  "runnerLabel": "windows-2022",
+  "productSource": "fcc681c19314b7c2432973ce99d517af36e10238",
+  "fixtureSource": "edb0d829d1abea1e49736e8c74653e62d19020d3",
+  "goVersion": "go1.26.10",
+  "tests": [
+    {
+      "file": "reference-adcs-chain.jsonl",
+      "sha256": "ea41b36c9060ee3afaf0a2d755bcf706fee496263313b00c3c0d18b9a0a4759a",
+      "counts": {
+        "pass": 18,
+        "fail": 0,
+        "skip": 0
+      },
+      "topLevelPassEvents": 9,
+      "testEvents": [
+        {
+          "name": "TestUsageExit",
+          "result": "pass"
+        },
+        {
+          "name": "TestKeySurvivorCLIAdmission",
+          "result": "pass"
+        },
+        {
+          "name": "TestRevocationFlagIsSingleExcludeRoot",
+          "result": "pass"
+        },
+        {
+          "name": "TestMapChainTrustRevocationUnknownOnlyWhenExclusive",
+          "result": "pass"
+        },
+        {
+          "name": "TestSurvivorExactExclusionAndProviderScope/old_exact",
+          "result": "pass"
+        },
+        {
+          "name": "TestSurvivorExactExclusionAndProviderScope/same_thumb_other_store",
+          "result": "pass"
+        },
+        {
+          "name": "TestSurvivorExactExclusionAndProviderScope/different_certificate_same_store",
+          "result": "pass"
+        },
+        {
+          "name": "TestSurvivorExactExclusionAndProviderScope/different_container",
+          "result": "pass"
+        },
+        {
+          "name": "TestSurvivorExactExclusionAndProviderScope/container_case_conservative",
+          "result": "pass"
+        },
+        {
+          "name": "TestSurvivorExactExclusionAndProviderScope/software_provider_case",
+          "result": "pass"
+        },
+        {
+          "name": "TestSurvivorExactExclusionAndProviderScope/hardware_metadata_only",
+          "result": "pass"
+        },
+        {
+          "name": "TestSurvivorExactExclusionAndProviderScope/user_scope",
+          "result": "pass"
+        },
+        {
+          "name": "TestSurvivorExactExclusionAndProviderScope/legacy_CSP",
+          "result": "pass"
+        },
+        {
+          "name": "TestSurvivorExactExclusionAndProviderScope",
+          "result": "pass"
+        },
+        {
+          "name": "TestInvalidRequestsAndIncompleteAlwaysUnsafe",
+          "result": "pass"
+        },
+        {
+          "name": "TestGlobalReferenceModeAndPartialExclusionRefusal",
+          "result": "pass"
+        },
+        {
+          "name": "TestBoundedProviderStrings",
+          "result": "pass"
+        },
+        {
+          "name": "TestNativeMetadataScanReadOnlySupportingOrStrictQualification",
+          "result": "pass"
+        }
+      ]
+    },
+    {
+      "file": "reference-adcs-cmc.jsonl",
+      "sha256": "e5b9bf5b896b2752de39a35b37b5dbd321fe73dc6d2cfa9443d1a3ce15ada5fd",
+      "counts": {
+        "pass": 34,
+        "fail": 0,
+        "skip": 0
+      },
+      "topLevelPassEvents": 11,
+      "testEvents": [
+        {
+          "name": "TestRunExitCodes",
+          "result": "pass"
+        },
+        {
+          "name": "TestPendingTokenBoundariesAndMalformedTime/minimum",
+          "result": "pass"
+        },
+        {
+          "name": "TestPendingTokenBoundariesAndMalformedTime/maximum-unsigned",
+          "result": "pass"
+        },
+        {
+          "name": "TestPendingTokenBoundariesAndMalformedTime/little-endian",
+          "result": "pass"
+        },
+        {
+          "name": "TestPendingTokenBoundariesAndMalformedTime/zero-request-id",
+          "result": "pass"
+        },
+        {
+          "name": "TestPendingTokenBoundariesAndMalformedTime/short-token",
+          "result": "pass"
+        },
+        {
+          "name": "TestPendingTokenBoundariesAndMalformedTime/long-token",
+          "result": "pass"
+        },
+        {
+          "name": "TestPendingTokenBoundariesAndMalformedTime/integer-time",
+          "result": "pass"
+        },
+        {
+          "name": "TestPendingTokenBoundariesAndMalformedTime/string-time",
+          "result": "pass"
+        },
+        {
+          "name": "TestPendingTokenBoundariesAndMalformedTime/utc-time-instead-of-generalized",
+          "result": "pass"
+        },
+        {
+          "name": "TestPendingTokenBoundariesAndMalformedTime/invalid-calendar-time",
+          "result": "pass"
+        },
+        {
+          "name": "TestPendingTokenBoundariesAndMalformedTime/trailing-field",
+          "result": "pass"
+        },
+        {
+          "name": "TestPendingTokenBoundariesAndMalformedTime",
+          "result": "pass"
+        },
+        {
+          "name": "TestSignedResponseAdversarialEnvelopes/issued",
+          "result": "pass"
+        },
+        {
+          "name": "TestSignedResponseAdversarialEnvelopes/pending",
+          "result": "pass"
+        },
+        {
+          "name": "TestSignedResponseAdversarialEnvelopes/denied",
+          "result": "pass"
+        },
+        {
+          "name": "TestSignedResponseAdversarialEnvelopes",
+          "result": "pass"
+        },
+        {
+          "name": "TestStatusInfoLocalizedTextAndExactFields/integer-body-list",
+          "result": "pass"
+        },
+        {
+          "name": "TestStatusInfoLocalizedTextAndExactFields/empty-body-list",
+          "result": "pass"
+        },
+        {
+          "name": "TestStatusInfoLocalizedTextAndExactFields/negative-body-id",
+          "result": "pass"
+        },
+        {
+          "name": "TestStatusInfoLocalizedTextAndExactFields/overflow-body-id",
+          "result": "pass"
+        },
+        {
+          "name": "TestStatusInfoLocalizedTextAndExactFields/trailing-other-info",
+          "result": "pass"
+        },
+        {
+          "name": "TestStatusInfoLocalizedTextAndExactFields/unknown-choice",
+          "result": "pass"
+        },
+        {
+          "name": "TestStatusInfoLocalizedTextAndExactFields/malformed-failure-integer",
+          "result": "pass"
+        },
+        {
+          "name": "TestStatusInfoLocalizedTextAndExactFields/invalid-utf8-text",
+          "result": "pass"
+        },
+        {
+          "name": "TestStatusInfoLocalizedTextAndExactFields/context-specific-text",
+          "result": "pass"
+        },
+        {
+          "name": "TestStatusInfoLocalizedTextAndExactFields",
+          "result": "pass"
+        },
+        {
+          "name": "TestDecodeRejectsEmptyAndOversized",
+          "result": "pass"
+        },
+        {
+          "name": "TestDecodePoCFixtures",
+          "result": "pass"
+        },
+        {
+          "name": "TestDecodeRejectsWrongPin",
+          "result": "pass"
+        },
+        {
+          "name": "TestDecodePendingWithRekeyedCAReportsKeyMismatch",
+          "result": "pass"
+        },
+        {
+          "name": "TestDecodePendingRequiresCACert",
+          "result": "pass"
+        },
+        {
+          "name": "TestExtractTopLevelIssuedCertHash",
+          "result": "pass"
+        },
+        {
+          "name": "TestSuccessResultPolicyUnknown",
+          "result": "pass"
+        }
+      ]
+    },
+    {
+      "file": "reference-verifier.jsonl",
+      "sha256": "9f17452273c29f70185d37afad4a2412af93637b9fb5e67b7b8ee31d5dd11365",
+      "counts": {
+        "pass": 27,
+        "fail": 0,
+        "skip": 0
+      },
+      "topLevelPassEvents": 19,
+      "testEvents": [
+        {
+          "name": "TestRun_ValidSignatureExitsZero",
+          "result": "pass"
+        },
+        {
+          "name": "TestRun_TamperedPayloadExitsVerifyFailed",
+          "result": "pass"
+        },
+        {
+          "name": "TestRun_NonEd25519KeyExitsUsageError",
+          "result": "pass"
+        },
+        {
+          "name": "TestRun_MissingPubkeyExitsUsageError",
+          "result": "pass"
+        },
+        {
+          "name": "TestRun_BothSignatureFormsIsUsageError",
+          "result": "pass"
+        },
+        {
+          "name": "TestRun_SignatureViaFileWorks",
+          "result": "pass"
+        },
+        {
+          "name": "TestRun_PayloadViaFileWorks",
+          "result": "pass"
+        },
+        {
+          "name": "TestParseEd25519PublicKey_Valid",
+          "result": "pass"
+        },
+        {
+          "name": "TestParseEd25519PublicKey_RejectsRSA",
+          "result": "pass"
+        },
+        {
+          "name": "TestParseEd25519PublicKey_RejectsPrivateKeyBlock",
+          "result": "pass"
+        },
+        {
+          "name": "TestParseEd25519PublicKey_RejectsGarbage",
+          "result": "pass"
+        },
+        {
+          "name": "TestParseEd25519PublicKey_RejectsTrailingData",
+          "result": "pass"
+        },
+        {
+          "name": "TestVerifyDetached_ValidSignaturePasses",
+          "result": "pass"
+        },
+        {
+          "name": "TestVerifyDetached_TamperedPayloadFails",
+          "result": "pass"
+        },
+        {
+          "name": "TestVerifyDetached_TamperedSignatureFails",
+          "result": "pass"
+        },
+        {
+          "name": "TestVerifyDetached_WrongKeyFails",
+          "result": "pass"
+        },
+        {
+          "name": "TestVerifyDetached_WrongLengthSignatureFailsCleanly",
+          "result": "pass"
+        },
+        {
+          "name": "TestVerifyDetached_EmptyPayloadStillVerifiable",
+          "result": "pass"
+        },
+        {
+          "name": "FuzzVerify/seed#0",
+          "result": "pass"
+        },
+        {
+          "name": "FuzzVerify/seed#1",
+          "result": "pass"
+        },
+        {
+          "name": "FuzzVerify/seed#2",
+          "result": "pass"
+        },
+        {
+          "name": "FuzzVerify/seed#3",
+          "result": "pass"
+        },
+        {
+          "name": "FuzzVerify/seed#4",
+          "result": "pass"
+        },
+        {
+          "name": "FuzzVerify/seed#5",
+          "result": "pass"
+        },
+        {
+          "name": "FuzzVerify/seed#6",
+          "result": "pass"
+        },
+        {
+          "name": "FuzzVerify/seed#7",
+          "result": "pass"
+        },
+        {
+          "name": "FuzzVerify",
+          "result": "pass"
+        }
+      ]
+    },
+    {
+      "file": "windows-service-host.jsonl",
+      "sha256": "d444b2cb1696298c447ce42462cdaacaba2d1c9dcfc9b40410c2c7675088cbce",
+      "counts": {
+        "pass": 13,
+        "fail": 0,
+        "skip": 0
+      },
+      "topLevelPassEvents": 7,
+      "testEvents": [
+        {
+          "name": "TestResolveStopTimeout/absent",
+          "result": "pass"
+        },
+        {
+          "name": "TestResolveStopTimeout/empty",
+          "result": "pass"
+        },
+        {
+          "name": "TestResolveStopTimeout/non-numeric",
+          "result": "pass"
+        },
+        {
+          "name": "TestResolveStopTimeout/zero",
+          "result": "pass"
+        },
+        {
+          "name": "TestResolveStopTimeout/negative",
+          "result": "pass"
+        },
+        {
+          "name": "TestResolveStopTimeout/valid",
+          "result": "pass"
+        },
+        {
+          "name": "TestResolveStopTimeout",
+          "result": "pass"
+        },
+        {
+          "name": "TestAgentHostGracefulStop",
+          "result": "pass"
+        },
+        {
+          "name": "TestAgentHostForceKillOnTimeout",
+          "result": "pass"
+        },
+        {
+          "name": "TestAgentHostWaitObservesUnrequestedExit",
+          "result": "pass"
+        },
+        {
+          "name": "TestExecuteReportsRealExitCodeOnUnrequestedCrash",
+          "result": "pass"
+        },
+        {
+          "name": "TestExecuteMapsRetiredExitCodeToCleanStop",
+          "result": "pass"
+        },
+        {
+          "name": "TestExecuteRequestedStopReturnsZero",
+          "result": "pass"
+        }
+      ]
+    }
+  ],
+  "fixtureProvenance": {
+    "productSource": "fcc681c19314b7c2432973ce99d517af36e10238",
+    "fixtureSource": "edb0d829d1abea1e49736e8c74653e62d19020d3",
+    "files": [
+      {
+        "path": "packages/agent/windows-service-host/host_test.go",
+        "sha256": "09c1bcbf068f64be111af79d9c1b20890d31e032f9a551a080bcdf5ec31e53c9",
+        "matchesReviewedFixtureBytes": true,
+        "matchesExactCommittedFixtureContent": true
+      },
+      {
+        "path": "packages/agent/windows-service-host/testdata/mock-agent.js",
+        "sha256": "cd24f34af87814ad9619499a06828cf7829d49134667dfc8406ccb91cc950ee0",
+        "matchesReviewedFixtureBytes": true,
+        "matchesExactCommittedFixtureContent": true
+      }
+    ]
+  },
+  "packagedHelper": {
+    "signedFixture": "passed",
+    "sourceSha": "fcc681c19314b7c2432973ce99d517af36e10238",
+    "goVersion": "go1.26.10",
+    "scope": "windows-helper-regression-not-domain-CA",
+    "agentSha256": "062f48b1960685b247b0114b2f7086b7accda23f8788895078da627f8844507c",
+    "wrongPinRefusal": "passed"
+  },
+  "limits": [
+    "Go suites execute their newly compiled test binaries; only the CMC amd64 binary is separately executed from the actual verified archive.",
+    "No domain/CA native campaign, SCM installation/upgrade, or arm64 execution is claimed.",
+    "Go pass event totals include parent/subtest and fuzz seed events."
+  ],
+  "counts": {
+    "pass": 92,
+    "fail": 0,
+    "skip": 0
+  },
+  "topLevelPassEvents": 46
+}
