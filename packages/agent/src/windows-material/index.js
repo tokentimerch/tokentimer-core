@@ -129,6 +129,10 @@ function createWindowsConnector({
             maxBuffer: 16384,
             encoding: "utf8",
             signal,
+            env: {
+              ...process.env,
+              PSModulePath: path.join(path.dirname(powershellPath), "Modules"),
+            },
           },
           (error, stdout) => {
             if (error) {

@@ -50,7 +50,18 @@ test(
           "-EncodedCommand",
           Buffer.from(script, "utf16le").toString("base64"),
         ],
-        { encoding: "utf8", windowsHide: true, timeout: 120000 },
+        {
+          encoding: "utf8",
+          windowsHide: true,
+          timeout: 120000,
+          env: {
+            ...process.env,
+            PSModulePath: path.join(
+              process.env.SystemRoot,
+              "System32/WindowsPowerShell/v1.0/Modules",
+            ),
+          },
+        },
       );
     }
     const caption = ps("(Get-CimInstance Win32_OperatingSystem).Caption");

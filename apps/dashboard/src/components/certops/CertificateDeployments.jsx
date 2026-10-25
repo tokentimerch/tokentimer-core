@@ -74,6 +74,8 @@ const publicationLabels = {
 const failureReasons = {
   service_unavailable: 'The destination service was unavailable.',
   verification_failed: 'The destination did not pass verification.',
+  material_drift_detected:
+    'The installed or served certificate has drifted from the pinned material.',
   material_auth_denied:
     'The material store denied access. Check the customer-local identity and permissions.',
   material_auth_unavailable:

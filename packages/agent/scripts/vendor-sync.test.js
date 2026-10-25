@@ -44,7 +44,13 @@ describe("vendor sync", () => {
 
   it("keeps canonical-json identical to @tokentimer/contracts (aside from attribution)", () => {
     const upstream = fs.readFileSync(
-      path.join(repoRoot, "packages", "contracts", "certops", "canonical-json.cjs"),
+      path.join(
+        repoRoot,
+        "packages",
+        "contracts",
+        "certops",
+        "canonical-json.cjs",
+      ),
       "utf8",
     );
     const vendored = fs.readFileSync(
@@ -52,6 +58,19 @@ describe("vendor sync", () => {
       "utf8",
     );
     assert.equal(stripVendoredAttribution(vendored), upstream);
+  });
+
+  it("keeps material provider capability and version rules byte-identical to the canonical contract", () => {
+    assert.equal(
+      fs.readFileSync(
+        path.join(packageRoot, "vendor/contracts/material-provider.cjs"),
+        "utf8",
+      ),
+      fs.readFileSync(
+        path.join(repoRoot, "packages/contracts/certops/material-provider.cjs"),
+        "utf8",
+      ),
+    );
   });
 
   it("keeps agent-protocol.schema.json byte-identical to @tokentimer/contracts", () => {
