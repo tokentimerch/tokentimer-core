@@ -89,6 +89,7 @@ async function main() {
     ]);
     created = true;
     let ready = false;
+    let lastProbe = null;
     for (let i = 0; i < 60; i++) {
       const probe = spawnSync(
         "docker",
@@ -102,13 +103,33 @@ async function main() {
         ],
         { encoding: "utf8", windowsHide: true, timeout: 10000 },
       );
+      lastProbe = {
+        exitCode: probe.status,
+        timedOut: probe.error?.code === "ETIMEDOUT",
+      };
       if (probe.status === 0) {
         ready = true;
         break;
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    if (!ready) throw new Error("Owned Vault never became ready");
+    if (!ready) {
+      // Keep only nonsecret execution state from this exact owned container.
+      // Do not emit its environment, dev token, command line or server logs.
+      summary.readiness = {
+        probes: 60,
+        lastProbe,
+      };
+      summary.readiness.container = JSON.parse(run([
+        "inspect",
+        "--format",
+        '{"running":{{.State.Running}},"status":{{json .State.Status}},"exitCode":{{.State.ExitCode}},"oomKilled":{{.State.OOMKilled}},"restartCount":{{.RestartCount}}}',
+        name,
+      ]));
+      throw new Error(
+        "Owned Vault never became ready: " + JSON.stringify(summary.readiness),
+      );
+    }
     const file = "packages/agent/src/material-store/material-store.test.js",
       report =
         "qualification-results/" + path.basename(output) + "/adapter.jsonl";
