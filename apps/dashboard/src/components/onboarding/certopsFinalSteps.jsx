@@ -568,9 +568,7 @@ export function VaultStep({ ctx }) {
           <StatusTag tone={outcome.level === 'verified' ? 'green' : 'orange'}>
             {outcome.level === 'verified'
               ? 'Distribution verified'
-              : outcome.level === 'ready_to_roll_out'
-                ? 'Ready to roll out'
-                : 'Configuration prepared'}
+              : 'Setup in progress'}
           </StatusTag>
           {gap.length ? (
             <Text fontSize='xs' color={muted}>
@@ -632,35 +630,36 @@ export function VaultStep({ ctx }) {
               ))}
             </Select>
           </FormControl>
-          {!publishJobId ? (
-            <VStack align='stretch' spacing={3}>
-              <Text fontSize='sm'>
-                With local execution enabled and dryRun true, send a signed test
-                to each agent here. If you already tested the issuer in this
-                guide, its existing result is shown. Tests do not issue or
-                deploy certificates. After they complete, stop the issuing
-                TokenTimer service while you prepare the group-specific
-                configuration below.
-              </Text>
-              <VaultAgentTest
-                key={`issuer/${issuerId}`}
-                ctx={ctx}
-                agent={agentItems.find(a => a.id === issuerId)}
-                isIssuer
-              />
-              <VaultAgentTest
-                key={`consumer/${consumerId}`}
-                ctx={ctx}
-                agent={agentItems.find(a => a.id === consumerId)}
-              />
+          <VStack align='stretch' spacing={3}>
+            <Text fontSize='sm'>
+              With local execution enabled and dryRun true, send a signed test
+              to each agent here. If you already tested the issuer in this
+              guide, its existing result is shown. Tests do not issue or deploy
+              certificates. After they complete, stop the issuing TokenTimer
+              service while you prepare the group-specific configuration below.
+            </Text>
+            <VaultAgentTest
+              key={`issuer/${issuerId}`}
+              ctx={ctx}
+              agent={agentItems.find(a => a.id === issuerId)}
+              isIssuer
+              disabled={Boolean(publishJobId)}
+            />
+            <VaultAgentTest
+              key={`consumer/${consumerId}`}
+              ctx={ctx}
+              agent={agentItems.find(a => a.id === consumerId)}
+              disabled={Boolean(publishJobId)}
+            />
+            {!publishJobId ? (
               <Checkbox
                 isChecked={issuerStopped}
                 onChange={e => setIssuerStopped(e.target.checked)}
               >
                 The issuing TokenTimer agent is stopped while I prepare Vault
               </Checkbox>
-            </VStack>
-          ) : null}
+            ) : null}
+          </VStack>
           <HStack align='center' spacing={3} flexWrap='wrap'>
             <DashboardActionButton
               variant='outline'
@@ -810,6 +809,18 @@ export function VaultStep({ ctx }) {
               tokentimer-agent on the consumer host.
             </Text>
           </FormControl>
+          <DashboardActionButton
+            variant='outline'
+            onClick={saveSettings}
+            isDisabled={!out.ok}
+          >
+            Save Vault connection settings
+          </DashboardActionButton>
+          {savedOk ? (
+            <Text fontSize='xs' color={muted}>
+              Vault connection settings saved.
+            </Text>
+          ) : null}
           <Text fontSize='xs' color={muted}>
             Consumer binding id (generated, keep it): {form.bindingId}
           </Text>

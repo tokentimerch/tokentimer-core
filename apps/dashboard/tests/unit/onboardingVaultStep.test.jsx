@@ -207,6 +207,19 @@ describe('Vault step structure', () => {
     expect(screen.queryByTestId('vault-part-3')).toBeNull();
   });
 
+  it('saves Vault connection details beside the fields', async () => {
+    const ctx = ctxWith(ready);
+    show(ctx);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save Vault connection settings' })
+    );
+    expect(
+      await screen.findByText('Vault connection settings saved.')
+    ).toBeInTheDocument();
+    expect(ctx.session.progress.certops.vaultAddress).toBe(ready.vaultAddress);
+    expect(screen.getByText('Setup in progress')).toBeInTheDocument();
+  });
+
   it('saves and confirms once the values are valid', async () => {
     const ctx = ctxWith(ready);
     show(ctx);

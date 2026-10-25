@@ -194,11 +194,13 @@ describe('a step that finishes by itself stays open until Continue', () => {
 
   it('keeps the agent step open when the agent checks in', async () => {
     seed('certops_observe', observe);
-    mount();
+    const view = mount();
     await screen.findByTestId('stub-certops_agent');
     expect(continueBar()).toBeNull();
     const before = finished();
     document.documentElement.scrollTop = 1200;
+    view.container.scrollTop = 1500;
+    document.body.scrollTop = 900;
 
     server.summary.certops.agents = { live: 1, items: [liveAgent()] };
     poll('certops_agent');
@@ -208,6 +210,8 @@ describe('a step that finishes by itself stays open until Continue', () => {
     // The counter and rail update at once, only the move waits.
     expect(finished()).toBe(before + 1);
     expect(document.documentElement.scrollTop).toBe(1200);
+    expect(view.container.scrollTop).toBe(1500);
+    expect(document.body.scrollTop).toBe(900);
     expect(
       within(continueBar()).getByRole('button', { name: 'Continue' })
     ).toBeEnabled();
@@ -216,6 +220,8 @@ describe('a step that finishes by itself stays open until Continue', () => {
     expect(await screen.findByTestId('stub-certops_execution')).toBeVisible();
     expect(screen.queryByTestId('stub-certops_agent')).toBeNull();
     expect(document.documentElement.scrollTop).toBe(0);
+    expect(view.container.scrollTop).toBe(0);
+    expect(document.body.scrollTop).toBe(0);
     expect(continueBar()).toBeNull();
   });
 

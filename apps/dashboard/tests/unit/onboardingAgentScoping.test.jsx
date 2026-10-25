@@ -146,6 +146,45 @@ function plan(pick, items, { certops = {}, progress = {} } = {}) {
 const status = (p, id) => p.steps.find(s => s.id === id)?.status;
 
 describe('agent satisfaction is a function of the pick', () => {
+  it('keeps a checked Vault issuer installed while stopped for publication setup', () => {
+    const pick = PICKS.find(p => p.objective === 'vault');
+    const offline = { ...lin, livenessState: 'offline' };
+    const args = {
+      certops: { dryRun: { id: 'check', status: 'dry_run_complete' } },
+      progress: {
+        chosenAgentId: lin.id,
+        chosenAgentConfirmed: lin.id,
+        dryRunJobId: 'check',
+        vaultPublishJobId: 'publication',
+      },
+    };
+    expect(status(plan(pick, [offline], args), 'certops_agent')).toBe('done');
+    expect(
+      status(
+        plan(pick, [offline], {
+          ...args,
+          certops: { dryRun: { id: 'other', status: 'dry_run_complete' } },
+        }),
+        'certops_agent'
+      )
+    ).not.toBe('done');
+    expect(
+      status(
+        plan(pick, [offline], {
+          ...args,
+          progress: { ...args.progress, vaultPublishJobId: '' },
+        }),
+        'certops_agent'
+      )
+    ).not.toBe('done');
+    expect(
+      status(
+        plan(pick, [{ ...offline, commandProfiles: [] }], args),
+        'certops_agent'
+      )
+    ).not.toBe('done');
+  });
+
   // The Windows agent is the one from an AD CS setup.
   it.each(PICKS.filter(p => p.infra === 'linux'))(
     '$name is not satisfied by a live Windows agent',

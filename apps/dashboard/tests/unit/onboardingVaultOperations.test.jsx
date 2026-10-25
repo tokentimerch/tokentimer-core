@@ -93,7 +93,7 @@ describe('Vault jobs stay in onboarding', () => {
       job: {
         id: 'test-job',
         status: 'dry_run_complete',
-        mode: 'dry_run',
+        operation: 'noop',
         assignedAgentId: first.id,
       },
     });
@@ -125,6 +125,25 @@ describe('Vault jobs stay in onboarding', () => {
     expect(document.body.textContent).not.toMatch(
       /POST|GET|curl|Sign in for the API/
     );
+  });
+
+  it('does not treat a completed real-operation request as the signed noop check', async () => {
+    const context = ctx();
+    context.session.progress.certops.vaultDryRunJobIds = {
+      [first.id]: 'wrong-job',
+    };
+    api.getJob.mockResolvedValue({
+      job: {
+        id: 'wrong-job',
+        operation: 'issue',
+        status: 'dry_run_complete',
+        assignedAgentId: first.id,
+        mode: 'real',
+      },
+    });
+    wrap(<VaultAgentTest ctx={context} agent={first} />);
+    await screen.findByText('Test status: dry_run_complete');
+    expect(screen.queryByText('Signed dry run completed')).toBeNull();
   });
 
   it('does not call a pending or failed check completed', async () => {

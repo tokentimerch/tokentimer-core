@@ -115,7 +115,10 @@ export function VaultAgentTest({
   const sameAgent = observed.job?.assignedAgentId === agent?.id;
   const passed =
     observed.job?.status === 'dry_run_complete' &&
-    observed.job?.mode === 'dry_run' &&
+    observed.job?.operation === 'noop' &&
+    // The public job-detail projection omits mode on existing servers.
+    // The attributed noop's terminal status proves the signed dry run.
+    (observed.job?.mode == null || observed.job.mode === 'dry_run') &&
     sameAgent;
   const notified = useRef(null);
   useEffect(() => {

@@ -674,6 +674,7 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
     [onboarding, docs, session, skip, navigate, releaseStep, goToStep]
   );
 
+  const stepViewportRef = useRef(null);
   const nav = useMemo(
     () => resolveNavigation(plan, viewStepId),
     [plan, viewStepId]
@@ -681,8 +682,13 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
   // A new step opens at its heading. Summary polling must not move the
   // operator away from the fields or evidence they are currently reading.
   useLayoutEffect(() => {
-    const scroller = document.scrollingElement || document.documentElement;
-    scroller.scrollTop = 0;
+    let scroller = stepViewportRef.current;
+    // The app root and body can scroll independently of the document
+    // because they use overflow-x containment. Reset the actual ancestors.
+    while (scroller) {
+      scroller.scrollTop = 0;
+      scroller = scroller.parentElement;
+    }
   }, [nav.shownId]);
   const titleOf = useCallback(
     id => plan?.steps.find(s => s.id === id)?.title || id,
@@ -809,7 +815,7 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
                     )}
                   </CollapsibleSteps>
                 </DashboardPanel>
-                <Box as='main' flex='1' minW={0} w='full'>
+                <Box ref={stepViewportRef} as='main' flex='1' minW={0} w='full'>
                   {plan.complete && !nav.viewing ? (
                     <DoneCard ctx={ctx} />
                   ) : Current ? (
