@@ -815,7 +815,14 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
                     )}
                   </CollapsibleSteps>
                 </DashboardPanel>
-                <Box ref={stepViewportRef} as='main' flex='1' minW={0} w='full'>
+                <Box
+                  ref={stepViewportRef}
+                  as='main'
+                  flex='1'
+                  minW={0}
+                  w='full'
+                  sx={{ overflowAnchor: 'none' }}
+                >
                   {plan.complete && !nav.viewing ? (
                     <DoneCard ctx={ctx} />
                   ) : Current ? (
