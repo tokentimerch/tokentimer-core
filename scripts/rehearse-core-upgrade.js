@@ -9,6 +9,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { containsPrivateKeyMaterial, redactGenericSecrets } = require("../packages/log-scrub/secret-material");
 
 const OWNER_LABEL = "ch.tokentimer.upgrade-rehearsal";
 const OLD_SOURCE = "813b0b111c7b2d6e4a5a3cbfdb458bd0b4572ecd";
@@ -52,6 +53,23 @@ function resourceIsMissing(stderr, name) {
   const message = String(stderr);
   return message.includes(name) && /no such (?:container|network|volume|object)\b|\bnetwork\b.*\bnot found\b/i.test(message);
 }
+function redactDiagnostic(value, secrets = []) {
+  try {
+    let text = String(value ?? "");
+    // Do not truncate before inspecting: a cutoff could discard the PEM
+    // marker while retaining its private contents. Oversized or ambiguous
+    // chunks are withheld entirely, including tail fragments of PEM bodies.
+    if (text.length > 32768) return "[DIAGNOSTIC_WITHHELD: oversized output]";
+    for (const secret of secrets) if (secret) text = text.replaceAll(secret, "[redacted]");
+    const content = text.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:\d{2})\s+/gm, "");
+    if (/-----\s*(?:BEGIN|END)[^\r\n]*PRIVATE\s+KEY/i.test(text) || /(?:^|\n)\s*[A-Za-z0-9+/=_-]{48,}\s*(?:\n|$)/.test(content) || containsPrivateKeyMaterial(content)) {
+      return "[DIAGNOSTIC_WITHHELD: possible private material]";
+    }
+    if (/failing row contains|\b(?:rows?|records?)["']?\s*[:=]\s*[\[{]/i.test(text)) return "[DIAGNOSTIC_WITHHELD: database row data]";
+    text = redactGenericSecrets(text).replace(/tt(?:boot|agent|x)_[^\s,"';}\]]+/gi, "[redacted-token]");
+    return text.length > 16384 ? "[DIAGNOSTIC_WITHHELD: oversized redacted output]" : text;
+  } catch (_) { return "[DIAGNOSTIC_WITHHELD: redaction failed]"; }
+}
 function assertLedgerUpgrade(before, after) {
   assert.equal(before.at(-1)?.version, 67, "Baseline must be the released 0.17.3 migration ledger");
   assert.equal(after.at(-1)?.version, 77, "0.18.0 must apply through onboarding migration 77");
@@ -89,7 +107,7 @@ async function apiProbe(input) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        const userId = (await client.query("INSERT INTO users(email,email_original,display_name,password_hash,auth_method,email_verified) VALUES($1,$1,'Upgrade Rehearsal',$2,'local',TRUE) RETURNING id", [f.email, await bcrypt.hash(f.password, 10)])).rows[0].id;
+        const userId = (await client.query("INSERT INTO users(email,email_original,display_name,password_hash,auth_method,email_verified) VALUES($1::text,$1::text,'Upgrade Rehearsal',$2,'local',TRUE) RETURNING id", [f.email, await bcrypt.hash(f.password, 10)])).rows[0].id;
         const workspaceId = crypto.randomUUID();
         await client.query("INSERT INTO workspaces(id,name,created_by,plan) VALUES($1,'Upgrade preserved workspace',$2,'oss')", [workspaceId, userId]);
         await client.query("INSERT INTO workspace_memberships(user_id,workspace_id,role,invited_by) VALUES($1,$2,'admin',$1)", [userId, workspaceId]);
@@ -162,7 +180,7 @@ async function apiProbe(input) {
         return { authenticated: true, preservedWorkspace: true, preservedInventory: true };
       }
       if (input.operation === "bootstrap") return request("POST", "/api/v1/workspaces/" + f.workspaceId + "/certops/agent-bootstrap-tokens", { name: "Upgrade rehearsal", expiresAt: new Date(Date.now() + 3600000).toISOString() });
-      if (input.operation === "noop") return request("POST", "/api/v1/workspaces/" + f.workspaceId + "/certops/jobs", { operation: "noop", mode: "dry_run", assignedAgentId: input.agentId, idempotencyKey: "upgrade-" + input.phase });
+      if (input.operation === "noop") return request("POST", "/api/v1/workspaces/" + f.workspaceId + "/certops/jobs", { operation: "noop", mode: input.mode, assignedAgentId: input.agentId, idempotencyKey: "upgrade-" + input.phase });
       throw new Error("Unknown HTTP operation");
     }
     throw new Error("Unknown API probe");
@@ -181,9 +199,9 @@ async function main(argv = process.argv.slice(2)) {
   let activeStep = "preflight";
   const receipt = { schemaVersion: 1, scope: "packaged-control-plane-and-linux-agent-upgrade", startedAt: new Date().toISOString(), status: "failed", baseline: { version: "0.17.3", sourceSha: OLD_SOURCE }, candidate: { version: "0.18.0", selectedSourceSha: options["source-sha"], imageBuildSourceSha: options["image-source-sha"], agentBuildSourceSha: options["agent-source-sha"] }, checks: [], notQualifiedByThisRun: ["Windows installer or service upgrade", "Linux systemd installer or service upgrade", "native AD CS or real ACME renewal", "Vault publication and distribution", "worker maintenance business logic (worker boot only)", "Helm upgrade", "whole-release sign-off"] };
   const out = path.resolve(options.out);
-  const redact = (value) => secrets.reduce((text, secret) => text.replaceAll(secret, "[redacted]"), String(value)).replace(/tt(?:boot|agent|x)_[A-Za-z0-9_.~+\/-]+/g, "[redacted-token]");
-  function run(command, args, { input, timeout = 120000, allowFailure = false } = {}) {
-    const result = spawnSync(command, args, { cwd: root, encoding: "utf8", input, timeout, maxBuffer: 8 * 1024 * 1024 });
+  const redact = (value) => redactDiagnostic(value, secrets);
+  function run(command, args, { input, timeout = 120000, allowFailure = false, maxBuffer = 8 * 1024 * 1024 } = {}) {
+    const result = spawnSync(command, args, { cwd: root, encoding: "utf8", input, timeout, maxBuffer });
     if (!allowFailure && result.status !== 0) throw new Error(activeStep + ": " + command + " failed (" + (result.status ?? result.error?.code) + "): " + redact(result.stderr || result.stdout).slice(-3000));
     return result;
   }
@@ -199,6 +217,28 @@ async function main(argv = process.argv.slice(2)) {
     return run("docker", args, opts);
   }
   function inspect(kind, name) { return JSON.parse(docker([kind, "inspect", name]).stdout)[0]; }
+  function failureDiagnostics() {
+    const diagnostics = [];
+    for (const resource of resources) {
+      if (resource.kind !== "container" || !/(?:old|candidate)-(?:api|agent|worker)$/.test(resource.name)) continue;
+      try {
+        const inspected = docker(["container", "inspect", resource.name], { allowFailure: true, timeout: 10000 });
+        if (inspected.status !== 0) {
+          diagnostics.push({ name: resource.name, unavailable: redact(inspected.stderr || inspected.error?.message || "Inspection failed") });
+          continue;
+        }
+        const container = JSON.parse(inspected.stdout)[0];
+        if (!ownsResource(resource.name, container.Config?.Labels, owner)) throw new Error("Diagnostic ownership check failed");
+        const logs = docker(["logs", "--tail", "60", "--timestamps", resource.name], { allowFailure: true, timeout: 10000, maxBuffer: 65536 });
+        diagnostics.push({
+          name: resource.name,
+          state: { status: container.State?.Status, running: container.State?.Running, exitCode: container.State?.ExitCode, oomKilled: container.State?.OOMKilled },
+          logs: logs.error || logs.status !== 0 ? "[DIAGNOSTIC_WITHHELD: incomplete collection]" : redact(logs.stdout + "\n" + logs.stderr),
+        });
+      } catch (error) { diagnostics.push({ name: resource.name, unavailable: redact(error.message) }); }
+    }
+    return diagnostics;
+  }
   function nodeResult(args, fn, input) {
     const code = "const input=JSON.parse(require('node:fs').readFileSync(0,'utf8'));Promise.resolve((" + fn.toString() + ")(input)).then(value=>console.log(" + JSON.stringify(MARKER) + "+JSON.stringify(value)),error=>{console.error(error.message);process.exitCode=1});";
     const result = docker([...args, "node", "-e", code], { input: JSON.stringify(input) });
@@ -299,19 +339,26 @@ async function main(argv = process.argv.slice(2)) {
   async function waitAgent(version) {
     return until(() => { const agent = probe("agent"); return agent?.agent_version === version && agent.last_seen_at && agent.status === "active" && BigInt(agent.last_sequence) > 0n ? agent : null; }, "agent registration/heartbeat " + version);
   }
-  async function dryRun(agent, phase) {
-    const result = probe("http", { operation: "noop", phase, agentId: agent.id });
+  async function signedNoop(agent, phase) {
+    // The released 0.17.3 session route does not forward body.mode, so its
+    // public API creates real-mode noops. Noop requests no side effects in
+    // either mode. The candidate must honor dry_run through that same route.
+    const mode = phase === "before" ? "real" : "dry_run";
+    const terminalStatus = mode === "real" ? "succeeded" : "dry_run_complete";
+    const result = probe("http", { operation: "noop", phase, mode, agentId: agent.id });
     const jobId = result.job?.id;
     assert.ok(jobId, "API did not return a created job");
+    assert.equal(result.job.payload?.mode, mode, "Public API did not persist the requested noop mode");
     const outcome = await until(() => {
       const value = probe("job", { jobId });
-      if (value.job && ["failed", "blocked", "cancelled", "succeeded"].includes(value.job.status)) throw new Error("Signed dry-run job ended as " + value.job.status);
-      return value.job?.status === "dry_run_complete" ? value : null;
-    }, "signed noop dry-run completion");
-    assert.equal(outcome.job.mode, "dry_run");
-    assert.ok(outcome.job.claim_id, "Dry-run did not pass through claim/dispatch");
+      if (value.job) assert.equal(value.job.mode, mode, "Stored job mode differs from the requested noop mode");
+      if (value.job && ["failed", "blocked", "cancelled", "succeeded", "dry_run_complete"].includes(value.job.status) && value.job.status !== terminalStatus) throw new Error("Signed noop ended as " + value.job.status);
+      return value.job?.status === terminalStatus ? value : null;
+    }, "signed noop completion (" + mode + ")");
+    assert.equal(outcome.job.mode, mode);
+    assert.ok(outcome.job.claim_id, "Noop did not pass through claim/dispatch");
     assert.ok(outcome.evidence.some((entry) => entry.evidence_type === "validation.passed" && entry.claim_id === outcome.job.claim_id), "Missing claim-bound validation evidence");
-    return { operation: "noop", mode: "dry_run", terminalStatus: outcome.job.status, claimBoundEvidence: true };
+    return { operation: "noop", mode, terminalStatus: outcome.job.status, claimBoundEvidence: true, sideEffectsRequested: false };
   }
   try {
     await step("source-and-artifact-inputs", () => {
@@ -402,7 +449,7 @@ async function main(argv = process.argv.slice(2)) {
     const bootstrap = probe("http", { operation: "bootstrap" });
     const oldAgentContainer = startAgent(oldPackage, "old-agent", bootstrap);
     let oldAgent = await step("released-agent-registration-and-heartbeat", async () => { const agent = await waitAgent("0.17.3"); return { id: agent.id, version: agent.agent_version, lastSequence: agent.last_sequence }; });
-    await step("released-agent-signed-dry-run", async () => dryRun(probe("agent"), "before"));
+    await step("released-agent-signed-noop", async () => signedNoop(probe("agent"), "before"));
     assert.equal(inspect("container", oldWorker).State.Running, true, "Released worker exited");
     docker(["stop", "--time", "20", oldAgentContainer]);
     oldAgent = probe("agent");
@@ -433,7 +480,7 @@ async function main(argv = process.argv.slice(2)) {
       assertAgentContinuity(oldAgent, newAgent, oldAgentState, stateProbe());
       return { id: newAgent.id, version: newAgent.agent_version, credentialPreserved: true, signingPinPreserved: true, configPreserved: true, sequenceAdvanced: true };
     });
-    await step("upgraded-agent-signed-dry-run", async () => dryRun(probe("agent"), "after"));
+    await step("upgraded-agent-signed-dry-run", async () => signedNoop(probe("agent"), "after"));
     assert.equal(inspect("container", candidateWorker).State.Running, true, "Candidate worker exited");
     docker(["stop", "--time", "20", candidateAgentContainer]);
     await step("upgraded-runtime-restart-preserves-state", async () => {
@@ -450,6 +497,7 @@ async function main(argv = process.argv.slice(2)) {
     receipt.failedStep = activeStep;
     receipt.error = redact(error.message);
     process.stderr.write(receipt.error + "\n");
+    receipt.diagnostics = failureDiagnostics();
   } finally {
     const cleanupErrors = [];
     for (const resource of [...resources].reverse()) {
@@ -476,5 +524,5 @@ async function main(argv = process.argv.slice(2)) {
   return receipt;
 }
 
-module.exports = { parseArgs, verifyArchiveChecksum, ownsResource, resourceIsMissing, assertLedgerUpgrade, assertAgentContinuity, OWNER_LABEL, OLD_AGENT_SHA256 };
+module.exports = { parseArgs, verifyArchiveChecksum, ownsResource, resourceIsMissing, redactDiagnostic, assertLedgerUpgrade, assertAgentContinuity, OWNER_LABEL, OLD_AGENT_SHA256 };
 if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 1; });

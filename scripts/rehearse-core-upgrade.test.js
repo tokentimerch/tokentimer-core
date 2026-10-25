@@ -6,7 +6,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { parseArgs, verifyArchiveChecksum, ownsResource, resourceIsMissing, assertLedgerUpgrade, assertAgentContinuity, OWNER_LABEL } = require("./rehearse-core-upgrade");
+const { parseArgs, verifyArchiveChecksum, ownsResource, resourceIsMissing, redactDiagnostic, assertLedgerUpgrade, assertAgentContinuity, OWNER_LABEL } = require("./rehearse-core-upgrade");
 
 const digest = "a".repeat(64);
 const args = () => [
@@ -64,6 +64,17 @@ test("cleanup cannot mistake daemon or permission failures for an absent resourc
   assert.equal(resourceIsMissing("permission denied while inspecting " + name, name), false);
   assert.equal(resourceIsMissing("Cannot connect to the Docker daemon", name), false);
   assert.equal(resourceIsMissing("Error: No such container: another-name", name), false);
+});
+
+test("failure diagnostics redact credentials and withhold private material or raw row data", () => {
+  const secret = "isolated-password-value";
+  const safe = redactDiagnostic("startup failed: password=" + secret + " Authorization: Bearer bearer-value ttagent_abcdef0123456789.secret", [secret]);
+  assert.ok(!safe.includes(secret) && !safe.includes("bearer-value") && !safe.includes("ttagent_"));
+  assert.equal(redactDiagnostic("connect ECONNREFUSED database:5432"), "connect ECONNREFUSED database:5432");
+  const key = crypto.generateKeyPairSync("ed25519").privateKey.export({ format: "pem", type: "pkcs8" });
+  for (const material of [key, Buffer.from(key).toString("base64"), "A".repeat(64) + "\n-----END PRIVATE KEY-----", "A".repeat(64) + "\n", "2026-10-25T00:03:22.123456789Z " + "A".repeat(64) + "\n", "x".repeat(32769), 'database error: Failing row contains (private fixture)', 'query result: {"rows":[{"password":"hidden"}]}']) {
+    assert.match(redactDiagnostic(material), /^\[DIAGNOSTIC_WITHHELD:/);
+  }
 });
 
 function ledgers() {

@@ -1,15 +1,6 @@
 name: "Core 0.18 / Release preparation (no publication)"
 
 on:
-  push:
-    branches: [release-prep/core-0.18.0-evidence]
-    paths:
-      - .github/workflows/core-018-release-preparation.yml
-      - scripts/rehearse-core-upgrade.js
-      - scripts/rehearse-core-upgrade.test.js
-      - scripts/verify-agent-native-package.js
-      - scripts/verify-agent-native-package.test.js
-      - .github/workflows/release.yml
   workflow_dispatch:
 
 permissions:
