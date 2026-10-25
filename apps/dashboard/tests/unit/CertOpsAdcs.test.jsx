@@ -10,6 +10,7 @@ import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
 
 import CertOpsAdcs from '../../src/pages/certops/CertOpsAdcs.jsx';
+import AdcsIssuerWizard from '../../src/components/certops/AdcsIssuerWizard.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
 const {
@@ -461,69 +462,99 @@ describe('CertOpsAdcs', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('points at New AD CS profile after the CA certificate is pinned', async () => {
-    isAdminMock.mockReturnValue(true);
-    listAgentsMock.mockResolvedValue({
-      items: [{ id: 'agent-1', name: 'member-1' }],
-    });
-    createIssuerMock.mockResolvedValue({ issuer: { id: 'issuer-new' } });
-    dispatchIssuerPreflightMock.mockResolvedValue({ job: { id: 'job-1' } });
-    listIssuersMock.mockResolvedValue({
-      items: [
-        issuer({
-          id: 'issuer-new',
-          name: 'Corp CA',
-          currentVersion: 0,
-          lastPreflight: {
-            ...issuer().lastPreflight,
-            caConfig: 'ca01.corp.example.com\\Corp Issuing CA',
-            template: 'WebServer',
-            caCheck: { verdict: 'safe' },
-            templateCheck: { verdict: 'safe' },
-          },
-          lastPreflightJobId: 'job-1',
-        }),
-      ],
-    });
+  it.each([false, true])(
+    'gives the correct next step after pinning (setup guide: %s)',
+    async setupGuide => {
+      isAdminMock.mockReturnValue(true);
+      listAgentsMock.mockResolvedValue({
+        items: [{ id: 'agent-1', name: 'member-1' }],
+      });
+      createIssuerMock.mockResolvedValue({ issuer: { id: 'issuer-new' } });
+      dispatchIssuerPreflightMock.mockResolvedValue({ job: { id: 'job-1' } });
+      listIssuersMock.mockResolvedValue({
+        items: [
+          issuer({
+            id: 'issuer-new',
+            name: 'Corp CA',
+            currentVersion: 0,
+            lastPreflight: {
+              ...issuer().lastPreflight,
+              caConfig: 'ca01.corp.example.com\\Corp Issuing CA',
+              template: 'WebServer',
+              caCheck: { verdict: 'safe' },
+              templateCheck: { verdict: 'safe' },
+            },
+            lastPreflightJobId: 'job-1',
+          }),
+        ],
+      });
 
-    renderPage();
-    await screen.findByText(/No enrollments yet/);
-    fireEvent.click(screen.getByRole('button', { name: 'New issuer' }));
-    fireEvent.change(screen.getByLabelText('Issuer name'), {
-      target: { value: 'Corp CA' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    fireEvent.change(screen.getByLabelText('Preflight agent'), {
-      target: { value: 'agent-1' },
-    });
-    fireEvent.change(screen.getByLabelText('CA config'), {
-      target: { value: 'ca01.corp.example.com\\Corp Issuing CA' },
-    });
-    fireEvent.change(screen.getByLabelText('Template'), {
-      target: { value: 'WebServer' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Run check' }));
+      if (setupGuide) {
+        render(
+          <ChakraProvider>
+            <DashboardThemeProvider>
+              <AdcsIssuerWizard
+                isOpen
+                setupGuide
+                workspaceId='ws-1'
+                agents={[{ id: 'agent-1', name: 'member-1' }]}
+                onClose={vi.fn()}
+              />
+            </DashboardThemeProvider>
+          </ChakraProvider>
+        );
+      } else {
+        renderPage();
+        await screen.findByText(/No enrollments yet/);
+        fireEvent.click(screen.getByRole('button', { name: 'New issuer' }));
+      }
+      fireEvent.change(screen.getByLabelText('Issuer name'), {
+        target: { value: 'Corp CA' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+      fireEvent.change(screen.getByLabelText('Preflight agent'), {
+        target: { value: 'agent-1' },
+      });
+      fireEvent.change(screen.getByLabelText('CA config'), {
+        target: { value: 'ca01.corp.example.com\\Corp Issuing CA' },
+      });
+      fireEvent.change(screen.getByLabelText('Template'), {
+        target: { value: 'WebServer' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Run check' }));
 
-    fireEvent.click(
-      await screen.findByRole(
-        'button',
-        { name: 'Use this certificate' },
-        { timeout: 5000 }
-      )
-    );
+      fireEvent.click(
+        await screen.findByRole(
+          'button',
+          { name: 'Use this certificate' },
+          { timeout: 5000 }
+        )
+      );
 
-    expect(confirmIssuerKeyMock).toHaveBeenCalledWith(
-      'ws-1',
-      'issuer-new',
-      expect.objectContaining({ caKeySha256: KEY })
-    );
-    expect(await screen.findByText(/New AD CS profile/)).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /attaches the profile to a certificate already in inventory/
-      )
-    ).toBeInTheDocument();
-  });
+      expect(confirmIssuerKeyMock).toHaveBeenCalledWith(
+        'ws-1',
+        'issuer-new',
+        expect.objectContaining({ caKeySha256: KEY })
+      );
+      if (setupGuide) {
+        expect(
+          await screen.findByText(
+            /Close this dialog to return to the setup guide/
+          )
+        ).toBeInTheDocument();
+        expect(
+          screen.queryByText(/shared list, above/)
+        ).not.toBeInTheDocument();
+        return;
+      }
+      expect(await screen.findByText(/New AD CS profile/)).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          /attaches the profile to a certificate already in inventory/
+        )
+      ).toBeInTheDocument();
+    }
+  );
 
   it('loads the next page of issuers past the first 100', async () => {
     isAdminMock.mockReturnValue(true);

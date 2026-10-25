@@ -547,6 +547,7 @@ export default function AdcsStep({ ctx }) {
       {issuerOpen ? (
         <AdcsIssuerWizard
           isOpen
+          setupGuide
           onClose={() => {
             setIssuerOpen(false);
             refreshQuietly();
