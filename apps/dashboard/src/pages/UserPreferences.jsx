@@ -253,7 +253,12 @@ export default function UserPreferences({
     setRestartingSetup(true);
     try {
       if (workspaceId) await onboardingAPI.resetSession(workspaceId, 'mega');
-      navigate('/onboarding');
+      // The guide must reopen the workspace whose session was just reset.
+      navigate(
+        workspaceId
+          ? `/onboarding?workspace=${encodeURIComponent(workspaceId)}`
+          : '/onboarding'
+      );
     } catch (e) {
       showError(e?.message || 'Could not restart the setup guide.');
     } finally {

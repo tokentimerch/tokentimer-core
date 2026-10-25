@@ -1,0 +1,588 @@
+{
+  "schemaVersion": 1,
+  "release": "Core 0.18.0",
+  "pullRequest": "https://github.com/tokentimerch/tokentimer-core/pull/453",
+  "purpose": "Canonical evidence references; archived copies do not add execution coverage.",
+  "acceptedProductCheckpoint": {
+    "status": "technical-acceptance-passed",
+    "auditedBaselineSha": "fcc681c19314b7c2432973ce99d517af36e10238",
+    "reviewedProductFixSha": "b1b92cb36de0ef0d8647f1122d18b075d06c17ea",
+    "fullAcceptanceSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+    "remainingObservedProductBlockers": [],
+    "publicationAuthorized": false
+  },
+  "archive": {
+    "kind": "retained-git-archive",
+    "commit": "85e724eec0b37bc03c22252e7b7bcbef53515281",
+    "retentionRef": "refs/heads/archive/core-0.18.0-evidence",
+    "directory": "docs/release/evidence/0.18.0",
+    "treeSha": "8aec8331a310f778627db5c5c20b1f937120fb32",
+    "url": "https://github.com/tokentimerch/tokentimer-core/tree/85e724eec0b37bc03c22252e7b7bcbef53515281/docs/release/evidence/0.18.0",
+    "blobBaseUrl": "https://github.com/tokentimerch/tokentimer-core/blob/85e724eec0b37bc03c22252e7b7bcbef53515281/docs/release/evidence/0.18.0/",
+    "checksumManifest": {
+      "archivePath": "SHA256SUMS",
+      "sha256": "dd12bcd26e03f7e345550ffc0397bf2fd48b29f48a6926710e1db3ceb22f4f73",
+      "coverage": "Original snapshot only; the four later review reports have separate hashes in canonicalArchivedReports."
+    },
+    "retention": "Keep the archive ref. It retains the original Git objects after the preparation branch is removed or squash-merged; it does not create another copy of their bytes.",
+    "integrity": "All 71 original files matched the original snapshot and all 70 original checksum entries verified before consolidation. The four later review reports were verified against both Actions artifact ZIP digests and the tested source before being retained once in this archive.",
+    "history": "Original reports, screenshots, logs and failed attempts retain their original content and labels. Historical redundancy is left intact; this manifest references each retained report without embedding its payload.",
+    "originalSnapshot": {
+      "commit": "aa31ae175ed8348c09be9941e337b3a2be85504d",
+      "treeSha": "77d8543936e2a36ba2190efd87beae4cd76a8d1b",
+      "files": 71,
+      "checksumEntries": 70
+    }
+  },
+  "gates": {
+    "normalCI": {
+      "status": "passed",
+      "runId": 40149240399,
+      "successfulJobs": 16,
+      "report": "corrected-normal-ci.json"
+    },
+    "nativeAcceptance": {
+      "status": "reconciled",
+      "distinctScenarioIds": 169,
+      "environment": "Windows Server 2022 / en-US / LocalSystem",
+      "report": "native-reconciliation.json"
+    },
+    "packageUpgrade": {
+      "status": "passed",
+      "runId": 40145464730,
+      "checksPassed": 13,
+      "report": "core-upgrade.json"
+    },
+    "originalFocusedWindows": {
+      "status": "passed",
+      "runId": 40145857569,
+      "environment": "Windows Server 2022 / en-US / administrator",
+      "reports": [
+        "windows-helpers-receipt.json",
+        "windows-boundaries-receipt.json"
+      ]
+    },
+    "distribution": {
+      "status": "passed",
+      "runId": 40149240400,
+      "supportingCohorts": {
+        "sourceAgentModes": 3,
+        "postgresSuites": 3,
+        "vaultAdapter": 1
+      },
+      "additionalOperatorPackageModes": 3,
+      "sourceScenarioOccurrencesPassed": 45,
+      "packageScenarioOccurrencesPassed": 45,
+      "ownerBrowserJourneysPassed": 6,
+      "postgresPassingEvents": 50,
+      "vaultAdapterPassingEvents": 9,
+      "reportGuardCasesPassed": 13,
+      "aggregateJobId": 121042001566,
+      "aggregateArtifact": {
+        "id": 12581413773,
+        "name": "distribution-functional-summary",
+        "zipSha256": "da25dcfdecad0175fb0e79b2d7a706c50148d6e28ca8fdff77802a03493a3578"
+      },
+      "aggregateReport": "distribution-functional-summary.json",
+      "verificationReport": "followup-corrected-seven-cohort-receipt.json",
+      "supportReport": "followup-corrected-postgres-vault-receipt.json",
+      "countMeaning": "The 45 + 45 lab values count repeated scenario occurrences across modes. The aggregate counts required names (PostgreSQL 2/17/11); actual PostgreSQL passing events are 2/29/19. Neither is a count of unique product features."
+    }
+  },
+  "artifacts": {
+    "preparedReleaseAgent": {
+      "sha256": "062f48b1960685b247b0114b2f7086b7accda23f8788895078da627f8844507c",
+      "sourceSha": "fcc681c19314b7c2432973ce99d517af36e10238",
+      "runId": 40144872189,
+      "jobId": 121023957655,
+      "artifactId": 12579539875,
+      "artifactZipSha256": "0b756caadd6633b64e85a0dfacfb8ae2454b2c06999c97807a46979c210d1ce7",
+      "compiler": "Go 1.26.10",
+      "verificationReport": "agent-verification.json"
+    },
+    "stableHelm": {
+      "sha256": "bd8edaab42b196ae088d4871870a9acc148018673f5ac84caba564ed743a1bb0",
+      "sourceSha": "fcc681c19314b7c2432973ce99d517af36e10238",
+      "runId": 40146293049,
+      "jobId": 121028239469,
+      "artifactId": 12580642481,
+      "artifactZipSha256": "5564c18bfc6ecee045db60bea5141826affe86a0570187bb84c2c1cdedadf1c6",
+      "published": false,
+      "verificationReport": "helm-verification.json"
+    },
+    "correctedDashboard": {
+      "archiveSha256": "25e4412822c9e50604c0e3258cb2401eadc5d4d6a590e4a9e10180f7d4b592b0",
+      "sourceSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+      "runId": 40149240400,
+      "jobId": 121037055389,
+      "artifactId": 12582481908,
+      "published": false,
+      "registryManifestDigestClaimed": false,
+      "verificationReport": "corrected-dashboard-verification.json"
+    },
+    "qualificationPackage": {
+      "descriptor": "qualification-package.json",
+      "descriptorSha256": "064c2396abe18ce503f2c34a6b51b9091cde0f9ed81faf101a856606ae458556",
+      "sharedByExecutions": [
+        "ordinary-package",
+        "san-package",
+        "wildcard-package"
+      ],
+      "originalDescriptor": {
+        "archivePath": "distribution/ordinary/package/artifact.json",
+        "sha256": "064c2396abe18ce503f2c34a6b51b9091cde0f9ed81faf101a856606ae458556"
+      },
+      "scope": "Qualification-only capability-enabled package. Hosted tests bind its reported hash and unmodified-file assertions; public receipt ZIPs do not contain its tgz, so no local archive rehash is claimed."
+    },
+    "fullOriginalProvenanceReport": "candidate-artifacts.json"
+  },
+  "executions": [
+    {
+      "id": "ordinary-source",
+      "certificateMode": "ordinary",
+      "agentSource": "source",
+      "status": "passed",
+      "sourceSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+      "runId": 40149240400,
+      "jobId": 121037055261,
+      "jobUrl": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40149240400/job/121037055261",
+      "labRunUuid": "5c6e9cf8-f88b-44de-928f-8774f48df1d6",
+      "startedAt": "2026-10-25T01:08:44.162Z",
+      "finishedAt": "2026-10-25T01:18:39.720Z",
+      "artifact": {
+        "id": 12581968385,
+        "name": "distribution-agent-ordinary",
+        "zipSha256": "980777a55dcdf22e76b68028466e0b87ba2de017fc86ca30d5ced3cf74ee73b4"
+      },
+      "mandatoryScenarioOccurrencesPassed": 15,
+      "ownerRedoAssertionsPassed": 9,
+      "browserRuntimeErrors": 0,
+      "unexpectedProductWrites": 0,
+      "qualificationReport": {
+        "archivePath": "distribution/ordinary/source/qualification.json",
+        "sha256": "139d5cd86ee251ea839c6aa97535da422118c1da9c6dba9acba54fa2dce2a5d1"
+      },
+      "privacyReport": {
+        "archivePath": "distribution/ordinary/source/privacy.json",
+        "sha256": "98482fe2d6b27da32747998b7f78893b4f255b7052aad035cf84f8c8e1a8e649"
+      },
+      "ownerRedoReport": {
+        "archivePath": "distribution/ordinary/source/onboarding-redo.json",
+        "sha256": "2047c36be7e6dae9ac9c98a83afb873b702ecfe26902501d629ec2d039f204a6"
+      },
+      "screenshot": {
+        "archivePath": "distribution/ordinary/source/distribution-onboarding-redo.png",
+        "sha256": "d86429d82e4d9b88651a157c887a04e21946ad98dc181c7e0e31480c31495bdf"
+      }
+    },
+    {
+      "id": "ordinary-package",
+      "certificateMode": "ordinary",
+      "agentSource": "package",
+      "status": "passed",
+      "sourceSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+      "runId": 40149240400,
+      "jobId": 121037055261,
+      "jobUrl": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40149240400/job/121037055261",
+      "labRunUuid": "d9ba7b65-fdb0-4e35-9edf-d055d1fcec9f",
+      "startedAt": "2026-10-25T01:19:32.710Z",
+      "finishedAt": "2026-10-25T01:29:40.021Z",
+      "artifact": {
+        "id": 12581613539,
+        "name": "operator-acceptance-vault-ordinary",
+        "zipSha256": "aacd9e812b9ab2db059976c4315232547294c8abdd35aa3d84ee844609ea64bb"
+      },
+      "mandatoryScenarioOccurrencesPassed": 15,
+      "ownerRedoAssertionsPassed": 9,
+      "browserRuntimeErrors": 0,
+      "unexpectedProductWrites": 0,
+      "qualificationReport": {
+        "archivePath": "distribution/ordinary/package/qualification.json",
+        "sha256": "93ed1fa076dc30cd590db420d6a64c350f9e0fbc3b18ff07659a526e9f0dbb0a"
+      },
+      "privacyReport": {
+        "archivePath": "distribution/ordinary/package/privacy.json",
+        "sha256": "dd44e848183a713e1df506333ed0cd77f3c2c7b9a3f78f626abd3c68c9584c34"
+      },
+      "ownerRedoReport": {
+        "archivePath": "distribution/ordinary/package/onboarding-redo.json",
+        "sha256": "a4e9580cb359593ca1759302e8a768a5114aa2b8702568796edcd85a30866f89"
+      },
+      "screenshot": {
+        "archivePath": "distribution/ordinary/package/distribution-onboarding-redo.png",
+        "sha256": "65b041c9591ecbc897c14e759dc1f8a6a8c21f9b4a24e5628bdcb45dc11f6ed9"
+      },
+      "packageDescriptor": "qualification-package.json"
+    },
+    {
+      "id": "san-source",
+      "certificateMode": "san",
+      "agentSource": "source",
+      "status": "passed",
+      "sourceSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+      "runId": 40149240400,
+      "jobId": 121037055063,
+      "jobUrl": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40149240400/job/121037055063",
+      "labRunUuid": "fadcb618-8096-4c80-85ac-bb93cfad256d",
+      "startedAt": "2026-10-25T01:08:36.934Z",
+      "finishedAt": "2026-10-25T01:18:40.684Z",
+      "artifact": {
+        "id": 12582484536,
+        "name": "distribution-agent-san",
+        "zipSha256": "aca13b01f0e447afd1d228b6cacb2bc4f74ecda695a27693914593a2e1fb9904"
+      },
+      "mandatoryScenarioOccurrencesPassed": 15,
+      "ownerRedoAssertionsPassed": 9,
+      "browserRuntimeErrors": 0,
+      "unexpectedProductWrites": 0,
+      "qualificationReport": {
+        "archivePath": "distribution/san/source/qualification.json",
+        "sha256": "285ade4459fd396859cc2725c485b3f5fff7fbf86f195d6487051062edc2b9e0"
+      },
+      "privacyReport": {
+        "archivePath": "distribution/san/source/privacy.json",
+        "sha256": "30593e13bca3866feee7c25c657f2e2b114429ed306cb68c07f0cd330e293fbd"
+      },
+      "ownerRedoReport": {
+        "archivePath": "distribution/san/source/onboarding-redo.json",
+        "sha256": "456963f221c6a73f004571a61583a83d5a8dce3fc51f32dc770c122c524b5755"
+      },
+      "screenshot": {
+        "archivePath": "distribution/san/source/distribution-onboarding-redo.png",
+        "sha256": "815bea56f12c67e71bb97b9cf9119bfdc82d88044911e54c66504276add61da5"
+      }
+    },
+    {
+      "id": "san-package",
+      "certificateMode": "san",
+      "agentSource": "package",
+      "status": "passed",
+      "sourceSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+      "runId": 40149240400,
+      "jobId": 121037055063,
+      "jobUrl": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40149240400/job/121037055063",
+      "labRunUuid": "f52986bc-3d11-4bae-a64e-1b97e97d8c37",
+      "startedAt": "2026-10-25T01:19:35.996Z",
+      "finishedAt": "2026-10-25T01:29:45.077Z",
+      "artifact": {
+        "id": 12581438730,
+        "name": "operator-acceptance-vault-san",
+        "zipSha256": "b7e033e33dd1311561d0a4e6e3f4c0bd7907b30e460767d2b320094313fb3c07"
+      },
+      "mandatoryScenarioOccurrencesPassed": 15,
+      "ownerRedoAssertionsPassed": 9,
+      "browserRuntimeErrors": 0,
+      "unexpectedProductWrites": 0,
+      "qualificationReport": {
+        "archivePath": "distribution/san/package/qualification.json",
+        "sha256": "2d65925744ac991e72300dc870c1f165697421dd2282788a2e38d4816219ec25"
+      },
+      "privacyReport": {
+        "archivePath": "distribution/san/package/privacy.json",
+        "sha256": "bd01390936f37792a2cf53a0e4a6739b9ead22b24dd7336f34ecb8b38e278fdf"
+      },
+      "ownerRedoReport": {
+        "archivePath": "distribution/san/package/onboarding-redo.json",
+        "sha256": "829f3905bedf0f93fc89c39bb9508c033bacd7181283ce868ea999c486243af7"
+      },
+      "screenshot": {
+        "archivePath": "distribution/san/package/distribution-onboarding-redo.png",
+        "sha256": "b1309be2490b019c1687a488461cd1e0ab6479904ad7715d1b6efe49fe5451e3"
+      },
+      "packageDescriptor": "qualification-package.json"
+    },
+    {
+      "id": "wildcard-source",
+      "certificateMode": "wildcard",
+      "agentSource": "source",
+      "status": "passed",
+      "sourceSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+      "runId": 40149240400,
+      "jobId": 121037055336,
+      "jobUrl": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40149240400/job/121037055336",
+      "labRunUuid": "0e974348-7e14-40fd-af0c-44b11fa1f300",
+      "startedAt": "2026-10-25T01:08:43.900Z",
+      "finishedAt": "2026-10-25T01:18:35.656Z",
+      "artifact": {
+        "id": 12582845016,
+        "name": "distribution-agent-wildcard",
+        "zipSha256": "8e17c13ed80ee2f3a6854afd552cc62790b3c4ea5aac3026c6828c7c5521e591"
+      },
+      "mandatoryScenarioOccurrencesPassed": 15,
+      "ownerRedoAssertionsPassed": 9,
+      "browserRuntimeErrors": 0,
+      "unexpectedProductWrites": 0,
+      "qualificationReport": {
+        "archivePath": "distribution/wildcard/source/qualification.json",
+        "sha256": "9341dbf4b91c3c288d525ed5dfff20154e20f6b4e8b00e966cfe4ffc98f91bcc"
+      },
+      "privacyReport": {
+        "archivePath": "distribution/wildcard/source/privacy.json",
+        "sha256": "f393d76d59e9468a02fea16ee21717b49321837b0ae28426159a1463fa616230"
+      },
+      "ownerRedoReport": {
+        "archivePath": "distribution/wildcard/source/onboarding-redo.json",
+        "sha256": "7f8ed8251f06c4e79712b3c79114e50fbc824e0ad87299228557800d1e7ce021"
+      },
+      "screenshot": {
+        "archivePath": "distribution/wildcard/source/distribution-onboarding-redo.png",
+        "sha256": "3ecb60e29d7f214b73a556d495b611327bc109ad034925941ea8fe91b1fada15"
+      }
+    },
+    {
+      "id": "wildcard-package",
+      "certificateMode": "wildcard",
+      "agentSource": "package",
+      "status": "passed",
+      "sourceSha": "fd4417653d40d4241f1cdecf310676a62e22fc55",
+      "runId": 40149240400,
+      "jobId": 121037055336,
+      "jobUrl": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40149240400/job/121037055336",
+      "labRunUuid": "cfc3cf54-9e32-4052-800a-fdd88d221043",
+      "startedAt": "2026-10-25T01:19:30.954Z",
+      "finishedAt": "2026-10-25T01:29:56.037Z",
+      "artifact": {
+        "id": 12582039976,
+        "name": "operator-acceptance-vault-wildcard",
+        "zipSha256": "0c43e59d5cb9311e09e53d136e0e2e188291c6f669729e9757319e9ac7154ee3"
+      },
+      "mandatoryScenarioOccurrencesPassed": 15,
+      "ownerRedoAssertionsPassed": 9,
+      "browserRuntimeErrors": 0,
+      "unexpectedProductWrites": 0,
+      "qualificationReport": {
+        "archivePath": "distribution/wildcard/package/qualification.json",
+        "sha256": "c061012c8ae6c19b6678a99e448d8250499d27e9cee2a8aca3404ec0409b24a8"
+      },
+      "privacyReport": {
+        "archivePath": "distribution/wildcard/package/privacy.json",
+        "sha256": "6fb35f2ea79b5d490ad8294832fceaaf2e522f7a638a436a6111bc9c94451d38"
+      },
+      "ownerRedoReport": {
+        "archivePath": "distribution/wildcard/package/onboarding-redo.json",
+        "sha256": "bf5ebad5af8a374b63d267a3c3c58768fb981e660b9b2ad6b69c9a846ac74a88"
+      },
+      "screenshot": {
+        "archivePath": "distribution/wildcard/package/distribution-onboarding-redo.png",
+        "sha256": "00ebf914f15986cbcd1fec9c6312deb31be31338f16b0bded6c2fa36784afbd4"
+      },
+      "packageDescriptor": "qualification-package.json"
+    }
+  ],
+  "canonicalArchivedReports": {
+    "source-accounting.json": {
+      "archivePath": "source-accounting.json",
+      "sha256": "50d7d5c44e3aa5c408e1894e334c703e497bf54a333fb7ed383d1d94df646d4f"
+    },
+    "preparation-source-accounting.json": {
+      "archivePath": "preparation-source-accounting.json",
+      "sha256": "0eea9a81df2045430dd2688b5298269aa04bf2c1fa0116b4820c3d7d29a6b499"
+    },
+    "source-impact.json": {
+      "archivePath": "source-impact.json",
+      "sha256": "7fe834815a910ebf453ace59368303a1b47e6a0fb5af10c2d955f9b26a5b4753"
+    },
+    "native-reconciliation.json": {
+      "archivePath": "native-reconciliation.json",
+      "sha256": "5d954f63d58276502b28a640e1e66874e99c6823eb5d262270b9516dba822537"
+    },
+    "current-delta-ci.json": {
+      "archivePath": "current-delta-ci.json",
+      "sha256": "8997b8dc9fcee1e44c2c49b1ea422bd63d37e28aab5630263a5820af6f473bbe"
+    },
+    "corrected-normal-ci.json": {
+      "archivePath": "corrected-normal-ci.json",
+      "sha256": "1f362ad9f25a0eed35e1ca9e0bd9faace2ae184f958686fc76b5193f5b656a4a"
+    },
+    "auto-sync-fcc-equivalence.json": {
+      "archivePath": "auto-sync-fcc-equivalence.json",
+      "sha256": "5a4fddeedd09dca1799a775f08a754e4c00cb82833a9d21e3df957ff2c698355"
+    },
+    "candidate-artifacts.json": {
+      "archivePath": "candidate-artifacts.json",
+      "sha256": "9a3eb0b2cca0df6b74d42cbb31394f57ccd4c43c8b6fc547cf28dcce1eb5db8a"
+    },
+    "artifact-carry-forward.json": {
+      "archivePath": "artifact-carry-forward.json",
+      "sha256": "771608baa5f2ecbc604f48f9586874cb62613b9cd016fb8f19fa7e295b0c2dd1"
+    },
+    "corrected-dashboard-verification.json": {
+      "archivePath": "corrected-dashboard-verification.json",
+      "sha256": "f1b4b48bb772f4f11fe2289f3450ac496399138ec1950496d05c5531e2c6726d"
+    },
+    "corrected-dashboard-hosted-job.json": {
+      "archivePath": "corrected-dashboard-hosted-job.json",
+      "sha256": "bd25679dc6e8e41daa6d70fdf317ecf396d2a3b4bbd8dd4ef3fc58e140740519"
+    },
+    "agent-verification.json": {
+      "archivePath": "agent-verification.json",
+      "sha256": "6735857af28a56219702d284a2e7c647bb98372b7a059a88b8c69db88a967d57"
+    },
+    "agent-native-provenance.json": {
+      "archivePath": "agent-native-provenance.json",
+      "sha256": "a3717123077e479f068d5fda31372f17894e9744b63f4bd0c3651021222fbc45"
+    },
+    "helm-verification.json": {
+      "archivePath": "helm-verification.json",
+      "sha256": "dbb1cb2d797a7e5dadbef61cab9bb6dbe7940067fbaa44443b2226b0c1eda830"
+    },
+    "image-scan-summary.json": {
+      "archivePath": "image-scan-summary.json",
+      "sha256": "2d78c5f0dd9607d3b8c8d7a794b3ded37e273cba9c5e9f4398d7a2ede4f86c79"
+    },
+    "security-analysis.md": {
+      "archivePath": "security-analysis.md",
+      "sha256": "d09502ddd43dbd299e9ed691efe81ffaf30f3da97cce18ab018f719f9656b6d7"
+    },
+    "core-upgrade.json": {
+      "archivePath": "core-upgrade.json",
+      "sha256": "9e78041ebce0aef4cfb4e0f21caa8f25b8df34912fe08bec008b8e4ee8c8ab53"
+    },
+    "core-upgrade-verification.json": {
+      "archivePath": "core-upgrade-verification.json",
+      "sha256": "d9a5f342eaf4b7082592aaae914b3fd9311f90d522e087a2aad745d7ad5bf76f"
+    },
+    "api-runtime-source-manifest.json": {
+      "archivePath": "api-runtime-source-manifest.json",
+      "sha256": "661d452348d66103067fe3f7e7ca1f474dab9285e2d49f62774ebf21a1be008a"
+    },
+    "worker-runtime-source-manifest.json": {
+      "archivePath": "worker-runtime-source-manifest.json",
+      "sha256": "539751b1696bc0454d13b6428a1eb1644b0742f6b029b48e7740de282177aea9"
+    },
+    "windows-helpers-receipt.json": {
+      "archivePath": "windows-helpers-receipt.json",
+      "sha256": "090afbdde197ce2b0400bf7055bc2c7c900814eed45c6a0e0dcd8c0d6969a3ba"
+    },
+    "windows-boundaries-receipt.json": {
+      "archivePath": "windows-boundaries-receipt.json",
+      "sha256": "e7fa0e08221eb4668bd512df900c4ecb9481bfb252587526a93073fde79778c5"
+    },
+    "followup-corrected-source-equivalence.json": {
+      "archivePath": "followup-corrected-source-equivalence.json",
+      "sha256": "976b147a55074515c7a793a33cb847f0cca861f3015bee3b27ee7d3eb8eaab70"
+    },
+    "followup-corrected-postgres-vault-receipt.json": {
+      "archivePath": "followup-corrected-postgres-vault-receipt.json",
+      "sha256": "770623cc831b9a233b3363d96e8cf71f328186d8e6479e4e72a49f8a864465d6"
+    },
+    "followup-corrected-seven-cohort-receipt.json": {
+      "archivePath": "followup-corrected-seven-cohort-receipt.json",
+      "sha256": "eaa51ecbb018f16105b28b03f84db98cea960b1b0c2f43bfd877c9fd1263f2cb"
+    },
+    "distribution-functional-summary.json": {
+      "archivePath": "distribution-functional-summary.json",
+      "sha256": "a14515c23b311e2cd02a562051a6ffbd8e98e169ebdd02c490d6b428bd334a53"
+    },
+    "workspace-reset-regression.json": {
+      "archivePath": "workspace-reset-regression.json",
+      "sha256": "5d91b05e50518849bc06c975bb8df766d754d23ad9efe10429e4320467b5aa97"
+    },
+    "followup-workspace-navigation-failure.json": {
+      "archivePath": "followup-workspace-navigation-failure.json",
+      "sha256": "a04ba0fc18f950a10067e14e780fe1ed515d5eecd92c8c2892629e58fb3bdc77"
+    },
+    "followup-vault-readiness-initial-attempt.json": {
+      "archivePath": "followup-vault-readiness-initial-attempt.json",
+      "sha256": "91b4257dd890d8eb2ceeb4f043cbbcffdbcaba0581fc6ae9e308cc124ad97f2d"
+    },
+    "review-tls-linux.tap": {
+      "archivePath": "review-followup/927507196afe4b19ec887b30dfd61149dfac9b66/tls-linux.tap",
+      "sha256": "8d05945be04e61b99755abc3c5285b8a0b190bf4de1bce1f9020e0100906be5f"
+    },
+    "review-tls-windows.tap": {
+      "archivePath": "review-followup/927507196afe4b19ec887b30dfd61149dfac9b66/tls-windows.tap",
+      "sha256": "61db3ce85ea9cab87c76b19de29e5a9cef222a9ea205d6b603dbd1c5a232484a"
+    },
+    "review-windows-boundaries.json": {
+      "archivePath": "review-followup/927507196afe4b19ec887b30dfd61149dfac9b66/windows-boundaries.json",
+      "sha256": "31461fb2e8791d93d0456779b74f2f33288881be865d1bd962a6f7ce7c3eeefb"
+    },
+    "review-source-identities.json": {
+      "archivePath": "review-followup/927507196afe4b19ec887b30dfd61149dfac9b66/source-identities.json",
+      "sha256": "f56ea930d3e2bc994d0d70ab2e7109691c1e3e4ebeb18470b78c46a157d724b7"
+    }
+  },
+  "limits": [
+    "Accepted parallel native evidence retains its original native-diagnostic-shard, experimental and not-qualified report labels and stated environment. No stock nine-environment collector result is claimed.",
+    "The canonical functional aggregate retains nativeAgentQualified:false, qualificationStatus:not-qualified, experimental:true and allFeaturesQualified:false.",
+    "The Linux packaged-upgrade rehearsal does not claim Windows/systemd installer upgrade, a worker maintenance tick or native CA renewal.",
+    "Prepared release, qualification-only and historical native package identities remain distinct. Fresh publication bytes require their own digests and release gates.",
+    "The existing fixed High/Critical image policy passed; unfiltered residual findings remain in the archived security reports. No zero-vulnerability claim or suppression is made.",
+    "Source/package owned containers and networks were stopped; named volumes/evidence were retained on disposable runners."
+  ],
+  "followupValidation": {
+    "scope": "Evidence consolidation and Windows rehearsal TLS validation; historical receipts retain their original tested sources and scope.",
+    "status": "passed",
+    "sourceSha": "927507196afe4b19ec887b30dfd61149dfac9b66",
+    "codeqlComment": "https://github.com/tokentimerch/tokentimer-core/pull/453#discussion_r4369054039",
+    "runId": 40173878344,
+    "runUrl": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40173878344",
+    "changes": [
+      "Explicit fixture certificate trust and normal hostname verification, with rejectUnauthorized:true.",
+      "Exact peer fingerprint, HTTP status and owned-content checks retained.",
+      "Four current evidence files reference one retained archive; six original executions remain distinct."
+    ],
+    "checks": [
+      {
+        "id": "tls-linux",
+        "status": "passed",
+        "jobId": 121110315360,
+        "nodeVersion": "v24.21.0",
+        "tests": 9,
+        "failed": 0,
+        "skipped": 0,
+        "report": "review-tls-linux.tap"
+      },
+      {
+        "id": "tls-windows",
+        "status": "passed",
+        "jobId": 121110315464,
+        "nodeVersion": "v24.22.1",
+        "tests": 9,
+        "failed": 0,
+        "skipped": 0,
+        "report": "review-tls-windows.tap"
+      },
+      {
+        "id": "actual-packaged-windows-boundaries",
+        "status": "passed",
+        "jobId": 121110315464,
+        "checksPassed": 5,
+        "environment": "Windows Server 2022 / en-US / administrator",
+        "agentArchiveSha256": "062f48b1960685b247b0114b2f7086b7accda23f8788895078da627f8844507c",
+        "fixtureCertificateVerified": true,
+        "normalHostnameVerification": true,
+        "ownedCleanupComplete": true,
+        "cleanupErrors": 0,
+        "report": "review-windows-boundaries.json"
+      },
+      {
+        "id": "codeql",
+        "status": "passed",
+        "runId": 40173882807,
+        "runUrl": "https://github.com/tokentimerch/tokentimer-core/actions/runs/40173882807"
+      }
+    ],
+    "artifacts": [
+      {
+        "id": 12591810619,
+        "name": "core-018-review-tls-linux",
+        "zipSha256": "d86d8db44d892e75ec966accb33f1e79ae92f5a0a2e3211dbb2cadcb44cae37d"
+      },
+      {
+        "id": 12591920764,
+        "name": "core-018-review-windows-boundaries",
+        "zipSha256": "d9fec5605a0504bf25a63b81a65e23cd40feab9490ee6eb82f22de895cdad2dd"
+      }
+    ],
+    "sourceBindingReport": "review-source-identities.json",
+    "countMeaning": "The same nine cases ran on two platforms; these are nine unique tests, not 18 distinct features. The Windows native rehearsal separately passed five checks.",
+    "scopeLimits": [
+      "Explicit fixture trust does not qualify the system trust store or a public CA.",
+      "This focused rehearsal does not claim AD CS, Windows service upgrade, arm64, or additional native environments."
+    ],
+    "publicationPerformed": false,
+    "temporaryWorkflow": "Retired after successful validation; the executed definition remains in the tested commit."
+  }
+}

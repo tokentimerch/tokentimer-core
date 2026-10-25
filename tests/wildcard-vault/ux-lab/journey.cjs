@@ -1085,7 +1085,10 @@ async function main() {
       qualification: () => qualification.extend({state,owner,approver,api,group,versions,matrix,rollout,approve,terminal,job,customer,wait,converge,check,save,root}),
       security: () => require("./adversarial.cjs").security(module.exports.context),
       "runtime-controls": () => require("./adversarial.cjs").runtimeControls(module.exports.context),
-      browser: () => require("./browser.cjs").inspect({state,owner,base,matrix,root}),
+      browser: async () => {
+        await require("./browser.cjs").inspect({state,owner,base,matrix,root});
+        gate.report.onboardingRedoEvidence = await require("./onboarding-redo.cjs").inspect({ ...module.exports.context, base });
+      },
       privacy: async () => { require("../../../scripts/certops-distribution-privacy").audit(process.env.TT_UX_PROJECT, path.join(root,"privacy.json"), (await versions()).filter(v=>v.state==="published").map(v=>v.id)); if(gate)gate.report.privacyEvidence={file:"privacy.json",sha256:crypto.createHash("sha256").update(fs.readFileSync(path.join(root,"privacy.json"))).digest("hex")}; },
     } : {}),
     transfer,
