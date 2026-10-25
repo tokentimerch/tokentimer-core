@@ -98,8 +98,15 @@ what the policy allows: set `declaredTargetSelectors` (issuer: the SANs;
 consumer: the binding ID) and, for the issuer, `declaredCommandProfileNames`.
 Without them the agent registers but never claims work.
 
-The examples ship `"dryRun": true`. Real jobs are refused until a signed dry run
-has passed and you set `"dryRun": false` and restart the agent. For the nginx
+The examples ship `"dryRun": true`. Before allocating the first publication,
+complete signed no-op smoke checks with execution enabled and local dry-run
+protection on. They prove dispatch/reporting, not later external effects.
+If ordinary approval is off, then disable issuer polling and restart before
+allocation. Prepare the returned group, Vault policy and host bindings while
+polling is off; once ready, restart with `"enabled": true` and `"dryRun": false`
+directly. A dry-run polling phase after allocation can claim and block the queued
+real publication. With approval on, keep that publication unapproved until ready.
+For the nginx
 consumer, `nginx -t` fails for the unprivileged agent user, so the example
 validates with `systemctl is-active` and reloads through `systemctl reload nginx`
 with a one-time systemd drop-in that tests the configuration as root; see

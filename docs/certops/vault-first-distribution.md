@@ -8,12 +8,14 @@ Use an HTTPS Vault KV v2 mount, reachable CA/DNS, registered issuer/consumer age
 
 Open the [setup guide](setup-guide.md) and choose **Share one certificate across servers with Vault → Linux server**. Select existing agents where appropriate. Preserve their identity, allowlists and local custody state.
 
+Before creating the first publication, complete each agent's signed no-op smoke check with `execution.enabled: true` and `execution.dryRun: true`. This checks dispatch/reporting, not later publication or deployment permissions. Do it before queuing real work: enabling polling with local dry-run protection can claim and block a queued real publication.
+
 ## Allocate the group and configure hosts
 
 The first publication job allocates the real `job.payload.publication.groupId`. Use that UUID in [local material-store/binding configuration](wildcard-vault-operations.md#customer-local-configuration) and [separate Vault Agent roles](vault-agent-authentication.md).
 
 - If ordinary job approval is required, keep the publication unapproved while preparing policy and token sinks.
-- If approval is off, keep issuer execution disabled during allocation until the returned group is configured and readiness checks pass. Submission alone does not hold work.
+- If approval is off, set issuer `execution.enabled: false` and restart **before** allocation. Keep polling disabled until the returned group is configured and readiness checks pass. Submission alone does not hold work.
 
 Keep Vault credentials, private bundles, filesystem destinations and reload commands on the hosts. Each consumer needs its own identity, read-only bundle access, deployment profile, authorization revision and listener probes. Validate/reload configuration through the service's approved local commands.
 
@@ -21,7 +23,7 @@ In the Vault GUI, inspect the KV v2 engine, group-scoped policies and published 
 
 ## Publish, assign and approve
 
-Run signed no-op smoke checks, then deliberately enable mutating execution. Complete the original publication under the actual workspace approval policy. Inspect its public receipt; publication alone is not installation.
+After readiness checks, deliberately set `execution.enabled: true` and `execution.dryRun: false` on the prepared hosts and restart their agents. Do not insert another dry-run polling phase while the real publication is queued. Approve the held job if required and follow the original publication under the actual workspace policy. Inspect its public receipt; publication alone is not installation.
 
 Follow the [publication and consumer API sequence](wildcard-vault-operations.md#public-workflow) for both destinations. Apply each returned authorization revision to the matching host-local binding before rollout. Request the intended material version and have a **different authorized manager** approve the rollout even when ordinary job approval is off. Child-job approval still follows workspace policy.
 
