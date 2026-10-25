@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Vault setup stays in the guide.** Send signed agent checks, assign consumers, copy their returned configuration revisions, and deploy a selected published version without running TokenTimer API commands in a terminal. The guide shows each deployment's timeline and verification; starting over creates a fresh publication attempt while preserving existing records.
+
 ## [0.18.1] - 2026-10-25
 
 ### Fixed

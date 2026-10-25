@@ -123,10 +123,7 @@ issuer or consumer credentials. Protect Vault backups as private keys.
 
 ## Public workflow
 
-Start with [First Vault distribution](vault-first-distribution.md). Distribution administration is mostly API-first. Inspect status in **Certificates → certificate → Deployments**; **Renewals** contains profiles and AD CS issuers. The setup guide creates the publication job. Consumer assignment,
-editing consumer bindings, requesting and approving rollouts, containment, retry
-and verification-only checks use the API below and the existing job approval
-endpoints.
+Start with [First Vault distribution](vault-first-distribution.md). The setup guide sends signed checks, creates the publication job, assigns one or more consumers and requests the chosen version's rollout. It displays returned configuration revisions, job timelines, read-only output and consumer verification. No terminal TokenTimer API calls are needed for that first distribution. Inspect later status in **Certificates → certificate → Deployments**; **Renewals** contains profiles and AD CS issuers. The API below remains the reference for automation, advanced binding changes, containment and verification-only checks. Approval review uses the existing Jobs surface when workspace policy requires it.
 
 1. Create an existing `issue` job with `assignedAgentId` set to the issuer's
    database row ID. Its payload includes the existing target/SANs/CA/DNS/key

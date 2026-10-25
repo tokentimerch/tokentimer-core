@@ -963,12 +963,7 @@ describe('DNS credential file examples', () => {
       expect.arrayContaining(['server', 'keyName', 'keySecretBase64'])
     );
     expect(Object.keys(JSON.parse(dnsCredentialsExample('acme-dns')))).toEqual(
-      expect.arrayContaining([
-        'baseUrl',
-        'username',
-        'password',
-        'subdomain',
-      ])
+      expect.arrayContaining(['baseUrl', 'username', 'password', 'subdomain'])
     );
     expect(Object.keys(JSON.parse(dnsCredentialsExample('ovhcloud')))).toEqual(
       expect.arrayContaining([
@@ -980,9 +975,9 @@ describe('DNS credential file examples', () => {
     expect(Object.keys(JSON.parse(dnsCredentialsExample('hetzner')))).toEqual(
       expect.arrayContaining(['apiToken'])
     );
-    expect(Object.keys(JSON.parse(dnsCredentialsExample('infomaniak')))).toEqual(
-      expect.arrayContaining(['apiToken'])
-    );
+    expect(
+      Object.keys(JSON.parse(dnsCredentialsExample('infomaniak')))
+    ).toEqual(expect.arrayContaining(['apiToken']));
     expect(Object.keys(JSON.parse(dnsCredentialsExample('exoscale')))).toEqual(
       expect.arrayContaining(['apiKey', 'apiSecret'])
     );
@@ -1045,6 +1040,7 @@ describe('Vault Agent config', () => {
     expect(text).toContain('method "approle"');
     expect(text).toContain('path = "/run/tokentimer-vault/issuer-token"');
     expect(text).toContain('ca_cert = "/etc/tokentimer-agent/vault-ca.pem"');
+    expect(text).toContain('mode = 384');
     expect(text).not.toMatch(SENSITIVE_PATTERN);
   });
 });

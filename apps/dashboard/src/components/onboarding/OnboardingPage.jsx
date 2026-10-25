@@ -52,6 +52,7 @@ import {
 } from './editionModules.js';
 import { clearGoal, skipStep } from './sessionTransitions.js';
 import { scopeCertops } from './certopsScope.js';
+import { scopeDistribution } from './distributionModel.js';
 import { resolveNavigation } from './stepNavigation.js';
 import {
   finishesByItself,
@@ -464,7 +465,21 @@ export function DoneCard({ ctx, guidedImportSteps = GUIDED_IMPORT_STEPS }) {
     scopeCertops(ctx.session.progress?.certops, goal?.certopsObjective)
       .infrastructure === 'windows';
   // A body that hedges must not sit under a title that says all is well.
-  const unverified = goal?.doneUnverified === true;
+  const saved = scopeCertops(
+    ctx.session.progress?.certops,
+    goal?.certopsObjective
+  );
+  const distributionId = saved.chosenDistributionId || saved.groupId;
+  const vaultVerified =
+    goal?.certopsObjective === 'vault' &&
+    Boolean(distributionId) &&
+    scopeDistribution(
+      ctx.summary?.certops?.distribution,
+      distributionId
+    )?.items?.some(
+      item => item.id === distributionId && item.verified === true
+    );
+  const unverified = goal?.doneUnverified === true && !vaultVerified;
   const restart = async () => {
     await ctx.controller.update(session => ({
       intent: { ...session.intent, goal: '' },
@@ -478,6 +493,8 @@ export function DoneCard({ ctx, guidedImportSteps = GUIDED_IMPORT_STEPS }) {
       kind='info'
       title={unverified ? 'Setup finished, not verified yet' : 'You are set up'}
       description={
+        (vaultVerified &&
+          'Your certificate was published to Vault and its distribution has current verification evidence. Review each consumer in the certificate details, and verify the live service independently.') ||
         (windows && goal?.doneTextWindows) ||
         (modalImport && goal.doneTextModal) ||
         goal?.doneText ||

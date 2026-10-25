@@ -896,7 +896,7 @@ export function buildVaultAgentConfig({
     '    }',
     '  }',
     '  sink "file" {',
-    `    config = { path = "${tokenFile}", mode = 0600 }`,
+    `    config = { path = "${tokenFile}", mode = 384 } # 0600: owner read/write`,
     '  }',
     '}',
     '',
@@ -1040,6 +1040,9 @@ export function buildVaultConfigs({
   issuerAgentId,
   consumerAgentId,
   consumerBindingId,
+  consumerDeploymentProfileRef = 'nginx-public',
+  consumerProfileRevision = 1,
+  consumerAuthorizationRevision = 1,
   deployPath = CONSUMER_DEPLOY_PATH,
   caFile = '',
   probeTrustCaFile = '',
@@ -1160,9 +1163,9 @@ export function buildVaultConfigs({
         groupId,
         agentId: consumerAgentId || 'REPLACE_WITH_CONSUMER_WIRE_ID',
         materialStoreRef: 'customer',
-        deploymentProfileRef: 'nginx-public',
-        profileRevision: 1,
-        authorizationRevision: 1,
+        deploymentProfileRef: consumerDeploymentProfileRef,
+        profileRevision: consumerProfileRevision,
+        authorizationRevision: consumerAuthorizationRevision,
         verificationPolicy: 'trust',
         reloadService: 'nginx',
         reloadCommandRefs: {
@@ -1171,7 +1174,7 @@ export function buildVaultConfigs({
         },
         target: {
           type: 'endpoint',
-          reference: 'nginx-public',
+          reference: consumerDeploymentProfileRef,
           certPath: `${deployPath}/fullchain.pem`,
           keyPath: `${deployPath}/privkey.pem`,
         },
@@ -1194,8 +1197,8 @@ export function buildVaultConfigs({
 /**
  * The job that publishes a certificate to Vault. The group id appears on the
  * created job as payload.publication.groupId. The agent refuses a publish job
- * without a key algorithm, so it is part of the body. There is no screen for
- * this job: it is created through the Jobs API. It waits for approval only
+ * without a key algorithm, so it is part of the body. The setup guide creates
+ * this job through the authenticated Jobs API. It waits for approval only
  * when the workspace requires approval for every job.
  */
 export function buildVaultPublishJob({
@@ -1234,11 +1237,15 @@ export function buildVaultPublishJob({
 }
 
 /** Assigns one consumer agent to the distribution group. */
-export function buildVaultConsumerAssignment({ agentRowId }) {
+export function buildVaultConsumerAssignment({
+  agentRowId,
+  deploymentProfileRef = 'nginx-public',
+  profileRevision = 1,
+}) {
   return {
     agentId: agentRowId,
-    deploymentProfileRef: 'nginx-public',
-    profileRevision: 1,
+    deploymentProfileRef,
+    profileRevision,
     required: true,
     wave: 0,
     verificationPolicy: 'trust',

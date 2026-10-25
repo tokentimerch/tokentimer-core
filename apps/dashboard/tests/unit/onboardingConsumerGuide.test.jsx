@@ -32,6 +32,12 @@ vi.mock('../../src/components/certops/certopsJobsApi.js', () => ({
   createJob: vi.fn(),
   getJob: vi.fn(),
 }));
+vi.mock('../../src/components/onboarding/vaultGuideApi.js', () => ({
+  readDistribution: vi.fn().mockResolvedValue({ versions: [], consumers: [] }),
+  assignConsumer: vi.fn(),
+  requestRollout: vi.fn(),
+  retryDeployment: vi.fn(),
+}));
 
 const UUID_A = '11111111-1111-4111-8111-111111111111';
 const UUID_B = '22222222-2222-4222-8222-222222222222';
@@ -169,7 +175,8 @@ describe('Vault consumer folder', () => {
     expect(screen.getByTestId('vault-dry-run-note').textContent).toMatch(
       /A rollout itself has no dry run/
     );
-    expect(document.body.textContent).toMatch(/"mode": "dry_run"/);
+    expect(document.body.textContent).toMatch(/Send a test job/);
+    expect(document.body.textContent).not.toMatch(/POST.*certops\/jobs/);
   });
 });
 

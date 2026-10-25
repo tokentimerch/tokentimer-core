@@ -377,10 +377,14 @@ describe('a step that finishes by itself stays open until Continue', () => {
           live: 1,
           executionEnabled: true,
           items: [
-            realAgent('linux', { commandProfiles: profile ? [profile] : [] }),
+            realAgent('linux', {
+              commandProfiles: profile ? [profile] : [],
+              supportedOperations: ['renew'],
+            }),
           ],
         },
         distribution: { groups: 1, verified: false },
+        dryRun: { status: 'dry_run_complete' },
       }
     );
     mount();
@@ -392,7 +396,7 @@ describe('a step that finishes by itself stays open until Continue', () => {
     await waitFor(() => expect(continueBar()).not.toBeNull());
     expect(screen.getByTestId('stub-certops_vault')).toBeVisible();
     clickContinue();
-    expect(await screen.findByTestId('stub-certops_execution')).toBeVisible();
+    expect(await screen.findByTestId('stub-recipients')).toBeVisible();
   });
 
   it('does not hold or add Continue when the page loads on a done step', async () => {

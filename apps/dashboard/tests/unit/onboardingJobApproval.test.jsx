@@ -25,6 +25,12 @@ vi.mock('../../src/components/onboarding/JobActivity.jsx', () => ({
   default: () => null,
   JobTimelineList: () => null,
 }));
+vi.mock('../../src/components/onboarding/vaultGuideApi.js', () => ({
+  readDistribution: vi.fn().mockResolvedValue({ versions: [], consumers: [] }),
+  assignConsumer: vi.fn(),
+  requestRollout: vi.fn(),
+  retryDeployment: vi.fn(),
+}));
 
 const WS = '11111111-1111-4111-8111-111111111111';
 const GROUP = '22222222-2222-4222-8222-222222222222';
@@ -117,6 +123,11 @@ describe('Vault publish job approval', () => {
     expect(document.body.textContent).not.toMatch(/held for approval/);
 
     fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: 'The issuing TokenTimer agent is stopped while I prepare Vault',
+      })
+    );
+    fireEvent.click(
       screen.getByRole('button', { name: 'Create the publish job' })
     );
     await flush();
@@ -141,7 +152,9 @@ describe('Vault publish job approval', () => {
       /this rollout waits/
     );
     expect(screen.queryByTestId('approval-policy-off')).toBeNull();
-    expect(screen.getByTestId('vault-dry-run-approval')).toBeTruthy();
+    expect(
+      screen.getAllByRole('button', { name: /Send a test job/ })
+    ).toHaveLength(2);
   });
 
   it('says nothing about approval while the policy is unknown', async () => {

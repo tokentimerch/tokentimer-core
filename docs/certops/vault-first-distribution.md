@@ -8,7 +8,7 @@ Use an HTTPS Vault KV v2 mount, reachable CA/DNS, registered issuer/consumer age
 
 Open the [setup guide](setup-guide.md) and choose **Share one certificate across servers with Vault → Linux server**. Select existing agents where appropriate. Preserve their identity, allowlists and local custody state.
 
-Before creating the first publication, complete each agent's signed no-op smoke check with `execution.enabled: true` and `execution.dryRun: true`. This checks dispatch/reporting, not later publication or deployment permissions. Do it before queuing real work: enabling polling with local dry-run protection can claim and block a queued real publication.
+Complete **Turn on execution safely → Send a test job** for the issuing agent before opening the Vault distribution step. Use the inline **Send a test job** control for each consumer as well, with `execution.enabled: true` and `execution.dryRun: true`. The guide shows the returned status, evidence and read-only Agent output. This checks dispatch/reporting, not later publication or deployment permissions. Do it before queuing real work: enabling polling with local dry-run protection can claim and block a queued real publication.
 
 ## Allocate the group and configure hosts
 
@@ -25,7 +25,11 @@ In the Vault GUI, inspect the KV v2 engine, group-scoped policies and published 
 
 After readiness checks, deliberately set `execution.enabled: true` and `execution.dryRun: false` on the prepared hosts and restart their agents. Do not insert another dry-run polling phase while the real publication is queued. Approve the held job if required and follow the original publication under the actual workspace policy. Inspect its public receipt; publication alone is not installation.
 
-Follow the [publication and consumer API sequence](wildcard-vault-operations.md#public-workflow) for both destinations. Apply each returned authorization revision to the matching host-local binding before rollout. Request the intended material version. With workspace Job approval off, the rollout starts without a second user; explicit `requiresApproval: true` can opt in for that request. With workspace approval on, another authorized manager must approve it. Child-job approval also follows workspace policy. Keep the setting off for unattended execution; publishing a renewed version does not automatically request a new rollout.
+In **Assign consumers and deploy**, assign the first consumer and use **Additional consumer → Add consumer** for the second. Each assignment returns its actual authorization revision and a matching host configuration. Copy it to that host, preserve the enrolled identity, and confirm the saved configuration after restarting the agent. A confirmation records your action; it is not deployment evidence.
+
+Choose the **Published certificate version**, review **Maximum parallel deployments**, then choose **Deploy the selected version**. The request pins that exact version. Follow its timeline and each consumer's deployment/Agent output without leaving onboarding. A successful coordinator request alone does not mean consumers are verified. The guide reads back their current desired/observed versions and convergence before showing **All selected consumers verified**.
+
+With workspace Job approval off, the rollout starts without a second user. With workspace approval on, another authorized manager must approve it through the existing Jobs review surface; its actual pending status is shown in the guide. Child-job approval also follows workspace policy. Keep the setting off for unattended execution; publishing a renewed version does not automatically request a new rollout. The [API reference](wildcard-vault-operations.md#public-workflow) remains available for automation and advanced administration; it is not required for this first guided distribution.
 
 ## Verify both services
 
