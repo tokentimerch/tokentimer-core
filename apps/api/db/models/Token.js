@@ -483,7 +483,7 @@ const update = async (id, tokenData, { client: transactionClient = null } = {}) 
     paramIndex++;
   }
   if (auto_sync_managed !== undefined) {
-    updateFields.push(`auto_sync_managed = $${paramIndex++}`);
+    updateFields.push(`auto_sync_managed = $${paramIndex}`);
     values.push(auto_sync_managed === true);
   }
 
