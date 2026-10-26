@@ -36,6 +36,7 @@ if (
   );
 }
 const { writeAudit } = require("./services/audit");
+const recipientVerification = require("../../packages/recipient-verification");
 const { resolveRequeuedNotifications } = require("./services/alertQueue");
 const {
   loadWorkspace,
@@ -493,85 +494,109 @@ app.post(
         });
       const alert = r.rows[0];
 
-      // If alert is blocked due to plan limits, return informative message and reset date
-      if (String(alert.status || "").toLowerCase() === "blocked") {
+      const alertStatus = String(alert.status || "").toLowerCase();
+      if (alertStatus === "blocked") {
         const now = new Date();
         const reset = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-        const isPlanLimit = (alert.error_message || "").includes("PLAN_LIMIT");
-        // If blocked due to max attempts, do not allow manual retry
-        if (!isPlanLimit) {
+        const failureText = alert.error_message || "";
+        if (failureText.includes("PLAN_LIMIT")) {
+          return res.status(400).json({
+            error: `Maximum monthly usage reached, please wait until ${reset
+              .toISOString()
+              .slice(0, 10)} to process or consider upgrading to higher plan`,
+            code: "PLAN_ALERT_LIMIT",
+            resetDate: reset.toISOString().slice(0, 10),
+          });
+        }
+        if (failureText.includes("MAX_ATTEMPTS")) {
           return res.status(400).json({
             error:
               "This alert has been permanently blocked due to too many failed attempts.",
             code: "MAX_ATTEMPTS_BLOCKED",
           });
         }
+      }
+      if (alertStatus === "sent") {
         return res.status(400).json({
-          error: `Maximum monthly usage reached, please wait until ${reset
-            .toISOString()
-            .slice(0, 10)} to process or consider upgrading to higher plan`,
-          code: "PLAN_ALERT_LIMIT",
-          resetDate: reset.toISOString().slice(0, 10),
+          error: "This alert was already delivered.",
+          code: "ALREADY_DELIVERED",
         });
       }
 
-      // Determine remaining eligible channels from stored list
-      let storedChannels = [];
-      try {
-        if (Array.isArray(alert.channels)) storedChannels = alert.channels;
-        else if (typeof alert.channels === "string") {
-          try {
-            const parsed = JSON.parse(alert.channels);
-            if (Array.isArray(parsed)) storedChannels = parsed;
-          } catch (_err) {
-            logger.debug("Parse failed", { error: _err.message });
-          }
-        }
-      } catch (_err) {
-        logger.debug("Parse failed", { error: _err.message });
-      }
-      const eligible = Array.from(new Set(storedChannels)).filter(Boolean);
-
-      // If no channel provided, derive behavior
-      if (!channel) {
-        if (eligible.length === 0) {
-          // Provide a friendly diagnostic
-          let providerHint = null;
-          try {
-            const lastWh = await pool.query(
-              `SELECT metadata->>'kind' AS kind
-               FROM alert_delivery_log
-               WHERE alert_queue_id = $1 AND channel = 'webhooks'
-               ORDER BY sent_at DESC
-               LIMIT 1`,
-              [alert.id],
-            );
-            providerHint = (lastWh.rows?.[0]?.kind || "").toLowerCase() || null;
-          } catch (_err) {
-            logger.warn("DB operation failed", { error: _err.message });
-          }
-          const isWebhookIssue =
-            (alert.error_message || "").toLowerCase().includes("webhooks") ||
-            providerHint;
-          const hint = isWebhookIssue
-            ? `Please put a valid ${providerHint || "webhook"} before retrying (Preferences -> Webhooks).`
-            : "No eligible channels to retry. Enable at least one channel in Preferences, then try again.";
-          return res.status(400).json({
-            error: hint,
-            code: isWebhookIssue ? "WEBHOOK_REQUIRED" : "NO_ELIGIBLE_CHANNELS",
-            ...(providerHint ? { provider: providerHint } : {}),
-          });
-        }
-        if (eligible.length > 1) {
+      const retryPlan = recipientVerification.planManualRetry(alert.channels, channel);
+      if (!retryPlan.ok) {
+        if (retryPlan.code === "CHANNEL_REQUIRED") {
           return res.status(400).json({
             error:
               "Multiple channels are eligible for retry. Please specify a channel (e.g., 'email' or 'webhooks').",
             code: "CHANNEL_REQUIRED",
-            eligible,
+            eligible: retryPlan.eligible,
           });
         }
-        channel = eligible[0];
+        if (retryPlan.code === "CHANNEL_PERMANENT") {
+          return res.status(400).json({
+            error:
+              "This channel failed permanently. Choose it explicitly after the endpoint is fixed. Successful channels are not sent again.",
+            code: "CHANNEL_PERMANENT",
+            eligible: retryPlan.eligible,
+          });
+        }
+        if (retryPlan.code === "ALREADY_DELIVERED") {
+          return res.status(400).json({
+            error: "That channel was already delivered.",
+            code: "ALREADY_DELIVERED",
+            eligible: retryPlan.eligible,
+          });
+        }
+        if (retryPlan.code === "CHANNEL_NOT_ELIGIBLE") {
+          return res.status(400).json({
+            error: "Channel is not eligible for retry",
+            code: "CHANNEL_NOT_ELIGIBLE",
+            eligible: retryPlan.eligible,
+          });
+        }
+        if (
+          retryPlan.code === "NO_VERIFIED_RECIPIENTS"
+          || retryPlan.code === "RECIPIENT_NOT_VERIFIED"
+          || retryPlan.code === "RECIPIENT_OPTED_OUT"
+          || retryPlan.code === "RECIPIENT_REVOKED"
+          || retryPlan.code === "RECIPIENT_SUPPRESSED"
+        ) {
+          return res.status(400).json({
+            error: retryPlan.code === "RECIPIENT_OPTED_OUT"
+              ? "This channel is waiting because the recipient opted out."
+              : "This channel is waiting for the recipient to confirm the destination.",
+            code: retryPlan.code,
+            eligible: retryPlan.eligible,
+          });
+        }
+        let providerHint = null;
+        try {
+          const lastWh = await pool.query(
+            `SELECT metadata->>'kind' AS kind
+             FROM alert_delivery_log
+             WHERE alert_queue_id = $1 AND channel = 'webhooks'
+             ORDER BY sent_at DESC
+             LIMIT 1`,
+            [alert.id],
+          );
+          providerHint = (lastWh.rows?.[0]?.kind || "").toLowerCase() || null;
+        } catch (_err) {
+          logger.warn("DB operation failed", { error: _err.message });
+        }
+        const isWebhookIssue =
+          (alert.error_message || "").toLowerCase().includes("webhooks") ||
+          providerHint;
+        const hint = isWebhookIssue
+          ? `Please put a valid ${providerHint || "webhook"} before retrying (Preferences -> Webhooks).`
+          : "No eligible channels to retry. Enable at least one channel in Preferences, then try again.";
+        return res.status(400).json({
+          error: hint,
+          code: isWebhookIssue ? "WEBHOOK_REQUIRED" : "NO_ELIGIBLE_CHANNELS",
+          ...(providerHint ? { provider: providerHint } : {}),
+        });
       }
+      channel = retryPlan.channel;
 
       // Respect cooldown window
       if (
@@ -584,14 +609,7 @@ app.post(
           .json({ error: "Cooldown active", nextAttemptAt: eta });
       }
 
-      // Ensure channel is among remaining channels
-      if (!eligible.includes(channel)) {
-        return res
-          .status(400)
-          .json({ error: "Channel is not eligible for retry", eligible });
-      }
-
-      // Set to pending and only this channel
+      // Set to pending and only this channel, keeping any delivery ledger.
       const currentAnchor = `COALESCE(
         (SELECT t.workspace_id FROM tokens t WHERE t.id = aq.token_id),
         (SELECT ca.workspace_id FROM certops_agents ca WHERE ca.id = aq.certops_agent_id)
@@ -603,7 +621,7 @@ app.post(
             AND (${currentWorkspaceAccessSql(currentAnchor, "$3")}
                  OR (aq.token_id IS NULL AND aq.certops_agent_id IS NULL))
           RETURNING aq.id, ${currentAnchor} AS workspace_id`,
-        [JSON.stringify([channel]), alertId, req.user.id],
+        [JSON.stringify(retryPlan.channels), alertId, req.user.id],
       );
       if (updated.rowCount === 0)
         return res.status(404).json({

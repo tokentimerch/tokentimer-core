@@ -58,6 +58,7 @@ import {
   queueDeliveryOutcome,
   selectDeliverableDestinations,
   mergeDeliveryAttempt,
+  webhookChannelReopened,
   DELIVERY_CLAIM_EXCLUSION_SQL,
 } from "./shared/recipientDeliveryGate.js";
 
@@ -2336,7 +2337,7 @@ export async function deliveryWorkerJob({
                     webhookEndpoints[urlHash] = "sent";
                     continue;
                   }
-                  if (priorPermanent.has(urlHash)) {
+                  if (priorPermanent.has(urlHash) && !webhookChannelReopened(alert.channels)) {
                     permanentEndpoints += 1;
                     webhookEndpoints[urlHash] = "permanent";
                     continue;
@@ -3272,9 +3273,17 @@ export async function deliveryWorkerJob({
             && !blockDueToWhatsApp
             && !reachedMaxAttempts;
           if (blockDueToEligibility && !deliveryOutcome.retry) {
-            errorMessages = errorMessages
-              ? `${errorMessages}; NO_VERIFIED_RECIPIENTS`
+            const eligibilityCode = deliveryOutcome.code === "RECIPIENT_OPTED_OUT"
+              ? "RECIPIENT_OPTED_OUT"
               : "NO_VERIFIED_RECIPIENTS";
+            errorMessages = errorMessages
+              ? `${errorMessages}; ${eligibilityCode}`
+              : eligibilityCode;
+          }
+          if (deliveryOutcome.notifyProviderTerminal && !blockDueToWhatsApp) {
+            errorMessages = errorMessages
+              ? `${errorMessages}; PERMANENT_DELIVERY_FAILURE`
+              : "PERMANENT_DELIVERY_FAILURE";
           }
           let finalNextAttempt = deliveryOutcome.retry ? nextAttemptTimestamp : null;
           if (
@@ -3341,12 +3350,37 @@ export async function deliveryWorkerJob({
               severity: "warning",
               dedupeKey: `delivery_unverified:${alert.workspace_id}`,
               title: `Alerts need verified recipients: ${incidentAssetLabel(alert)}`,
-              message: newStatus === "blocked"
-                ? "Email or WhatsApp delivery was not sent because no recipient has confirmed that destination."
-                : "Some Email or WhatsApp recipients were skipped because they have not confirmed that destination.",
+              message: deliveryOutcome.code === "RECIPIENT_OPTED_OUT"
+                ? "Email or WhatsApp was not sent because the recipient opted out."
+                : (newStatus === "blocked"
+                  ? "Email or WhatsApp delivery was not sent because no recipient has confirmed that destination."
+                  : "Some Email or WhatsApp recipients were skipped because they have not confirmed that destination."),
               metadata: {
                 alert_queue_id: alert.id,
                 reason: "no_verified_recipients",
+                workspace_name: alert.workspace_name,
+                token_name: alert.name,
+              },
+            });
+          }
+          if (
+            terminalRes.rowCount > 0
+            && deliveryOutcome.notifyProviderTerminal
+            && !blockDueToWhatsApp
+            && alert.workspace_id
+          ) {
+            await raiseOperationalNotification(client, {
+              workspaceId: alert.workspace_id,
+              tokenId: alert.token_id,
+              category: "delivery",
+              type: "delivery_webhook_permanent",
+              severity: "warning",
+              dedupeKey: `delivery_webhook_permanent:${alert.id}`,
+              title: `Webhook delivery failed: ${incidentAssetLabel(alert)}`,
+              message: "A webhook endpoint rejected the alert. That endpoint is not retried until it is fixed and the channel is retried.",
+              metadata: {
+                alert_queue_id: alert.id,
+                reason: "webhook_permanent_failure",
                 workspace_name: alert.workspace_name,
                 token_name: alert.name,
               },

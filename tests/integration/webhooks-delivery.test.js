@@ -74,7 +74,7 @@ describe("Webhooks Delivery - PD severity mapping", function () {
       [userId],
     );
     const channelSets = aq.rows.map((r) =>
-      Array.isArray(r.channels) ? r.channels : JSON.parse(r.channels),
+      require("../../packages/recipient-verification").publicDeliveryChannels(r.channels).map((row) => row.channel),
     );
     for (const ch of channelSets) expect(ch).to.include("webhooks");
   });

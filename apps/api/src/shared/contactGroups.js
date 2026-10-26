@@ -261,10 +261,16 @@ function deliveryChannelsFromEligibleGroups(
 
 function parseQueuedChannels(value) {
   if (Array.isArray(value)) return value.map(String);
+  if (value && typeof value === "object") {
+    if (Array.isArray(value.retry)) return value.retry.map(String);
+    return [];
+  }
   if (typeof value !== "string" || value.trim() === "") return [];
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.map(String) : [];
+    if (Array.isArray(parsed)) return parsed.map(String);
+    if (parsed && typeof parsed === "object" && Array.isArray(parsed.retry)) return parsed.retry.map(String);
+    return [];
   } catch {
     return [];
   }

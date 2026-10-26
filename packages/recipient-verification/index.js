@@ -377,14 +377,19 @@ async function filterDeliveryRecipients({ client, workspaceId, channel, recipien
 function deliveryDisposition(results) {
   const list = Array.isArray(results) ? results : [];
   const unsuccessful = list.filter((row) => row && row.success !== true);
-  const retryable = unsuccessful.filter((row) => !row.eligibilityTerminal);
+  const retryable = unsuccessful.filter((row) => row && !row.eligibilityTerminal && !row.terminal && !row.providerTerminal);
   const anySuccess = list.some((row) => row && (row.success === true || row.partialSuccess === true));
+  const eligibilityRows = unsuccessful.filter((row) => row && row.eligibilityTerminal);
+  const providerFailure = unsuccessful.some((row) => row && row.providerTerminal);
+  const terminalCode = eligibilityRows.length
+    ? (eligibilityRows.every((row) => row.errorCode === "RECIPIENT_OPTED_OUT") ? "RECIPIENT_OPTED_OUT" : "NO_VERIFIED_RECIPIENTS")
+    : (providerFailure ? "PERMANENT_DELIVERY_FAILURE" : null);
   if (unsuccessful.length === 0) return { status: "sent", retry: false, channels: [] };
   if (retryable.length === 0) {
     if (anySuccess) {
-      return { status: "partial", retry: false, channels: [], code: "NO_VERIFIED_RECIPIENTS" };
+      return { status: "partial", retry: false, channels: [], code: terminalCode };
     }
-    return { status: "blocked", retry: false, channels: [], code: "NO_VERIFIED_RECIPIENTS" };
+    return { status: "blocked", retry: false, channels: [], code: terminalCode };
   }
   return {
     status: anySuccess ? "partial" : "failed",
@@ -406,6 +411,7 @@ function queueDeliveryOutcome(results, options = {}) {
     channels: retry ? disposition.channels : [],
     code: disposition.code || null,
     notifyUnverified: (Array.isArray(results) ? results : []).some((row) => row && row.eligibilityTerminal),
+    notifyProviderTerminal: (Array.isArray(results) ? results : []).some((row) => row && row.providerTerminal),
   };
 }
 
@@ -486,6 +492,7 @@ function foldDeliveryLog(rows) {
         current.state = "blocked";
         current.terminal = true;
       }
+      current.reason = "provider";
     } else if (row.status === "success") {
       current.state = "sent";
       current.terminal = true;
@@ -494,6 +501,7 @@ function foldDeliveryLog(rows) {
         current.state = "blocked";
         current.terminal = true;
         current.code = row.error_message || current.code || null;
+        current.reason = ELIGIBILITY_CODES.has(current.code) ? "eligibility" : "provider";
       }
     } else if (current.state !== "sent") {
       current.state = "failed";
@@ -505,40 +513,212 @@ function foldDeliveryLog(rows) {
   return outcomes;
 }
 
+function isEligibilityOutcome(outcome) {
+  if (!outcome || typeof outcome !== "object") return false;
+  if (outcome.reason === "provider") return false;
+  if (outcome.reason === "eligibility") return true;
+  if (ELIGIBILITY_CODES.has(outcome.code)) return true;
+  const endpoints = outcome.endpoints && typeof outcome.endpoints === "object" ? Object.keys(outcome.endpoints) : [];
+  return outcome.state === "blocked" && outcome.terminal === true && !outcome.code && endpoints.length === 0;
+}
+
 function resultFromOutcome(channel, outcome) {
-  if (!outcome) return { channel, success: false, eligibilityTerminal: false };
-  if (outcome.state === "sent") return { channel, success: true, eligibilityTerminal: false };
-  if (outcome.state === "partial") {
-    return { channel, success: false, partialSuccess: true, eligibilityTerminal: Boolean(outcome.terminal), terminal: Boolean(outcome.terminal) };
+  if (!outcome) return { channel, success: false, eligibilityTerminal: false, terminal: false, providerTerminal: false };
+  if (outcome.state === "sent") {
+    return { channel, success: true, eligibilityTerminal: false, terminal: false, providerTerminal: false };
   }
-  if (outcome.terminal || outcome.state === "blocked") {
+  const eligibility = isEligibilityOutcome(outcome);
+  const terminal = Boolean(outcome.terminal || outcome.state === "blocked");
+  if (outcome.state === "partial") {
     return {
       channel,
       success: false,
-      eligibilityTerminal: true,
-      terminal: true,
-      errorCode: outcome.code || "NO_VERIFIED_RECIPIENTS",
+      partialSuccess: true,
+      eligibilityTerminal: eligibility && terminal,
+      terminal,
+      providerTerminal: terminal && !eligibility,
+      errorCode: outcome.code || null,
     };
   }
-  return { channel, success: false, eligibilityTerminal: false, errorCode: outcome.code || null };
+  if (terminal) {
+    return {
+      channel,
+      success: false,
+      eligibilityTerminal: eligibility,
+      terminal: true,
+      providerTerminal: !eligibility,
+      errorCode: eligibility ? (outcome.code || "NO_VERIFIED_RECIPIENTS") : (outcome.code || "PERMANENT_DELIVERY_FAILURE"),
+    };
+  }
+  return { channel, success: false, eligibilityTerminal: false, terminal: false, providerTerminal: false, errorCode: outcome.code || null };
+}
+
+function sameStringList(left, right) {
+  const a = [...(left || [])].map(String).sort();
+  const b = [...(right || [])].map(String).sort();
+  return a.length === b.length && a.every((item, index) => item === b[index]);
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function reconcileDeliveryChannels(stored, configuredChannels) {
+  const live = Array.isArray(configuredChannels) ? configuredChannels.map(String).filter(Boolean) : [];
+  const ledger = parseDeliveryLedger(stored);
+  if (ledger.legacy) {
+    const storedList = Array.isArray(stored)
+      ? stored.map(String)
+      : (typeof stored === "string" ? ledger.retry : null);
+    let next = live.slice();
+    if (Array.isArray(storedList) && storedList.length > 0) {
+      next = live.filter((channel) => storedList.includes(channel));
+      if (next.length === 0) next = storedList.slice();
+    }
+    return {
+      format: "legacy",
+      channels: next,
+      changed: !Array.isArray(storedList) || !sameStringList(next, storedList),
+    };
+  }
+  const outcomes = {};
+  for (const channel of live) {
+    if (ledger.outcomes[channel]) outcomes[channel] = ledger.outcomes[channel];
+  }
+  const retry = [];
+  for (const channel of live) {
+    const outcome = outcomes[channel];
+    if (!outcome) {
+      retry.push(channel);
+      continue;
+    }
+    if (outcome.state === "sent" || outcome.terminal === true || outcome.state === "blocked") continue;
+    retry.push(channel);
+  }
+  const next = { version: 1, retry, required: live.slice(), outcomes };
+  return {
+    format: "ledger",
+    channels: next,
+    changed: !sameStringList(retry, ledger.retry)
+      || !sameStringList(live, ledger.required)
+      || stableJson(outcomes) !== stableJson(ledger.outcomes),
+  };
+}
+
+function providerTerminalOutcome(outcome) {
+  if (!outcome || outcome.state === "sent" || isEligibilityOutcome(outcome)) return false;
+  return outcome.terminal === true || outcome.state === "blocked";
+}
+
+function planManualRetry(stored, requestedChannel) {
+  const ledger = parseDeliveryLedger(stored);
+  if (ledger.legacy) {
+    const eligible = ledger.retry.filter(Boolean);
+    const channel = String(requestedChannel || "").trim() || (eligible.length === 1 ? eligible[0] : "");
+    if (!channel) {
+      return { ok: false, code: eligible.length ? "CHANNEL_REQUIRED" : "NO_ELIGIBLE_CHANNELS", eligible, format: "legacy" };
+    }
+    if (!eligible.includes(channel)) return { ok: false, code: "CHANNEL_NOT_ELIGIBLE", eligible, format: "legacy" };
+    return { ok: true, channel, eligible, format: "legacy", channels: [channel] };
+  }
+  const outcomes = { ...(ledger.outcomes || {}) };
+  const known = ledger.required.length ? ledger.required.slice() : Object.keys(outcomes);
+  const eligible = ledger.retry.filter((channel) => {
+    const outcome = outcomes[channel];
+    return !outcome || (outcome.state !== "sent" && outcome.terminal !== true && outcome.state !== "blocked");
+  });
+  const permanent = known.filter((channel) => providerTerminalOutcome(outcomes[channel]));
+  const channel = String(requestedChannel || "").trim() || (eligible.length === 1 ? eligible[0] : "");
+  if (!channel) {
+    if (eligible.length > 1) return { ok: false, code: "CHANNEL_REQUIRED", eligible, format: "ledger" };
+    if (permanent.length) return { ok: false, code: "CHANNEL_PERMANENT", eligible: permanent, format: "ledger" };
+    return { ok: false, code: "NO_ELIGIBLE_CHANNELS", eligible, format: "ledger" };
+  }
+  const outcome = outcomes[channel];
+  if (outcome && outcome.state === "sent") return { ok: false, code: "ALREADY_DELIVERED", eligible, format: "ledger" };
+  if (isEligibilityOutcome(outcome)) {
+    return { ok: false, code: outcome.code || "RECIPIENT_NOT_VERIFIED", eligible, format: "ledger" };
+  }
+  if (!known.includes(channel) && !eligible.includes(channel)) {
+    return { ok: false, code: "CHANNEL_NOT_ELIGIBLE", eligible, format: "ledger" };
+  }
+  if (providerTerminalOutcome(outcome)) {
+    outcomes[channel] = {
+      ...outcome,
+      state: "failed",
+      terminal: false,
+      reopened: true,
+      reason: "provider",
+    };
+  }
+  return {
+    ok: true,
+    channel,
+    eligible,
+    format: "ledger",
+    channels: {
+      version: 1,
+      retry: [channel],
+      required: known.includes(channel) ? known : [...known, channel],
+      outcomes,
+    },
+  };
+}
+
+function publicDeliveryChannels(stored) {
+  const ledger = parseDeliveryLedger(stored);
+  if (ledger.legacy) return ledger.retry.map((channel) => ({ channel, channel_state: null }));
+  const names = ledger.required.length ? ledger.required : Object.keys(ledger.outcomes || {});
+  return names.map((channel) => ({
+    channel,
+    channel_state: ledger.outcomes[channel]?.state || "pending",
+  }));
+}
+
+function webhookChannelReopened(stored) {
+  const ledger = parseDeliveryLedger(stored);
+  return ledger.outcomes?.webhooks?.reopened === true;
+}
+
+function requeueWebhookChannel(stored) {
+  const ledger = parseDeliveryLedger(stored);
+  if (ledger.legacy) return Array.from(new Set([...ledger.retry, "webhooks"]));
+  const outcome = ledger.outcomes.webhooks;
+  if (outcome && (outcome.state === "sent" || isEligibilityOutcome(outcome))) return null;
+  const required = Array.from(new Set([...(ledger.required.length ? ledger.required : Object.keys(ledger.outcomes)), "webhooks"]));
+  const retry = Array.from(new Set([...ledger.retry, "webhooks"]));
+  const outcomes = { ...ledger.outcomes };
+  if (outcome && (outcome.terminal === true || outcome.state === "blocked" || outcome.state === "partial")) {
+    outcomes.webhooks = { ...outcome, state: "failed", terminal: false, reopened: true, reason: "provider" };
+  }
+  return { version: 1, retry, required, outcomes };
 }
 
 function outcomeFromAttempt(row) {
+  const eligibility = row.eligibilityTerminal === true;
+  const provider = Boolean(row.terminal) && !eligibility;
   if (row.success === true) {
-    return { state: "sent", terminal: true, code: null, endpoints: row.endpoints || {} };
+    return { state: "sent", terminal: true, code: null, reason: null, endpoints: row.endpoints || {} };
   }
   if (row.partialSuccess === true) {
+    const terminal = Boolean(row.terminal || eligibility);
     return {
       state: "partial",
-      terminal: Boolean(row.terminal || row.eligibilityTerminal),
+      terminal,
       code: row.errorCode || null,
+      reason: eligibility ? "eligibility" : (terminal ? "provider" : null),
       endpoints: row.endpoints || {},
     };
   }
-  const terminal = Boolean(row.eligibilityTerminal || row.terminal);
+  const terminal = Boolean(eligibility || row.terminal);
   return {
     state: terminal ? "blocked" : "failed",
     terminal,
+    reason: eligibility ? "eligibility" : (provider ? "provider" : null),
     code: row.errorCode || null,
     endpoints: row.endpoints || {},
   };
@@ -1378,6 +1558,11 @@ module.exports = {
   queueDeliveryOutcome,
   mergeDeliveryAttempt,
   parseDeliveryLedger,
+  reconcileDeliveryChannels,
+  planManualRetry,
+  publicDeliveryChannels,
+  webhookChannelReopened,
+  requeueWebhookChannel,
   selectDeliverableDestinations,
   isEligibilityTerminal,
   createInvitation,

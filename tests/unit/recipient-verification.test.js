@@ -1129,6 +1129,8 @@ describe("recipient verification", () => {
     });
     assert.equal(permanent.outcome.status, "partial");
     assert.equal(permanent.outcome.retry, false);
+    assert.equal(permanent.outcome.notifyUnverified, false);
+    assert.equal(permanent.outcome.notifyProviderTerminal, true);
   });
 
   it("retries only the channels named by a delivery ledger", async () => {
@@ -1145,5 +1147,171 @@ describe("recipient verification", () => {
       groups.channelsForDeliveryAttempt(["email", "webhooks"], ["email"], { isRetry: true }),
       ["email"],
     );
+  });
+
+  it("preserves a delivery ledger and separates recipient failures from webhook failures", () => {
+    const ledger = {
+      version: 1,
+      retry: ["webhooks"],
+      required: ["email", "webhooks"],
+      outcomes: {
+        email: { state: "blocked", terminal: true, code: "NO_VERIFIED_RECIPIENTS", reason: "eligibility" },
+        webhooks: { state: "failed", terminal: false, code: "HTTP_500" },
+      },
+    };
+    const same = verification.reconcileDeliveryChannels(ledger, ["webhooks", "email"]);
+    assert.equal(same.changed, false);
+    assert.equal(same.channels.outcomes.email.state, "blocked");
+    assert.deepEqual(same.channels.retry, ["webhooks"]);
+    assert.equal(verification.reconcileDeliveryChannels(same.channels, ["email", "webhooks"]).changed, false);
+
+    const delivered = verification.reconcileDeliveryChannels({
+      version: 1,
+      retry: ["email"],
+      required: ["email", "webhooks"],
+      outcomes: {
+        email: { state: "sent", terminal: true },
+        webhooks: { state: "failed", terminal: false },
+      },
+    }, ["email", "webhooks"]);
+    assert.deepEqual(delivered.channels.retry, ["webhooks"]);
+
+    const terminalWebhook = verification.reconcileDeliveryChannels({
+      version: 1,
+      retry: ["webhooks"],
+      required: ["webhooks"],
+      outcomes: { webhooks: { state: "blocked", terminal: true, reason: "provider", code: "HTTP_404" } },
+    }, ["webhooks"]);
+    assert.deepEqual(terminalWebhook.channels.retry, []);
+    assert.equal(verification.reconcileDeliveryChannels(terminalWebhook.channels, ["webhooks"]).changed, false);
+
+    const legacy = verification.reconcileDeliveryChannels(["email", "webhooks"], ["email"]);
+    assert.equal(legacy.format, "legacy");
+    assert.deepEqual(legacy.channels, ["email"]);
+    assert.equal(verification.reconcileDeliveryChannels(["email"], ["email", "webhooks"]).changed, false);
+
+    const added = verification.reconcileDeliveryChannels(ledger, ["email", "webhooks", "whatsapp"]);
+    assert.deepEqual(added.channels.retry, ["webhooks", "whatsapp"]);
+    assert.equal(added.channels.outcomes.email.terminal, true);
+    const removed = verification.reconcileDeliveryChannels(added.channels, ["webhooks"]);
+    assert.equal(removed.channels.outcomes.email, undefined);
+    assert.equal(removed.channels.outcomes.whatsapp, undefined);
+    assert.deepEqual(removed.channels.retry, ["webhooks"]);
+
+    const unverified = verification.mergeDeliveryAttempt({
+      prior: ["email"],
+      attempted: [{ channel: "email", success: false, eligibilityTerminal: true, errorCode: "NO_VERIFIED_RECIPIENTS" }],
+      liveChannels: ["email"],
+    });
+    assert.equal(unverified.outcome.notifyUnverified, true);
+    assert.equal(unverified.outcome.notifyProviderTerminal, false);
+    assert.equal(unverified.outcome.status, "blocked");
+    assert.equal(unverified.outcome.retry, false);
+
+    const optedOut = verification.mergeDeliveryAttempt({
+      prior: ["whatsapp"],
+      attempted: [{ channel: "whatsapp", success: false, eligibilityTerminal: true, errorCode: "RECIPIENT_OPTED_OUT" }],
+      liveChannels: ["whatsapp"],
+    });
+    assert.equal(optedOut.outcome.code, "RECIPIENT_OPTED_OUT");
+    assert.equal(optedOut.outcome.notifyUnverified, true);
+    assert.equal(optedOut.ledger.outcomes.whatsapp.reason, "eligibility");
+
+    const permanentWebhook = verification.mergeDeliveryAttempt({
+      prior: ["webhooks"],
+      attempted: [{ channel: "webhooks", success: false, terminal: true, errorCode: "HTTP_404", endpoints: { h: "permanent" } }],
+      liveChannels: ["webhooks"],
+    });
+    assert.equal(permanentWebhook.outcome.notifyUnverified, false);
+    assert.equal(permanentWebhook.outcome.notifyProviderTerminal, true);
+    assert.equal(permanentWebhook.outcome.code, "PERMANENT_DELIVERY_FAILURE");
+    assert.equal(permanentWebhook.outcome.status, "blocked");
+
+    const transient = verification.mergeDeliveryAttempt({
+      prior: ["webhooks"],
+      attempted: [{ channel: "webhooks", success: false, terminal: false, errorCode: "HTTP_429" }],
+      liveChannels: ["webhooks"],
+    });
+    assert.equal(transient.outcome.retry, true);
+    assert.equal(transient.outcome.notifyProviderTerminal, false);
+    assert.equal(transient.outcome.notifyUnverified, false);
+
+    const oneEndpoint = verification.mergeDeliveryAttempt({
+      prior: ["webhooks"],
+      attempted: [{
+        channel: "webhooks",
+        success: false,
+        partialSuccess: true,
+        terminal: true,
+        endpoints: { ok: "sent", bad: "permanent" },
+      }],
+      liveChannels: ["webhooks"],
+    });
+    assert.equal(oneEndpoint.outcome.status, "partial");
+    assert.equal(oneEndpoint.outcome.retry, false);
+    assert.equal(oneEndpoint.outcome.notifyUnverified, false);
+
+    const combined = verification.mergeDeliveryAttempt({
+      prior: ["email", "webhooks"],
+      attempted: [
+        { channel: "email", success: false, eligibilityTerminal: true, errorCode: "NO_VERIFIED_RECIPIENTS" },
+        { channel: "webhooks", success: false, terminal: true, endpoints: { h: "permanent" } },
+      ],
+      liveChannels: ["email", "webhooks"],
+    });
+    assert.equal(combined.outcome.notifyUnverified, true);
+    assert.equal(combined.outcome.notifyProviderTerminal, true);
+    assert.equal(combined.outcome.retry, false);
+
+    const manual = verification.planManualRetry(combined.ledger, "webhooks");
+    assert.equal(manual.ok, true);
+    assert.equal(manual.format, "ledger");
+    assert.equal(manual.channels.outcomes.email.code, "NO_VERIFIED_RECIPIENTS");
+    assert.equal(manual.channels.outcomes.webhooks.reopened, true);
+    assert.deepEqual(manual.channels.retry, ["webhooks"]);
+    assert.equal(verification.planManualRetry(combined.ledger, "email").code, "NO_VERIFIED_RECIPIENTS");
+    assert.deepEqual(verification.planManualRetry(["email", "webhooks"], "webhooks").channels, ["webhooks"]);
+    assert.equal(verification.planManualRetry({
+      version: 1,
+      retry: [],
+      required: ["email"],
+      outcomes: { email: { state: "sent", terminal: true } },
+    }, "email").code, "ALREADY_DELIVERED");
+    assert.equal(verification.planManualRetry(permanentWebhook.ledger).code, "CHANNEL_PERMANENT");
+
+    for (const state of ["pending", "failed", "partial", "blocked", "sent"]) {
+      const listed = verification.publicDeliveryChannels(state === "pending"
+        ? { version: 1, retry: ["email"], required: ["email"], outcomes: {} }
+        : {
+          version: 1,
+          retry: state === "failed" ? ["email"] : [],
+          required: ["email"],
+          outcomes: { email: { state, terminal: state !== "failed" } },
+        });
+      assert.deepEqual(listed.map((row) => row.channel), ["email"]);
+      assert.equal(listed[0].channel_state, state === "pending" ? "pending" : state);
+      assert.equal(Object.hasOwn(listed[0], "endpoints"), false);
+    }
+    assert.equal(verification.publicDeliveryChannels(["webhooks"])[0].channel_state, null);
+
+    const requeued = verification.requeueWebhookChannel(permanentWebhook.ledger);
+    assert.equal(requeued.version, 1);
+    assert.equal(requeued.outcomes.webhooks.terminal, false);
+    assert.equal(requeued.outcomes.webhooks.reopened, true);
+    assert.deepEqual(verification.requeueWebhookChannel(["email"]), ["email", "webhooks"]);
+
+    const api = fs.readFileSync(path.join(ROOT, "apps/api/index.js"), "utf8");
+    assert.match(api, /planManualRetry\(alert\.channels, channel\)/);
+    assert.match(api, /currentWorkspaceAccessSql\(currentAnchor, "\$3"\)/);
+    const alerts = fs.readFileSync(path.join(ROOT, "apps/api/routes/alerts.js"), "utf8");
+    assert.equal(alerts.includes("jsonb_array_elements_text"), false);
+    assert.match(alerts, /publicDeliveryChannels\(alert\.channels\)/);
+    assert.match(alerts, /delivery_claim_id IS NULL/);
+    const worker = fs.readFileSync(path.join(ROOT, "apps/worker/src/delivery-worker.js"), "utf8");
+    assert.match(worker, /type: "delivery_webhook_permanent"/);
+    assert.match(worker, /type: "delivery_unverified_recipients"/);
+    const queue = fs.readFileSync(path.join(ROOT, "apps/worker/src/queue-manager.js"), "utf8");
+    assert.match(queue, /reconcileDeliveryChannels/);
+    assert.match(queue, /delivery_claim_id IS NULL/);
   });
 });

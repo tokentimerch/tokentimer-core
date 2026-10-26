@@ -44,6 +44,10 @@ function mergeDeliveryAttempt(input) {
   return recipientVerification.mergeDeliveryAttempt(input);
 }
 
+function webhookChannelReopened(stored) {
+  return recipientVerification.webhookChannelReopened(stored);
+}
+
 const DELIVERY_CLAIM_EXCLUSION_SQL = recipientVerification.DELIVERY_CLAIM_EXCLUSION_SQL;
 
 export {
@@ -54,5 +58,6 @@ export {
   queueDeliveryOutcome,
   selectDeliverableDestinations,
   mergeDeliveryAttempt,
+  webhookChannelReopened,
   DELIVERY_CLAIM_EXCLUSION_SQL,
 };

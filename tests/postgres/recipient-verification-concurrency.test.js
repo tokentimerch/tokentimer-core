@@ -530,3 +530,207 @@ test("two workers cannot both commit a delivery result for one claim", async () 
     b.release();
   }
 });
+
+test("reconciliation, listing, and webhook requeue keep ledger history", async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS alert_queue (
+      id SERIAL PRIMARY KEY,
+      channels JSONB NOT NULL DEFAULT '[]'::jsonb,
+      status VARCHAR(20) NOT NULL DEFAULT 'pending',
+      due_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      next_attempt_at TIMESTAMP NULL,
+      delivery_claim_id UUID NULL,
+      error_message TEXT NULL
+    )
+  `);
+  await pool.query("ALTER TABLE alert_queue ADD COLUMN IF NOT EXISTS user_id INTEGER");
+  await pool.query("ALTER TABLE alert_queue ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP");
+  await pool.query("DELETE FROM alert_queue");
+
+  const ledger = {
+    version: 1,
+    retry: ["webhooks"],
+    required: ["email", "webhooks"],
+    outcomes: {
+      email: { state: "blocked", terminal: true, code: "NO_VERIFIED_RECIPIENTS", reason: "eligibility" },
+      webhooks: { state: "failed", terminal: false, code: "HTTP_500" },
+    },
+  };
+  const inserted = await pool.query(
+    `INSERT INTO alert_queue (channels, status, user_id, error_message)
+     VALUES ($1::jsonb, 'failed', 7, 'webhooks: HTTP 500')
+     RETURNING id, channels`,
+    [JSON.stringify(ledger)],
+  );
+  const id = inserted.rows[0].id;
+  const first = verification.reconcileDeliveryChannels(inserted.rows[0].channels, ["email", "webhooks"]);
+  assert.equal(first.changed, false);
+  assert.equal(first.channels.outcomes.email.state, "blocked");
+  assert.equal(verification.reconcileDeliveryChannels(first.channels, ["email", "webhooks"]).changed, false);
+
+  const claim = "33333333-3333-3333-3333-333333333333";
+  await pool.query("UPDATE alert_queue SET delivery_claim_id = $2 WHERE id = $1", [id, claim]);
+  const held = await pool.query(
+    `UPDATE alert_queue
+        SET channels = $1, updated_at = NOW()
+      WHERE id = $2
+        AND status = ANY($3::text[])
+        AND delivery_claim_id IS NULL
+        AND channels = $4`,
+    [JSON.stringify(["email"]), id, ["pending", "failed", "partial"], JSON.stringify(ledger)],
+  );
+  assert.equal(held.rowCount, 0);
+  const settled = {
+    version: 1,
+    retry: [],
+    required: ["email", "webhooks"],
+    outcomes: {
+      email: { state: "blocked", terminal: true, code: "NO_VERIFIED_RECIPIENTS", reason: "eligibility" },
+      webhooks: { state: "sent", terminal: true },
+    },
+  };
+  const owner = await pool.connect();
+  const reconciler = await pool.connect();
+  try {
+    const [delivered, raced] = await Promise.all([
+      owner.query(
+        `UPDATE alert_queue
+            SET channels = $2, status = 'partial', delivery_claim_id = NULL
+          WHERE id = $1 AND delivery_claim_id = $3
+          RETURNING channels`,
+        [id, JSON.stringify(settled), claim],
+      ),
+      reconciler.query(
+        `UPDATE alert_queue
+            SET channels = $1, updated_at = NOW()
+          WHERE id = $2
+            AND status = ANY($3::text[])
+            AND delivery_claim_id IS NULL
+            AND channels = $4`,
+        [JSON.stringify(["email"]), id, ["pending", "failed", "partial"], JSON.stringify(ledger)],
+      ),
+    ]);
+    assert.equal(delivered.rowCount, 1);
+    assert.equal(raced.rowCount, 0);
+  } finally {
+    owner.release();
+    reconciler.release();
+  }
+  const afterRace = await pool.query("SELECT channels, status FROM alert_queue WHERE id = $1", [id]);
+  assert.equal(afterRace.rows[0].status, "partial");
+  assert.equal(afterRace.rows[0].channels.outcomes.webhooks.state, "sent");
+  const stale = await pool.query(
+    `UPDATE alert_queue
+        SET channels = $1, updated_at = NOW()
+      WHERE id = $2
+        AND delivery_claim_id IS NULL
+        AND channels = $3`,
+    [JSON.stringify(["email"]), id, JSON.stringify(ledger)],
+  );
+  assert.equal(stale.rowCount, 0);
+  const settledReconcile = verification.reconcileDeliveryChannels(afterRace.rows[0].channels, ["email", "webhooks"]);
+  assert.deepEqual(settledReconcile.channels.retry, []);
+  assert.equal(settledReconcile.channels.outcomes.webhooks.state, "sent");
+
+  const narrowed = verification.reconcileDeliveryChannels(ledger, ["webhooks"]);
+  const wrote = await pool.query(
+    `UPDATE alert_queue
+        SET channels = $1, updated_at = NOW()
+      WHERE id = $2 AND delivery_claim_id IS NULL
+      RETURNING channels`,
+    [JSON.stringify(narrowed.channels), id],
+  );
+  assert.equal(wrote.rows[0].channels.outcomes.email, undefined);
+  assert.deepEqual(wrote.rows[0].channels.retry, ["webhooks"]);
+  assert.equal(verification.reconcileDeliveryChannels(wrote.rows[0].channels, ["webhooks"]).changed, false);
+
+  const permanent = {
+    version: 1,
+    retry: [],
+    required: ["email", "webhooks"],
+    outcomes: {
+      email: { state: "sent", terminal: true },
+      webhooks: { state: "blocked", terminal: true, reason: "provider", code: "HTTP_404", endpoints: { h: "permanent" } },
+    },
+  };
+  await pool.query(
+    `UPDATE alert_queue
+        SET channels = $1::jsonb, status = 'failed', error_message = 'webhooks: HTTP 404', user_id = 7
+      WHERE id = $2`,
+    [JSON.stringify(permanent), id],
+  );
+  const storedPermanent = await pool.query("SELECT channels FROM alert_queue WHERE id = $1", [id]);
+  const next = verification.requeueWebhookChannel(storedPermanent.rows[0].channels);
+  assert.equal(Array.isArray(next), false);
+  assert.equal(next.outcomes.email.state, "sent");
+  const requeued = await pool.query(
+    `UPDATE alert_queue
+        SET channels = $1, status = 'pending', next_attempt_at = NOW(), updated_at = NOW()
+      WHERE id = $2 AND user_id = $3 AND status = 'failed' AND delivery_claim_id IS NULL
+      RETURNING channels, status`,
+    [JSON.stringify(next), id, 7],
+  );
+  assert.equal(requeued.rows[0].status, "pending");
+  assert.equal(requeued.rows[0].channels.version, 1);
+  assert.equal(requeued.rows[0].channels.outcomes.webhooks.reopened, true);
+  assert.equal(requeued.rows[0].channels.outcomes.email.state, "sent");
+  const kind = await pool.query("SELECT jsonb_typeof(channels) AS kind FROM alert_queue WHERE id = $1", [id]);
+  assert.equal(kind.rows[0].kind, "object");
+
+  const otherUser = await pool.query(
+    `UPDATE alert_queue SET status = 'pending' WHERE id = $1 AND user_id = $2 RETURNING id`,
+    [id, 8],
+  );
+  assert.equal(otherUser.rowCount, 0);
+
+  const refused = verification.planManualRetry(requeued.rows[0].channels, "email");
+  assert.equal(refused.code, "ALREADY_DELIVERED");
+  const allowed = verification.planManualRetry(requeued.rows[0].channels, "webhooks");
+  const retried = await pool.query(
+    `UPDATE alert_queue SET channels = $1, status = 'pending' WHERE id = $2 AND user_id = $3 RETURNING channels`,
+    [JSON.stringify(allowed.channels), id, 7],
+  );
+  assert.equal(retried.rows[0].channels.outcomes.email.state, "sent");
+  assert.deepEqual(retried.rows[0].channels.retry, ["webhooks"]);
+
+  const legacyInserted = await pool.query(
+    `INSERT INTO alert_queue (channels, status, user_id)
+     VALUES ('["email"]'::jsonb, 'failed', 7)
+     RETURNING id, channels`,
+  );
+  const legacyWrite = await pool.query(
+    `UPDATE alert_queue SET channels = $1 WHERE id = $2 RETURNING channels`,
+    [JSON.stringify(verification.requeueWebhookChannel(legacyInserted.rows[0].channels)), legacyInserted.rows[0].id],
+  );
+  assert.deepEqual(legacyWrite.rows[0].channels, ["email", "webhooks"]);
+  const legacyKind = await pool.query(
+    "SELECT jsonb_typeof(channels) AS kind FROM alert_queue WHERE id = $1",
+    [legacyInserted.rows[0].id],
+  );
+  assert.equal(legacyKind.rows[0].kind, "array");
+
+  await pool.query("DELETE FROM alert_queue WHERE user_id = 11");
+  for (const status of ["pending", "failed", "partial", "blocked", "sent"]) {
+    const channels = status === "pending"
+      ? { version: 1, retry: ["email"], required: ["email"], outcomes: {} }
+      : {
+        version: 1,
+        retry: status === "failed" ? ["email"] : [],
+        required: ["email"],
+        outcomes: { email: { state: status, terminal: status !== "failed" } },
+      };
+    await pool.query(
+      "INSERT INTO alert_queue (channels, status, user_id) VALUES ($1::jsonb, $2, 11)",
+      [JSON.stringify(channels), status],
+    );
+  }
+  const listed = await pool.query(
+    "SELECT status, channels FROM alert_queue WHERE user_id = 11 ORDER BY id",
+  );
+  assert.deepEqual(listed.rows.map((row) => row.status), ["pending", "failed", "partial", "blocked", "sent"]);
+  for (const row of listed.rows) {
+    const expanded = verification.publicDeliveryChannels(row.channels);
+    assert.deepEqual(expanded.map((item) => item.channel), ["email"]);
+    assert.equal(expanded[0].channel_state, row.status === "pending" ? "pending" : row.status);
+  }
+});

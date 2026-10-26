@@ -38,7 +38,7 @@ Configure Twilio's incoming message webhook as `POST {PUBLIC_BASE_URL}/webhooks/
 - Self-hosted default is `shadow`: the worker evaluates and logs, and still delivers. Set `enforce` when invitations have been sent and recipients have had time to confirm. `off` is a self-hosted rollback switch only.
 - Cloud default is `enforce`. `off` is ignored. `shadow` is an operator-only temporary escape and is not a workspace setting.
 
-When enforcement blocks every required recipient, the alert is marked `blocked` with `NO_VERIFIED_RECIPIENTS` and is not retried as a provider outage. If another channel succeeded, the alert is `partial` and the successful channel is not sent again. Other eligible recipients in a mixed group are still delivered, including when an earlier duplicate contact for the same address is unverified. A workspace warning is raised for administrators.
+When enforcement blocks every required recipient, the alert is marked `blocked` with `NO_VERIFIED_RECIPIENTS` and is not retried as a provider outage. If another channel succeeded, the alert is `partial` and the successful channel is not sent again. Other eligible recipients in a mixed group are still delivered, including when an earlier duplicate contact for the same address is unverified. A workspace warning is raised for administrators. A permanent webhook response is a provider failure: that endpoint is not retried automatically, earlier successful channels are not sent again, and the warning type is `delivery_webhook_permanent`. An administrator can retry that webhook after fixing it. A recipient who has not confirmed, or who opted out, is not retried by that action.
 
 Workspace WhatsApp tests require `contact_id` for a saved contact whose current number is verified. An arbitrary `phone_e164` is rejected.
 
@@ -66,7 +66,8 @@ A destination that hits the weekly cap from 3 or more workspaces is suppressed f
 - Audit actions: `RECIPIENT_VERIFICATION_INVITED`, `RECIPIENT_VERIFICATION_RATE_LIMITED`, `RECIPIENT_VERIFICATION_REVOKED`, `RECIPIENT_VERIFICATION_RESUBSCRIBE_REQUIRED`, `RECIPIENT_WHATSAPP_CONFIRMED`.
 - Worker log `recipient-verification-shadow` while shadow mode is on.
 - Operational notification type `delivery_unverified_recipients` when an enforced alert has no eligible recipient.
-- Alert status `blocked` and error `NO_VERIFIED_RECIPIENTS` means the failure is eligibility, not SMTP or Twilio.
+- Operational notification type `delivery_webhook_permanent` when a webhook endpoint rejects the alert. That warning is not used for an unverified or opted-out recipient.
+- Alert status `blocked` and error `NO_VERIFIED_RECIPIENTS` means the failure is eligibility, not SMTP, Twilio, or a webhook response. `PERMANENT_DELIVERY_FAILURE` means a provider rejected the delivery.
 
 ## Limitations
 

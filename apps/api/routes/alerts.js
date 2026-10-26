@@ -3,6 +3,7 @@ const { ipKeyGenerator } = require("express-rate-limit");
 const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
+const recipientVerification = require("../../../packages/recipient-verification");
 const { requireAuth } = require("../middleware/auth");
 const { getApiLimiter } = require("../middleware/rateLimit");
 const {
@@ -1607,28 +1608,28 @@ router.put(
           webhooks_alerts_enabled === undefined)
       ) {
         try {
-          await pool.query(
-            `UPDATE alert_queue
-             SET 
-               channels = (
-                 SELECT (
-                   SELECT jsonb_agg(DISTINCT to_jsonb(v)) FROM (
-                     SELECT jsonb_array_elements_text(COALESCE(alert_queue.channels::jsonb, '[]'::jsonb)) AS v
-                     UNION SELECT 'webhooks'
-                   ) s
-                 )
-               )
-               , status = 'pending'
-               , next_attempt_at = NOW()
-               , updated_at = NOW()
-             WHERE user_id = $1
-               AND status = 'failed'
-               AND (
-                 error_message ILIKE '%webhooks%'
-                 OR channels::text NOT LIKE '%webhooks%'
-               )`,
+          const failedAlerts = await pool.query(
+            `SELECT id, channels
+               FROM alert_queue
+              WHERE user_id = $1
+                AND status = 'failed'
+                AND delivery_claim_id IS NULL
+                AND (
+                  COALESCE(error_message, '') ILIKE '%webhooks%'
+                  OR COALESCE(channels::text, '') NOT LIKE '%webhooks%'
+                )`,
             [req.user.id],
           );
+          for (const failedAlert of failedAlerts.rows) {
+            const nextChannels = recipientVerification.requeueWebhookChannel(failedAlert.channels);
+            if (!nextChannels) continue;
+            await pool.query(
+              `UPDATE alert_queue
+                  SET channels = $1, status = 'pending', next_attempt_at = NOW(), updated_at = NOW()
+                WHERE id = $2 AND user_id = $3 AND status = 'failed' AND delivery_claim_id IS NULL`,
+              [JSON.stringify(nextChannels), failedAlert.id, req.user.id],
+            );
+          }
         } catch (_err) {
           logger.debug("Non-critical operation failed", {
             error: _err.message,
@@ -2186,20 +2187,17 @@ router.get(
       // Expand channels into separate rows
       const expandedAlerts = [];
       for (const alert of rows.rows) {
-        let channels = [];
-        try {
-          channels = Array.isArray(alert.channels)
-            ? alert.channels
-            : JSON.parse(alert.channels);
-        } catch (_) {
-          channels = [];
-        }
+        const listedChannels = recipientVerification.publicDeliveryChannels(alert.channels);
+        const channels = listedChannels.map((row) => row.channel);
+        const channelState = new Map(listedChannels.map((row) => [row.channel, row.channel_state]));
 
         if (channels.length === 0) {
           // If no channels, still show the alert
           expandedAlerts.push({
             ...alert,
+            channels: [],
             channel: null,
+            channel_state: null,
             channel_display: "None",
             channel_error_message: null,
           });
@@ -2216,7 +2214,9 @@ router.get(
                     : null;
             expandedAlerts.push({
               ...alert,
+              channels,
               channel,
+              channel_state: channelState.get(channel) || null,
               channel_display:
                 channel === "email"
                   ? "\u{1F4E7} Email"
