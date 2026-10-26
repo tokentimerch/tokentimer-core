@@ -1,7 +1,7 @@
 # Certificate material distribution candidate
 
 Customer issuer → existing native ACME DNS-01 → customer Vault KV v2 →
-explicitly assigned Linux consumers → concrete TLS listeners → public receipts.
+explicitly assigned Linux consumers → installed files, optionally live TLS listeners → public receipts.
 The API, workers, inventory scanners, dashboards and queues never receive the
 private key or Vault/DNS credentials. Publishing is a separate outcome from
 deploying to every consumer. The same certificate may be an ordinary, SAN, or
@@ -78,7 +78,7 @@ Each local store entry grants one explicit workspace/group, exact SAN set and
 key algorithm. Issuer entries also bind wire agent ID, issuance profile/revision,
 CA endpoint and DNS provider/zone. Each consumer entry binds wire agent ID,
 group/store, deployment profile/revision, authorization revision, destination,
-reload and all dial address/port/SNI probes. Changing a server binding increments
+delivery policy, and (for service delivery) reload and all dial address/port/SNI probes. Changing a server binding increments
 its authorization revision; update and review the matching local policy before
 creating a new approved rollout. No implicit path or alias fallback exists.
 
@@ -123,10 +123,7 @@ issuer or consumer credentials. Protect Vault backups as private keys.
 
 ## Public workflow
 
-Start with [First Vault distribution](vault-first-distribution.md). Distribution administration is mostly API-first. Inspect status in **Certificates → certificate → Deployments**; **Renewals** contains profiles and AD CS issuers. The setup guide creates the publication job. Consumer assignment,
-editing consumer bindings, requesting and approving rollouts, containment, retry
-and verification-only checks use the API below and the existing job approval
-endpoints.
+Start with [First Vault distribution](vault-first-distribution.md). The setup guide sends signed checks, creates the publication job, assigns one or more consumers and requests the chosen version's rollout. It displays returned configuration revisions, job timelines, read-only output and consumer verification. No terminal TokenTimer API calls are needed for that first distribution. Inspect later status in **Certificates → certificate → Deployments**; **Renewals** contains profiles and AD CS issuers. The API below remains the reference for automation, advanced binding changes, containment and verification-only checks. Approval review uses the existing Jobs surface when workspace policy requires it.
 
 1. Create an existing `issue` job with `assignedAgentId` set to the issuer's
    database row ID. Its payload includes the existing target/SANs/CA/DNS/key
@@ -167,16 +164,23 @@ endpoints.
    setting off for unattended execution. Publication of a renewed version does
    not automatically request a rollout: submit the new version explicitly.
 6. Children are signed `deploy-from-store` jobs assigned to one agent/binding.
+   `installed` is the explicit file-only verification policy: install and read
+   back the certificate/key pair (and a configured chain), without reload or TLS
+   probes. Local bindings for this policy must not contain reload commands or
+   listener probes. Its receipt has `installed: true`, with `bound`,
+   `servedVerified` and `trustValidated` false. A completed rollout containing
+   any file-only consumer has state `installed`, never `verified`.
    Fetch, pair/identity validation, installation, reload, served verification
    and trust validation have separate receipt fields. `served` verifies the
    requested fingerprint; `trust` also requires hostname/SNI and CA trust.
-   Every locally configured listener must pass. A certificate renewed at the
+   For `served`/`trust`, every locally configured listener must pass. These
+   policies still reject a receipt that only proves file installation. A certificate renewed at the
    source does not mark an offline consumer current.
 
 The consumer matrix at `GET .../{groupId}/consumers` and **Certificates → Deployments**
 shows desired/observed logical versions, generation, fingerprint, deployed
 expiry, verification method/time and latest deployment failure. Convergence
-requires a fresh, unexpired proof for the current binding revision and active
+requires a fresh, unexpired proof of the selected delivery policy for the current binding revision and active
 identity. It is never inferred from publication alone.
 An optional consumer whose authorization changed makes a completed rollout
 `degraded`, even if a successful historical receipt remains available.
@@ -202,7 +206,7 @@ retry fetches the same pinned provider version. A changed intent needs a new
 approval. Cloud admission rejects new effects for frozen or unpaid workspaces;
 claim-bound continuing results remain accepted.
 
-After an uncertain consumer deployment, repair and reconcile the local service,
+After an uncertain consumer deployment, repair and reconcile the local files and, when selected, service,
 then retry the original job and resume its rollout. Only an accepted, fresh
 receipt for the current authorized deployment clears that job's server-side
 reconciliation flag. Local reconciliation alone, stale historical evidence and
@@ -210,7 +214,7 @@ an invalid receipt leave the flag in place.
 
 For a read-only drift check, request another approved rollout of the desired
 version with `verificationOnly: true`. It advances generation, fetches/validates
-the pinned bundle, compares the installed pair and probes the listeners, without
+the pinned bundle, compares the installed pair and (for service policies) probes the listeners, without
 installation or reload. Failure reports `material_drift_detected`; previous
 verified state remains historical and the matrix becomes unconverged. Schedule
 these checks through the existing authorized workflow if periodic checks are

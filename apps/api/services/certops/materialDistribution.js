@@ -255,10 +255,17 @@ async function acceptDeploymentReceipt({ client, workspaceId, agentId, job, rece
   if (!row || row.job_id !== job.id || row.assigned_agent_id !== agentId ||
     job.claimed_by_agent_id !== agentId || receipt.workspaceId !== workspaceId || receipt.groupId !== row.group_id ||
     receipt.bindingId !== row.binding_id || receipt.materialVersionId !== row.material_version_id ||
+    intent.verificationPolicy !== row.verification_policy ||
+    intent.authorizationRevision !== row.authorization_revision ||
+    intent.deploymentProfileRef !== row.deployment_profile_ref || intent.profileRevision !== row.profile_revision ||
     receipt.generation !== Number(row.generation) || receipt.fingerprintSha256 !== row.fingerprint_sha256 ||
     receipt.validTo !== new Date(row.valid_to).toISOString()) fail("CERTOPS_DEPLOYMENT_RECEIPT_MISMATCH");
   if (receipt.trustValidated && !receipt.servedVerified || receipt.servedVerified && !receipt.bound || receipt.bound && !receipt.installed || receipt.installed && !receipt.fetched) fail("CERTOPS_DEPLOYMENT_STAGES_INVALID", 422);
-  if (jobStatus === "succeeded" && (!receipt.servedVerified || (row.verification_policy === "trust" && !receipt.trustValidated))) fail("CERTOPS_DEPLOYMENT_ASSURANCE_MISSING", 422);
+  const filesOnly = row.verification_policy === "installed";
+  if (filesOnly && (receipt.bound || receipt.servedVerified || receipt.trustValidated)) fail("CERTOPS_DEPLOYMENT_ASSURANCE_MISMATCH", 422);
+  const assurance = filesOnly ? receipt.installed
+    : receipt.servedVerified && (row.verification_policy !== "trust" || receipt.trustValidated);
+  if (jobStatus === "succeeded" && !assurance) fail("CERTOPS_DEPLOYMENT_ASSURANCE_MISSING", 422);
   const lease = await client.query(`SELECT 1 FROM certificate_jobs WHERE workspace_id=$1 AND id=$2 AND claim_id=$3 AND lease_expires_at>clock_timestamp()`, [workspaceId, job.id, job.claim_id]);
   if (!lease.rowCount) fail("CERTOPS_DEPLOYMENT_CLAIM_EXPIRED");
   const age = Date.now() - Date.parse(receipt.observedAt);
@@ -277,12 +284,12 @@ async function acceptDeploymentReceipt({ client, workspaceId, agentId, job, rece
   const identityActive = identity?.rows[0]?.lifecycle_status === "active";
   const current = identityActive && row.binding_state === "active" && row.current_authorization_revision === row.authorization_revision &&
     Number(row.desired_generation) === receipt.generation && row.desired_material_version_id === receipt.materialVersionId &&
-    ["pending","deploying"].includes(row.rollout_state) && jobStatus === "succeeded" && receipt.servedVerified && (row.verification_policy !== "trust" || receipt.trustValidated);
+    ["pending","deploying"].includes(row.rollout_state) && jobStatus === "succeeded" && assurance;
   if (current) await client.query(`UPDATE certops_consumer_current_state SET accepted_generation=$3,
     observed_material_version_id=$4,observed_fingerprint_sha256=$5,observed_valid_to=$6,verification_method=$7,observed_at=$8
     WHERE workspace_id=$1 AND binding_id=$2 AND accepted_generation<=$3`, [workspaceId, intent.bindingId,
     receipt.generation, receipt.materialVersionId, receipt.fingerprintSha256, receipt.validTo,
-    receipt.trustValidated ? "trust" : "served", receipt.observedAt]);
+    filesOnly ? "installed" : receipt.trustValidated ? "trust" : "served", receipt.observedAt]);
   await enqueueDistributionEvent(client, workspaceId, "distribution_rollout_requested", `${intent.rolloutId}:${job.id}:${job.claim_id}`, { groupId: intent.groupId, rolloutId: intent.rolloutId });
   return { historicalOnly: !current, retirementConflict: !identityActive, stage };
 }
@@ -309,11 +316,16 @@ async function consumerMatrix({ client, workspaceId, groupId, groupIds }) {
         WHERE proof.workspace_id=b.workspace_id AND proof.binding_id=b.id AND rollout.generation=s.accepted_generation
           AND proof.authorization_revision=b.authorization_revision AND identity.lifecycle_status='active'
           AND current_group.state='active' AND period.ended_at IS NULL
-          AND material.id=s.observed_material_version_id AND material.certificate_identity_id=period.current_identity_id
-          AND proof.stage IN ('served_verified','trust_validated'))
+          AND material.id=s.observed_material_version_id
+          AND proof.verification_policy=b.verification_policy
+          AND ((b.verification_policy='installed' AND proof.stage='installed' AND s.verification_method='installed')
+            OR (b.verification_policy='served' AND proof.stage IN ('served_verified','trust_validated') AND s.verification_method IN ('served','trust'))
+            OR (b.verification_policy='trust' AND proof.stage='trust_validated' AND s.verification_method='trust')))
       AND s.observed_at>clock_timestamp()-b.freshness_seconds*interval '1 second') AS converged,
-    (SELECT jsonb_build_object('stage',d.stage,'failureCode',d.failure_code,'jobId',d.job_id)
+    (SELECT jsonb_build_object('stage',d.stage,'failureCode',COALESCE(d.failure_code,j.error_code),'jobId',d.job_id,
+      'rolloutId',r.id,'rolloutState',r.state,'rolloutRequestJobId',r.approval_job_id)
       FROM certops_consumer_deployments d JOIN certops_distribution_rollouts r ON r.workspace_id=d.workspace_id AND r.id=d.rollout_id
+      LEFT JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=d.job_id
       WHERE d.workspace_id=b.workspace_id AND d.binding_id=b.id ORDER BY r.generation DESC LIMIT 1) AS latest_deployment
     FROM certops_consumer_bindings b LEFT JOIN certops_consumer_current_state s
     ON s.workspace_id=b.workspace_id AND s.binding_id=b.id
@@ -321,7 +333,10 @@ async function consumerMatrix({ client, workspaceId, groupId, groupIds }) {
     LEFT JOIN certops_material_versions desired ON desired.workspace_id=s.workspace_id AND desired.id=s.desired_material_version_id
     LEFT JOIN certops_material_versions observed ON observed.workspace_id=s.workspace_id AND observed.id=s.observed_material_version_id
     WHERE b.workspace_id=$1 AND b.group_id=ANY($2::uuid[]) ORDER BY b.id`,
-  [workspaceId, ids])).rows;
+  [workspaceId, ids])).rows.map(row => ({ ...row,
+    files_installed: row.converged === true && row.verification_policy === "installed",
+    live_verified: row.converged === true && ["served", "trust"].includes(row.verification_policy),
+  }));
 }
 
 module.exports = { validateDistributionContract, normalizeDistributionId, hashIntent, enqueueDistributionEvent, buildRolloutIntent, lockGroup, resolveDistributionJobDefaults, createGroupForSource, allocateMaterialVersion,

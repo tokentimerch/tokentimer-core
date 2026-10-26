@@ -76,6 +76,7 @@ export function ExecutionStep({ ctx }) {
   const [job, setJob] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [attemptId] = useState(() => globalThis.crypto.randomUUID());
   const { required: approvalRequired } = useJobApprovalPolicy(ctx.workspaceId);
   const goal = GOALS[ctx.session.intent?.goal];
   const needsExecution = goal?.certopsObjective !== 'observe';
@@ -146,14 +147,25 @@ export function ExecutionStep({ ctx }) {
   }
 
   const createDryRun = async () => {
+    if (busy || !agent || saved.dryRunJobId) return;
     setBusy(true);
     setError('');
     try {
+      const requestKey =
+        saved.dryRunRequestAgentId === agent.id && saved.dryRunRequestKey
+          ? saved.dryRunRequestKey
+          : `wizard-dryrun-${agent.id}-${attemptId}`;
+      // Save before submission: retries after a lost response recover the
+      // same request, while Start over and another agent get a fresh key.
+      await saveCertops(ctx, {
+        dryRunRequestKey: requestKey,
+        dryRunRequestAgentId: agent.id,
+      });
       const res = await createJob(
         ctx.workspaceId,
         buildDryRunJob({
           assignedAgentId: agent.id,
-          idempotencyKey: `wizard-dryrun-${agent.id}`,
+          idempotencyKey: requestKey,
         })
       );
       const created = res.job || res;

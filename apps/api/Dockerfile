@@ -33,7 +33,7 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
 COPY --from=subfinder-builder /go/bin/subfinder /usr/local/bin/subfinder
 RUN subfinder -version
 
-RUN corepack enable && corepack prepare pnpm@11.13.0 --activate
+RUN corepack enable && corepack prepare pnpm@11.28.8 --activate
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 COPY --chown=nodejs:nodejs packages ./packages

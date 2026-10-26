@@ -868,9 +868,17 @@ describe("CertOps inventory routes", function () {
       })
       .expect(200);
 
-    expect(response.body.certificate.id).to.equal(leafCertificate.id);
+    expect(response.body.certificate.id).to.equal(response.body.certificate.identityId);
+    expect(response.body.certificate.fingerprintSha256).to.equal(leafCertificate.fingerprintSha256);
+    expect(response.body.certificate.managed).to.equal(false);
+    expect(response.body.certificate.managedCertificateId).to.equal(null);
     expect(response.body.certificate.status).to.equal("decommissioned");
-    expect(response.body.certificate.tokenId).to.equal(leafCertificate.tokenId);
+    const history = await request(BASE)
+      .get(`/api/v1/workspaces/${workspaceId}/certops/certificate-identities/${response.body.certificate.identityId}`)
+      .set("Cookie", ownerSession.cookie).expect(200);
+    expect(history.body.certificate.sources.some(source =>
+      source.managedCertificateId === leafCertificate.id && source.periodEndedAt,
+    )).to.equal(true);
     expectNoPrivateKeyFields(response.body);
 
     const managed = await managedCertificateRow(
@@ -930,7 +938,10 @@ describe("CertOps inventory routes", function () {
       })
       .expect(200);
 
-    expect(response.body.certificate.id).to.equal(caCertificate.id);
+    expect(response.body.certificate.id).to.equal(response.body.certificate.identityId);
+    expect(response.body.certificate.fingerprintSha256).to.equal(caCertificate.fingerprintSha256);
+    expect(response.body.certificate.managed).to.equal(false);
+    expect(response.body.certificate.managedCertificateId).to.equal(null);
     expect(response.body.certificate.status).to.equal("revoked");
     expectNoPrivateKeyFields(response.body);
 

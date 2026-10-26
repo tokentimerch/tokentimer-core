@@ -172,7 +172,7 @@ Set `RECIPIENT_FINGERPRINT_SECRET` (or rely on `PHONE_HASH_SALT` or `SESSION_SEC
 
 Point Twilio's inbound WhatsApp webhook at `POST /webhooks/twilio/whatsapp/inbound`. The signature is checked against `PUBLIC_BASE_URL` or `API_URL` plus the request path and the raw form body. A missing base URL or auth token returns 503 and does not confirm a number. Delivery status callbacks are not consent.
 
-Migration `recipient_channel_verification` adds the verification tables and does not mark existing contacts verified. See [recipient verification](recipient-verification.md).
+Migration 79 (`recipient_channel_verification`) adds the verification tables and does not mark existing contacts verified. See [recipient verification](recipient-verification.md).
 
 ## Alerts, limits, and webhooks
 
@@ -479,6 +479,14 @@ decommission eligibility after deployment. Legacy record retirement clients
 must supply the expected certificate identity; incompatible requests fail
 without mutation. Reverting images does not undo migrations; recovery needs a
 matching backup or an explicitly supported migration path.
+
+Retiring a certificate closes its current source management periods and disables
+their automation while retaining source and observation history. Seeing a fresh
+replacement fingerprint does not resume management. After verifying that fresh
+certificate, select **Re-add management** and choose its renewal configuration
+explicitly. The retired fingerprint remains terminal and cannot be re-added.
+Bound terminal AD CS key cleanup can still finish; retirement does not classify
+read-only or dry-run work as an uncertain installation.
 
 Cloud applies the corresponding schema as migrations 80–84. Enterprise must
 ship the Core runtime containing these changes alongside its overlays. Promote

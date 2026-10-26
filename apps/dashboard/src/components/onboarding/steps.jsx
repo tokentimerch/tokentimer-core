@@ -8,6 +8,7 @@ import {
   RadioGroup,
   Stack,
   Text,
+  Tooltip,
   VStack,
 } from '@chakra-ui/react';
 import {
@@ -156,18 +157,38 @@ export function GoalStep({ ctx, returnTo = null }) {
                         .join(' ');
                       return (
                         <Box key={goal.id}>
-                          <HStack>
-                            <Radio
-                              value={goal.id}
-                              isDisabled={Boolean(goal.blocker)}
-                              aria-describedby={describedBy}
+                          <Tooltip
+                            label={
+                              goal.blocker?.remediation ||
+                              'This goal is unavailable. Check the requirements below.'
+                            }
+                            isDisabled={!goal.blocker}
+                            hasArrow
+                            openDelay={0}
+                          >
+                            <HStack
+                              role={goal.blocker ? 'group' : undefined}
+                              aria-label={
+                                goal.blocker
+                                  ? `Restriction for ${goal.label}`
+                                  : undefined
+                              }
+                              tabIndex={goal.blocker ? 0 : undefined}
                             >
-                              <Text fontWeight='semibold' fontSize='sm'>
-                                {goal.label}
-                              </Text>
-                            </Radio>
-                            {candidate ? <CandidateBadge id={badgeId} /> : null}
-                          </HStack>
+                              <Radio
+                                value={goal.id}
+                                isDisabled={Boolean(goal.blocker)}
+                                aria-describedby={describedBy}
+                              >
+                                <Text fontWeight='semibold' fontSize='sm'>
+                                  {goal.label}
+                                </Text>
+                              </Radio>
+                              {candidate ? (
+                                <CandidateBadge id={badgeId} />
+                              ) : null}
+                            </HStack>
+                          </Tooltip>
                           <Text
                             id={`goal-${goal.id}-desc`}
                             fontSize='xs'

@@ -7,11 +7,11 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `no-host`: skipped because it needs real hardware/OS/IIS not available in CI
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 75
+Total skips found: 76
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
-| `packages/agent/scripts/install-agent-sh.test.js` | 34 | install-agent.sh polkit grants on re-run | describe(..., { skip }) option-object | `no-host` |
+| `packages/agent/scripts/install-agent-sh.test.js` | 36 | install-agent.sh polkit grants on re-run | describe(..., { skip }) option-object | `no-host` |
 | `packages/agent/scripts/installer-smoke.test.js` | 370 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `no-host` |
 | `packages/agent/scripts/pack-release.test.js` | 204 | tracks install-agent.sh as executable in git (mode 100755) | dynamic (this.skip() / t.skip()) | `no-host` |
 | `packages/agent/scripts/pack-release.test.js` | 213 | assertExecutableEntries rejects a tarball whose installer lost the exec bit | dynamic (this.skip() / t.skip()) | `no-host` |
@@ -51,6 +51,7 @@ Total skips found: 75
 | `packages/agent/src/keys/keys.test.js` | 180 | sets 0600 on the key file and 0700 on the parent dir on non-win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 209 | refuses to write through a symlink at the key path | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 499 | verifies the CSR with openssl when available | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/material-preflight.test.js` | 10 | a local material policy refusal has no uncertain side effect | test(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/material-store/material-store.test.js` | 88 | real isolated Vault KV v2: pinned publication and idempotent CAS | test(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/material-store/material-store.test.js` | 130 | real Vault ACL separates issuer, consumer, scanner and customer prefixes | test(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/platform/platform.test.js` | 454 | refuses a group/other-readable file on POSIX | it(..., { skip }) option-object | `no-host` |

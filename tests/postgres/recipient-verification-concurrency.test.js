@@ -96,7 +96,7 @@ test.beforeEach(async () => {
   delete process.env.RECIPIENT_VERIFY_PUBLIC_WINDOW_SECONDS;
 });
 
-test("migration 78 is idempotent and creates the verification indexes", async () => {
+test("migration 79 is idempotent and creates the verification indexes", async () => {
   const indexes = await pool.query(
     `SELECT indexname FROM pg_indexes
       WHERE indexname IN (

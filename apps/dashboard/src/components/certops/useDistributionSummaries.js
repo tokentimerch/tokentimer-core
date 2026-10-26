@@ -81,13 +81,20 @@ export default function useDistributionSummaries(
       }
       return {
         index,
-        deadlines: [...groups.values()].flatMap(group =>
-          Array.isArray(group.summary?.verification_expirations)
-            ? group.summary.verification_expirations.map(
-                time => time + group.offset
-              )
-            : [group.fallbackExpiry]
-        ),
+        deadlines: [...groups.values()].flatMap(group => {
+          const live = group.summary?.verification_expirations;
+          const files = group.summary?.installation_expirations;
+          return [
+            ...(Array.isArray(live)
+              ? live.map(time => time + group.offset)
+              : [group.fallbackExpiry]),
+            ...(Array.isArray(files)
+              ? files.map(time => time + group.offset)
+              : group.summary?.installed
+                ? [group.fallbackExpiry]
+                : []),
+          ];
+        }),
       };
     },
     [workspaceId, managedIds, identityIds]
@@ -105,17 +112,32 @@ export default function useDistributionSummaries(
             const expired = expirations.filter(
               time => time + group.offset <= state.now
             ).length;
+            const installations = summary.installation_expirations;
+            const installedExpired = Array.isArray(installations)
+              ? installations.filter(time => time + group.offset <= state.now)
+                  .length
+              : 0;
             return {
               ...group,
+              ...(summary.installed &&
+              !Array.isArray(installations) &&
+              state.now >= group.fallbackExpiry
+                ? { freshnessUnknown: true }
+                : {}),
               summary: {
                 ...summary,
-                verified: Math.max(0, summary.verified - expired),
-                stale: (summary.stale || 0) + expired,
+                verified: Math.max(0, (summary.verified || 0) - expired),
+                installed: Math.max(
+                  0,
+                  (summary.installed || 0) - installedExpired
+                ),
+                stale: (summary.stale || 0) + expired + installedExpired,
               },
             };
           }
           // Older servers cannot supply exact freshness boundaries. Fail closed after one poll window.
-          return state.now >= group.fallbackExpiry && summary.verified
+          return state.now >= group.fallbackExpiry &&
+            (summary.verified || summary.installed)
             ? { ...group, freshnessUnknown: true }
             : group;
         })

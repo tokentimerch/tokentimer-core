@@ -148,6 +148,22 @@ test("real PostgreSQL publication, renewal identities, approvals, frozen waves, 
   assert.equal((await pool.query("SELECT needs_operator_reconciliation FROM certificate_jobs WHERE id=$1",[child.id])).rows[0].needs_operator_reconciliation,true);
   await operations.transaction(client=>operations.advanceRollout(client,workspaceId,groupId,snapshot.rolloutId));
   assert.equal((await pool.query("SELECT state FROM certops_distribution_rollouts WHERE id=$1",[snapshot.rolloutId])).rows[0].state,"paused");
+  const pausedConsumer=(await material.consumerMatrix({client:pool,workspaceId,groupId})).find(row=>row.binding_id===bindingA);
+  assert.equal(pausedConsumer.latest_deployment.rolloutId,snapshot.rolloutId);
+  assert.equal(pausedConsumer.latest_deployment.rolloutRequestJobId,approval.id);
+  assert.notEqual(pausedConsumer.latest_deployment.rolloutId,pausedConsumer.latest_deployment.rolloutRequestJobId);
+  assert.equal(pausedConsumer.latest_deployment.rolloutState,"paused");
+  const matrixClient=await pool.connect();
+  try {
+    await matrixClient.query("BEGIN");
+    await matrixClient.query("UPDATE certops_consumer_deployments SET failure_code=NULL WHERE workspace_id=$1 AND job_id=$2",[workspaceId,child.id]);
+    await matrixClient.query("UPDATE certificate_jobs SET error_code='material_reload_failed' WHERE workspace_id=$1 AND id=$2",[workspaceId,child.id]);
+    const fallback=(await material.consumerMatrix({client:matrixClient,workspaceId,groupId})).find(row=>row.binding_id===bindingA);
+    assert.equal(fallback.latest_deployment.failureCode,"material_reload_failed","older deployment rows retain the underlying job failure");
+  } finally {
+    await matrixClient.query("ROLLBACK");
+    matrixClient.release();
+  }
   await operations.retryDistributionJob({workspaceId,jobId:child.id,actorUserId:actor});
   await operations.setRolloutState({workspaceId,groupId,rolloutId:snapshot.rolloutId,state:"deploying",actorUserId:actor});
   const reclaimed=await dispatch.claimJobs(poll);assert.equal(reclaimed.jobs.length,1);
@@ -250,8 +266,20 @@ test("real PostgreSQL publication, renewal identities, approvals, frozen waves, 
   assert.equal(deployments.length,2);assert.ok(deployments.every(d=>d.job_id));
   let inFlight=(await pool.query("UPDATE certificate_jobs SET status='running',claim_id=gen_random_uuid(),claimed_by_agent_id=$2,lease_expires_at=clock_timestamp()+interval '5 minutes' WHERE id=$1 RETURNING *",[deployments[0].job_id,deployments[0].assigned_agent_id])).rows[0];
   assert.equal(inFlight.certificate_identity_id,oldIdentity.id,"rollback pins the immutable old version identity");
+  const rollbackReceipt = { ...deployed, bindingId: deployments[0].binding_id,
+    generation: retirementRollout.payload.distributionRollout.generation, observedAt: new Date().toISOString() };
+  const rollbackAccepted = await operations.transaction(client => material.acceptDeploymentReceipt({
+    client, workspaceId, agentId: deployments[0].assigned_agent_id, job: inFlight,
+    jobStatus: "succeeded", receipt: rollbackReceipt }));
+  assert.equal(rollbackAccepted.historicalOnly, false, "the approved retained version is accepted as current");
+  assert.equal((await material.consumerMatrix({ client: pool, workspaceId, groupId }))
+    .find(row => row.binding_id === deployments[0].binding_id).converged, true,
+    "an approved rollback converges while its retained identity remains active");
   const stateBefore=(await pool.query("SELECT accepted_generation,observed_material_version_id FROM certops_consumer_current_state WHERE binding_id=$1",[deployments[0].binding_id])).rows[0];
   await pool.query("UPDATE certops_certificate_identities SET lifecycle_status='decommissioned' WHERE workspace_id=$1 AND id=$2",[workspaceId,oldIdentity.id]);
+  assert.equal((await material.consumerMatrix({ client: pool, workspaceId, groupId }))
+    .find(row => row.binding_id === deployments[0].binding_id).converged, false,
+    "retiring the pinned rollback identity removes convergence");
   await assert.rejects(pool.query("UPDATE certificate_jobs SET status='claimed',claim_id=gen_random_uuid(),claimed_by_agent_id=$2 WHERE id=$1",[deployments[1].job_id,deployments[1].assigned_agent_id]),{code:"55000"});
   const late=await operations.transaction(client=>material.acceptDeploymentReceipt({client,workspaceId,agentId:deployments[0].assigned_agent_id,
     job:inFlight,jobStatus:"succeeded",receipt:{...deployed,bindingId:deployments[0].binding_id,generation:retirementRollout.payload.distributionRollout.generation,observedAt:new Date().toISOString()}}));

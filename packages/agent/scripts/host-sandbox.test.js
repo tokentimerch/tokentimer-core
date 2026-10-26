@@ -16,7 +16,20 @@ const {
   planPolkitRule,
   parseExistingPolkitUnits,
   mapReloadService,
+  assertPolkitJavascriptVersion,
 } = require("./host-sandbox.js");
+
+describe("reload authorization backend", () => {
+  it("rejects legacy/local-authority and unrecognized versions instead of promising an ineffective grant", () => {
+    assert.throws(() => assertPolkitJavascriptVersion("pkaction version 0.105"), /JavaScript/);
+    assert.throws(() => assertPolkitJavascriptVersion("unknown"), /version/);
+  });
+  it("accepts JavaScript-rule versions including the current integer version scheme", () => {
+    for (const version of ["pkaction version 0.106", "pkaction version 0.120", "pkaction version 124"]) {
+      assert.doesNotThrow(() => assertPolkitJavascriptVersion(version));
+    }
+  });
+});
 
 describe("host-sandbox path validation", () => {
   it("accepts absolute concrete paths", () => {

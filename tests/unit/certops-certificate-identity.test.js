@@ -79,12 +79,17 @@ test("unknown visibility requires acknowledgment and a running install blocks af
     { code: "CERTOPS_MUTATION_RUNNING" });
 });
 
-test("acknowledged uncertain decommission commits and preserves source management", async () => {
+test("acknowledged uncertain decommission closes current periods and preserves source history", async () => {
   const db = dbFor({ observations: [{ presence_state: "unknown", fresh: false }] });
   const result = await decommission(db, { acknowledgeUncertainty: true });
   assert.equal(result.lifecycleStatus, "decommissioned");
   assert(db.statements.includes("COMMIT"));
-  assert(!db.statements.some((sql) => sql.includes("UPDATE certops_management_periods")));
+  const closed = db.statements.filter((sql) => sql.includes("UPDATE certops_management_periods"));
+  assert.equal(closed.length, 1);
+  assert.match(closed[0], /ended_at = GREATEST\(NOW\(\), started_at\)/);
+  assert.match(closed[0], /automation_enabled = FALSE/);
+  assert.match(closed[0], /current_identity_id = \$2 AND ended_at IS NULL/);
+  assert(!db.statements.some((sql) => /DELETE FROM certops_(?:management_periods|certificate_sources)/.test(sql)));
 });
 
 test("revoked lifecycle cannot be downgraded to decommissioned", async () => {

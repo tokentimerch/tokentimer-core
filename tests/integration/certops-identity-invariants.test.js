@@ -96,6 +96,13 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       )
     ).rows[0];
   }
+  async function readdObservedSource(ws, mc) {
+    const old = await period(mc);
+    assert(old.ended_at, "observation alone must leave management stopped");
+    await readdManagingSource({ workspaceId: ws, managedCertificateId: mc.id,
+      renewalProfileId: null, automationEnabled: false, client: db });
+    assert.notEqual((await period(mc)).id, old.id, "re-add creates fresh admitted history");
+  }
   async function endpoint(ws) {
     return (
       await db.query(
@@ -297,6 +304,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
         }
         await applyMigrationSql(c, migration);
         await c.query("COMMIT");
+        if (migration.postCommitSql) await c.query(migration.postCommitSql);
       } catch (e) {
         await c.query("ROLLBACK");
         throw e;
@@ -706,6 +714,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     await db.query(migrations.find((m) => m.version === 63).sql);
     await db.query(migrations.find((m) => m.version === 64).sql);
     await db.query(migrations.find((m) => m.version === 65).sql);
+    await db.query(migrations.find((m) => m.version === 73).postCommitSql);
     assert.deepEqual(
       (await db.query("SELECT * FROM certops_management_periods ORDER BY id"))
         .rows,
@@ -836,6 +845,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       0,
     );
     assert.equal((await identity(ws, B)).lifecycle_status, "active");
+    await readdObservedSource(ws, mc);
     assert.equal(
       (await period(mc)).current_identity_id,
       (await identity(ws, B)).id,
@@ -911,12 +921,14 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       "active",
     );
     assert.equal((await identity(ws, B)).lifecycle_status, "active");
-    assert.equal(await countActiveManagedCertificatesWithClient(db, ws), 2);
+    assert.equal(await countActiveManagedCertificatesWithClient(db, ws), 1);
     await db.query(
       "UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=clock_timestamp() WHERE id=$1",
       [first.id, C],
     );
     assert.equal((await identity(ws, C)).lifecycle_status, "active");
+    await readdObservedSource(ws, first);
+    assert.equal(await countActiveManagedCertificatesWithClient(db, ws), 2);
   });
   it("database lifecycle rejects retired reactivation and revoked downgrade", async () => {
     const ws = await workspace();
@@ -1621,23 +1633,25 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     it(`rejects unproved replacement assertions during ${operation} admission and claim`, async () => {
       const ws = await workspace(), mc = await source(ws, A);
       await db.query("UPDATE managed_certificates SET key_mode='agent-local' WHERE id=$1", [mc.id]);
+      const pending = await job(ws, mc, "pending", operation);
       await retireCertificateIdentity({ client: db, workspaceId: ws, identityId: (await identity(ws, A)).id,
         expectedFingerprintSha256: A, status: "revoked", reason: "No authorized replacement" });
       const payload = { targetFingerprintSha256: B, canRestoreOriginal: false };
       const { createCertificateJob } = require("../../apps/api/services/certops/jobs");
       await assert.rejects(createCertificateJob({ client: db, workspaceId: ws, operation,
         subjectType: "managed_certificate", subjectId: mc.id, payload, mode: "dry_run" }), { code: "CERTOPS_CERTIFICATE_RETIRED" });
-      const pending = (await db.query("INSERT INTO certificate_jobs(workspace_id,subject_type,subject_id,operation,status,payload) VALUES($1,'managed_certificate',$2,$3,'pending',$4::jsonb) RETURNING id", [ws,mc.id,operation,JSON.stringify(payload)])).rows[0];
-      await assert.rejects(db.query("UPDATE certificate_jobs SET status='claimed' WHERE id=$1", [pending.id]), { code: "55000" });
+      await assert.rejects(db.query("INSERT INTO certificate_jobs(workspace_id,subject_type,subject_id,operation,status,payload) VALUES($1,'managed_certificate',$2,$3,'pending',$4::jsonb)", [ws,mc.id,operation,JSON.stringify(payload)]), { code: "55000" });
+      const attempted = await db.query("UPDATE certificate_jobs SET status='claimed' WHERE id=$1 RETURNING status", [pending.id]);
+      assert.equal(attempted.rows[0].status, "cancelled");
     });
   }
 
   it("dispatch never signs a retired replacement assertion while non-mutating work remains claimable", async () => {
     const ws = await workspace(), mc = await source(ws, A);
+    const unsafe = (await db.query("INSERT INTO certificate_jobs(workspace_id,subject_type,subject_id,operation,status,payload) VALUES($1,'managed_certificate',$2,'deploy','pending',$3::jsonb) RETURNING id", [ws,mc.id,JSON.stringify({ targetFingerprintSha256: B, canRestoreOriginal: false })])).rows[0];
     await retireCertificateIdentity({ client: db, workspaceId: ws, identityId: (await identity(ws, A)).id,
       expectedFingerprintSha256: A, status: "revoked", reason: "Dispatch lifecycle guard" });
-    const unsafe = (await db.query("INSERT INTO certificate_jobs(workspace_id,subject_type,subject_id,operation,status,payload) VALUES($1,'managed_certificate',$2,'deploy','pending',$3::jsonb) RETURNING id", [ws,mc.id,JSON.stringify({ targetFingerprintSha256: B, canRestoreOriginal: false })])).rows[0];
-    const safe = await job(ws, mc, "pending", "noop");
+    const safe = await job(ws, await source(ws, B), "pending", "noop");
     const agentRow = (await db.query("INSERT INTO certops_agents(workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash,status) VALUES($1,$2,'1.0.0','1.0.0',$3,$4,'active') RETURNING id", [ws,`review-${randomUUID()}`,`ttagent_${randomUUID().replace(/-/g, "").slice(0,16)}`,A])).rows[0];
     const signed = [];
     const { claimJobs } = require("../../apps/api/services/certops/agentDispatch");
@@ -1650,7 +1664,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
         signJobForDispatch: async args => { signed.push(args); return args; } } });
     assert.equal(claimed.jobs.length, 1);
     assert.equal(signed.length, 1);
-    assert.equal((await db.query("SELECT status,attempt_count FROM certificate_jobs WHERE id=$1", [unsafe.id])).rows[0].status, "pending");
+    assert.equal((await db.query("SELECT status,attempt_count FROM certificate_jobs WHERE id=$1", [unsafe.id])).rows[0].status, "cancelled");
     assert.equal((await db.query("SELECT status FROM certificate_jobs WHERE id=$1", [safe.id])).rows[0].status, "claimed");
   });
 
@@ -1684,6 +1698,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     await retireCertificateIdentity({ client: db, workspaceId: ws, identityId: (await identity(ws, A)).id,
       expectedFingerprintSha256: A, status: "decommissioned", reason: "Replace retired certificate", acknowledgeUncertainty: true });
     await db.query("UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=clock_timestamp(),status='active' WHERE id=$1", [mc.id,B]);
+    await readdObservedSource(ws, mc);
     const { createCertificateJob } = require("../../apps/api/services/certops/jobs");
     const created = await createCertificateJob({ client: db, workspaceId: ws, operation: "deploy",
       subjectType: "managed_certificate", subjectId: mc.id, payload: {}, mode: "dry_run" });
@@ -2007,6 +2022,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       { workspaceId: ws, source: sources[2].source, sourceRef: sources[2].source_ref,
         tokenId: tid, status: "active", observedAt: new Date(Date.now()+1000) }, 0);
     assert.deepEqual(await readToken(), { cert_lifecycle_status: "active", expiration: "2027-06-01", serial_number: "replacement-D" });
+    await readdObservedSource(ws, sources[2]);
     const replacementJob = await job(ws, sources[2], "claimed");
     assert.equal(replacementJob.certificate_identity_id, (await identity(ws, replacement)).id);
     assert.equal(replacementJob.certificate_token_id, tid);
@@ -2083,7 +2099,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       assert.equal((await readToken()).cert_lifecycle_status, retiredStatus);
       assert.equal((await readToken()).expiration, "2026-10-20");
       await assert.rejects(job(ws, mc, "claimed", "renew"),
-        error => error.code === "55000" && /lifecycle blocks/.test(error.message),
+        error => error.code === "55000" && /lifecycle blocks|source is stopped/.test(error.message),
         "ordinary renewal of the retired fingerprint must remain blocked");
       await upsertManagedCertificateByMonitorSource(db,
         { fingerprintSha256: A, commonName: "app.example", notAfter: "2026-10-20" },
@@ -2100,6 +2116,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       assert.equal((await identity(ws, B)).lifecycle_status, "active");
       assert.deepEqual(await readToken(), { expiration: "2027-01-12",
         cert_lifecycle_status: "active", serial_number: "replacement-leaf", notes: "Lifecycle notes" });
+      await readdObservedSource(ws, mc);
       const renewed = await job(ws, mc, "claimed", "renew");
       renewed.claim_id = randomUUID();
       await db.query("UPDATE certificate_jobs SET claim_id=$2 WHERE id=$1", [renewed.id, renewed.claim_id]);
@@ -2170,6 +2187,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     assert.equal((await period(first)).id, originalPeriod.id);
     assert((await period(second)).ended_at);
     await db.query(migrations.find((m) => m.version === 65).sql);
+    await db.query(migrations.find((m) => m.version === 73).postCommitSql);
   });
   it("closing cancels only unstarted period jobs and preserves claimed/running reconciliation", async () => {
     const ws = await workspace(),
@@ -2920,6 +2938,8 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     const readOnly=await job(ws,mc,"running","noop");
     await retireCertificateIdentity({workspaceId:ws,identityId:(await identity(ws,A)).id,
       expectedFingerprintSha256:A,status:"revoked",reason:"Urgent revocation",client:db});
+    // Restarting an already migrated deployment must preserve the same boundary.
+    await db.query(migrations.find((migration) => migration.version === 73).postCommitSql);
     await db.query("UPDATE certificate_jobs SET status='dry_run_complete' WHERE id=$1",[dryRun.id]);
     await db.query("UPDATE certificate_jobs SET status='succeeded' WHERE id=$1",[readOnly.id]);
     for(const row of (await db.query("SELECT * FROM certificate_jobs WHERE id=ANY($1::uuid[])",[[dryRun.id,readOnly.id]])).rows){
@@ -3451,6 +3471,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       "UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=$3 WHERE id=$1",
       [mc.id, B, time(25)],
     );
+    await readdObservedSource(from, mc);
     await source(to, B);
     const original = await period(mc),
       pending = await job(from, mc);
@@ -3755,6 +3776,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     await db.query(migrations.find((m) => m.version === 63).sql);
     await db.query(migrations.find((m) => m.version === 64).sql);
     await db.query(migrations.find((m) => m.version === 65).sql);
+    await db.query(migrations.find((m) => m.version === 73).postCommitSql);
     assert.equal(
       (
         await db.query(

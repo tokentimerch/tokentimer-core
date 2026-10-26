@@ -738,8 +738,8 @@ export function buildIssueJob({
  * needs access, and the owner and mode should be left alone so the next
  * renewal can replace the file.
  */
-export function buildServerSnippet({ reloadService = '', certPath }) {
-  const key = keyPathFor(certPath);
+export function buildServerSnippet({ reloadService = '', certPath, keyPath }) {
+  const key = keyPath || keyPathFor(certPath);
   if (!key) return '';
   if (reloadService === 'apache') {
     return [
@@ -766,11 +766,12 @@ export function buildServerSnippet({ reloadService = '', certPath }) {
 export function buildConsumerPlaceholderCommand({
   deployPath = CONSUMER_DEPLOY_PATH,
   host = 'placeholder.invalid',
+  keyFileName = 'privkey.pem',
 } = {}) {
   return [
     `sudo -u ${AGENT_USER} openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 1 \\`,
     `  -subj ${shQuote(`/CN=${host}`)} \\`,
-    `  -keyout ${deployPath}/privkey.pem -out ${deployPath}/fullchain.pem`,
+    `  -keyout ${deployPath}/${keyFileName} -out ${deployPath}/fullchain.pem`,
   ].join('\n');
 }
 
@@ -896,7 +897,7 @@ export function buildVaultAgentConfig({
     '    }',
     '  }',
     '  sink "file" {',
-    `    config = { path = "${tokenFile}", mode = 0600 }`,
+    `    config = { path = "${tokenFile}", mode = 384 } # 0600: owner read/write`,
     '  }',
     '}',
     '',
@@ -1040,7 +1041,14 @@ export function buildVaultConfigs({
   issuerAgentId,
   consumerAgentId,
   consumerBindingId,
-  deployPath = CONSUMER_DEPLOY_PATH,
+  consumerDeploymentProfileRef,
+  consumerProfileRevision = 1,
+  consumerAuthorizationRevision = 1,
+  consumerDeliveryMode = 'service',
+  consumerReloadService = 'nginx',
+  deployPath = consumerDeliveryMode === 'files'
+    ? '/etc/tokentimer/certificates'
+    : CONSUMER_DEPLOY_PATH,
   caFile = '',
   probeTrustCaFile = '',
 }) {
@@ -1051,11 +1059,30 @@ export function buildVaultConfigs({
     problems.push(message);
     (fieldErrors[field] ||= []).push(message);
   };
+  const reload = consumerDeliveryMode === 'service';
+  const deploymentProfile =
+    consumerDeploymentProfileRef ||
+    (reload ? `${consumerReloadService}-public` : 'certificate-files');
+  if (!['files', 'service'].includes(consumerDeliveryMode))
+    problem(
+      'consumerDeliveryMode',
+      'Choose file distribution or service reload.'
+    );
+  if (reload && !RELOAD_SERVICES[consumerReloadService])
+    problem('consumerReloadService', 'Choose a supported service.');
+  if (
+    !/^\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/.test(deployPath || '') ||
+    deployPath.split('/').some(part => part === '.' || part === '..')
+  )
+    problem(
+      'deployPath',
+      'Use an absolute destination directory without spaces or parent segments.'
+    );
   if (!/^https:\/\//.test(vaultAddress || ''))
     problem('vaultAddress', 'The Vault address must use https.');
   if (caFile && !String(caFile).startsWith('/'))
     problem('caFile', 'The Vault CA file must be an absolute path.');
-  if (probeTrustCaFile && !String(probeTrustCaFile).startsWith('/'))
+  if (reload && probeTrustCaFile && !String(probeTrustCaFile).startsWith('/'))
     problem(
       'probeCa',
       'The CA file for the served-certificate check must be an absolute path.'
@@ -1144,7 +1171,7 @@ export function buildVaultConfigs({
       allowedTargetSelectors: [bindingId],
       allowedPaths: [deployPath, AGENT_KEYS_DIR],
       allowedCommands: {
-        ...reloadCommands('nginx'),
+        ...(reload ? reloadCommands(consumerReloadService) : {}),
       },
     },
     materialStores: {
@@ -1160,31 +1187,37 @@ export function buildVaultConfigs({
         groupId,
         agentId: consumerAgentId || 'REPLACE_WITH_CONSUMER_WIRE_ID',
         materialStoreRef: 'customer',
-        deploymentProfileRef: 'nginx-public',
-        profileRevision: 1,
-        authorizationRevision: 1,
-        verificationPolicy: 'trust',
-        reloadService: 'nginx',
-        reloadCommandRefs: {
-          validate: 'nginx-validate',
-          reload: 'nginx-reload',
-        },
+        deploymentProfileRef: deploymentProfile,
+        profileRevision: consumerProfileRevision,
+        authorizationRevision: consumerAuthorizationRevision,
+        verificationPolicy: reload ? 'trust' : 'installed',
+        ...(reload
+          ? {
+              reloadService: consumerReloadService,
+              reloadCommandRefs: {
+                validate: `${consumerReloadService}-validate`,
+                reload: `${consumerReloadService}-reload`,
+              },
+            }
+          : {}),
         target: {
           type: 'endpoint',
-          reference: 'nginx-public',
+          reference: deploymentProfile,
           certPath: `${deployPath}/fullchain.pem`,
-          keyPath: `${deployPath}/privkey.pem`,
+          keyPath: `${deployPath}/${reload && consumerReloadService === 'haproxy' ? 'fullchain.pem.key' : 'privkey.pem'}`,
         },
-        probes: [
-          {
-            dialAddress: '127.0.0.1',
-            port: 443,
-            sni: probeHostFor(names),
-            // Needed when the certificate comes from a private CA: the
-            // "trust" check validates the chain against this file.
-            ...(probeTrustCaFile ? { trustCaFile: probeTrustCaFile } : {}),
-          },
-        ],
+        probes: reload
+          ? [
+              {
+                dialAddress: '127.0.0.1',
+                port: 443,
+                sni: probeHostFor(names),
+                // Needed when the certificate comes from a private CA: the
+                // "trust" check validates the chain against this file.
+                ...(probeTrustCaFile ? { trustCaFile: probeTrustCaFile } : {}),
+              },
+            ]
+          : [],
       },
     },
   };
@@ -1194,8 +1227,8 @@ export function buildVaultConfigs({
 /**
  * The job that publishes a certificate to Vault. The group id appears on the
  * created job as payload.publication.groupId. The agent refuses a publish job
- * without a key algorithm, so it is part of the body. There is no screen for
- * this job: it is created through the Jobs API. It waits for approval only
+ * without a key algorithm, so it is part of the body. The setup guide creates
+ * this job through the authenticated Jobs API. It waits for approval only
  * when the workspace requires approval for every job.
  */
 export function buildVaultPublishJob({
@@ -1234,14 +1267,22 @@ export function buildVaultPublishJob({
 }
 
 /** Assigns one consumer agent to the distribution group. */
-export function buildVaultConsumerAssignment({ agentRowId }) {
+export function buildVaultConsumerAssignment({
+  agentRowId,
+  deploymentProfileRef,
+  profileRevision = 1,
+  consumerDeliveryMode = 'service',
+}) {
   return {
     agentId: agentRowId,
-    deploymentProfileRef: 'nginx-public',
-    profileRevision: 1,
+    deploymentProfileRef:
+      deploymentProfileRef ||
+      (consumerDeliveryMode === 'files' ? 'certificate-files' : 'nginx-public'),
+    profileRevision,
     required: true,
     wave: 0,
-    verificationPolicy: 'trust',
+    verificationPolicy:
+      consumerDeliveryMode === 'files' ? 'installed' : 'trust',
     freshnessSeconds: 3600,
     state: 'active',
   };

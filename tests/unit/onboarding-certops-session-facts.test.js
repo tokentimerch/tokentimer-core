@@ -172,9 +172,16 @@ describe("loadObservedCertificates", () => {
 describe("loadDistributionReality session facts", () => {
   const SINCE = "2026-10-22T10:00:00.000Z";
   const load = async (itemRows, opts) => {
+    const groups = itemRows.map(item => ({ latest_generation: 1, verification_only: false,
+      latest_rollout_state: item.verified ? "verified" : item.completed ? "installed" : null,
+      ...item, id: require("node:crypto").randomUUID() }));
     const answers = [
       { rows: [{ groups: itemRows.length, bindings: 0, verified_rollouts: 1 }] },
-      { rows: itemRows },
+      { rows: groups },
+      ...(groups.length ? [{ rows: groups.flatMap(g => [{ group_id: g.id, binding_state: g.binding_state || "active",
+        desired_generation: g.latest_generation, converged: g.converged !== false,
+        verification_policy: g.latest_rollout_state === "installed" ? "installed" : "trust" },
+        ...(g.olderPausedConsumer ? [{ group_id: g.id, binding_state: "paused", desired_generation: 0, converged: false }] : [])]) }] : []),
       { rows: [{ n: 0, oldest: null }] },
     ];
     return loadDistributionReality(
@@ -183,6 +190,38 @@ describe("loadDistributionReality session facts", () => {
       opts,
     );
   };
+
+  it("ignores unrelated paused consumers while still requiring an active fresh consumer", async () => {
+    const { items } = await load([{ completed: true, olderPausedConsumer: true }], { since: SINCE });
+    assert.equal(items[0].completed, true);
+    const pausedOnly = await load([{ completed: true, binding_state: "paused" }], { since: SINCE });
+    assert.equal(pausedOnly.items[0].completed, false);
+  });
+
+  it("does not reuse historical live verification for a later file-only rollout or stale authorization", async () => {
+    for (const converged of [true, false]) {
+      const { items, verified, completed } = await load([{ verified: true, completed: true,
+        latest_rollout_state: "installed", latest_generation: 2, converged,
+        last_verified_at: null, last_completed_at: "2026-10-22T11:00:00.000Z" }], { since: SINCE });
+      assert.equal(items[0].verified, false);
+      assert.equal(verified, false);
+      assert.equal(items[0].completed, converged);
+      assert.equal(completed, converged);
+    }
+  });
+
+  it("counts only new file-install completion as session work without calling it live verified", async () => {
+    const { items } = await load([
+      { id: "old-files", created_at: "2026-10-22T09:00:00.000Z", completed: true, verified: false, last_completed_at: "2026-10-22T09:30:00.000Z" },
+      { id: "new-files", created_at: "2026-10-22T09:00:00.000Z", completed: true, verified: false, last_completed_at: "2026-10-22T11:00:00.000Z" },
+    ], { since: SINCE });
+    assert.equal(items[0].existedBeforeSession, true);
+    assert.equal(items[1].existedBeforeSession, false);
+    assert.equal(items[1].completed, true);
+    assert.equal(items[1].verified, false);
+    assert.equal(items[1].lastVerifiedAt, null);
+    assert.equal(items[1].lastCompletedAt, "2026-10-22T11:00:00.000Z");
+  });
 
   it("marks groups with no session work so the guide never adopts them", async () => {
     const { items } = await load(

@@ -52,6 +52,8 @@ import useDistributionRead, {
 import { formatDateTime } from './certopsFormat.js';
 
 const explanations = {
+  installed:
+    'The agent confirmed the installed certificate and key. No service was reloaded or checked; this does not prove the certificate is in use.',
   failed:
     'The latest deployment failed. Review the job evidence, correct the cause, then follow the signed retry and approval workflow.',
   uncertain:
@@ -185,7 +187,7 @@ function ConsumerDetails({ consumer: c, status, workspaceId, now, staleData }) {
         </Fact>
         <Fact label='Verification freshness'>
           {deadline !== null
-            ? `${now >= deadline ? 'Expired on' : status === 'verified' && !staleData ? 'Valid until' : 'Policy window until'} ${formatDateTime(deadline)}`
+            ? `${now >= deadline ? 'Expired on' : ['verified', 'installed'].includes(status) && !staleData ? 'Valid until' : 'Policy window until'} ${formatDateTime(deadline)}`
             : 'No valid verification window'}
         </Fact>
         <Fact label='Deployment status'>
@@ -330,6 +332,7 @@ function GroupDeployments({
     const counts = {
       total: 0,
       verified: 0,
+      installed: 0,
       failed: 0,
       uncertain: 0,
       stale: 0,

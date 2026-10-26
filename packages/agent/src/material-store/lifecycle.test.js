@@ -9,7 +9,7 @@ const crypto = require("node:crypto");
 const { readProtectedFile, writeProtectedJson } = require("./index");
 const { applyRestrictivePermissions } = require("../platform");
 const { computeCertificateFingerprint, parseDnsSans } = require("../verify");
-const { executePinnedDeployment, deployWroteNothing } = require("./lifecycle");
+const { executePinnedDeployment, reconcilePinnedDeployment, deployWroteNothing } = require("./lifecycle");
 
 async function fixture(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tt-binding-test-"));
@@ -40,6 +40,7 @@ async function fixture(t) {
     sans: parseDnsSans(x509.subjectAltName),
   };
   const server = http.createServer((req, res) => {
+    res.setHeader("Connection", "close");
     res.end(
       JSON.stringify({
         data: {
@@ -95,8 +96,8 @@ async function fixture(t) {
     "material-bindings",
     `${bindingId}.json`,
   );
-  function deploy({ generation = 1, reload = async () => true } = {}) {
-    return executePinnedDeployment({
+  function options({ generation = 1, reload = async () => true, policy = bindings[bindingId].verificationPolicy, verificationOnly = false, checkLease = async () => {}, recoveryOnly = false } = {}) {
+    return {
       job: {
         workspaceId: ids.workspaceId,
         agentId: "consumer-agent",
@@ -110,22 +111,89 @@ async function fixture(t) {
           deploymentProfileRef: "fixture",
           profileRevision: 1,
           authorizationRevision: 1,
-          verificationPolicy: "served",
+          verificationPolicy: policy,
+          ...(verificationOnly ? { verificationOnly: true } : {}),
         },
       },
       stores,
       bindings,
       stateDir: path.join(directory, "state"),
       policyEngine: { checkPath: () => ({ allowed: true }) },
-      checkLease: async () => {},
+      checkLease,
       reload,
+      recoveryOnly,
       fixtureLoopbackHttp: true,
-    });
+    };
   }
-  return { deploy, record, target, deployDir };
+  const deploy = (input) => executePinnedDeployment(options(input));
+  return { deploy, options, binding: bindings[bindingId], record, target, deployDir };
 }
 
 const readRecord = (file) => JSON.parse(readProtectedFile(file, 16384));
+
+function filesOnly(f) {
+  f.binding.verificationPolicy = "installed";
+  delete f.binding.reloadService;
+  f.binding.probes = [];
+}
+
+test("files-only delivery writes and reads back the actual pair without reload or TLS", async (t) => {
+  const f = await fixture(t);
+  filesOnly(f);
+  t.mock.method(require("node:tls"), "connect", () => assert.fail("files-only must not probe TLS"));
+  const result = await f.deploy({ reload: () => assert.fail("files-only must not reload") });
+  assert.equal(result.status, "succeeded");
+  assert.ok(new crypto.X509Certificate(fs.readFileSync(f.target.certPath)).checkPrivateKey(crypto.createPrivateKey(fs.readFileSync(f.target.keyPath))));
+  for (const key of ["fetched", "installed"]) assert.equal(result.deploymentReceipt[key], true);
+  for (const key of ["bound", "servedVerified", "trustValidated"]) assert.equal(result.deploymentReceipt[key], false);
+  assert.equal(readRecord(f.record).uncertain, false);
+  assert.equal((await f.deploy({ recoveryOnly: true })).status, "succeeded");
+});
+
+test("files-only rejects mismatched local policy, service hooks, and stale generations before writing", async (t) => {
+  const f = await fixture(t);
+  filesOnly(f);
+  await assert.rejects(f.deploy({ policy: "trust" }), { code: "material_binding_policy_denied" });
+  for (const extra of [{ reloadService: "nginx" }, { reloadCommandRefs: [] }, { probes: [{ dialAddress: "localhost" }] }]) {
+    const original = { ...f.binding };
+    Object.assign(f.binding, extra);
+    await assert.rejects(f.deploy(), { code: "material_binding_policy_denied" });
+    for (const key of Object.keys(extra)) delete f.binding[key];
+    Object.assign(f.binding, original);
+  }
+  assert.equal(fs.existsSync(f.target.certPath), false);
+  assert.equal((await f.deploy({ generation: 2 })).status, "succeeded");
+  await assert.rejects(f.deploy({ generation: 1 }), { code: "material_stale_generation" });
+});
+
+test("files-only reconcile proves the pair after uncertainty and recovery keeps file-only assurance", async (t) => {
+  const f = await fixture(t);
+  filesOnly(f);
+  let leases = 0;
+  const result = await f.deploy({ checkLease: async () => { if (++leases === 3) throw new Error("lost lease after install"); } });
+  assert.equal(result.status, "orphaned_unknown_effect");
+  assert.equal(readRecord(f.record).uncertain, true);
+  await assert.rejects(f.deploy({ recoveryOnly: true }), { code: "material_binding_uncertain" });
+  t.mock.method(require("node:tls"), "connect", () => assert.fail("reconcile must not probe"));
+  assert.equal((await reconcilePinnedDeployment(f.options())).reconciled, true);
+  assert.equal(readRecord(f.record).uncertain, false);
+  assert.equal((await f.deploy({ recoveryOnly: true })).status, "succeeded");
+  fs.writeFileSync(f.target.keyPath, "not a key");
+  await assert.rejects(reconcilePinnedDeployment(f.options()));
+});
+
+test("files-only verification checks the disk without repairing missing or altered files", async (t) => {
+  const f = await fixture(t);
+  filesOnly(f);
+  assert.equal((await f.deploy()).status, "succeeded");
+  assert.equal((await f.deploy({ generation: 2, verificationOnly: true })).status, "succeeded");
+  fs.unlinkSync(f.target.certPath);
+  const result = await f.deploy({ generation: 3, verificationOnly: true });
+  assert.equal(result.status, "failed");
+  assert.equal(result.errorMessage, "material_drift_detected");
+  assert.equal(result.deploymentReceipt.installed, false);
+  assert.equal(fs.existsSync(f.target.certPath), false);
+});
 
 test("a deploy rejected before any write leaves no uncertain marker and can be retried", async (t) => {
   const f = await fixture(t);

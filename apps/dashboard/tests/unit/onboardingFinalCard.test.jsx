@@ -29,6 +29,40 @@ const show = (goal, certops) =>
   );
 
 describe('final card title follows the verdict', () => {
+  it('reports the selected Vault distribution as verified only with its own backend evidence', () => {
+    const ctx = ctxFor('certops_vault', {
+      objective: 'vault',
+      groupId: 'selected-group',
+    });
+    ctx.summary.certops = {
+      distribution: { items: [{ id: 'selected-group', verified: true }] },
+    };
+    const view = render(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <MemoryRouter>
+            <DoneCard ctx={ctx} />
+          </MemoryRouter>
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+    expect(screen.getByText('You are set up')).toBeVisible();
+    expect(document.body.textContent).toMatch(/current verification evidence/);
+    view.unmount();
+    ctx.summary.certops.distribution.items = [
+      { id: 'unrelated-group', verified: true },
+    ];
+    render(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <MemoryRouter>
+            <DoneCard ctx={ctx} />
+          </MemoryRouter>
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+    expect(screen.getByText('Setup finished, not verified yet')).toBeVisible();
+  });
   it('says all is well when the body does not hedge', () => {
     show('monitor_https');
     expect(screen.getByText('You are set up')).toBeVisible();

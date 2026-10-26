@@ -43,7 +43,7 @@ Delivery uses `filterDeliveryRecipients` before send and `canDeliverToRecipient`
 - `packages/recipient-verification/` policy, migration SQL, and a local copy of the email syntax check
 - `apps/api/routes/recipientVerification.js`
 - `apps/api/routes/contacts.js`, `whatsapp.js`, `alerts.js`, `apps/api/index.js`
-- `apps/api/migrations/migrate.js` version 78
+- `apps/api/migrations/migrate.js` version 79
 - `apps/worker/src/delivery-worker.js`, `weekly-digest.js`, `shared/recipientDeliveryGate.js`
 - `apps/dashboard/src/pages/AlertPreferences.jsx` and the small verification controls beside it
 - `tests/unit/recipient-verification.test.js`
@@ -52,7 +52,7 @@ Delivery uses `filterDeliveryRecipients` before send and `canDeliverToRecipient`
 
 ## 5. Database
 
-Migration name `recipient_channel_verification`, version 78. Tables:
+Migration name `recipient_channel_verification`, version 79. Tables:
 
 - `contact_channel_verifications`
 - `contact_verification_challenges`
@@ -97,7 +97,7 @@ The suite uses an in-memory query double with serialized transactions. It does n
 
 ## 10. Deployment and rollback
 
-1. Deploy the API and worker together with migration 78.
+1. Deploy the API and worker together with migration 79.
 2. Set `RECIPIENT_FINGERPRINT_SECRET` and `PUBLIC_BASE_URL` or `API_URL`.
 3. Configure the Twilio inbound webhook.
 4. Leave self-hosted on shadow until managers send invitations.

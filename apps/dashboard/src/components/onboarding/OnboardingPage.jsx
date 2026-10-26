@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -52,6 +53,7 @@ import {
 } from './editionModules.js';
 import { clearGoal, skipStep } from './sessionTransitions.js';
 import { scopeCertops } from './certopsScope.js';
+import { scopeDistribution } from './distributionModel.js';
 import { resolveNavigation } from './stepNavigation.js';
 import {
   finishesByItself,
@@ -464,7 +466,31 @@ export function DoneCard({ ctx, guidedImportSteps = GUIDED_IMPORT_STEPS }) {
     scopeCertops(ctx.session.progress?.certops, goal?.certopsObjective)
       .infrastructure === 'windows';
   // A body that hedges must not sit under a title that says all is well.
-  const unverified = goal?.doneUnverified === true;
+  const saved = scopeCertops(
+    ctx.session.progress?.certops,
+    goal?.certopsObjective
+  );
+  const distributionId = saved.chosenDistributionId || saved.groupId;
+  const vaultVerified =
+    goal?.certopsObjective === 'vault' &&
+    Boolean(distributionId) &&
+    scopeDistribution(
+      ctx.summary?.certops?.distribution,
+      distributionId
+    )?.items?.some(
+      item => item.id === distributionId && item.verified === true
+    );
+  const vaultFilesInstalled =
+    goal?.certopsObjective === 'vault' &&
+    Boolean(distributionId) &&
+    scopeDistribution(
+      ctx.summary?.certops?.distribution,
+      distributionId
+    )?.items?.some(
+      item => item.id === distributionId && item.completed === true
+    );
+  const unverified =
+    goal?.doneUnverified === true && !vaultVerified && !vaultFilesInstalled;
   const restart = async () => {
     await ctx.controller.update(session => ({
       intent: { ...session.intent, goal: '' },
@@ -478,6 +504,10 @@ export function DoneCard({ ctx, guidedImportSteps = GUIDED_IMPORT_STEPS }) {
       kind='info'
       title={unverified ? 'Setup finished, not verified yet' : 'You are set up'}
       description={
+        (vaultVerified &&
+          'Your certificate was published to Vault and its distribution has current verification evidence. Review each consumer in the certificate details, and verify the live service independently.') ||
+        (vaultFilesInstalled &&
+          'Your certificate was published to Vault and its files were installed on the selected consumers. File-only delivery does not reload a service or verify the certificate in use.') ||
         (windows && goal?.doneTextWindows) ||
         (modalImport && goal.doneTextModal) ||
         goal?.doneText ||
@@ -656,10 +686,22 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
     [onboarding, docs, session, skip, navigate, releaseStep, goToStep]
   );
 
+  const stepViewportRef = useRef(null);
   const nav = useMemo(
     () => resolveNavigation(plan, viewStepId),
     [plan, viewStepId]
   );
+  // A new step opens at its heading. Summary polling must not move the
+  // operator away from the fields or evidence they are currently reading.
+  useLayoutEffect(() => {
+    let scroller = stepViewportRef.current;
+    // The app root and body can scroll independently of the document
+    // because they use overflow-x containment. Reset the actual ancestors.
+    while (scroller) {
+      scroller.scrollTop = 0;
+      scroller = scroller.parentElement;
+    }
+  }, [nav.shownId]);
   const titleOf = useCallback(
     id => plan?.steps.find(s => s.id === id)?.title || id,
     [plan]
@@ -785,7 +827,14 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
                     )}
                   </CollapsibleSteps>
                 </DashboardPanel>
-                <Box as='main' flex='1' minW={0} w='full'>
+                <Box
+                  ref={stepViewportRef}
+                  as='main'
+                  flex='1'
+                  minW={0}
+                  w='full'
+                  sx={{ overflowAnchor: 'none' }}
+                >
                   {plan.complete && !nav.viewing ? (
                     <DoneCard ctx={ctx} />
                   ) : Current ? (

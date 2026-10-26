@@ -170,6 +170,24 @@ function proxyResponseStatus(error) {
   return null;
 }
 
+const CERTIFICATE_FAILURE_CODES = new Set([
+  "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "CERT_HAS_EXPIRED",
+  "CERT_NOT_YET_VALID", "ERR_TLS_CERT_ALTNAME_INVALID",
+]);
+const NETWORK_FAILURE_CODES = new Set([
+  ...CERTIFICATE_FAILURE_CODES, "ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT",
+  "ECONNRESET", "EPIPE", "EAI_AGAIN",
+]);
+function networkFailureCode(error) {
+  const seen = new Set();
+  for (let cause = error; cause && !seen.has(cause) && seen.size < 8; cause = cause.cause) {
+    seen.add(cause);
+    if (NETWORK_FAILURE_CODES.has(cause.code)) return cause.code;
+  }
+  return undefined;
+}
+
 async function vaultHttpRequest({
   address,
   path,
@@ -265,6 +283,13 @@ async function vaultHttpRequest({
       err.status = 408;
       err.code = "ETIMEDOUT";
       throw err;
+    }
+    if (!error.status && !error.code) {
+      // Fetch exposes only "fetch failed" at the outer boundary. Preserve a
+      // known transport classification, never arbitrary nested error text.
+      const code = networkFailureCode(error);
+      if (code) error.code = code;
+      if (CERTIFICATE_FAILURE_CODES.has(code)) error.message = "Vault TLS certificate verification failed";
     }
     if (error.message && !error.status) {
       logger.error("Vault network error", {

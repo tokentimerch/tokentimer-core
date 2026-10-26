@@ -475,9 +475,9 @@ describe("Retired certificate alerts against PostgreSQL", function () {
     );
     const certA = await insertManagedCertificate(tokenId, "delivery-a");
     const certB = await insertManagedCertificate(tokenId, "delivery-b");
+    const leftoverJob = await insertRenewalJob(certA);
     await retireCertificate(certA, "decommissioned");
 
-    const leftoverJob = await insertRenewalJob(certA);
     const leftover = await insertAlert({
       tokenId,
       alertKey: `cert_renewal_failed:${leftoverJob}`,

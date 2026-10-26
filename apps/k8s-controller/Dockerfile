@@ -10,7 +10,7 @@ WORKDIR /app
 RUN addgroup -g 1001 -S tokentimer \
     && adduser -u 1001 -S tokentimer -G tokentimer \
     && corepack enable \
-    && corepack prepare pnpm@11.13.0 --activate
+    && corepack prepare pnpm@11.28.8 --activate
 
 ENV NODE_ENV=production
 
