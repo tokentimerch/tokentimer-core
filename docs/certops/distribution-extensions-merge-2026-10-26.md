@@ -1,6 +1,6 @@
 # Distribution extension merge validation — 2026-10-26
 
-PR #460 merges main through `8ba7a118b08992855db697580697fed1cb3d9e31` into the
+PR #460 merges main through `8e9df7d0de9ff3b65e5f834e18815d7fe93e04cf` into the
 existing `feat/certops-distribution-extensions` branch, starting from clean PR head
 `2ca3b2581ffbf3e140e3b05a864baedcb186e451`. The branch is not rebased or force
 pushed, and the PR is not merged into main.
@@ -8,6 +8,13 @@ The first merge integrated `af0d826b`; a second preserves subsequent retirement
 guards, timezone handling and dependency/action updates. Added PR jobs use the
 same checkout pin as the updated main workflow. Both retirement regression
 assertions are combined, including scoped parameters and retained source data.
+A subsequent refresh, `f08d9287`, integrates main's guided Vault recovery,
+workspace-manager access, onboarding restart, nested Vault diagnostics and
+scoped Linux reload-policy changes. That refresh started from clean, pushed
+head `4d008af1` and preserves all previously confirmed Windows fixes.
+Main subsequently landed its own manager-repair regression tests. The final
+test-only refresh, `2fed37ad`, integrates those tests without changing any
+application, agent, contract, script or workflow code from `f08d9287`.
 
 ## Conflict integration
 
@@ -25,6 +32,27 @@ Nine conflicted files were reconciled by combining their invariants:
   concrete-store behavior. Main's Debian trust-store fresh revoke remains.
 - Both migration test histories are retained and extended through 79. Vendored
   validators and skip inventory are regenerated with official scripts.
+
+The subsequent main refresh had one conflict in
+`tests/wildcard-vault/ux-lab/qualification.cjs`. Its resolution keeps main's
+convergence wait and the PR's explicit exact-version/accepted-generation and
+removed-consumer assertions. Active retained identities in the same management
+period remain eligible for an approved rollback; removed bindings cannot count
+as converged. The auto-merged consumer matrix also retains main's distinct
+rollout/request IDs and fallback job failure code alongside the PR's provider
+references and policy-specific proof fences.
+
+One stale qualification assertion was independently reproduced against the
+actual authorization middleware: the lab expected manager profile repair to
+return 403, but main deliberately admits workspace managers. The public
+journey now proves idempotent manager repair, demotes that same authenticated
+member to viewer through the public membership API, verifies 403, and restores
+the manager role. The last refresh resolves the overlapping `journey.cjs`
+conflict by preserving that role-change proof alongside main's owner/manager
+success assertions. Main's additional viewer check after renewal is retained.
+The real API integration suite uses main's dedicated manager-repair test and
+viewer/missing-membership refusal cases; the earlier duplicate manager assertion
+is removed. Product RBAC is not changed.
 
 ## Migration correctness
 
@@ -80,9 +108,11 @@ retained; the corresponding real PostgreSQL tests remain enabled.
 ## Validation evidence
 
 The tested merged product commit is
-`54267cafec1a21335dbd9543a28d91633083eb6a`.
-[Core CI run 40341773697](https://github.com/tokentimerch/tokentimer-core/actions/runs/40341773697)
-completed successfully: **35 jobs passed, 0 failed/skipped**. Separate CodeQL
+`2fed37ad7f07251e63940e83ca87010964908f91`.
+[Core CI run 40404197128](https://github.com/tokentimerch/tokentimer-core/actions/runs/40404197128)
+completed successfully: **all 35 jobs have successful final results**, with no
+skipped jobs. One infrastructure bootstrap required an isolated retry, detailed
+below. Separate CodeQL
 Actions, Go and JavaScript/TypeScript analysis jobs also passed. Earlier reports
 are historical supporting evidence, not exact-artifact qualification for this
 merged candidate. Counts below overlap across full and focused runs and must
@@ -90,25 +120,50 @@ not be added together.
 
 | Validation | Passed | Failed | Skipped |
 | --- | ---: | ---: | ---: |
-| Core unit suite on merged CI candidate | 2,779 | 0 | 0 |
+| Core unit suite on merged CI candidate | 2,792 | 0 | 0 |
+| Frontend suite on merged CI candidate | 2,745 | 0 | 0 |
 | Contract suite | 47 | 0 | 0 |
-| Integration suite against the Compose stack | 1,395 | 0 | 0 |
+| Integration suite against the Compose stack | 1,399 | 0 | 0 |
 | Runtime API endpoint contracts | 8 | 0 | 0 |
-| Focused Core regression rerun after the latest main merge | 129 | 0 | 0 |
-| Focused agent/provider regression rerun after the latest main merge | 61 | 0 | 2 |
-| Full recursive Linux agent suite in the local Debian/Node 24 container | 2,052 | 0 | 15 |
-| Native Windows full recursive agent suite | 2,047 | 0 | 16 |
+| Focused Core regressions during the main refresh | 170 | 0 | 0 |
+| Focused native Windows agent/provider regressions during the refresh | 78 | 0 | 0 |
+| Focused frontend during the refresh, serial workers and original timeouts | 205 | 0 | 0 |
+| Full recursive Linux agent suite in the local Debian/Node 24 container | 2,055 | 0 | 15 |
+| Native Windows full recursive agent suite | 2,049 | 0 | 16 |
 | Server 2022/2025 native custody/IIS matrix, 16 jobs | 144 | 0 | 0 |
 | Real PostgreSQL immutable upgrade histories | 8 | 0 | 0 |
 | PostgreSQL provider pinning/retained rollback models | 3 | 0 | 0 |
 | PostgreSQL distribution governance/transfer regressions | 55 | 0 | 0 |
 | Real OpenBao 2.3.2/2.4.1 and Vault 1.21.0 compatibility scenarios | 3 | 0 | 3 |
+| Exact-candidate packaged OpenBao SAN lab, mandatory phases | 15 | 0 | 0 |
 
-The focused agent skips are two explicitly gated live Vault fixtures. Full
-agent skips are existing platform/environment restrictions. Each real-provider
+The focused Windows agent command also has an excluded Linux-only installer
+suite; Node's final individual-test skip counter is zero. Full agent skips are
+existing platform/environment restrictions. Each real-provider
 job runs its KV scenario and excludes the live Azure scenario; all Azure
 exact-version and ambiguous-write tests in ordinary suites use offline models.
 No new skip was added to make validation pass.
+
+Diagnostic local attempts are retained separately, not counted as green: the
+initial concurrent Windows frontend run had 199 passed and six timeout failures;
+a container run had 203 passed and two timeout failures. The final native
+serial run passed the same 205 tests with unchanged assertions and deadlines.
+The first fully concurrent recursive Linux agent run had 2,053 passed, two
+ACME subprocess/readiness failures and 15 skips under the concurrent image-build
+load. Those process cases passed all 11 tests in isolation, and the complete
+recursive rerun with two workers passed all 2,055 eligible tests. Test bodies,
+termination deadlines and assertions were not weakened. The new installer
+permission smoke also passed in a disposable Debian container under umask 077.
+
+The final CI's first attempt had 34 successful jobs and one failed fixture
+bootstrap: Windows 2022/OpenBao/RSA job `121857615262` could not obtain an
+initialized, unsealed OpenBao health response. No Node/certificate test started
+in that failed job; the original VM's server diagnostic files are not retained
+by this workflow, so a more specific startup cause is not asserted. A fresh
+runner retried only that job, with no code, timeout or assertion changes.
+Job `121866809708` passed all nine Node results, including all seven custody
+cases, with zero failures/skips. The remaining 34 results were carried forward
+into attempt 2; the overall run and all 35 unique jobs are successful.
 
 Each native matrix job has seven custody subtests, their enclosing test and
 one IIS scenario. Every log was checked for valid reuse, exportable key,
@@ -122,8 +177,23 @@ Frozen pnpm 11.28.8 installation, contract manifest/runtime coverage/generated
 integrity, all 13 CI guards, secret-logging and lockfile checks, formatting,
 lint, types, builds, coverage, dependency audit, Compose and Helm passed.
 All four API/dashboard/worker/controller image builds, startup probes and
-Grype scans passed. The latest main run, 40334450760 on `8ba7a118`, also passed;
+Grype scans passed. The latest main run, 40401455506 on `8e9df7d0`, also passed;
 its four image scans were inspected separately.
+
+The exact-candidate lab, `tt-wildcard-ux-qual-pr460-mainfinal`, passed all 15
+mandatory phases and 41 operator checks with three real Pebble DNS-01 orders.
+It uses a checksum-verified package, unprivileged agents, actual OpenBao 2.4.1,
+nginx/HAProxy listeners, real Chromium and public HTTP operations. Publication
+and reload failures, credential rotation, read-only reconciliation, original
+signed retries, retained rollback, drift, rollout controls, workspace-role
+changes, corrupted signatures, replay rejection, custody audit and workspace
+transfer all passed. The official report verifier accepted the result.
+
+An earlier `f08d9287` packaged cohort independently passed the same 15 phases
+and 41 checks. Both qualification labs are stopped with evidence/volumes
+retained; the existing user review lab is untouched. These are development
+artifacts with `qualificationStatus: not-qualified`, not production capability
+promotion or exact release qualification.
 
 ## Security alert disposition
 
@@ -158,6 +228,7 @@ suppression, identifier replacement or weaker security check was introduced.
 | Agent lifecycle/platform tests and Core installed-assurance tests | Linux installed/served/trust, 19 qualified platform/mode cases, no-effect denials, full-chain truncation, legacy-journal recovery and Windows policy/receipt rejection |
 | Migration unit, PostgreSQL and integration upgrade tests | Fresh and both version-78 histories, three competing CLI migrators, preserved ledger rows/data, both schema extensions and provider rollback |
 | Retirement regression, vendored contracts, manifests and skip inventory | Preserve both branches' assertions and regenerate through official repository scripts |
+| `tests/wildcard-vault/ux-lab/{qualification,journey}.cjs`, `tests/integration/certops-manager-access.test.js` | Combine retained-rollback proofs and keep manager/viewer qualification aligned with main's actual permission contract |
 | Distribution/qualification/ADR documentation | Canonical migration numbers, supported policies, evidence and release boundaries |
 
 The prior custody, association and SHA-1 review fixes remain unchanged in the
@@ -169,11 +240,12 @@ boundaries.
 ## Final audit and recommendation
 
 **READY TO MERGE.** No confirmed finding remains. The complete merged diff was
-inspected against the latest fetched main, `8ba7a118`. Main is an ancestor of
+inspected against the latest fetched main, `8e9df7d0`. Main is an ancestor of
 the candidate, there are no unmerged paths/conflict markers, `git diff --check`
 passes, the registry has 79 unique versions and the renamed provider SQL is
 byte-for-byte identical to its original PR definition. Both merge commits
-(`ebacda31`, `54267caf`) were pushed normally on the existing feature branch.
+(`ebacda31`, `54267caf`) and refresh merges (`f08d9287`, `2fed37ad`) were pushed
+normally on the existing feature branch. GitHub reports the branch mergeable.
 The final evidence-only documentation update does not change the tested
 product, and its exact tracked source snapshot is checked with all 13 guards.
 The PR is not merged automatically.
