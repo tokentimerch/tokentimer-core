@@ -162,7 +162,7 @@ jobs:
           helm template tokentimer "$CHART" --set config.adminEmail=ci@example.com >/dev/null
 
       - name: Upload Helm package artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: helm-chart
           path: .helm-pkg/tokentimer-${{ steps.get_version.outputs.VERSION }}.tgz
@@ -221,7 +221,7 @@ jobs:
 
       - name: Upload native package verification evidence
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: agent-native-verification
           path: |
@@ -230,7 +230,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload agent release artifacts
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: agent-release
           path: |
