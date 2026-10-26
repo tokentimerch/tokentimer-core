@@ -422,18 +422,28 @@ export default function CertificateIdentityDetailModal({
     }
   }
   const canRestart = source =>
-    Boolean(source.periodEndedAt) &&
-    latestSources.get(source.managedCertificateId) === source &&
-    source.endedReason !== 'endpoint_monitor_deleted' &&
-    (!detail.identityId || source.currentIdentityId === detail.identityId) &&
-    !openSourceIds.has(source.managedCertificateId);
-  const visibleSources = showHistory
+    !['revoked', 'decommissioned'].includes(detail.lifecycleStatus) &&
+    (source.restartCandidate ||
+      (Boolean(source.periodEndedAt) &&
+        latestSources.get(source.managedCertificateId) === source &&
+        source.endedReason !== 'endpoint_monitor_deleted' &&
+        (!detail.identityId ||
+          source.currentIdentityId === detail.identityId) &&
+        !openSourceIds.has(source.managedCertificateId)));
+  const periodSources = showHistory
     ? detail.sources || []
     : (detail.sources || []).filter(
         source => activeSources.includes(source) || canRestart(source)
       );
+  const visibleSources = [
+    ...periodSources,
+    ...(detail.restartableSources || []).map(source => ({
+      ...source,
+      restartCandidate: true,
+    })),
+  ];
   const hiddenPeriodCount =
-    (detail.sources || []).length - visibleSources.length;
+    (detail.sources || []).length - periodSources.length;
   // Job history and deployment details follow an explicitly selected registration.
   // An immutable identity ID is never a managed certificate ID.
   const managedCertificateId = selectedManagedId;
@@ -734,7 +744,9 @@ export default function CertificateIdentityDetailModal({
                     const current = activeSources.includes(source);
                     const canReadd = canRestart(source);
                     return (
-                      <Tr key={`${source.periodId}-${source.startedAt}`}>
+                      <Tr
+                        key={`${source.periodId || source.managedCertificateId}-${source.startedAt || 'replacement'}`}
+                      >
                         <Td>
                           <Text fontSize='sm' fontWeight='semibold'>
                             {sourceLabel(source.source)}
@@ -756,12 +768,18 @@ export default function CertificateIdentityDetailModal({
                         </Td>
                         <Td>
                           <Text fontSize='xs' color='dashboard.modal.muted'>
-                            {formatDate(source.startedAt)} –{' '}
-                            {source.endedAt || source.periodEndedAt
-                              ? formatDate(
-                                  source.endedAt || source.periodEndedAt
-                                )
-                              : 'present'}
+                            {source.restartCandidate ? (
+                              'No active period'
+                            ) : (
+                              <>
+                                {formatDate(source.startedAt)} –{' '}
+                                {source.endedAt || source.periodEndedAt
+                                  ? formatDate(
+                                      source.endedAt || source.periodEndedAt
+                                    )
+                                  : 'present'}
+                              </>
+                            )}
                           </Text>
                         </Td>
                         <Td>

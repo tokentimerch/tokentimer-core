@@ -1,8 +1,8 @@
 "use strict";
 // Real owner browser, authenticated public API reads, and the lab's existing
 // verified rollout. No route mocks, session API writes, DB access or result
-// injection. Configuration acknowledgement is navigation through the runbook;
-// this check does not install its draft or qualify a production DNS provider.
+// injection. Each fresh session runs the guide's real signed noop dry run.
+// Configuration acknowledgement does not install its draft or qualify a provider.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -12,7 +12,7 @@ const SOURCE = "tests/wildcard-vault/ux-lab/onboarding-redo.cjs";
 const VAULT_TITLE = "Share a certificate through Vault";
 const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex");
 
-async function inspect({ state, owner, base, api, versions, matrix, customer, wait, check, root }) {
+async function inspect({ state, owner, base, api, versions, matrix, customer, wait, approve, job, check, root }) {
   const route = `/api/v1/workspaces/${state.workspaceId}/onboarding/mega`;
   const session = async () => (await owner.request(route)).session;
   const summary = async () => (await owner.request(route + "/summary")).summary;
@@ -68,14 +68,28 @@ async function inspect({ state, owner, base, api, versions, matrix, customer, wa
     page.setDefaultTimeout(30000);
     const failures = [];
     page.on("pageerror", () => failures.push("dashboard runtime error"));
-    // Any browser write to the product must be the guide's own session/reset.
+    // Browser writes are the guide's session/reset and exactly two signed noop
+    // previews (one per fresh session). No issuance or deployment is allowed.
     // Observe rather than intercept requests so the test cannot manufacture
     // success or hide an unintended publish/deployment operation.
     const unexpectedWrites = [];
+    const previewRequests = [];
+    const previewJobs = [];
     page.on("request", (request) => {
       const pathname = new URL(request.url()).pathname;
       if (["GET", "HEAD", "OPTIONS"].includes(request.method())) return;
       if ((pathname === route && request.method() === "PUT") || (pathname === route + "/reset" && request.method() === "POST")) return;
+      if (pathname === api() + "/jobs" && request.method() === "POST") {
+        const body = request.postDataJSON();
+        if (body?.operation === "noop" && body.mode === "dry_run" &&
+            body.assignedAgentId === state.agents.issuer.id &&
+            typeof body.idempotencyKey === "string" &&
+            body.idempotencyKey.startsWith("wizard-dryrun-" + state.agents.issuer.id + "-") &&
+            Object.keys(body).sort().join(",") === "assignedAgentId,idempotencyKey,mode,operation") {
+          previewRequests.push(body.idempotencyKey);
+          return;
+        }
+      }
       unexpectedWrites.push({ method: request.method(), path: pathname });
     });
     const frame = (title) => page.getByRole("region", { name: title, exact: true });
@@ -109,12 +123,33 @@ async function inspect({ state, owner, base, api, versions, matrix, customer, wa
       // its real Pebble configuration and its existing Vault custody intact.
       await config.getByRole("button", { name: "I saved this file", exact: true }).click();
       await frame("Install the agent").getByRole("button", { name: "Continue", exact: true }).click();
+      const execution = frame("Turn on execution safely");
+      await execution.waitFor();
+      const submitted = page.waitForResponse((response) => requestFor(response, "POST", api() + "/jobs"));
+      await execution.getByRole("button", { name: "Send a test job", exact: true }).click();
+      const response = await submitted;
+      assert.equal(response.status(), 201);
+      const created = (await response.json()).job;
+      assert.ok(created?.id);
+      assert.equal(created.operation, "noop");
+      assert.equal(created.payload.mode, "dry_run");
+      await approve(created.id);
+      const completedPreview = await wait("fresh onboarding signed noop completes on the enrolled issuer", async () => {
+        const row = await job(created.id);
+        assert.equal(row.operation, "noop");
+        assert.equal(row.payload.mode, "dry_run");
+        assert.equal(row.assignedAgentId, state.agents.issuer.id);
+        assert.ok(!["failed", "rejected", "cancelled", "succeeded"].includes(row.status));
+        return row.status === "dry_run_complete" ? row : false;
+      }, 60000);
+      previewJobs.push({ id: completedPreview.id, status: completedPreview.status, mode: completedPreview.payload.mode });
       await frame(VAULT_TITLE).waitFor();
       await assertNotDone();
       const current = await session();
       assert.equal(current.exists, true);
       assert.equal(current.intent.goal, "certops_vault");
       assert.equal(current.progress.certops.chosenAgentConfirmed, state.agents.issuer.id);
+      assert.equal(current.progress.certops.dryRunJobId, created.id);
       assert.ok(!current.progress.certops.chosenDistributionId);
       assert.ok(!current.progress.certops.chosenDistributionConfirmed);
       const group = distribution(await summary());
@@ -176,9 +211,15 @@ async function inspect({ state, owner, base, api, versions, matrix, customer, wa
     await vaultRow().getByRole("button", { name: VAULT_TITLE + ", review", exact: true }).click();
     await frame(VAULT_TITLE).getByText("Distribution verified", { exact: true }).waitFor();
     assert.equal(await frame(VAULT_TITLE).getByRole("combobox", { name: "Choose your distribution", exact: true }).inputValue(), state.groupId);
-    assert.deepEqual(await inventory(), before, "Starting over and explicitly reusing must preserve the real group, material, consumers, jobs and ACME orders");
+    assert.equal(previewJobs.length, 2);
+    assert.equal(new Set(previewJobs.map((row) => row.id)).size, 2);
+    assert.equal(previewRequests.length, 2);
+    assert.equal(new Set(previewRequests).size, 2);
+    const after = await inventory();
+    assert.deepEqual(after, { ...before, jobs: [...before.jobs, ...previewJobs.map((row) => row.id)].sort() },
+      "Only the two declared signed noop previews may be added; existing jobs, distribution, material, consumers and ACME orders must be preserved");
     assert.deepEqual(failures, []);
-    assert.deepEqual(unexpectedWrites, [], "Only onboarding session/reset writes are expected");
+    assert.deepEqual(unexpectedWrites, [], "Only onboarding session/reset and the two signed noop preview writes are expected");
 
     const screenshot = "distribution-onboarding-redo.png";
     await frame(VAULT_TITLE).scrollIntoViewIfNeeded();
@@ -204,9 +245,12 @@ async function inspect({ state, owner, base, api, versions, matrix, customer, wa
       choiceWithoutContinueRemainedIncomplete: true,
       explicitReuseCompletedStep: true,
       completedChoiceSurvivedReload: true,
-      inventoryUnchanged: true,
-      inventorySha256: sha256(JSON.stringify(before)),
-      counts: { jobs: before.jobs.length, groups: before.groups.length, materialVersions: before.materialVersions.length, consumers: before.consumers.length, acmeOrders: before.acmeOrders },
+      distributionInventoryUnchanged: true,
+      existingJobsPreserved: true,
+      signedDryRunJobs: previewJobs,
+      inventoryBeforeSha256: sha256(JSON.stringify(before)),
+      inventoryAfterSha256: sha256(JSON.stringify(after)),
+      counts: { jobs: after.jobs.length, originalJobs: before.jobs.length, signedDryRunJobs: previewJobs.length, groups: before.groups.length, materialVersions: before.materialVersions.length, consumers: before.consumers.length, acmeOrders: before.acmeOrders },
       browserRuntimeErrors: failures.length,
       unexpectedProductWrites: unexpectedWrites.length,
       databaseInjection: false,
@@ -214,7 +258,7 @@ async function inspect({ state, owner, base, api, versions, matrix, customer, wa
       configurationRunbookOnly: true,
       installationQualified: false,
       publishedReleaseQualified: false,
-      scope: "Disposable Core lab, existing verified distribution and already enrolled issuer; runbook acknowledgement only, no production provider configuration or installation qualification.",
+      scope: "Disposable Core lab, existing verified distribution and already enrolled issuer; two browser-created signed noop dry runs and runbook acknowledgement, no production provider configuration or installation qualification.",
       screenshot: { file: screenshot, sha256: sha256(fs.readFileSync(path.join(root, screenshot))) },
       finishedAt: new Date().toISOString(),
     };
