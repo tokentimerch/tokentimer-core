@@ -1,5 +1,10 @@
 # Distribution extension qualification
 
+The [2026-10-26 expanded lab report](distribution-extensions-lab-2026-10-26.md)
+records the current non-Azure campaign, including Server 2022/2025 and the
+pre-mutation P-521 restriction. The initial implementation evidence below is
+retained for provenance.
+
 Implementation evidence recorded on 2026-10-25. These are development checks,
 not an exact-artifact production release campaign. See [ADR-0015](../adr/0015-certops-material-providers-and-windows-consumers.md)
 and the [operator runbook](distribution-extensions.md).
@@ -128,9 +133,16 @@ node --test tests/e2e/windows-material-real.test.js
 ```
 
 Manual dispatch of `ci.yml` also runs this test in its
-`windows_material_qualification` job on an ephemeral Windows Server 2022
-runner with real IIS installed. Push runs leave that external qualification
-job gated off. The ordinary native Windows agent unit suite remains separate.
+`windows_material_qualification` matrix on ephemeral Windows Server 2022 and
+2025 runners with real IIS installed. Each OS covers RSA, P-256, P-384 and
+P-521 with both a local HTTP fixture and a real checksum-verified OpenBao
+2.4.1 process. The OpenBao consumer uses a scoped read-only token. P-521 cases
+require rejection before native mutation; the twelve supported-key cases run
+the complete native campaign, including a different-leaf import interruption,
+typed local repair and read-only reconciliation. Push runs leave that external
+qualification job gated off. The ordinary native Windows agent unit suite
+remains separate. See the workflow for its per-case environment and provider
+setup when reproducing the matrix locally.
 
 The test reserves port 45443, uses uniquely named IIS sites and a unique
 machine personal store, and removes only its own sites/certificates/keys.
