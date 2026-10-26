@@ -490,6 +490,112 @@ test("delivery worker records ledger outcomes and notifications on a migrated da
   );
   assert.equal(keptLogs.rows.length, 1);
 
+  hook.route("/valid-mixed", [200]);
+  hook.route("/valid-batch", [200]);
+  const malformed = await createWorkspace("malformed", {
+    contact: { email: "malformed@example.com" },
+    group: { webhook_names: ["Broken"] },
+    webhooks: [{ name: "Broken", url: "not-a-url", kind: "generic" }],
+  });
+  const ftp = await createWorkspace("ftp", {
+    contact: { email: "ftp@example.com" },
+    group: { webhook_names: ["Ftp"] },
+    webhooks: [{ name: "Ftp", url: "ftp://example.com/hook", kind: "generic" }],
+  });
+  const blank = await createWorkspace("blank", {
+    contact: { email: "blank@example.com" },
+    group: { webhook_names: ["Blank"] },
+    webhooks: [{ name: "Blank", url: "", kind: "generic" }],
+  });
+  const mixedUrl = await createWorkspace("mixed-url", {
+    contact: { email: "mixed-url@example.com" },
+    group: { webhook_names: ["Good", "Broken"] },
+    webhooks: [
+      { name: "Good", url: `http://127.0.0.1:${hook.port}/valid-mixed`, kind: "generic" },
+      { name: "Broken", url: "not-a-url", kind: "generic" },
+    ],
+  });
+  const validBatch = await createWorkspace("valid-batch", {
+    contact: { email: "valid-batch@example.com" },
+    group: { webhook_names: ["Good"] },
+    webhooks: [{ name: "Good", url: `http://127.0.0.1:${hook.port}/valid-batch`, kind: "generic" }],
+  });
+  const malformedId = await enqueue(malformed, ["webhooks"]);
+  const ftpId = await enqueue(ftp, ["webhooks"]);
+  const blankId = await enqueue(blank, ["webhooks"]);
+  const mixedUrlId = await enqueue(mixedUrl, ["webhooks"]);
+  const validBatchId = await enqueue(validBatch, ["webhooks"]);
+  await deliveryWorkerJob({ closePool: false, incidentEmailSender: sender });
+
+  const malformedRow = await loadAlert(malformedId);
+  assert.equal(malformedRow.status, "blocked");
+  assert.equal(malformedRow.delivery_claim_id, null);
+  assert.equal(malformedRow.channels.outcomes.webhooks.terminal, true);
+  assert.equal(malformedRow.channels.outcomes.webhooks.reason, "provider");
+  assert.deepEqual(malformedRow.channels.retry, []);
+  const malformedLog = await pool.query(
+    `SELECT error_message, metadata FROM alert_delivery_log
+      WHERE alert_queue_id = $1 AND channel = 'webhooks'`,
+    [malformedId],
+  );
+  assert.equal(malformedLog.rows.length, 1);
+  assert.equal(malformedLog.rows[0].error_message, "Invalid webhook URL");
+  assert.equal(malformedLog.rows[0].metadata.terminal, true);
+  assert.equal(malformedLog.rows[0].metadata.urlDomain, null);
+  assert.equal(malformedLog.rows[0].metadata.code, "WEBHOOK_INVALID_URL");
+  const malformedAudit = await pool.query(
+    `SELECT metadata FROM audit_events
+      WHERE workspace_id = $1 AND action = 'ALERT_SEND_FAILED'`,
+    [malformed.workspaceId],
+  );
+  assert.equal(JSON.stringify(malformedAudit.rows).includes("not-a-url"), false);
+
+  const ftpRow = await loadAlert(ftpId);
+  assert.equal(ftpRow.status, "blocked");
+  assert.equal(ftpRow.delivery_claim_id, null);
+  assert.equal(ftpRow.channels.outcomes.webhooks.terminal, true);
+  const ftpLog = await pool.query(
+    `SELECT error_message, metadata FROM alert_delivery_log WHERE alert_queue_id = $1`,
+    [ftpId],
+  );
+  assert.equal(ftpLog.rows[0].metadata.terminal, true);
+  assert.equal(ftpLog.rows[0].metadata.code, "WEBHOOK_INVALID_URL");
+  assert.equal(ftpLog.rows[0].metadata.urlDomain, "example.com");
+  assert.equal(JSON.stringify(ftpLog.rows[0]).includes("ftp://"), false);
+
+  const blankRow = await loadAlert(blankId);
+  assert.equal(blankRow.status, "blocked");
+  assert.equal(blankRow.delivery_claim_id, null);
+  assert.equal(blankRow.channels.outcomes.webhooks.terminal, true);
+  const blankLog = await pool.query(
+    `SELECT metadata FROM alert_delivery_log WHERE alert_queue_id = $1`,
+    [blankId],
+  );
+  assert.equal(blankLog.rows[0].metadata.code, "WEBHOOK_INVALID_URL");
+  assert.equal(blankLog.rows[0].metadata.terminal, true);
+
+  const mixedUrlRow = await loadAlert(mixedUrlId);
+  assert.equal(mixedUrlRow.status, "partial");
+  assert.equal(mixedUrlRow.delivery_claim_id, null);
+  assert.equal(mixedUrlRow.channels.outcomes.webhooks.state, "partial");
+  assert.equal(mixedUrlRow.channels.outcomes.webhooks.terminal, true);
+  assert.deepEqual(mixedUrlRow.channels.retry, []);
+  assert.equal(hook.hits.filter((hit) => hit === "/valid-mixed").length, 1);
+
+  const validBatchRow = await loadAlert(validBatchId);
+  assert.equal(validBatchRow.status, "sent");
+  assert.equal(validBatchRow.delivery_claim_id, null);
+  assert.equal(hook.hits.filter((hit) => hit === "/valid-batch").length, 1);
+
+  await deliveryWorkerJob({ closePool: false, incidentEmailSender: sender });
+  assert.equal(hook.hits.filter((hit) => hit === "/valid-mixed").length, 1);
+  assert.equal(hook.hits.filter((hit) => hit === "/valid-batch").length, 1);
+  const malformedLogsAfter = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM alert_delivery_log WHERE alert_queue_id = $1`,
+    [malformedId],
+  );
+  assert.equal(malformedLogsAfter.rows[0].n, 1);
+
   await new Promise((resolve, reject) => {
     hook.server.close((err) => (err ? reject(err) : resolve()));
   });

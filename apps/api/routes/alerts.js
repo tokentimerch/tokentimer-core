@@ -11,7 +11,7 @@ const {
   requireWorkspaceMembership,
 } = require("../services/rbac");
 const { testWebhookUrl } = require("../config/constants");
-const { webhookHostAllowed, postWebhook } = require("../utils/webhookSafety");
+const { webhookHostAllowed, postWebhook, validateWebhookConfiguration } = require("../utils/webhookSafety");
 const { isValidEmail } = require("../utils/emailAddress");
 const systemSettings = require("../services/systemSettings");
 const {
@@ -609,6 +609,15 @@ router.put(
         const norm = normalizeAlertThresholdsList(alert_thresholds);
         fields.push(`alert_thresholds = $${p++}`);
         params.push(JSON.stringify(norm));
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body || {}, "webhook_urls")) {
+        const checkedWebhooks = validateWebhookConfiguration(webhook_urls);
+        if (!checkedWebhooks.ok) {
+          return res.status(400).json({
+            error: checkedWebhooks.error,
+            code: checkedWebhooks.code,
+          });
+        }
       }
       if (Array.isArray(webhook_urls)) {
         fields.push(`webhook_urls = $${p++}`);
@@ -1549,12 +1558,24 @@ router.put(
         const MAX_WEBHOOKS = parseInt(process.env.MAX_WEBHOOKS || "5", 10) || 5;
         let validWebhooks = [];
         if (Array.isArray(webhook_urls)) {
+          const checkedWebhooks = validateWebhookConfiguration(webhook_urls);
+          if (!checkedWebhooks.ok) {
+            return res.status(400).json({
+              error: checkedWebhooks.error,
+              code: checkedWebhooks.code,
+            });
+          }
           validWebhooks = webhook_urls
             .filter(
               (wh) =>
                 wh && typeof wh.url === "string" && wh.url.trim().length > 0,
             )
             .slice(0, MAX_WEBHOOKS);
+        } else if (webhook_urls != null) {
+          return res.status(400).json({
+            error: "webhook_urls must be an array",
+            code: "VALIDATION_ERROR",
+          });
         }
         // Strict verification for each provided webhook (skip in tests for flexibility)
         if (process.env.NODE_ENV !== "test") {

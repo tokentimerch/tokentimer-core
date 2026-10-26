@@ -31,7 +31,6 @@ import {
   getWebhookNames,
   unionGroupsForThresholdWindow,
   unionContactIds,
-  dedupeNormalizedDestinations,
   deliveryChannelsFromEligibleGroups,
   channelsForDeliveryAttempt,
 } from "./shared/contactGroups.js";
@@ -102,17 +101,19 @@ function unionWebhookNames(groups) {
 
 function uniqueWebhooksByUrl(webhooks) {
   const list = Array.isArray(webhooks) ? webhooks : [];
-  const urls = dedupeNormalizedDestinations(
-    list.map((webhook) => webhook && webhook.url),
-    "webhook",
-  );
-  const byUrl = new Map();
+  const seen = new Set();
+  const kept = [];
   for (const webhook of list) {
     const url = String(webhook?.url || "").trim();
-    if (!url || byUrl.has(url)) continue;
-    byUrl.set(url, webhook);
+    if (!url) {
+      kept.push(webhook);
+      continue;
+    }
+    if (seen.has(url)) continue;
+    seen.add(url);
+    kept.push(webhook);
   }
-  return urls.map((url) => byUrl.get(url)).filter(Boolean);
+  return kept;
 }
 
 function contactGroupAuditFields(assignedIds, resolvedGroups, contactGroups) {
@@ -1478,6 +1479,15 @@ const TRANSIENT_WEBHOOK_CODES = new Set([
   "WEBHOOK_DNS_UNRESOLVED",
 ]);
 
+function webhookLogDomain(url) {
+  try {
+    const parsed = new URL(String(url || ""));
+    return parsed.hostname || null;
+  } catch {
+    return null;
+  }
+}
+
 function webhookEndpointTerminal(result) {
   const code = String((result && result.code) || "");
   const status = Number(result && result.status);
@@ -2360,7 +2370,36 @@ export async function deliveryWorkerJob({
                   const kind = resolveWebhookProviderKind(wh);
                   const url = String(wh?.url || "");
                   const routingKey = String(wh?.routingKey || "");
-                  if (!url) continue;
+                  const trimmedUrl = url.trim();
+                  if (!trimmedUrl) {
+                    consideredEndpoints += 1;
+                    permanentEndpoints += 1;
+                    const blankHash = crypto.createHash("sha256").update("").digest("hex");
+                    webhookEndpoints[blankHash] = "permanent";
+                    if (priorPermanent.has(blankHash)) continue;
+                    errors.push(`${kind}: Invalid webhook URL`);
+                    await client.query(
+                      `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
+                       VALUES ($1, $2, $3, $4, 'webhooks', 'failed', $5, $6)`,
+                      [
+                        alert.id,
+                        alert.owner_user_id,
+                        alert.token_id,
+                        alert.workspace_id,
+                        "Invalid webhook URL",
+                        JSON.stringify({
+                          kind,
+                          urlDomain: null,
+                          urlHash: blankHash,
+                          group_id: groupIdUsedForWebhooks,
+                          terminal: true,
+                          code: "WEBHOOK_INVALID_URL",
+                          retryGeneration: webhookGeneration,
+                        }),
+                      ],
+                    );
+                    continue;
+                  }
                   consideredEndpoints += 1;
 
                   // Compute a stable hash for the URL to identify unique endpoints without storing the raw URL
@@ -2597,7 +2636,7 @@ export async function deliveryWorkerJob({
                       res.success ? null : res.error || null,
                       JSON.stringify({
                         kind,
-                        urlDomain: new URL(url).hostname,
+                        urlDomain: webhookLogDomain(url),
                         urlHash,
                         group_id: groupIdUsedForWebhooks,
                         payload_type: isEndpointHealthWebhook
@@ -2615,6 +2654,7 @@ export async function deliveryWorkerJob({
                           : null,
                         terminal: endpointTerminal === true,
                         retryGeneration: webhookGeneration,
+                        ...(res.code ? { code: res.code } : {}),
                       }),
                     ],
                   );
