@@ -1,5 +1,9 @@
 # Distribution extension qualification
 
+The [PR #460 review follow-up](distribution-extensions-pr-460-review.md)
+records the later Windows target-isolation and key-custody fixes and their
+regression validation.
+
 The [2026-10-26 expanded lab report](distribution-extensions-lab-2026-10-26.md)
 records the current non-Azure campaign, including Server 2022/2025 and the
 pre-mutation P-521 restriction. The initial implementation evidence below is
@@ -129,14 +133,15 @@ test inside the VM; keep all fixture keys and protected staging there.
 
 ```powershell
 $env:TT_WINDOWS_MATERIAL_REAL = '1'
-node --test tests/e2e/windows-material-real.test.js
+node --test tests/e2e/windows-material-custody-real.test.js tests/e2e/windows-material-real.test.js
 ```
 
 Manual dispatch of `ci.yml` also runs this test in its
 `windows_material_qualification` matrix on ephemeral Windows Server 2022 and
 2025 runners with real IIS installed. Each OS covers RSA, P-256, P-384 and
 P-521 with both a local HTTP fixture and a real checksum-verified OpenBao
-2.4.1 process. The OpenBao consumer uses a scoped read-only token. P-521 cases
+2.4.1 process. Every case also runs the existing-key custody regressions. The
+OpenBao consumer uses a scoped read-only token. P-521 cases
 require rejection before native mutation; the twelve supported-key cases run
 the complete native campaign, including a different-leaf import interruption,
 typed local repair and read-only reconciliation. Push runs leave that external
