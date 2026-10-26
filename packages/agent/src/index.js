@@ -2536,6 +2536,16 @@ async function executeJob({
           executionContext, log, leaseOpts, onBeforeMutation: markMutation, publication: session });
       });
     } catch (error) {
+      // These failures are raised by local configuration admission, before
+      // fetching material or creating a side-effect marker. Do not invent an
+      // uncertain installation. A recovery-only attempt still preserves its
+      // earlier unresolved execution fence.
+      if (executionContext.materialRecoveryOnly !== true && [
+        "material_binding_policy_denied", "material_destination_denied",
+        "material_intent_invalid", "material_scope_denied", "material_store_config_invalid",
+      ].includes(error.code)) {
+        return { status: "blocked", errorMessage: error.code };
+      }
       return { status: "orphaned_unknown_effect", errorMessage:
         /^material_[a-z_]+$/.test(error.code || "") ? error.code : "material_execution_failed" };
     }
