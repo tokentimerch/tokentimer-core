@@ -6518,6 +6518,45 @@ describe("executeTrustJob / executeJob dispatch wiring for distribute-trust/revo
     assert.equal(client.calls.reportEvidence.length, 0);
   });
 
+  it("executeTrustJob runs the allowlisted --fresh argv on a Debian revoke, with no fallback warning (B-R5-02)", async () => {
+    if (!AGENT_TRUST_STORE_PREREQUISITES.candidate) return;
+    if (AGENT_TRUST_STORE_PREREQUISITES.family !== "debian") return; // --fresh only exists on Debian-family
+    const freshArgv = ["/usr/sbin/update-ca-certificates", "--fresh"];
+    const commands = {
+      [trustStoreCommandRefForFamily("debian")]: { argv: ["update-ca-certificates"] },
+      "trust-store:update-ca-certificates-fresh": { argv: freshArgv },
+    };
+    const policyEngine = createPolicyEngine(loadPolicyConfig({ allowedCommands: commands }));
+    const executionContext = makeExecutionContext();
+    const seams = fakeSeamsForCurrentFamily();
+    const run = (job, action) =>
+      executeTrustJob({
+        job,
+        jobId: "job-trust-1",
+        action,
+        jobMode: "real",
+        policyEngine,
+        client: createRecordingClient(),
+        log: silentLog,
+        executionContext,
+        trustStoreSeams: seams,
+      });
+
+    const installed = await run(distributeTrustJob(), "distribute-trust");
+    assert.equal(installed.status, "succeeded");
+    const revokeJob = distributeTrustJob({ action: "revoke-trust" });
+    delete revokeJob.pem;
+    const revoked = await run(revokeJob, "revoke-trust");
+
+    assert.equal(revoked.status, "succeeded");
+    assert.deepEqual(seams.execFileImpl.calls.at(-1), freshArgv, "revoke must refresh the store with --fresh");
+    assert.equal(
+      revoked.trustResult.metadata?.some((entry) => entry.name === "debian_fresh_command_ref_missing"),
+      undefined,
+      "no fallback warning when the fresh profile is configured",
+    );
+  });
+
   it("executeJob routes revoke-trust to executeTrustJob and reports a receipt-missing failure for an unowned anchor (seam-injected, no real mutation)", async () => {
     if (!AGENT_TRUST_STORE_PREREQUISITES.candidate) return;
     const family = AGENT_TRUST_STORE_PREREQUISITES.family;

@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Debian trust-anchor revoke uses the configured `--fresh` refresh.** The agent never looked up the `trust-store:update-ca-certificates-fresh` command profile, so a revoke always ran plain `update-ca-certificates`, left the removed anchor's dangling `/etc/ssl/certs` symlink in place, and recorded the "fresh profile missing" warning even when the profile was allowlisted. A Debian revoke now runs the allowlisted `--fresh` argv. Without that profile the behaviour is unchanged (plain refresh plus the warning).
+
 ## [0.18.1] - 2026-10-26
 
 ### Added
