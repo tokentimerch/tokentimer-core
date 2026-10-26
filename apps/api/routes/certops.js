@@ -294,6 +294,7 @@ function redactIdentityLocationsForViewers(req, items) {
   return items.map((item) => ({ ...item,
     keyReference: undefined,
     sources: item.sources.map((source) => ({ ...source, sourceRef: undefined })),
+    restartableSources: (item.restartableSources || []).map((source) => ({ ...source, sourceRef: undefined })),
     locations: item.locations.map((location) => ({ ...location,
       sourceRef: undefined, deploymentReference: undefined })),
   }));
