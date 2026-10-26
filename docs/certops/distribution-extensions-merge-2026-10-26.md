@@ -1,9 +1,13 @@
 # Distribution extension merge validation — 2026-10-26
 
-PR #460 merges main `af0d826be7a80cb49665942ea586ba6960a04cbb` into the existing
-`feat/certops-distribution-extensions` branch, starting from clean PR head
+PR #460 merges main through `8ba7a118b08992855db697580697fed1cb3d9e31` into the
+existing `feat/certops-distribution-extensions` branch, starting from clean PR head
 `2ca3b2581ffbf3e140e3b05a864baedcb186e451`. The branch is not rebased or force
 pushed, and the PR is not merged into main.
+The first merge integrated `af0d826b`; a second preserves subsequent retirement
+guards, timezone handling and dependency/action updates. Added PR jobs use the
+same checkout pin as the updated main workflow. Both retirement regression
+assertions are combined, including scoped parameters and retained source data.
 
 ## Conflict integration
 

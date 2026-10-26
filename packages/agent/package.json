@@ -4,7 +4,7 @@
   "private": true,
   "description": "TokenTimer Agent - outbound-only execution-plane process for CertOps",
   "license": "AGPL-3.0-or-later",
-  "packageManager": "pnpm@11.13.0",
+  "packageManager": "pnpm@11.28.8",
   "type": "commonjs",
   "main": "src/index.js",
   "bin": {

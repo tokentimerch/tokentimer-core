@@ -238,6 +238,16 @@ test("files-only verification checks the disk without repairing missing or alter
   assert.equal(fs.existsSync(f.target.certPath), false);
 });
 
+test("installed readback rejects non-certificate payloads appended to a matching leaf", async t => {
+  const f = await fixture(t); filesOnly(f);
+  assert.equal((await f.deploy()).status, "succeeded");
+  fs.appendFileSync(f.target.certPath, f.bundle.privateKeyPem);
+  const result = await f.deploy({ generation: 2, verificationOnly: true });
+  assert.equal(result.status, "failed");
+  assert.equal(result.deploymentReceipt.installed, false);
+  assert.equal(readProtectedFile(f.record).includes("PRIVATE KEY"), false);
+});
+
 test("a deploy rejected before any write leaves no uncertain marker and can be retried", async (t) => {
   const f = await fixture(t);
   const missingDir = path.join(f.deployDir, "absent");

@@ -86,8 +86,10 @@ test("acknowledged uncertain decommission closes only this identity's active per
   const result = await decommission(db, { acknowledgeUncertainty: true });
   assert.equal(result.lifecycleStatus, "decommissioned");
   assert(db.statements.includes("COMMIT"));
+  assert.equal(db.statements.filter(sql => sql.includes("UPDATE certops_management_periods")).length, 1);
   const closed = db.calls.find(call => call.sql.includes("UPDATE certops_management_periods"));
   assert.ok(closed);
+  assert.match(closed.sql, /ended_at = GREATEST\(NOW\(\), started_at\)/);
   assert.match(closed.sql, /automation_enabled = FALSE/);
   assert.match(closed.sql, /WHERE workspace_id = \$1 AND current_identity_id = \$2 AND ended_at IS NULL/);
   assert.deepEqual(closed.params, [workspaceId, identityId, "certificate_decommissioned"]);
@@ -96,6 +98,7 @@ test("acknowledged uncertain decommission closes only this identity's active per
   assert.deepEqual(source.params.slice(0, 3), [workspaceId, fingerprint, "decommissioned"]);
   assert(!db.statements.some(sql => /DELETE FROM managed_certificates\b/.test(sql)));
   assert(!db.statements.some(sql => /DELETE FROM certops_management_associations\b/.test(sql)));
+  assert(!db.statements.some((sql) => /DELETE FROM certops_(?:management_periods|certificate_sources)/.test(sql)));
 });
 
 test("revoked lifecycle cannot be downgraded to decommissioned", async () => {

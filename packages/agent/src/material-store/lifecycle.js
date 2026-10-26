@@ -215,8 +215,12 @@ function installedPairMatches(binding, policyEngine, fingerprintSha256, bundle =
   if (!cert.checkPrivateKey(key) || crypto.createHash("sha256").update(cert.raw).digest("hex") !== fingerprintSha256) return false;
   const chainPem = binding.target.chainPath ? readPublic(binding.target.chainPath) : "";
   if (bundle) {
-    const certificates = pem => (pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) || [])
-      .map(block => crypto.createHash("sha256").update(new crypto.X509Certificate(block).raw).digest("hex"));
+    const certificates = pem => {
+      const blocks = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g);
+      if (!blocks?.length || pem.replace(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g, "").trim())
+        throw failure("material_install_readback_failed");
+      return blocks.map(block => crypto.createHash("sha256").update(new crypto.X509Certificate(block).raw).digest("hex"));
+    };
     // Compare every installed chain certificate as well as the leaf/key pair.
     if (JSON.stringify(certificates(certPem + "\n" + chainPem)) !== JSON.stringify(certificates(bundle.certificatePem))) return false;
   }
