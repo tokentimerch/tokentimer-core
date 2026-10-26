@@ -477,14 +477,14 @@ describe("CertOps route hardening", () => {
     }
   });
 
-  it("maps the renewal-profile permission to admin in shared RBAC", () => {    const rbacSource = fs.readFileSync(
+  it("maps the renewal-profile permission to manager in shared RBAC", () => {    const rbacSource = fs.readFileSync(
       path.resolve(__dirname, "../../apps/api/services/rbac.js"),
       "utf8",
     );
     assert.match(
       rbacSource,
-      /"certops\.renewal_profile\.manage":\s*"admin"/,
-      "renewal-profile editing must be admin-gated; can() denies unknown actions, so a missing entry would 403 instead of silently allowing, but an accidental downgrade to workspace_manager would not",
+      /"certops\.renewal_profile\.manage":\s*"workspace_manager"/,
+      "renewal-profile editing must allow workspace managers while retaining the shared authorization guard",
     );
   });
 

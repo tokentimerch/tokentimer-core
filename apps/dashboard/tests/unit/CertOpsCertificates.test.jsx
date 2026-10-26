@@ -211,9 +211,8 @@ it.each([
   ['vault:customer/group', true],
   [null, false],
 ])(
-  'offers Vault profile repair only with local publication authority (%s)',
+  'offers a non-owner manager Vault profile repair only with local publication authority (%s)',
   (keyReference, expected) => {
-    useCertOpsIsWorkspaceAdminMock.mockReturnValue(true);
     useCertOpsCertificatesMock.mockReturnValue(
       certState({
         certificates: [certificate({ keyMode: 'vault-managed', keyReference })],
@@ -227,6 +226,24 @@ it.each([
     else expect(repair).not.toBeInTheDocument();
   }
 );
+
+it('hides Vault profile repair from viewers', () => {
+  useCertOpsCanManageMock.mockReturnValue(false);
+  useCertOpsCertificatesMock.mockReturnValue(
+    certState({
+      certificates: [
+        certificate({
+          keyMode: 'vault-managed',
+          keyReference: 'vault:customer/group',
+        }),
+      ],
+    })
+  );
+  renderPage();
+  expect(
+    screen.queryByRole('button', { name: 'Repair renewal profile' })
+  ).not.toBeInTheDocument();
+});
 
 it('shows one stable identity lifecycle alongside independent inventory expiry', () => {
   const now = Date.now();
