@@ -77,7 +77,14 @@ namespace TokenTimerTests {
             });
             legacy.PersistKeyInCsp=true;
             var request=new CertificateRequest("CN=isolated-review.invalid",legacy,HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1);
-            certificate.Dispose();certificate=request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1),DateTimeOffset.UtcNow.AddHours(1));
+            certificate.Dispose();
+            // CreateSelfSigned can attach an ephemeral CNG copy of a CSP key.
+            // Persist the explicit legacy provider association instead, so the
+            // fixture actually reaches the unsupported-provider acquisition.
+            using(var signed=request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1),DateTimeOffset.UtcNow.AddHours(1)))certificate=new X509Certificate2(signed.RawData);
+            var info=new KeyProviderInfo {Container=legacy.CspKeyContainerInfo.KeyContainerName,Provider=legacy.CspKeyContainerInfo.ProviderName,ProviderType=24,Flags=0x20,KeySpec=(uint)KeyNumber.Exchange};
+            Require(CertSetCertificateContextProperty(certificate.Handle,2,0,ref info),"legacy-fixture-association");
+            using(var acquired=certificate.GetRSAPrivateKey())Require(acquired is RSACryptoServiceProvider,"legacy-fixture-provider");
           }
           if(scenario=="incorrect-acl") {
             var descriptor=new RawSecurityDescriptor("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GR;;;WD)");
