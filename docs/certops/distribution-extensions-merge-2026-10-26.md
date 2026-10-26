@@ -239,7 +239,8 @@ boundaries.
 
 ## Final audit and recommendation
 
-**READY TO MERGE.** No confirmed finding remains. The complete merged diff was
+**NOT READY TO MERGE under the current repository policy; code and validation
+are complete.** No confirmed product finding remains. The complete merged diff was
 inspected against the latest fetched main, `8e9df7d0`. Main is an ancestor of
 the candidate, there are no unmerged paths/conflict markers, `git diff --check`
 passes, the registry has 79 unique versions and the renamed provider SQL is
@@ -249,6 +250,20 @@ normally on the existing feature branch. GitHub reports the branch mergeable.
 The final evidence-only documentation update does not change the tested
 product, and its exact tracked source snapshot is checked with all 13 guards.
 The PR is not merged automatically.
+
+GitHub reports `mergeable: true`, `mergeable_state: blocked`, `draft: false` and
+`merged: false`. The active
+[Protect main ruleset 24130458](https://github.com/tokentimerch/tokentimer-core/rules/24130458)
+includes a restriction on updating the default branch. The current account's
+`current_user_can_bypass` is `never`; it has push access but no repository
+administration permission. GitHub's
+[ruleset documentation](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets#restrict-updates)
+explains that this restriction admits only actors with bypass permission.
+The second active ruleset also requires signed commits and linear main history;
+all PR commits are already verified. There is no outstanding required review
+or failing check on the final evidence commit. An authorized maintainer must
+handle the remaining merge-policy gate using the repository's permitted merge
+process. Repository protections are not changed or bypassed by this work.
 
 ## Qualification boundaries
 
