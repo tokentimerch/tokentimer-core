@@ -9,8 +9,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Auto-sync metrics remain available between runs and after restarts.** API `/metrics` exposes durable creation and run-outcome totals, plus last-attempt and last-success timestamps by provider. **Operator guidance:** apply migrations 79–80, establish a Prometheus baseline, and scrape one stable API target per database; replica copies must not be summed. Historical activity is not backfilled.
+
 ### Fixed
 
+- **Vault setup includes consumer registration and recovery.** Create each consumer's bootstrap token and resume a paused rollout in the guide. Retrying a deployment refreshes its timeline and agent output without reloading the page.
+- **Linux agent installation checks reload authorization.** Legacy polkit backends that cannot enforce the scoped service grant are rejected before installation changes. Public package directories remain accessible to the service account after extraction with a restrictive umask; credential and runtime-state permissions stay private.
+
+- **Vault connection errors identify certificate-trust and network failures.** TLS, DNS and refused-connection causes wrapped by the HTTP client retain their classification, so operators receive the corresponding troubleshooting guidance.
+- **Workspace members appear on first load.** Opening Workspaces now shows the selected workspace's members without switching away and back; late responses from a previous selection cannot replace the current list.
+- **Workspace managers can complete AD CS setup and manage renewal profiles.** Issuer configuration, CA confirmation, enrollment management and profile controls accept managers and owners; disabled setup goals explain the required role on hover and keyboard focus.
+
+- **Expiry dates stay consistent across timezones and daylight-saving changes.** Date-only values retain their stated calendar date, and badges, relative labels, sorting and filters count calendar days rather than elapsed 24-hour periods.
+- **Retiring a certificate closes its management periods without losing history or blocking terminal key cleanup.** Read-only and dry-run work does not require installation reconciliation. **Operator action:** after observing a fresh replacement, use **Re-add management** to select its renewal configuration; observing the replacement alone does not restart automation.
 - **Adopted discovered certificates renew.** A certificate found by an agent could not be renewed by the hosted worker when its common name was reported in typed form (`DNS:example.com`): the derived renewal profile listed both `example.com` and `DNS:example.com`, so every automatic renewal failed with certbot's "Inconsistent domain requests" and retried each minute. The `DNS:` prefix is now stripped before the SAN policy is built.
 - **Debian trust-anchor revoke uses the configured `--fresh` refresh.** The agent never looked up the `trust-store:update-ca-certificates-fresh` command profile, so a revoke always ran plain `update-ca-certificates`, left the removed anchor's dangling `/etc/ssl/certs` symlink in place, and recorded the "fresh profile missing" warning even when the profile was allowlisted. A Debian revoke now runs the allowlisted `--fresh` argv. Without that profile the behaviour is unchanged (plain refresh plus the warning).
 

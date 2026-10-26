@@ -14,7 +14,7 @@ import AdcsIssuerWizard from '../../src/components/certops/AdcsIssuerWizard.jsx'
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
 const {
-  isAdminMock,
+  canManageMock,
   listIssuersMock,
   listEnrollmentsMock,
   listAgentsMock,
@@ -27,7 +27,7 @@ const {
   showSuccessMock,
   showErrorMock,
 } = vi.hoisted(() => ({
-  isAdminMock: vi.fn(),
+  canManageMock: vi.fn(),
   listIssuersMock: vi.fn(),
   listEnrollmentsMock: vi.fn(),
   listAgentsMock: vi.fn(),
@@ -51,10 +51,10 @@ vi.mock('../../src/utils/toast.js', () => ({
 }));
 
 vi.mock('../../src/components/certops/useCertOps.js', () => ({
-  useCertOpsIsWorkspaceAdmin: isAdminMock,
-  useCertOpsWorkspaceAdminState: () => ({
+  useCertOpsIsWorkspaceAdmin: canManageMock,
+  useCertOpsManagementState: () => ({
     status: 'ready',
-    isAdmin: isAdminMock(),
+    canManage: canManageMock(),
     retry: vi.fn(),
   }),
 }));
@@ -122,7 +122,7 @@ function issuer(overrides = {}) {
 }
 
 beforeEach(() => {
-  isAdminMock.mockReset();
+  canManageMock.mockReset();
   listIssuersMock.mockReset();
   listEnrollmentsMock.mockReset();
   listAgentsMock.mockReset();
@@ -142,7 +142,7 @@ beforeEach(() => {
 
 describe('CertOpsAdcs', () => {
   it('shows the exact installed enrollment and its status together after Show finished', async () => {
-    isAdminMock.mockReturnValue(true);
+    canManageMock.mockReturnValue(true);
     const id = 'a24bf631-19c7-4257-918f-e84e22d79b41';
     listEnrollmentsMock.mockResolvedValue({
       items: [{ id, state: 'installed', requestId: 42 }],
@@ -160,7 +160,7 @@ describe('CertOpsAdcs', () => {
     expect(checkbox).toBeChecked();
   });
   it('rejects a RequestId above the signed 32-bit CA range before calling the API', async () => {
-    isAdminMock.mockReturnValue(true);
+    canManageMock.mockReturnValue(true);
     listEnrollmentsMock.mockResolvedValue({
       items: [{ id: 'enr-2', state: 'submission_uncertain', requestId: null }],
     });
@@ -187,19 +187,21 @@ describe('CertOpsAdcs', () => {
     expect(showErrorMock).not.toHaveBeenCalled();
   });
 
-  it('hides issuer management from a non-admin', () => {
-    isAdminMock.mockReturnValue(false);
+  it('hides issuer management from a viewer', () => {
+    canManageMock.mockReturnValue(false);
 
     renderPage();
 
     expect(
-      screen.getByText('AD CS issuer management is limited to workspace admins')
+      screen.getByText(
+        'AD CS issuer management requires a workspace manager or owner'
+      )
     ).toBeInTheDocument();
     expect(listIssuersMock).not.toHaveBeenCalled();
   });
 
   it('shows approval, an uncertain RequestId, and a stale CA-key notice', async () => {
-    isAdminMock.mockReturnValue(true);
+    canManageMock.mockReturnValue(true);
     listIssuersMock.mockResolvedValue({ items: [issuer()] });
     listEnrollmentsMock.mockResolvedValue({
       items: [
@@ -291,7 +293,7 @@ describe('CertOpsAdcs', () => {
   });
 
   it('offers key confirmation only after a safe preflight', async () => {
-    isAdminMock.mockReturnValue(true);
+    canManageMock.mockReturnValue(true);
     listIssuersMock.mockResolvedValue({
       items: [
         issuer({
@@ -313,7 +315,7 @@ describe('CertOpsAdcs', () => {
   });
 
   it('does not create an issuer until the CA check starts', async () => {
-    isAdminMock.mockReturnValue(true);
+    canManageMock.mockReturnValue(true);
     createIssuerMock.mockResolvedValue({ issuer: { id: 'issuer-2' } });
 
     renderPage();
@@ -346,7 +348,7 @@ describe('CertOpsAdcs', () => {
   });
 
   it('discards the draft when the wizard closes before confirm', async () => {
-    isAdminMock.mockReturnValue(true);
+    canManageMock.mockReturnValue(true);
     listAgentsMock.mockResolvedValue({
       items: [{ id: 'agent-1', name: 'member-1' }],
     });
@@ -382,7 +384,7 @@ describe('CertOpsAdcs', () => {
   });
 
   it('hides an AD CS issuer that has no chosen certificate', async () => {
-    isAdminMock.mockReturnValue(true);
+    canManageMock.mockReturnValue(true);
     listIssuersMock.mockResolvedValue({
       items: [issuer({ currentVersion: 0, name: 'Draft CA' }), issuer()],
     });
@@ -394,7 +396,7 @@ describe('CertOpsAdcs', () => {
   });
 
   it('keeps asking for a preflight verdict after dispatch', async () => {
-    isAdminMock.mockReturnValue(true);
+    canManageMock.mockReturnValue(true);
     listAgentsMock.mockResolvedValue({
       items: [{ id: 'agent-1', name: 'member-1' }],
     });
@@ -433,7 +435,7 @@ describe('CertOpsAdcs', () => {
   });
 
   it('does not offer a new CA or template on a confirmed issuer', async () => {
-    isAdminMock.mockReturnValue(true);
+    canManageMock.mockReturnValue(true);
     listIssuersMock.mockResolvedValue({
       items: [
         issuer({
@@ -465,7 +467,7 @@ describe('CertOpsAdcs', () => {
   it.each([false, true])(
     'gives the correct next step after pinning (setup guide: %s)',
     async setupGuide => {
-      isAdminMock.mockReturnValue(true);
+      canManageMock.mockReturnValue(true);
       listAgentsMock.mockResolvedValue({
         items: [{ id: 'agent-1', name: 'member-1' }],
       });
@@ -557,7 +559,7 @@ describe('CertOpsAdcs', () => {
   );
 
   it('loads the next page of issuers past the first 100', async () => {
-    isAdminMock.mockReturnValue(true);
+    canManageMock.mockReturnValue(true);
     const firstPage = Array.from({ length: 100 }, (_, index) =>
       issuer({ id: `issuer-${index}`, name: `CA ${index}` })
     );
@@ -589,7 +591,7 @@ describe('CertOpsAdcs', () => {
   });
 
   it('finishes Check again when the new preflight repeats the same safe verdict', async () => {
-    isAdminMock.mockReturnValue(true);
+    canManageMock.mockReturnValue(true);
     listAgentsMock.mockResolvedValue({
       items: [{ id: 'agent-1', name: 'member-1' }],
     });
@@ -648,7 +650,7 @@ describe('CertOpsAdcs', () => {
   }, 12000);
 
   it('confirms the later CA pair when an older preflight finishes first', async () => {
-    isAdminMock.mockReturnValue(true);
+    canManageMock.mockReturnValue(true);
     listAgentsMock.mockResolvedValue({
       items: [{ id: 'agent-1', name: 'member-1' }],
     });
@@ -724,7 +726,7 @@ describe('CertOpsAdcs', () => {
   }, 15000);
 
   it('reads an issuer that sorts past the first page before confirming it', async () => {
-    isAdminMock.mockReturnValue(true);
+    canManageMock.mockReturnValue(true);
     listAgentsMock.mockResolvedValue({
       items: [{ id: 'agent-1', name: 'member-1' }],
     });
@@ -795,7 +797,7 @@ describe('CertOpsAdcs', () => {
     ).toBeInTheDocument();
   }, 15000);
   async function runCheck() {
-    isAdminMock.mockReturnValue(true);
+    canManageMock.mockReturnValue(true);
     listAgentsMock.mockResolvedValue({
       items: [{ id: 'agent-1', name: 'member-1' }],
     });

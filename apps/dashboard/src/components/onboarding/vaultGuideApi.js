@@ -41,3 +41,11 @@ export async function retryDeployment(workspaceId, jobId) {
   );
   return res.data;
 }
+
+export async function resumeRollout(workspaceId, groupId, rolloutId) {
+  const res = await apiClient.post(
+    `${base(workspaceId, groupId)}/rollouts/${encodeURIComponent(rolloutId)}/state`,
+    { state: 'deploying' }
+  );
+  return res.data;
+}

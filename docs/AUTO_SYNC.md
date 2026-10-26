@@ -35,6 +35,23 @@ restarts and deletions; historical imports are not backfilled. For `increase()`
 alerts, scrape one stable API target per database and record a baseline first.
 Do not sum replica copies. Monitor scrape failures separately.
 
+Migration 80 also exposes `auto_sync_run_outcomes_total{provider,status}` for
+committed `success`, `partial`, `failed`, and `superseded` run outcomes. Each run
+counts once when it first leaves `running`, including lease recovery and API
+supersession. Existing history is not backfilled; totals survive history deletion.
+The separate name distinguishes this durable counter from the worker's
+process-local `auto_sync_runs_total`.
+
+`auto_sync_last_attempt_timestamp_seconds{provider}` records the latest run start;
+`auto_sync_last_success_timestamp_seconds{provider}` records the latest fully
+successful completion. Both are Unix seconds, persist after restart/deletion,
+and expose zero until observed. Partial and failed runs never refresh success.
+For freshness alerts, require a timestamp greater than zero before comparing
+`time() - auto_sync_last_success_timestamp_seconds` with your expected schedule;
+handle never-successful providers separately. Provider aggregates describe the
+installation, so one healthy configuration can hide another configuration's
+failure; use configuration run history to investigate individual connections.
+
 ## Cleanup and removal
 
 Enable destructive cleanup only when it matches your retention policy. Partial, truncated, rate-limited or inaccessible scans must not be treated as proof that an asset disappeared. Complete scans reconcile only the scope actually covered.

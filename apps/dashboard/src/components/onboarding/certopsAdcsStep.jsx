@@ -69,7 +69,7 @@ function adcsBlocker(capabilities) {
   if (!cap || !BLOCKED_STATES.has(cap.state)) return null;
   return (
     cap.blockers?.[0]?.remediation ||
-    'Ask a workspace administrator to complete this step.'
+    'Ask a workspace manager or owner to complete this step.'
   );
 }
 

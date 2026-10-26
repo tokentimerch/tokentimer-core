@@ -448,6 +448,14 @@ must supply the expected certificate identity; incompatible requests fail
 without mutation. Reverting images does not undo migrations; recovery needs a
 matching backup or an explicitly supported migration path.
 
+Retiring a certificate closes its current source management periods and disables
+their automation while retaining source and observation history. Seeing a fresh
+replacement fingerprint does not resume management. After verifying that fresh
+certificate, select **Re-add management** and choose its renewal configuration
+explicitly. The retired fingerprint remains terminal and cannot be re-added.
+Bound terminal AD CS key cleanup can still finish; retirement does not classify
+read-only or dry-run work as an uncertain installation.
+
 Cloud applies the corresponding schema as migrations 80–84. Enterprise must
 ship the Core runtime containing these changes alongside its overlays. Promote
 the final Core pin, contract digests, matching image/chart versions and release
@@ -581,7 +589,8 @@ TokenTimer stores only public certificate material (fingerprints, serials, issue
 | `ENVIRONMENT_SUFFIX` | Metrics environment label (if you have multiple instances) | `unset`       | Worker metrics |
 
 API `/metrics` exposes `auto_sync_items_created_total{provider}` when
-`ENABLE_METRICS=true`; no Pushgateway is required. See
+`ENABLE_METRICS=true`, along with durable run outcomes and last-attempt and
+last-success timestamps; no Pushgateway is required. See
 [auto-sync monitoring](AUTO_SYNC.md#new-inventory-metrics).
 
 ## WhatsApp (Twilio)

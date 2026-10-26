@@ -15,7 +15,7 @@ import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
 const {
   useCertOpsAvailabilityMock,
-  useCertOpsIsWorkspaceAdminMock,
+  useCertOpsCanManageMock,
   listRenewalProfilesMock,
   updateRenewalProfileMock,
   createAdcsRenewalProfileMock,
@@ -29,7 +29,7 @@ const {
   distributionApiGetMock,
 } = vi.hoisted(() => ({
   useCertOpsAvailabilityMock: vi.fn(),
-  useCertOpsIsWorkspaceAdminMock: vi.fn(),
+  useCertOpsCanManageMock: vi.fn(),
   listRenewalProfilesMock: vi.fn(),
   updateRenewalProfileMock: vi.fn(),
   createAdcsRenewalProfileMock: vi.fn(),
@@ -81,9 +81,9 @@ vi.mock('../../src/utils/toast.js', () => ({
 
 vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsAvailability: useCertOpsAvailabilityMock,
-  useCertOpsCanManage: () => false,
+  useCertOpsCanManage: useCertOpsCanManageMock,
   useCertOpsEnabled: () => true,
-  useCertOpsIsWorkspaceAdmin: useCertOpsIsWorkspaceAdminMock,
+  useCertOpsIsWorkspaceAdmin: () => false,
   useCertOpsWorkspaceKillSwitch: () => ({
     certOpsPaused: false,
     certOpsEnabled: true,
@@ -215,7 +215,7 @@ beforeEach(() => {
     error: '',
     retry: vi.fn(),
   });
-  useCertOpsIsWorkspaceAdminMock.mockReturnValue(true);
+  useCertOpsCanManageMock.mockReturnValue(true);
   listRenewalProfilesMock.mockResolvedValue({
     items: [profile()],
     total: 1,
@@ -370,10 +370,9 @@ describe('CertOpsRenewals page', () => {
     });
   });
 
-  it('hides every renewal control from a non-admin', async () => {
-    // The API is admin-only, so showing the control to a manager would just
-    // produce a 403 after they clicked it.
-    useCertOpsIsWorkspaceAdminMock.mockReturnValue(false);
+  it('hides every renewal control from a viewer', async () => {
+    // Viewers cannot mutate renewal profiles through either the UI or API.
+    useCertOpsCanManageMock.mockReturnValue(false);
 
     renderPage();
     await openRenewalProfiles();
@@ -386,7 +385,9 @@ describe('CertOpsRenewals page', () => {
       screen.queryByRole('button', { name: 'Change' })
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText('Only workspace admins can change renewal settings.')
+      screen.getByText(
+        'Only workspace managers and owners can change renewal settings.'
+      )
     ).toBeInTheDocument();
   });
 
@@ -546,8 +547,8 @@ describe('CertOpsRenewals page', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('reads renewal profiles for a non-admin, leaving the write refusal to the server', async () => {
-    useCertOpsIsWorkspaceAdminMock.mockReturnValue(false);
+  it('reads renewal profiles for a read-only caller, leaving the write refusal to the server', async () => {
+    useCertOpsCanManageMock.mockReturnValue(false);
 
     renderPage();
     await openRenewalProfiles();

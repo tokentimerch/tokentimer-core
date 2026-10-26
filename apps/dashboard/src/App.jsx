@@ -142,7 +142,10 @@ import apiClient, {
   showSuccessMessage,
 } from './utils/apiClient';
 
-import { isNeverExpires, NEVER_EXPIRES_DATE_VALUE } from './utils/dateUtils';
+import {
+  getDaysUntilExpiration as calendarDaysUntilExpiration,
+  NEVER_EXPIRES_DATE_VALUE,
+} from './utils/dateUtils';
 import { ContactGroupPluralWritesProvider } from './utils/contactGroupPluralWrites.jsx';
 import {
   TOUR_MOCK_TOKENS,
@@ -231,7 +234,6 @@ function buildAccountPathFromDashboardSearch(search) {
 // Now uses centralized color system from styles/colors.js
 const _getSectionColorScheme = getColorFromString;
 
-const MS_PER_DAY = 1000 * 60 * 60 * 24;
 const PRODUCT_TOUR_MOBILE_BREAKPOINT_PX = 992;
 const INTRODUCTION_VIDEO_URL = 'https://tokentimer.ch/blog/video-introduction';
 
@@ -269,14 +271,7 @@ function useProductTourMobileViewport() {
 }
 
 function getDaysUntilExpiration(expiry) {
-  if (!expiry || isNeverExpires(expiry)) return Number.POSITIVE_INFINITY;
-  const expirationDate = new Date(expiry);
-  if (Number.isNaN(expirationDate.getTime())) return Number.POSITIVE_INFINITY;
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  expirationDate.setHours(0, 0, 0, 0);
-  return Math.ceil((expirationDate.getTime() - today.getTime()) / MS_PER_DAY);
+  return calendarDaysUntilExpiration(expiry) ?? Number.POSITIVE_INFINITY;
 }
 
 function getDashboardStatusMeta(expiry) {

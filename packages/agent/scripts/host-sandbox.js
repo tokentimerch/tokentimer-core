@@ -13,12 +13,21 @@
  *   node host-sandbox.js polkit --user NAME [--rule-file FILE] [--replace] [--reload-service UNIT ...]
  *   node host-sandbox.js validate-path PATH
  *   node host-sandbox.js map-reload-service NAME
+ *   node host-sandbox.js check-polkit "pkaction version VERSION"
  *   node host-sandbox.js trust-store-paths FAMILY
  *   node host-sandbox.js is-trust-store-path PATH
  *   node host-sandbox.js is-trust-store-recursive-acl PATH
  */
 
 const fs = require("node:fs");
+
+function assertPolkitJavascriptVersion(text) {
+  const match = /\bpkaction\s+(?:version\s+)?(\d+)(?:\.(\d+))?/i.exec(String(text));
+  if (!match) throw new Error("Could not determine the installed polkit version");
+  if (Number(match[1]) === 0 && Number(match[2] || 0) < 106) {
+    throw new Error("Service reload needs polkit JavaScript rules (0.106 or newer); legacy local-authority polkit, including Ubuntu 22.04's default 0.105, cannot enforce the scoped unit/verb grant. Use a supported newer polkit/OS, such as Ubuntu 24.04. No broad authorization fallback is installed.");
+  }
+}
 
 /**
  * OS-owned trust-store directories the agent must write for
@@ -386,6 +395,8 @@ function parseArgs(argv) {
       options.path = arg;
     } else if (command === "map-reload-service" && !options.service) {
       options.service = arg;
+    } else if (command === "check-polkit" && !options.version) {
+      options.version = arg;
     } else if (command === "trust-store-paths" && !options.family) {
       options.family = arg;
     } else if (command === "is-trust-store-path" && !options.path) {
@@ -405,6 +416,10 @@ function main(argv = process.argv.slice(2)) {
     return 0;
   }
   const { command, options } = parseArgs(argv);
+  if (command === "check-polkit") {
+    assertPolkitJavascriptVersion(options.version);
+    return 0;
+  }
   if (command === "override") {
     process.stdout.write(
       buildSystemdOverride({
@@ -488,6 +503,7 @@ module.exports = {
   planPolkitRule,
   parseExistingPolkitUnits,
   mapReloadService,
+  assertPolkitJavascriptVersion,
   main,
 };
 
