@@ -535,10 +535,57 @@ test(
     };
     assert.notEqual(renewed.fingerprintSha256, bundle.fingerprintSha256);
     await saveBundle(renewed);
+    const replacementJob = jobFor(0, 4, renewed);
+    let replacementChecks = 0;
+    const interruptedReplacement = await execute(replacementJob, async () => {
+      if (++replacementChecks === 4)
+        throw Object.assign(new Error(), {
+          code: "material_lease_unavailable",
+        });
+    });
+    assert.equal(interruptedReplacement.status, "orphaned_unknown_effect");
+    const reconcileReplacement = () =>
+      reconcilePinnedDeployment({
+        job: replacementJob,
+        bindings,
+        stateDir,
+        policyEngine,
+      });
+    await assert.rejects(reconcileReplacement(), {
+      code: "material_windows_verify_failed",
+    });
+    await assert.rejects(execute(replacementJob), {
+      code: "material_binding_uncertain",
+    });
+    // Customer-owned repair activates only the already imported intended leaf.
+    // Reconciliation itself must never perform that repair or manufacture proof.
+    const repair = createWindowsConnector({
+      binding: bindings[replacementJob.materialDeployment.bindingId],
+      stateDir,
+    });
     assert.equal(
-      (await execute(jobFor(0, 4, renewed))).status,
+      await repair.withLock((signal) => repair.verify(bundle, signal)),
+      true,
+      "the original binding survives an interruption after importing new material",
+    );
+    await repair.withLock((signal) => repair.activate(renewed, signal));
+    assert.equal(
+      JSON.parse(
+        readProtectedFile(
+          path.join(
+            stateDir,
+            "material-bindings",
+            `${replacementJob.materialDeployment.bindingId}.json`,
+          ),
+        ),
+      ).uncertain,
+      true,
+    );
+    assert.equal((await reconcileReplacement()).reconciled, true);
+    assert.equal(
+      (await execute(replacementJob)).status,
       "succeeded",
-      "new material activates on the first consumer",
+      "new material recovers only after local repair, reconciliation and original-intent retry",
     );
     const independent = jobFor(1, 2);
     independent.materialDeployment.verificationOnly = true;
