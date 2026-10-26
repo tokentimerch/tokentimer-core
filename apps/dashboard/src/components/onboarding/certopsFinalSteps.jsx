@@ -356,7 +356,7 @@ export function VaultStep({ ctx }) {
       workspaceId: ctx.workspaceId,
       groupId: form.groupId,
     });
-  } catch (_) {
+  } catch {
     policies = null;
   }
   const declared = agentItems.flatMap(a => a.declaredCapabilities || []);
@@ -408,7 +408,7 @@ export function VaultStep({ ctx }) {
         const job = res?.job || res;
         if (!job?.id) throw new Error('The publish job could not be read.');
         if (!cancelled) setPub(p => ({ ...p, job }));
-      } catch (_) {
+      } catch {
         if (!cancelled) setPub(p => ({ ...p, job: null }));
       }
     };
@@ -1047,6 +1047,15 @@ export function VaultStep({ ctx }) {
                   {out.fieldErrors?.deployPath?.join(' ')}
                 </FormErrorMessage>
               </FormControl>
+              {reloadConsumer ? (
+                <Text fontSize='sm' data-testid='vault-reload-prerequisite'>
+                  Service reloads require polkit with JavaScript rules support
+                  (0.106 or later). Ubuntu
+                  22.04&apos;s default polkit 0.105 cannot enforce this reload
+                  policy; use a compatible host such as Ubuntu 24.04. File-only
+                  delivery does not need a reload grant.
+                </Text>
+              ) : null}
               <Text fontSize='sm'>
                 Install the Vault binary first, then run the agent install
                 command. Its --write-path makes the installer create{' '}
