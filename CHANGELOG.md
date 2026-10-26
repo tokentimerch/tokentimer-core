@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Adopted discovered certificates renew.** A certificate found by an agent could not be renewed by the hosted worker when its common name was reported in typed form (`DNS:example.com`): the derived renewal profile listed both `example.com` and `DNS:example.com`, so every automatic renewal failed with certbot's "Inconsistent domain requests" and retried each minute. The `DNS:` prefix is now stripped before the SAN policy is built.
+
 ## [0.18.1] - 2026-10-26
 
 ### Added

@@ -146,6 +146,66 @@ describe("renewal profile derivation from an issued certificate", () => {
     assert.ok(profile.sanPolicy.sans.includes("web-01.example.com"));
   });
 
+  it("does not duplicate a name reported in typed DNS: form (adopted discovered certificate)", () => {
+    // Discovery stores the first typed SAN as the common name when the leaf has
+    // no Subject CN, so an adopted certificate reaches derivation like this.
+    const profile = deriveRenewalProfileFromIssuedCertificate({
+      payload: issuePayload({
+        sans: ["web-01.example.com", "DNS:web-01.example.com"],
+      }),
+      certificate: issuedCertificate({
+        commonName: "DNS:web-01.example.com",
+        subjectAltNames: ["DNS:web-01.example.com"],
+      }),
+    });
+    assert.deepEqual(profile.sanPolicy.sans, ["web-01.example.com"]);
+    assert.equal(profile.sanPolicy.allowWildcards, false);
+  });
+
+  it("strips the DNS: prefix from every observed SAN and keeps order and other names", () => {
+    const profile = deriveRenewalProfileFromIssuedCertificate({
+      payload: issuePayload(),
+      certificate: issuedCertificate({
+        commonName: "DNS:web-01.example.com",
+        subjectAltNames: [
+          "DNS:web-01.example.com",
+          "dns: www.example.com",
+          "alt.example.com",
+        ],
+      }),
+    });
+    assert.deepEqual(profile.sanPolicy.sans, [
+      "web-01.example.com",
+      "www.example.com",
+      "alt.example.com",
+    ]);
+  });
+
+  it("recognises a typed wildcard SAN as a wildcard", () => {
+    const profile = deriveRenewalProfileFromIssuedCertificate({
+      payload: issuePayload({
+        target: { type: "domain", reference: "*.example.com" },
+      }),
+      certificate: issuedCertificate({
+        commonName: "DNS:*.example.com",
+        subjectAltNames: ["DNS:*.example.com"],
+      }),
+    });
+    assert.deepEqual(profile.sanPolicy.sans, ["*.example.com"]);
+    assert.equal(profile.sanPolicy.allowWildcards, true);
+  });
+
+  it("matches the approved domain against a typed SAN for a SAN-only certificate", () => {
+    const profile = deriveRenewalProfileFromIssuedCertificate({
+      payload: issuePayload(),
+      certificate: issuedCertificate({
+        commonName: null,
+        subjectAltNames: ["DNS:web-01.example.com"],
+      }),
+    });
+    assert.deepEqual(profile.sanPolicy.sans, ["web-01.example.com"]);
+  });
+
   it("allows wildcards only when the issued certificate contains one", () => {
     const plain = deriveRenewalProfileFromIssuedCertificate({
       payload: issuePayload(),
