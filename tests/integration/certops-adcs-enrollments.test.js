@@ -1091,5 +1091,12 @@ describe("CertOps AD CS enrollments (real database)", function () {
     await retire(queuedCert, "revoked");
     expect((await job(queuedDeploy)).status).to.equal("cancelled");
     expect((await job(queuedContinuation)).status).to.equal("pending");
+    await pool.query("UPDATE certificate_enrollments SET state='abandoned' WHERE current_job_id=$1", [queuedContinuation]);
+    await run(queuedContinuation);
+    expect(await job(queuedContinuation)).to.deep.equal({ status: "running", reconcile: false });
+    const laterCleanup = await continuation("expired", queuedCert);
+    await run(laterCleanup);
+    expect(await job(laterCleanup)).to.deep.equal({ status: "running", reconcile: false });
+    expect((await pool.query("SELECT management_period_id FROM certificate_jobs WHERE id=$1", [laterCleanup])).rows[0].management_period_id).to.equal(null);
   });
 });

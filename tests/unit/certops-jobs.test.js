@@ -229,6 +229,7 @@ function createMemoryClient(options = {}) {
           completed_at: params[21],
           canceled_at: params[22],
           creation_request_hash: params[23],
+          enrollment_id: params[24],
         };
         jobs.push(row);
         return { rows: [row] };
