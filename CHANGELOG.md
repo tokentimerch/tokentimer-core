@@ -9,18 +9,15 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Changed
+## [0.18.1] - 2026-10-26
 
-- **Vault setup stays in the guide.** Send signed agent checks, assign consumers, copy their returned configuration revisions, and deploy a selected published version without running TokenTimer API commands in a terminal. Choose file distribution alone or also reload NGINX, Apache or HAProxy; file-only completion confirms installation without requiring or claiming live TLS verification. The guide shows each deployment's evidence; starting over creates a fresh publication attempt while preserving existing records. **Operator action:** apply migration 78 and deploy matching API/worker and consumer agents for file-only delivery; older agents reject that policy before mutation.
+### Added
 
-### Fixed
-
-- **Restarted setup guides can run a new signed test.** A fresh setup no longer reuses another attempt's job request. New steps open at their heading, while background status refreshes keep the current reading position.
-
-## [0.18.1] - 2026-10-25
+- **Vault setup stays in the guide, with file-only delivery.** Send signed agent checks, assign consumers, copy their returned configuration revisions, and deploy a published version from the setup guide without running TokenTimer API commands in a terminal. Choose file distribution alone or also reload NGINX, Apache or HAProxy; file-only completion confirms installation and does not claim live TLS verification. The guide shows each deployment's evidence, and starting over creates a fresh publication attempt while keeping existing records. **Operator action:** apply migration 78 and deploy matching API/worker and consumer agents before using file-only delivery; older agents reject that policy before any change is made.
 
 ### Fixed
 
+- **Restarted setup guides can run a new signed test.** A fresh setup no longer reuses another attempt's job request. New steps open at their heading, and background status refreshes keep your reading position.
 - **AD CS setup stays in the guide after CA pinning.** Run the fresh CA/template check on the selected Windows agent inline; renewal setup waits for the post-pin check instead of sending you to Renewals.
 - **Vault rollouts honor Job approval.** With workspace approval off, a single operator can start a rollout and its consumer deployments without a second account. Explicit per-request approval remains available; workspace-forced approval still requires another authorized user. Existing pending approvals are preserved. Settings and operator guidance clarify that enabling Job approval also holds scheduled renewal jobs, and that publishing a renewed certificate does not automatically request a consumer rollout.
 
