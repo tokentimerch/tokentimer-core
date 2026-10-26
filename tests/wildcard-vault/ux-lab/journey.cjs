@@ -463,7 +463,7 @@ async function publish() {
   }
   await owner.request(repairRoute, "POST", { keyRotation: false }, 422);
   check(
-    "SAN-only publication configures renewal; manager repair preserves the profile, viewers are denied and input stays constrained",
+    "SAN-only publication configures renewal; owner and manager repair preserve the profile, viewers are denied and input stays constrained",
   );
 }
 async function bindings() {

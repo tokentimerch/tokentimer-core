@@ -182,6 +182,12 @@ async function extend(c) {
     "/api/v1/workspaces/" + state.workspaceId + "/members/" + session.user.id;
   await owner.request(member, "PATCH", { role: "viewer" });
   try {
+    await approver.request(
+      api() + "/certificates/" + state.certificateId + "/renewal-profile/repair",
+      "POST",
+      {},
+      403,
+    );
     await approver.request(group() + "/versions", "GET", undefined, 403);
     await approver.request(
       group() + "/consumers/" + state.bindings[0].id,
@@ -205,7 +211,7 @@ async function extend(c) {
     await owner.request(member, "PATCH", { role: "workspace_manager" });
   }
   check(
-    "viewer cannot read operator distribution versions, mutate bindings, request rollouts or retry jobs; admin restores manager rights",
+    "viewer cannot repair renewal profiles, read operator distribution versions, mutate bindings, request rollouts or retry jobs; admin restores manager rights",
   );
   // Real same-key retries concurrently resolve one approval and frozen intent.
   const concurrent = await Promise.all(
