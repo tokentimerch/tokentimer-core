@@ -2,6 +2,8 @@
 
 Install on the host that holds the certificate keys. Use Node.js 22 or 24 and a systemd Linux host with outbound HTTPS to the TokenTimer API. Enable CertOps and provide its signing/registration encryption keys on the control plane first.
 
+For service reload, install polkit with JavaScript-rule support (0.106 or newer; Ubuntu 24.04 is a suitable example). Ubuntu 22.04's default polkit 0.105 cannot enforce the agent's scoped reload grant. The installer rejects that backend before changing the installation; it does not add a broad sudo or legacy `.pkla` permission. Discovery and file-only delivery do not need reload authorization.
+
 1. In the workspace's Agent fleet panel, create a bootstrap token and copy the generated deployment command. Tokens are single-use and shown once. A token expires 24 hours after creation by default (maximum 30 days); create a new one if it expires.
 2. Download the matching released agent package and verify its checksum against the release before extracting it. Use the package installer, not an unreviewed copy of a script.
 3. Run the generated command as root. Prefer the hidden bootstrap-token prompt. Keep initial execution disabled while you configure [local policy](configuration.md).

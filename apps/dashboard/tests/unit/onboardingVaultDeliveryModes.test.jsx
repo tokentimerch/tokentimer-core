@@ -242,6 +242,7 @@ describe('Vault consumer delivery choices', () => {
     for (let n = 1; n <= 6; n++)
       expect(screen.getByTestId(`vault-part-${n}`)).toBeVisible();
     expect(screen.queryByLabelText('Service to reload')).toBeNull();
+    expect(screen.queryByTestId('vault-reload-prerequisite')).toBeNull();
     expect(document.body.textContent).not.toMatch(
       /Install nginx|nginx server block|One-time nginx setup|--reload-service/
     );
@@ -252,6 +253,9 @@ describe('Vault consumer delivery choices', () => {
       screen.getByRole('radio', { name: 'Distribute and reload a service' })
     );
     await screen.findByLabelText('Service to reload');
+    expect(screen.getByTestId('vault-reload-prerequisite')).toHaveTextContent(
+      'Ubuntu 24.04'
+    );
     fireEvent.change(screen.getByLabelText('Service to reload'), {
       target: { value: 'apache' },
     });

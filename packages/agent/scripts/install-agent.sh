@@ -460,6 +460,20 @@ if [ "$NODE_MAJOR" -lt "$REQUIRED_MAJOR" ]; then
 fi
 log "Node $(node -v) satisfies engines.node '$REQUIRED_RANGE'."
 
+# Reject ineffective reload grants before changing users, files or services.
+# The legacy local authority cannot constrain a grant by systemd unit/verb.
+if [ -n "$RELOAD_SERVICES" ] && [ "$IS_DARWIN" -eq 0 ]; then
+  if command -v pkaction >/dev/null 2>&1; then
+    POLKIT_VERSION=$(pkaction --version 2>/dev/null) || fail "could not inspect polkit for service reload"
+    node "$HOST_SANDBOX_JS" check-polkit "$POLKIT_VERSION" \
+      || fail "service reload authorization is unavailable; no installation changes were made"
+  elif [ "$DRY_RUN" -eq 0 ]; then
+    fail "--reload-service needs polkit with JavaScript rules (0.106 or newer). Install a supported polkit package before retrying; no broad sudo/pkla grant is installed."
+  else
+    log "[dry-run] --reload-service requires polkit JavaScript rules (0.106 or newer) before installation."
+  fi
+fi
+
 # ------------------------------------------------------------- system user
 if [ "$IS_DARWIN" -eq 0 ]; then
   if id "$AGENT_USER" >/dev/null 2>&1; then
@@ -480,6 +494,9 @@ fi
 # the swap (systemd restart picks up the new tree).
 log "Installing agent package from $PACKAGE_DIR to $APP_DIR"
 run mkdir -p "$INSTALL_ROOT"
+# The service user must traverse this public parent even under umask 077.
+# Private runtime state is separately restricted to 0700 below.
+run chmod 0755 "$INSTALL_ROOT"
 if [ "$DRY_RUN" -eq 1 ]; then
   printf '%s\n' "[dry-run] stage $PACKAGE_DIR into $APP_DIR.staging.\$\$ (excluding node_modules), then atomically swap into $APP_DIR"
 else
@@ -491,6 +508,13 @@ else
   if ! (cd "$PACKAGE_DIR" && tar -cf - --exclude=./node_modules .) | (cd "$APP_STAGING" && tar -xf -); then
     rm -rf "$APP_STAGING"
     fail "failed to stage the agent package; $APP_DIR was left untouched"
+  fi
+  # npm archives can omit directory entries. A restrictive extraction umask
+  # must not leave public package code inaccessible to the service account.
+  # Runtime state/credentials live outside APP_STAGING and remain private.
+  if ! find "$APP_STAGING" -type d -exec chmod 0755 {} +; then
+    rm -rf "$APP_STAGING"
+    fail "could not prepare public package directory permissions; the previous install was left untouched"
   fi
   if [ -d "$APP_DIR" ]; then
     mv "$APP_DIR" "$APP_PREVIOUS"

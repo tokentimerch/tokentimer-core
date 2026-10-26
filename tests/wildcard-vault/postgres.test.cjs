@@ -148,6 +148,22 @@ test("real PostgreSQL publication, renewal identities, approvals, frozen waves, 
   assert.equal((await pool.query("SELECT needs_operator_reconciliation FROM certificate_jobs WHERE id=$1",[child.id])).rows[0].needs_operator_reconciliation,true);
   await operations.transaction(client=>operations.advanceRollout(client,workspaceId,groupId,snapshot.rolloutId));
   assert.equal((await pool.query("SELECT state FROM certops_distribution_rollouts WHERE id=$1",[snapshot.rolloutId])).rows[0].state,"paused");
+  const pausedConsumer=(await material.consumerMatrix({client:pool,workspaceId,groupId})).find(row=>row.binding_id===bindingA);
+  assert.equal(pausedConsumer.latest_deployment.rolloutId,snapshot.rolloutId);
+  assert.equal(pausedConsumer.latest_deployment.rolloutRequestJobId,approval.id);
+  assert.notEqual(pausedConsumer.latest_deployment.rolloutId,pausedConsumer.latest_deployment.rolloutRequestJobId);
+  assert.equal(pausedConsumer.latest_deployment.rolloutState,"paused");
+  const matrixClient=await pool.connect();
+  try {
+    await matrixClient.query("BEGIN");
+    await matrixClient.query("UPDATE certops_consumer_deployments SET failure_code=NULL WHERE workspace_id=$1 AND job_id=$2",[workspaceId,child.id]);
+    await matrixClient.query("UPDATE certificate_jobs SET error_code='material_reload_failed' WHERE workspace_id=$1 AND id=$2",[workspaceId,child.id]);
+    const fallback=(await material.consumerMatrix({client:matrixClient,workspaceId,groupId})).find(row=>row.binding_id===bindingA);
+    assert.equal(fallback.latest_deployment.failureCode,"material_reload_failed","older deployment rows retain the underlying job failure");
+  } finally {
+    await matrixClient.query("ROLLBACK");
+    matrixClient.release();
+  }
   await operations.retryDistributionJob({workspaceId,jobId:child.id,actorUserId:actor});
   await operations.setRolloutState({workspaceId,groupId,rolloutId:snapshot.rolloutId,state:"deploying",actorUserId:actor});
   const reclaimed=await dispatch.claimJobs(poll);assert.equal(reclaimed.jobs.length,1);
