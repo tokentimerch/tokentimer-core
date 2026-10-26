@@ -4318,8 +4318,9 @@ paths:
         activeSourceCount reporting current managed sources, and locationCount
         reporting the full observation count. Viewer
         responses omit key, source and deployment references. Each source period
-        includes its linked tokenId when a token exists. Lifecycle does not
-        determine whether an identity is managed or consumes quota.
+        includes its linked tokenId when a matching token exists. Retiring an
+        identity closes periods still pointing to it and releases its managed
+        quota; periods already rotated to another identity remain open.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - $ref: "#/components/parameters/certOpsReadLimitParam"
@@ -4365,7 +4366,18 @@ paths:
       tags: [CertOps]
       summary: Read a certificate identity and its locations and management history
       operationId: getCertOpsCertificateIdentity
-      description: Returns complete source-period history and up to 20 distinct locations with the full locationCount. Recreated endpoint monitors share one URL location, preferring surviving monitors. Each location includes observationReason, monitoringEnded, previousObservationCount and up to 20 previousObservations without sensitive references. Viewer responses redact current deployment and source references.
+      description: >-
+        Returns complete source-period history and up to 20 distinct locations
+        with the full locationCount. Recreated endpoint monitors share one URL
+        location, preferring surviving monitors. Each location includes
+        observationReason, monitoringEnded, previousObservationCount and up to
+        20 previousObservations without sensitive references. restartableSources
+        lists up to 100 stopped registrations now observing this active identity
+        without a management period for it. Each contains managedCertificateId,
+        source and sourceRef; these candidates do not create history or resume
+        automation. An explicit re-add with selected renewal settings starts a
+        new period. Retired identities cannot be re-added. Viewer responses redact
+        deployment and source references, including restartableSources.sourceRef.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path
