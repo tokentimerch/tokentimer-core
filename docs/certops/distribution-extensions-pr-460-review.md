@@ -1,5 +1,9 @@
 # Distribution extension review — PR #460
 
+This report records the earlier review before the main-branch integration.
+Current merge readiness, migration 78/79 reconciliation and final validation
+are recorded in the [merged-candidate report](distribution-extensions-merge-2026-10-26.md).
+
 Reviewed on 2026-10-26 after fetching `origin/main` and
 `origin/feat/certops-distribution-extensions`. The existing branch was clean and
 already matched remote commit `bac39ef10043414829c9350dee80564324ef3236`.
