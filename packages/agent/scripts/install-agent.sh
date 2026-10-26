@@ -494,6 +494,9 @@ fi
 # the swap (systemd restart picks up the new tree).
 log "Installing agent package from $PACKAGE_DIR to $APP_DIR"
 run mkdir -p "$INSTALL_ROOT"
+# The service user must traverse this public parent even under umask 077.
+# Private runtime state is separately restricted to 0700 below.
+run chmod 0755 "$INSTALL_ROOT"
 if [ "$DRY_RUN" -eq 1 ]; then
   printf '%s\n' "[dry-run] stage $PACKAGE_DIR into $APP_DIR.staging.\$\$ (excluding node_modules), then atomically swap into $APP_DIR"
 else

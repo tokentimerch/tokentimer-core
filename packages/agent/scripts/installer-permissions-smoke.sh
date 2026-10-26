@@ -12,10 +12,12 @@ export PATH
 cp -a /repo/packages /tmp/tt-installer-source
 find /tmp/tt-installer-source/agent -type d -exec chmod 0700 {} \;
 export TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_installer_permissions_fixture
+umask 077
 sh /tmp/tt-installer-source/agent/scripts/install-agent.sh \
   --api-url https://example.test \
   --workspace-id 11111111-1111-4111-8111-111111111111 --no-trust-store
 runuser -u tokentimer-agent -- test -r /opt/tokentimer-agent/app/bin/tokentimer-agent.js
+test "$(stat -c %a /opt/tokentimer-agent)" = 755
 test "$(stat -c %a /opt/tokentimer-agent/state)" = 700
 test "$(stat -c %a /opt/tokentimer-agent/state/config.json)" = 600
 test "$(stat -c %a /opt/tokentimer-agent/state/bootstrap.env)" = 600
