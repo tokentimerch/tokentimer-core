@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Durable auto-sync creation metric.** With metrics enabled, the API exposes `auto_sync_items_created_total{provider}` on every `/metrics` scrape, including zero before the first creation and unchanged totals between runs. Counts commit with newly inserted auto-sync assets and survive worker/API restarts, retries, and inventory or workspace deletion. Updates and ordinary manual imports do not count. **Operator action:** apply migration 79, upgrade all API writers, and establish a Prometheus baseline before relying on alerts. This metric is pulled from the API, not pushed by workers; use a stable logical scrape target for the installation-wide total. See [auto-sync monitoring](docs/AUTO_SYNC_MONITORING.md).
+
 ### Fixed
 
 - **Adopted discovered certificates renew.** A certificate found by an agent could not be renewed by the hosted worker when its common name was reported in typed form (`DNS:example.com`): the derived renewal profile listed both `example.com` and `DNS:example.com`, so every automatic renewal failed with certbot's "Inconsistent domain requests" and retried each minute. The `DNS:` prefix is now stripped before the SAN policy is built.

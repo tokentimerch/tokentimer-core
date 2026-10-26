@@ -201,6 +201,19 @@ async function upsertImportedToken({ context, payload, workspaceId, userId, manu
     }, { client }) : await Token.create({ ...payload, userId, workspaceId,
       created_by: userId, imported_at: new Date() }, { client });
     if (context) await attachObservedToken(context, token.id, !existing, { client });
+    if (context && !existing) {
+      // Commit the historical total with the new inventory row. Updates,
+      // retries and adoption do not count; a later worker failure cannot lose
+      // an already committed creation. Keep this write last to minimize the
+      // time concurrent imports hold the provider counter's row lock.
+      await client.query(
+        `INSERT INTO auto_sync_provider_stats (provider, items_created_total)
+         VALUES ($1, 1)
+         ON CONFLICT (provider) DO UPDATE
+           SET items_created_total = auto_sync_provider_stats.items_created_total + 1`,
+        [context.provider],
+      );
+    }
     return { token, created: !existing };
   });
 }

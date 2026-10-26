@@ -26,6 +26,18 @@ Use **Manage auto-sync** to review or edit a saved connection. **Run now** reque
 
 Overlapping configurations may discover one provider identity and share its inventory record. Changing a name or schedule preserves the configuration. Changing credentials, scope or scan settings supersedes active work and queues a replacement when enabled.
 
+## Notify operators about new inventory
+
+Self-hosted installations can alert through Prometheus and an Alertmanager email
+receiver when auto-sync creates inventory. The API exposes the persistent
+`auto_sync_items_created_total{provider}` counter, aggregated across the
+installation. It counts new inventory rows, not updates to existing rows or
+provider-side token issuance. See [auto-sync monitoring](AUTO_SYNC_MONITORING.md)
+for the scrape configuration, GitLab alert example, and delivery limitations.
+
+The notification groups on a sync configuration remain the recipients for the
+new assets' ordinary alerts; selecting a group does not enable discovery emails.
+
 ## Cleanup and removal
 
 Enable destructive cleanup only when it matches your retention policy. Partial, truncated, rate-limited or inaccessible scans must not be treated as proof that an asset disappeared. Complete scans reconcile only the scope actually covered.

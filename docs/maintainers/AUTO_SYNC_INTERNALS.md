@@ -40,6 +40,35 @@ Token and certificate details show the Auto-sync section only for managed invent
 
 Provider error bodies, raw exception messages and import item names are not persisted as public auto-sync errors. Controlled categories retain HTTP status, timeouts or import/completeness outcomes; credential-like JSON, header values and multiline secrets cannot enter run history, audit or incident notifications through these messages. Credentials never enter settings snapshots; the allowlist contains scope/filter metadata and sanitized source instance/account identity.
 
+## Persistent creation metric
+
+`auto_sync_items_created_total{provider}` is a database-wide cumulative counter
+collected by the API's `/metrics` endpoint. The creation increment belongs to the
+same transaction as the auto-sync import. Updates, existing-row associations,
+manual imports and rolled-back writes do not increment it. Committed creations
+remain counted if a later import batch or run completion fails.
+
+Store totals independently of tokens, configurations, workspaces and retained run
+history. Their deletion must not lower the counter. API/worker process restarts
+must not reset it. The collector exports known provider series at zero before
+events and reads the database total rather than adding it to an in-process
+counter. It must fail collection when the database read fails instead of serving
+a stale or invented zero snapshot.
+
+The metric migration starts totals at zero without reconstructing past imports.
+Counting is complete only after all API writers have been upgraded and the
+current fenced worker is active. Mixed-version writers can still create rows
+without the new increment. An older database restore can lower the total even
+though ordinary resource deletion cannot; monitoring must establish a new
+baseline after that recovery.
+
+All API replicas expose the same value, so a dedicated stable Service-address
+scrape collects this metric under one logical target. Do not combine duplicate
+replica totals with `sum`, route ordinary per-process counters through that
+load-balanced scrape, or push this counter from ephemeral workers. See
+[auto-sync monitoring](../AUTO_SYNC_MONITORING.md) for operator examples and the
+limits of `increase()`-based notifications.
+
 ## Activation and rollback
 
 For a production Compose walkthrough, populate both CertOps encryption keys before starting the candidate API: Compose enables CertOps by default, and startup requires each key to contain 64 hex characters. Generate them independently with `openssl rand -hex 32` and retain them securely; see `deploy/compose/.env.example` and `docs/CONFIGURATION.md`. Inventory-only use does not bypass this startup requirement.

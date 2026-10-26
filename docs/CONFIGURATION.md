@@ -580,6 +580,18 @@ TokenTimer stores only public certificate material (fingerprints, serials, issue
 | `PUSHGATEWAY_URL`    | Prometheus Pushgateway endpoint                            | `unset`       | Worker metrics |
 | `ENVIRONMENT_SUFFIX` | Metrics environment label (if you have multiple instances) | `unset`       | Worker metrics |
 
+With API metrics enabled, `auto_sync_items_created_total{provider}` exposes the
+database's persistent count of inventory rows created by auto-sync. Scrape this
+counter directly from the API; it does not require `PUSHGATEWAY_URL`. A dedicated
+stable scrape target avoids counting duplicate copies from API replicas and
+preserves the series across pod rollouts. The regular per-pod API scrape remains
+appropriate for process and request metrics.
+
+See [auto-sync monitoring](AUTO_SYNC_MONITORING.md) for a Prometheus/Alertmanager
+email example, zero-baseline setup, and collection-health alerts. These alerts
+report recent additions by provider; they do not contain token names or provide
+one guaranteed notification per discovery.
+
 ## WhatsApp (Twilio)
 
 | Variable                                               | Description                                        | Default value | Scope               |
