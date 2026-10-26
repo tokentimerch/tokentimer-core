@@ -873,7 +873,10 @@ describe("CertOps inventory routes", function () {
     expect(response.body.certificate.managed).to.equal(false);
     expect(response.body.certificate.managedCertificateId).to.equal(null);
     expect(response.body.certificate.status).to.equal("decommissioned");
-    expect(response.body.certificate.sources.some(source =>
+    const history = await request(BASE)
+      .get(`/api/v1/workspaces/${workspaceId}/certops/certificate-identities/${response.body.certificate.identityId}`)
+      .set("Cookie", ownerSession.cookie).expect(200);
+    expect(history.body.certificate.sources.some(source =>
       source.managedCertificateId === leafCertificate.id && source.periodEndedAt,
     )).to.equal(true);
     expectNoPrivateKeyFields(response.body);
