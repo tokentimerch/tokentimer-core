@@ -97,7 +97,8 @@ export function VerifyStep({ ctx }) {
             clusterId: certopsSaved.clusterId,
             agentId: certopsSaved.chosenAgentId,
             issuerId: certopsSaved.chosenIssuerId,
-            distributionId: certopsSaved.chosenDistributionId,
+            distributionId:
+              certopsSaved.chosenDistributionId || certopsSaved.groupId,
           }),
         });
       } catch (e) {

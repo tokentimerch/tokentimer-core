@@ -13,7 +13,7 @@ async function main() {
   const record=JSON.parse(readProtectedFile(path.join(stateDir,"material-bindings",`${bindingId}.json`),MAX_BUNDLE_BYTES+16384));
   if(!record.intent)throw new Error("material_reconciliation_intent_missing");
   const result=await reconcilePinnedDeployment({job:{workspaceId:record.intent.workspaceId,agentId:config.agentId,materialDeployment:record.intent},
-    bindings:config.materialBindings,stateDir,policyEngine:createPolicyEngine(loadPolicyConfig(config.policy),{declaredTargetSelectors:config.declaredTargetSelectors})});
+    bindings:config.materialBindings,stores:config.materialStores,stateDir,policyEngine:createPolicyEngine(loadPolicyConfig(config.policy),{declaredTargetSelectors:config.declaredTargetSelectors})});
   process.stdout.write(JSON.stringify(result)+"\n");
 }
 main().catch((e)=>{process.stderr.write(`${/^material_[a-z_]+$/.test(e.code||e.message)?e.code||e.message:"material_reconciliation_failed"}\n`);process.exitCode=1;});

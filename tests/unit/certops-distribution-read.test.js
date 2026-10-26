@@ -27,12 +27,26 @@ test("summary counts active bindings, partial convergence, and stale/failed/unce
   assert.equal(summarizeConsumers([]).status, "not_deployed");
   assert.equal(summarizeConsumers([verified]).status, "verified");
   assert.deepEqual(summarizeConsumers([verified, consumer(), consumer({ binding_state: "removed", converged: true })]), {
-    total: 2, verified: 1, failed: 0, uncertain: 0, stale: 0, pending: 1, not_deployed: 0, status: "partial",
+    total: 2, verified: 1, installed: 0, failed: 0, uncertain: 0, stale: 0, pending: 1, not_deployed: 0, status: "partial", installation_expirations: [],
   });
   for (const [extra, status] of [[{ stale: true }, "stale"], [{ latest_deployment: { stage: "failed" } }, "failed"], [{ latest_deployment: { stage: "orphaned_unknown_effect" } }, "uncertain"]]) {
     assert.equal(summarizeConsumers([verified, consumer(extra)]).status, status);
   }
   assert.equal(summarizeConsumers([verified], false).verified, 0);
+});
+
+test("file installation is completed without claiming live verification, and expires from cached counts", () => {
+  const now = Date.now();
+  const installed = consumer({ converged: true, verification_policy: "installed", observed_at: new Date(now), freshness_seconds: 60, observed_valid_to: new Date(now + 3600000) });
+  const summary = summarizeConsumers([installed]);
+  assert.equal(summary.installed, 1);
+  assert.equal(summary.verified, 0);
+  assert.equal(summary.status, "installed");
+  assert.deepEqual(summary.installation_expirations, [now + 60000]);
+  assert.deepEqual(summary.verification_expirations, []);
+  assert.equal(summarizeConsumers([installed, consumer({ converged: true })]).status, "completed");
+  assert.equal(consumerStatus({ ...installed, converged: false, stale: true }), "stale");
+  assert.equal(summarizeConsumers([installed], false).installed, 0);
 });
 
 test("batch input is bounded, deduplicated and rejects invalid IDs", async () => {

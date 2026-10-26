@@ -5,6 +5,7 @@
 
 import { existingAssetStepIds } from './assetRefs.js';
 import {
+  agentFitsSetup,
   agentsFor,
   effectiveInfrastructure,
   pickGoalAgent,
@@ -158,6 +159,24 @@ function agentStepDone(certops, saved, objective) {
     })
   );
   if (neededKey && saved.installerKey !== neededKey) return false;
+  // Vault preparation deliberately stops the issuer after its signed check.
+  // Keep that confirmed installation complete while preparing the queued
+  // publication; this does not mark the agent live or the distribution ready.
+  const preparingVault =
+    objective === 'vault' &&
+    Boolean(saved.vaultPublishJobId) &&
+    Boolean(saved.vaultIssuerAgentId) &&
+    (!saved.chosenAgentId ||
+      (saved.chosenAgentConfirmed === saved.chosenAgentId &&
+        saved.chosenAgentId === saved.vaultIssuerAgentId)) &&
+    certops?.dryRun?.id === saved.dryRunJobId &&
+    certops.dryRun.status === 'dry_run_complete' &&
+    agentFitsSetup(
+      agents?.items?.find(a => a.id === saved.vaultIssuerAgentId),
+      objective,
+      infra
+    );
+  if (preparingVault) return true;
   // One live agent must carry what the goal uses: the command profile
   // (reported at registration, so a discovery-only agent never claims an
   // order), the capabilities (re-declared on every check-in) and the right
@@ -253,11 +272,11 @@ function certopsDone(stepId, { reality, progress, objective }) {
       // already in the workspace never finishes the step on its own.
       const dist = scopeDistribution(
         certops?.distribution,
-        saved.chosenDistributionId
+        saved.chosenDistributionId || saved.groupId
       );
       return (
         (dist?.groups || 0) > 0 &&
-        dist?.verified === true &&
+        (dist?.completed === true || dist?.verified === true) &&
         (!saved.chosenDistributionId ||
           saved.chosenDistributionConfirmed === saved.chosenDistributionId)
       );

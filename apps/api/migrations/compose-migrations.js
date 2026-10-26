@@ -23,10 +23,23 @@ function composeMigrations(migrations, recorded = []) {
       throw new Error(`Missing or inconsistent pinned Core migration: ${name}`);
     }
   }
+  // Canonical main keeps installed-file assurance at 78 and providers at 79.
+  // Early, unreleased PR builds applied providers as 78. Recognize that exact
+  // ledger by name; retain its SQL/version and move only the unapplied change.
+  const installed = "certops_installed_file_distribution", providers = "certops_material_providers";
+  const preview = recorded.some(entry => entry.version === 78 && entry.name === providers);
+  const extensions = migrations.some(entry => entry.name === installed) && migrations.some(entry => entry.name === providers)
+    ? new Map((preview ? [providers, installed] : [installed, providers]).map((name, offset) => {
+      const entry = migrations.find(migration => migration.name === name);
+      return [name, { ...entry, version: 78 + offset }];
+    })) : new Map();
+  const registry = migrations.map(entry => extensions.get(entry.name) || entry);
+  if (new Set(registry.map(entry => entry.version)).size !== registry.length)
+    throw new Error("Duplicate Core migration version");
   const tail = recorded.filter(entry => entry.version >= 70).slice().sort((a, b) => a.version - b.version);
   const order = histories.find(names => tail.every((row, offset) => {
     if (offset < names.length) return row.version === 70 + offset && row.name === names[offset];
-    return row.version === 70 + offset && migrations.some(entry => entry.version === row.version && entry.name === row.name);
+    return row.version === 70 + offset && registry.some(entry => entry.version === row.version && entry.name === row.name);
   }));
   if (!order) throw new Error(`Unsupported Core migration history at version ${tail[0]?.version}`);
   const distributionFirst = order[0] === DISTRIBUTION;
@@ -40,7 +53,7 @@ function composeMigrations(migrations, recorded = []) {
         : migration.sql;
     return [name, {...migration, version: 70 + offset, sql}];
   }));
-  return migrations.map(entry => replacements.get(entry.name) || entry).sort((a, b) => a.version - b.version);
+  return registry.map(entry => replacements.get(entry.name) || entry).sort((a, b) => a.version - b.version);
 }
 
 module.exports = { composeMigrations };

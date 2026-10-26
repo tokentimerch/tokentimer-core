@@ -610,6 +610,7 @@
         },
         "verificationPolicy": {
           "enum": [
+            "installed",
             "served",
             "trust"
           ]
@@ -859,6 +860,7 @@
         },
         "verificationPolicy": {
           "enum": [
+            "installed",
             "served",
             "trust"
           ]

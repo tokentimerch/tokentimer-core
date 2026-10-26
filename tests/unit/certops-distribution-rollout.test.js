@@ -18,6 +18,9 @@ test("rollout completion requires current authorization even for previously veri
     { binding_state: "paused" },
     { job_status: "failed" },
     {},
+    { stage: "installed", verification_policy: "installed" },
+    { stage: "installed", verification_policy: "installed", current_revision: 2 },
+    { stage: "installed", verification_policy: "trust", job_status: "failed" },
   ]) {
     let state;
     const row = {
@@ -57,12 +60,12 @@ test("rollout completion requires current authorization even for previously veri
     await advanceRollout(client, "workspace", "group", "rollout");
     assert.equal(
       state,
-      Object.keys(change).length ? "degraded" : "verified",
+      change.verification_policy === "installed" && !change.current_revision ? "installed" : Object.keys(change).length ? "degraded" : "verified",
       JSON.stringify(change),
     );
     assert.equal(
       row.stage,
-      "served_verified",
+      change.stage || "served_verified",
       "Historical verification remains available",
     );
   }

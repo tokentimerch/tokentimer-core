@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 const { randomBytes } = require("node:crypto");
-const { spawnSync } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const { Client } = require("pg");
@@ -17,6 +17,8 @@ describe("Core distribution and lifecycle migration histories", function () {
     "canonical-core",
     "mainline-alert-context",
     "previous-distribution",
+    "mainline-installed-78",
+    "provider-preview-78",
   ]) {
     it(`upgrades ${history} through the actual composed executor`, async () => {
       const root = path.resolve(__dirname, "../..");
@@ -62,9 +64,22 @@ describe("Core distribution and lifecycle migration histories", function () {
             `${result.error || ""}\n${result.stderr}\n${result.stdout?.slice(-1800)}`,
           );
         }
+        function executeConcurrent() {
+          return Promise.allSettled(Array.from({ length: 3 }, () => new Promise((resolve, reject) => {
+            const child = spawn(process.execPath, ["migrations/migrate.js"], { cwd: api, env, windowsHide: true, timeout: 90000 });
+            let output = "";
+            for (const stream of [child.stdout, child.stderr]) stream.on("data", chunk => { output = (output + chunk.toString()).slice(-10000); });
+            child.on("error", reject);
+            child.on("close", code => code === 0 ? resolve() : reject(new Error(`Concurrent migration failed (${code}): ${output}`)));
+          }))).then(results => {
+            const failures = results.filter(result => result.status === "rejected");
+            if (failures.length) throw failures[0].reason;
+          });
+        }
         let before = [];
         let oldJob;
         let workspace;
+        let retained;
         if (history !== "fresh") {
           const canonical = [
             "certops_certificate_enrollments",
@@ -79,7 +94,11 @@ describe("Core distribution and lifecycle migration histories", function () {
           const count = history === "distribution-first" ? 3 : history === "enrollment-first" || history === "mainline-alert-context" ? 4 : history === "previous-distribution" ? 6 : 3;
           // Run real historical SQL through the original executor. The ledger
           // is created by migration execution, never fabricated with inserts.
-          const script =
+          const legacyExtension = ["mainline-installed-78", "provider-preview-78"].includes(history);
+          const script = legacyExtension
+            ? "const c=require('./migrations/migrate');const preview=" + JSON.stringify(history === "provider-preview-78") +
+              ";const list=c.migrations.filter(m=>m.version<=77||m.name===(preview?'certops_material_providers':'certops_installed_file_distribution')).map(m=>m.name==='certops_material_providers'?{...m,version:78}:m);c.migrations.splice(0,c.migrations.length,...list);c.runMigrations().then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1)});"
+            :
             "const c=require('./migrations/migrate');const {composeMigrations}=require('./migrations/compose-migrations');const names=" +
             JSON.stringify(names.slice(0, count)) +
             ";const recorded=names.map((name,i)=>({version:70+i,name}));const list=composeMigrations(c.migrations,recorded).filter(m=>m.version<=69+names.length);c.migrations.splice(0,c.migrations.length,...list.map(m=>m.name==='certops_job_alert_context'?{...m,postCommitSql:undefined}:m));c.runMigrations().then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1)});";
@@ -111,15 +130,54 @@ describe("Core distribution and lifecycle migration histories", function () {
               ],
             )
           ).rows[0];
+          if (legacyExtension) {
+            const { randomUUID } = require("node:crypto");
+            const fingerprint = randomBytes(32).toString("hex");
+            const agent = (await db.query(`INSERT INTO certops_agents(workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash,platform)
+              VALUES($1,$2,'0.18.1','1.0.0',$3,$4,'linux') RETURNING id`,
+            [workspace.id, randomUUID(), `ttagent_${randomBytes(8).toString("hex")}`, randomBytes(32).toString("hex")])).rows[0].id;
+            const source = (await db.query(`INSERT INTO managed_certificates(workspace_id,source,source_ref,fingerprint_sha256,status,not_after)
+              VALUES($1,'agent_filesystem',$2,$3,'active',NOW()+INTERVAL '1 day') RETURNING id`,
+            [workspace.id, randomUUID(), fingerprint])).rows[0].id;
+            const period = (await db.query("SELECT id,current_identity_id FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL", [workspace.id, source])).rows[0];
+            const group = (await db.query(`INSERT INTO certops_distribution_groups(workspace_id,managed_certificate_id,management_period_id,issuer_agent_id,material_store_ref,issuance_profile_ref,profile_revision,generation)
+              VALUES($1,$2,$3,$4,'retained','retained',1,1) RETURNING id`, [workspace.id, source, period.id, agent])).rows[0].id;
+            const version = (await db.query(`INSERT INTO certops_material_versions(workspace_id,group_id,management_period_id,publishing_job_id,publishing_claim_id,profile_revision,state,provider_version,certificate_identity_id,fingerprint_sha256,valid_to,published_at)
+              VALUES($1,$2,$3,$4,$5,1,'published',1,$6,$7,NOW()+INTERVAL '1 day',NOW()) RETURNING id`,
+            [workspace.id, group, period.id, oldJob.id, randomUUID(), period.current_identity_id, fingerprint])).rows[0].id;
+            const policy = history === "mainline-installed-78" ? "installed" : "served";
+            const binding = (await db.query(`INSERT INTO certops_consumer_bindings(workspace_id,group_id,assigned_agent_id,deployment_profile_ref,profile_revision,verification_policy)
+              VALUES($1,$2,$3,'retained',1,$4) RETURNING id`, [workspace.id, group, agent, policy])).rows[0].id;
+            await db.query(`INSERT INTO certops_consumer_current_state(workspace_id,group_id,binding_id,desired_material_version_id,desired_generation,accepted_generation,observed_material_version_id,observed_fingerprint_sha256,observed_valid_to,verification_method,observed_at)
+              VALUES($1,$2,$3,$4,1,1,$4,$5,NOW()+INTERVAL '1 day',$6,NOW())`, [workspace.id, group, binding, version, fingerprint, policy]);
+            const snapshots = [
+              ["certops_distribution_groups", group, "material_store_provider"],
+              ["certops_material_versions", version, "provider_version_ref"],
+              ["certops_consumer_bindings", binding, "unused_additive_column"],
+            ];
+            const read = async () => ({
+              rows: await Promise.all(snapshots.map(async ([table, id, additive]) =>
+                (await db.query(`SELECT to_jsonb(row)-$2::text AS value FROM ${table} row WHERE id=$1`, [id, additive])).rows[0].value)),
+              state: (await db.query("SELECT * FROM certops_consumer_current_state WHERE binding_id=$1", [binding])).rows[0],
+            });
+            retained = { read, before: await read() };
+          }
         }
         // The CLI must finish after the committed work, without waiting for
         // the imported Core executor's 30-second idle pool timeout.
-        execute(["migrations/migrate.js"], 10000);
+        if (["fresh", "mainline-installed-78", "provider-preview-78"].includes(history)) await executeConcurrent();
+        else execute(["migrations/migrate.js"], 10000);
         const after = (
           await db.query(
             "SELECT version,name,executed_at FROM migrations ORDER BY version",
           )
         ).rows;
+        if (retained) assert.deepEqual(await retained.read(), retained.before, "upgrade preserves published pins, installed/served assurance and accepted evidence");
+        const combined = (await db.query(`SELECT
+          EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='certops_distribution_groups' AND column_name='material_store_provider') AS provider,
+          EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='certops_material_versions' AND column_name='provider_version_ref') AS opaque,
+          EXISTS(SELECT 1 FROM pg_constraint WHERE conname='certops_consumer_bindings_verification_policy_check' AND pg_get_constraintdef(oid) LIKE '%installed%') AS installed`)).rows[0];
+        assert.deepEqual(combined, { provider: true, opaque: true, installed: true });
         assert.deepEqual(
           after.filter((row) => row.version <= (before.at(-1)?.version || 0)),
           before,
@@ -134,8 +192,13 @@ describe("Core distribution and lifecycle migration histories", function () {
           "certops_distribution_transfer",
         ];
         const mainlineOrder = history === "distribution-first" ? [canonical[4],canonical[5],canonical[6],canonical[0],canonical[1],canonical[2],canonical[3]] : history === "enrollment-first" ? [canonical[0],canonical[4],canonical[5],canonical[6],canonical[1],canonical[2],canonical[3]] : history === "previous-distribution" ? [canonical[0],canonical[1],canonical[2],canonical[4],canonical[5],canonical[6],canonical[3]] : canonical;
-        // Migration 77 lands after every supported history.
-        const expected = [...mainlineOrder, "onboarding_sessions", "certops_material_providers"];
+        // Both assurance and provider changes follow every supported history.
+        const expected = [
+          ...mainlineOrder,
+          "onboarding_sessions",
+          ...(history === "provider-preview-78" ? ["certops_material_providers", "certops_installed_file_distribution"] :
+            ["certops_installed_file_distribution", "certops_material_providers"]),
+        ];
         assert.deepEqual(
           after.filter((row) => row.version >= 70).map((row) => row.name),
           expected,

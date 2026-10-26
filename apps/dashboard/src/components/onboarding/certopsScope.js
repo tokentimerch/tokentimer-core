@@ -63,6 +63,16 @@ export function switchObjective(certops, objective) {
 
 // Marks that only mean something for the platform they were made on.
 const VARIANT_KEYS = [
+  // Paths, reload commands and IIS targets belong to the selected host OS.
+  // Keeping them can leave an invisible Linux-only validation error on Windows.
+  'reloadService',
+  'certPath',
+  'directories',
+  'acmeClientPath',
+  'acmeShellPath',
+  'iisSite',
+  'iisPort',
+  'sniHost',
   'configReviewed',
   'executionAcknowledged',
   'installerKey',
@@ -76,6 +86,8 @@ const VARIANT_KEYS = [
   'chosenDistributionId',
   'chosenDistributionConfirmed',
   'dryRunJobId',
+  'dryRunRequestKey',
+  'dryRunRequestAgentId',
   'issueJobId',
   'issueAttempt',
   'issueReloadService',

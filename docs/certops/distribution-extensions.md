@@ -15,6 +15,17 @@ qualification gates. A configuration example or a passing mock is not a
 qualification claim. See [qualification](distribution-extensions-qualification.md)
 for exact evidence and remaining gates.
 
+The canonical schema sequence is migration 78 for installed-file assurance,
+then migration 79 for immutable provider references. Upgrade API/worker and
+consumer agents together. Previously applied migration rows are retained;
+recognized early provider-first preview databases append the missing assurance
+change without renumbering their ledger.
+
+Linux endpoint consumers support `installed`, `served` and `trust`. Installed
+assurance reads back the certificate, key and full chain without probes or a
+reload hook. IIS consumers require the typed Windows connector and `served` or
+`trust`; installed-only assurance is rejected by the API and agent.
+
 Public provider identifiers are `vault-kv2`, `openbao-kv2`, and
 `azure-key-vault`. Existing store configuration can omit `provider`, which
 means Vault. New publication requests use `publicationDestination.type`:

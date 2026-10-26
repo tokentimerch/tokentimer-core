@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  within,
+  waitFor,
+} from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { VaultStep } from '../../src/components/onboarding/certopsFinalSteps.jsx';
@@ -9,10 +15,17 @@ import {
   buildVaultConfigs,
 } from '../../src/components/onboarding/certopsConfig.js';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
+import { createJob } from '../../src/components/certops/certopsJobsApi.js';
 
 vi.mock('../../src/components/certops/certopsJobsApi.js', () => ({
   createJob: vi.fn(),
   getJob: vi.fn(),
+}));
+vi.mock('../../src/components/onboarding/vaultGuideApi.js', () => ({
+  readDistribution: vi.fn().mockResolvedValue({ versions: [], consumers: [] }),
+  assignConsumer: vi.fn(),
+  requestRollout: vi.fn(),
+  retryDeployment: vi.fn(),
 }));
 
 const policy = vi.hoisted(() => ({ required: null }));
@@ -25,6 +38,7 @@ vi.mock(
 );
 beforeEach(() => {
   policy.required = null;
+  vi.clearAllMocks();
 });
 
 const WS = '11111111-1111-4111-8111-111111111111';
@@ -57,8 +71,18 @@ function ctxWith(certops = {}) {
       certops: {
         agents: {
           items: [
-            { id: 'i1', wireAgentId: 'issuer-1', commandProfiles: ['certbot'] },
-            { id: 'c1', wireAgentId: 'consumer-1', commandProfiles: [] },
+            {
+              id: 'i1',
+              wireAgentId: 'issuer-1',
+              platform: 'linux',
+              commandProfiles: ['certbot'],
+            },
+            {
+              id: 'c1',
+              wireAgentId: 'consumer-1',
+              platform: 'linux',
+              commandProfiles: [],
+            },
           ],
         },
         distribution: { groups: 0, bindings: 0 },
@@ -82,6 +106,43 @@ const ready = {
 };
 
 describe('Vault step structure', () => {
+  it('recovers a lost publication response with the saved key, but a fresh setup has a new key', async () => {
+    const ctx = ctxWith(ready);
+    createJob.mockRejectedValueOnce(new Error('Response lost'));
+    let view = show(ctx);
+    const submit = () => {
+      fireEvent.click(
+        screen.getByRole('checkbox', {
+          name: 'The issuing TokenTimer agent is stopped while I prepare Vault',
+        })
+      );
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Create the publish job' })
+      );
+    };
+    submit();
+    await screen.findByText('Response lost');
+    const firstKey = createJob.mock.calls[0][1].idempotencyKey;
+    expect(ctx.session.progress.certops.vaultPublishRequestKey).toBe(firstKey);
+    view.unmount();
+    createJob.mockResolvedValue({
+      job: {
+        id: 'publication',
+        status: 'pending',
+        payload: { publication: { groupId: GROUP } },
+      },
+    });
+    view = show(ctx);
+    submit();
+    await waitFor(() => expect(createJob).toHaveBeenCalledTimes(2));
+    expect(createJob.mock.calls[1][1].idempotencyKey).toBe(firstKey);
+    view.unmount();
+    view = show(ctxWith(ready));
+    submit();
+    await waitFor(() => expect(createJob).toHaveBeenCalledTimes(3));
+    expect(createJob.mock.calls[2][1].idempotencyKey).not.toBe(firstKey);
+    view.unmount();
+  });
   it.each([true, false])(
     'explains the loaded rollout approval policy (%s) without an unconditional second-user requirement',
     required => {
@@ -116,17 +177,21 @@ describe('Vault step structure', () => {
     const parts = [1, 2, 3, 4, 5, 6].map(n =>
       screen.getByTestId(`vault-part-${n}`)
     );
-    expect(parts[0].textContent).toMatch(/1\. Create the publish job/);
+    expect(parts[0].textContent).toMatch(
+      /1\. Check your agents and prepare publication/
+    );
     expect(parts[0].textContent).toMatch(/You, in this dashboard/);
     expect(parts[2].textContent).toMatch(/Vault administrator/);
     expect(parts[3].textContent).toMatch(/issuing server/);
     expect(parts[4].textContent).toMatch(/consumer server/);
     expect(parts[5].textContent).toMatch(
-      /You, with the API \(workspace manager\)/
+      /You, in this dashboard \(workspace manager\)/
     );
-    expect(parts[5].textContent).toMatch(
-      /follows the workspace Job approval policy/
-    );
+    expect(
+      within(parts[5]).getByRole('button', {
+        name: 'Deploy the selected version',
+      })
+    ).toBeDisabled();
     expect(parts[5].textContent).not.toMatch(
       /always needs approval|whatever the workspace/
     );
@@ -140,6 +205,19 @@ describe('Vault step structure', () => {
       /the Vault address, the group id/
     );
     expect(screen.queryByTestId('vault-part-3')).toBeNull();
+  });
+
+  it('saves Vault connection details beside the fields', async () => {
+    const ctx = ctxWith(ready);
+    show(ctx);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save Vault connection settings' })
+    );
+    expect(
+      await screen.findByText('Vault connection settings saved.')
+    ).toBeInTheDocument();
+    expect(ctx.session.progress.certops.vaultAddress).toBe(ready.vaultAddress);
+    expect(screen.getByText('Setup in progress')).toBeInTheDocument();
   });
 
   it('saves and confirms once the values are valid', async () => {
@@ -174,13 +252,19 @@ describe('Vault step structure', () => {
   });
 
   it('keeps every proven command', () => {
-    show(ctxWith(ready));
+    show(
+      ctxWith({
+        ...ready,
+        vaultConsumerDeliveryMode: 'service',
+        vaultConsumerDeployPath: '/etc/nginx/tokentimer',
+      })
+    );
     const text = document.body.textContent;
     expect(text).toMatch(/--write-path '\/etc\/nginx\/tokentimer'/);
     expect(text).toMatch(/sudo -u tokentimer-agent openssl req/);
     expect(text).toMatch(/vault policy write tt-issuer issuer\.hcl/);
     expect(text).toMatch(/systemctl daemon-reload/);
-    expect(text).toMatch(/"mode": "dry_run"/);
+    expect(text).toMatch(/Send a test job/);
   });
 });
 
@@ -211,12 +295,17 @@ describe('Vault API examples', () => {
     expect(buildApiRead('x/y')).toContain('"$API/api/v1/workspaces/$WS/x/y"');
   });
 
-  it('puts the group and binding ids in the assignment call and a placeholder in the rollout', () => {
+  it('offers inline assignment and version selection instead of API command placeholders', () => {
     show(ctxWith(ready));
     const text = document.body.textContent;
-    expect(text).toContain(`distribution-groups/${GROUP}/consumers/`);
-    expect(text).toContain('VERSION_ID_FROM_GROUP_VERSIONS');
-    expect(text).toContain('Find the published version id');
+    expect(
+      screen.getByRole('button', { name: 'Assign consumer-1' })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText('Published certificate version')
+    ).toBeInTheDocument();
+    expect(text).not.toContain('VERSION_ID_FROM_GROUP_VERSIONS');
+    expect(text).not.toContain('Sign in for the API calls');
   });
 });
 

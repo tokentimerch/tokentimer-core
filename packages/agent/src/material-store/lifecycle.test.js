@@ -41,6 +41,7 @@ async function fixture(t, platform = "linux") {
     sans: parseDnsSans(x509.subjectAltName),
   };
   const server = http.createServer((req, res) => {
+    res.setHeader("Connection", "close");
     res.end(
       JSON.stringify({
         data: {
@@ -97,8 +98,8 @@ async function fixture(t, platform = "linux") {
     "material-bindings",
     `${bindingId}.json`,
   );
-  function deploy({ generation = 1, reload = async () => true, windowsConnector, onBeforeMutation, intent = {}, checkLease = async () => {}, platform: executionPlatform = platform } = {}) {
-    return executePinnedDeployment({
+  function options({ generation = 1, reload = async () => true, policy = bindings[bindingId].verificationPolicy, verificationOnly = false, checkLease = async () => {}, recoveryOnly = false, windowsConnector, onBeforeMutation, intent = {}, platform: executionPlatform = platform } = {}) {
+    return {
       job: {
         workspaceId: ids.workspaceId,
         agentId: "consumer-agent",
@@ -112,7 +113,8 @@ async function fixture(t, platform = "linux") {
           deploymentProfileRef: "fixture",
           profileRevision: 1,
           authorizationRevision: 1,
-          verificationPolicy: "served",
+          verificationPolicy: policy,
+          ...(verificationOnly ? { verificationOnly: true } : {}),
           ...intent,
         },
       },
@@ -124,14 +126,117 @@ async function fixture(t, platform = "linux") {
       windowsConnector,
       onBeforeMutation,
       reload,
+      recoveryOnly,
       fixtureLoopbackHttp: true,
       platform: executionPlatform,
-    });
+    };
   }
-  return { deploy, record, target, deployDir, bindings, bindingId, bundle, ids, directory };
+  const deploy = (input) => executePinnedDeployment(options(input));
+  return { deploy, options, binding: bindings[bindingId], record, target, deployDir, bindings, bindingId, bundle, ids, directory };
 }
 
 const readRecord = (file) => JSON.parse(readProtectedFile(file, 16384));
+
+function filesOnly(f) {
+  f.binding.verificationPolicy = "installed";
+  delete f.binding.reloadService;
+  f.binding.probes = [];
+}
+
+function fullChain(f) {
+  f.bundle.certificatePem = fs.readFileSync(path.join(__dirname, "../verify/fixtures/chain-leaf-fullchain.crt.pem"), "utf8");
+  f.bundle.privateKeyPem = fs.readFileSync(path.join(__dirname, "../verify/fixtures/chain-leaf.key.pem"), "utf8");
+  f.bundle.fingerprintSha256 = computeCertificateFingerprint(f.bundle.certificatePem);
+  f.bundle.sans.splice(0, f.bundle.sans.length, ...parseDnsSans(new crypto.X509Certificate(f.bundle.certificatePem).subjectAltName));
+}
+
+test("files-only delivery writes and reads back the actual pair without reload or TLS", async (t) => {
+  const f = await fixture(t);
+  filesOnly(f);
+  delete f.binding.probes;
+  t.mock.method(require("node:tls"), "connect", () => assert.fail("files-only must not probe TLS"));
+  const result = await f.deploy({ reload: () => assert.fail("files-only must not reload") });
+  assert.equal(result.status, "succeeded");
+  assert.ok(new crypto.X509Certificate(fs.readFileSync(f.target.certPath)).checkPrivateKey(crypto.createPrivateKey(fs.readFileSync(f.target.keyPath))));
+  for (const key of ["fetched", "installed"]) assert.equal(result.deploymentReceipt[key], true);
+  for (const key of ["bound", "servedVerified", "trustValidated"]) assert.equal(result.deploymentReceipt[key], false);
+  assert.equal(readRecord(f.record).uncertain, false);
+  assert.equal((await f.deploy({ recoveryOnly: true })).status, "succeeded");
+});
+
+for (const splitChain of [false, true]) {
+  test(`installed-only reconciliation rejects an incomplete ${splitChain ? "separate" : "combined"} chain without clearing uncertainty`, async t => {
+    const f = await fixture(t);
+    filesOnly(f); fullChain(f);
+    if (splitChain) f.target.chainPath = path.join(f.deployDir, "chain.pem");
+    let leases = 0;
+    const interrupted = await f.deploy({ checkLease: async () => { if (++leases === 3) throw new Error("interrupted after readback"); } });
+    assert.equal(interrupted.status, "orphaned_unknown_effect");
+    assert.equal(readRecord(f.record).uncertain, true);
+    const leaf = f.bundle.certificatePem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/)[0];
+    fs.writeFileSync(splitChain ? f.target.chainPath : f.target.certPath, splitChain ? "\n" : leaf);
+    await assert.rejects(reconcilePinnedDeployment(f.options()), { code: "material_reconciliation_mismatch" });
+    assert.equal(readRecord(f.record).uncertain, true);
+    await assert.rejects(f.deploy({ generation: 2, verificationOnly: true }), { code: "material_binding_uncertain" });
+  });
+}
+
+test("legacy file-only journals use the exact provider pin to recover public chain proof", async t => {
+  const f = await fixture(t); filesOnly(f); fullChain(f);
+  let leases = 0;
+  await f.deploy({ checkLease: async () => { if (++leases === 3) throw new Error("interrupted after readback"); } });
+  const saved = readRecord(f.record);
+  delete saved.certificatePem;
+  writeProtectedJson(f.record, saved);
+  assert.equal((await reconcilePinnedDeployment(f.options())).reconciled, true);
+  assert.equal(readRecord(f.record).uncertain, false);
+  assert.equal((await f.deploy({ recoveryOnly: true })).status, "succeeded");
+});
+
+test("files-only rejects mismatched local policy, service hooks, and stale generations before writing", async (t) => {
+  const f = await fixture(t);
+  filesOnly(f);
+  await assert.rejects(f.deploy({ policy: "trust" }), { code: "material_binding_policy_denied" });
+  for (const extra of [{ reloadService: "nginx" }, { reloadCommandRefs: [] }, { probes: [{ dialAddress: "localhost" }] }]) {
+    const original = { ...f.binding };
+    Object.assign(f.binding, extra);
+    await assert.rejects(f.deploy(), { code: "material_binding_policy_denied" });
+    for (const key of Object.keys(extra)) delete f.binding[key];
+    Object.assign(f.binding, original);
+  }
+  assert.equal(fs.existsSync(f.target.certPath), false);
+  assert.equal((await f.deploy({ generation: 2 })).status, "succeeded");
+  await assert.rejects(f.deploy({ generation: 1 }), { code: "material_stale_generation" });
+});
+
+test("files-only reconcile proves the pair after uncertainty and recovery keeps file-only assurance", async (t) => {
+  const f = await fixture(t);
+  filesOnly(f);
+  let leases = 0;
+  const result = await f.deploy({ checkLease: async () => { if (++leases === 3) throw new Error("lost lease after install"); } });
+  assert.equal(result.status, "orphaned_unknown_effect");
+  assert.equal(readRecord(f.record).uncertain, true);
+  await assert.rejects(f.deploy({ recoveryOnly: true }), { code: "material_binding_uncertain" });
+  t.mock.method(require("node:tls"), "connect", () => assert.fail("reconcile must not probe"));
+  assert.equal((await reconcilePinnedDeployment(f.options())).reconciled, true);
+  assert.equal(readRecord(f.record).uncertain, false);
+  assert.equal((await f.deploy({ recoveryOnly: true })).status, "succeeded");
+  fs.writeFileSync(f.target.keyPath, "not a key");
+  await assert.rejects(reconcilePinnedDeployment(f.options()));
+});
+
+test("files-only verification checks the disk without repairing missing or altered files", async (t) => {
+  const f = await fixture(t);
+  filesOnly(f);
+  assert.equal((await f.deploy()).status, "succeeded");
+  assert.equal((await f.deploy({ generation: 2, verificationOnly: true })).status, "succeeded");
+  fs.unlinkSync(f.target.certPath);
+  const result = await f.deploy({ generation: 3, verificationOnly: true });
+  assert.equal(result.status, "failed");
+  assert.equal(result.errorMessage, "material_drift_detected");
+  assert.equal(result.deploymentReceipt.installed, false);
+  assert.equal(fs.existsSync(f.target.certPath), false);
+});
 
 test("a deploy rejected before any write leaves no uncertain marker and can be retried", async (t) => {
   const f = await fixture(t);
@@ -251,6 +356,15 @@ test("Windows verification-only detects drift without import, activation, or a m
   assert.equal(result.status,"failed");assert.equal(f.imports,0);assert.equal(f.activations,0);
 });
 
+test("Windows IIS refuses installed-only assurance before helpers, staging or reload", async t => {
+  const f = await windowsFixture(t);
+  filesOnly(f);
+  await assert.rejects(f.deploy({ windowsConnector: f.connector, onBeforeMutation: () => assert.fail("mutation"),
+    reload: () => assert.fail("reload") }), { code: "material_windows_policy_denied" });
+  assert.equal(f.imports, 0); assert.equal(f.activations, 0);
+  assert.equal(fs.existsSync(path.join(f.directory, "state")), false);
+});
+
 for (const [platform, type] of [["win32", "endpoint"], ["linux", "windows-iis"], ["darwin", "endpoint"], ["darwin", "windows-iis"]]) {
   test(`${platform} rejects shared ${type} before staging, reload or native mutation`, async t => {
     const f = await fixture(t, platform);
@@ -288,6 +402,29 @@ test("Linux endpoint deployment still installs the pair, reloads and verifies se
   assert.equal(reloads, 1);
   assert.equal(fs.readFileSync(f.target.keyPath, "utf8"), f.bundle.privateKeyPem);
   assert.equal(readRecord(f.record).uncertain, false);
+});
+
+test("Linux trust deployment requires the pinned listener and its trusted full chain", async t => {
+  const f = await fixture(t); fullChain(f);
+  f.binding.verificationPolicy = "trust";
+  const blocks = f.bundle.certificatePem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g);
+  assert.ok(blocks.length > 1);
+  const caFile = path.join(f.directory, "trusted-ca.pem");
+  const roots = fs.readFileSync(path.join(__dirname, "../verify/fixtures/leaf-fullchain.crt.pem"), "utf8").match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g);
+  fs.writeFileSync(caFile, roots.at(-1));
+  const listener = tls.createServer({ cert: f.bundle.certificatePem, key: f.bundle.privateKeyPem }, socket => socket.end());
+  await new Promise(resolve => listener.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise(resolve => listener.close(resolve)));
+  f.binding.probes = [{ dialAddress: "127.0.0.1", port: listener.address().port,
+    sni: f.bundle.sans.find(name => !name.includes("*")), trustCaFile: caFile }];
+  const deployed = await f.deploy();
+  assert.equal(deployed.status, "succeeded", deployed.errorMessage);
+  assert.equal(deployed.deploymentReceipt.trustValidated, true);
+  fs.writeFileSync(caFile, fs.readFileSync(path.join(__dirname, "../verify/fixtures/leaf.crt.pem")));
+  const failed = await f.deploy({ generation: 2, verificationOnly: true });
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.deploymentReceipt.installed, true);
+  assert.equal(failed.deploymentReceipt.trustValidated, false);
 });
 
 test("Windows shared IIS refuses an untyped connector before any helper or filesystem effects", async t => {

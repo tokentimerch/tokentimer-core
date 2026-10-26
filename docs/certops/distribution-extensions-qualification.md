@@ -1,5 +1,10 @@
 # Distribution extension qualification
 
+The [merged distribution validation](distribution-extensions-merge-2026-10-26.md)
+records integration with main's installed-file policy and the canonical
+78/79 migration sequence. The reports below retain their original candidate
+identities and pre-merge migration numbering.
+
 The [PR #460 review follow-up](distribution-extensions-pr-460-review.md)
 records the later Windows target-isolation and key-custody fixes and their
 regression validation.
@@ -184,7 +189,8 @@ tokens or customer key material as CI artifacts.
 
 Core owns the implementation. Enterprise composes the base CertOps services;
 Cloud has an older Core pin and an independent migration/route overlay.
-Adopt migration 78, widened contracts, provider-aware services and agent
+Adopt migrations 78 (installed-file assurance) and 79 (provider references),
+widened contracts, provider-aware services and agent
 capabilities together when those editions update their Core pin. Review
 Cloud's migration ordering and route composition and rerun each edition's
 RBAC/governance suite. No sibling release pin or customer environment was

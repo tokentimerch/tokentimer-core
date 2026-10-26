@@ -684,8 +684,18 @@ async function retireCertificateIdentity({
       );
       return identityRecord({ ...row, ...representative.rows[0] });
     };
-    if (identity.lifecycle_status === status)
+    const closeRetiredPeriods = () => tx.query(
+      `UPDATE certops_management_periods
+          SET ended_at = GREATEST(NOW(), started_at), ended_reason = $3,
+              automation_enabled = FALSE
+        WHERE workspace_id = $1 AND current_identity_id = $2 AND ended_at IS NULL`,
+      [workspaceId, identityId, `certificate_${status}`],
+    );
+    if (identity.lifecycle_status === status) {
+      // Repeated retirement also repairs open periods left by older builds.
+      await closeRetiredPeriods();
       return recordWithManagement(identity);
+    }
 
     if (status === "decommissioned") {
       const observations = await tx.query(
@@ -952,6 +962,8 @@ async function retireCertificateIdentity({
         if (token.rows[0]) await archiveCertificateExpiryAlerts(tx, { workspaceId, tokenId, expiration: token.rows[0].expiration });
       }
     }
+    // A source rotated to another current identity keeps its management period.
+    await closeRetiredPeriods();
     await tx.query(
       `INSERT INTO audit_events(actor_user_id, subject_user_id, action, target_type,
          target_id, channel, metadata, workspace_id)

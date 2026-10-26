@@ -31,6 +31,10 @@ database column; add `provider_version_ref` for Azure and return a number or
 string, respectively, in the existing `providerVersion` wire field. Published
 rows and group/provider authority remain immutable under the existing
 triggers. Database constraints reject a provider/version-type mismatch.
+The canonical provider migration is 79, following main's unchanged migration
+78 for installed-file assurance. Explicit preview-history composition retains
+an already applied provider-first 78 and appends only its missing assurance
+change; no recorded row is renamed or rewritten.
 Rollout approval snapshots and signed consumer jobs bind the exact provider
 and version. Consumers never request an unversioned/latest Azure secret.
 

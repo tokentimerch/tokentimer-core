@@ -9,10 +9,20 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.18.1] - 2026-10-25
+### Fixed
+
+- **Adopted discovered certificates renew.** A certificate found by an agent could not be renewed by the hosted worker when its common name was reported in typed form (`DNS:example.com`): the derived renewal profile listed both `example.com` and `DNS:example.com`, so every automatic renewal failed with certbot's "Inconsistent domain requests" and retried each minute. The `DNS:` prefix is now stripped before the SAN policy is built.
+- **Debian trust-anchor revoke uses the configured `--fresh` refresh.** The agent never looked up the `trust-store:update-ca-certificates-fresh` command profile, so a revoke always ran plain `update-ca-certificates`, left the removed anchor's dangling `/etc/ssl/certs` symlink in place, and recorded the "fresh profile missing" warning even when the profile was allowlisted. A Debian revoke now runs the allowlisted `--fresh` argv. Without that profile the behaviour is unchanged (plain refresh plus the warning).
+
+## [0.18.1] - 2026-10-26
+
+### Added
+
+- **Vault setup stays in the guide, with file-only delivery.** Send signed agent checks, assign consumers, copy their returned configuration revisions, and deploy a published version from the setup guide without running TokenTimer API commands in a terminal. Choose file distribution alone or also reload NGINX, Apache or HAProxy; file-only completion confirms installation and does not claim live TLS verification. The guide shows each deployment's evidence, and starting over creates a fresh publication attempt while keeping existing records. **Operator action:** apply migration 78 and deploy matching API/worker and consumer agents before using file-only delivery; older agents reject that policy before any change is made.
 
 ### Fixed
 
+- **Restarted setup guides can run a new signed test.** A fresh setup no longer reuses another attempt's job request. New steps open at their heading, and background status refreshes keep your reading position.
 - **AD CS setup stays in the guide after CA pinning.** Run the fresh CA/template check on the selected Windows agent inline; renewal setup waits for the post-pin check instead of sending you to Renewals.
 - **Vault rollouts honor Job approval.** With workspace approval off, a single operator can start a rollout and its consumer deployments without a second account. Explicit per-request approval remains available; workspace-forced approval still requires another authorized user. Existing pending approvals are preserved. Settings and operator guidance clarify that enabling Job approval also holds scheduled renewal jobs, and that publishing a renewed certificate does not automatically request a consumer rollout.
 

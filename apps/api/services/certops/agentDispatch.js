@@ -2498,7 +2498,10 @@ async function ingestResult({
       jobStatus !== "awaiting_issuer";
     // Terminal renew failures must persist error_code for the alerts stage.
     const errorCode = isFailure
-      ? body.rejectionReason || `AGENT_RESULT_${jobStatus.toUpperCase()}`
+      ? body.rejectionReason ||
+        (job.payload?.materialDeployment && body.errorMessage === "material_drift_detected"
+          ? "CERTOPS_MATERIAL_DRIFT_DETECTED"
+          : `AGENT_RESULT_${jobStatus.toUpperCase()}`)
       : null;
     // Agent-provided error text is untrusted: scrub private-key material
     // and generic secrets before it is stored, logged, audited or alerted.

@@ -32,5 +32,6 @@ export function scopeDistribution(distribution, chosenId) {
     items,
     groups: items.length,
     verified: items.some(i => i.verified === true),
+    completed: items.some(i => i.completed === true || i.verified === true),
   };
 }

@@ -115,6 +115,25 @@ test("malformed pinned migration registries cannot be composed", () => {
     /inconsistent pinned Core migration/,
   );
 });
+
+test("main 78 and provider-preview 78 retain their recorded definitions and append only the missing extension", () => {
+  const installed = { version: 78, name: "certops_installed_file_distribution", sql: "installed-assurance" };
+  const providers = { version: 79, name: "certops_material_providers", sql: "immutable-providers" };
+  const registry = [...core, installed, providers];
+  const prior = [...ledger(canonical), { version: 77, name: "future" }];
+  for (const [first, second] of [[installed, providers], [{ ...providers, version: 78 }, { ...installed, version: 79 }]]) {
+    for (const completed of [[first], [first, second]]) {
+      const recorded = [...prior, ...completed.map(({ version, name }) => ({ version, name }))];
+      const planned = composeMigrations(registry, recorded);
+      assert.deepEqual(planned.slice(-2), [first, second]);
+      for (const entry of completed) assert.deepEqual(planned.find(row => row.version === entry.version), entry);
+      assert.equal(new Set(planned.map(entry => entry.version)).size, planned.length);
+    }
+  }
+  assert.deepEqual(composeMigrations(registry).slice(-2), [installed, providers]);
+  assert.throws(() => composeMigrations([...registry, { version: 79, name: "collision", sql: "unsafe" }]), /Duplicate Core migration version/);
+  assert.throws(() => composeMigrations(registry, [...prior, { version: 78, name: "unknown" }]), /Unsupported Core migration history/);
+});
 test("all 72 legacy distribution-first definitions retain their immutable historical SQL", () => {
   const coreRoot = path.resolve(__dirname, "../..");
   const { migrations } = require(

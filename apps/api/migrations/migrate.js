@@ -4835,14 +4835,19 @@ const migrations = [
         ON onboarding_sessions(workspace_id);
     `,
   },
+  {
+    version: 78,
+    name: "certops_installed_file_distribution",
+    sql: fs.readFileSync(require("path").join(__dirname, "078-certops-installed-file-distribution.sql"), "utf8"),
+  },
 ];
 
 
 
 migrations.push({
-  version: 78,
+  version: 79,
   name: "certops_material_providers",
-  sql: fs.readFileSync(require("path").join(__dirname, "078-certops-material-providers.sql"), "utf8"),
+  sql: fs.readFileSync(require("path").join(__dirname, "079-certops-material-providers.sql"), "utf8"),
 });
 
 const { composeMigrations } = require("./compose-migrations");
@@ -5183,7 +5188,12 @@ async function runMigrations() {
   }
 
   const client = await migrationPool.connect();
+  let migrationLockHeld = false;
   try {
+    // Serialize the entire executor, including ledger creation and post-commit
+    // validations. Transaction locks cannot span the per-migration commits.
+    await client.query("SELECT pg_advisory_lock(hashtextextended('tokentimer-core:migrations',0))");
+    migrationLockHeld = true;
     logger.info("Creating migrations table if it doesn't exist...");
 
     await client.query(`
@@ -5310,7 +5320,13 @@ async function runMigrations() {
     logger.error("Migration process failed:", error);
     process.exit(1);
   } finally {
-    client.release();
+    let discard = false;
+    if (migrationLockHeld) {
+      try { await client.query("SELECT pg_advisory_unlock(hashtextextended('tokentimer-core:migrations',0))"); }
+      catch { discard = true; }
+    }
+    // A failed unlock must never return a session holding the fence to a pool.
+    client.release(discard);
   }
 }
 

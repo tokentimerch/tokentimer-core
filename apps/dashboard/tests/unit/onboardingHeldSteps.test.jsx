@@ -194,10 +194,13 @@ describe('a step that finishes by itself stays open until Continue', () => {
 
   it('keeps the agent step open when the agent checks in', async () => {
     seed('certops_observe', observe);
-    mount();
+    const view = mount();
     await screen.findByTestId('stub-certops_agent');
     expect(continueBar()).toBeNull();
     const before = finished();
+    document.documentElement.scrollTop = 1200;
+    view.container.scrollTop = 1500;
+    document.body.scrollTop = 900;
 
     server.summary.certops.agents = { live: 1, items: [liveAgent()] };
     poll('certops_agent');
@@ -206,6 +209,9 @@ describe('a step that finishes by itself stays open until Continue', () => {
     expect(screen.getByTestId('stub-certops_agent')).toBeVisible();
     // The counter and rail update at once, only the move waits.
     expect(finished()).toBe(before + 1);
+    expect(document.documentElement.scrollTop).toBe(1200);
+    expect(view.container.scrollTop).toBe(1500);
+    expect(document.body.scrollTop).toBe(900);
     expect(
       within(continueBar()).getByRole('button', { name: 'Continue' })
     ).toBeEnabled();
@@ -213,6 +219,9 @@ describe('a step that finishes by itself stays open until Continue', () => {
     clickContinue();
     expect(await screen.findByTestId('stub-certops_execution')).toBeVisible();
     expect(screen.queryByTestId('stub-certops_agent')).toBeNull();
+    expect(document.documentElement.scrollTop).toBe(0);
+    expect(view.container.scrollTop).toBe(0);
+    expect(document.body.scrollTop).toBe(0);
     expect(continueBar()).toBeNull();
   });
 
@@ -377,10 +386,14 @@ describe('a step that finishes by itself stays open until Continue', () => {
           live: 1,
           executionEnabled: true,
           items: [
-            realAgent('linux', { commandProfiles: profile ? [profile] : [] }),
+            realAgent('linux', {
+              commandProfiles: profile ? [profile] : [],
+              supportedOperations: ['renew'],
+            }),
           ],
         },
         distribution: { groups: 1, verified: false },
+        dryRun: { status: 'dry_run_complete' },
       }
     );
     mount();
@@ -392,7 +405,7 @@ describe('a step that finishes by itself stays open until Continue', () => {
     await waitFor(() => expect(continueBar()).not.toBeNull());
     expect(screen.getByTestId('stub-certops_vault')).toBeVisible();
     clickContinue();
-    expect(await screen.findByTestId('stub-certops_execution')).toBeVisible();
+    expect(await screen.findByTestId('stub-recipients')).toBeVisible();
   });
 
   it('does not hold or add Continue when the page loads on a done step', async () => {

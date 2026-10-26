@@ -50,7 +50,11 @@ export function vaultNeedsPolling({
   publishActive,
 }) {
   if (backlogMessage || publishActive) return true;
-  return (distribution?.groups || 0) > 0 && distribution?.verified !== true;
+  return (
+    (distribution?.groups || 0) > 0 &&
+    distribution?.verified !== true &&
+    distribution?.completed !== true
+  );
 }
 
 /**
