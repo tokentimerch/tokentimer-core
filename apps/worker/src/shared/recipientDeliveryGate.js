@@ -32,9 +32,19 @@ function verificationMode() {
   return recipientVerification.resolveEnforcementMode();
 }
 
+function queueDeliveryOutcome(results, options) {
+  return recipientVerification.queueDeliveryOutcome(results, options);
+}
+
+function selectDeliverableDestinations(rows) {
+  return recipientVerification.selectDeliverableDestinations(rows);
+}
+
 export {
   gateDestinations,
   recheckDestination,
   destinationAllowed,
   verificationMode,
+  queueDeliveryOutcome,
+  selectDeliverableDestinations,
 };

@@ -17,6 +17,8 @@ Each channel is independent:
 
 Changing the email address invalidates email verification only. Changing the phone number invalidates WhatsApp verification only. A confirmation in one workspace does not authorize another workspace. Deleting and recreating a contact does not clear a decline for that destination in the same workspace.
 
+A decline stays in force until the recipient accepts a new invitation. Creating that invitation does not email a destination that already declined. The response includes a confirmation link an administrator can pass on only when the person asks to subscribe again. Accepting that link clears the decline. Expired, used, revoked, and superseded links do not.
+
 Historical `contact_opt_ins` rows recorded when a contact was created are not treated as consent. New contacts do not write that row.
 
 ## Email
@@ -36,7 +38,7 @@ Configure Twilio's incoming message webhook as `POST {PUBLIC_BASE_URL}/webhooks/
 - Self-hosted default is `shadow`: the worker evaluates and logs, and still delivers. Set `enforce` when invitations have been sent and recipients have had time to confirm. `off` is a self-hosted rollback switch only.
 - Cloud default is `enforce`. `off` is ignored. `shadow` is an operator-only temporary escape and is not a workspace setting.
 
-When enforcement blocks every required recipient, the alert is marked `blocked` with `NO_VERIFIED_RECIPIENTS` and is not retried as a provider outage. Other eligible recipients in a mixed group are still delivered. A workspace warning is raised for administrators.
+When enforcement blocks every required recipient, the alert is marked `blocked` with `NO_VERIFIED_RECIPIENTS` and is not retried as a provider outage. If another channel succeeded, the alert is `partial` and the successful channel is not sent again. Other eligible recipients in a mixed group are still delivered, including when an earlier duplicate contact for the same address is unverified. A workspace warning is raised for administrators.
 
 Workspace WhatsApp tests require `contact_id` for a saved contact whose current number is verified. An arbitrary `phone_e164` is rejected.
 
@@ -49,7 +51,7 @@ Defaults, overridable by environment (see [configuration](CONFIGURATION.md#recip
 - 50 invitations per workspace per day, and 20 per user per day.
 - 3 notification tests per contact per day, with 120 seconds between tests.
 
-A destination that hits the weekly cap from 3 or more workspaces is suppressed for 24 hours. Limits are stored in Postgres and apply across API replicas.
+A destination that hits the weekly cap from 3 or more workspaces is suppressed for 24 hours. That suppression is saved even though the refused invitation is rolled back. Per-destination, per-workspace, and per-user limits are enforced inside one transaction with advisory locks, so concurrent invitations to different destinations cannot pass a shared workspace or user cap. Public confirmation pages are limited per client address in memory and in Postgres. The Twilio inbound webhook keeps its own limiter and is not part of the page limit. Limits are stored in Postgres and apply across API replicas.
 
 ## Rollout
 
@@ -61,7 +63,7 @@ A destination that hits the weekly cap from 3 or more workspaces is suppressed f
 
 ## Monitoring
 
-- Audit actions: `RECIPIENT_VERIFICATION_INVITED`, `RECIPIENT_VERIFICATION_RATE_LIMITED`, `RECIPIENT_VERIFICATION_REVOKED`, `RECIPIENT_WHATSAPP_CONFIRMED`.
+- Audit actions: `RECIPIENT_VERIFICATION_INVITED`, `RECIPIENT_VERIFICATION_RATE_LIMITED`, `RECIPIENT_VERIFICATION_REVOKED`, `RECIPIENT_VERIFICATION_RESUBSCRIBE_LINK`, `RECIPIENT_WHATSAPP_CONFIRMED`.
 - Worker log `recipient-verification-shadow` while shadow mode is on.
 - Operational notification type `delivery_unverified_recipients` when an enforced alert has no eligible recipient.
 - Alert status `blocked` and error `NO_VERIFIED_RECIPIENTS` means the failure is eligibility, not SMTP or Twilio.
@@ -71,4 +73,4 @@ A destination that hits the weekly cap from 3 or more workspaces is suppressed f
 - A failed SMTP send still consumes the destination invitation slot, because the limit is reserved before the external send.
 - The confirmation token is present on the POST URL. The response redirects to a token-free page and sets `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
 - Invitation pages return the same generic result for unknown, expired, and replayed links.
-- The partial unique indexes for suppressions were not executed against a live Postgres in the automated unit run. Apply the migration on a database before production enforcement.
+- Apply the migration on a database before production enforcement. The migration is idempotent.

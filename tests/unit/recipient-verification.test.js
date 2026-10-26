@@ -25,6 +25,7 @@ function createStore() {
     events: [],
     inbound: new Set(),
     queries: [],
+    locks: [],
     nextId: 1,
   };
 
@@ -40,7 +41,10 @@ function createStore() {
     const text = String(sql);
     state.queries.push(text);
     if (text === "BEGIN" || text === "COMMIT" || text === "ROLLBACK") return rowsOf([]);
-    if (text.includes("pg_advisory_xact_lock")) return rowsOf([]);
+    if (text.includes("pg_advisory_xact_lock")) {
+      state.locks.push(params[0]);
+      return rowsOf([]);
+    }
 
     if (text.includes("RV_CONTACT")) {
       const contact = state.contacts.get(contactKey(params[0], params[1]));
@@ -300,6 +304,18 @@ function createStore() {
         && row.status === "pending"
         && new Date(row.expires_at).getTime() > Date.now()
       )));
+    }
+
+    if (text.includes("RV_LOCK_CONTACT")) return rowsOf([{ id: params[1] }]);
+
+    if (text.includes("RV_PREVIEW_CHALLENGE")) {
+      const challenge = state.challenges.find((row) => {
+        const hashMatch = text.includes("code_hash") ? row.code_hash === params[0] : row.token_hash === params[0];
+        if (!hashMatch || row.status !== "pending" || new Date(row.expires_at).getTime() <= Date.now()) return false;
+        if (text.includes("destination_normalized = $2") && row.destination_normalized !== params[1]) return false;
+        return true;
+      });
+      return rowsOf(challenge ? [challenge] : []);
     }
 
     throw new Error(`unexpected SQL: ${text.slice(0, 180)}`);
@@ -808,7 +824,15 @@ describe("recipient verification", () => {
     const digest = fs.readFileSync(path.join(ROOT, "apps/worker/src/weekly-digest.js"), "utf8");
     assert.equal(worker.includes("gateDestinations"), true);
     assert.equal(worker.includes("eligibilityTerminal"), true);
-    assert.equal(worker.includes("NO_VERIFIED_RECIPIENTS"), true);
+    assert.equal(worker.includes("queueDeliveryOutcome"), true);
+    assert.equal(worker.includes("selectDeliverableDestinations"), true);
+    const route = fs.readFileSync(path.join(ROOT, "apps/api/routes/recipientVerification.js"), "utf8");
+    assert.equal(route.includes("recipientVerificationPageLimiter"), true);
+    assert.equal(route.includes("withholdDelivery"), true);
+    assert.equal(route.includes("/webhooks/twilio/whatsapp/inbound"), true);
+    const policy = fs.readFileSync(path.join(ROOT, "packages/recipient-verification/index.js"), "utf8");
+    assert.equal(policy.includes("limited.recordAbuse"), true);
+    assert.equal(policy.includes("recordAbuseSuppression"), true);
     assert.equal(digest.includes("destinationAllowed"), true);
     const whatsappRoute = ["apps/api/routes/whatsapp.js", "apps/saas/routes/whatsapp.js"]
       .map((name) => path.join(ROOT, name))
@@ -847,5 +871,146 @@ describe("recipient verification", () => {
     );
     assert.equal(notes.length, 1);
     assert.match(ui.formatRetry(3700), /hours/);
+  });
+
+  it("records delivery outcomes without treating a blocked recipient as sent", () => {
+    assert.equal("ABCDEFGHJKLMNPQRSTUVWXYZ23456789".length, 32);
+    assert.equal(verification.queueDeliveryOutcome([
+      { channel: "email", success: true },
+      { channel: "whatsapp", success: true },
+    ]).status, "sent");
+    const blocked = verification.queueDeliveryOutcome([
+      { channel: "email", success: false, eligibilityTerminal: true },
+    ]);
+    assert.equal(blocked.status, "blocked");
+    assert.equal(blocked.retry, false);
+    const partial = verification.queueDeliveryOutcome([
+      { channel: "email", success: true },
+      { channel: "whatsapp", success: false, eligibilityTerminal: true },
+    ]);
+    assert.equal(partial.status, "partial");
+    assert.equal(partial.retry, false);
+    assert.deepEqual(partial.channels, []);
+    const retryable = verification.queueDeliveryOutcome([
+      { channel: "email", success: true },
+      { channel: "webhooks", success: false, eligibilityTerminal: false },
+    ]);
+    assert.equal(retryable.status, "partial");
+    assert.equal(retryable.retry, true);
+    assert.deepEqual(retryable.channels, ["webhooks"]);
+    const forced = verification.queueDeliveryOutcome([
+      { channel: "whatsapp", success: false, eligibilityTerminal: false },
+    ], { whatsappPermanentFailure: true });
+    assert.equal(forced.status, "blocked");
+    assert.equal(forced.retry, false);
+    const selected = verification.selectDeliverableDestinations([
+      { contactId: "verified", destination: "person@example.com" },
+      { contactId: "duplicate", destination: "person@example.com" },
+      { contactId: "other", destination: "second@example.com" },
+    ]);
+    assert.deepEqual(selected.destinations, ["person@example.com", "second@example.com"]);
+    assert.equal(selected.contactIdByDestination.get("person@example.com"), "verified");
+  });
+
+  it("lets a new pending invitation re-open consent after a decline without emailing that address", async () => {
+    const store = createStore();
+    seedContact(store);
+    const fingerprint = verification.destinationFingerprint("email", "person@example.com");
+    store.state.verifications.push({
+      workspace_id: "ws-1",
+      contact_id: "contact-1",
+      channel: "email",
+      destination_normalized: "person@example.com",
+      destination_fingerprint: fingerprint,
+      status: "opted_out",
+      consent_at: null,
+    });
+    store.state.suppressions.push({
+      channel: "email",
+      destination_fingerprint: fingerprint,
+      scope: "workspace",
+      workspace_id: "ws-1",
+      reason: "recipient_declined",
+      expires_at: null,
+    });
+    const invitation = await verification.createInvitation({
+      pool: store.pool,
+      workspaceId: "ws-1",
+      contactId: "contact-1",
+      channel: "email",
+      actorUserId: 4,
+    });
+    assert.equal(invitation.withholdDelivery, true);
+    const page = await verification.loadChallenge(store.pool, invitation.token);
+    assert.equal(page.state, "pending");
+    store.state.locks.length = 0;
+    await verification.createInvitation({
+      pool: store.pool,
+      workspaceId: "ws-1",
+      contactId: "contact-1",
+      channel: "whatsapp",
+      actorUserId: 4,
+    });
+    const locks = store.state.locks.slice(-3);
+    assert.deepEqual(locks, [...locks].sort());
+    const accepted = await verification.consumeEmailChallenge({
+      pool: store.pool,
+      token: invitation.token,
+      decision: "accept",
+    });
+    assert.equal(accepted.ok, true);
+    assert.equal(store.state.suppressions.some((row) => row.reason === "recipient_declined"), false);
+  });
+
+  it("limits public confirmation attempts without describing the token", async () => {
+    process.env.RECIPIENT_VERIFY_PUBLIC_PER_WINDOW = "1";
+    process.env.RECIPIENT_VERIFY_PUBLIC_WINDOW_SECONDS = "600";
+    const store = createStore();
+    await verification.assertPublicVerificationBudget(store.pool, "ip-hash");
+    await assert.rejects(
+      () => verification.assertPublicVerificationBudget(store.pool, "ip-hash"),
+      (error) => error.status === 429 && error.code === "RECIPIENT_VERIFICATION_RATE_LIMITED",
+    );
+  });
+
+  it("delivers when a later duplicate contact is the verified one", async () => {
+    process.env.TT_DEPLOYMENT = "self-hosted";
+    process.env.RECIPIENT_VERIFICATION_MODE = "enforce";
+    const store = createStore();
+    seedContact(store);
+    store.state.contacts.set("ws-1:contact-2", {
+      id: "contact-2",
+      workspace_id: "ws-1",
+      phone_e164: "+14155550100",
+      details: { email: "person@example.com" },
+    });
+    store.state.verifications.push({
+      workspace_id: "ws-1",
+      contact_id: "contact-2",
+      channel: "email",
+      destination_normalized: "person@example.com",
+      destination_fingerprint: verification.destinationFingerprint("email", "person@example.com"),
+      status: "verified",
+      consent_at: new Date(),
+    });
+    const gated = await verification.filterDeliveryRecipients({
+      client: store.client,
+      workspaceId: "ws-1",
+      channel: "email",
+      recipients: [
+        { contactId: "contact-1", destination: "person@example.com" },
+        { contactId: "contact-2", destination: "person@example.com" },
+      ],
+    });
+    const selected = verification.selectDeliverableDestinations(gated.allowed);
+    assert.deepEqual(selected.destinations, ["person@example.com"]);
+    assert.equal(selected.contactIdByDestination.get("person@example.com"), "contact-2");
+    const digest = await verification.canDeliverToDestination({
+      client: store.client,
+      workspaceId: "ws-1",
+      channel: "email",
+      destination: "person@example.com",
+    });
+    assert.equal(digest.allowed, true);
   });
 });

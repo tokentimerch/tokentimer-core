@@ -164,6 +164,10 @@ Set `RECIPIENT_FINGERPRINT_SECRET` (or rely on `PHONE_HASH_SALT` or `SESSION_SEC
 | `RECIPIENT_VERIFY_USER_PER_DAY` | Invitations per user | `20` | API |
 | `RECIPIENT_TEST_PER_CONTACT_PER_DAY` | Workspace notification tests per contact | `3` | API |
 | `RECIPIENT_TEST_COOLDOWN_SECONDS` | Minimum gap between tests of one contact | `120` | API |
+| `RECIPIENT_VERIFY_PUBLIC_PER_WINDOW` | Public confirmation page requests per client address, shared across API replicas | `60` | API |
+| `RECIPIENT_VERIFY_PUBLIC_WINDOW_SECONDS` | Window for the public confirmation page limit | `600` | API |
+| `RECIPIENT_VERIFY_PAGE_MAX` | In-process shield for public confirmation pages | `60` in production, `10000` in development and test | API |
+| `RECIPIENT_VERIFY_PAGE_WINDOW_MS` | Window for the in-process confirmation page shield | `600000` | API |
 | `RECIPIENT_VERIFICATION_ADMIN_PROVIDER_TEST` | Set to `1` to allow an enforce-mode operator WhatsApp provider probe to an arbitrary number | unset | API |
 
 Point Twilio's inbound WhatsApp webhook at `POST /webhooks/twilio/whatsapp/inbound`. The signature is checked against `PUBLIC_BASE_URL` or `API_URL` plus the request path and the raw form body. A missing base URL or auth token returns 503 and does not confirm a number. Delivery status callbacks are not consent.

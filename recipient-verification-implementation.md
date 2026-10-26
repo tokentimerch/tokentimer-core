@@ -82,7 +82,7 @@ Self-hosted admin WhatsApp provider probes stay available in shadow mode. In enf
 
 ## 8. Tests and results
 
-`node --test tests/unit/recipient-verification.test.js` passed, 11 tests, 0 failures. The suite covers invitation rate limits, parallel consumption, GET versus POST, decline suppression after recreate, destination change, Twilio signature failure, wrong WhatsApp sender, replay, delivery disposition, and the Cloud versus self-hosted mode switch.
+`node --test tests/unit/recipient-verification.test.js` passed, 15 tests, 0 failures. `node --test tests/postgres/recipient-verification-concurrency.test.js` passed, 9 tests, 0 failures, against PostgreSQL 16. That run applies migration `recipient_channel_verification` twice and covers workspace and user invitation limits under concurrency, abuse suppression that survives the rolled-back invitation, decline after contact recreation, one-winner confirmation, a destination change during confirmation, the public confirmation budget, and an expired challenge.
 
 The suite uses an in-memory query double with serialized transactions. It does not open Postgres, SMTP, or Twilio. `tests/integration/api-test-whatsapp.test.js` was updated to expect `CONTACT_REQUIRED` for an arbitrary number. That file was not executed because no API server was running. The migration SQL was not applied to a live database in this run. No browser session was available on ports 3000, 3001, 4000, 5173, or 8080, so the contacts screen was not clicked through.
 
@@ -91,7 +91,7 @@ The suite uses an in-memory query double with serialized transactions. It does n
 - A failed invitation email still consumes the 24-hour destination slot.
 - Existing mail logs can include the recipient address. The token is not logged by the new route.
 - The accept POST URL contains the token until the redirect. Referrer and cache headers are set to limit leakage.
-- Partial unique indexes were not executed on PostgreSQL here. Run the migration before enforcement.
+- Partial unique suppression indexes were created by applying the migration twice on PostgreSQL 16 in `tests/postgres/recipient-verification-concurrency.test.js`.
 - Shadow mode on self-hosted still delivers. That is the compatibility default, not a customer toggle.
 - WhatsApp decline is implemented in the route transaction rather than the shared consume function. Email decline is in the package.
 

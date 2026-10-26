@@ -2,7 +2,8 @@ const express = require("express");
 const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
-const { getApiLimiter } = require("../middleware/rateLimit");
+const { getApiLimiter, recipientVerificationPageLimiter } = require("../middleware/rateLimit");
+const { resolveClientIp } = require("../utils/logger");
 const { requireAuth } = require("../middleware/auth");
 const { loadWorkspace, requireWorkspaceMembership } = require("../services/rbac");
 const { sendEmail } = require("../services/emailService");
@@ -72,6 +73,21 @@ router.post(
         channel,
         actorUserId: req.user.id,
       });
+      if (channel === "email" && invitation.withholdDelivery) {
+        const shareUrl = `${verification.publicApiBase()}/verify/recipient/${encodeURIComponent(invitation.token)}`;
+        await audit(req, "RECIPIENT_VERIFICATION_RESUBSCRIBE_LINK", {
+          contact_id: req.params.contactId,
+          channel,
+          destination_masked: verification.maskEmail(invitation.destination),
+        });
+        return res.status(200).json({
+          status: "withheld",
+          channel,
+          expires_at: invitation.expiresAt,
+          share_url: shareUrl,
+          code: "RECIPIENT_OPTED_OUT",
+        });
+      }
       if (channel === "email") {
         const link = `${verification.publicApiBase()}/verify/recipient/${encodeURIComponent(invitation.token)}`;
         const workspaceName = req.workspace.name || "your workspace";
@@ -146,27 +162,48 @@ function html(res, status, body) {
   res.status(status).type("html").send(body);
 }
 
-router.get("/verify/recipient/done", (req, res) => {
+async function limitPublicVerification(req, res) {
+  const ip = resolveClientIp(req) || "unknown";
+  const key = verification.destinationFingerprint("public", ip) || verification.hashToken(`public:${ip}`);
+  try {
+    await verification.assertPublicVerificationBudget(pool, key);
+    return false;
+  } catch (error) {
+    if (error.status === 429) {
+      res.set("Retry-After", String(error.retryAfter || 60));
+      html(res, 429, verification.renderDone("invalid"));
+      return true;
+    }
+    logger.error("recipient verification page limit failed", { code: error.code || "INTERNAL_ERROR" });
+    html(res, 503, verification.renderDone("invalid"));
+    return true;
+  }
+}
+
+router.get("/verify/recipient/done", recipientVerificationPageLimiter, async (req, res) => {
+  if (await limitPublicVerification(req, res)) return undefined;
   const result = req.query.result === "accepted" || req.query.result === "declined" ? req.query.result : "invalid";
-  html(res, 200, verification.renderDone(result));
+  return html(res, 200, verification.renderDone(result));
 });
 
-router.get("/verify/recipient/:token", async (req, res) => {
+router.get("/verify/recipient/:token", recipientVerificationPageLimiter, async (req, res) => {
+  if (await limitPublicVerification(req, res)) return undefined;
   try {
     const challenge = await verification.loadChallenge(pool, req.params.token);
     const fromNumber = challenge.channel === "whatsapp" ? await officialWhatsAppFrom() : null;
-    html(res, 200, verification.renderChallengePage({
+    return html(res, 200, verification.renderChallengePage({
       ...challenge,
       token: req.params.token,
       fromNumber,
     }));
   } catch (error) {
     logger.error("recipient verification page failed", { error: error.message });
-    html(res, 404, verification.renderDone("invalid"));
+    return html(res, 404, verification.renderDone("invalid"));
   }
 });
 
-router.post("/verify/recipient/:token/accept", async (req, res) => {
+router.post("/verify/recipient/:token/accept", recipientVerificationPageLimiter, async (req, res) => {
+  if (await limitPublicVerification(req, res)) return undefined;
   try {
     const result = await verification.consumeEmailChallenge({ pool, token: req.params.token, decision: "accept" });
     return res.redirect(303, `/verify/recipient/done?result=${result.ok ? "accepted" : "invalid"}`);
@@ -176,7 +213,8 @@ router.post("/verify/recipient/:token/accept", async (req, res) => {
   }
 });
 
-router.post("/verify/recipient/:token/decline", async (req, res) => {
+router.post("/verify/recipient/:token/decline", recipientVerificationPageLimiter, async (req, res) => {
+  if (await limitPublicVerification(req, res)) return undefined;
   try {
     const loaded = await verification.loadChallenge(pool, req.params.token);
     if (loaded.channel === "whatsapp" && loaded.state === "pending") {

@@ -51,6 +51,8 @@ function limits(env = process.env) {
     userPerDay: positiveInt(env.RECIPIENT_VERIFY_USER_PER_DAY, 20),
     testPerContactPerDay: positiveInt(env.RECIPIENT_TEST_PER_CONTACT_PER_DAY, 3),
     testCooldownSeconds: positiveInt(env.RECIPIENT_TEST_COOLDOWN_SECONDS, 120),
+    publicPerWindow: positiveInt(env.RECIPIENT_VERIFY_PUBLIC_PER_WINDOW, 60),
+    publicWindowSeconds: positiveInt(env.RECIPIENT_VERIFY_PUBLIC_WINDOW_SECONDS, 10 * 60),
   };
 }
 
@@ -123,9 +125,12 @@ function randomToken() {
 }
 
 function randomWhatsAppCode() {
+  // 32 symbols, a power of two. A byte masked to the low 5 bits is uniform.
+  // Modulo would also be uniform here because 256 divides evenly by 32.
   const bytes = crypto.randomBytes(10);
+  const mask = WA_ALPHABET.length - 1;
   let out = "";
-  for (let i = 0; i < 10; i += 1) out += WA_ALPHABET[bytes[i] % WA_ALPHABET.length];
+  for (let i = 0; i < 10; i += 1) out += WA_ALPHABET[bytes[i] & mask];
   return out;
 }
 
@@ -373,15 +378,49 @@ function deliveryDisposition(results) {
   const list = Array.isArray(results) ? results : [];
   const unsuccessful = list.filter((row) => row && row.success !== true);
   const retryable = unsuccessful.filter((row) => !row.eligibilityTerminal);
+  const anySuccess = list.some((row) => row && row.success === true);
   if (unsuccessful.length === 0) return { status: "sent", retry: false, channels: [] };
   if (retryable.length === 0) {
+    if (anySuccess) {
+      return { status: "partial", retry: false, channels: [], code: "NO_VERIFIED_RECIPIENTS" };
+    }
     return { status: "blocked", retry: false, channels: [], code: "NO_VERIFIED_RECIPIENTS" };
   }
   return {
-    status: list.some((row) => row && row.success === true) ? "partial" : "failed",
+    status: anySuccess ? "partial" : "failed",
     retry: true,
     channels: retryable.map((row) => row.channel),
   };
+}
+
+function queueDeliveryOutcome(results, options = {}) {
+  const disposition = deliveryDisposition(results);
+  let status = disposition.status;
+  if (status === "sent" && options.hasPartialIssues) status = "partial";
+  const forcedBlock = options.whatsappPermanentFailure === true || options.reachedMaxAttempts === true;
+  if (forcedBlock) status = "blocked";
+  const retry = !forcedBlock && disposition.retry === true && status !== "sent" && status !== "blocked";
+  return {
+    status,
+    retry,
+    channels: retry ? disposition.channels : [],
+    code: disposition.code || null,
+    notifyUnverified: (Array.isArray(results) ? results : []).some((row) => row && row.eligibilityTerminal),
+  };
+}
+
+function selectDeliverableDestinations(rows) {
+  const seen = new Set();
+  const destinations = [];
+  const contactIdByDestination = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const destination = row && row.destination;
+    if (!destination || seen.has(destination)) continue;
+    seen.add(destination);
+    destinations.push(destination);
+    contactIdByDestination.set(destination, row.contactId);
+  }
+  return { destinations, contactIdByDestination };
 }
 
 function isEligibilityTerminal(code) {
@@ -417,7 +456,14 @@ async function assertInvitationBudget(client, { channel, fingerprint, workspaceI
   const config = limits();
   const dayLimit = channel === "email" ? config.emailDestPerDay : config.whatsappDestPerDay;
   const weekLimit = channel === "email" ? config.emailDestPerWeek : config.whatsappDestPerWeek;
-  await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`verify:${channel}:${fingerprint}`]);
+  const lockKeys = [
+    `verify:dest:${channel}:${fingerprint}`,
+    `verify:ws:${workspaceId || "none"}`,
+    `verify:user:${actorUserId || "unknown"}`,
+  ].sort();
+  for (const key of lockKeys) {
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [key]);
+  }
   const day = await takeBucket(client, {
     key: `dest:${channel}:${fingerprint}:24h`,
     limit: dayLimit,
@@ -444,20 +490,13 @@ async function assertInvitationBudget(client, { channel, fingerprint, workspaceI
         WHERE bucket_key = $1 AND created_at > NOW() - INTERVAL '7 days'`,
       [`dest:${channel}:${fingerprint}:7d`],
     );
-    if ((distinct.rows[0]?.n || 0) >= 3) {
-      await client.query(
-        `-- RV_INSERT_SUPPRESSION
-         INSERT INTO notification_suppressions
-           (channel, destination_fingerprint, scope, workspace_id, reason, expires_at)
-         VALUES ($1, $2, 'global', NULL, 'verification_abuse', NOW() + INTERVAL '24 hours')
-         ON CONFLICT (channel, destination_fingerprint, reason) WHERE scope = 'global'
-         DO UPDATE SET expires_at = GREATEST(notification_suppressions.expires_at, EXCLUDED.expires_at)`,
-        [channel, fingerprint],
-      );
-    }
-    throw coded(429, "RECIPIENT_VERIFICATION_RATE_LIMITED", "Verification invitation limit reached for this destination", {
+    const limited = coded(429, "RECIPIENT_VERIFICATION_RATE_LIMITED", "Verification invitation limit reached for this destination", {
       retryAfter: week.retryAfter,
     });
+    if ((distinct.rows[0]?.n || 0) >= 3) {
+      limited.recordAbuse = { channel, fingerprint };
+    }
+    throw limited;
   }
   const workspace = await takeBucket(client, {
     key: `ws:${workspaceId}:24h`,
@@ -483,11 +522,24 @@ async function assertInvitationBudget(client, { channel, fingerprint, workspaceI
   }
 }
 
+async function recordAbuseSuppression(pool, { channel, fingerprint }) {
+  await pool.query(
+    `-- RV_INSERT_SUPPRESSION
+     INSERT INTO notification_suppressions
+       (channel, destination_fingerprint, scope, workspace_id, reason, expires_at)
+     VALUES ($1, $2, 'global', NULL, 'verification_abuse', NOW() + INTERVAL '24 hours')
+     ON CONFLICT (channel, destination_fingerprint, reason) WHERE scope = 'global'
+     DO UPDATE SET expires_at = GREATEST(notification_suppressions.expires_at, EXCLUDED.expires_at)`,
+    [channel, fingerprint],
+  );
+}
+
 async function createInvitation({ pool, workspaceId, contactId, channel, actorUserId }) {
   if (channel !== "email" && channel !== "whatsapp") {
     throw coded(400, "VALIDATION_ERROR", "Unsupported channel");
   }
-  return withTransaction(pool, async (client) => {
+  try {
+    return await withTransaction(pool, async (client) => {
     const contact = await client.query(
       `-- RV_CONTACT
        SELECT id, phone_e164, details FROM workspace_contacts WHERE workspace_id = $1 AND id = $2`,
@@ -514,6 +566,15 @@ async function createInvitation({ pool, workspaceId, contactId, channel, actorUs
       });
     }
     await assertInvitationBudget(client, { channel, fingerprint, workspaceId, actorUserId });
+    const declined = await client.query(
+      `-- RV_SUPPRESSION_LOOKUP
+       SELECT reason FROM notification_suppressions
+        WHERE channel = $1 AND destination_fingerprint = $2 AND reason = 'recipient_declined'
+          AND (expires_at IS NULL OR expires_at > NOW())
+          AND scope = 'workspace' AND workspace_id = $3
+        LIMIT 1`,
+      [channel, fingerprint, workspaceId],
+    );
     await client.query(
       `-- RV_SUPERSEDE
        UPDATE contact_verification_challenges
@@ -551,8 +612,15 @@ async function createInvitation({ pool, workspaceId, contactId, channel, actorUs
       destination: destination.value,
       expiresAt: inserted.rows[0].expires_at,
       challengeId: inserted.rows[0].id,
+      withholdDelivery: Boolean(declined.rows[0]),
     };
-  });
+    });
+  } catch (error) {
+    if (error && error.recordAbuse) {
+      await recordAbuseSuppression(pool, error.recordAbuse);
+    }
+    throw error;
+  }
 }
 
 async function loadChallenge(pool, token) {
@@ -580,22 +648,22 @@ async function loadChallenge(pool, token) {
   }
   const row = rows[0];
   if (!row) return { state: "invalid" };
+  if (row.status === "pending" && new Date(row.expires_at).getTime() > Date.now()) {
+    return {
+      state: "pending",
+      channel: row.channel,
+      workspaceName: row.workspace_name,
+      expiresAt: row.expires_at,
+      code: row.channel === "whatsapp" ? openCode(row.code_ciphertext) : null,
+    };
+  }
   if (row.verification_status === "verified") {
     return { state: "accepted", channel: row.channel, workspaceName: row.workspace_name };
   }
   if (row.verification_status === "opted_out" || row.status === "declined") {
     return { state: "declined", channel: row.channel, workspaceName: row.workspace_name };
   }
-  if (row.status !== "pending" || new Date(row.expires_at).getTime() <= Date.now()) {
-    return { state: "invalid" };
-  }
-  return {
-    state: "pending",
-    channel: row.channel,
-    workspaceName: row.workspace_name,
-    expiresAt: row.expires_at,
-    code: row.channel === "whatsapp" ? openCode(row.code_ciphertext) : null,
-  };
+  return { state: "invalid" };
 }
 
 async function upsertVerification(client, row, status, method) {
@@ -664,6 +732,32 @@ async function consumeEmailChallenge({ pool, token, decision }) {
     return { ok: false };
   }
   return withTransaction(pool, async (client) => {
+    const pending = await client.query(
+      `-- RV_PREVIEW_CHALLENGE
+       SELECT workspace_id, contact_id, channel, destination_normalized, destination_fingerprint
+         FROM contact_verification_challenges
+        WHERE token_hash = $1
+          AND channel = 'email'
+          AND status = 'pending'
+          AND expires_at > NOW()`,
+      [hashToken(token)],
+    );
+    const preview = pending.rows[0];
+    if (!preview) return { ok: false };
+    await client.query(
+      `-- RV_LOCK_CONTACT
+       SELECT id FROM workspace_contacts WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+      [preview.workspace_id, preview.contact_id],
+    );
+    const contact = await client.query(
+      `-- RV_CONTACT
+       SELECT details FROM workspace_contacts WHERE workspace_id = $1 AND id = $2`,
+      [preview.workspace_id, preview.contact_id],
+    );
+    const current = normalizeEmail(contact.rows[0]?.details?.email);
+    if (!current.ok || current.value !== preview.destination_normalized) {
+      return { ok: false, stale: true };
+    }
     const consumed = await client.query(
       `-- RV_CONSUME_CHALLENGE
        UPDATE contact_verification_challenges
@@ -677,13 +771,6 @@ async function consumeEmailChallenge({ pool, token, decision }) {
     );
     const row = consumed.rows[0];
     if (!row) return { ok: false };
-    const contact = await client.query(
-      `-- RV_CONTACT
-       SELECT details FROM workspace_contacts WHERE workspace_id = $1 AND id = $2`,
-      [row.workspace_id, row.contact_id],
-    );
-    const current = normalizeEmail(contact.rows[0]?.details?.email);
-    if (!current.ok || current.value !== row.destination_normalized) return { ok: false, stale: true };
     await upsertVerification(
       client,
       row,
@@ -707,6 +794,31 @@ async function confirmWhatsAppInbound({ pool, from, body, messageSid }) {
       [String(messageSid).slice(0, 128)],
     );
     if (!inserted.rows[0]) return { ok: false, duplicate: true, reason: "duplicate" };
+    const pending = await client.query(
+      `-- RV_PREVIEW_CHALLENGE
+       SELECT workspace_id, contact_id, destination_normalized
+         FROM contact_verification_challenges
+        WHERE code_hash = $1
+          AND channel = 'whatsapp'
+          AND status = 'pending'
+          AND expires_at > NOW()
+          AND destination_normalized = $2`,
+      [hashToken(code), sender.value],
+    );
+    const preview = pending.rows[0];
+    if (!preview) return { ok: false, reason: "invalid" };
+    await client.query(
+      `-- RV_LOCK_CONTACT
+       SELECT id FROM workspace_contacts WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+      [preview.workspace_id, preview.contact_id],
+    );
+    const currentContact = await client.query(
+      `-- RV_CONTACT
+       SELECT phone_e164 FROM workspace_contacts WHERE workspace_id = $1 AND id = $2`,
+      [preview.workspace_id, preview.contact_id],
+    );
+    const current = normalizePhone(currentContact.rows[0]?.phone_e164);
+    if (!current.ok || current.value !== sender.value) return { ok: false, reason: "stale" };
     const consumed = await client.query(
       `-- RV_CONSUME_CHALLENGE
        UPDATE contact_verification_challenges
@@ -721,13 +833,6 @@ async function confirmWhatsAppInbound({ pool, from, body, messageSid }) {
     );
     const row = consumed.rows[0];
     if (!row) return { ok: false, reason: "invalid" };
-    const contact = await client.query(
-      `-- RV_CONTACT
-       SELECT phone_e164 FROM workspace_contacts WHERE workspace_id = $1 AND id = $2`,
-      [row.workspace_id, row.contact_id],
-    );
-    const current = normalizePhone(contact.rows[0]?.phone_e164);
-    if (!current.ok || current.value !== sender.value) return { ok: false, reason: "stale" };
     await upsertVerification(client, row, "verified", "whatsapp_inbound_confirm");
     return { ok: true, outcome: "accepted", workspaceId: row.workspace_id };
   });
@@ -809,6 +914,11 @@ async function invalidateChangedDestination({ client, workspaceId, contactId, ch
   const next = normalizeDestination(channel, nextDestination);
   if (previous.ok && next.ok && previous.value === next.value) return;
   await client.query(
+    `-- RV_LOCK_CONTACT
+     SELECT id FROM workspace_contacts WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+    [workspaceId, contactId],
+  );
+  await client.query(
     `-- RV_SUPERSEDE
      UPDATE contact_verification_challenges
         SET status = 'superseded'
@@ -841,7 +951,7 @@ async function revokeChannel({ pool, workspaceId, contactId, channel, actorUserI
   return withTransaction(pool, async (client) => {
     const contact = await client.query(
       `-- RV_CONTACT
-       SELECT phone_e164, details FROM workspace_contacts WHERE workspace_id = $1 AND id = $2`,
+       SELECT phone_e164, details FROM workspace_contacts WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
       [workspaceId, contactId],
     );
     if (!contact.rows[0]) throw coded(404, "CONTACT_NOT_FOUND", "Contact not found");
@@ -996,6 +1106,24 @@ function verificationResponseHeaders(res) {
   res.set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'");
 }
 
+async function assertPublicVerificationBudget(pool, key) {
+  const config = limits();
+  return withTransaction(pool, async (client) => {
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`verify:public:${key}`]);
+    const bucket = await takeBucket(client, {
+      key: `public:${key}`,
+      limit: config.publicPerWindow,
+      windowSeconds: config.publicWindowSeconds,
+      workspaceId: null,
+    });
+    if (!bucket.ok) {
+      throw coded(429, "RECIPIENT_VERIFICATION_RATE_LIMITED", "Please wait before trying again", {
+        retryAfter: bucket.retryAfter,
+      });
+    }
+  });
+}
+
 module.exports = {
   CONSENT_POLICY_VERSION,
   DELIVERY_POLICIES,
@@ -1020,6 +1148,8 @@ module.exports = {
   canDeliverToDestination,
   filterDeliveryRecipients,
   deliveryDisposition,
+  queueDeliveryOutcome,
+  selectDeliverableDestinations,
   isEligibilityTerminal,
   createInvitation,
   loadChallenge,
@@ -1035,5 +1165,6 @@ module.exports = {
   attachVerification,
   authorizeWorkspaceTest,
   verificationResponseHeaders,
+  assertPublicVerificationBudget,
   withTransaction,
 };

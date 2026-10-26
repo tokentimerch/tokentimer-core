@@ -2687,12 +2687,37 @@ export default function AlertPreferences({
     if (!workspaceId || !contact?.id || isViewer) return;
     setVerificationBusy(`${contact.id}:email`);
     try {
-      await apiClient.post(
+      const response = await apiClient.post(
         `/api/v1/workspaces/${workspaceId}/contacts/${contact.id}/verifications/email`
       );
-      showSuccess(
-        'Verification email sent. Nothing is confirmed until that person accepts.'
-      );
+      if (response?.data?.status === 'withheld') {
+        const shareUrl = response.data.share_url;
+        let copied = false;
+        if (shareUrl && navigator.clipboard?.writeText) {
+          try {
+            await navigator.clipboard.writeText(shareUrl);
+            copied = true;
+          } catch {
+            copied = false;
+          }
+        }
+        if (copied) {
+          showSuccess(
+            'This person declined email, so TokenTimer did not email them. The confirmation link is copied. Send it only if they asked to subscribe again.'
+          );
+        } else if (shareUrl) {
+          window.prompt(
+            'This person declined email. Send this link only if they asked to subscribe again.',
+            shareUrl
+          );
+        } else {
+          showError('This person declined email. TokenTimer did not send another invitation.');
+        }
+      } else {
+        showSuccess(
+          'Verification email sent. Nothing is confirmed until that person accepts.'
+        );
+      }
       await refreshContacts();
     } catch (error) {
       showError(verificationErrorMessage(error));
