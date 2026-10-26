@@ -477,7 +477,9 @@ app.post(
       });
     try {
       const r = await pool.query(
-        `SELECT aq.*, COALESCE(t.workspace_id, ca.workspace_id) AS workspace_id
+        `SELECT aq.*, COALESCE(t.workspace_id, ca.workspace_id) AS workspace_id,
+                (aq.delivery_claim_id IS NOT NULL AND aq.next_attempt_at > NOW()) AS claim_active,
+                (aq.delivery_claim_id IS NULL AND aq.next_attempt_at > NOW()) AS cooldown_active
            FROM alert_queue aq
            LEFT JOIN tokens t ON t.id = aq.token_id
            LEFT JOIN certops_agents ca ON ca.id = aq.certops_agent_id
@@ -598,37 +600,88 @@ app.post(
       }
       channel = retryPlan.channel;
 
-      // Respect cooldown window
-      if (
-        alert.next_attempt_at &&
-        new Date(alert.next_attempt_at) > new Date()
-      ) {
+      if (alert.claim_active === true) {
+        return res.status(409).json({
+          error: "A delivery is already in progress for this alert.",
+          code: "DELIVERY_IN_PROGRESS",
+        });
+      }
+
+      // Respect cooldown window. A live claim uses the same future timestamp
+      // and is reported above, so this is only a scheduled retry wait.
+      if (alert.cooldown_active === true) {
         const eta = new Date(alert.next_attempt_at).toISOString();
         return res
           .status(429)
           .json({ error: "Cooldown active", nextAttemptAt: eta });
       }
 
-      // Set to pending and only this channel, keeping any delivery ledger.
+      // Compare the snapshot the plan was built from. A worker that claims or
+      // finishes the row between the read and this update changes one of these
+      // fields, and the update matches nothing.
       const currentAnchor = `COALESCE(
         (SELECT t.workspace_id FROM tokens t WHERE t.id = aq.token_id),
         (SELECT ca.workspace_id FROM certops_agents ca WHERE ca.id = aq.certops_agent_id)
       )`;
       const updated = await pool.query(
-        `UPDATE alert_queue aq
-            SET status='pending', channels=$1, next_attempt_at=NOW(), updated_at=NOW()
-          WHERE aq.id=$2 AND aq.user_id=$3
-            AND (${currentWorkspaceAccessSql(currentAnchor, "$3")}
-                 OR (aq.token_id IS NULL AND aq.certops_agent_id IS NULL))
-          RETURNING aq.id, ${currentAnchor} AS workspace_id`,
-        [JSON.stringify(retryPlan.channels), alertId, req.user.id],
+        recipientVerification.manualRetryUpdateSql(
+          `${currentWorkspaceAccessSql(currentAnchor, "$3")}
+                 OR (aq.token_id IS NULL AND aq.certops_agent_id IS NULL)`,
+          `aq.id, ${currentAnchor} AS workspace_id`,
+        ),
+        [
+          JSON.stringify(retryPlan.channels),
+          alertId,
+          req.user.id,
+          alert.status,
+          JSON.stringify(alert.channels),
+          alert.delivery_claim_id,
+        ],
       );
-      if (updated.rowCount === 0)
-        return res.status(404).json({
-          error:
-            "We couldn't find this alert. It may have been processed or deleted.",
-          code: "ALERT_NOT_FOUND",
+      if (updated.rowCount === 0) {
+        const latest = await pool.query(
+          `SELECT aq.status, aq.next_attempt_at,
+                  (aq.delivery_claim_id IS NOT NULL AND aq.next_attempt_at > NOW()) AS claim_active,
+                  (aq.delivery_claim_id IS NULL AND aq.next_attempt_at > NOW()) AS cooldown_active
+             FROM alert_queue aq
+             LEFT JOIN tokens t ON t.id = aq.token_id
+             LEFT JOIN certops_agents ca ON ca.id = aq.certops_agent_id
+            WHERE aq.id = $1 AND aq.user_id = $2
+              AND (${currentWorkspaceAccessSql("COALESCE(t.workspace_id, ca.workspace_id)", "$2")}
+                   OR (aq.token_id IS NULL AND aq.certops_agent_id IS NULL))`,
+          [alertId, req.user.id],
+        );
+        if (latest.rows.length === 0) {
+          return res.status(404).json({
+            error:
+              "We couldn't find this alert. It may have been processed or deleted.",
+            code: "ALERT_NOT_FOUND",
+          });
+        }
+        const current = latest.rows[0];
+        if (current.claim_active === true) {
+          return res.status(409).json({
+            error: "A delivery is already in progress for this alert.",
+            code: "DELIVERY_IN_PROGRESS",
+          });
+        }
+        if (String(current.status || "").toLowerCase() === "sent") {
+          return res.status(400).json({
+            error: "This alert was already delivered.",
+            code: "ALREADY_DELIVERED",
+          });
+        }
+        if (current.cooldown_active === true) {
+          return res.status(429).json({
+            error: "Cooldown active",
+            nextAttemptAt: new Date(current.next_attempt_at).toISOString(),
+          });
+        }
+        return res.status(409).json({
+          error: "This alert changed before the retry could be saved.",
+          code: "ALERT_STATE_CHANGED",
         });
+      }
       const workspaceId = updated.rows[0].workspace_id;
       await resolveRequeuedNotifications([
         { id: alertId, workspace_id: workspaceId },

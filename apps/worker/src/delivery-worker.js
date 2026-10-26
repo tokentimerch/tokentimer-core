@@ -58,7 +58,8 @@ import {
   queueDeliveryOutcome,
   selectDeliverableDestinations,
   mergeDeliveryAttempt,
-  webhookChannelReopened,
+  webhookRetryGenerationFromStored,
+  webhookPermanentHashes,
   DELIVERY_CLAIM_EXCLUSION_SQL,
 } from "./shared/recipientDeliveryGate.js";
 
@@ -1452,14 +1453,50 @@ const shutdown = async (signal) => {
   process.exit(0);
 };
 
-function webhookEndpointTerminal(result, url) {
-  const target = String(url || "");
-  if (target.includes("/__permanent__")) return true;
+const TERMINAL_WEBHOOK_CODES = new Set([
+  "WEBHOOK_PRIVATE_IP_BLOCKED",
+  "WEBHOOK_INVALID_URL",
+  "WEBHOOK_INVALID_SCHEME",
+  "WEBHOOK_HOST_NOT_ALLOWED",
+  "WEBHOOK_REDIRECT_REFUSED",
+]);
+
+const TRANSIENT_WEBHOOK_CODES = new Set([
+  "ETIMEDOUT",
+  "ESOCKETTIMEDOUT",
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "ECONNABORTED",
+  "WEBHOOK_NETWORK",
+  "WEBHOOK_TIMEOUT",
+  "WEBHOOK_UNREACHABLE",
+  "WEBHOOK_DNS_UNRESOLVED",
+]);
+
+function webhookEndpointTerminal(result) {
+  const code = String((result && result.code) || "");
   const status = Number(result && result.status);
+  if (code === "WEBHOOK_PROVIDER_REJECTED") {
+    if (status === 408 || status === 409 || status === 429) return false;
+    if (Number.isFinite(status) && status >= 500 && status < 600) return false;
+    return true;
+  }
+  if (TERMINAL_WEBHOOK_CODES.has(code)) return true;
+  if (TRANSIENT_WEBHOOK_CODES.has(code)) return false;
   if (status === 408 || status === 409 || status === 429) return false;
+  if (Number.isFinite(status) && status >= 500 && status < 600) return false;
   if (Number.isFinite(status) && status >= 400 && status < 500) return true;
-  const error = String((result && result.error) || "");
-  return /host not allowed|invalid webhook url scheme|private\/reserved|WEBHOOK_PRIVATE/i.test(error);
+  if (Number.isFinite(status) && status >= 200 && status < 300) return false;
+  if (!code) {
+    const error = String((result && result.error) || "");
+    return /host not allowed|invalid webhook url scheme|private\/reserved|WEBHOOK_PRIVATE/i.test(error);
+  }
+  return false;
 }
 
 // Exported for direct unit testing without spinning up the full worker job.
@@ -1477,6 +1514,7 @@ export const _test = {
   getCertRenewalFailedContext,
   neutralizeMentions,
   RENEWAL_PATH_STATE_LABELS,
+  webhookEndpointTerminal,
 };
 
 export async function deliveryWorkerJob({
@@ -2313,11 +2351,9 @@ export async function deliveryWorkerJob({
                     .map((r) => String(r.h || "").trim())
                     .filter(Boolean),
                 );
+                const webhookGeneration = webhookRetryGenerationFromStored(alert.channels);
                 const priorPermanent = new Set(
-                  priorDeliveryRows
-                    .filter((row) => row.channel === "webhooks" && row.status === "failed" && (row.metadata?.terminal === true || row.metadata?.terminal === "true"))
-                    .map((row) => String(row.metadata?.urlHash || "").trim())
-                    .filter(Boolean),
+                  webhookPermanentHashes(priorDeliveryRows, alert.channels),
                 );
 
                 for (const wh of webhooks) {
@@ -2337,7 +2373,7 @@ export async function deliveryWorkerJob({
                     webhookEndpoints[urlHash] = "sent";
                     continue;
                   }
-                  if (priorPermanent.has(urlHash) && !webhookChannelReopened(alert.channels)) {
+                  if (priorPermanent.has(urlHash)) {
                     permanentEndpoints += 1;
                     webhookEndpoints[urlHash] = "permanent";
                     continue;
@@ -2532,7 +2568,7 @@ export async function deliveryWorkerJob({
                       error: _.message,
                     });
                   }
-                  const endpointTerminal = !res.success && webhookEndpointTerminal(res, url);
+                  const endpointTerminal = !res.success && webhookEndpointTerminal(res);
                   if (!res.success) {
                     errors.push(`${kind}: ${res.error}`);
                     if (endpointTerminal) {
@@ -2578,6 +2614,7 @@ export async function deliveryWorkerJob({
                           ? tokenData?.transition || null
                           : null,
                         terminal: endpointTerminal === true,
+                        retryGeneration: webhookGeneration,
                       }),
                     ],
                   );

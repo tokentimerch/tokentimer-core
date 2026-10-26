@@ -1281,8 +1281,51 @@ describe("recipient verification", () => {
     assert.equal(manual.ok, true);
     assert.equal(manual.format, "ledger");
     assert.equal(manual.channels.outcomes.email.code, "NO_VERIFIED_RECIPIENTS");
-    assert.equal(manual.channels.outcomes.webhooks.reopened, true);
+    assert.equal(manual.channels.outcomes.webhooks.retryGeneration, 1);
+    assert.equal(manual.channels.outcomes.webhooks.reopened, undefined);
     assert.deepEqual(manual.channels.retry, ["webhooks"]);
+    const retriedTransient = verification.mergeDeliveryAttempt({
+      prior: manual.channels,
+      logRows: [],
+      attempted: [{
+        channel: "webhooks",
+        success: false,
+        terminal: false,
+        errorCode: "HTTP_503",
+        endpoints: { h: "failed" },
+      }],
+      liveChannels: ["email", "webhooks"],
+    });
+    assert.equal(retriedTransient.ledger.outcomes.webhooks.retryGeneration, 1);
+    assert.equal(retriedTransient.ledger.outcomes.webhooks.terminal, false);
+    assert.deepEqual(retriedTransient.ledger.retry, ["webhooks"]);
+    assert.deepEqual(verification.webhookPermanentHashes([
+      { channel: "webhooks", status: "failed", metadata: { terminal: true, urlHash: "old", retryGeneration: 0 } },
+      { channel: "webhooks", status: "failed", metadata: { terminal: true, urlHash: "new", retryGeneration: 1 } },
+      { channel: "webhooks", status: "success", metadata: { urlHash: "sent", retryGeneration: 1 } },
+    ], retriedTransient.ledger), ["new"]);
+    assert.equal(verification.webhookRetryGeneration({ reopened: true }), 1);
+    const now = new Date();
+    assert.equal(verification.deliveryClaimIsActive({
+      delivery_claim_id: "claim",
+      next_attempt_at: new Date(now.getTime() + 60000),
+    }, now), true);
+    assert.equal(verification.deliveryClaimIsActive({
+      delivery_claim_id: "claim",
+      next_attempt_at: new Date(now.getTime() - 60000),
+    }, now), false);
+    assert.equal(verification.deliveryClaimIsActive({
+      delivery_claim_id: null,
+      next_attempt_at: new Date(now.getTime() + 60000),
+    }, now), false);
+    const reopenedAgain = verification.planManualRetry({
+      ...retriedTransient.ledger,
+      outcomes: {
+        ...retriedTransient.ledger.outcomes,
+        webhooks: { ...retriedTransient.ledger.outcomes.webhooks, terminal: true, state: "blocked" },
+      },
+    }, "webhooks");
+    assert.equal(reopenedAgain.channels.outcomes.webhooks.retryGeneration, 2);
     assert.equal(verification.planManualRetry(combined.ledger, "email").code, "NO_VERIFIED_RECIPIENTS");
     assert.deepEqual(verification.planManualRetry(["email", "webhooks"], "webhooks").channels, ["webhooks"]);
     assert.equal(verification.planManualRetry({
@@ -1311,17 +1354,22 @@ describe("recipient verification", () => {
     const requeued = verification.requeueWebhookChannel(permanentWebhook.ledger);
     assert.equal(requeued.version, 1);
     assert.equal(requeued.outcomes.webhooks.terminal, false);
-    assert.equal(requeued.outcomes.webhooks.reopened, true);
+    assert.equal(requeued.outcomes.webhooks.retryGeneration, 1);
+    assert.equal(requeued.outcomes.webhooks.reopened, undefined);
     assert.deepEqual(verification.requeueWebhookChannel(["email"]), ["email", "webhooks"]);
 
     const api = fs.readFileSync(path.join(ROOT, "apps/api/index.js"), "utf8");
     assert.match(api, /planManualRetry\(alert\.channels, channel\)/);
+    assert.match(api, /manualRetryUpdateSql\(/);
+    assert.match(api, /DELIVERY_IN_PROGRESS/);
     assert.match(api, /currentWorkspaceAccessSql\(currentAnchor, "\$3"\)/);
     const alerts = fs.readFileSync(path.join(ROOT, "apps/api/routes/alerts.js"), "utf8");
     assert.equal(alerts.includes("jsonb_array_elements_text"), false);
     assert.match(alerts, /publicDeliveryChannels\(alert\.channels\)/);
     assert.match(alerts, /delivery_claim_id IS NULL/);
     const worker = fs.readFileSync(path.join(ROOT, "apps/worker/src/delivery-worker.js"), "utf8");
+    assert.equal(worker.includes("__permanent__"), false);
+    assert.match(worker, /webhookPermanentHashes/);
     assert.match(worker, /type: "delivery_webhook_permanent"/);
     assert.match(worker, /type: "delivery_unverified_recipients"/);
     const queue = fs.readFileSync(path.join(ROOT, "apps/worker/src/queue-manager.js"), "utf8");

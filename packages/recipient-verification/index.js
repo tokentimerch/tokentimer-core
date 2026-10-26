@@ -625,7 +625,7 @@ function planManualRetry(stored, requestedChannel) {
     if (!eligible.includes(channel)) return { ok: false, code: "CHANNEL_NOT_ELIGIBLE", eligible, format: "legacy" };
     return { ok: true, channel, eligible, format: "legacy", channels: [channel] };
   }
-  const outcomes = { ...(ledger.outcomes || {}) };
+  const outcomes = JSON.parse(JSON.stringify(ledger.outcomes || {}));
   const known = ledger.required.length ? ledger.required.slice() : Object.keys(outcomes);
   const eligible = ledger.retry.filter((channel) => {
     const outcome = outcomes[channel];
@@ -647,13 +647,15 @@ function planManualRetry(stored, requestedChannel) {
     return { ok: false, code: "CHANNEL_NOT_ELIGIBLE", eligible, format: "ledger" };
   }
   if (providerTerminalOutcome(outcome)) {
-    outcomes[channel] = {
+    const next = {
       ...outcome,
       state: "failed",
       terminal: false,
-      reopened: true,
       reason: "provider",
     };
+    delete next.reopened;
+    if (channel === "webhooks") next.retryGeneration = webhookRetryGeneration(outcome) + 1;
+    outcomes[channel] = next;
   }
   return {
     ok: true,
@@ -679,9 +681,52 @@ function publicDeliveryChannels(stored) {
   }));
 }
 
-function webhookChannelReopened(stored) {
-  const ledger = parseDeliveryLedger(stored);
-  return ledger.outcomes?.webhooks?.reopened === true;
+function deliveryClaimIsActive(row, now = new Date()) {
+  if (!row || !row.delivery_claim_id || !row.next_attempt_at) return false;
+  return new Date(row.next_attempt_at).getTime() > new Date(now).getTime();
+}
+
+function webhookRetryGeneration(outcome) {
+  if (!outcome || typeof outcome !== "object") return 0;
+  const parsed = Number(outcome.retryGeneration);
+  if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+  return outcome.reopened === true ? 1 : 0;
+}
+
+function webhookRetryGenerationFromStored(stored) {
+  return webhookRetryGeneration(parseDeliveryLedger(stored).outcomes?.webhooks);
+}
+
+function webhookPermanentHashes(logRows, stored) {
+  const generation = webhookRetryGenerationFromStored(stored);
+  const hashes = [];
+  for (const row of Array.isArray(logRows) ? logRows : []) {
+    if (!row || row.channel !== "webhooks" || row.status !== "failed") continue;
+    const meta = metadataObject(row.metadata);
+    if (!(meta.terminal === true || meta.terminal === "true")) continue;
+    const logged = Number(meta.retryGeneration || 0);
+    if (!Number.isFinite(logged) || logged < generation) continue;
+    const hash = String(meta.urlHash || "").trim();
+    if (hash) hashes.push(hash);
+  }
+  return hashes;
+}
+
+function manualRetryUpdateSql(accessSql, returningSql) {
+  return `UPDATE alert_queue aq
+      SET status = 'pending',
+          channels = $1,
+          next_attempt_at = NOW(),
+          updated_at = NOW(),
+          delivery_claim_id = NULL
+    WHERE aq.id = $2
+      AND aq.user_id = $3
+      AND aq.status = $4
+      AND aq.channels = $5
+      AND aq.delivery_claim_id IS NOT DISTINCT FROM $6
+      AND (aq.next_attempt_at IS NULL OR aq.next_attempt_at <= NOW())
+      AND (${accessSql})
+    RETURNING ${returningSql}`;
 }
 
 function requeueWebhookChannel(stored) {
@@ -693,7 +738,10 @@ function requeueWebhookChannel(stored) {
   const retry = Array.from(new Set([...ledger.retry, "webhooks"]));
   const outcomes = { ...ledger.outcomes };
   if (outcome && (outcome.terminal === true || outcome.state === "blocked" || outcome.state === "partial")) {
-    outcomes.webhooks = { ...outcome, state: "failed", terminal: false, reopened: true, reason: "provider" };
+    const next = { ...outcome, state: "failed", terminal: false, reason: "provider" };
+    delete next.reopened;
+    next.retryGeneration = webhookRetryGeneration(outcome) + 1;
+    outcomes.webhooks = next;
   }
   return { version: 1, retry, required, outcomes };
 }
@@ -730,6 +778,11 @@ function mergeDeliveryAttempt({ prior, logRows, attempted, liveChannels } = {}) 
   for (const row of Array.isArray(attempted) ? attempted : []) {
     if (!row || !row.channel) continue;
     outcomes[String(row.channel)] = outcomeFromAttempt(row);
+  }
+  const webhookGeneration = webhookRetryGeneration(ledger.outcomes?.webhooks);
+  if (webhookGeneration && outcomes.webhooks) {
+    outcomes.webhooks = { ...outcomes.webhooks, retryGeneration: webhookGeneration };
+    delete outcomes.webhooks.reopened;
   }
   const configured = Array.isArray(liveChannels) ? liveChannels.map(String).filter(Boolean) : [];
   const required = configured.length ? configured : Object.keys(outcomes);
@@ -1561,7 +1614,11 @@ module.exports = {
   reconcileDeliveryChannels,
   planManualRetry,
   publicDeliveryChannels,
-  webhookChannelReopened,
+  deliveryClaimIsActive,
+  webhookRetryGeneration,
+  webhookRetryGenerationFromStored,
+  webhookPermanentHashes,
+  manualRetryUpdateSql,
   requeueWebhookChannel,
   selectDeliverableDestinations,
   isEligibilityTerminal,

@@ -44,8 +44,12 @@ function mergeDeliveryAttempt(input) {
   return recipientVerification.mergeDeliveryAttempt(input);
 }
 
-function webhookChannelReopened(stored) {
-  return recipientVerification.webhookChannelReopened(stored);
+function webhookRetryGenerationFromStored(stored) {
+  return recipientVerification.webhookRetryGenerationFromStored(stored);
+}
+
+function webhookPermanentHashes(logRows, stored) {
+  return recipientVerification.webhookPermanentHashes(logRows, stored);
 }
 
 const DELIVERY_CLAIM_EXCLUSION_SQL = recipientVerification.DELIVERY_CLAIM_EXCLUSION_SQL;
@@ -58,6 +62,7 @@ export {
   queueDeliveryOutcome,
   selectDeliverableDestinations,
   mergeDeliveryAttempt,
-  webhookChannelReopened,
+  webhookRetryGenerationFromStored,
+  webhookPermanentHashes,
   DELIVERY_CLAIM_EXCLUSION_SQL,
 };

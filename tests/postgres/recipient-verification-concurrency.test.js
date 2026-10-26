@@ -672,7 +672,7 @@ test("reconciliation, listing, and webhook requeue keep ledger history", async (
   );
   assert.equal(requeued.rows[0].status, "pending");
   assert.equal(requeued.rows[0].channels.version, 1);
-  assert.equal(requeued.rows[0].channels.outcomes.webhooks.reopened, true);
+  assert.equal(requeued.rows[0].channels.outcomes.webhooks.retryGeneration, 1);
   assert.equal(requeued.rows[0].channels.outcomes.email.state, "sent");
   const kind = await pool.query("SELECT jsonb_typeof(channels) AS kind FROM alert_queue WHERE id = $1", [id]);
   assert.equal(kind.rows[0].kind, "object");

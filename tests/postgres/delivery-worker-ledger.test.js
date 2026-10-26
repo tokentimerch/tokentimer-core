@@ -18,13 +18,16 @@ delete process.env.ENABLE_METRICS;
 
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
+const http = require("node:http");
 const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 const test = require("node:test");
 const { Pool } = require("pg");
 const verification = require("../../packages/recipient-verification");
+const { currentWorkspaceAccessSql } = require("../../apps/api/services/rbac");
 
 const ROOT = path.join(__dirname, "..", "..");
+let hookServer = null;
 const pool = new Pool({
   host: process.env.DB_HOST,
   port: Number(process.env.DB_PORT),
@@ -125,15 +128,78 @@ async function enqueue(row, channels) {
 
 async function loadAlert(id) {
   const result = await pool.query(
-    `SELECT status, attempts, channels, error_message, delivery_claim_id
+    `SELECT id, user_id, status, attempts, channels, error_message, delivery_claim_id, next_attempt_at
        FROM alert_queue WHERE id = $1`,
     [id],
   );
   return result.rows[0];
 }
 
+function retryAccessSql() {
+  return `${currentWorkspaceAccessSql(`COALESCE(
+        (SELECT t.workspace_id FROM tokens t WHERE t.id = aq.token_id),
+        (SELECT ca.workspace_id FROM certops_agents ca WHERE ca.id = aq.certops_agent_id)
+      )`, "$3")} OR (aq.token_id IS NULL AND aq.certops_agent_id IS NULL)`;
+}
+
+function applyRetry(alert, channels, userId = alert.user_id) {
+  return pool.query(
+    verification.manualRetryUpdateSql(retryAccessSql(), "aq.id, aq.channels, aq.delivery_claim_id, aq.status"),
+    [
+      JSON.stringify(channels),
+      alert.id,
+      userId,
+      alert.status,
+      JSON.stringify(alert.channels),
+      alert.delivery_claim_id,
+    ],
+  );
+}
+
+function startWebhookServer() {
+  const routes = new Map();
+  const hits = [];
+  let openHold = () => {};
+  const hold = new Promise((resolve) => {
+    openHold = resolve;
+  });
+  const server = http.createServer((req, res) => {
+    const pathName = String(req.url || "/").split("?")[0];
+    hits.push(pathName);
+    if (pathName === "/hold") {
+      hold.then(() => {
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end("ok");
+      });
+      return;
+    }
+    const queue = routes.get(pathName) || [404];
+    const status = queue.length > 1 ? queue.shift() : queue[0];
+    res.writeHead(status, { "content-type": "text/plain" });
+    res.end(status >= 200 && status < 300 ? "ok" : "no");
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      resolve({
+        server,
+        port: server.address().port,
+        hits,
+        route(pathName, statuses) {
+          routes.set(pathName, statuses.slice());
+        },
+        releaseHold() {
+          openHold();
+        },
+      });
+    });
+  });
+}
+
 test("delivery worker records ledger outcomes and notifications on a migrated database", async () => {
   migrate();
+  const hook = await startWebhookServer();
+  hookServer = hook.server;
+  hook.route("/permanent", [404]);
   await pool.query(
     `DELETE FROM alert_delivery_log
       WHERE alert_queue_id IN (SELECT id FROM alert_queue WHERE alert_key LIKE 'ledger-worker:%')`,
@@ -142,7 +208,7 @@ test("delivery worker records ledger outcomes and notifications on a migrated da
   const mixed = await createWorkspace("mixed", {
     contact: { email: "unverified@example.com" },
     group: { email_contact_ids: [], webhook_names: ["Private"] },
-    webhooks: [{ name: "Private", url: "http://127.0.0.1/__permanent__", kind: "generic" }],
+    webhooks: [{ name: "Private", url: `http://127.0.0.1:${hook.port}/permanent`, kind: "generic" }],
   });
   await pool.query(
     `UPDATE workspace_settings
@@ -272,13 +338,10 @@ test("delivery worker records ledger outcomes and notifications on a migrated da
   const reopen = verification.planManualRetry(mixedRow.channels, "webhooks");
   assert.equal(reopen.ok, true);
   assert.equal(reopen.channels.outcomes.email.reason, "eligibility");
-  assert.equal(reopen.channels.outcomes.webhooks.reopened, true);
-  await pool.query(
-    `UPDATE alert_queue
-        SET status = 'pending', channels = $2, next_attempt_at = NOW(), delivery_claim_id = NULL
-      WHERE id = $1 AND user_id = $3`,
-    [mixedId, JSON.stringify(reopen.channels), mixed.userId],
-  );
+  assert.equal(reopen.channels.outcomes.webhooks.retryGeneration, 1);
+  assert.equal(reopen.channels.outcomes.webhooks.reopened, undefined);
+  const reopenedWrite = await applyRetry(mixedRow, reopen.channels, mixed.userId);
+  assert.equal(reopenedWrite.rowCount, 1);
   await pool.query(
     `UPDATE alert_queue SET status = 'limit_exceeded' WHERE id = ANY($1::int[])`,
     [[transientId, optedId]],
@@ -300,9 +363,142 @@ test("delivery worker records ledger outcomes and notifications on a migrated da
   );
   assert.equal(emailLogsAfter.rows[0].n, emailLogsBefore.rows[0].n);
   assert.ok(webhookLogsAfter.rows[0].n > webhookLogsBefore.rows[0].n);
+  const permanentHits = hook.hits.filter((hit) => hit === "/permanent").length;
+  assert.equal(permanentHits, 2);
+  const historical = await pool.query(
+    `SELECT metadata FROM alert_delivery_log
+      WHERE alert_queue_id = $1 AND channel = 'webhooks'
+      ORDER BY id ASC`,
+    [mixedId],
+  );
+  assert.equal(historical.rows[0].metadata.terminal, true);
+  assert.equal(Number(historical.rows[0].metadata.retryGeneration || 0), 0);
+  assert.equal(historical.rows[1].metadata.terminal, true);
+  assert.equal(Number(historical.rows[1].metadata.retryGeneration), 1);
+
+  hook.route("/retry-me", [404, 503, 200]);
+  const sequence = await createWorkspace("sequence", {
+    contact: { email: "sequence@example.com" },
+    group: { webhook_names: ["Retry"] },
+    webhooks: [{ name: "Retry", url: `http://127.0.0.1:${hook.port}/retry-me`, kind: "generic" }],
+  });
+  const sequenceId = await enqueue(sequence, ["webhooks"]);
+  await deliveryWorkerJob({ closePool: false, incidentEmailSender: sender });
+  const first = await loadAlert(sequenceId);
+  assert.equal(first.status, "blocked");
+  assert.equal(first.delivery_claim_id, null);
+  assert.equal(first.channels.outcomes.webhooks.terminal, true);
+  assert.equal(first.channels.outcomes.webhooks.reason, "provider");
+  const firstNote = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM operational_notifications
+      WHERE workspace_id = $1 AND type = 'delivery_webhook_permanent' AND resolved_at IS NULL`,
+    [sequence.workspaceId],
+  );
+  assert.equal(firstNote.rows[0].n, 1);
+  const opened = verification.planManualRetry(first.channels, "webhooks");
+  assert.equal(opened.channels.outcomes.webhooks.retryGeneration, 1);
+  assert.equal((await applyRetry(first, opened.channels)).rowCount, 1);
+
+  await deliveryWorkerJob({ closePool: false, incidentEmailSender: sender });
+  const second = await loadAlert(sequenceId);
+  assert.equal(second.status, "failed");
+  assert.equal(second.delivery_claim_id, null);
+  assert.equal(second.attempts, 2);
+  assert.deepEqual(second.channels.retry, ["webhooks"]);
+  assert.equal(second.channels.outcomes.webhooks.retryGeneration, 1);
+  assert.equal(second.channels.outcomes.webhooks.terminal, false);
+  assert.ok(second.next_attempt_at);
+  const secondLogs = await pool.query(
+    `SELECT status, metadata FROM alert_delivery_log
+      WHERE alert_queue_id = $1 AND channel = 'webhooks'
+      ORDER BY id ASC`,
+    [sequenceId],
+  );
+  assert.equal(secondLogs.rows.length, 2);
+  assert.equal(secondLogs.rows[0].metadata.terminal, true);
+  assert.equal(Number(secondLogs.rows[0].metadata.retryGeneration || 0), 0);
+  assert.equal(secondLogs.rows[1].status, "failed");
+  assert.equal(secondLogs.rows[1].metadata.terminal, false);
+  assert.equal(Number(secondLogs.rows[1].metadata.retryGeneration), 1);
+  const duringTransient = await pool.query(
+    `SELECT type FROM operational_notifications
+      WHERE workspace_id = $1 AND type = 'delivery_unverified_recipients'`,
+    [sequence.workspaceId],
+  );
+  assert.equal(duringTransient.rows.length, 0);
+
+  await deliveryWorkerJob({ closePool: false, incidentEmailSender: sender });
+  const third = await loadAlert(sequenceId);
+  assert.equal(third.status, "sent");
+  assert.equal(third.attempts, 3);
+  assert.deepEqual(third.channels.retry, []);
+  assert.equal(third.channels.outcomes.webhooks.state, "sent");
+  assert.equal(third.channels.outcomes.webhooks.retryGeneration, 1);
+  const thirdLogs = await pool.query(
+    `SELECT status, metadata FROM alert_delivery_log
+      WHERE alert_queue_id = $1 AND channel = 'webhooks'
+      ORDER BY id ASC`,
+    [sequenceId],
+  );
+  assert.equal(thirdLogs.rows.length, 3);
+  assert.equal(thirdLogs.rows[2].status, "success");
+  assert.equal(hook.hits.filter((hit) => hit === "/retry-me").length, 3);
+
+  hook.route("/kept", [200]);
+  hook.route("/new-permanent", [404, 404]);
+  const mixedEndpoints = await createWorkspace("mixed-endpoints", {
+    contact: { email: "mixed-endpoints@example.com" },
+    group: { webhook_names: ["Kept", "Broken"] },
+    webhooks: [
+      { name: "Kept", url: `http://127.0.0.1:${hook.port}/kept`, kind: "generic" },
+      { name: "Broken", url: `http://127.0.0.1:${hook.port}/new-permanent`, kind: "generic" },
+    ],
+  });
+  const mixedEndpointId = await enqueue(mixedEndpoints, ["webhooks"]);
+  await deliveryWorkerJob({ closePool: false, incidentEmailSender: sender });
+  const partial = await loadAlert(mixedEndpointId);
+  assert.equal(partial.status, "partial");
+  assert.equal(partial.channels.outcomes.webhooks.endpoints[
+    crypto.createHash("sha256").update(`http://127.0.0.1:${hook.port}/kept`).digest("hex")
+  ], "sent");
+  const reopenedPartial = verification.planManualRetry(partial.channels, "webhooks");
+  assert.equal(reopenedPartial.channels.outcomes.webhooks.retryGeneration, 1);
+  await pool.query("UPDATE alert_queue SET next_attempt_at = NULL WHERE id = $1", [mixedEndpointId]);
+  partial.next_attempt_at = null;
+  assert.equal((await applyRetry(partial, reopenedPartial.channels)).rowCount, 1);
+  await deliveryWorkerJob({ closePool: false, incidentEmailSender: sender });
+  const afterNewPermanent = await loadAlert(mixedEndpointId);
+  assert.equal(afterNewPermanent.channels.outcomes.webhooks.retryGeneration, 1);
+  assert.equal(afterNewPermanent.channels.outcomes.webhooks.terminal, true);
+  assert.deepEqual(afterNewPermanent.channels.retry, []);
+  assert.equal(hook.hits.filter((hit) => hit === "/kept").length, 1);
+  assert.equal(hook.hits.filter((hit) => hit === "/new-permanent").length, 2);
+  await deliveryWorkerJob({ closePool: false, incidentEmailSender: sender });
+  assert.equal(hook.hits.filter((hit) => hit === "/kept").length, 1);
+  assert.equal(hook.hits.filter((hit) => hit === "/new-permanent").length, 2);
+  const repeated = verification.planManualRetry(afterNewPermanent.channels, "webhooks");
+  assert.equal(repeated.channels.outcomes.webhooks.retryGeneration, 2);
+  await pool.query("UPDATE alert_queue SET next_attempt_at = NULL WHERE id = $1", [mixedEndpointId]);
+  afterNewPermanent.next_attempt_at = null;
+  assert.equal((await applyRetry(afterNewPermanent, repeated.channels)).rowCount, 1);
+  await deliveryWorkerJob({ closePool: false, incidentEmailSender: sender });
+  assert.equal(hook.hits.filter((hit) => hit === "/kept").length, 1);
+  assert.equal(hook.hits.filter((hit) => hit === "/new-permanent").length, 3);
+  const keptLogs = await pool.query(
+    `SELECT status FROM alert_delivery_log WHERE alert_queue_id = $1 AND channel = 'webhooks' AND status = 'success'`,
+    [mixedEndpointId],
+  );
+  assert.equal(keptLogs.rows.length, 1);
+
+  await new Promise((resolve, reject) => {
+    hook.server.close((err) => (err ? reject(err) : resolve()));
+  });
 });
 
 test.after(async () => {
+  if (hookServer) {
+    await new Promise((resolve) => hookServer.close(() => resolve()));
+  }
   await pool.end();
   try {
     const db = await import("../../apps/worker/src/db.js");
