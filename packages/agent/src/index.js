@@ -200,6 +200,7 @@ const {
   distributeTrust,
   revokeTrust,
   trustStoreCommandRefForFamily,
+  freshUpdateCommandArgvForRevoke,
 } = require("./trust-store");
 
 const { version: AGENT_VERSION } = require("../package.json");
@@ -6474,7 +6475,12 @@ async function executeTrustJob({
   // tests inject fake exec/fs/spawn implementations into ../trust-store's
   // distributeTrust/revokeTrust without hitting a real certutil.exe/
   // update-ca-certificates/update-ca-trust or the real machine trust store.
-  const seams = { updateCommandArgv, certutilPath, ...(trustStoreSeams || {}) };
+  const seams = {
+    updateCommandArgv,
+    certutilPath,
+    freshUpdateCommandArgv: freshUpdateCommandArgvForRevoke(family, action, policyEngine),
+    ...(trustStoreSeams || {}),
+  };
 
   const trustResult =
     action === "distribute-trust"
