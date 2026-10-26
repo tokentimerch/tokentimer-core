@@ -1238,10 +1238,13 @@ async function readdManagingSource({
         fail("CERTOPS_MANAGEMENT_CONFIG_INVALID", "Renewal profile not found");
     }
     const identity = await tx.query(
-      `SELECT id FROM certops_certificate_identities
+      `SELECT id, lifecycle_status FROM certops_certificate_identities
       WHERE workspace_id = $1 AND fingerprint_sha256 = $2`,
       [workspaceId, normalizeFingerprint(mc.rows[0].fingerprint_sha256)],
     );
+    if (["revoked", "decommissioned"].includes(identity.rows[0]?.lifecycle_status)) {
+      fail("CERTOPS_CERTIFICATE_RETIRED", "Observe a fresh replacement certificate before re-adding management");
+    }
     await acquireManagedCertificateImportLock(tx, workspaceId);
     await tx.query("SELECT certops_admit_management($1::uuid, $2::uuid)", [
       workspaceId,
