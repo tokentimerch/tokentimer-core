@@ -55,8 +55,19 @@ failure; use configuration run history to investigate individual connections.
 `auto_sync_enabled_configurations{provider}` is the current number of enabled
 connections. Scope freshness and failure alerts to values greater than zero so
 unused providers and disabled or deleted connections do not page operators.
-See [metric definitions, tested alert examples and rollout guidance](AUTO_SYNC_METRICS.md)
-before enabling notifications.
+Apply the opt-in `deploy/helm/examples/values-auto-sync-alerts.yaml` after your
+normal values, or load `deploy/prometheus/auto-sync.rules.yaml` in standalone
+Prometheus. Use a unique `installation` label per database, shared by its replicas;
+match Prometheus Operator selectors and check target discovery/rule loading.
+
+The creation alert detects rolling 15-minute activity, not one notification per
+asset. `increase()` can extrapolate fractional values. The failure alert requires
+three observed failures in three hours and no persisted full success in that
+window. It excludes counter resets and deduplicates replicas without extrapolation;
+scrape gaps, resets and replacement targets can undercount. Tune the 25-hour
+freshness/grace periods for your longest schedule. Alertmanager controls delivery.
+Collector errors can return HTTP 500; connection failures may terminate the API.
+Both cause scrape failures, not evidence of zero activity.
 
 ## Cleanup and removal
 

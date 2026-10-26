@@ -1,6 +1,6 @@
 # Opt-in activity and health rules; apply after your normal values.
 # Change installation identity, Prometheus selector labels, API job selector
-# and schedule windows as described in docs/AUTO_SYNC_METRICS.md.
+# and schedule windows as described in docs/AUTO_SYNC.md.
 monitoring:
   metrics:
     enabled: true
