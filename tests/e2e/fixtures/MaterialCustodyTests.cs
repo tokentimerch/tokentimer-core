@@ -73,18 +73,25 @@ namespace TokenTimerTests {
           }
           if(scenario=="legacy-csp") {
             legacy=new RSACryptoServiceProvider(2048,new CspParameters(24,"Microsoft Enhanced RSA and AES Cryptographic Provider",name+"Legacy") {
-              Flags=CspProviderFlags.UseMachineKeyStore,KeyNumber=(int)KeyNumber.Exchange
+              Flags=CspProviderFlags.UseMachineKeyStore|CspProviderFlags.UseNonExportableKey,KeyNumber=(int)KeyNumber.Exchange
             });
             legacy.PersistKeyInCsp=true;
             var request=new CertificateRequest("CN=isolated-review.invalid",legacy,HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1);
             certificate.Dispose();
-            // CreateSelfSigned can attach an ephemeral CNG copy of a CSP key.
-            // Persist the explicit legacy provider association instead, so the
-            // fixture actually reaches the unsupported-provider acquisition.
+            // Persist the explicit CSP provider association rather than depend
+            // on CertificateRequest's private-key attachment representation.
             using(var signed=request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1),DateTimeOffset.UtcNow.AddHours(1)))certificate=new X509Certificate2(signed.RawData);
             var info=new KeyProviderInfo {Container=legacy.CspKeyContainerInfo.KeyContainerName,Provider=legacy.CspKeyContainerInfo.ProviderName,ProviderType=24,Flags=0x20,KeySpec=(uint)KeyNumber.Exchange};
             Require(CertSetCertificateContextProperty(certificate.Handle,2,0,ref info),"legacy-fixture-association");
-            using(var acquired=certificate.GetRSAPrivateKey())Require(acquired is RSACryptoServiceProvider,"legacy-fixture-provider");
+            // Windows exposes this persisted CSP association through RSACng.
+            // Prove provider identity independently of the other custody facts.
+            using(var acquired=certificate.GetRSAPrivateKey()) {
+              var cng=acquired as RSACng;
+              Require(cng!=null,"legacy-fixture-provider");
+              Require(cng.Key.Provider.Provider==legacy.CspKeyContainerInfo.ProviderName &&
+                !cng.Key.Provider.Equals(CngProvider.MicrosoftSoftwareKeyStorageProvider),"legacy-fixture-provider");
+              Require(cng.Key.IsMachineKey && !cng.Key.IsEphemeral && cng.Key.ExportPolicy==CngExportPolicies.None,"legacy-fixture-custody");
+            }
           }
           if(scenario=="incorrect-acl") {
             var descriptor=new RawSecurityDescriptor("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GR;;;WD)");
@@ -100,7 +107,7 @@ namespace TokenTimerTests {
           catch(CryptographicException) { rejected=true; }
           Require(rejected==(scenario!="valid-reuse"),"existing-key-reuse-result-"+scenario);
           if(rejected) {
-            string expected=scenario=="incorrect-acl"?"acl-principal":scenario=="private-key-mismatch"?"verify-signature":scenario=="legacy-csp"?"existing-key":"key-custody";
+            string expected=scenario=="incorrect-acl"?"acl-principal":scenario=="private-key-mismatch"?"verify-signature":"key-custody";
             Require(TokenTimer.MaterialImport.FailureStage==expected,"unexpected-safe-stage-"+scenario+"-"+TokenTimer.MaterialImport.FailureStage);
           } else {
             using(var sha=SHA256.Create()) {
