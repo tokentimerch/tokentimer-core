@@ -873,7 +873,9 @@ describe("CertOps inventory routes", function () {
     expect(response.body.certificate.managed).to.equal(false);
     expect(response.body.certificate.managedCertificateId).to.equal(null);
     expect(response.body.certificate.status).to.equal("decommissioned");
-    expect(response.body.certificate.tokenId).to.equal(leafCertificate.tokenId);
+    expect(response.body.certificate.sources.some(source =>
+      source.managedCertificateId === leafCertificate.id && source.periodEndedAt,
+    )).to.equal(true);
     expectNoPrivateKeyFields(response.body);
 
     const managed = await managedCertificateRow(
