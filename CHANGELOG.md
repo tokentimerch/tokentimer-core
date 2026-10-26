@@ -11,6 +11,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Vault connection errors identify certificate-trust and network failures.** TLS, DNS and refused-connection causes wrapped by the HTTP client retain their classification, so operators receive the corresponding troubleshooting guidance.
 - **Expiry dates stay consistent across timezones and daylight-saving changes.** Date-only values retain their stated calendar date, and badges, relative labels, sorting and filters count calendar days rather than elapsed 24-hour periods.
 - **Retiring a certificate closes its management periods without losing history or blocking terminal key cleanup.** Read-only and dry-run work does not require installation reconciliation. **Operator action:** after observing a fresh replacement, use **Re-add management** to select its renewal configuration; observing the replacement alone does not restart automation.
 - **Adopted discovered certificates renew.** A certificate found by an agent could not be renewed by the hosted worker when its common name was reported in typed form (`DNS:example.com`): the derived renewal profile listed both `example.com` and `DNS:example.com`, so every automatic renewal failed with certbot's "Inconsistent domain requests" and retried each minute. The `DNS:` prefix is now stripped before the SAN policy is built.
