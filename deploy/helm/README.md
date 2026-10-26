@@ -559,13 +559,6 @@ monitoring:
               summary: Application errors detected
 ```
 
-For email notifications when GitLab auto-sync creates new inventory, see
-[auto-sync monitoring](../../docs/AUTO_SYNC_MONITORING.md). The persistent
-`auto_sync_items_created_total{provider}` counter is shared by all API replicas.
-Use the guide's dedicated stable Service-address scrape job for this counter;
-keep the existing per-pod ServiceMonitor for process and HTTP metrics. The
-example does not require Pushgateway.
-
 ### Autoscaling
 
 ```yaml
@@ -656,13 +649,6 @@ See the `examples/` directory:
 - `values-minimal.yaml` -- single-node CNPG, no ingress (smallest viable install)
 - `values-external-db.yaml` -- external PostgreSQL with ingress and monitoring
 - `values-full-test.yaml` -- lab/Minikube with HPA, metrics, all workers enabled
-
-Additional monitoring examples (Prometheus configuration, not chart values):
-
-- `prometheus-auto-sync-created.yaml` -- one stable API Service scrape for the
-  persistent auto-sync creation counter
-- `auto-sync-created.rules.yaml` -- GitLab creation and collection-health alerts;
-  its `groups` list can also be merged into `monitoring.prometheusRules.groups`
 
 ## Environment Variables Reference
 

@@ -26,17 +26,14 @@ Use **Manage auto-sync** to review or edit a saved connection. **Run now** reque
 
 Overlapping configurations may discover one provider identity and share its inventory record. Changing a name or schedule preserves the configuration. Changing credentials, scope or scan settings supersedes active work and queues a replacement when enabled.
 
-## Notify operators about new inventory
+## New inventory metrics
 
-Self-hosted installations can alert through Prometheus and an Alertmanager email
-receiver when auto-sync creates inventory. The API exposes the persistent
-`auto_sync_items_created_total{provider}` counter, aggregated across the
-installation. It counts new inventory rows, not updates to existing rows or
-provider-side token issuance. See [auto-sync monitoring](AUTO_SYNC_MONITORING.md)
-for the scrape configuration, GitLab alert example, and delivery limitations.
-
-The notification groups on a sync configuration remain the recipients for the
-new assets' ordinary alerts; selecting a group does not enable discovery emails.
+With `ENABLE_METRICS=true`, API `/metrics` exposes
+`auto_sync_items_created_total{provider}` on every scrape, including zero before
+the first creation. It counts committed auto-sync additions and persists across
+restarts and deletions; historical imports are not backfilled. For `increase()`
+alerts, scrape one stable API target per database and record a baseline first.
+Do not sum replica copies. Monitor scrape failures separately.
 
 ## Cleanup and removal
 
