@@ -11,7 +11,7 @@ Total skips found: 81
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
-| `packages/agent/scripts/install-agent-sh.test.js` | 34 | install-agent.sh polkit grants on re-run | describe(..., { skip }) option-object | `no-host` |
+| `packages/agent/scripts/install-agent-sh.test.js` | 36 | install-agent.sh polkit grants on re-run | describe(..., { skip }) option-object | `no-host` |
 | `packages/agent/scripts/installer-smoke.test.js` | 370 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `no-host` |
 | `packages/agent/scripts/pack-release.test.js` | 207 | tracks install-agent.sh as executable in git (mode 100755) | dynamic (this.skip() / t.skip()) | `no-host` |
 | `packages/agent/scripts/pack-release.test.js` | 216 | assertExecutableEntries rejects a tarball whose installer lost the exec bit | dynamic (this.skip() / t.skip()) | `no-host` |

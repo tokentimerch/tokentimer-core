@@ -334,7 +334,9 @@ renewal without issuing it through CertOps.
 ### A1.4 Reading the schedule is not gated on a client-side role check
 
 Reads (`GET /certops/profiles`, `GET /certops/renewals/upcoming`) require manager
-or above; writes require workspace admin (`certops.renewal_profile.manage`).
+or above. Amended 2026-10-26: writes also require manager or above
+(`certops.renewal_profile.manage`), so workspace managers can complete issuer
+setup and maintain the corresponding renewal profiles without ownership.
 
 Manager rather than viewer, because a profile body is deployment topology, not
 expiry metadata: certificate and key paths, the reload unit, file ownership and
@@ -360,7 +362,7 @@ permission. A boolean that starts `false` and collapses lookup failures into
 an empty schedule for any of those makes a workspace of expiring certificates
 read as all-clear. On this surface a false negative is the worst available
 failure, so the server is the only authority and a refusal is rendered as a
-refusal. Write affordances are still hidden from non-admins, but only to avoid
+refusal. Write affordances are still hidden from viewers, but only to avoid
 offering a button that would 403.
 
 ### A1.5 The schedule lists what will not renew, not what will

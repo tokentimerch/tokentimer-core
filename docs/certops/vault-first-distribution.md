@@ -34,9 +34,13 @@ After readiness checks, deliberately set `execution.enabled: true` and `executio
 
 In **Assign consumers and deploy**, select the first consumer (use **Check registered consumers** after a new registration), assign it and use **Additional consumer → Add consumer** for the second. Each assignment returns its actual authorization revision and a matching host configuration. Signed checks here belong to that selected host, not the issuer. Copy the configuration to that host, preserve the enrolled identity, and confirm the saved configuration after restarting the agent. A confirmation records your action; it is not deployment evidence.
 
+For a fresh consumer, use **Create a consumer bootstrap token** in **Prepare the consumer server**. Each host needs a separate single-use token; paste it at the installer's hidden prompt. Existing registered agents keep their identity and need no new token.
+
 Choose the **Published certificate version**, review **Maximum parallel deployments**, then choose **Deploy the selected version**. The request pins that exact version. Follow its timeline and each consumer's deployment/Agent output without leaving onboarding. A successful coordinator request alone does not prove installation. The guide reads back current desired/observed versions and the selected policy's evidence: **Certificate files installed on all selected consumers** for files, or **All selected consumers verified** after service reload/TLS checks.
 
 With workspace Job approval off, the rollout starts without a second user. With workspace approval on, another authorized manager must approve it through the existing Jobs review surface; its actual pending status is shown in the guide. Child-job approval also follows workspace policy. Keep the setting off for unattended execution; publishing a renewed version does not automatically request a new rollout. The [API reference](wildcard-vault-operations.md#public-workflow) remains available for automation and advanced administration; it is not required for this first guided distribution.
+
+If a required deployment fails, repair the host and follow the guide's reconciliation instructions before **Retry deployment**. Then use **Resume rollout** in the same guide. It resumes the existing version and assignments; fresh deployment evidence is still required before the guide reports success.
 
 ## Confirm the selected result
 

@@ -370,8 +370,9 @@ async function extend(c) {
   assert.equal((await job(rollback.id)).status, "pending_approval");
   await approve(rollback.id);
   await terminal(rollback.id);
-  // An approved retained version in the same active management period is a
-  // legitimate desired identity. Prove its exact receipts and convergence.
+  // An explicitly approved retained version in the same active management
+  // period remains eligible while its fingerprint is active. Require both
+  // exact accepted generation/version and fresh convergence after rollback.
   await wait("consumers accept and observe the rolled-back version", async () => {
     const rows = await matrix();
     return state.bindings.every((b) => {
@@ -386,6 +387,7 @@ async function extend(c) {
       ? rows
       : false;
   });
+  await converge();
   const rollbackRows = await matrix();
   assert.ok(
     state.bindings.every((binding) => rollbackRows.find((row) => row.binding_id === binding.id)?.converged === true),

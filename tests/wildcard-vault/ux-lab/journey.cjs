@@ -449,10 +449,21 @@ async function publish() {
   const repair = await owner.request(repairRoute, "POST", {});
   assert.equal(repair.created, false);
   assert.equal(repair.profileId, detail.certificate.profileId);
-  await approver.request(repairRoute, "POST", {}, 403);
+  const managerRepair = await approver.request(repairRoute, "POST", {});
+  assert.equal(managerRepair.created, false);
+  assert.equal(managerRepair.profileId, detail.certificate.profileId);
+  const managerSession = await approver.request("/api/session");
+  const memberRoute =
+    "/api/v1/workspaces/" + state.workspaceId + "/members/" + managerSession.user.id;
+  await owner.request(memberRoute, "PATCH", { role: "viewer" });
+  try {
+    await approver.request(repairRoute, "POST", {}, 403);
+  } finally {
+    await owner.request(memberRoute, "PATCH", { role: "workspace_manager" });
+  }
   await owner.request(repairRoute, "POST", { keyRotation: false }, 422);
   check(
-    "SAN-only publication automatically configures renewal; repair preserves profile and enforces admin/input boundaries",
+    "SAN-only publication configures renewal; manager repair preserves the profile, viewers are denied and input stays constrained",
   );
 }
 async function bindings() {

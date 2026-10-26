@@ -538,7 +538,6 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
       null;
     if (!selected || selected.id === currentWorkspace?.id) return;
 
-    let cancelled = false;
     setCurrentWorkspace(selected);
     setRenaming(false);
     setTransferState(prev => ({
@@ -549,12 +548,28 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
           ? prev.toId
           : workspaces.find(w => w.id !== selected.id)?.id || '',
     }));
+
+    if (String(selected.id) !== String(workspaceId)) {
+      try {
+        selectWorkspace(selected.id, { replace: true });
+      } catch (_) {}
+    }
+  }, [workspaceId, workspaces, currentWorkspace?.id, selectWorkspace]);
+
+  // Selecting a workspace triggers a render. Keep request ownership separate
+  // so that render cannot cancel the initial members request without replacing it.
+  React.useEffect(() => {
+    const selectedId = currentWorkspace?.id;
+    setMembers([]);
+    setPendingInvitations([]);
+    if (!selectedId) return undefined;
+    let cancelled = false;
     (async () => {
       try {
-        const res = await workspaceAPI.listMembers(selected.id, 100, 0);
+        const res = await workspaceAPI.listMembers(selectedId, 100, 0);
         if (!cancelled) setMembers(res?.items || []);
         try {
-          const inv = await workspaceAPI.listInvitations(selected.id, 100, 0);
+          const inv = await workspaceAPI.listInvitations(selectedId, 100, 0);
           if (!cancelled) setPendingInvitations(inv?.items || []);
         } catch (_) {
           if (!cancelled) setPendingInvitations([]);
@@ -567,16 +582,10 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
       }
     })();
 
-    if (String(selected.id) !== String(workspaceId)) {
-      try {
-        selectWorkspace(selected.id, { replace: true });
-      } catch (_) {}
-    }
-
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, workspaces, currentWorkspace?.id, selectWorkspace]);
+  }, [currentWorkspace?.id]);
 
   async function reloadMembers(workspaceId) {
     const res = await workspaceAPI.listMembers(workspaceId, 100, 0);
@@ -783,7 +792,7 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                   aria-label='Workspace'
                   maxW={{ base: '100%', sm: '300px' }}
                   value={currentWorkspace?.id || ''}
-                  onChange={async e => {
+                  onChange={e => {
                     const id = e.target.value;
                     const ws = findWorkspaceById(workspaces, id);
                     setCurrentWorkspace(ws || null);
@@ -792,8 +801,7 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                       try {
                         selectWorkspace(ws.id);
                       } catch (_) {}
-                      await reloadMembers(ws.id);
-                      await reloadInvitations(ws.id);
+                      // The selected-workspace effect owns member loading.
                     } else {
                       setMembers([]);
                       setPendingInvitations([]);

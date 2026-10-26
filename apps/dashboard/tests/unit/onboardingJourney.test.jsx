@@ -514,9 +514,9 @@ describe('first-value onboarding journey', () => {
         ],
       });
     mount();
-    const radio = await screen.findByLabelText(
-      /Monitor a website certificate/i
-    );
+    const radio = await screen.findByRole('radio', {
+      name: /Monitor a website certificate/i,
+    });
     expect(radio).toBeDisabled();
     expect(screen.getByText('Ask a workspace manager.')).toBeVisible();
     spy.mockRestore();

@@ -344,8 +344,10 @@ async function consumerMatrix({ client, workspaceId, groupId, groupIds }) {
             OR (b.verification_policy='served' AND proof.stage IN ('served_verified','trust_validated') AND s.verification_method IN ('served','trust'))
             OR (b.verification_policy='trust' AND proof.stage='trust_validated' AND s.verification_method='trust')))
       AND s.observed_at>clock_timestamp()-b.freshness_seconds*interval '1 second') AS converged,
-    (SELECT jsonb_build_object('stage',d.stage,'failureCode',d.failure_code,'jobId',d.job_id)
+    (SELECT jsonb_build_object('stage',d.stage,'failureCode',COALESCE(d.failure_code,j.error_code),'jobId',d.job_id,
+      'rolloutId',r.id,'rolloutState',r.state,'rolloutRequestJobId',r.approval_job_id)
       FROM certops_consumer_deployments d JOIN certops_distribution_rollouts r ON r.workspace_id=d.workspace_id AND r.id=d.rollout_id
+      LEFT JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=d.job_id
       WHERE d.workspace_id=b.workspace_id AND d.binding_id=b.id ORDER BY r.generation DESC LIMIT 1) AS latest_deployment
     FROM certops_consumer_bindings b LEFT JOIN certops_consumer_current_state s
     ON s.workspace_id=b.workspace_id AND s.binding_id=b.id
