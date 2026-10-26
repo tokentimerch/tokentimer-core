@@ -14,7 +14,7 @@ const {
   readEnrollmentJournal,
 } = require("../../../packages/agent/src/issuers/adcs-enrollment");
 const REQUIRED_SCENARIOS = Object.freeze([
-  "adcs-real-browser-manager-viewer-role-boundary",
+  "adcs-real-browser-manager-viewer-admin-boundary",
   "adcs-real-browser-role-boundary-preserves-native-uncertain-state",
 ]);
 const REQUIRED_SOURCES = Object.freeze([
