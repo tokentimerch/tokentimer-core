@@ -9,6 +9,7 @@
 <p align="center">
   <a href="https://github.com/tokentimerch?tab=packages&repo_name=tokentimer-core"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Ftokentimerch%2Ftokentimer-core%2Fbadges%2Fdownloads.json&style=for-the-badge" alt="Package downloads (GHCR images and Helm chart)" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/Open%20Source-AGPL--3.0-16A34A?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="Open Source, AGPL-3.0" /></a>
+  <a href="https://demo.tokentimer.ch"><img src="https://img.shields.io/badge/Demo-Explore%20live-3B82F6?style=for-the-badge" alt="Explore the interactive demo" /></a>
 </p>
 
 <p align="center">
