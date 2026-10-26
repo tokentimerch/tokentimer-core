@@ -104,7 +104,8 @@ async function main() {
   // Accelerate only time windows/grace periods; promtool separately tests the
   // unmodified shipped 15-minute, 3-hour and 25-hour examples.
   for (const group of rules.groups) for (const rule of group.rules) {
-    rule.expr = rule.expr.replaceAll("[15m]", "[10s]").replaceAll("[3h]", "[30s]").replaceAll("90000", "10");
+    rule.expr = rule.expr.replaceAll("[15m]", "[10s]").replaceAll("[3h]", "[30s]")
+      .replaceAll("10800", "30").replaceAll("90000", "10");
     rule.for = rule.for === "0m" ? "0s" : "3s";
   }
   fs.writeFileSync(path.join(evidence, "live-rules.yaml"), yaml.dump(rules, { lineWidth: -1 }));

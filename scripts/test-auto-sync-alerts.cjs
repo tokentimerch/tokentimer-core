@@ -79,7 +79,22 @@ scenario("one failed outcome copied across three replicas does not meet the fail
   ...["a", "b", "c"].map(instance => outcome("failed", "0+0x59 1+0x121", { instance })),
   outcome("success", "0+0x180")], "3h");
 scenario("a successful completion in the window suppresses provider failure escalation", [enabled(1),
-  outcome("failed", failed), outcome("success", "0+0x149 1+0x31")], "3h");
+  outcome("failed", failed), outcome("success", "0+0x149 1+0x31"), success(9000)], "3h");
+scenario("success present in the first scrape still suppresses failures", [enabled(1),
+  outcome("failed", failed), outcome("success", "1+0x180"), success(3600)], "3h");
+const sparseFailures = Array(181).fill("_");
+for (const [minute, value] of [[1, 10], [61, 11], [121, 12]]) sparseFailures[minute] = String(value);
+scenario("two sparsely scraped failures during replica churn cannot cross three", [enabled(1), success(0),
+  outcome("failed", sparseFailures.join(" "), { instance: "old" }),
+  outcome("failed", "_ _ _ _ _ _ 12+0x174", { instance: "new" })], "3h");
+scenario("replica baseline differences and counter reset do not invent failures", [enabled(1), success(0),
+  outcome("failed", "100+0x59 stale", { instance: "old" }),
+  outcome("failed", "_ _ 100+0x59 0+0x29 1+0x89", { instance: "new" })], "3h");
+scenario("a same-target counter reset cannot turn its old high into failures", [enabled(1), success(0),
+  outcome("failed", "100+0x59 0+0x59 2+0x60")], "3h");
+scenario("an expired persisted success allows three observed failures", [enabled(1), success(1),
+  outcome("failed", "0+0x179 1+0x29 2+0x29 3+0x60")], "5h",
+  { AutoSyncProviderFailures: [{}] });
 scenario("partial and superseded outcomes do not masquerade as failed", [enabled(1),
   outcome("failed", "0+0x180"), outcome("success", "0+0x180"),
   outcome("partial", failed), outcome("superseded", failed)], "3h");

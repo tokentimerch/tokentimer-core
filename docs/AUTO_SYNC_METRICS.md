@@ -87,7 +87,12 @@ repeat interval and routing determine notifications. The example has severity
 ## Health alert expectations
 
 - `AutoSyncProviderFailures`: at least three observed failed outcomes in three
-  hours, no observed success in that window, and at least one enabled connection.
+  hours, no persisted full success in that window, and an enabled connection.
+  It uses the per-target maximum minus minimum, excludes targets with counter
+  resets, then deduplicates replicas with a maximum. No extrapolation is used.
+  Scrape gaps, target replacement and resets may undercount; use run history
+  for exact accounting. A success already present at the first scrape suppresses
+  the alert through its persisted timestamp.
   Partial and superseded outcomes are not counted as failed. This is an
   installation/provider aggregate; another connection's success can suppress it.
 - `AutoSyncNotRunning`: an enabled provider previously started, but its latest
@@ -99,33 +104,11 @@ repeat interval and routing determine notifications. The example has severity
   alert evaluation. New or unused providers do not page immediately. As with
   other `for` timers, evaluation interruptions can restart this grace period.
 - `TokenTimerAPIDown`: the API scrape has failed for two minutes. Database read
-  or validation failures return HTTP 500, rather than publishing fake zero or
-  cached totals. An unavailable metrics endpoint is not evidence of no activity.
+  or validation errors can return HTTP 500; connection failures may terminate
+  the API. Both are scrape failures, not evidence of zero activity.
 
 **Change 25 hours to exceed your longest configured schedule**, including weekly
 or monthly connections, and tune the failure window for your run frequency.
 Health alerts stop when no connections for that provider remain enabled. These
 provider-level metrics cannot prove that every connection is healthy; inspect
 individual connection history when one healthy connection could mask another.
-
-## Reproduce the local tests
-
-```sh
-node scripts/test-auto-sync-alerts.cjs --evidence .build/auto-sync-alert-evidence
-```
-
-This runs the shipped PromQL in pinned Prometheus/promtool, verifies the Helm
-examples match, and saves its fixtures, source hashes and results. The live test
-also requires a disposable migrated PostgreSQL database whose name ends in
-`_issue71_test`:
-
-```sh
-node scripts/test-auto-sync-prometheus.cjs --evidence .build/auto-sync-live-evidence
-```
-
-The live test serves the actual API metrics bootstrap over HTTP, scrapes two
-replicas, performs real import transactions and tests failures and recovery. Its
-saved rules accelerate time windows for a short live run; promtool tests the
-unmodified shipped windows separately. Test fixtures contain synthetic data.
-These reproduction commands require a source checkout and development
-dependencies; the customer install bundle does not include the test scripts.
