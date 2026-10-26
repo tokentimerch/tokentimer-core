@@ -2585,6 +2585,26 @@ describe("agentDispatch.ingestResult", () => {
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
 
+  it("retains a stable drift code for a failed material verification", async () => {
+    let persisted;
+    const dbPool = createMockPool((sql, params) => {
+      if (sql.includes("FOR UPDATE")) return { rows: [lockedJobRow({
+        payload: { materialDeployment: { groupId: "group", rolloutId: "rollout" } },
+      })] };
+      if (sql.includes("UPDATE certops_consumer_deployments") || sql.includes("INSERT INTO certops_outbox")) return { rows: [] };
+      if (sql.includes("UPDATE certificate_jobs")) {
+        persisted = params;
+        return { rows: [{ id: 42, status: "failed", error_code: params[2], completed_at: new Date() }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const result = await ingestResult({ dbPool, agent: agentFixture(),
+      body: resultBody({ errorMessage: "material_drift_detected" }),
+      deps: { consumeNonce: async () => ({ consumed: true }) } });
+    assert.equal(result.errorCode, "CERTOPS_MATERIAL_DRIFT_DETECTED");
+    assert.equal(persisted[2], "CERTOPS_MATERIAL_DRIFT_DETECTED");
+  });
+
   it("clears error fields on success", async () => {
     let updateParams = null;
     const dbPool = createMockPool((sql, params) => {
