@@ -796,7 +796,7 @@ jobs:
         run: ./packages/agent/scripts/install-agent.ps1 --uninstall --dry-run
 
   windows_material_qualification:
-    name: Windows IIS Material (${{ matrix.os }} / ${{ matrix.store }})
+    name: Windows IIS Material (${{ matrix.os }} / ${{ matrix.store }} / ${{ matrix.key }})
     if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
     strategy:
@@ -804,6 +804,9 @@ jobs:
       matrix:
         os: [windows-2022, windows-2025]
         store: [fixture, openbao]
+        key: [rsa, ec-p256, ec-p384, ec-p521]
+    env:
+      TT_WINDOWS_MATERIAL_KEY_ALGORITHM: ${{ matrix.key }}
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -822,6 +825,8 @@ jobs:
           Start-Service W3SVC
       - name: Start checksum-verified customer-local OpenBao
         if: matrix.store == 'openbao'
+        env:
+          TT_WINDOWS_MATERIAL_REAL: "1"
         shell: pwsh
         run: |
           $directory = Join-Path $env:RUNNER_TEMP 'tt-windows-openbao'
@@ -838,8 +843,13 @@ jobs:
             Start-Sleep -Seconds 1
           }
           if (-not $ready) { throw 'Owned OpenBao fixture did not become ready' }
-          'TT_WINDOWS_MATERIAL_KV_ADDRESS=http://127.0.0.1:58208' | Out-File $env:GITHUB_ENV -Append
+          $env:TT_WINDOWS_MATERIAL_KV_ADDRESS = 'http://127.0.0.1:58208'
+          try {
+            node --test tests/e2e/windows-material-real.test.js
+            if ($LASTEXITCODE -ne 0) { throw 'Native OpenBao/IIS qualification failed' }
+          } finally { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue }
       - name: Verify actual CNG import, ACL, IIS listeners and retained rollback
+        if: matrix.store == 'fixture'
         env:
           TT_WINDOWS_MATERIAL_REAL: "1"
         run: node --test tests/e2e/windows-material-real.test.js

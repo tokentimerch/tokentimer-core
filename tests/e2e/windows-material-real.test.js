@@ -74,20 +74,73 @@ test(
     t.diagnostic(
       `Native ${caption.trim()}; material transport: ${realAddress ? "real OpenBao KV v2" : "local HTTP fixture"}`,
     );
-    const certificatePem = fs.readFileSync(
+    let certificatePem = fs.readFileSync(
       path.join(
         __dirname,
         "../../packages/agent/src/verify/fixtures/leaf.crt.pem",
       ),
       "utf8",
     );
-    const privateKeyPem = fs.readFileSync(
+    let privateKeyPem = fs.readFileSync(
       path.join(
         __dirname,
         "../../packages/agent/src/verify/fixtures/leaf.key.pem",
       ),
       "utf8",
     );
+    let generatedRenewal;
+    const algorithm = process.env.TT_WINDOWS_MATERIAL_KEY_ALGORITHM || "rsa";
+    assert.ok(["rsa", "ec-p256", "ec-p384", "ec-p521"].includes(algorithm));
+    if (algorithm !== "rsa") {
+      privateKeyPem = crypto.generateKeyPairSync("ec", {
+        namedCurve: {
+          "ec-p256": "prime256v1",
+          "ec-p384": "secp384r1",
+          "ec-p521": "secp521r1",
+        }[algorithm],
+        privateKeyEncoding: { type: "pkcs8", format: "pem" },
+        publicKeyEncoding: { type: "spki", format: "pem" },
+      }).privateKey;
+      const keyFile = path.join(directory, "generated-key.pem");
+      writeProtectedFile(keyFile, privateKeyPem);
+      const openssl = path.join(
+        process.env.ProgramFiles,
+        "Git/usr/bin/openssl.exe",
+      );
+      function leaf(serial) {
+        const outputFile = path.join(directory, `generated-leaf-${serial}.pem`);
+        execFileSync(
+          openssl,
+          [
+            "req",
+            "-new",
+            "-x509",
+            "-key",
+            keyFile,
+            "-out",
+            outputFile,
+            "-days",
+            "2",
+            "-sha256",
+            "-subj",
+            "/CN=valid.example.com",
+            "-set_serial",
+            String(serial),
+            "-addext",
+            "basicConstraints=critical,CA:false",
+            "-addext",
+            "extendedKeyUsage=serverAuth",
+            "-addext",
+            "subjectAltName=DNS:valid.example.com,DNS:www.valid.example.com",
+          ],
+          { windowsHide: true, stdio: "pipe", timeout: 30000 },
+        );
+        return fs.readFileSync(outputFile, "utf8");
+      }
+      certificatePem = leaf(1);
+      generatedRenewal = leaf(2);
+    }
+    t.diagnostic(`Native key algorithm: ${algorithm}`);
     const sans = parseDnsSans(
       new crypto.X509Certificate(certificatePem).subjectAltName,
     );
@@ -96,7 +149,7 @@ test(
       // Delete only this run's uniquely named sites and store, including keys
       // created in that store. No shared My/WebHosting cleanup is performed.
       ps(
-        `$ErrorActionPreference='Stop';Add-Type -Path (Join-Path $env:windir 'System32/inetsrv/Microsoft.Web.Administration.dll');$m=New-Object Microsoft.Web.Administration.ServerManager;foreach($name in @('${sites.join("','")}')){if($m.Sites[$name]){$m.Sites.Remove($m.Sites[$name])}};$m.CommitChanges();$m.Dispose();$s=New-Object System.Security.Cryptography.X509Certificates.X509Store('${store}','LocalMachine');$s.Open('ReadWrite');foreach($c in $s.Certificates){$rsa=[System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c);if($rsa -is [System.Security.Cryptography.RSACng]){$rsa.Key.Delete();$rsa.Dispose()};$s.Remove($c)};$s.Close()`,
+        `$ErrorActionPreference='Stop';Add-Type -Path (Join-Path $env:windir 'System32/inetsrv/Microsoft.Web.Administration.dll');$m=New-Object Microsoft.Web.Administration.ServerManager;foreach($name in @('${sites.join("','")}')){if($m.Sites[$name]){$m.Sites.Remove($m.Sites[$name])}};$m.CommitChanges();$m.Dispose();$s=New-Object System.Security.Cryptography.X509Certificates.X509Store('${store}','LocalMachine');$s.Open('ReadWrite');foreach($c in $s.Certificates){$rsa=[System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c);$ec=[System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($c);if($rsa -is [System.Security.Cryptography.RSACng]){$rsa.Key.Delete();$rsa.Dispose()};if($ec -is [System.Security.Cryptography.ECDsaCng]){$ec.Key.Delete();$ec.Dispose()};$s.Remove($c)};$s.Close()`,
       );
       fs.rmSync(directory, { recursive: true, force: true });
     });
@@ -154,7 +207,8 @@ test(
           [ids.groupId]: {
             workspaceId: ids.workspaceId,
             prefix: `${ids.workspaceId}/${ids.groupId}`,
-            keyAlgorithm: "rsa",
+            keyAlgorithm: new crypto.X509Certificate(certificatePem).publicKey
+              .asymmetricKeyType,
             sans,
           },
         },
@@ -436,13 +490,15 @@ test(
       3,
       "invalid CA material is rejected before binding state or native mutation",
     );
-    const renewedCertificate = fs.readFileSync(
-      path.join(
-        __dirname,
-        "../../packages/agent/src/verify/fixtures/material-renewed.crt.pem",
-      ),
-      "utf8",
-    );
+    const renewedCertificate =
+      generatedRenewal ||
+      fs.readFileSync(
+        path.join(
+          __dirname,
+          "../../packages/agent/src/verify/fixtures/material-renewed.crt.pem",
+        ),
+        "utf8",
+      );
     const renewed = {
       ...bundle,
       materialVersionId: crypto.randomUUID(),

@@ -74,7 +74,7 @@ Total skips found: 79
 | `tests/e2e/certops-enrollment-recovery-api-e2e.test.js` | 20 | AD CS installation retry through real API and PostgreSQL | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/material-providers-real.test.js` | 74 | real KV v2: AppRole, ACLs, rotation, exact versions, CAS and uncertain writes | test(..., { skip }) option-object | `no-host` |
 | `tests/e2e/material-providers-real.test.js` | 238 | real Azure Key Vault Secrets: publication, recovery and exact immutable retrieval | test(..., { skip }) option-object | `no-host` |
-| `tests/e2e/windows-material-real.test.js` | 30 | real Windows/IIS: shared import, service ACL, exact SNI consumers, interruption, reconciliation and retained rollback | test(..., { skip }) option-object | `no-host` |
+| `tests/e2e/windows-material-real.test.js` | 31 | real Windows/IIS: shared import, service ACL, exact SNI consumers, interruption, reconciliation and retained rollback | test(..., { skip }) option-object | `no-host` |
 | `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 50 | (unknown - no enclosing it()/test() title found above this line) | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 135 | sweepStaleAgents flips a real stale agent to offline and queues exactly one real down alert_queue row | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 177 | a second sweep tick over the same still-offline agent does not queue a duplicate down alert (transition, not level) | dynamic (this.skip() / t.skip()) | `no-host` |
