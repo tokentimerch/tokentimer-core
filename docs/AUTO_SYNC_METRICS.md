@@ -127,3 +127,5 @@ The live test serves the actual API metrics bootstrap over HTTP, scrapes two
 replicas, performs real import transactions and tests failures and recovery. Its
 saved rules accelerate time windows for a short live run; promtool tests the
 unmodified shipped windows separately. Test fixtures contain synthetic data.
+These reproduction commands require a source checkout and development
+dependencies; the customer install bundle does not include the test scripts.
