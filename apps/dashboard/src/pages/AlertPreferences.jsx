@@ -2690,29 +2690,10 @@ export default function AlertPreferences({
       const response = await apiClient.post(
         `/api/v1/workspaces/${workspaceId}/contacts/${contact.id}/verifications/email`
       );
-      if (response?.data?.status === 'withheld') {
-        const shareUrl = response.data.share_url;
-        let copied = false;
-        if (shareUrl && navigator.clipboard?.writeText) {
-          try {
-            await navigator.clipboard.writeText(shareUrl);
-            copied = true;
-          } catch {
-            copied = false;
-          }
-        }
-        if (copied) {
-          showSuccess(
-            'This person declined email, so TokenTimer did not email them. The confirmation link is copied. Send it only if they asked to subscribe again.'
-          );
-        } else if (shareUrl) {
-          window.prompt(
-            'This person declined email. Send this link only if they asked to subscribe again.',
-            shareUrl
-          );
-        } else {
-          showError('This person declined email. TokenTimer did not send another invitation.');
-        }
+      if (response?.data?.code === 'RECIPIENT_OPTED_OUT' || response?.data?.status === 'opted_out') {
+        showError(
+          'This person declined email. TokenTimer did not email them and did not create a confirmation link. They can request a new link from the public re-subscribe page, and only that mailbox can accept it.'
+        );
       } else {
         showSuccess(
           'Verification email sent. Nothing is confirmed until that person accepts.'

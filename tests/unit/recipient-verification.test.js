@@ -318,6 +318,29 @@ function createStore() {
       return rowsOf(challenge ? [challenge] : []);
     }
 
+    if (text.includes("RV_RESUBSCRIBE_TARGETS")) {
+      const fingerprint = params[0];
+      const email = params[1];
+      const rows = [];
+      for (const contact of state.contacts.values()) {
+        const contactEmail = String(contact.details?.email || "").trim().toLowerCase();
+        if (contactEmail !== email) continue;
+        const declined = state.suppressions.find((row) => (
+          row.reason === "recipient_declined"
+          && row.destination_fingerprint === fingerprint
+          && row.workspace_id === contact.workspace_id
+          && !expired(row)
+        ));
+        if (!declined) continue;
+        rows.push({
+          workspace_id: contact.workspace_id,
+          contact_id: contact.id,
+          workspace_name: state.workspaces.get(contact.workspace_id) || "Workspace",
+        });
+      }
+      return rowsOf(rows);
+    }
+
     throw new Error(`unexpected SQL: ${text.slice(0, 180)}`);
   }
 
@@ -829,6 +852,9 @@ describe("recipient verification", () => {
     const route = fs.readFileSync(path.join(ROOT, "apps/api/routes/recipientVerification.js"), "utf8");
     assert.equal(route.includes("recipientVerificationPageLimiter"), true);
     assert.equal(route.includes("withholdDelivery"), true);
+    assert.equal(route.includes("status: \"opted_out\""), true);
+    assert.equal(route.includes("/verify/recipient/resubscribe"), true);
+    assert.equal(route.includes("share_url: shareUrl"), true);
     assert.equal(route.includes("/webhooks/twilio/whatsapp/inbound"), true);
     const policy = fs.readFileSync(path.join(ROOT, "packages/recipient-verification/index.js"), "utf8");
     assert.equal(policy.includes("limited.recordAbuse"), true);
@@ -941,7 +967,15 @@ describe("recipient verification", () => {
       actorUserId: 4,
     });
     assert.equal(invitation.withholdDelivery, true);
-    const page = await verification.loadChallenge(store.pool, invitation.token);
+    assert.equal(invitation.token, null);
+    assert.equal(store.state.challenges.length, 0);
+    const resumed = await verification.requestEmailResubscribe({
+      pool: store.pool,
+      email: "person@example.com",
+    });
+    assert.equal(resumed.length, 1);
+    assert.equal(typeof resumed[0].token, "string");
+    const page = await verification.loadChallenge(store.pool, resumed[0].token);
     assert.equal(page.state, "pending");
     store.state.locks.length = 0;
     await verification.createInvitation({
@@ -955,7 +989,7 @@ describe("recipient verification", () => {
     assert.deepEqual(locks, [...locks].sort());
     const accepted = await verification.consumeEmailChallenge({
       pool: store.pool,
-      token: invitation.token,
+      token: resumed[0].token,
       decision: "accept",
     });
     assert.equal(accepted.ok, true);
@@ -1012,5 +1046,104 @@ describe("recipient verification", () => {
       destination: "person@example.com",
     });
     assert.equal(digest.allowed, true);
+  });
+
+  it("keeps an earlier blocked channel when a later retry succeeds", () => {
+    const first = verification.mergeDeliveryAttempt({
+      prior: ["email", "webhooks"],
+      logRows: [],
+      attempted: [
+        { channel: "email", success: false, eligibilityTerminal: true, errorCode: "NO_VERIFIED_RECIPIENTS" },
+        { channel: "webhooks", success: false, eligibilityTerminal: false },
+      ],
+      liveChannels: ["email", "webhooks"],
+    });
+    assert.equal(first.outcome.status, "failed");
+    assert.deepEqual(first.outcome.channels, ["webhooks"]);
+    const second = verification.mergeDeliveryAttempt({
+      prior: first.ledger,
+      logRows: [],
+      attempted: [{ channel: "webhooks", success: true }],
+      liveChannels: ["email", "webhooks"],
+    });
+    assert.equal(second.outcome.status, "partial");
+    assert.equal(second.outcome.retry, false);
+    assert.deepEqual(second.ledger.retry, []);
+    const whatsapp = verification.mergeDeliveryAttempt({
+      prior: {
+        version: 1,
+        retry: ["email"],
+        required: ["email", "whatsapp"],
+        outcomes: {
+          whatsapp: { state: "blocked", terminal: true, code: "NO_VERIFIED_RECIPIENTS" },
+          email: { state: "failed", terminal: false },
+        },
+      },
+      attempted: [{ channel: "email", success: true }],
+      liveChannels: ["email", "whatsapp"],
+    });
+    assert.equal(whatsapp.outcome.status, "partial");
+    const recovered = verification.mergeDeliveryAttempt({
+      prior: ["email", "whatsapp"],
+      logRows: [
+        { channel: "email", status: "success", metadata: { recipient: "person@example.com" } },
+        { channel: "whatsapp", status: "failed", error_message: "timeout" },
+      ],
+      attempted: [{ channel: "whatsapp", success: true }],
+      liveChannels: ["email", "whatsapp"],
+    });
+    assert.equal(recovered.outcome.status, "sent");
+    const endpoints = verification.mergeDeliveryAttempt({
+      prior: [],
+      attempted: [{
+        channel: "webhooks",
+        success: false,
+        partialSuccess: true,
+        terminal: false,
+        endpoints: { a: "sent", b: "failed" },
+      }],
+      liveChannels: ["webhooks"],
+    });
+    assert.equal(endpoints.outcome.status, "partial");
+    assert.deepEqual(endpoints.outcome.channels, ["webhooks"]);
+    const finished = verification.mergeDeliveryAttempt({
+      prior: endpoints.ledger,
+      attempted: [{
+        channel: "webhooks",
+        success: true,
+        endpoints: { a: "sent", b: "sent" },
+      }],
+      liveChannels: ["webhooks"],
+    });
+    assert.equal(finished.outcome.status, "sent");
+    const permanent = verification.mergeDeliveryAttempt({
+      prior: [],
+      attempted: [{
+        channel: "webhooks",
+        success: false,
+        partialSuccess: true,
+        terminal: true,
+        endpoints: { a: "sent", b: "permanent" },
+      }],
+      liveChannels: ["webhooks"],
+    });
+    assert.equal(permanent.outcome.status, "partial");
+    assert.equal(permanent.outcome.retry, false);
+  });
+
+  it("retries only the channels named by a delivery ledger", async () => {
+    const groups = await import(pathToFileURL(path.join(ROOT, "apps/worker/src/shared/contactGroups.js")).href);
+    assert.deepEqual(
+      groups.channelsForDeliveryAttempt(
+        ["email", "webhooks", "whatsapp"],
+        { version: 1, retry: ["webhooks"] },
+        { isRetry: true },
+      ),
+      ["webhooks"],
+    );
+    assert.deepEqual(
+      groups.channelsForDeliveryAttempt(["email", "webhooks"], ["email"], { isRetry: true }),
+      ["email"],
+    );
   });
 });

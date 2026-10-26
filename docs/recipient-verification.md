@@ -17,7 +17,7 @@ Each channel is independent:
 
 Changing the email address invalidates email verification only. Changing the phone number invalidates WhatsApp verification only. A confirmation in one workspace does not authorize another workspace. Deleting and recreating a contact does not clear a decline for that destination in the same workspace.
 
-A decline stays in force until the recipient accepts a new invitation. Creating that invitation does not email a destination that already declined. The response includes a confirmation link an administrator can pass on only when the person asks to subscribe again. Accepting that link clears the decline. Expired, used, revoked, and superseded links do not.
+A decline stays in force until the recipient accepts a new confirmation sent to that mailbox. An administrator cannot receive or open that link. The recipient requests it from `/verify/recipient/resubscribe`. Expired, used, revoked, and superseded links do not restore consent.
 
 Historical `contact_opt_ins` rows recorded when a contact was created are not treated as consent. New contacts do not write that row.
 
@@ -63,7 +63,7 @@ A destination that hits the weekly cap from 3 or more workspaces is suppressed f
 
 ## Monitoring
 
-- Audit actions: `RECIPIENT_VERIFICATION_INVITED`, `RECIPIENT_VERIFICATION_RATE_LIMITED`, `RECIPIENT_VERIFICATION_REVOKED`, `RECIPIENT_VERIFICATION_RESUBSCRIBE_LINK`, `RECIPIENT_WHATSAPP_CONFIRMED`.
+- Audit actions: `RECIPIENT_VERIFICATION_INVITED`, `RECIPIENT_VERIFICATION_RATE_LIMITED`, `RECIPIENT_VERIFICATION_REVOKED`, `RECIPIENT_VERIFICATION_RESUBSCRIBE_REQUIRED`, `RECIPIENT_WHATSAPP_CONFIRMED`.
 - Worker log `recipient-verification-shadow` while shadow mode is on.
 - Operational notification type `delivery_unverified_recipients` when an enforced alert has no eligible recipient.
 - Alert status `blocked` and error `NO_VERIFIED_RECIPIENTS` means the failure is eligibility, not SMTP or Twilio.

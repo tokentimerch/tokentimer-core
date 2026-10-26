@@ -288,11 +288,17 @@ test("a decline blocks delivery after recreate and a new acceptance restores it"
     actorUserId: row.userId,
   });
   assert.equal(again.withholdDelivery, true);
+  assert.equal(again.token, null);
   const oldPage = await verification.loadChallenge(pool, invitation.token);
   assert.equal(oldPage.state, "invalid");
+  const resumed = await verification.requestEmailResubscribe({
+    pool,
+    email: "declined@example.com",
+  });
+  assert.equal(resumed.length, 1);
   const accepted = await verification.consumeEmailChallenge({
     pool,
-    token: again.token,
+    token: resumed[0].token,
     decision: "accept",
   });
   assert.equal(accepted.ok, true);
@@ -304,13 +310,22 @@ test("a decline blocks delivery after recreate and a new acceptance restores it"
     destination: "declined@example.com",
   });
   assert.equal(allowed.allowed, true);
+  const other = await seed({ email: "other@example.com", phone: "+14155550123", workspaceName: "Other" });
+  const otherDecision = await verification.evaluateRecipient({
+    client: pool,
+    workspaceId: other.workspaceId,
+    contactId: other.contactId,
+    channel: "email",
+    destination: "declined@example.com",
+  });
+  assert.equal(otherDecision.allowed, false);
   await pool.query(
     "UPDATE contact_verification_challenges SET expires_at = NOW() - INTERVAL '1 minute', status = 'pending' WHERE id = $1",
-    [again.challengeId],
+    [resumed[0].challengeId],
   );
   const replay = await verification.consumeEmailChallenge({
     pool,
-    token: again.token,
+    token: resumed[0].token,
     decision: "decline",
   });
   assert.equal(replay.ok, false);
@@ -443,4 +458,75 @@ test("an expired challenge cannot clear an opt-out", async () => {
     destination: "expired@example.com",
   });
   assert.equal(decision.code, "RECIPIENT_OPTED_OUT");
+});
+
+test("partial delivery rows with an empty retry set are not claimed again", async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS alert_queue (
+      id SERIAL PRIMARY KEY,
+      channels JSONB NOT NULL DEFAULT '[]'::jsonb,
+      status VARCHAR(20) NOT NULL DEFAULT 'pending',
+      due_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      next_attempt_at TIMESTAMP NULL,
+      delivery_claim_id UUID NULL,
+      error_message TEXT NULL
+    )
+  `);
+  await pool.query("DELETE FROM alert_queue");
+  await pool.query(
+    `INSERT INTO alert_queue (channels, status) VALUES
+      ('[]'::jsonb, 'partial'),
+      ('["webhooks"]'::jsonb, 'partial'),
+      ($1::jsonb, 'partial'),
+      ($2::jsonb, 'failed')`,
+    [
+      JSON.stringify({ version: 1, retry: [], required: ["email", "webhooks"], outcomes: {} }),
+      JSON.stringify({ version: 1, retry: ["email"], required: ["email", "whatsapp"], outcomes: {} }),
+    ],
+  );
+  const claimed = await pool.query(
+    `SELECT id, status, channels FROM alert_queue aq
+      WHERE aq.status IN ('pending', 'failed', 'partial')
+        AND aq.due_date <= CURRENT_DATE
+        ${verification.DELIVERY_CLAIM_EXCLUSION_SQL}
+      ORDER BY id`,
+  );
+  assert.equal(claimed.rows.length, 2);
+  const retryValues = claimed.rows.map((row) => (
+    Array.isArray(row.channels) ? row.channels : row.channels.retry
+  ));
+  assert.deepEqual(retryValues, [["webhooks"], ["email"]]);
+});
+
+test("two workers cannot both commit a delivery result for one claim", async () => {
+  await pool.query("DELETE FROM alert_queue");
+  const inserted = await pool.query(
+    "INSERT INTO alert_queue (channels, status, delivery_claim_id) VALUES ('[]'::jsonb, 'pending', $1) RETURNING id",
+    ["11111111-1111-1111-1111-111111111111"],
+  );
+  const id = inserted.rows[0].id;
+  const first = pool.connect();
+  const second = pool.connect();
+  const a = await first;
+  const b = await second;
+  try {
+    const winner = await a.query(
+      `UPDATE alert_queue SET status = 'partial', channels = $2, delivery_claim_id = NULL
+        WHERE id = $1 AND delivery_claim_id = $3 RETURNING id`,
+      [id, JSON.stringify({ version: 1, retry: ["webhooks"], required: ["email", "webhooks"], outcomes: { email: { state: "blocked", terminal: true } } }), "11111111-1111-1111-1111-111111111111"],
+    );
+    const loser = await b.query(
+      `UPDATE alert_queue SET status = 'sent', delivery_claim_id = NULL
+        WHERE id = $1 AND delivery_claim_id = $2 RETURNING id`,
+      [id, "11111111-1111-1111-1111-111111111111"],
+    );
+    assert.equal(winner.rowCount, 1);
+    assert.equal(loser.rowCount, 0);
+    const stored = await pool.query("SELECT status, channels FROM alert_queue WHERE id = $1", [id]);
+    assert.equal(stored.rows[0].status, "partial");
+    assert.deepEqual(stored.rows[0].channels.retry, ["webhooks"]);
+  } finally {
+    a.release();
+    b.release();
+  }
 });

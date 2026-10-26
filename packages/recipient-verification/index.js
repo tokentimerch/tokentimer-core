@@ -378,7 +378,7 @@ function deliveryDisposition(results) {
   const list = Array.isArray(results) ? results : [];
   const unsuccessful = list.filter((row) => row && row.success !== true);
   const retryable = unsuccessful.filter((row) => !row.eligibilityTerminal);
-  const anySuccess = list.some((row) => row && row.success === true);
+  const anySuccess = list.some((row) => row && (row.success === true || row.partialSuccess === true));
   if (unsuccessful.length === 0) return { status: "sent", retry: false, channels: [] };
   if (retryable.length === 0) {
     if (anySuccess) {
@@ -406,6 +406,163 @@ function queueDeliveryOutcome(results, options = {}) {
     channels: retry ? disposition.channels : [],
     code: disposition.code || null,
     notifyUnverified: (Array.isArray(results) ? results : []).some((row) => row && row.eligibilityTerminal),
+  };
+}
+
+const DELIVERY_CLAIM_EXCLUSION_SQL = `
+AND NOT (
+  aq.status = 'partial'
+  AND (
+    aq.channels IS NULL
+    OR aq.channels = '[]'::jsonb
+    OR (
+      jsonb_typeof(aq.channels) = 'object'
+      AND COALESCE(aq.channels->'retry', '[]'::jsonb) = '[]'::jsonb
+    )
+  )
+)`;
+
+function metadataObject(value) {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === "object" ? value : {};
+}
+
+function parseDeliveryLedger(value) {
+  let parsed = value;
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      parsed = [];
+    }
+  }
+  if (Array.isArray(parsed)) {
+    return { version: 0, retry: parsed.map(String), required: [], outcomes: {}, legacy: true };
+  }
+  if (parsed && typeof parsed === "object" && Number(parsed.version) === 1) {
+    return {
+      version: 1,
+      retry: Array.isArray(parsed.retry) ? parsed.retry.map(String) : [],
+      required: Array.isArray(parsed.required) ? parsed.required.map(String) : [],
+      outcomes: parsed.outcomes && typeof parsed.outcomes === "object" ? parsed.outcomes : {},
+      legacy: false,
+    };
+  }
+  return { version: 0, retry: [], required: [], outcomes: {}, legacy: true };
+}
+
+function foldDeliveryLog(rows) {
+  const outcomes = {};
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const channel = String(row && row.channel || "");
+    if (!channel) continue;
+    const current = outcomes[channel] || { state: "failed", terminal: false, endpoints: {} };
+    const meta = metadataObject(row.metadata);
+    if (channel === "webhooks" && meta.urlHash) {
+      if (row.status === "success") current.endpoints[meta.urlHash] = "sent";
+      else if (row.status === "blocked" || meta.terminal === true || meta.terminal === "true") {
+        current.endpoints[meta.urlHash] = "permanent";
+      } else current.endpoints[meta.urlHash] = "failed";
+      const values = Object.values(current.endpoints);
+      const pending = values.filter((item) => item === "failed");
+      if (pending.length) {
+        current.state = "failed";
+        current.terminal = false;
+      } else if (values.every((item) => item === "sent")) {
+        current.state = "sent";
+        current.terminal = true;
+      } else if (values.some((item) => item === "sent")) {
+        current.state = "partial";
+        current.terminal = true;
+      } else {
+        current.state = "blocked";
+        current.terminal = true;
+      }
+    } else if (row.status === "success") {
+      current.state = "sent";
+      current.terminal = true;
+    } else if (row.status === "blocked") {
+      if (current.state !== "sent") {
+        current.state = "blocked";
+        current.terminal = true;
+        current.code = row.error_message || current.code || null;
+      }
+    } else if (current.state !== "sent") {
+      current.state = "failed";
+      current.terminal = false;
+      current.code = row.error_message || null;
+    }
+    outcomes[channel] = current;
+  }
+  return outcomes;
+}
+
+function resultFromOutcome(channel, outcome) {
+  if (!outcome) return { channel, success: false, eligibilityTerminal: false };
+  if (outcome.state === "sent") return { channel, success: true, eligibilityTerminal: false };
+  if (outcome.state === "partial") {
+    return { channel, success: false, partialSuccess: true, eligibilityTerminal: Boolean(outcome.terminal), terminal: Boolean(outcome.terminal) };
+  }
+  if (outcome.terminal || outcome.state === "blocked") {
+    return {
+      channel,
+      success: false,
+      eligibilityTerminal: true,
+      terminal: true,
+      errorCode: outcome.code || "NO_VERIFIED_RECIPIENTS",
+    };
+  }
+  return { channel, success: false, eligibilityTerminal: false, errorCode: outcome.code || null };
+}
+
+function outcomeFromAttempt(row) {
+  if (row.success === true) {
+    return { state: "sent", terminal: true, code: null, endpoints: row.endpoints || {} };
+  }
+  if (row.partialSuccess === true) {
+    return {
+      state: "partial",
+      terminal: Boolean(row.terminal || row.eligibilityTerminal),
+      code: row.errorCode || null,
+      endpoints: row.endpoints || {},
+    };
+  }
+  const terminal = Boolean(row.eligibilityTerminal || row.terminal);
+  return {
+    state: terminal ? "blocked" : "failed",
+    terminal,
+    code: row.errorCode || null,
+    endpoints: row.endpoints || {},
+  };
+}
+
+function mergeDeliveryAttempt({ prior, logRows, attempted, liveChannels } = {}) {
+  const ledger = parseDeliveryLedger(prior);
+  const outcomes = { ...ledger.outcomes, ...foldDeliveryLog(logRows) };
+  for (const row of Array.isArray(attempted) ? attempted : []) {
+    if (!row || !row.channel) continue;
+    outcomes[String(row.channel)] = outcomeFromAttempt(row);
+  }
+  const configured = Array.isArray(liveChannels) ? liveChannels.map(String).filter(Boolean) : [];
+  const required = configured.length ? configured : Object.keys(outcomes);
+  const results = required.map((channel) => resultFromOutcome(channel, outcomes[channel]));
+  const disposition = queueDeliveryOutcome(results);
+  const stored = {};
+  for (const channel of required) {
+    if (outcomes[channel]) stored[channel] = outcomes[channel];
+  }
+  return {
+    ledger: { version: 1, retry: disposition.channels, required, outcomes: stored },
+    outcome: disposition,
+    results,
   };
 }
 
@@ -534,7 +691,7 @@ async function recordAbuseSuppression(pool, { channel, fingerprint }) {
   );
 }
 
-async function createInvitation({ pool, workspaceId, contactId, channel, actorUserId }) {
+async function createInvitation({ pool, workspaceId, contactId, channel, actorUserId, recipientInitiated = false }) {
   if (channel !== "email" && channel !== "whatsapp") {
     throw coded(400, "VALIDATION_ERROR", "Unsupported channel");
   }
@@ -565,7 +722,6 @@ async function createInvitation({ pool, workspaceId, contactId, channel, actorUs
         retryAfter: 24 * 60 * 60,
       });
     }
-    await assertInvitationBudget(client, { channel, fingerprint, workspaceId, actorUserId });
     const declined = await client.query(
       `-- RV_SUPPRESSION_LOOKUP
        SELECT reason FROM notification_suppressions
@@ -575,6 +731,18 @@ async function createInvitation({ pool, workspaceId, contactId, channel, actorUs
         LIMIT 1`,
       [channel, fingerprint, workspaceId],
     );
+    if (declined.rows[0] && !recipientInitiated) {
+      return {
+        token: null,
+        code: null,
+        channel,
+        destination: destination.value,
+        expiresAt: null,
+        challengeId: null,
+        withholdDelivery: true,
+      };
+    }
+    await assertInvitationBudget(client, { channel, fingerprint, workspaceId, actorUserId });
     await client.query(
       `-- RV_SUPERSEDE
        UPDATE contact_verification_challenges
@@ -612,7 +780,7 @@ async function createInvitation({ pool, workspaceId, contactId, channel, actorUs
       destination: destination.value,
       expiresAt: inserted.rows[0].expires_at,
       challengeId: inserted.rows[0].id,
-      withholdDelivery: Boolean(declined.rows[0]),
+      withholdDelivery: false,
     };
     });
   } catch (error) {
@@ -621,6 +789,51 @@ async function createInvitation({ pool, workspaceId, contactId, channel, actorUs
     }
     throw error;
   }
+}
+
+async function requestEmailResubscribe({ pool, email }) {
+  const normalized = normalizeEmail(email);
+  if (!normalized.ok) return [];
+  const fingerprint = destinationFingerprint("email", normalized.value);
+  if (!fingerprint) return [];
+  const matches = await pool.query(
+    `-- RV_RESUBSCRIBE_TARGETS
+     SELECT s.workspace_id, c.id AS contact_id, w.name AS workspace_name
+       FROM notification_suppressions s
+       JOIN workspace_contacts c ON c.workspace_id = s.workspace_id
+       JOIN workspaces w ON w.id = s.workspace_id
+      WHERE s.channel = 'email'
+        AND s.destination_fingerprint = $1
+        AND s.reason = 'recipient_declined'
+        AND s.scope = 'workspace'
+        AND (s.expires_at IS NULL OR s.expires_at > NOW())
+        AND lower(btrim(COALESCE(c.details->>'email', ''))) = $2`,
+    [fingerprint, normalized.value],
+  );
+  const invitations = [];
+  for (const row of matches.rows) {
+    try {
+      const invitation = await createInvitation({
+        pool,
+        workspaceId: row.workspace_id,
+        contactId: row.contact_id,
+        channel: "email",
+        actorUserId: null,
+        recipientInitiated: true,
+      });
+      if (invitation && invitation.token) {
+        invitations.push({
+          ...invitation,
+          workspaceId: row.workspace_id,
+          workspaceName: row.workspace_name,
+        });
+      }
+    } catch (error) {
+      if (error && error.status === 429) continue;
+      throw error;
+    }
+  }
+  return invitations;
 }
 
 async function loadChallenge(pool, token) {
@@ -899,6 +1112,20 @@ function renderChallengePage({ state, token, workspaceName, channel, code, fromN
   );
 }
 
+function renderResubscribeForm() {
+  return renderPage(
+    "Re-subscribe",
+    "<h1>Request email alerts again</h1><p>If you previously declined TokenTimer email alerts, enter that email address. When it matches, TokenTimer sends a confirmation link to that mailbox. Opening this page does not restore consent.</p><form method=\"post\" action=\"/verify/recipient/resubscribe\"><label>Email<br><input name=\"email\" type=\"email\" autocomplete=\"email\" required></label><br><button type=\"submit\">Email me a confirmation link</button></form>",
+  );
+}
+
+function renderResubscribeAccepted() {
+  return renderPage(
+    "Check your email",
+    "<h1>Check your email</h1><p>If this address previously declined TokenTimer alerts, a confirmation link is on its way. The link works only for that address, and nothing is confirmed until you accept it.</p>",
+  );
+}
+
 function renderDone(result) {
   if (result === "accepted") {
     return renderPage("Confirmed", "<h1>Confirmed</h1><p>You will receive TokenTimer notifications at this destination. You can close this page.</p>");
@@ -1149,9 +1376,12 @@ module.exports = {
   filterDeliveryRecipients,
   deliveryDisposition,
   queueDeliveryOutcome,
+  mergeDeliveryAttempt,
+  parseDeliveryLedger,
   selectDeliverableDestinations,
   isEligibilityTerminal,
   createInvitation,
+  requestEmailResubscribe,
   loadChallenge,
   consumeEmailChallenge,
   confirmWhatsAppInbound,
@@ -1159,6 +1389,8 @@ module.exports = {
   verifyTwilioSignature,
   whatsAppDeepLink,
   renderChallengePage,
+  renderResubscribeForm,
+  renderResubscribeAccepted,
   renderDone,
   invalidateChangedDestination,
   revokeChannel,
@@ -1166,5 +1398,6 @@ module.exports = {
   authorizeWorkspaceTest,
   verificationResponseHeaders,
   assertPublicVerificationBudget,
+  DELIVERY_CLAIM_EXCLUSION_SQL,
   withTransaction,
 };

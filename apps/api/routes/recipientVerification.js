@@ -74,18 +74,16 @@ router.post(
         actorUserId: req.user.id,
       });
       if (channel === "email" && invitation.withholdDelivery) {
-        const shareUrl = `${verification.publicApiBase()}/verify/recipient/${encodeURIComponent(invitation.token)}`;
-        await audit(req, "RECIPIENT_VERIFICATION_RESUBSCRIBE_LINK", {
+        await audit(req, "RECIPIENT_VERIFICATION_RESUBSCRIBE_REQUIRED", {
           contact_id: req.params.contactId,
           channel,
           destination_masked: verification.maskEmail(invitation.destination),
         });
         return res.status(200).json({
-          status: "withheld",
+          status: "opted_out",
           channel,
-          expires_at: invitation.expiresAt,
-          share_url: shareUrl,
           code: "RECIPIENT_OPTED_OUT",
+          resubscribe_url: `${verification.publicApiBase()}/verify/recipient/resubscribe`,
         });
       }
       if (channel === "email") {
@@ -179,6 +177,32 @@ async function limitPublicVerification(req, res) {
     return true;
   }
 }
+
+router.get("/verify/recipient/resubscribe", recipientVerificationPageLimiter, async (req, res) => {
+  if (await limitPublicVerification(req, res)) return undefined;
+  return html(res, 200, verification.renderResubscribeForm());
+});
+
+router.post("/verify/recipient/resubscribe", recipientVerificationPageLimiter, async (req, res) => {
+  if (await limitPublicVerification(req, res)) return undefined;
+  const email = req.body && (req.body.email || req.body.destination);
+  try {
+    const invitations = await verification.requestEmailResubscribe({ pool, email });
+    for (const invitation of invitations) {
+      const link = `${verification.publicApiBase()}/verify/recipient/${encodeURIComponent(invitation.token)}`;
+      const workspaceName = invitation.workspaceName || "A TokenTimer workspace";
+      await sendEmail({
+        to: invitation.destination,
+        subject: "Confirm TokenTimer notifications again",
+        text: `${workspaceName} can send expiration alerts to this address again only if you open ${link} and accept. This link expires in 48 hours.`,
+        html: `<p><strong>${verification.escapeHtml(workspaceName)}</strong> can send expiration alerts to this address again only if you accept.</p><p><a href="${verification.escapeHtml(link)}">Review and confirm</a></p><p>The link expires in 48 hours. Opening it does not confirm anything.</p>`,
+      });
+    }
+  } catch (error) {
+    logger.error("recipient resubscribe failed", { code: error.code || "INTERNAL_ERROR" });
+  }
+  return html(res, 200, verification.renderResubscribeAccepted());
+});
 
 router.get("/verify/recipient/done", recipientVerificationPageLimiter, async (req, res) => {
   if (await limitPublicVerification(req, res)) return undefined;

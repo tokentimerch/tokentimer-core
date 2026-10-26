@@ -40,6 +40,12 @@ function selectDeliverableDestinations(rows) {
   return recipientVerification.selectDeliverableDestinations(rows);
 }
 
+function mergeDeliveryAttempt(input) {
+  return recipientVerification.mergeDeliveryAttempt(input);
+}
+
+const DELIVERY_CLAIM_EXCLUSION_SQL = recipientVerification.DELIVERY_CLAIM_EXCLUSION_SQL;
+
 export {
   gateDestinations,
   recheckDestination,
@@ -47,4 +53,6 @@ export {
   verificationMode,
   queueDeliveryOutcome,
   selectDeliverableDestinations,
+  mergeDeliveryAttempt,
+  DELIVERY_CLAIM_EXCLUSION_SQL,
 };
