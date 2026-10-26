@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-26 against main ecde182d for v0.18.1, including guided Vault file-only delivery and optional service reload. Other
+Last reviewed: 2026-10-26 against main 6d27dd6a, including setup-role explanations and initial workspace-member loading. Other
 certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
 
 This page is the repository milestone index: what Core takes next, what must

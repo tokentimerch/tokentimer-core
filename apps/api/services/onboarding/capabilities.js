@@ -205,8 +205,8 @@ function baseCapability(def, ctx) {
         def.scope === "system_admin"
           ? "Ask a system administrator to complete this step."
           : def.minRole === "admin"
-            ? "Ask a workspace administrator to complete this step."
-            : "Ask a workspace manager or administrator to complete this step.",
+            ? "Restricted to the workspace owner. System admin access alone does not grant this role."
+            : "Restricted to workspace managers and owners.",
     });
   }
 

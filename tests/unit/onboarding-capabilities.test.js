@@ -21,6 +21,16 @@ const manager = {
 describe("onboarding capabilities", () => {
   afterEach(() => resetCapabilityOverrides());
 
+  it("names the workspace-owner restriction separately from AD CS licensing", () => {
+    const cap = find(evaluateCapabilities({ ...manager, isSystemAdmin: true }), "certops.adcs");
+    assert.equal(cap.entitled, true);
+    assert.equal(cap.authorized, false);
+    assert.equal(cap.state, "role_handoff");
+    assert.equal(cap.blockers[0].code, "ROLE_REQUIRED");
+    assert.match(cap.blockers[0].remediation, /workspace owner/);
+    assert.match(cap.blockers[0].remediation, /System admin access alone/);
+  });
+
   it("is ready for a manager when prerequisites are in place", () => {
     const items = evaluateCapabilities(manager);
     const cap = find(items, "monitoring.endpoint");
