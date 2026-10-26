@@ -4,7 +4,12 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { createWindowsConnector, validateWindowsBinding } = require("./index");
+const crypto = require("node:crypto");
+const {
+  createWindowsConnector,
+  validateWindowsBinding,
+  validateWindowsKey,
+} = require("./index");
 const { readProtectedFile } = require("../material-store");
 const binding = {
   connector: "windows-material-iis-v1",
@@ -23,6 +28,21 @@ const binding = {
   },
   probes: [{ dialAddress: "127.0.0.1", port: 443, sni: "valid.example.com" }],
 };
+
+test("Windows IIS accepts qualified key algorithms and rejects P-521 before native execution", () => {
+  for (const namedCurve of ["prime256v1", "secp384r1", "secp521r1"]) {
+    const { publicKey } = crypto.generateKeyPairSync("ec", { namedCurve });
+    if (namedCurve === "secp521r1")
+      assert.throws(() => validateWindowsKey(publicKey), {
+        code: "material_windows_algorithm_unsupported",
+      });
+    else assert.doesNotThrow(() => validateWindowsKey(publicKey));
+  }
+  const { publicKey } = crypto.generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+  });
+  assert.doesNotThrow(() => validateWindowsKey(publicKey));
+});
 test("Windows connector permits only the exact typed IIS rebind surface", () => {
   const policy = {
     checkTargetScope: (ref) => ({ allowed: ref === "iis-customer" }),

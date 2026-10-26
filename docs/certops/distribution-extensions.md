@@ -186,6 +186,11 @@ service SIDs receive read access. Shared import uses the Microsoft Software
 Key Storage Provider; TPM/HSM and custom KSP imports are unsupported. Windows
 may expand generic ACL masks, so verification compares their effective rights
 while still rejecting additional permissions and inheritance.
+The shared IIS connector accepts RSA and EC P-256/P-384 material. P-521
+passed native CNG parsing and signing but failed IIS activation in the Server
+2022 and 2025 lab, so `material_windows_algorithm_unsupported` rejects it
+before import, binding changes or an uncertainty record. General provider
+storage and Linux validation retain their existing algorithm support.
 An existing identical certificate is reused
 only when key association and the exact protected key ACL already match.
 

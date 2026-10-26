@@ -26,7 +26,9 @@ const {
 
 const nativeWindowsLab = process.env.TT_WINDOWS_MATERIAL_REAL === "1";
 test(
-  "real Windows/IIS: shared import, service ACL, exact SNI consumers, interruption, reconciliation and retained rollback",
+  process.env.TT_WINDOWS_MATERIAL_KEY_ALGORITHM === "ec-p521"
+    ? "real Windows/IIS: P-521 is rejected before key import or binding mutation"
+    : "real Windows/IIS: shared import, service ACL, exact SNI consumers, interruption, reconciliation and retained rollback",
   // skip-reason: no-host — requires an elevated, disposable Windows Server/IIS VM.
   { skip: !nativeWindowsLab, timeout: 900000 },
   async (t) => {
@@ -334,6 +336,7 @@ test(
         },
         probes: [{ dialAddress: "127.0.0.1", port, sni: sans[i] }],
       };
+    let nativeCalls = 0;
     const execute = (job, checkLease = async () => {}) =>
       executePinnedDeployment({
         job,
@@ -348,6 +351,7 @@ test(
           stateDir,
           execFileImpl: (file, args, options, callback) =>
             execFile(file, args, options, (error, stdout, stderr) => {
+              nativeCalls++;
               // Only the helper's fixed phase/HRESULT may enter CI diagnostics.
               const diagnostic = String(stderr || "").match(
                 /^material_windows_connector_failed:[a-z0-9A-F-]+:[0-9A-F]{8}$/m,
@@ -358,6 +362,30 @@ test(
             }),
         }),
       });
+    if (algorithm === "ec-p521") {
+      await assert.rejects(execute(jobFor(0)), {
+        code: "material_windows_algorithm_unsupported",
+      });
+      assert.equal(
+        nativeCalls,
+        0,
+        "unqualified IIS algorithms must not start a native helper",
+      );
+      assert.equal(
+        fs.existsSync(
+          path.join(
+            stateDir,
+            "material-bindings",
+            `${jobFor(0).materialDeployment.bindingId}.json`,
+          ),
+        ),
+        false,
+      );
+      t.diagnostic(
+        "P-521 rejected before key import, binding changes or uncertainty journaling",
+      );
+      return;
+    }
     const first = await execute(jobFor(0));
     assert.equal(first.status, "succeeded", first.errorMessage);
     assert.equal(first.deploymentReceipt.servedVerified, true);

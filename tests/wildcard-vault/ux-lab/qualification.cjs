@@ -370,10 +370,8 @@ async function extend(c) {
   assert.equal((await job(rollback.id)).status, "pending_approval");
   await approve(rollback.id);
   await terminal(rollback.id);
-  // The matrix reports `converged` only for the managed period's current
-  // identity. A rollback to the retained pre-renewal identity is observed and
-  // accepted by every consumer but is deliberately not "converged", so wait
-  // for the observed rollback proof instead.
+  // An approved retained version in the same active management period is a
+  // legitimate desired identity. Prove its exact receipts and convergence.
   await wait("consumers accept and observe the rolled-back version", async () => {
     const rows = await matrix();
     return state.bindings.every((b) => {
@@ -389,8 +387,8 @@ async function extend(c) {
       : false;
   });
   assert.ok(
-    (await matrix()).every((row) => row.converged !== true),
-    "a rolled-back retired identity must not report converged",
+    (await matrix()).every((row) => row.converged === true),
+    "an approved retained-version rollback must converge",
   );
   await externalProof(initial);
   assert.deepEqual(

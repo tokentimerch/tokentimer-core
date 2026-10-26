@@ -98,7 +98,7 @@ const {
   AgentProtocolError,
 } = require("./protocol");
 const { trustStoreCommandRefForFamily } = require("./trust-store");
-const { readReceipt } = require("./trust-store/receipt");
+const { readReceiptById } = require("./trust-store/receipt");
 
 function makeTempConfigDir() {
   // .native is required on Windows: os.tmpdir() can resolve through a
@@ -6388,11 +6388,11 @@ describe("executeTrustJob / executeJob dispatch wiring for distribute-trust/revo
     // The receipt this run persisted is readable from the SAME stateDir
     // executeJob itself derived from executionContext, proving the
     // dispatch path wires receiptDir consistently end to end.
-    const persisted = readReceipt(
+    const persisted = readReceiptById(
       path.join(workDir, "trust-receipts"),
-      outcome.trustResult.store,
-      CA_FINGERPRINT,
+      outcome.trustResult.receipt.id,
     );
+    assert.ok(persisted?.row, "the result's receipt id must resolve to a persisted receipt on every platform");
     assert.equal(persisted.row.state, "installed");
   });
 

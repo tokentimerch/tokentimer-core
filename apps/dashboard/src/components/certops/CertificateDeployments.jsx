@@ -94,6 +94,8 @@ const failureReasons = {
     'The customer-local material store configuration is unsupported.',
   material_windows_activation_failed:
     'IIS activation failed. Review and reconcile the exact listener before retry.',
+  material_windows_algorithm_unsupported:
+    'This Windows IIS connector supports RSA and EC P-256/P-384 certificates. The requested key was rejected before import.',
   material_windows_import_failed:
     'Windows certificate import or private-key permissions failed.',
   material_windows_binding_mismatch:

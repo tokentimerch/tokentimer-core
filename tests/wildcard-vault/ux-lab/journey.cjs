@@ -66,7 +66,10 @@ class User {
   async request(route, method = "GET", body, expected = 200, headers = {}) {
     if (method !== "GET" && !this.csrf)
       this.csrf = (await this.request("/api/csrf-token")).csrfToken;
-    const r = await fetch(base + route, {
+    let r;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        r = await fetch(base + route, {
       method,
       redirect: "manual",
       signal: AbortSignal.timeout(12000),
@@ -77,7 +80,17 @@ class User {
         ...headers,
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
+        });
+        break;
+      } catch (error) {
+        // Re-read public state after a bounded local transport interruption.
+        // Mutations must retain their original ambiguous-response behavior.
+        if (method !== "GET" || attempt >= 2) throw error;
+        state.readTransportRetries = (state.readTransportRetries || 0) + 1;
+        console.log("RETRY public GET after a lab transport interruption");
+        await sleep(500);
+      }
+    }
     for (const cookie of r.headers.getSetCookie()) {
       const pair = cookie.split(";")[0],
         i = pair.indexOf("=");

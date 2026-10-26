@@ -200,6 +200,7 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
     const certificate = new crypto.X509Certificate(bundle.certificatePem);
     if (binding.probes.some(probe => !certificate.checkHost(probe.sni,{subject:"never"}))) throw failure("material_probe_identity_mismatch");
     if (binding.target.type === "windows-iis") {
+      require("../windows-material").validateWindowsKey(certificate.publicKey);
       const connector = windowsConnector || require("../windows-material").createWindowsConnector({binding,stateDir});
       return connector.withLock(async lockSignal => {
         const signal=jobSignal&&lockSignal?AbortSignal.any([jobSignal,lockSignal]):jobSignal||lockSignal;

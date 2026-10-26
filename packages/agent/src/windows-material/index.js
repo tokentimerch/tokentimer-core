@@ -23,6 +23,14 @@ const {
 const { makePkcs12 } = require("./pkcs12");
 
 const CONNECTOR = "windows-material-iis-v1";
+function validateWindowsKey(publicKey) {
+  // Native CNG import/signing support alone does not prove IIS activation.
+  // These consumer algorithms passed the Server 2022 and 2025 campaign.
+  if (publicKey.asymmetricKeyType !== "rsa" &&
+    !(publicKey.asymmetricKeyType === "ec" &&
+      ["prime256v1", "secp384r1"].includes(publicKey.asymmetricKeyDetails?.namedCurve)))
+    throw failure("material_windows_algorithm_unsupported");
+}
 function validateWindowsBinding(binding, policyEngine) {
   if (
     binding.connector !== CONNECTOR ||
@@ -224,4 +232,4 @@ function createWindowsConnector({
     verify,
   };
 }
-module.exports = { CONNECTOR, validateWindowsBinding, createWindowsConnector };
+module.exports = { CONNECTOR, validateWindowsBinding, validateWindowsKey, createWindowsConnector };

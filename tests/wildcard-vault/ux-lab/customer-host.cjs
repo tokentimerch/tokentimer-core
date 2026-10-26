@@ -245,7 +245,7 @@ function store(workspaceId, groupId, wireId, issuer, name) {
       caFile: "/lab/transport.crt",
       mount: "secret",
       tokenFile: "/lab/"+name+"/material-token",
-      timeoutMs: 2000,
+      timeoutMs: 10000,
       groups: {
         [groupId]: {
           workspaceId,
