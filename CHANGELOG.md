@@ -11,7 +11,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Auto-sync metrics remain available between runs and after restarts.** API `/metrics` exposes durable creation and run-outcome totals, plus last-attempt and last-success timestamps by provider. **Operator guidance:** apply migrations 79–80, establish a Prometheus baseline, and scrape one stable API target per database; replica copies must not be summed. Historical activity is not backfilled.
+- **Auto-sync metrics remain available between runs and after restarts.** API `/metrics` exposes durable creation and run-outcome totals, last-attempt and last-success timestamps, and enabled-connection counts by provider. Opt-in alerts cover new creations, run failures and stale activity without paging for unused or disabled providers. **Operator guidance:** apply migrations 79–80, establish a Prometheus baseline, and scrape one stable API target per database; replica copies must not be summed. Historical activity is not backfilled.
 
 ### Fixed
 

@@ -7,6 +7,9 @@ on:
       - "apps/api/**"
       - "apps/worker/src/**"
       - "tests/postgres/**"
+      - "deploy/prometheus/**"
+      - "deploy/helm/examples/values*.yaml"
+      - "scripts/test-auto-sync-*.cjs"
       - "package.json"
       - "pnpm-lock.yaml"
       - ".github/workflows/auto-sync-fencing.yml"
@@ -50,3 +53,4 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: node apps/api/migrations/migrate.js
       - run: pnpm test:auto-sync:postgres
+      - run: pnpm test:auto-sync:alerts

@@ -1,0 +1,124 @@
+# Opt-in activity and health rules; apply after your normal values.
+# Change installation identity, Prometheus selector labels, API job selector
+# and schedule windows as described in docs/AUTO_SYNC_METRICS.md.
+monitoring:
+  metrics:
+    enabled: true
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: kube-prom-stack
+    metricRelabelings:
+      - action: replace
+        targetLabel: installation
+        replacement: replace-with-unique-database-id
+  prometheusRules:
+    enabled: true
+    labels:
+      release: kube-prom-stack
+    groups:
+      - name: tokentimer.auto-sync
+        rules:
+          - alert: AutoSyncCreatedAssets
+            expr: >-
+              max by (installation, namespace, job, provider) (increase(auto_sync_items_created_total[15m])) >
+              0
+            for: 0m
+            labels:
+              severity: info
+            annotations:
+              summary: Auto-sync created inventory for {{ $labels.provider }}
+              description: >-
+                New committed auto-sync inventory was observed in the last 15 minutes. This is an
+                informational activity notification, not a failure or a count of current inventory.
+          - alert: AutoSyncProviderFailures
+            expr: |
+              (
+                max by (installation, namespace, job, provider) (increase(auto_sync_run_outcomes_total{status="failed"}[3h])) >= 3
+                unless
+                max by (installation, namespace, job, provider) (increase(auto_sync_run_outcomes_total{status="success"}[3h])) > 0
+              )
+              and on (installation, namespace, job, provider)
+              max by (installation, namespace, job, provider) (auto_sync_enabled_configurations) > 0
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: Auto-sync provider {{ $labels.provider }} failing
+              description: >-
+                At least three failed run outcomes were observed in 3 hours with no successful completion in
+                that window. Check credentials and connectivity; partial and superseded outcomes are separate
+                from failed.
+          - alert: AutoSyncNotRunning
+            expr: |
+              (
+                time() - max by (installation, namespace, job, provider) (auto_sync_last_attempt_timestamp_seconds) > 90000
+                and
+                max by (installation, namespace, job, provider) (auto_sync_last_attempt_timestamp_seconds) > 0
+              )
+              and on (installation, namespace, job, provider)
+              max by (installation, namespace, job, provider) (auto_sync_enabled_configurations) > 0
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: Auto-sync for {{ $labels.provider }} has not started in more than 25 hours
+              description: >-
+                An enabled provider has started before but has no recent attempt. Check worker scheduling and
+                leases. Adjust 25 hours to your longest configured schedule.
+          - alert: AutoSyncNoRecentSuccess
+            expr: |
+              (
+                time() - max by (installation, namespace, job, provider) (auto_sync_last_success_timestamp_seconds) > 90000
+                and
+                max by (installation, namespace, job, provider) (auto_sync_last_success_timestamp_seconds) > 0
+              )
+              and on (installation, namespace, job, provider)
+              max by (installation, namespace, job, provider) (auto_sync_enabled_configurations) > 0
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: Auto-sync for {{ $labels.provider }} has not fully succeeded in more than 25 hours
+              description: >-
+                Attempts may still be running, partial, or failing. Only a fully successful completion
+                refreshes this timestamp. Adjust 25 hours for weekly or custom schedules.
+          - alert: AutoSyncNeverStarted
+            expr: |
+              max by (installation, namespace, job, provider) (auto_sync_last_attempt_timestamp_seconds) == 0
+              and
+              max by (installation, namespace, job, provider) (auto_sync_enabled_configurations) > 0
+            for: 25h
+            labels:
+              severity: warning
+            annotations:
+              summary: Auto-sync for {{ $labels.provider }} has no observed attempt
+              description: >-
+                A provider has remained enabled without an observed run start for 25 hours of alert
+                evaluation. Check worker deployment and schedules; adjust the grace period for your longest
+                schedule.
+          - alert: AutoSyncNeverSucceeded
+            expr: |
+              max by (installation, namespace, job, provider) (auto_sync_last_success_timestamp_seconds) == 0
+              and
+              max by (installation, namespace, job, provider) (auto_sync_last_attempt_timestamp_seconds) > 0
+              and
+              max by (installation, namespace, job, provider) (auto_sync_enabled_configurations) > 0
+            for: 25h
+            labels:
+              severity: warning
+            annotations:
+              summary: Auto-sync for {{ $labels.provider }} has no observed successful completion
+              description: >-
+                An enabled provider with an observed attempt has remained without a recorded full success for
+                25 hours of alert evaluation. New installations and unused providers do not page immediately.
+          - alert: TokenTimerAPIDown
+            expr: up{job="tokentimer-api"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: TokenTimer API metrics scrape is failing
+              description: >-
+                The API metrics target cannot be scraped. Check API availability, database connectivity and
+                migrations; missing telemetry must not be interpreted as zero activity.

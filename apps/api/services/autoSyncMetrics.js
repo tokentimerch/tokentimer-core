@@ -10,6 +10,12 @@ const OUTCOMES = ["success", "partial", "failed", "superseded"];
 function registerRunMetrics(register, providers) {
   const definitions = [
     {
+      name: "auto_sync_enabled_configurations", type: "gauge",
+      help: "Currently enabled auto-sync configurations by provider; use to scope freshness alerts",
+      sql: "SELECT provider, COUNT(*) AS value FROM auto_sync_configs WHERE enabled = TRUE GROUP BY provider ORDER BY provider",
+      labels: providers.map(provider => ({ provider })),
+    },
+    {
       name: "auto_sync_run_outcomes_total", type: "counter",
       help: "Committed terminal auto-sync runs since instrumentation was enabled, by provider and status",
       sql: "SELECT provider, status, runs_total AS value FROM auto_sync_run_outcome_stats ORDER BY provider, status",

@@ -11,6 +11,17 @@ function mockCreation(t, query) { return t.mock.method(pool, "query", sql => sql
 const metricName = "auto_sync_items_created_total";
 
 describe("durable run outcome and freshness collectors", () => {
+  it("refreshes enabled configuration counts and returns unused providers to zero", async (t) => {
+    let enabled = true;
+    t.mock.method(pool, "query", async sql => ({ rows: sql.includes("auto_sync_configs") && enabled
+      ? [{ provider: "gitlab", value: "2" }] : [] }));
+    const registry = new Registry();
+    registerAutoSyncMetrics(registry);
+    const gauge = registry.getSingleMetric("auto_sync_enabled_configurations");
+    assert.equal((await gauge.get()).values.find(s => s.labels.provider === "gitlab").value, 2);
+    enabled = false;
+    assert.ok((await gauge.get()).values.every(s => s.value === 0));
+  });
   it("preserves stored providers, zeros all outcomes, and reads fresh values after restart", async (t) => {
     let total = "4";
     t.mock.method(pool, "query", async sql => ({ rows: sql.includes("outcome_stats")
@@ -69,7 +80,7 @@ describe("durable auto-sync creation metric collector", { concurrency: false }, 
     registerAutoSyncMetrics(registry);
 
     assert.deepEqual(await values(registry), { github: 0, gitlab: 0 });
-    assert.equal(query.mock.callCount(), 4);
+    assert.equal(query.mock.callCount(), 5);
     assert.match(await registry.metrics(), new RegExp(`# TYPE ${metricName} counter`));
   });
 

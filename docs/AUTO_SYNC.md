@@ -52,6 +52,12 @@ handle never-successful providers separately. Provider aggregates describe the
 installation, so one healthy configuration can hide another configuration's
 failure; use configuration run history to investigate individual connections.
 
+`auto_sync_enabled_configurations{provider}` is the current number of enabled
+connections. Scope freshness and failure alerts to values greater than zero so
+unused providers and disabled or deleted connections do not page operators.
+See [metric definitions, tested alert examples and rollout guidance](AUTO_SYNC_METRICS.md)
+before enabling notifications.
+
 ## Cleanup and removal
 
 Enable destructive cleanup only when it matches your retention policy. Partial, truncated, rate-limited or inaccessible scans must not be treated as proof that an asset disappeared. Complete scans reconcile only the scope actually covered.
