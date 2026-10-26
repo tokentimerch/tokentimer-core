@@ -143,6 +143,8 @@ async function inspect({ state, owner, base, api, versions, matrix, customer, wa
         return row.status === "dry_run_complete" ? row : false;
       }, 60000);
       previewJobs.push({ id: completedPreview.id, status: completedPreview.status, mode: completedPreview.payload.mode });
+      // The guide holds a completed observed step until the operator continues.
+      await page.getByTestId("step-continue").getByRole("button", { name: "Continue", exact: true }).click();
       await frame(VAULT_TITLE).waitFor();
       await assertNotDone();
       const current = await session();
