@@ -766,7 +766,7 @@ jobs:
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
       - name: Build API image
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ./deploy/compose/Dockerfile.api
@@ -781,7 +781,7 @@ jobs:
         run: node scripts/boot-published-images.js api "tokentimer/api:${{ github.sha }}"
 
       - name: Build dashboard image
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ./deploy/compose/Dockerfile.dashboard
@@ -798,7 +798,7 @@ jobs:
         run: node scripts/boot-published-images.js dashboard "tokentimer/dashboard:${{ github.sha }}"
 
       - name: Build worker image
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ./deploy/compose/Dockerfile.worker
@@ -816,7 +816,7 @@ jobs:
         run: node scripts/boot-published-images.js worker "tokentimer/worker:${{ github.sha }}"
 
       - name: Build Kubernetes controller image
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ./apps/k8s-controller/Dockerfile
