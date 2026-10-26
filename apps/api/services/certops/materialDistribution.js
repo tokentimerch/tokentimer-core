@@ -316,7 +316,7 @@ async function consumerMatrix({ client, workspaceId, groupId, groupIds }) {
         WHERE proof.workspace_id=b.workspace_id AND proof.binding_id=b.id AND rollout.generation=s.accepted_generation
           AND proof.authorization_revision=b.authorization_revision AND identity.lifecycle_status='active'
           AND current_group.state='active' AND period.ended_at IS NULL
-          AND material.id=s.observed_material_version_id AND material.certificate_identity_id=period.current_identity_id
+          AND material.id=s.observed_material_version_id
           AND proof.verification_policy=b.verification_policy
           AND ((b.verification_policy='installed' AND proof.stage='installed' AND s.verification_method='installed')
             OR (b.verification_policy='served' AND proof.stage IN ('served_verified','trust_validated') AND s.verification_method IN ('served','trust'))
