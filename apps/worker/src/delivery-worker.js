@@ -2956,8 +2956,9 @@ export async function deliveryWorkerJob({
                 }
               }
 
-              // If WhatsApp failed without per-recipient rows (rate limit or no recipients), log a channel-level entry
-              if (!success && trimmed.length === 0) {
+              // Eligibility already recorded a blocked row. A second failed row would
+              // make a later replay treat the opt-out as retryable.
+              if (!success && trimmed.length === 0 && !eligibilityTerminal) {
                 try {
                   await client.query(
                     `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)

@@ -1208,6 +1208,20 @@ describe("recipient verification", () => {
     assert.equal(unverified.outcome.status, "blocked");
     assert.equal(unverified.outcome.retry, false);
 
+    const replayedOptOut = verification.mergeDeliveryAttempt({
+      prior: [],
+      logRows: [
+        { channel: "whatsapp", status: "blocked", error_message: "RECIPIENT_OPTED_OUT" },
+        { channel: "whatsapp", status: "failed", error_message: "RECIPIENT_OPTED_OUT" },
+      ],
+      attempted: [],
+      liveChannels: ["whatsapp"],
+    });
+    assert.equal(replayedOptOut.ledger.outcomes.whatsapp.state, "blocked");
+    assert.equal(replayedOptOut.ledger.outcomes.whatsapp.reason, "eligibility");
+    assert.equal(replayedOptOut.outcome.retry, false);
+    assert.equal(replayedOptOut.outcome.notifyUnverified, true);
+
     const optedOut = verification.mergeDeliveryAttempt({
       prior: ["whatsapp"],
       attempted: [{ channel: "whatsapp", success: false, eligibilityTerminal: true, errorCode: "RECIPIENT_OPTED_OUT" }],

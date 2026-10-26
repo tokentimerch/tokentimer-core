@@ -503,7 +503,7 @@ function foldDeliveryLog(rows) {
         current.code = row.error_message || current.code || null;
         current.reason = ELIGIBILITY_CODES.has(current.code) ? "eligibility" : "provider";
       }
-    } else if (current.state !== "sent") {
+    } else if (current.state !== "sent" && !(current.state === "blocked" && current.reason === "eligibility")) {
       current.state = "failed";
       current.terminal = false;
       current.code = row.error_message || null;
