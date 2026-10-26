@@ -23,6 +23,7 @@ const base = "http://127.0.0.1:" + (process.env.TT_UX_WEB_PORT || "58801"),
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 state.certificateMode ||= process.env.TT_UX_CERTIFICATE_MODE || "san";
 state.coreCommit ||= process.env.TT_UX_CORE_COMMIT || null;
+state.materialProvider ||= process.env.TT_UX_MATERIAL_PROVIDER || "vault-kv2";
 const certificateSans = state.certificateMode === "wildcard"
   ? ["*.wildcard.test", "wildcard.test"]
   : state.certificateMode === "ordinary" ? ["nginx.wildcard.test"]
@@ -376,6 +377,7 @@ async function preparePublication() {
       keySize: 256,
       keyRotation: true,
       publicationDestination: {
+        type: state.materialProvider,
         materialStoreRef: "customer",
         issuanceProfileRef: "wildcard",
         profileRevision: 1,
@@ -797,6 +799,7 @@ async function rejection() {
       keySize: 256,
       keyRotation: true,
       publicationDestination: {
+        type: state.materialProvider,
         materialStoreRef: "customer",
         issuanceProfileRef: "rejection-only",
         profileRevision: 1,
@@ -1117,6 +1120,7 @@ async function main() {
         {
           passed: true,
           coreCommit: state.coreCommit,
+          materialProvider: state.materialProvider,
           certificateMode: state.certificateMode,
           runId: state.runId,
           workspaceId: state.workspaceId,

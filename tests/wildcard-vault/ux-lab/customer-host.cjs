@@ -240,6 +240,7 @@ function config(name, extra = {}) {
 function store(workspaceId, groupId, wireId, issuer, name) {
   return {
     customer: {
+      provider: process.env.TT_UX_MATERIAL_PROVIDER || "vault-kv2",
       address: "https://127.0.0.1:18200",
       caFile: "/lab/transport.crt",
       mount: "secret",
@@ -574,7 +575,7 @@ async function main() {
   fs.writeFileSync(
     build + "/src/capabilities/qualified-capabilities.generated.js",
     renderGeneratedModule([
-      "material-store-vault-kv2-v1",
+      process.env.TT_UX_MATERIAL_PROVIDER === "openbao-kv2" ? "material-store-openbao-kv2-v1" : "material-store-vault-kv2-v1",
       "certificate-publication-v1",
       "deploy-from-store-v1",
     ]),

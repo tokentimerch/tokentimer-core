@@ -40,14 +40,17 @@ services:
     cpus: 0.25
     mem_limit: 96m
   vault:
-    image: hashicorp/vault:1.21
+    image: ${TT_UX_KV_IMAGE:-hashicorp/vault:1.21.0}
     command: [server, -dev, -dev-listen-address=0.0.0.0:8200]
-    environment: { VAULT_DEV_ROOT_TOKEN_ID: ux-lab-only-vault-token }
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ux-lab-only-vault-token
+      BAO_DEV_ROOT_TOKEN_ID: ux-lab-only-vault-token
+      TT_UX_KV_BINARY: ${TT_UX_KV_BINARY:-vault}
     cap_add: [IPC_LOCK]
     cpus: 0.5
     mem_limit: 768m
     healthcheck:
-      test: [CMD-SHELL, "VAULT_ADDR=http://127.0.0.1:8200 vault status >/dev/null"]
+      test: [CMD-SHELL, "BAO_ADDR=http://127.0.0.1:8200 VAULT_ADDR=http://127.0.0.1:8200 $${TT_UX_KV_BINARY} status >/dev/null"]
       interval: 2s
       retries: 30
       start_period: 10s
@@ -114,6 +117,7 @@ services:
     cap_add: [IPC_LOCK]
     environment:
       TT_UX_CERTIFICATE_MODE: ${TT_UX_CERTIFICATE_MODE:-san}
+      TT_UX_MATERIAL_PROVIDER: ${TT_UX_MATERIAL_PROVIDER:-vault-kv2}
       TT_UX_PACKAGE_ACCEPTANCE: ${TT_UX_PACKAGE_ACCEPTANCE:-0}
       TT_UX_CORE_COMMIT: ${TT_UX_CORE_COMMIT}
     volumes: ["../../..:/repo:ro", "customers:/lab", "${TT_WILDCARD_UX_OUTPUT}:/lab-input:ro"]

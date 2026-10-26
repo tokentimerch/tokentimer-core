@@ -67,6 +67,7 @@ function createGate({ root, candidateSha, mode }) {
     allFeaturesQualified: false,
   });
   gate.report.qualificationEnvironment.certificateMode = mode;
+  gate.report.qualificationEnvironment.materialProvider = process.env.TT_UX_MATERIAL_PROVIDER || "vault-kv2";
   gate.report.fixtureSources =
     require("../../../docs/certops/qualification-suites.json")
       .slots.find((s) => s.suite === SUITE)

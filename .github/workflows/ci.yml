@@ -796,9 +796,14 @@ jobs:
         run: ./packages/agent/scripts/install-agent.ps1 --uninstall --dry-run
 
   windows_material_qualification:
-    name: Windows Server IIS Material Qualification
+    name: Windows IIS Material (${{ matrix.os }} / ${{ matrix.store }})
     if: github.event_name == 'workflow_dispatch'
-    runs-on: windows-2022
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+        store: [fixture, openbao]
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -815,10 +820,35 @@ jobs:
           $result = Install-WindowsFeature Web-Server,Web-Mgmt-Tools,Web-Scripting-Tools
           if (-not $result.Success) { throw 'IIS feature installation failed' }
           Start-Service W3SVC
+      - name: Start checksum-verified customer-local OpenBao
+        if: matrix.store == 'openbao'
+        shell: pwsh
+        run: |
+          $directory = Join-Path $env:RUNNER_TEMP 'tt-windows-openbao'
+          New-Item -ItemType Directory -Path $directory | Out-Null
+          $archive = Join-Path $directory 'bao.zip'
+          Invoke-WebRequest 'https://github.com/openbao/openbao/releases/download/v2.4.1/bao_2.4.1_Windows_x86_64.zip' -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne '1d1422e9578101f167ffe2a0b8847afacda56a4f41201e8666d3c058f6470e84') { throw 'OpenBao checksum mismatch' }
+          Expand-Archive $archive -DestinationPath $directory
+          $process = Start-Process (Join-Path $directory 'bao.exe') -ArgumentList @('server','-dev','-dev-root-token-id=isolated-windows-openbao-only','-dev-listen-address=127.0.0.1:58208') -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $directory 'stdout.log') -RedirectStandardError (Join-Path $directory 'stderr.log')
+          $process.Id | Set-Content (Join-Path $directory 'pid.txt')
+          $ready = $false
+          for ($attempt = 0; $attempt -lt 60; $attempt++) {
+            try { $health = Invoke-RestMethod 'http://127.0.0.1:58208/v1/sys/health'; if ($health.initialized -and -not $health.sealed) { $ready = $true; break } } catch {}
+            Start-Sleep -Seconds 1
+          }
+          if (-not $ready) { throw 'Owned OpenBao fixture did not become ready' }
+          'TT_WINDOWS_MATERIAL_KV_ADDRESS=http://127.0.0.1:58208' | Out-File $env:GITHUB_ENV -Append
       - name: Verify actual CNG import, ACL, IIS listeners and retained rollback
         env:
           TT_WINDOWS_MATERIAL_REAL: "1"
         run: node --test tests/e2e/windows-material-real.test.js
+      - name: Stop only the owned OpenBao process
+        if: always() && matrix.store == 'openbao'
+        shell: pwsh
+        run: |
+          $pidFile = Join-Path $env:RUNNER_TEMP 'tt-windows-openbao/pid.txt'
+          if (Test-Path $pidFile) { Stop-Process -Id ([int](Get-Content $pidFile)) -ErrorAction SilentlyContinue }
 
   docker_build_and_scan:
     name: Docker Build & Security Scan

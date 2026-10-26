@@ -11,6 +11,15 @@ actual operator role contract; viewers receive 403.
 
 Run from the implementation checkout, with Docker Desktop, Node 24, pnpm, and the checkout's dependencies installed. This is a separate Core installation with its own PostgreSQL, mail capture, Vault, Pebble DNS-01 CA, maintenance worker, dashboard, and customer hosts. All published ports bind to `127.0.0.1`; PostgreSQL and Vault have no host port.
 
+Pass `-MaterialProvider openbao-kv2` on `Up` to run the complete journey against
+OpenBao 2.4.1, including explicit provider authority in signed issuance and
+deployment jobs. The default is Vault 1.21.0. The selected provider is retained
+with the lab options. Both providers support `-PackageAcceptance`: that mode
+uses a checksum-verified agent package, an unprivileged agent account, and
+separate scoped AppRoles and protected sinks managed by the Vault Agent client.
+Credential rotation, denied access, lost responses, reconciliation, rollback,
+browser checks and custody scans execute against the selected real service.
+
 The journey uses public HTTP routes with session cookies and CSRF tokens. It creates a workspace, invites a second user through captured email, verifies that account, enrolls real agents with bootstrap tokens, submits work, and approves/rejects it as a different user. The customer host runs the full agent CLI, including signing, replay protection, live leases, evidence, and result outbox. Real nginx and HAProxy processes load the certificate and receive TLS probes. There are no SQL commands, direct database connections, inserted receipts, service-layer calls, or database fixture injection in the harness. Ordinary API startup migrations/admin bootstrap and the ordinary worker retain their normal database access.
 
 ## Start and test

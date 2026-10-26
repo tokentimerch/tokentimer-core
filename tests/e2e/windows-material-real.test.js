@@ -11,6 +11,7 @@ const {
   createWindowsConnector,
 } = require("../../packages/agent/src/windows-material");
 const {
+  createMaterialStore,
   writeProtectedFile,
   readProtectedFile,
 } = require("../../packages/agent/src/material-store");
@@ -66,6 +67,13 @@ test(
     }
     const caption = ps("(Get-CimInstance Win32_OperatingSystem).Caption");
     assert.match(caption, /Server/);
+    const realAddress = process.env.TT_WINDOWS_MATERIAL_KV_ADDRESS;
+    const provider = realAddress ? "openbao-kv2" : "vault-kv2";
+    if (realAddress)
+      assert.match(realAddress, /^http:\/\/127\.0\.0\.1:[0-9]+$/);
+    t.diagnostic(
+      `Native ${caption.trim()}; material transport: ${realAddress ? "real OpenBao KV v2" : "local HTTP fixture"}`,
+    );
     const certificatePem = fs.readFileSync(
       path.join(
         __dirname,
@@ -137,7 +145,8 @@ test(
     writeProtectedFile(tokenFile, "synthetic-customer-side-token");
     const stores = {
       qualification: {
-        address: `http://127.0.0.1:${server.address().port}`,
+        provider,
+        address: realAddress || `http://127.0.0.1:${server.address().port}`,
         mount: "secret",
         tokenFile,
         timeoutMs: 30000,
@@ -151,6 +160,76 @@ test(
         },
       },
     };
+    const rootToken = "isolated-windows-openbao-only";
+    const prefix = stores.qualification.groups[ids.groupId].prefix;
+    const role = `tt-windows-${suffix}`;
+    async function providerApi(route, method, body) {
+      const response = await fetch(new URL(`/v1${route}`, realAddress), {
+        method,
+        headers: {
+          "X-Vault-Token": rootToken,
+          "Content-Type": "application/json",
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+      assert.ok(
+        response.ok,
+        `Owned OpenBao fixture operation returned ${response.status}`,
+      );
+      return response.status === 204 ? null : response.json();
+    }
+    async function saveBundle(selected, invalid = false) {
+      bundles.set(selected.materialVersionId, selected);
+      if (!realAddress) return;
+      if (invalid) {
+        // A privileged hostile write must still be rejected by the consumer.
+        await providerApi(
+          `/secret/data/${prefix}/bundles/${selected.materialVersionId}`,
+          "POST",
+          { options: { cas: 0 }, data: selected },
+        );
+        return;
+      }
+      const issuerFile = path.join(directory, "issuer-token");
+      writeProtectedFile(issuerFile, rootToken);
+      const issuer = createMaterialStore(
+        { qualification: { ...stores.qualification, tokenFile: issuerFile } },
+        {
+          ...ids,
+          provider,
+          materialStoreRef: "qualification",
+          materialVersionId: selected.materialVersionId,
+        },
+        { fixtureLoopbackHttp: true },
+      );
+      const receipt = await issuer.publish(selected);
+      assert.equal(receipt.provider, provider);
+      assert.equal(receipt.providerVersion, 1);
+      assert.deepEqual(await issuer.publish(selected), receipt);
+    }
+    if (realAddress) {
+      await providerApi(`/sys/policies/acl/${role}`, "PUT", {
+        policy: `path "secret/data/${prefix}/bundles/*" { capabilities = ["read"] }`,
+      });
+      const issued = await providerApi("/auth/token/create", "POST", {
+        policies: [role],
+        no_default_policy: true,
+        ttl: "15m",
+      });
+      writeProtectedFile(tokenFile, issued.auth.client_token);
+      t.after(async () => {
+        await providerApi("/auth/token/revoke", "POST", {
+          token: issued.auth.client_token,
+        });
+        for (const materialVersionId of bundles.keys())
+          await providerApi(
+            `/secret/metadata/${prefix}/bundles/${materialVersionId}`,
+            "DELETE",
+          );
+        await providerApi(`/sys/policies/acl/${role}`, "DELETE");
+      });
+    }
+    await saveBundle(bundle);
     const stateDir = path.join(directory, "state"),
       bindings = {};
     const policyEngine = { checkTargetScope: () => ({ allowed: true }) };
@@ -164,6 +243,7 @@ test(
           materialVersionId: selected.materialVersionId,
           bindingId,
           materialStoreRef: "qualification",
+          provider,
           providerVersion: 1,
           generation,
           fingerprintSha256: selected.fingerprintSha256,
@@ -339,7 +419,7 @@ test(
       certificatePem: caCertificate,
       fingerprintSha256: computeCertificateFingerprint(caCertificate),
     };
-    bundles.set(invalidCa.materialVersionId, invalidCa);
+    await saveBundle(invalidCa, true);
     await assert.rejects(execute(jobFor(0, 4, invalidCa)), {
       code: "material_bundle_invalid",
     });
@@ -370,7 +450,7 @@ test(
       fingerprintSha256: computeCertificateFingerprint(renewedCertificate),
     };
     assert.notEqual(renewed.fingerprintSha256, bundle.fingerprintSha256);
-    bundles.set(renewed.materialVersionId, renewed);
+    await saveBundle(renewed);
     assert.equal(
       (await execute(jobFor(0, 4, renewed))).status,
       "succeeded",
