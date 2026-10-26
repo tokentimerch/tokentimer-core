@@ -1050,10 +1050,10 @@ export function VaultStep({ ctx }) {
               {reloadConsumer ? (
                 <Text fontSize='sm' data-testid='vault-reload-prerequisite'>
                   Service reloads require polkit with JavaScript rules support
-                  (0.106 or later). Ubuntu
-                  22.04&apos;s default polkit 0.105 cannot enforce this reload
-                  policy; use a compatible host such as Ubuntu 24.04. File-only
-                  delivery does not need a reload grant.
+                  (0.106 or later). Ubuntu 22.04&apos;s default polkit 0.105
+                  cannot enforce this reload policy; use a compatible host such
+                  as Ubuntu 24.04. File-only delivery does not need a reload
+                  grant.
                 </Text>
               ) : null}
               <Text fontSize='sm'>
