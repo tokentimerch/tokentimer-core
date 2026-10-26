@@ -87,6 +87,18 @@ function text(value) {
   return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
 }
 
+/**
+ * A discovered certificate reports its names in typed form ("DNS:example.com").
+ * Only the DNS type is an ACME-requestable name, so strip exactly that prefix
+ * and leave every other value (bare names, "IP Address:..." and so on) as it
+ * was reported.
+ */
+function bareDnsName(value) {
+  const name = text(value);
+  if (!name) return null;
+  return text(name.replace(/^DNS:\s*/i, ""));
+}
+
 function isPlainObject(value) {
   return (
     typeof value === "object" && value !== null && !Array.isArray(value)
@@ -166,13 +178,20 @@ function deriveRenewalProfileFromIssuedCertificate({
 
   // SAN-only leaves are valid. Use the approved domain only when the CA
   // actually issued that exact name; never guess from the first SAN.
+  //
+  // A discovered row may carry a SAN in typed form ("DNS:example.com"): an ACME
+  // certificate often has no Subject CN, so discovery stores the first typed
+  // SAN as the common name (see agentObservations.js certificateFor). Strip the
+  // DNS type prefix before the names enter the SAN policy, or the policy would
+  // hold both "example.com" and "DNS:example.com" and every renewal would fail
+  // with an inconsistent domain request.
   const observedSans = Array.isArray(certificate.subjectAltNames)
-    ? certificate.subjectAltNames.map(text).filter(Boolean)
+    ? certificate.subjectAltNames.map(bareDnsName).filter(Boolean)
     : [];
   const normalizeName = (name) => name.toLowerCase().replace(/\.$/, "");
   const approvedDomain = payload.target?.type === "domain"
     ? text(payload.target.reference) : null;
-  const commonName = text(certificate.commonName) ||
+  const commonName = bareDnsName(certificate.commonName) ||
     (approvedDomain && observedSans.some((san) => normalizeName(san) === normalizeName(approvedDomain))
       ? normalizeName(approvedDomain) : null);
   if (!commonName) {
