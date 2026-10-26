@@ -71,7 +71,7 @@ jobs:
           fi
 
       - name: Build and push API
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ./deploy/compose/Dockerfile.api
@@ -86,7 +86,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build and push Dashboard
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ./deploy/compose/Dockerfile.dashboard
@@ -103,7 +103,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build and push Worker
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ./deploy/compose/Dockerfile.worker
@@ -118,7 +118,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build and push Kubernetes controller
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ./apps/k8s-controller/Dockerfile
