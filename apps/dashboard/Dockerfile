@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-RUN corepack enable && corepack prepare pnpm@11.13.0 --activate
+RUN corepack enable && corepack prepare pnpm@11.28.8 --activate
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 COPY apps/dashboard/package.json ./apps/dashboard/

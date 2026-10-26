@@ -2209,12 +2209,13 @@ async function createCertificateJob(options) {
          started_at,
          completed_at,
         canceled_at,
-        creation_request_hash
+        creation_request_hash,
+        enrollment_id
        )
        VALUES (
          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
          $12::jsonb, $13::jsonb, $14, $15, $16, $17, $18, $19,
-         $20, $21, $22, $23, $24
+         $20, $21, $22, $23, $24, $25
        )
        ON CONFLICT (workspace_id, idempotency_key)
          WHERE idempotency_key IS NOT NULL
@@ -2245,6 +2246,7 @@ async function createCertificateJob(options) {
         completedAt,
         cancelledAt,
         creationRequestHash,
+        options.enrollmentId || null,
       ],
     );
 
@@ -2255,12 +2257,6 @@ async function createCertificateJob(options) {
           groupId: payload.publication.groupId, job: { ...result.rows[0], payload } });
       }
       if (options.enrollmentId) {
-        await db.query(
-          `UPDATE certificate_jobs
-              SET enrollment_id = $3
-            WHERE workspace_id = $1 AND id = $2`,
-          [workspaceId, job.id, options.enrollmentId],
-        );
         job.enrollmentId = options.enrollmentId;
       }
       return options.returnOutcome === true ? { job, created: true } : job;

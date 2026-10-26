@@ -649,27 +649,33 @@ export function VaultRolloutGuide({
                   {['failed', 'blocked', 'orphaned_unknown_effect'].includes(
                     binding.latest_deployment?.stage
                   ) ? (
-                    <DashboardActionButton
-                      variant='outline'
-                      isDisabled={Boolean(busy)}
-                      onClick={async () => {
-                        setBusy(target.bindingId);
-                        setError('');
-                        try {
-                          await retryDeployment(
-                            ctx.workspaceId,
-                            binding.latest_deployment.jobId
-                          );
-                          refresh();
-                        } catch (e) {
-                          setError(message(e));
-                        } finally {
-                          setBusy('');
-                        }
-                      }}
-                    >
-                      Retry deployment to {label(agent)}
-                    </DashboardActionButton>
+                    <>
+                      <Text fontSize='sm'>
+                        Retrying queues this deployment again. If the rollout is
+                        paused, resume it before the retry can run.
+                      </Text>
+                      <DashboardActionButton
+                        variant='outline'
+                        isDisabled={Boolean(busy)}
+                        onClick={async () => {
+                          setBusy(target.bindingId);
+                          setError('');
+                          try {
+                            await retryDeployment(
+                              ctx.workspaceId,
+                              binding.latest_deployment.jobId
+                            );
+                            refresh();
+                          } catch (e) {
+                            setError(message(e));
+                          } finally {
+                            setBusy('');
+                          }
+                        }}
+                      >
+                        Retry deployment to {label(agent)}
+                      </DashboardActionButton>
+                    </>
                   ) : null}
                 </>
               ) : null}
