@@ -4,6 +4,8 @@
  * Brand: Clean, professional, developer-friendly, privacy-focused
  */
 
+import { getDaysUntilExpiration } from '../utils/dateUtils.js';
+
 // ===== PRIMITIVE COLORS =====
 // Base palette - do not use directly in components
 
@@ -460,13 +462,8 @@ export function getExpiryStatus(expiry) {
   }
 
   try {
-    const expirationDate = new Date(expiry);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    expirationDate.setHours(0, 0, 0, 0);
-
-    const diffTime = expirationDate - today;
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    const diffDays = getDaysUntilExpiration(expiry);
+    if (diffDays === null) throw new RangeError('Invalid expiry date');
 
     // Critical: Expired (Grey to de-emphasize)
     if (diffDays < 0) {
