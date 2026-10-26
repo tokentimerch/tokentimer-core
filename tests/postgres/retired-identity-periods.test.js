@@ -6,7 +6,7 @@ assert.equal(process.env.DB_HOST, "127.0.0.1");
 assert.match(process.env.DB_NAME || "", /^pr329_.*_test$/);
 assert.equal(process.env.NODE_ENV, "test");
 const { pool } = require("../../apps/api/db/database");
-const { retireCertificateIdentity, readdManagingSource } = require("../../apps/api/services/certops/certificateIdentity");
+const { retireCertificateIdentity, readdManagingSource, listCertificateIdentities } = require("../../apps/api/services/certops/certificateIdentity");
 after(() => pool.end());
 
 for (const status of ["revoked", "decommissioned"]) {
@@ -54,7 +54,14 @@ for (const status of ["revoked", "decommissioned"]) {
     await pool.query("UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=clock_timestamp(),status='active' WHERE id=$1", [sourceId, replacement]);
     assert.equal((await pool.query("SELECT count(*)::int AS n FROM certops_management_periods WHERE managed_certificate_id=$1 AND ended_at IS NULL", [sourceId])).rows[0].n, 0,
       "a fresh observation does not implicitly resume management");
+    const replacementIdentity = (await pool.query("SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2", [workspaceId, replacement])).rows[0].id;
+    const detail = (await listCertificateIdentities({ workspaceId, identityId: replacementIdentity })).items[0];
+    assert.equal(detail.managed, false);
+    assert.deepEqual(detail.sources, [], "a replacement has no invented management history");
+    assert.deepEqual(detail.restartableSources.map(source => source.managedCertificateId), [sourceId]);
+    assert.deepEqual((await listCertificateIdentities({ workspaceId, identityId })).items[0].restartableSources, []);
     const started = await readd();
+    assert.deepEqual((await listCertificateIdentities({ workspaceId, identityId: replacementIdentity })).items[0].restartableSources, []);
     assert.notEqual(started.periodId, rows[0].id);
     assert.equal((await pool.query("SELECT current_identity_id FROM certops_management_periods WHERE id=$1", [started.periodId])).rows[0].current_identity_id,
       (await pool.query("SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2", [workspaceId, replacement])).rows[0].id);
