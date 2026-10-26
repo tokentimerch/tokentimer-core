@@ -97,7 +97,7 @@ const {
   AGENT_PROTOCOL_ERROR_CODES,
   AgentProtocolError,
 } = require("./protocol");
-const { trustStoreCommandRefForFamily } = require("./trust-store");
+const { trustStoreCommandRefForFamily, resolveConcreteStore } = require("./trust-store");
 const { readReceipt } = require("./trust-store/receipt");
 
 function makeTempConfigDir() {
@@ -6390,7 +6390,7 @@ describe("executeTrustJob / executeJob dispatch wiring for distribute-trust/revo
     // dispatch path wires receiptDir consistently end to end.
     const persisted = readReceipt(
       path.join(workDir, "trust-receipts"),
-      outcome.trustResult.store,
+      resolveConcreteStore(family, "root"),
       CA_FINGERPRINT,
     );
     assert.equal(persisted.row.state, "installed");
@@ -6518,7 +6518,7 @@ describe("executeTrustJob / executeJob dispatch wiring for distribute-trust/revo
     assert.equal(client.calls.reportEvidence.length, 0);
   });
 
-  it("executeTrustJob runs the allowlisted --fresh argv on a Debian revoke, with no fallback warning (B-R5-02)", async () => {
+  it("executeTrustJob runs the allowlisted --fresh argv on a Debian revoke, with no fallback warning", async () => {
     if (!AGENT_TRUST_STORE_PREREQUISITES.candidate) return;
     if (AGENT_TRUST_STORE_PREREQUISITES.family !== "debian") return; // --fresh only exists on Debian-family
     const freshArgv = ["/usr/sbin/update-ca-certificates", "--fresh"];
