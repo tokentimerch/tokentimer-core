@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-26 against main 6d27dd6a, including manager access to certificate setup, role explanations and initial workspace-member loading. Other
+Last reviewed: 2026-10-26 against main c7a289af, including manager access to certificate setup, role explanations and initial workspace-member loading. Other
 certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
 
 This page is the repository milestone index: what Core takes next, what must
