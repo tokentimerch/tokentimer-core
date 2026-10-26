@@ -129,6 +129,22 @@ function executorRouteBlock(routePath) {
 }
 
 describe("CertOps route hardening", () => {
+  it("redacts restartable registration topology for viewers while preserving manager access", () => {
+    const definition = routesSource.match(/function redactIdentityLocationsForViewers\(req, items\) \{[\s\S]*?\n\}/);
+    assert.ok(definition);
+    const redact = new Function("hasAtLeastRole", `return (${definition[0]});`)(
+      (role) => role === "workspace_manager",
+    );
+    const items = [{ sources: [], locations: [], restartableSources: [{
+      managedCertificateId: "registration", source: "agent_filesystem", sourceRef: "/private/host/certificate.pem",
+    }] }];
+    const viewer = redact({ authz: { workspaceRole: "viewer" } }, items);
+    assert.equal(viewer[0].restartableSources[0].managedCertificateId, "registration");
+    assert.equal(viewer[0].restartableSources[0].sourceRef, undefined);
+    assert.equal(JSON.stringify(viewer).includes("/private/host"), false);
+    assert.equal(redact({ authz: { workspaceRole: "workspace_manager" } }, items), items);
+    assert.equal(redact({ isWorkerCall: true }, items), items);
+  });
   it("allows the provisioning idempotency header through split-host CORS", () => {
     assert.match(
       apiIndexSource,

@@ -874,3 +874,55 @@ it('does not preselect when several registrations are current or none is', async
     unmount();
   }
 });
+
+it.each(['active', 'revoked', 'decommissioned'])(
+  'offers explicit re-add only for an active replacement (%s)',
+  async lifecycleStatus => {
+    getIdentityMock.mockResolvedValue({
+      identityId: 'replacement-identity',
+      lifecycleStatus,
+      fingerprintSha256: 'b'.repeat(64),
+      sources: [],
+      locations: [],
+      restartableSources: [
+        {
+          managedCertificateId: 'stopped-registration',
+          source: 'agent_filesystem',
+          sourceRef: 'host/replacement',
+        },
+      ],
+    });
+    readdMock.mockResolvedValue({});
+    render(
+      <ChakraProvider>
+        <CertificateIdentityDetailModal
+          workspaceId='workspace-1'
+          certificate={{ identityId: 'replacement-identity' }}
+          isOpen
+          onClose={vi.fn()}
+          canManage
+        />
+      </ChakraProvider>
+    );
+    await screen.findByText('No active period');
+    if (lifecycleStatus === 'active') {
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Start managing again' })
+      );
+      await waitFor(() =>
+        expect(readdMock).toHaveBeenCalledWith(
+          'workspace-1',
+          'stopped-registration',
+          {
+            renewalProfileId: null,
+            automationEnabled: false,
+          }
+        )
+      );
+    } else {
+      expect(
+        screen.queryByRole('button', { name: 'Start managing again' })
+      ).not.toBeInTheDocument();
+    }
+  }
+);
