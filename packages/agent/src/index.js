@@ -2514,9 +2514,10 @@ async function executeJob({
       if (gate?.ok === false) { const error = new Error("material_lease_unavailable"); error.code = "material_lease_unavailable"; throw error; }
     };
     try {
+      // Dry-run and real execution share the same platform/target preflight.
+      if (job.materialDeployment) resolveBindingPolicy(job,executionContext.materialBindings,policyEngine);
       if (jobMode === "dry_run") {
         resolveStore(executionContext.materialStores, { ...(job.publication || job.materialDeployment), workspaceId: job.workspaceId });
-        if (job.materialDeployment) resolveBindingPolicy(job,executionContext.materialBindings,policyEngine);
         return { status: "dry_run_complete", keyRotated: null };
       }
       if (action === "deploy-from-store") return await executePinnedDeployment({

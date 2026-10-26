@@ -7,7 +7,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `no-host`: skipped because it needs real hardware/OS/IIS not available in CI
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 79
+Total skips found: 80
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -74,6 +74,7 @@ Total skips found: 79
 | `tests/e2e/certops-enrollment-recovery-api-e2e.test.js` | 20 | AD CS installation retry through real API and PostgreSQL | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/material-providers-real.test.js` | 74 | real KV v2: AppRole, ACLs, rotation, exact versions, CAS and uncertain writes | test(..., { skip }) option-object | `no-host` |
 | `tests/e2e/material-providers-real.test.js` | 238 | real Azure Key Vault Secrets: publication, recovery and exact immutable retrieval | test(..., { skip }) option-object | `no-host` |
+| `tests/e2e/windows-material-custody-real.test.js` | 10 | native Windows existing-key custody and association reject unsafe reuse without mutation | test(..., { skip }) option-object | `no-host` |
 | `tests/e2e/windows-material-real.test.js` | 33 | (unknown - no enclosing describe()/it()/test() title found above this line) | it(..., { skip }) option-object | `no-host` |
 | `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 50 | (unknown - no enclosing it()/test() title found above this line) | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 135 | sweepStaleAgents flips a real stale agent to offline and queues exactly one real down alert_queue row | dynamic (this.skip() / t.skip()) | `no-host` |

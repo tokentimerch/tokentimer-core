@@ -67,8 +67,20 @@ namespace TokenTimer {
     static void CheckCustody(CngKey key) {
       // Shared import uses this file-backed KSP. Do not apply its ACL mapping
       // to a TPM/HSM or another provider with different access semantics.
-      if(!key.IsMachineKey || key.IsEphemeral || key.ExportPolicy!=CngExportPolicies.None ||
-        !key.Provider.Equals(CngProvider.MicrosoftSoftwareKeyStorageProvider))throw new CryptographicException();
+      CheckCustodyPolicy(key.IsMachineKey,key.IsEphemeral,key.ExportPolicy,key.Provider);
+    }
+    static void CheckCustodyPolicy(bool machine,bool ephemeral,CngExportPolicies exportPolicy,CngProvider provider) {
+      if(!machine || ephemeral || exportPolicy!=CngExportPolicies.None ||
+        !CngProvider.MicrosoftSoftwareKeyStorageProvider.Equals(provider))throw new CryptographicException();
+    }
+    static void CheckAssociation(X509Certificate2 cert) {
+      // HasPrivateKey and a matching store identifier do not prove association.
+      FailureStage="verify-signature";
+      byte[] nonce=new byte[32];using(var random=RandomNumberGenerator.Create())random.GetBytes(nonce);
+      using(var rsa=cert.GetRSAPrivateKey()) {
+        if(rsa!=null) { using(var pub=cert.GetRSAPublicKey())if(!pub.VerifyData(nonce,rsa.SignData(nonce,HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1),HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1))throw new CryptographicException(); }
+        else using(var ec=cert.GetECDsaPrivateKey())using(var pub=cert.GetECDsaPublicKey())if(!pub.VerifyData(nonce,ec.SignData(nonce,HashAlgorithmName.SHA256),HashAlgorithmName.SHA256))throw new CryptographicException();
+      }
     }
     static void CheckAcl(CngKey key,string[] sids) {
       var descriptor=new RawSecurityDescriptor(key.GetProperty("Security Descr",(CngPropertyOptions)4).GetValue(),0);
@@ -104,7 +116,17 @@ namespace TokenTimer {
         var existing=Find(destination,thumbprint);
         // An existing key is adopted only if its key association, CNG custody
         // and exact service ACL can be proven. Never rewrite a foreign ACL.
-        if(existing!=null) { FailureStage="existing-key";using(var key=Key(existing))CheckAcl(key,sids);return; }
+        if(existing!=null) {
+          FailureStage="existing-key";
+          using(var key=Key(existing)) {
+            FailureStage="key-custody";
+            CheckCustody(key);
+            FailureStage="key-acl";
+            CheckAcl(key,sids);
+          }
+          CheckAssociation(existing);
+          return;
+        }
         GCHandle pinned=GCHandle.Alloc(pfx,GCHandleType.Pinned);
         IntPtr handle=IntPtr.Zero;
         try {
@@ -147,14 +169,7 @@ namespace TokenTimer {
           FailureStage="verify-acl";
           CheckAcl(key,sids);
         }
-        // HasPrivateKey alone is insufficient: prove the acquired key matches
-        // the certificate and is usable by the executing service identity.
-        FailureStage="verify-signature";
-        byte[] nonce=new byte[32];using(var random=RandomNumberGenerator.Create())random.GetBytes(nonce);
-        using(var rsa=cert.GetRSAPrivateKey()) {
-          if(rsa!=null) { using(var pub=cert.GetRSAPublicKey())if(!pub.VerifyData(nonce,rsa.SignData(nonce,HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1),HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1))throw new CryptographicException(); }
-          else using(var ec=cert.GetECDsaPrivateKey())using(var pub=cert.GetECDsaPublicKey())if(!pub.VerifyData(nonce,ec.SignData(nonce,HashAlgorithmName.SHA256),HashAlgorithmName.SHA256))throw new CryptographicException();
-        }
+        CheckAssociation(cert);
       }
     }
   }

@@ -12,7 +12,7 @@ const { applyRestrictivePermissions } = require("../platform");
 const { computeCertificateFingerprint, parseDnsSans } = require("../verify");
 const { executePinnedDeployment, reconcilePinnedDeployment, deployWroteNothing } = require("./lifecycle");
 
-async function fixture(t) {
+async function fixture(t, platform = "linux") {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tt-binding-test-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const tokenFile = path.join(directory, "token");
@@ -97,7 +97,7 @@ async function fixture(t) {
     "material-bindings",
     `${bindingId}.json`,
   );
-  function deploy({ generation = 1, reload = async () => true, windowsConnector, onBeforeMutation, intent = {}, checkLease = async () => {} } = {}) {
+  function deploy({ generation = 1, reload = async () => true, windowsConnector, onBeforeMutation, intent = {}, checkLease = async () => {}, platform: executionPlatform = platform } = {}) {
     return executePinnedDeployment({
       job: {
         workspaceId: ids.workspaceId,
@@ -125,6 +125,7 @@ async function fixture(t) {
       onBeforeMutation,
       reload,
       fixtureLoopbackHttp: true,
+      platform: executionPlatform,
     });
   }
   return { deploy, record, target, deployDir, bindings, bindingId, bundle, ids, directory };
@@ -204,7 +205,7 @@ test("only deploy failures that provably wrote nothing are treated as clean", ()
 });
 
 async function windowsFixture(t) {
-  const f=await fixture(t),binding=f.bindings[f.bindingId];
+  const f=await fixture(t,"win32"),binding=f.bindings[f.bindingId];
   const listener=tls.createServer({cert:f.bundle.certificatePem,key:f.bundle.privateKeyPem},socket=>socket.end());
   await new Promise(resolve=>listener.listen(0,"127.0.0.1",resolve));t.after(()=>new Promise(resolve=>listener.close(resolve)));
   Object.assign(binding,{connector:"windows-material-iis-v1",serviceAccountSids:["S-1-5-82-123-456"],
@@ -239,7 +240,7 @@ test("Windows interrupted activation requires verified local reconciliation and 
   assert.equal(failed.status,"orphaned_unknown_effect");assert.equal(failed.deploymentReceipt.installed,true);assert.equal(failed.deploymentReceipt.servedVerified,false);
   await assert.rejects(f.deploy({windowsConnector:f.connector}),{code:"material_binding_uncertain"});
   const saved=readRecord(f.record);
-  const options={job:{workspaceId:f.ids.workspaceId,agentId:"consumer-agent",materialDeployment:saved.intent},bindings:f.bindings,stateDir:path.join(f.directory,"state"),policyEngine:{checkTargetScope:()=>({allowed:true})},windowsConnector:f.connector};
+  const options={job:{workspaceId:f.ids.workspaceId,agentId:"consumer-agent",materialDeployment:saved.intent},bindings:f.bindings,stateDir:path.join(f.directory,"state"),policyEngine:{checkTargetScope:()=>({allowed:true})},windowsConnector:f.connector,platform:"win32"};
   await assert.rejects(reconcilePinnedDeployment(options),{code:"material_reconciliation_mismatch"});
   f.repair();assert.equal((await reconcilePinnedDeployment(options)).reconciled,true);
   assert.equal((await f.deploy({windowsConnector:f.connector})).status,"succeeded");
@@ -248,6 +249,60 @@ test("Windows verification-only detects drift without import, activation, or a m
   const f=await windowsFixture(t);
   const result=await f.deploy({windowsConnector:f.connector,intent:{verificationOnly:true},onBeforeMutation:()=>assert.fail("mutation")});
   assert.equal(result.status,"failed");assert.equal(f.imports,0);assert.equal(f.activations,0);
+});
+
+for (const [platform, type] of [["win32", "endpoint"], ["linux", "windows-iis"], ["darwin", "endpoint"], ["darwin", "windows-iis"]]) {
+  test(`${platform} rejects shared ${type} before staging, reload or native mutation`, async t => {
+    const f = await fixture(t, platform);
+    f.bindings[f.bindingId].target.type = type;
+    const untouched = () => assert.fail("unsupported combination reached execution");
+    for (const verificationOnly of [false, true]) {
+      await assert.rejects(f.deploy({ intent: { verificationOnly }, checkLease: untouched,
+        reload: untouched, onBeforeMutation: untouched,
+        windowsConnector: { withLock: untouched, import: untouched, activate: untouched } }),
+      { code: "material_platform_unqualified" });
+    }
+    assert.equal(fs.existsSync(path.join(f.directory, "state")), false);
+    assert.deepEqual(fs.readdirSync(f.deployDir), []);
+    await assert.rejects(reconcilePinnedDeployment({
+      job: { workspaceId: f.ids.workspaceId, agentId: "consumer-agent", materialDeployment: {
+        ...f.ids, bindingId: f.bindingId, generation: 1, materialStoreRef: "customer",
+        deploymentProfileRef: "fixture", profileRevision: 1, authorizationRevision: 1,
+        verificationPolicy: "served",
+      } }, bindings: f.bindings, stateDir: path.join(f.directory, "state"), policyEngine: {}, platform,
+    }), { code: "material_platform_unqualified" });
+    assert.equal(fs.existsSync(path.join(f.directory, "state")), false);
+  });
+}
+
+test("Linux endpoint deployment still installs the pair, reloads and verifies served TLS", async t => {
+  const f = await fixture(t);
+  const listener = tls.createServer({ cert: f.bundle.certificatePem, key: f.bundle.privateKeyPem }, socket => socket.end());
+  await new Promise(resolve => listener.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise(resolve => listener.close(resolve)));
+  f.bindings[f.bindingId].probes[0].port = listener.address().port;
+  let reloads = 0;
+  const result = await f.deploy({ reload: async () => { reloads++; return true; } });
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.deploymentReceipt.servedVerified, true);
+  assert.equal(reloads, 1);
+  assert.equal(fs.readFileSync(f.target.keyPath, "utf8"), f.bundle.privateKeyPem);
+  assert.equal(readRecord(f.record).uncertain, false);
+});
+
+test("Windows shared IIS refuses an untyped connector before any helper or filesystem effects", async t => {
+  const f = await fixture(t, "win32");
+  const binding = f.bindings[f.bindingId];
+  Object.assign(binding, { connector: "powershell", serviceAccountSids: [],
+    target: { type: "windows-iis", reference: "site", store: "My", binding: {
+      site: "Review", address: "127.0.0.1", port: 9, store: "My", sniHost: binding.probes[0].sni,
+    } } });
+  const untouched = () => assert.fail("untyped connector reached execution");
+  await assert.rejects(f.deploy({ checkLease: untouched, reload: untouched,
+    windowsConnector: { withLock: untouched }, onBeforeMutation: untouched }),
+  { code: "material_windows_policy_denied" });
+  assert.equal(fs.existsSync(path.join(f.directory, "state")), false);
+  assert.deepEqual(fs.readdirSync(f.deployDir), []);
 });
 test("Windows rejects wrong authorization, wrong hostname, broad ACLs and lease loss before import",async t=>{
   const f=await windowsFixture(t);

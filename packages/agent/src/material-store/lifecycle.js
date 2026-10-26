@@ -154,7 +154,7 @@ function probeListener(probe, fingerprintSha256, verificationPolicy) {
   });
 }
 
-function resolveBindingPolicy(job, bindings, policyEngine) {
+function resolveBindingPolicy(job, bindings, policyEngine, { platform = process.platform } = {}) {
   const intent = intentFromJob(job);
   const binding = Object.hasOwn(bindings || {}, intent.bindingId) ? bindings[intent.bindingId] : null;
   if (!UUID.test(intent.bindingId) || !Number.isSafeInteger(intent.generation) || intent.generation < 1 ||
@@ -163,6 +163,10 @@ function resolveBindingPolicy(job, bindings, policyEngine) {
     binding.deploymentProfileRef !== intent.deploymentProfileRef || binding.profileRevision !== intent.profileRevision ||
     binding.authorizationRevision !== intent.authorizationRevision || binding.verificationPolicy !== intent.verificationPolicy ||
     !["endpoint","windows-iis"].includes(binding.target?.type) || !Array.isArray(binding.probes) || binding.probes.length < 1 || binding.probes.length > 16) throw failure("material_binding_policy_denied");
+  // Platform qualification is independent of release capability advertisement.
+  // Enforce before any lock, staging, provider read, native helper or reload.
+  if (!(platform === "linux" && binding.target.type === "endpoint") &&
+    !(platform === "win32" && binding.target.type === "windows-iis")) throw failure("material_platform_unqualified");
   for (const probe of binding.probes) {
     if (!probe || typeof probe.dialAddress !== "string" || !probe.dialAddress || !Number.isInteger(probe.port) || probe.port < 1 || probe.port > 65535 ||
       typeof probe.sni !== "string" || !/^[a-z0-9.-]{1,253}$/i.test(probe.sni)) throw failure("material_probe_config_invalid");
@@ -179,8 +183,8 @@ function resolveBindingPolicy(job, bindings, policyEngine) {
   return { intent,binding };
 }
 
-async function executePinnedDeployment({ job, stores, bindings, stateDir, policyEngine, checkLease, reload, recoveryOnly = false, fixtureLoopbackHttp = false, onBeforeMutation = () => {}, windowsConnector, signal: jobSignal }) {
-  const { intent,binding } = resolveBindingPolicy(job,bindings,policyEngine);
+async function executePinnedDeployment({ job, stores, bindings, stateDir, policyEngine, checkLease, reload, recoveryOnly = false, fixtureLoopbackHttp = false, onBeforeMutation = () => {}, windowsConnector, signal: jobSignal, platform = process.platform }) {
+  const { intent,binding } = resolveBindingPolicy(job,bindings,policyEngine,{platform});
   const store = createMaterialStore(stores, intent, { fixtureLoopbackHttp });
   const locks = path.join(stateDir, "material-locks");
   const record = path.join(stateDir, "material-bindings", `${intent.bindingId}.json`);
@@ -332,8 +336,8 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
 // current-state promotion. Prove the installed pair AND every configured TLS
 // listener before clearing an uncertain local marker. The subsequent signed
 // retry still needs a live claim and the original approved generation.
-async function reconcilePinnedDeployment({ job,bindings,stateDir,policyEngine,windowsConnector }) {
-  const { intent,binding }=resolveBindingPolicy(job,bindings,policyEngine);
+async function reconcilePinnedDeployment({ job,bindings,stateDir,policyEngine,windowsConnector,platform = process.platform }) {
+  const { intent,binding }=resolveBindingPolicy(job,bindings,policyEngine,{platform});
   return withMaterialLock(path.join(stateDir,"material-locks"),`binding:${intent.workspaceId}:${intent.bindingId}`,async()=>{
     const record=path.join(stateDir,"material-bindings",`${intent.bindingId}.json`);
     const previous=JSON.parse(readProtectedFile(record,MAX_BUNDLE_BYTES+16384));

@@ -62,6 +62,10 @@ function makePkcs12(bundle, password) {
   const certs = bundle.certificatePem
     .match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g)
     .map((pem) => new crypto.X509Certificate(pem).raw);
+  // PKCS#12 localKeyId pairs the leaf/key bags using the Windows thumbprint
+  // convention. It is an interoperability label, never an integrity check.
+  // Bundle/native/TLS identity and signing proofs use SHA-256; the PFX MAC
+  // below uses HMAC-SHA-256. Keep this identifier stable for CryptoAPI import.
   const id = crypto.createHash("sha1").update(certs[0]).digest();
   const attribute = der(
     0x31,
