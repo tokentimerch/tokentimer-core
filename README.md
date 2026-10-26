@@ -14,6 +14,7 @@
 <p align="center">
   <a href="https://tokentimer.ch"><img src="https://img.shields.io/badge/Website-tokentimer.ch-0F766E?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Website" /></a>
   <a href="https://discord.gg/7AUSMNWHC5"><img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join the Discord community" /></a>
+  <a href="https://demo.tokentimer.ch"><img src="https://img.shields.io/badge/Demo-Explore%20live-3B82F6?style=for-the-badge" alt="Explore the interactive demo" /></a>
   <a href="https://tokentimer.ch/docs"><img src="https://img.shields.io/badge/Docs-Documentation-2563EB?style=for-the-badge&logo=gitbook&logoColor=white" alt="Documentation" /></a>
 </p>
 
