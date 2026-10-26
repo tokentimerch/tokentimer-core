@@ -14,7 +14,7 @@ const {
   readEnrollmentJournal,
 } = require("../../../packages/agent/src/issuers/adcs-enrollment");
 const REQUIRED_SCENARIOS = Object.freeze([
-  "adcs-real-browser-manager-viewer-admin-boundary",
+  "adcs-real-browser-manager-viewer-role-boundary",
   "adcs-real-browser-role-boundary-preserves-native-uncertain-state",
 ]);
 const REQUIRED_SOURCES = Object.freeze([
@@ -39,8 +39,8 @@ const FLAGS = Object.freeze([
   "distinctOwnedNonownerActors",
   "noGlobalAdminBypassAssumed",
   "publicManagerViewerManagerTransitions",
-  "managerAndViewerUiDenied",
-  "bothRolesReconcileAndAbandonForbidden",
+  "managerUiAllowedViewerUiDenied",
+  "viewerReconcileAndAbandonForbidden",
   "publicOwnerAdminPatchDemotionRefused",
   "exactOwnerAdminUnchanged",
   "actualUncertainEnrollmentAndJobsUnchanged",
@@ -52,7 +52,7 @@ const FLAGS = Object.freeze([
   "browserAndTrustDrained",
 ]);
 const SCOPE =
-  "public-manager-viewer-adcs-admin-boundary-not-mounted-admin-withdrawal";
+  "public-manager-viewer-adcs-role-boundary-not-mounted-admin-withdrawal";
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 function verifyProof(value) {
   assert.deepEqual(
@@ -69,7 +69,7 @@ function verifyProof(value) {
   );
   assert.equal(value.scope, SCOPE);
   assert.match(value.enrollmentId, UUID);
-  assert.equal(value.forbiddenMutations, 4);
+  assert.equal(value.forbiddenMutations, 2);
   assert.equal(value.roleChanges, 2);
   assert.equal(value.adminDemotions, 0);
   assert.equal(value.mountedAdminWithdrawalQualified, false);
@@ -82,7 +82,8 @@ function verifyRoleObservations(value) {
     "viewer",
     "workspace_manager",
   ]);
-  assert.deepEqual(value.forbiddenStatuses, [403, 403, 403, 403]);
+  assert.deepEqual(value.forbiddenStatuses, [403, 403]);
+  assert.deepEqual(value.managerReadStatuses, [200, 200]);
   assert.equal(value.adminDemotionStatus, 403);
   assert.equal(value.ownerRole, "admin");
   assert.equal(value.actorGlobalAdmin, false);
@@ -310,6 +311,7 @@ async function qualifyAdminRoleBoundary(context, enrollmentId) {
   const observations = {
     roles: [],
     forbiddenStatuses: [],
+    managerReadStatuses: [],
     actorGlobalAdmin: false,
     controllerGlobalAdmin: false,
   };
@@ -338,10 +340,17 @@ async function qualifyAdminRoleBoundary(context, enrollmentId) {
           },
           async (page) => {
             const denied = page.getByText(
-              "AD CS issuer management is limited to workspace admins",
+              "AD CS issuer management requires a workspace manager or owner",
               { exact: true },
             );
-            await denied.waitFor();
+            const managerAllowed = async () => {
+              await page.reload();
+              await page.getByRole("button", { name: "New issuer", exact: true }).waitFor();
+              const response = await actor.request(`${api}/issuers`);
+              observations.managerReadStatuses.push(response.status);
+              assert.equal(response.status, 200);
+            };
+            await managerAllowed();
             const forbidden = async () => {
               assert.equal(
                 await page
@@ -365,7 +374,6 @@ async function qualifyAdminRoleBoundary(context, enrollmentId) {
               }
               await denied.waitFor();
             };
-            await forbidden();
             changed = true;
             assert.equal(
               (await controller.request(member, "PATCH", { role: "viewer" }))
@@ -373,6 +381,8 @@ async function qualifyAdminRoleBoundary(context, enrollmentId) {
               200,
             );
             observations.roles.push(await role());
+            await page.reload();
+            await denied.waitFor();
             await forbidden();
             assert.equal(
               (
@@ -384,7 +394,7 @@ async function qualifyAdminRoleBoundary(context, enrollmentId) {
             );
             changed = false;
             observations.roles.push(await role());
-            await denied.waitFor();
+            await managerAllowed();
           },
         );
         observations.ownerRole = (
@@ -395,7 +405,7 @@ async function qualifyAdminRoleBoundary(context, enrollmentId) {
       {
         evidenceLevel: "real-host",
         oracle:
-          "real separate non-owner manager/viewer UI remains admin-restricted, public manager→viewer→manager transitions, four actual forbidden operations and public admin-demotion refusal",
+          "real non-owner manager issuer access, viewer UI and two API refusals, public manager→viewer→manager transitions and owner-demotion refusal",
       },
     );
   } catch (error) {
@@ -451,7 +461,7 @@ async function qualifyAdminRoleBoundary(context, enrollmentId) {
       const value = {
         scope: SCOPE,
         enrollmentId,
-        forbiddenMutations: 4,
+        forbiddenMutations: 2,
         roleChanges: 2,
         adminDemotions: 0,
         mountedAdminWithdrawalQualified: false,

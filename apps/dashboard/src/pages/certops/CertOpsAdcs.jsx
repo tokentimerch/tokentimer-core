@@ -37,7 +37,7 @@ import {
   listIssuers,
   proposeEnrollmentRequestId,
 } from '../../components/certops/certopsEnrollmentsApi';
-import { useCertOpsWorkspaceAdminState } from '../../components/certops/useCertOps.js';
+import { useCertOpsManagementState } from '../../components/certops/useCertOps.js';
 import {
   DashboardActionButton,
   DashboardErrorAlert,
@@ -854,10 +854,10 @@ export default function CertOpsAdcs({
   onFocusHandled,
 } = {}) {
   const {
-    status: adminStatus,
-    isAdmin,
-    retry: retryAdmin,
-  } = useCertOpsWorkspaceAdminState();
+    status: roleStatus,
+    canManage,
+    retry: retryRole,
+  } = useCertOpsManagementState();
   const outlet = useOutletContext();
   const pauseResolved = !outlet || outlet.killSwitchResolved === true;
   const paused = !pauseResolved || Boolean(outlet?.certOpsPaused);
@@ -899,7 +899,7 @@ export default function CertOpsAdcs({
 
   const reload = useCallback(
     async signal => {
-      if (!workspaceId || !isAdmin) return;
+      if (!workspaceId || !canManage) return;
       const [issuerPage, enrollmentPage, agentPage] = await Promise.all([
         listIssuers(workspaceId, {
           limit: PAGE_LIMIT,
@@ -918,11 +918,11 @@ export default function CertOpsAdcs({
       setEnrollmentTotal(Number(enrollmentPage.pagination?.total || 0));
       setLoadError('');
     },
-    [workspaceId, isAdmin]
+    [workspaceId, canManage]
   );
 
   useEffect(() => {
-    if (!isAdmin) {
+    if (!canManage) {
       setLoading(false);
       return undefined;
     }
@@ -948,7 +948,7 @@ export default function CertOpsAdcs({
       cancelled = true;
       controller.abort();
     };
-  }, [isAdmin, reload]);
+  }, [canManage, reload]);
 
   const loadMoreIssuers = useCallback(async () => {
     setLoadingMore('issuers');
@@ -990,18 +990,18 @@ export default function CertOpsAdcs({
   // may use it, then hand the request back so the link is consumed once.
   useEffect(() => {
     if (!openRequest) return;
-    if (adminStatus === 'loading' || !pauseResolved || loading) return;
-    if (isAdmin && !paused) {
+    if (roleStatus === 'loading' || !pauseResolved || loading) return;
+    if (canManage && !paused) {
       setIssuerPrefill(openRequest);
       setWizardOpen(true);
     }
     onRequestHandled?.();
   }, [
     openRequest,
-    adminStatus,
+    roleStatus,
     pauseResolved,
     loading,
-    isAdmin,
+    canManage,
     paused,
     onRequestHandled,
   ]);
@@ -1009,13 +1009,13 @@ export default function CertOpsAdcs({
   // A deep link names one issuer to open, for a re-check. Once the list is
   // loaded the issuer is expanded and the request is handed back.
   useEffect(() => {
-    if (!focusIssuerId || loading || adminStatus === 'loading') return;
+    if (!focusIssuerId || loading || roleStatus === 'loading') return;
     if (issuers.some(item => item.id === focusIssuerId)) {
       issuerListReady.current = true;
       setOpenIssuerId(focusIssuerId);
     }
     onFocusHandled?.();
-  }, [focusIssuerId, loading, adminStatus, issuers, onFocusHandled]);
+  }, [focusIssuerId, loading, roleStatus, issuers, onFocusHandled]);
 
   useEffect(() => {
     issuerListReady.current = false;
@@ -1093,19 +1093,19 @@ export default function CertOpsAdcs({
     [stopPreflightPoll, workspaceId]
   );
 
-  if (adminStatus === 'loading') {
+  if (roleStatus === 'loading') {
     return (
       <DashboardState type='loading' title='Checking your workspace role...' />
     );
   }
 
-  if (adminStatus === 'error') {
+  if (roleStatus === 'error') {
     return (
       <DashboardState
         title='Could not check your workspace role'
         description='The issuer page stays closed until the role lookup succeeds.'
         action={
-          <DashboardActionButton onClick={retryAdmin}>
+          <DashboardActionButton onClick={retryRole}>
             Try again
           </DashboardActionButton>
         }
@@ -1113,11 +1113,11 @@ export default function CertOpsAdcs({
     );
   }
 
-  if (!isAdmin) {
+  if (!canManage) {
     return (
       <DashboardState
-        title='AD CS issuer management is limited to workspace admins'
-        description='Viewers and managers can still see jobs. Confirming a CA key and reconciling an enrollment require an admin.'
+        title='AD CS issuer management requires a workspace manager or owner'
+        description='Ask a workspace manager or owner to configure the issuer or manage enrollments.'
       />
     );
   }

@@ -3732,7 +3732,7 @@ router.post(
 // manager-scoped too, so this keeps the API and the UI enforcing the same line
 // instead of relying on the client to hide the surface.
 //
-// The single mutating route is admin-gated via
+// Profile mutations are manager-or-owner gated via
 // authorize("certops.renewal_profile.manage") because a profile edit changes
 // what a host-privileged agent executes at the next renewal; see
 // services/certops/renewalProfileAdmin.js for the editable-field boundary.

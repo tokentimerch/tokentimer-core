@@ -12,7 +12,7 @@ Linux hosts, and Windows hosts that are not domain-joined, do not enroll over DC
 
 ## Operator sequence
 
-Use the workspace owner for issuer confirmation and profile creation. System administrator access alone does not grant workspace ownership; a disabled setup choice explains the required role on hover or keyboard focus. Start the dashboard's **Preferences → Setup guide** or **Certificate Management → Settings → CertOps quickstart**, choose the Microsoft CA goal and Windows Server, and select your existing agent when appropriate.
+Workspace managers and owners can configure AD CS issuers, confirm CA keys and create renewal profiles. Viewers see a disabled setup choice that explains the required role on hover or keyboard focus; system administrator status alone does not replace workspace membership. Start the dashboard's **Preferences → Setup guide** or **Certificate Management → Settings → CertOps quickstart**, choose the Microsoft CA goal and Windows Server, and select your existing agent when appropriate.
 
 1. Prepare a domain-joined Windows member, existing IIS site/HTTPS binding and a published server-authentication template. Give its computer account, or a dedicated group, **Read and Enroll** on that template.
 2. Merge one complete [enrollment rule](#enrollment-rules) into the existing config; preserve `agentId`, credentials, pins and custody state. Declare the target DNS name, enable store discovery and confirm the actual IIS registration appears in **Certificates**.

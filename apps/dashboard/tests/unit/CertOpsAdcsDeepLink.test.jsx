@@ -5,7 +5,7 @@ import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
-  admin: { status: 'ready', isAdmin: true, retry: () => {} },
+  management: { status: 'ready', canManage: true, retry: () => {} },
   outlet: { killSwitchResolved: true, certOpsPaused: false },
   wizardProps: null,
 }));
@@ -15,7 +15,7 @@ vi.mock('react-router', async importOriginal => ({
   useOutletContext: () => h.outlet,
 }));
 vi.mock('../../src/components/certops/useCertOps.js', () => ({
-  useCertOpsWorkspaceAdminState: () => h.admin,
+  useCertOpsManagementState: () => h.management,
 }));
 vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
   useWorkspace: () => ({ workspaceId: 'ws-1' }),
@@ -83,7 +83,7 @@ function renderRenewals(url) {
 const search = () => screen.getByTestId('search').textContent;
 
 beforeEach(() => {
-  h.admin = { status: 'ready', isAdmin: true, retry: () => {} };
+  h.management = { status: 'ready', canManage: true, retry: () => {} };
   h.outlet = { killSwitchResolved: true, certOpsPaused: false };
   h.wizardProps = null;
 });
@@ -118,11 +118,11 @@ describe('New AD CS issuer deep link', () => {
     expect(search()).toBe('?workspace=ws-1');
   });
 
-  it('shows the admin-only state instead of the dialog for a non-admin', async () => {
-    h.admin = { status: 'ready', isAdmin: false, retry: () => {} };
+  it('shows the manager-or-owner requirement instead of the dialog for a viewer', async () => {
+    h.management = { status: 'ready', canManage: false, retry: () => {} };
     renderRenewals('/certops/renewals?workspace=ws-1&action=new-adcs-issuer');
     expect(
-      await screen.findByText(/limited to workspace admins/)
+      await screen.findByText(/requires a workspace manager or owner/)
     ).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).toBeNull();
     await waitFor(() => expect(search()).toBe('?workspace=ws-1'));

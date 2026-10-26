@@ -47,7 +47,7 @@ const BASE_CAPABILITIES = Object.freeze([
   { id: "alerts.contact_groups", group: "alerts", minRole: "workspace_manager" },
   { id: "alerts.email_delivery", group: "alerts", minRole: "workspace_manager", needs: "smtp" },
   { id: "certops.core", group: "certops", minRole: "workspace_manager", needs: "certops" },
-  { id: "certops.adcs", group: "certops", minRole: "admin", needs: "certops" },
+  { id: "certops.adcs", group: "certops", minRole: "workspace_manager", needs: "certops" },
   { id: "certops.vault_distribution", group: "certops", minRole: "workspace_manager", needs: "certops" },
 ]);
 

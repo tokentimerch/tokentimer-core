@@ -21,14 +21,23 @@ const manager = {
 describe("onboarding capabilities", () => {
   afterEach(() => resetCapabilityOverrides());
 
-  it("names the workspace-owner restriction separately from AD CS licensing", () => {
-    const cap = find(evaluateCapabilities({ ...manager, isSystemAdmin: true }), "certops.adcs");
-    assert.equal(cap.entitled, true);
+  it("allows AD CS setup for managers and owners without system administration", () => {
+    for (const workspaceRole of ["workspace_manager", "admin"]) {
+      for (const isSystemAdmin of [false, true]) {
+        const cap = find(evaluateCapabilities({ ...manager, workspaceRole, isSystemAdmin }), "certops.adcs");
+        assert.equal(cap.entitled, true);
+        assert.equal(cap.authorized, true);
+        assert.equal(cap.state, "ready");
+        assert.deepEqual(cap.blockers, []);
+      }
+    }
+  });
+
+  it("explains the manager-or-owner requirement to viewers, including system admins", () => {
+    const cap = find(evaluateCapabilities({ ...manager, workspaceRole: "viewer", isSystemAdmin: true }), "certops.adcs");
     assert.equal(cap.authorized, false);
     assert.equal(cap.state, "role_handoff");
-    assert.equal(cap.blockers[0].code, "ROLE_REQUIRED");
-    assert.match(cap.blockers[0].remediation, /workspace owner/);
-    assert.match(cap.blockers[0].remediation, /System admin access alone/);
+    assert.match(cap.blockers[0].remediation, /workspace managers and owners/);
   });
 
   it("is ready for a manager when prerequisites are in place", () => {

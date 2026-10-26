@@ -6,8 +6,7 @@ import { GoalStep } from '../../src/components/onboarding/steps.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
 const label = 'Issue certificates from my Microsoft CA (AD CS)';
-const explanation =
-  'Restricted to the workspace owner. System admin access alone does not grant this role.';
+const explanation = 'Restricted to workspace managers and owners.';
 
 function show(state = 'role_handoff') {
   const update = vi.fn();

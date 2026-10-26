@@ -57,26 +57,25 @@ const actionPolicy = {
   "auto_sync.manage": "workspace_manager",
   "domain.manage": "workspace_manager",
   "certops.kill_switch.manage": "admin",
-  // Editing a renewal profile changes what a privileged agent executes on a
-  // host at the next renewal, so it sits above ordinary CertOps job creation
-  // (workspace_manager) and alongside the kill switch.
-  "certops.renewal_profile.manage": "admin",
+  // Workspace managers configure certificate issuance and renewal workflows,
+  // matching the role required to create and approve certificate jobs.
+  "certops.renewal_profile.manage": "workspace_manager",
   // Diagnostic bootstrap mints a new machine credential and lets a
   // reference client authenticate against this workspace's agent protocol
   // (ADR-0012 decision 7). Low blast radius by construction (protocol_smoke
   // only, no certificate access), but it is still credential issuance, so
-  // it sits at admin alongside the kill switch and renewal profile rather
+  // it sits at admin alongside the kill switch rather
   // than at the workspace_manager level ordinary job creation uses.
   "certops.agents.diagnose": "admin",
   // Installing or removing a root/intermediate CA in a machine trust store
   // (ADR-0012 decisions 4-6) changes what every certificate on that host is
   // trusted against, not just one certificate's lifecycle, so it sits at the
-  // same admin level as the kill switch and renewal profile management
+  // same admin level as the kill switch
   // rather than the workspace_manager level ordinary job creation uses.
   "certops.trust_anchor.manage": "admin",
-  // Creating or confirming an issuer changes what a later enrollment will
-  // ask an agent to submit. Same admin bar as renewal profiles.
-  "certops.issuer.manage": "admin",
+  // Issuer setup, CA confirmation and enrollment management share the same
+  // manager-or-owner bar as renewal-profile management.
+  "certops.issuer.manage": "workspace_manager",
   // Execution-console text is diagnostic. Viewers see stream status only.
   "certops.agent_logs.read": "workspace_manager",
   // Scan and import both mutate workspace inventory (or probe provider
