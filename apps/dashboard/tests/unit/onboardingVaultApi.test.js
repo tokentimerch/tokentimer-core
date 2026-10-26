@@ -10,10 +10,21 @@ import {
   readDistribution,
   requestRollout,
   retryDeployment,
+  resumeRollout,
 } from '../../src/components/onboarding/vaultGuideApi.js';
 
 beforeEach(() => vi.clearAllMocks());
 describe('Vault guide uses the authenticated workspace surface', () => {
+  it('resumes the actual rollout without changing its approved intent', async () => {
+    client.post.mockResolvedValue({
+      data: { id: 'rollout', state: 'deploying' },
+    });
+    await resumeRollout('ws', 'group', 'rollout');
+    expect(client.post).toHaveBeenCalledWith(
+      '/api/v1/workspaces/ws/certops/distribution-groups/group/rollouts/rollout/state',
+      { state: 'deploying' }
+    );
+  });
   it('reads versions and consumer evidence together, and propagates failed reads', async () => {
     const abort = new AbortController();
     client.get.mockImplementation(url =>

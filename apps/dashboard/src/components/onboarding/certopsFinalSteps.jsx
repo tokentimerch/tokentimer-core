@@ -75,6 +75,7 @@ import {
 } from './useSummaryPolling.js';
 import WorkerWarning from './WorkerWarning.jsx';
 import { VaultAgentTest, VaultRolloutGuide } from './VaultGuidedOperations.jsx';
+import ConsumerBootstrapToken from './ConsumerBootstrapToken.jsx';
 
 /** A UUID the operator uses for the consumer binding (not secret). */
 function newBindingId() {
@@ -969,6 +970,7 @@ export function VaultStep({ ctx }) {
               title='Prepare the consumer server'
               who='root (sudo) on the consumer server, then the agent user'
             >
+              <ConsumerBootstrapToken workspaceId={ctx.workspaceId} />
               <FormControl as='fieldset'>
                 <FormLabel as='legend' fontSize='sm'>
                   Consumer delivery

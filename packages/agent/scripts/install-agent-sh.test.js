@@ -6,12 +6,14 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
+const fs = require("node:fs");
+const os = require("node:os");
 const { spawnSync } = require("node:child_process");
 
 const installer = path.join(__dirname, "install-agent.sh");
 const supported = process.platform === "linux" || process.platform === "darwin";
 
-function dryRun(extraArgs) {
+function dryRun(extraArgs, env = {}) {
   return spawnSync(
     "sh",
     [
@@ -24,7 +26,7 @@ function dryRun(extraArgs) {
       "--no-trust-store",
       ...extraArgs,
     ],
-    { encoding: "utf8" },
+    { encoding: "utf8", env: { ...process.env, ...env } },
   );
 }
 
@@ -33,6 +35,18 @@ describe(
   // skip-reason: no-host - install-agent.sh is POSIX shell and only runs on Linux/macOS
   { skip: !supported },
   () => {
+    it("refuses the legacy backend before claiming a reload rule was installed", () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-polkit-check-"));
+      try {
+        fs.writeFileSync(path.join(dir, "pkaction"), '#!/bin/sh\nprintf "pkaction version 0.105\\n"\n', { mode: 0o755 });
+        const result = dryRun(["--reload-service", "nginx"], { PATH: `${dir}${path.delimiter}${process.env.PATH}` });
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /polkit JavaScript rules/);
+        assert.doesNotMatch(result.stdout, /Installing agent package/);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
     it("merges --reload-service with the rule already on the host by default", () => {
       const result = dryRun(["--reload-service", "nginx"]);
       assert.equal(result.status, 0, result.stderr);

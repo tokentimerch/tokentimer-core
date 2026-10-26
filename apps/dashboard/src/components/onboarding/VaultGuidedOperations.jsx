@@ -26,6 +26,7 @@ import {
   readDistribution,
   requestRollout,
   retryDeployment,
+  resumeRollout,
 } from './vaultGuideApi.js';
 import { ApprovalPolicyNote, ApprovalWaitPanel } from './approvalPolicy.jsx';
 import { CopyBlock } from './blocks.jsx';
@@ -420,6 +421,42 @@ export function VaultRolloutGuide({
       );
     });
   const rolloutLocked = Boolean(rolloutId || requestKey);
+  // The coordinator job ID is not the rollout ID. Resume only a rollout
+  // reported by the server for the currently selected version and bindings.
+  const pausedRollouts = [
+    ...new Set(
+      targets
+        .map(t => bindingFor(t))
+        .filter(
+          b =>
+            b?.latest_deployment?.rolloutState === 'paused' &&
+            b.latest_deployment.rolloutRequestJobId === rolloutId &&
+            b.desired_material_version_id === selected?.id
+        )
+        .map(b => b.latest_deployment.rolloutId)
+        .filter(Boolean)
+    ),
+  ];
+  const pausedRolloutId =
+    pausedRollouts.length === 1 ? pausedRollouts[0] : null;
+  const needsRetry = targets.some(t =>
+    ['failed', 'blocked', 'orphaned_unknown_effect'].includes(
+      bindingFor(t)?.latest_deployment?.stage
+    )
+  );
+  const resume = async () => {
+    if (!pausedRolloutId || busy || needsRetry || !configured) return;
+    setBusy('resume');
+    setError('');
+    try {
+      await resumeRollout(ctx.workspaceId, groupId, pausedRolloutId);
+      refresh();
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setBusy('');
+    }
+  };
   const deploy = async () => {
     if (!configured || !selected || busy || rolloutId) return;
     setBusy('rollout');
@@ -524,7 +561,7 @@ export function VaultRolloutGuide({
                     Boolean(binding) || rolloutLocked || Boolean(busy)
                   }
                   onChange={e => {
-                    const value = e.target.value;
+                    const { value } = e.target;
                     setTargets(current =>
                       current.map(t =>
                         t.bindingId === target.bindingId
@@ -601,7 +638,7 @@ export function VaultRolloutGuide({
                       binding.authorization_revision
                     }
                     onChange={async e => {
-                      const checked = e.target.checked;
+                      const { checked } = e.target;
                       setBusy(target.bindingId);
                       setError('');
                       try {
@@ -635,6 +672,7 @@ export function VaultRolloutGuide({
                     binding.latest_deployment.jobId
                   ) === target.bindingId ? (
                     <JobActivity
+                      key={`${binding.latest_deployment.jobId}:${refreshIndex}`}
                       workspaceId={ctx.workspaceId}
                       jobId={binding.latest_deployment.jobId}
                       title={`Deployment: ${label(agent)}`}
@@ -774,10 +812,31 @@ export function VaultRolloutGuide({
       <DashboardActionButton variant='outline' onClick={refresh}>
         Refresh distribution status
       </DashboardActionButton>
+      {pausedRolloutId && !allComplete ? (
+        <StatusPanel status='warning' title='Rollout paused'>
+          <VStack align='start' spacing={3}>
+            <Text fontSize='sm'>
+              Repair and reconcile any uncertain consumer on its host, then
+              retry the affected deployment above before resuming. Resuming
+              keeps the same version and consumer assignments; it does not prove
+              deployment.
+            </Text>
+            <DashboardActionButton
+              variant='outline'
+              onClick={resume}
+              isLoading={busy === 'resume'}
+              isDisabled={Boolean(busy) || needsRetry || !configured}
+            >
+              Resume rollout
+            </DashboardActionButton>
+          </VStack>
+        </StatusPanel>
+      ) : null}
       {rolloutId ? (
         <>
           <ApprovalWaitPanel job={observedRollout.job} />
           <JobActivity
+            key={`${rolloutId}:${refreshIndex}`}
             workspaceId={ctx.workspaceId}
             jobId={rolloutId}
             title='Rollout request timeline'
