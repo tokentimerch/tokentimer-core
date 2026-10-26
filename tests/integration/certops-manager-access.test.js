@@ -182,6 +182,16 @@ describe("CertOps workspace-manager access (real API and database)", function ()
     }
   });
 
+  it("admits a manager to renewal-profile repair before checking certificate existence", async () => {
+    const result = await call(
+      "post",
+      `${api}/certificates/${crypto.randomUUID()}/renewal-profile/repair`,
+      {},
+    );
+    expect(result.status).to.equal(404);
+    expect(result.body.code).to.match(/^CERTOPS_/);
+  });
+
   it("denies viewers and missing membership on the same public endpoints", async () => {
     await TestUtils.execQuery(
       "UPDATE workspace_memberships SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",
@@ -191,6 +201,11 @@ describe("CertOps workspace-manager access (real API and database)", function ()
       ["get", `${api}/issuers`],
       ["post", `${api}/issuers`, { kind: "adcs", name: "Forbidden issuer" }],
       ["post", `${api}/profiles`, {}],
+      [
+        "post",
+        `${api}/certificates/${crypto.randomUUID()}/renewal-profile/repair`,
+        {},
+      ],
       ...[
         "cancel",
         "abandon",
@@ -209,5 +224,11 @@ describe("CertOps workspace-manager access (real API and database)", function ()
       [workspaceId, actor.id],
     );
     expect((await call("get", `${api}/issuers`)).status).to.equal(403);
+    const repairWithoutMembership = await call(
+      "post",
+      `${api}/certificates/${crypto.randomUUID()}/renewal-profile/repair`,
+      {},
+    );
+    expect(repairWithoutMembership.status).to.equal(403);
   });
 });

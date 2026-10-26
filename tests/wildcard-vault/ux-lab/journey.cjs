@@ -434,10 +434,12 @@ async function publish() {
   const repair = await owner.request(repairRoute, "POST", {});
   assert.equal(repair.created, false);
   assert.equal(repair.profileId, detail.certificate.profileId);
-  await approver.request(repairRoute, "POST", {}, 403);
+  const managerRepair = await approver.request(repairRoute, "POST", {});
+  assert.equal(managerRepair.created, false);
+  assert.equal(managerRepair.profileId, detail.certificate.profileId);
   await owner.request(repairRoute, "POST", { keyRotation: false }, 422);
   check(
-    "SAN-only publication automatically configures renewal; repair preserves profile and enforces admin/input boundaries",
+    "SAN-only publication automatically configures renewal; owner and manager repair preserve the profile and reject invalid input",
   );
 }
 async function bindings() {
