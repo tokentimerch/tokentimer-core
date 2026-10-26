@@ -4,6 +4,20 @@
 
 const NEVER_EXPIRES_DATE = '2099-12-31';
 
+// A date-only expiry is a calendar date, not midnight UTC. Timestamp expiries
+// keep their instant and are displayed on the viewer's local calendar.
+function expirationDate(date) {
+  if (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    const [year, month, day] = date.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  }
+  return new Date(date);
+}
+
+function calendarDay(date) {
+  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
 /**
  * Check if a date represents a "never expires" token
  * @param {string|Date} date - Date to check
@@ -42,7 +56,7 @@ export function formatExpirationDate(date, options = {}) {
   }
 
   try {
-    const d = new Date(date);
+    const d = expirationDate(date);
     if (isNaN(d.getTime())) return 'Invalid date';
 
     if (shortFormat) {
@@ -77,15 +91,10 @@ export function getDaysUntilExpiration(date) {
   }
 
   try {
-    const expirationDate = new Date(date);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    expirationDate.setHours(0, 0, 0, 0);
-
-    const diffTime = expirationDate - today;
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-    return diffDays;
+    const expiry = expirationDate(date);
+    if (Number.isNaN(expiry.getTime())) return null;
+    // Count calendar boundaries, so a 23/25-hour DST day is still one day.
+    return (calendarDay(expiry) - calendarDay(new Date())) / 86400000;
   } catch (e) {
     return null;
   }

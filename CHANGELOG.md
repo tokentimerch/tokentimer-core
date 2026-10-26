@@ -11,6 +11,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Expiry dates stay consistent across timezones and daylight-saving changes.** Date-only values retain their stated calendar date, and badges, relative labels, sorting and filters count calendar days rather than elapsed 24-hour periods.
 - **Adopted discovered certificates renew.** A certificate found by an agent could not be renewed by the hosted worker when its common name was reported in typed form (`DNS:example.com`): the derived renewal profile listed both `example.com` and `DNS:example.com`, so every automatic renewal failed with certbot's "Inconsistent domain requests" and retried each minute. The `DNS:` prefix is now stripped before the SAN policy is built.
 - **Debian trust-anchor revoke uses the configured `--fresh` refresh.** The agent never looked up the `trust-store:update-ca-certificates-fresh` command profile, so a revoke always ran plain `update-ca-certificates`, left the removed anchor's dangling `/etc/ssl/certs` symlink in place, and recorded the "fresh profile missing" warning even when the profile was allowlisted. A Debian revoke now runs the allowlisted `--fresh` argv. Without that profile the behaviour is unchanged (plain refresh plus the warning).
 
