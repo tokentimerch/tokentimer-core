@@ -386,10 +386,12 @@ async function extend(c) {
       ? rows
       : false;
   });
+  const rollbackRows = await matrix();
   assert.ok(
-    (await matrix()).every((row) => row.converged === true),
+    state.bindings.every((binding) => rollbackRows.find((row) => row.binding_id === binding.id)?.converged === true),
     "an approved retained-version rollback must converge",
   );
+  assert.ok(rollbackRows.filter((row) => row.binding_state === "retired").every((row) => row.converged === false), "retired consumers must stay outside convergence");
   await externalProof(initial);
   assert.deepEqual(
     immutable((await versions()).find((v) => v.id === initial.id)),
