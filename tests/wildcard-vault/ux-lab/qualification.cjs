@@ -391,7 +391,8 @@ async function extend(c) {
     state.bindings.every((binding) => rollbackRows.find((row) => row.binding_id === binding.id)?.converged === true),
     "an approved retained-version rollback must converge",
   );
-  assert.ok(rollbackRows.filter((row) => row.binding_state === "retired").every((row) => row.converged === false), "retired consumers must stay outside convergence");
+  const removedRows = rollbackRows.filter((row) => !state.bindings.some((binding) => binding.id === row.binding_id));
+  assert.ok(removedRows.length > 0 && removedRows.every((row) => row.binding_state === "removed" && row.converged === false), "removed consumers must stay outside convergence");
   await externalProof(initial);
   assert.deepEqual(
     immutable((await versions()).find((v) => v.id === initial.id)),
