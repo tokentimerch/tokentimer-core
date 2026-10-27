@@ -9288,6 +9288,284 @@ paths:
           description: Stale intent, version, generation, period or approval
         '422':
           description: Invalid public intent
+  /api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/management:
+    get:
+      tags:
+        - CertOps
+      summary: Read distribution management, public evidence and partial discovery coverage
+      description: >-
+        Workspace membership and existing CertOps manager authorization apply. Public metadata only;
+        customer-local credentials and private material are never accepted. Policy writes require a session user
+        and an active workspace.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Public lifecycle metadata or accepted revision
+        '403':
+          description: Workspace role or delivery policy denied
+        '404':
+          description: Workspace-scoped distribution group not found
+        '409':
+          description: Authorization or policy revision changed; refresh and review again
+        '422':
+          description: Closed public contract or bounded policy validation failed
+  /api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/policy:
+    get:
+      tags:
+        - CertOps
+      summary: Read revisioned distribution policy and manual defaults
+      description: >-
+        Workspace membership and existing CertOps manager authorization apply. Public metadata only;
+        customer-local credentials and private material are never accepted. Policy writes require a session user
+        and an active workspace.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Public lifecycle metadata or accepted revision
+        '403':
+          description: Workspace role or delivery policy denied
+        '404':
+          description: Workspace-scoped distribution group not found
+        '409':
+          description: Authorization or policy revision changed; refresh and review again
+        '422':
+          description: Closed public contract or bounded policy validation failed
+    put:
+      tags:
+        - CertOps
+      summary: Configure post-publication, verification, alert and retention policies
+      description: >-
+        Workspace membership and existing CertOps manager authorization apply. Public metadata only;
+        customer-local credentials and private material are never accepted. Policy writes require a session user
+        and an active workspace.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../certops/distribution-lifecycle.schema.json#/definitions/policyRequest
+      responses:
+        '200':
+          description: Public lifecycle metadata or accepted revision
+        '403':
+          description: Workspace role or delivery policy denied
+        '404':
+          description: Workspace-scoped distribution group not found
+        '409':
+          description: Authorization or policy revision changed; refresh and review again
+        '422':
+          description: Closed public contract or bounded policy validation failed
+  /api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/preflight:
+    get:
+      tags:
+        - CertOps
+      summary: Preview non-mutating control-plane preflight; customer-local checks remain necessary
+      description: >-
+        Workspace membership and existing CertOps manager authorization apply. Public metadata only;
+        customer-local credentials and private material are never accepted. Policy writes require a session user
+        and an active workspace.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: materialVersionId
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Public lifecycle metadata or accepted revision
+        '403':
+          description: Workspace role or delivery policy denied
+        '404':
+          description: Workspace-scoped distribution group not found
+        '409':
+          description: Authorization or policy revision changed; refresh and review again
+        '422':
+          description: Closed public contract or bounded policy validation failed
+  /api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/retention:
+    get:
+      tags:
+        - CertOps
+      summary: Preview protected retained versions without deleting customer material
+      description: >-
+        Workspace membership and existing CertOps manager authorization apply. Public metadata only;
+        customer-local credentials and private material are never accepted. Policy writes require a session user
+        and an active workspace.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Public lifecycle metadata or accepted revision
+        '403':
+          description: Workspace role or delivery policy denied
+        '404':
+          description: Workspace-scoped distribution group not found
+        '409':
+          description: Authorization or policy revision changed; refresh and review again
+        '422':
+          description: Closed public contract or bounded policy validation failed
+  /api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/consumers/{bindingId}/activation-policy:
+    put:
+      tags:
+        - CertOps
+      summary: Configure a consumer IANA maintenance calendar and activation class
+      description: >-
+        Workspace membership and existing CertOps manager authorization apply. Public metadata only;
+        customer-local credentials and private material are never accepted. Policy writes require a session user
+        and an active workspace.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: bindingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../certops/distribution-lifecycle.schema.json#/definitions/activationRequest
+      responses:
+        '200':
+          description: Public lifecycle metadata or accepted revision
+        '403':
+          description: Workspace role or delivery policy denied
+        '404':
+          description: Workspace-scoped distribution group not found
+        '409':
+          description: Authorization or policy revision changed; refresh and review again
+        '422':
+          description: Closed public contract or bounded policy validation failed
+  /api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/consumers/{bindingId}/emergency:
+    post:
+      tags:
+        - CertOps
+      summary: Request a bounded audited emergency activation exception
+      description: >-
+        Administrator-only bounded per-consumer emergency exception; at most four hours. Audited,
+        revision-fenced, blackouts win, and explicit Jobs approval remains necessary. No remote commands.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: bindingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../certops/distribution-lifecycle.schema.json#/definitions/activationRequest
+      responses:
+        '200':
+          description: Public lifecycle metadata or accepted revision
+        '403':
+          description: Workspace role or delivery policy denied
+        '404':
+          description: Workspace-scoped distribution group not found
+        '409':
+          description: Authorization or policy revision changed; refresh and review again
+        '422':
+          description: Closed public contract or bounded policy validation failed
 components:
   securitySchemes:
     cookieAuth:

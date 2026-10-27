@@ -51,6 +51,8 @@ import {
   retryPendingOperationalIncidentEmails,
   reconcileStaleDeliveryIncidents,
 } from "./shared/opNotifications.js";
+import {isDistributionAlert,loadDistributionAlertContext,buildDistributionEmailContent,
+  buildDistributionWebhookPayload,distributionWhatsAppVariables} from "./shared/distributionAlerts.js";
 
 const OPERATIONAL_EMAIL_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
 let lastOperationalEmailSweepAt = 0;
@@ -65,6 +67,7 @@ const SINGLE_SHOT_ALERT_PREFIXES = [
   "endpoint_health:",
   "cert_renewal_failed:",
   "agent_health:",
+  "cert_distribution:",
 ];
 
 function assignedIdsFromRow(value) {
@@ -1666,6 +1669,11 @@ export async function deliveryWorkerJob({
 
       try {
         let jobCertificateStatus = null;
+        if(isDistributionAlert(alert) && !(await loadDistributionAlertContext(client,alert))){
+          await client.query(`UPDATE alert_queue SET status='sent',error_message='Suppressed: distribution incident no longer eligible',
+            delivery_claim_id=NULL,next_attempt_at=NULL,updated_at=NOW() WHERE id=$1 AND delivery_claim_id=$2`,[alert.id,claimId]);
+          continue;
+        }
         let renewalIdentityUnavailable = false;
         const renewalFailedJobId = parseCertRenewalFailedJobId(alert.alert_key);
         if (renewalFailedJobId) {
@@ -2059,7 +2067,9 @@ export async function deliveryWorkerJob({
                     });
                   }
                 }
-                const { subject, text, html } = isEndpointAlert
+                const { subject, text, html } = isDistributionAlert(alert)
+                  ? buildDistributionEmailContent(alert)
+                  : isEndpointAlert
                   ? buildEndpointHealthEmailContent(alert, alert)
                   : isCertRenewalFailedAlert
                     ? buildCertRenewalFailedEmailContent(alert, certRenewalJob)
@@ -2307,7 +2317,9 @@ export async function deliveryWorkerJob({
                     }
                   }
 
-                  const payload = isEndpointHealthWebhook
+                  const payload = isDistributionAlert(alert)
+                    ? buildDistributionWebhookPayload(kind,alert,{routingKey,title:templateTitle || undefined})
+                    : isEndpointHealthWebhook
                     ? buildEndpointHealthWebhookPayload(kind, alert, {
                         severity: selectedSeverity,
                         title: templateTitle || undefined,
@@ -2509,17 +2521,19 @@ export async function deliveryWorkerJob({
                   const endpointTransition = isEndpointHealthWhatsApp
                     ? String(alert.alert_key || "").split(":")[2] || "down"
                     : null;
-                  const selectedContentSid = isEndpointHealthWhatsApp
+                  const selectedContentSid = isDistributionAlert(alert)
+                    ? process.env.TWILIO_WHATSAPP_ALERT_CONTENT_SID_DISTRIBUTION || null
+                    : isEndpointHealthWhatsApp
                     ? endpointTransition === "down"
                       ? contentSidEndpointDown
                       : contentSidEndpointRecovered
                     : isExpired
                       ? contentSidExpired
                       : contentSidExpires;
-                  if (isEndpointHealthWhatsApp && !selectedContentSid) {
+                  if ((isEndpointHealthWhatsApp || isDistributionAlert(alert)) && !selectedContentSid) {
                     success = false;
-                    errorMessage = "WHATSAPP_ENDPOINT_TEMPLATE_NOT_CONFIGURED";
-                    errorCode = "WHATSAPP_ENDPOINT_TEMPLATE_NOT_CONFIGURED";
+                    errorMessage = isDistributionAlert(alert)?"WHATSAPP_DISTRIBUTION_TEMPLATE_NOT_CONFIGURED":"WHATSAPP_ENDPOINT_TEMPLATE_NOT_CONFIGURED";
+                    errorCode = errorMessage;
                     try {
                       await client.query(
                         `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
@@ -2616,7 +2630,9 @@ export async function deliveryWorkerJob({
                     // Token expiry and endpoint health use different Twilio ContentSids;
                     // only include placeholders defined for each template (see DocsAlerts).
                     const contentVariablesBase = selectedContentSid
-                      ? isEndpointHealthWhatsApp
+                      ? isDistributionAlert(alert)
+                        ? distributionWhatsAppVariables(alert,contactInfos[0]?.first_name)
+                        : isEndpointHealthWhatsApp
                         ? buildEndpointHealthWhatsAppTemplateVariables(
                             alert,
                             contactInfos[0]?.first_name || "User",

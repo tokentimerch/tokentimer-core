@@ -4378,6 +4378,12 @@ router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/policy",
     const lifecycle=require("../services/certops/distributionLifecycle");
     return {policy:await lifecycle.loadPolicy(pool,req.workspace.id,groupId),defaults:lifecycle.DEFAULT_POLICY};
   }));
+router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/management", ...csrReadGuards,
+  csrRoute(req=>require("../services/certops/distributionAdministration").overview({workspaceId:req.workspace.id,groupId:req.params.groupId})));
+router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/preflight", ...csrReadGuards,
+  csrRoute(req=>require("../services/certops/distributionAdministration").preflight({workspaceId:req.workspace.id,groupId:req.params.groupId,materialVersionId:req.query.materialVersionId})));
+router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/retention", ...csrReadGuards,
+  csrRoute(req=>require("../services/certops/distributionAdministration").retentionPreview({workspaceId:req.workspace.id,groupId:req.params.groupId})));
 router.put("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/policy", ...distributionWriteGuards,requireWorkspaceCertOpsActive,
   csrRoute(req=>require("../services/certops/distributionLifecycle").putPolicy({workspaceId:req.workspace.id,groupId:req.params.groupId,
     policy:req.body?.policy,expectedRevision:req.body?.expectedRevision,actorUserId:req.user.id})));

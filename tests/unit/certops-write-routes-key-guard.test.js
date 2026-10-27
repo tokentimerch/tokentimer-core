@@ -68,10 +68,13 @@ describe("CertOps write routes reject private key material", () => {
     const distribution = routes.filter((route) => route.path.includes("/distribution-"));
     const keys = distribution.map((route) => route.key).sort();
     assert.deepEqual(keys, [
+      "post /api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers/:bindingId/emergency",
       "post /api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollouts",
       "post /api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollouts/:rolloutId/state",
       "post /api/v1/workspaces/:id/certops/distribution-jobs/:jobId/retry",
       "put /api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers/:bindingId",
+      "put /api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers/:bindingId/activation-policy",
+      "put /api/v1/workspaces/:id/certops/distribution-groups/:groupId/policy",
     ]);
     for (const route of distribution) {
       assert.ok(route.handlers.includes("rejectKeyMaterial"), `${route.key} must reject key material`);

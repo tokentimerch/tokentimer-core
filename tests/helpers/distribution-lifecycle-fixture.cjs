@@ -10,6 +10,7 @@ async function fixture({requireApproval=false}={}) {
   const actor=await user(),approver=await user();
   await pool.query(`INSERT INTO workspaces(id,name,created_by,plan,certops_require_approval_always)
     VALUES($1,'Isolated lifecycle test',$2,'oss',$3)`,[workspaceId,actor,requireApproval]);
+  await pool.query(`INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,'workspace_manager')`,[workspaceId,approver]);
   async function agent(){return (await pool.query(`INSERT INTO certops_agents(workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash,
     supported_operations,declared_capabilities,declared_target_selectors,supported_dns_providers,declared_command_profile_names,capabilities_updated_at,last_seen_at)
     VALUES($1,$2,'0.18.1','1.0.0',$3,$4,'["renew","deploy-from-store"]',
@@ -34,4 +35,21 @@ async function fixture({requireApproval=false}={}) {
   await operations.putBinding({workspaceId,groupId,bindingId,binding,actorUserId:actor});
   return {workspaceId,actor,approver,issuer,consumer,groupId,materialVersionId,bindingId,binding,certificateId:issued.job.subjectId,identity,fingerprint};
 }
-module.exports={fixture};
+async function proveConsumer(f){
+  const material=require("../../apps/api/services/certops/materialDistribution");
+  const rollout=(await pool.query(`SELECT * FROM certops_distribution_rollouts WHERE workspace_id=$1 AND group_id=$2 ORDER BY generation DESC LIMIT 1`,[f.workspaceId,f.groupId])).rows[0];
+  await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,rollout.id));
+  const claimId=crypto.randomUUID();
+  const job=(await pool.query(`UPDATE certificate_jobs SET status='claimed',claim_id=$2,claimed_by_agent_id=assigned_agent_id,
+    lease_expires_at=clock_timestamp()+interval '5 minutes',attempt_count=1 WHERE id=(SELECT job_id FROM certops_consumer_deployments
+    WHERE workspace_id=$1 AND rollout_id=$3 AND binding_id=$4) RETURNING *`,[f.workspaceId,claimId,rollout.id,f.bindingId])).rows[0];
+  const version=(await pool.query(`SELECT * FROM certops_material_versions WHERE workspace_id=$1 AND id=$2`,[f.workspaceId,rollout.material_version_id])).rows[0];
+  const receipt={schemaVersion:1,workspaceId:f.workspaceId,groupId:f.groupId,bindingId:f.bindingId,materialVersionId:version.id,
+    generation:Number(rollout.generation),fetched:true,installed:true,bound:true,servedVerified:true,trustValidated:false,
+    fingerprintSha256:version.fingerprint_sha256,validTo:new Date(version.valid_to).toISOString(),observedAt:new Date().toISOString()};
+  await operations.transaction(client=>material.acceptDeploymentReceipt({client,workspaceId:f.workspaceId,agentId:f.consumer,job,receipt,jobStatus:"succeeded"}));
+  await pool.query(`UPDATE certificate_jobs SET status='succeeded',completed_at=clock_timestamp() WHERE id=$1`,[job.id]);
+  await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,rollout.id));
+  return {job,receipt,rollout};
+}
+module.exports={fixture,proveConsumer};

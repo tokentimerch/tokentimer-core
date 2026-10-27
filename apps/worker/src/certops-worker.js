@@ -178,6 +178,14 @@ export const CERTOPS_SWEEP_CONFIG = Object.freeze({
     enableEnv: "CERTOPS_SWEEP_OUTBOX_DRAIN_ENABLED",
     timeoutEnv: "CERTOPS_SWEEP_OUTBOX_DRAIN_TIMEOUT_MS",
   }),
+  "distribution-scheduler": Object.freeze({
+    enableEnv: "CERTOPS_SWEEP_DISTRIBUTION_SCHEDULER_ENABLED",
+    timeoutEnv: "CERTOPS_SWEEP_DISTRIBUTION_SCHEDULER_TIMEOUT_MS",
+  }),
+  "distribution-monitoring": Object.freeze({
+    enableEnv: "CERTOPS_SWEEP_DISTRIBUTION_MONITORING_ENABLED",
+    timeoutEnv: "CERTOPS_SWEEP_DISTRIBUTION_MONITORING_TIMEOUT_MS",
+  }),
   "diagnostic-agent-inactivity-sweep": Object.freeze({
     enableEnv: "CERTOPS_SWEEP_DIAGNOSTIC_AGENT_INACTIVITY_ENABLED",
     timeoutEnv: "CERTOPS_SWEEP_DIAGNOSTIC_AGENT_INACTIVITY_TIMEOUT_MS",
@@ -1524,6 +1532,8 @@ export async function runCertOpsMaintenance({
   registrationReplaySweeper = sweepExpiredRegistrationReplays,
   renewalSweeper = runRenewalSchedulerSweep,
   outboxDrainer = drainCertOpsOutbox,
+  distributionScheduler = args => require("../../api/services/certops/distributionScheduler.js").runDistributionScheduler(args),
+  distributionMonitoring = args => require("../../api/services/certops/distributionMonitoring.js").runDistributionMonitoring(args),
   diagnosticAgentSweeper = sweepInactiveDiagnosticAgents,
   pushMetricsFn = pushMetrics,
 } = {}) {
@@ -1678,6 +1688,15 @@ export async function runCertOpsMaintenance({
       enabled: isSweepEnabled("outbox-drain", env),
       timeoutMs: resolveSweepTimeoutMs("outbox-drain", env),
     },
+  );
+
+  results.distributionScheduler = await runIsolated(
+    "distribution-scheduler",log,()=>distributionScheduler({dbPool}),
+    {enabled:isSweepEnabled("distribution-scheduler",env),timeoutMs:resolveSweepTimeoutMs("distribution-scheduler",env)},
+  );
+  results.distributionMonitoring = await runIsolated(
+    "distribution-monitoring",log,()=>distributionMonitoring({dbPool}),
+    {enabled:isSweepEnabled("distribution-monitoring",env),timeoutMs:resolveSweepTimeoutMs("distribution-monitoring",env)},
   );
 
   // ADR-0012 decision 7: this sweep is the only path that retires a

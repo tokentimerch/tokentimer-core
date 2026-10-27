@@ -424,6 +424,8 @@ async function approveJob(options) {
   if (job.payload?.distributionRollout || job.payload?.distributionPolicyApproval) {
     await require("./outbox").enqueueOutboxEvent({ client:db,workspaceId,
       eventType:"distribution_approval_granted",dedupeKey:jobId,payload:{ jobId } });
+    await db.query(`UPDATE operational_notifications SET resolved_at=NOW(),updated_at=NOW()
+      WHERE workspace_id=$1 AND dedupe_key=$2 AND resolved_at IS NULL`,[workspaceId,`distribution_approval:${jobId}`]);
   }
 
   await logAppender({

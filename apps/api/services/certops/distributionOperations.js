@@ -23,6 +23,11 @@ async function putBinding({ workspaceId, groupId, bindingId = crypto.randomUUID(
     await material.lockGroup(client, workspaceId, groupId);
     const old = (await client.query(`SELECT * FROM certops_consumer_bindings WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, [workspaceId, bindingId])).rows[0];
     if (old && old.group_id !== groupId) fail("CERTOPS_BINDING_GROUP_IMMUTABLE");
+    if(old && old.assigned_agent_id!==binding.agentId){
+      const live=await client.query(`SELECT 1 FROM certops_consumer_deployments d JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=d.job_id
+        WHERE d.workspace_id=$1 AND d.binding_id=$2 AND (j.status IN ('claimed','running','orphaned_unknown_effect') OR d.stage='orphaned_unknown_effect') LIMIT 1`,[workspaceId,bindingId]);
+      if(live.rowCount)fail("CERTOPS_CONSUMER_REASSIGNMENT_REQUIRES_RECONCILIATION");
+    }
     // Compare validated typed values while holding the group and binding locks.
     // An identical PUT must preserve approvals, proofs and local authorization.
     const authorization = { assigned_agent_id: binding.agentId, deployment_profile_ref: binding.deploymentProfileRef,
@@ -76,7 +81,7 @@ async function requestRollout({ workspaceId, groupId, materialVersionId, maxPara
     const job = await createCertificateJob({ client, workspaceId, operation: "noop", source: "control-plane",
       subjectType: "managed_certificate", subjectId: group.managed_certificate_id,
       assignedAgentId: group.issuer_agent_id, requestedByUserId: actorUserId,
-      requiresApproval:requiresApproval || (!verificationOnly && intent.bindings.some(b=>b.activationPolicy?.requiresApproval || b.activationPolicy?.disruptive)),
+      requiresApproval:requiresApproval || (!verificationOnly && (group.latest_material_version_id && materialVersionId!==group.latest_material_version_id || intent.bindings.some(b=>b.activationPolicy?.requiresApproval || b.activationPolicy?.disruptive))),
       idempotencyKey, payload: { distributionRollout: intent } });
     await client.query("UPDATE certificate_jobs SET distribution_request_hash=$3 WHERE workspace_id=$1 AND id=$2",[workspaceId,job.id,requestHash]);
     if (job.status === "pending") {
@@ -88,6 +93,7 @@ async function requestRollout({ workspaceId, groupId, materialVersionId, maxPara
       await client.query("UPDATE certificate_jobs SET status='succeeded',completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE workspace_id=$1 AND id=$2 AND status='pending'",[workspaceId,job.id]);
       return getCertificateJobById({ client, workspaceId, jobId: job.id });
     }
+    await require("./distributionLifecycle").notifyApproval(client,workspaceId,job);
     return job;
   };
   return transactionClient ? work(transactionClient) : transaction(work, dbPool);
@@ -254,7 +260,7 @@ async function retryDistributionJob({ workspaceId,jobId,actorUserId }) {
       lease_renewed_at=NULL,completed_at=NULL,started_at=NULL,next_attempt_at=NULL,error_code=NULL,error_message=NULL,updated_at=clock_timestamp()
       WHERE workspace_id=$1 AND id=$2`,[workspaceId,jobId,status]);
     if(job.payload.materialDeployment)await client.query(`UPDATE certops_consumer_deployments SET stage='pending',failure_code=NULL
-      WHERE workspace_id=$1 AND job_id=$2`,[workspaceId,jobId]);
+      WHERE workspace_id=$1 AND job_id=$2 AND stage<>'orphaned_unknown_effect'`,[workspaceId,jobId]);
     await require("../audit").writeAudit({client,workspaceId,actorUserId,action:"CERTOPS_MATERIAL_JOB_RETRY_REQUESTED",targetType:"certificate_job",targetId:jobId,metadata:{materialVersionId:intent.materialVersionId,status}});
     return {jobId,status,materialVersionId:intent.materialVersionId};
   });

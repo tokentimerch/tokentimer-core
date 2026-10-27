@@ -16,6 +16,8 @@ async function main(){let created=false;try{
     CERTOPS_SIGNING_ENCRYPTION_KEY:crypto.randomBytes(32).toString("hex"),CERTOPS_REGISTRATION_ENCRYPTION_KEY:crypto.randomBytes(32).toString("hex")};
   run(process.execPath,["apps/api/migrations/migrate.js"],env,"migration.log");
   process.stdout.write(run(process.execPath,["--test","--test-force-exit","tests/postgres/distribution-lifecycle.test.js"],env,"tests.log"));
+  const upgradeDatabase=`pr329_distribution_upgrade_${nonce}_test`;run("docker",["exec",container,"createdb","-U","postgres",upgradeDatabase]);
+  process.stdout.write(run(process.execPath,["--test","--test-force-exit","tests/postgres/distribution-migration-upgrade.test.js"],{...env,DB_NAME:upgradeDatabase},"upgrade-tests.log"));
   console.log(`Real PostgreSQL lifecycle integration passed. Logs: ${output}`);
 }finally{if(created)run("docker",["rm","-f",container]);}}
 main().catch(error=>{console.error(error.message);process.exitCode=1;});

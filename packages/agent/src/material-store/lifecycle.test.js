@@ -9,7 +9,7 @@ const crypto = require("node:crypto");
 const { readProtectedFile, writeProtectedJson } = require("./index");
 const { applyRestrictivePermissions } = require("../platform");
 const { computeCertificateFingerprint, parseDnsSans } = require("../verify");
-const { executePinnedDeployment, reconcilePinnedDeployment, deployWroteNothing } = require("./lifecycle");
+const { executePinnedDeployment, reconcilePinnedDeployment, preflightPinnedDeployment, deployWroteNothing } = require("./lifecycle");
 
 test("calendar enforcement refuses a delayed deployment before material fetch or service writes", async t=>{
   const f=await fixture(t),options=f.options();
@@ -143,6 +143,18 @@ function filesOnly(f) {
   delete f.binding.reloadService;
   f.binding.probes = [];
 }
+
+test("customer-local preflight reads the exact version without creating files, acquiring locks or reloading",async t=>{
+  const f=await fixture(t);filesOnly(f);
+  const options=f.options();let checks=0;options.checkLease=async()=>{checks++;};
+  options.reload=()=>assert.fail("Preflight must never reload");
+  const result=await preflightPinnedDeployment(options);
+  assert.equal(result.readOnly,true);assert.equal(result.ready,true);assert.equal(checks,2);
+  assert.equal(fs.existsSync(options.stateDir),false);
+  assert.equal(fs.existsSync(f.target.certPath),false);
+  assert.ok(result.diagnostics.some(item=>item.code==="material_exact_version_authorized"));
+  assert.ok(!JSON.stringify(result).includes("PRIVATE KEY"));
+});
 
 test("files-only delivery writes and reads back the actual pair without reload or TLS", async (t) => {
   const f = await fixture(t);

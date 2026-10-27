@@ -65,14 +65,14 @@
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "bd985c269a09bab5bced90db61efd313576db8e99b17b08888acb18e5724f288"
+          "sha256": "10c579786e10e11472e4ff4c0a6cfbf465c243e313a908071c9fa709af6eb823"
         },
         {
           "id": "integration-openapi-spec",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "bd985c269a09bab5bced90db61efd313576db8e99b17b08888acb18e5724f288"
+          "sha256": "10c579786e10e11472e4ff4c0a6cfbf465c243e313a908071c9fa709af6eb823"
         },
         {
           "id": "auth-route-compat-contract",
@@ -323,6 +323,24 @@
           "kind": "schema",
           "status": "existing",
           "description": "Strict validator for public material publication, consumer bindings and deployment receipts."
+        },
+        {
+          "id": "certops-distribution-lifecycle-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/distribution-lifecycle.schema.json",
+          "status": "existing"
+        },
+        {
+          "id": "certops-activation-calendar-module",
+          "kind": "module",
+          "path": "packages/contracts/certops/activation-calendar.cjs",
+          "status": "existing"
+        },
+        {
+          "id": "certops-service-connectors-module",
+          "kind": "module",
+          "path": "packages/contracts/certops/service-connectors.cjs",
+          "status": "existing"
         }
       ]
     }

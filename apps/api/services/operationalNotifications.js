@@ -13,7 +13,7 @@
 const { pool } = require("../db/database");
 
 const VALID_SEVERITIES = new Set(["info", "warning", "critical"]);
-const VALID_CATEGORIES = new Set(["delivery", "auto_sync"]);
+const VALID_CATEGORIES = new Set(["delivery", "auto_sync", "certops"]);
 
 /**
  * Raise (or escalate/update) an open operational notification.

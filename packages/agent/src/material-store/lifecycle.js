@@ -327,4 +327,43 @@ async function reconcilePinnedDeployment({ job,bindings,stateDir,policyEngine })
   });
 }
 
-module.exports = { withMaterialLock, publicationSession, resolveBindingPolicy, executePinnedDeployment, reconcilePinnedDeployment, probeListener, deployWroteNothing };
+// Read-only customer-side checks: no writes, lock claims, marker updates,
+// install, command execution or service reload.
+async function preflightPinnedDeployment({job,stores,bindings,stateDir,policyEngine,checkLease=async()=>{},fixtureLoopbackHttp=false}){
+  const diagnostics=[];
+  const check=(code,status)=>diagnostics.push({code,status});
+  let intent,binding,store;
+  try{
+    ({intent,binding}=resolveBindingPolicy(job,bindings,policyEngine));
+    store=createVaultStore(stores,intent,{fixtureLoopbackHttp});
+    check("material_local_policy_current","passed");
+  }catch(error){return {readOnly:true,ready:false,diagnostics:[{code:/^material_[a-z_]+$/.test(error.code || "")?error.code:"material_preflight_policy_invalid",status:"blocked"}]};}
+  const lock=path.join(stateDir,"material-locks",`${crypto.createHash("sha256").update(`binding:${intent.workspaceId}:${intent.bindingId}`).digest("hex")}.lock`);
+  check("material_live_lock_present",fs.existsSync(lock)?"blocked":"passed");
+  const record=path.join(stateDir,"material-bindings",`${intent.bindingId}.json`);
+  if(fs.existsSync(record)){
+    try{const previous=JSON.parse(readProtectedFile(record,16384));
+      check("material_binding_uncertain",previous.uncertain?"blocked":"passed");
+      check("material_stale_generation",previous.generation>intent.generation?"blocked":"passed");
+    }catch{check("material_binding_state_invalid","blocked");}
+  }
+  for(const file of [binding.target.certPath,binding.target.keyPath,binding.target.chainPath].filter(Boolean)){
+    try{const parent=fs.realpathSync(path.dirname(file));
+      if(!policyEngine.checkPath(path.join(parent,path.basename(file))).allowed || fs.existsSync(file)&&fs.lstatSync(file).isSymbolicLink())throw failure("material_destination_denied");
+      fs.accessSync(parent,fs.constants.W_OK);check("material_destination_permissions","passed");
+    }catch{check("material_destination_permissions","blocked");}
+  }
+  if(binding.verificationPolicy!=="installed"){
+    const refs=binding.reloadCommandRefs;
+    const allowed=refs && ["validate","reload"].every(key=>typeof refs[key]==="string" && policyEngine.checkCommandRef?.(refs[key])?.allowed===true);
+    check("material_reload_allowlist",allowed?"passed":"blocked");
+    const probes=binding.probes.every(probe=>typeof probe.dialAddress==="string" && Number.isInteger(probe.port) && probe.port>0 && probe.port<=65535 && typeof probe.sni==="string" && /^[a-z0-9.-]{1,253}$/i.test(probe.sni));
+    check("material_probe_configuration",probes?"passed":"blocked");
+  }
+  try{await checkLease();const bundle=await store.fetch(intent.providerVersion);validateBundle(bundle,intent,store.scope);await checkLease();check("material_exact_version_authorized","passed");}
+  catch(error){check(/^material_[a-z_]+$/.test(error.code || "")?error.code:"material_exact_version_unavailable","blocked");}
+  return {readOnly:true,bindingId:intent.bindingId,materialVersionId:intent.materialVersionId,
+    ready:diagnostics.every(item=>item.status==="passed"),diagnostics};
+}
+
+module.exports = { withMaterialLock, publicationSession, resolveBindingPolicy, executePinnedDeployment, reconcilePinnedDeployment, preflightPinnedDeployment, probeListener, deployWroteNothing };
