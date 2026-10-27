@@ -201,9 +201,8 @@ function DiscoveredCertificateStep({ ctx }) {
 }
 
 /**
- * Two honest outcomes. Generated files only ever reach "Configuration
- * prepared". "Distribution verified" requires a rollout that the control plane
- * recorded as verified, which in turn requires qualified agents.
+ * Generated configuration never proves delivery. Completion requires a
+ * rollout recorded as installed; live verification is a separate assurance.
  */
 export function vaultOutcome({ declaredByAgents, distribution }) {
   const required = requiredCapabilities('vault', 'linux');
@@ -236,8 +235,18 @@ const VAULT_FIELD_NAMES = {
   workspace: 'the workspace id',
 };
 
+const VAULT_ACTION_LAYOUT = {
+  h: 'auto',
+  minH: '36px',
+  maxW: '100%',
+  w: { base: 'full', sm: 'auto' },
+  alignSelf: { base: 'stretch', sm: 'flex-start' },
+  py: 2,
+  whiteSpace: 'normal',
+};
+
 export function VaultStep({ ctx }) {
-  const { muted } = useDashboardTheme();
+  const { bodySecondary: muted } = useDashboardTheme();
   const saved = certopsProgress(ctx);
   const [form, setForm] = useState({
     vaultAddress: saved.vaultAddress || '',
@@ -319,7 +328,7 @@ export function VaultStep({ ctx }) {
   const chosenDistributionId = saved.chosenDistributionId || '';
   const distribution = scopeDistribution(
     ctx.summary?.certops?.distribution,
-    chosenDistributionId
+    chosenDistributionId || saved.groupId
   );
   const reusable = reusableDistributions(ctx.summary?.certops?.distribution);
   const [reuseTicked, setReuseTicked] = useState(Boolean(chosenDistributionId));
@@ -557,9 +566,17 @@ export function VaultStep({ ctx }) {
         ...ctx.docs('certops.worker', 'Check the CertOps worker'),
       ]}
       actions={
-        <VStack align='flex-end' spacing={1}>
+        <VStack
+          align={{ base: 'stretch', sm: 'flex-end' }}
+          spacing={2}
+          w='full'
+          minW={0}
+          overflowWrap='anywhere'
+        >
           {chosenDistributionId && !confirmed ? (
             <PrimaryButton
+              {...VAULT_ACTION_LAYOUT}
+              alignSelf={{ base: 'stretch', sm: 'flex-end' }}
               onClick={confirmDistribution}
               isDisabled={!distribution?.verified && !distribution?.completed}
               data-testid='vault-use-distribution'
@@ -567,30 +584,61 @@ export function VaultStep({ ctx }) {
               Continue
             </PrimaryButton>
           ) : null}
-          <PrimaryButton onClick={saveSettings} isDisabled={!out.ok}>
+          <PrimaryButton
+            {...VAULT_ACTION_LAYOUT}
+            alignSelf={{ base: 'stretch', sm: 'flex-end' }}
+            onClick={saveSettings}
+            isDisabled={!out.ok}
+          >
             Save these settings
           </PrimaryButton>
           {!out.ok ? (
-            <Text fontSize='xs' color={muted} data-testid='vault-save-hint'>
+            <Text
+              fontSize='xs'
+              color={muted}
+              _light={{ color: muted }}
+              data-testid='vault-save-hint'
+            >
               Save stays disabled until these are valid:{' '}
               {missingFields.join(', ')}.
             </Text>
           ) : savedOk ? (
-            <Text fontSize='xs' color={muted} data-testid='vault-saved'>
-              Saved. This step finishes by itself once a rollout is verified.
+            <Text
+              fontSize='xs'
+              color={muted}
+              _light={{ color: muted }}
+              data-testid='vault-saved'
+            >
+              {reloadConsumer
+                ? 'Saved. Next becomes available once every consumer confirms the selected certificate is in use.'
+                : 'Saved. Next becomes available once every consumer confirms the selected certificate files are installed.'}
             </Text>
           ) : null}
         </VStack>
       }
     >
-      <VStack align='stretch' spacing={4}>
+      <VStack
+        align='stretch'
+        spacing={4}
+        minW={0}
+        overflowWrap='anywhere'
+        sx={{
+          '& .chakra-badge': {
+            maxWidth: '100%',
+            whiteSpace: 'normal',
+            overflowWrap: 'anywhere',
+          },
+        }}
+      >
         <StatusPanel
-          status='warning'
+          status='info'
           title='Prepare, publish and deploy from this guide'
         >
           Apply the generated configuration on the hosts, then return here to
-          send signed checks, publish and deploy. Live deployment is only
-          confirmed by the returned consumer verification evidence.
+          send signed checks, publish and deploy.{' '}
+          {reloadConsumer
+            ? 'Each consumer must confirm that its service is using the selected certificate before you can continue.'
+            : 'Each consumer must confirm that the selected certificate files are installed before you can continue. File delivery does not check whether a service is using them.'}
         </StatusPanel>
         {choiceError ? (
           <StatusPanel status='error' testId='vault-choice-error'>
@@ -611,6 +659,7 @@ export function VaultStep({ ctx }) {
           <Text
             fontSize='xs'
             color={muted}
+            _light={{ color: muted }}
             data-testid='existing-distributions-note'
           >
             {reusable.length === 1
@@ -623,7 +672,7 @@ export function VaultStep({ ctx }) {
             {backlogMessage}
           </WorkerWarning>
         ) : null}
-        <HStack>
+        <HStack align='start' flexWrap='wrap' gap={2} spacing={0}>
           <StatusTag
             tone={
               ['verified', 'installed'].includes(outcome.level)
@@ -638,7 +687,7 @@ export function VaultStep({ ctx }) {
                 : 'Setup in progress'}
           </StatusTag>
           {gap.length ? (
-            <Text fontSize='xs' color={muted}>
+            <Text fontSize='xs' color={muted} _light={{ color: muted }}>
               Agents do not yet declare: {gap.join(', ')}.
             </Text>
           ) : null}
@@ -659,7 +708,7 @@ export function VaultStep({ ctx }) {
           {!publishJobId ? (
             <ApprovalPolicyNote required={approvalRequired} />
           ) : null}
-          <FormControl>
+          <FormControl minW={0}>
             <FormLabel fontSize='sm'>Issuing agent</FormLabel>
             <Select
               size='sm'
@@ -711,6 +760,7 @@ export function VaultStep({ ctx }) {
           </VStack>
           <HStack align='center' spacing={3} flexWrap='wrap'>
             <DashboardActionButton
+              {...VAULT_ACTION_LAYOUT}
               variant='outline'
               onClick={createPublishJob}
               isLoading={pub.busy}
@@ -725,7 +775,12 @@ export function VaultStep({ ctx }) {
               Create the publish job
             </DashboardActionButton>
             {publishJobId ? (
-              <Text fontSize='sm' data-testid='vault-publish-job'>
+              <Text
+                fontSize='sm'
+                minW={0}
+                overflowWrap='anywhere'
+                data-testid='vault-publish-job'
+              >
                 Publish job {publishJobId}
                 {pub.job?.status ? (
                   <>
@@ -740,6 +795,7 @@ export function VaultStep({ ctx }) {
             <Text
               fontSize='xs'
               color={muted}
+              _light={{ color: muted }}
               data-testid='vault-publication-prerequisites'
             >
               {!issuerId
@@ -754,7 +810,7 @@ export function VaultStep({ ctx }) {
           {pub.error ? <ErrorText>{pub.error}</ErrorText> : null}
           <ApprovalWaitPanel job={pub.job} />
           {pub.job?.status === 'pending_approval' ? (
-            <Text fontSize='xs' color={muted}>
+            <Text fontSize='xs' color={muted} _light={{ color: muted }}>
               After approval the issuing agent must be online and out of dry
               run.
             </Text>
@@ -781,6 +837,7 @@ export function VaultStep({ ctx }) {
           ) : null}
           <HStack align='start' spacing={3} flexWrap='wrap'>
             <FormControl
+              minW={0}
               flex='2 1 240px'
               isInvalid={shownErrors('vaultAddress').length > 0}
             >
@@ -800,12 +857,12 @@ export function VaultStep({ ctx }) {
                 ))}
               </FormErrorMessage>
             </FormControl>
-            <FormControl flex='1 1 120px'>
+            <FormControl minW={0} flex='1 1 120px'>
               <FormLabel fontSize='sm'>KV v2 mount</FormLabel>
               <Input size='sm' value={form.mount} onChange={set('mount')} />
             </FormControl>
           </HStack>
-          <FormControl isInvalid={shownErrors('groupId').length > 0}>
+          <FormControl minW={0} isInvalid={shownErrors('groupId').length > 0}>
             <FormLabel fontSize='sm'>Group id</FormLabel>
             <Input
               size='sm'
@@ -821,11 +878,11 @@ export function VaultStep({ ctx }) {
                 </ErrorText>
               ))}
             </FormErrorMessage>
-            <Text fontSize='xs' mt={1} color={muted}>
+            <Text fontSize='xs' mt={1} color={muted} _light={{ color: muted }}>
               Filled in for you once the publish job in part 1 exists.
             </Text>
           </FormControl>
-          <FormControl isInvalid={shownErrors('caFile').length > 0}>
+          <FormControl minW={0} isInvalid={shownErrors('caFile').length > 0}>
             <FormLabel fontSize='sm'>Vault CA file (optional)</FormLabel>
             <Input
               size='sm'
@@ -841,11 +898,11 @@ export function VaultStep({ ctx }) {
                 </ErrorText>
               ))}
             </FormErrorMessage>
-            <Text fontSize='xs' mt={1} color={muted}>
+            <Text fontSize='xs' mt={1} color={muted} _light={{ color: muted }}>
               Needed when Vault uses a private CA. The file stays on each host.
             </Text>
           </FormControl>
-          <FormControl isInvalid={shownErrors('probeCa').length > 0}>
+          <FormControl minW={0} isInvalid={shownErrors('probeCa').length > 0}>
             <FormLabel fontSize='sm'>
               CA file for the consumer&apos;s served-certificate check
               (optional)
@@ -864,7 +921,7 @@ export function VaultStep({ ctx }) {
                 </ErrorText>
               ))}
             </FormErrorMessage>
-            <Text fontSize='xs' mt={1} color={muted}>
+            <Text fontSize='xs' mt={1} color={muted} _light={{ color: muted }}>
               Needed when the certificate comes from a private CA or a test CA
               such as the Let&apos;s Encrypt staging CA: the consumer&apos;s
               trust check validates the chain against this file and fails
@@ -873,6 +930,7 @@ export function VaultStep({ ctx }) {
             </Text>
           </FormControl>
           <DashboardActionButton
+            {...VAULT_ACTION_LAYOUT}
             variant='outline'
             onClick={saveSettings}
             isDisabled={!out.ok}
@@ -880,15 +938,15 @@ export function VaultStep({ ctx }) {
             Save Vault connection settings
           </DashboardActionButton>
           {savedOk ? (
-            <Text fontSize='xs' color={muted}>
+            <Text fontSize='xs' color={muted} _light={{ color: muted }}>
               Vault connection settings saved.
             </Text>
           ) : null}
-          <Text fontSize='xs' color={muted}>
+          <Text fontSize='xs' color={muted} _light={{ color: muted }}>
             Consumer binding id (generated, keep it): {form.bindingId}
           </Text>
           {!out.ok ? (
-            <Text fontSize='xs' color={muted}>
+            <Text fontSize='xs' color={muted} _light={{ color: muted }}>
               The commands and files in parts 3 to 6 appear once these values
               are valid.
             </Text>
@@ -929,7 +987,7 @@ export function VaultStep({ ctx }) {
               title='Prepare the issuing server'
               who='root (sudo) on the issuing server, then the agent user'
             >
-              <Text fontSize='xs' color={muted}>
+              <Text fontSize='xs' color={muted} _light={{ color: muted }}>
                 Both configs name an agent by its wire id (agentId, and the
                 consumer repeats it in materialBindings). Choose each id before
                 the agent registers by setting agentId in its config.json, or
@@ -942,7 +1000,12 @@ export function VaultStep({ ctx }) {
                 text={JSON.stringify(issuerOut.issuer, null, 2)}
                 language='json'
               />
-              <Text fontSize='xs' color={muted} data-testid='vault-auth-note'>
+              <Text
+                fontSize='xs'
+                color={muted}
+                _light={{ color: muted }}
+                data-testid='vault-auth-note'
+              >
                 Authentication to Vault: each agent reads a Vault token from a
                 file (tokenFile) and has no login of its own, so AppRole,
                 Kubernetes or other auth methods are handled by Vault Agent,
@@ -971,7 +1034,7 @@ export function VaultStep({ ctx }) {
               who='root (sudo) on the consumer server, then the agent user'
             >
               <ConsumerBootstrapToken workspaceId={ctx.workspaceId} />
-              <FormControl as='fieldset'>
+              <FormControl as='fieldset' minW={0}>
                 <FormLabel as='legend' fontSize='sm'>
                   Consumer delivery
                 </FormLabel>
@@ -991,7 +1054,7 @@ export function VaultStep({ ctx }) {
                     </Radio>
                   </VStack>
                 </RadioGroup>
-                <Text fontSize='xs' color={muted}>
+                <Text fontSize='xs' color={muted} _light={{ color: muted }}>
                   File distribution does not require a web server, reload or TLS
                   listener. Service reload also checks the certificate served by
                   that service.
@@ -1001,7 +1064,7 @@ export function VaultStep({ ctx }) {
                 </Text>
               </FormControl>
               {reloadConsumer ? (
-                <FormControl>
+                <FormControl minW={0}>
                   <FormLabel fontSize='sm' htmlFor='vault-consumer-service'>
                     Service to reload
                   </FormLabel>
@@ -1023,6 +1086,7 @@ export function VaultStep({ ctx }) {
                 </FormControl>
               ) : null}
               <FormControl
+                minW={0}
                 isInvalid={Boolean(out.fieldErrors?.deployPath?.length)}
               >
                 <FormLabel fontSize='sm' htmlFor='vault-consumer-directory'>
@@ -1117,7 +1181,11 @@ export function VaultStep({ ctx }) {
                   />
                   {form.reloadService === 'nginx' ? (
                     <>
-                      <Text fontSize='xs' color={muted}>
+                      <Text
+                        fontSize='xs'
+                        color={muted}
+                        _light={{ color: muted }}
+                      >
                         The stock nginx unit does not test its configuration on
                         reload, so run the one-time setup below as well.
                       </Text>
@@ -1155,7 +1223,7 @@ export function VaultStep({ ctx }) {
                 running CertOps worker is required to advance deployments;
                 publication alone does not change a consumer service.
               </Text>
-              <FormControl>
+              <FormControl minW={0}>
                 <FormLabel fontSize='sm' htmlFor='vault-first-consumer'>
                   First consumer agent
                 </FormLabel>
@@ -1189,6 +1257,7 @@ export function VaultStep({ ctx }) {
                 </Text>
               ) : null}
               <DashboardActionButton
+                {...VAULT_ACTION_LAYOUT}
                 variant='outline'
                 onClick={() => ctx.refresh()}
               >
@@ -1231,11 +1300,11 @@ export function VaultStep({ ctx }) {
               testId='vault-uncertain-note'
               summary='If a rollout fails or reports an uncertain result'
             >
-              <Text fontSize='xs' color={muted}>
+              <Text fontSize='xs' color={muted} _light={{ color: muted }}>
                 A root-owned placeholder or a file the agent cannot overwrite
                 makes the first rollout fail with material_install_failed.
               </Text>
-              <Text fontSize='xs' color={muted}>
+              <Text fontSize='xs' color={muted} _light={{ color: muted }}>
                 Before the consumer agent touches a file it records an uncertain
                 marker for the binding in {AGENT_STATE_DIR}
                 /material-bindings. It clears the marker only after the files
@@ -1249,7 +1318,7 @@ export function VaultStep({ ctx }) {
                 fails with material_binding_uncertain until the marker is
                 cleared.
               </Text>
-              <Text fontSize='xs' color={muted}>
+              <Text fontSize='xs' color={muted} _light={{ color: muted }}>
                 Repair the cause on the host first. Then run this as the agent
                 user. It installs and reloads nothing: it only checks that the
                 installed certificate and key are the ones being rolled out and
@@ -1259,7 +1328,7 @@ export function VaultStep({ ctx }) {
                 label='Clear the marker (consumer host)'
                 text={buildReconcileCommand(bindingId)}
               />
-              <Text fontSize='xs' color={muted}>
+              <Text fontSize='xs' color={muted} _light={{ color: muted }}>
                 Then use Retry deployment on the affected consumer above and
                 resume the rollout. If no file was replaced, the check reports
                 material_reconciliation_mismatch and the marker stays: there is

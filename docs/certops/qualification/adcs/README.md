@@ -18,6 +18,8 @@ The serial comprehensive campaign uses Azure Managed Run Command with a 190-minu
 
 Read the run summary and sanitized JSON artifacts. Missing prerequisites or mandatory scenarios fail the run. Fixture results never substitute for native evidence. Collect completed core native runs using `certops-release-qualification.yml` with the exact main candidate SHA and run IDs. Its verdict lists omitted environments and cannot claim full coverage.
 
+During a campaign, monitor workflow status or the managed command's ARM execution-state GET. Do not submit separate guest Run Command diagnostics while the workflow owns the lab: they can occupy the channel needed for final report collection. For guest investigation, use a diagnostic run and wait until its report collection finishes; clean up the retained owned lab when investigation ends. Read-only report transfer retries a rejected busy-channel HTTP `409` at most twelve times with five-second waits. Native actions and uncertain server/network failures are never replayed by that retry.
+
 Lab teardown runs with `always()`. Keep scheduled `certops-adcs-lab-janitor.yml` enabled and its separate `certops-adcs-cleanup` environment able to authenticate without human approval. It deletes only expired, owned labs; verify both normal teardown and cancellation cleanup before relying on this infrastructure.
 
 Hierarchy, issuer reassignment, standalone CA feasibility, response-loss/journal crash experiments and elapsed 24-hour campaigns are deferred to the extended follow-up branch. No native qualification is claimed until actual runs pass.

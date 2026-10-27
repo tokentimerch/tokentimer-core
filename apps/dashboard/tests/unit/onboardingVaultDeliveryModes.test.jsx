@@ -311,6 +311,9 @@ describe('Vault consumer delivery choices', () => {
       vaultConsumerDeliveryMode: 'files',
       vaultMaterialVersionId: 'version',
     });
+    ctx.summary.certops.distribution.items = [
+      { id: GROUP, completed: true, verified: false },
+    ];
     api.readDistribution.mockResolvedValue({
       versions: [
         {
@@ -350,11 +353,9 @@ describe('Vault consumer delivery choices', () => {
       />
     );
     expect(
-      await screen.findByText(
-        'Certificate files installed on all selected consumers'
-      )
+      await screen.findByText('Certificate files installed on all consumers')
     ).toBeVisible();
-    expect(screen.queryByText('All selected consumers verified')).toBeNull();
+    expect(screen.queryByText('All consumers verified')).toBeNull();
     expect(document.body.textContent).toContain(
       'this does not prove the certificate is in use'
     );
