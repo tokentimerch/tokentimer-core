@@ -80,6 +80,24 @@ function createStore() {
       return rowsOf([]);
     }
 
+    if (text.includes("RV_PENDING_CHALLENGE")) {
+      const pending = state.challenges.find((row) => (
+        row.workspace_id === params[0]
+        && row.contact_id === params[1]
+        && row.channel === "email"
+        && row.status === "pending"
+        && new Date(row.expires_at).getTime() > Date.now()
+      ));
+      return rowsOf(pending ? [{ id: pending.id }] : []);
+    }
+
+    if (text.includes("RV_DISPATCH_EVENTS")) {
+      const prefix = String(params[0] || "").replace(/%$/, "");
+      return rowsOf(state.events
+        .filter((row) => String(row.bucket_key).startsWith(prefix))
+        .map((row) => ({ bucket_key: row.bucket_key, created_at: new Date(row.created_at) })));
+    }
+
     if (text.includes("RV_DISTINCT_WORKSPACES")) {
       const ids = new Set(
         state.events
@@ -407,9 +425,20 @@ describe("recipient verification", () => {
 
   it("keeps Cloud fail-closed and self-hosted shadow unless an operator sets a mode", () => {
     assert.equal(verification.resolveEnforcementMode({ TT_DEPLOYMENT: "cloud", RECIPIENT_VERIFICATION_MODE: "off" }), "enforce");
-    assert.equal(verification.resolveEnforcementMode({ TT_DEPLOYMENT: "cloud", RECIPIENT_VERIFICATION_MODE: "shadow" }), "shadow");
+    assert.equal(verification.resolveEnforcementMode({ TT_DEPLOYMENT: "cloud", RECIPIENT_VERIFICATION_MODE: "shadow" }), "enforce");
+    assert.equal(verification.resolveEnforcementMode({
+      TT_DEPLOYMENT: "cloud",
+      RECIPIENT_VERIFICATION_MODE: "shadow",
+      RECIPIENT_VERIFICATION_CLOUD_SHADOW: "1",
+    }), "shadow");
+    assert.equal(verification.resolveEnforcementMode({ TT_DEPLOYMENT: "cloud" }), "enforce");
+    assert.equal(verification.resolveEnforcementMode({ TT_DEPLOYMENT: "prod" }), "enforce");
     assert.equal(verification.resolveEnforcementMode({ TT_DEPLOYMENT: "self-hosted" }), "shadow");
     assert.equal(verification.resolveEnforcementMode({ TT_DEPLOYMENT: "self-hosted", RECIPIENT_VERIFICATION_MODE: "enforce" }), "enforce");
+    assert.equal(verification.resolveEnforcementMode({ TT_DEPLOYMENT: "self-hosted", RECIPIENT_VERIFICATION_MODE: "off" }), "off");
+    const cloudReport = verification.describeEnforcement({ TT_DEPLOYMENT: "cloud" });
+    assert.equal(cloudReport.mode, "enforce");
+    assert.equal(cloudReport.deployment, "cloud");
     if (verification.DEFAULT_DEPLOYMENT === "cloud") {
       assert.equal(verification.resolveEnforcementMode({}), "enforce");
     } else {
@@ -688,6 +717,13 @@ describe("recipient verification", () => {
       channel: "email",
       actorUserId: 1,
     });
+    await verification.noteInvitationDispatch({
+      pool: store.pool,
+      workspaceId: "ws-1",
+      contactId: "contact-1",
+      channel: "email",
+      outcome: "accepted",
+    });
     await assert.rejects(
       () => verification.createInvitation({
         pool: store.pool,
@@ -860,6 +896,14 @@ describe("recipient verification", () => {
     assert.equal(policy.includes("limited.recordAbuse"), true);
     assert.equal(policy.includes("recordAbuseSuppression"), true);
     assert.equal(digest.includes("destinationAllowed"), true);
+    const digestLoop = digest.slice(digest.indexOf("for (const row of inverted)"));
+    assert.ok(digestLoop.indexOf("claimWeeklyDigestRecipient") < digestLoop.indexOf("confirmDigestConsent"));
+    assert.ok(digestLoop.indexOf("confirmDigestConsent") < digestLoop.indexOf("deliverRecipientDigest"));
+    assert.equal(digestLoop.includes("releaseWeeklyDigestRecipientClaim"), true);
+    const preferences = fs.readFileSync(path.join(ROOT, "apps/dashboard/src/pages/AlertPreferences.jsx"), "utf8");
+    const whatsappInvite = preferences.slice(preferences.indexOf("async function handleShareWhatsApp"));
+    assert.ok(whatsappInvite.indexOf("RECIPIENT_OPTED_OUT") < whatsappInvite.indexOf("share_url"));
+    assert.ok(route.indexOf("invitation.withholdDelivery") < route.indexOf("share_url: shareUrl"));
     const whatsappRoute = ["apps/api/routes/whatsapp.js", "apps/saas/routes/whatsapp.js"]
       .map((name) => path.join(ROOT, name))
       .find((candidate) => fs.existsSync(candidate));
@@ -1375,5 +1419,150 @@ describe("recipient verification", () => {
     const queue = fs.readFileSync(path.join(ROOT, "apps/worker/src/queue-manager.js"), "utf8");
     assert.match(queue, /reconcileDeliveryChannels/);
     assert.match(queue, /delivery_claim_id IS NULL/);
+  });
+
+  it("does not let public re-subscriptions share one anonymous user quota", async () => {
+    process.env.RECIPIENT_VERIFY_USER_PER_DAY = "1";
+    process.env.RECIPIENT_VERIFY_EMAIL_DEST_PER_DAY = "1";
+    process.env.RECIPIENT_VERIFY_WORKSPACE_PER_DAY = "10";
+    const store = createStore();
+    seedContact(store, { id: "contact-1", details: { email: "one@example.com" }, phone_e164: "+14155550101" });
+    seedContact(store, { id: "contact-2", details: { email: "two@example.com" }, phone_e164: "+14155550102" });
+    const first = await verification.createInvitation({
+      pool: store.pool,
+      workspaceId: "ws-1",
+      contactId: "contact-1",
+      channel: "email",
+      actorUserId: null,
+      recipientInitiated: true,
+      requestIp: "203.0.113.10",
+    });
+    const second = await verification.createInvitation({
+      pool: store.pool,
+      workspaceId: "ws-1",
+      contactId: "contact-2",
+      channel: "email",
+      actorUserId: null,
+      recipientInitiated: true,
+      requestIp: "203.0.113.11",
+    });
+    assert.equal(typeof first.token, "string");
+    assert.equal(typeof second.token, "string");
+    assert.equal(store.state.events.some((row) => String(row.bucket_key).startsWith("user:unknown")), false);
+    process.env.RECIPIENT_VERIFY_WORKSPACE_PER_DAY = "1";
+    const other = createStore();
+    seedContact(other, { id: "contact-1", details: { email: "one@example.com" }, phone_e164: "+14155550101" });
+    seedContact(other, { id: "contact-2", details: { email: "two@example.com" }, phone_e164: "+14155550102" });
+    await verification.createInvitation({
+      pool: other.pool,
+      workspaceId: "ws-1",
+      contactId: "contact-1",
+      channel: "email",
+      recipientInitiated: true,
+    });
+    await assert.rejects(
+      () => verification.createInvitation({
+        pool: other.pool,
+        workspaceId: "ws-1",
+        contactId: "contact-2",
+        channel: "email",
+        recipientInitiated: true,
+      }),
+      (error) => error.code === "RECIPIENT_VERIFICATION_RATE_LIMITED",
+    );
+  });
+
+  it("retries a failed verification email without using another destination allowance", async () => {
+    process.env.RECIPIENT_VERIFY_EMAIL_DEST_PER_DAY = "1";
+    process.env.RECIPIENT_VERIFY_EMAIL_DEST_PER_WEEK = "3";
+    const store = createStore();
+    seedContact(store);
+    const first = await verification.createInvitation({
+      pool: store.pool,
+      workspaceId: "ws-1",
+      contactId: "contact-1",
+      channel: "email",
+      actorUserId: 7,
+    });
+    await assert.rejects(
+      () => verification.createInvitation({
+        pool: store.pool,
+        workspaceId: "ws-1",
+        contactId: "contact-1",
+        channel: "email",
+        actorUserId: 7,
+      }),
+      (error) => error.code === "VERIFICATION_DISPATCH_UNCONFIRMED",
+    );
+    await verification.noteInvitationDispatch({
+      pool: store.pool,
+      workspaceId: "ws-1",
+      contactId: "contact-1",
+      channel: "email",
+      outcome: "failed",
+    });
+    const retried = await verification.createInvitation({
+      pool: store.pool,
+      workspaceId: "ws-1",
+      contactId: "contact-1",
+      channel: "email",
+      actorUserId: 7,
+    });
+    assert.notEqual(retried.token, first.token);
+    assert.equal(store.state.challenges.filter((row) => row.status === "pending").length, 1);
+    await verification.noteInvitationDispatch({
+      pool: store.pool,
+      workspaceId: "ws-1",
+      contactId: "contact-1",
+      channel: "email",
+      outcome: "ambiguous",
+    });
+    await assert.rejects(
+      () => verification.createInvitation({
+        pool: store.pool,
+        workspaceId: "ws-1",
+        contactId: "contact-1",
+        channel: "email",
+        actorUserId: 7,
+      }),
+      (error) => error.code === "VERIFICATION_DISPATCH_UNCONFIRMED",
+    );
+    const accepted = await verification.consumeEmailChallenge({
+      pool: store.pool,
+      token: retried.token,
+      decision: "accept",
+    });
+    assert.equal(accepted.ok, true);
+    assert.equal(accepted.outcome, "accepted");
+  });
+
+  it("blocks a digest send when consent changes after the claim", () => {
+    assert.equal(verification.confirmDigestConsent({ mode: "enforce", finalAllowed: false }).send, false);
+    assert.equal(verification.confirmDigestConsent({ mode: "enforce", finalAllowed: true }).send, true);
+    assert.equal(verification.confirmDigestConsent({ mode: "shadow", finalAllowed: false }).send, true);
+    assert.equal(verification.confirmDigestConsent({ mode: "off", finalAllowed: false }).send, true);
+  });
+
+  it("withholds a WhatsApp invitation after a decline", async () => {
+    const store = createStore();
+    seedContact(store);
+    const fingerprint = verification.destinationFingerprint("whatsapp", "+14155550100");
+    store.state.suppressions.push({
+      channel: "whatsapp",
+      destination_fingerprint: fingerprint,
+      scope: "workspace",
+      workspace_id: "ws-1",
+      reason: "recipient_declined",
+      expires_at: null,
+    });
+    const invitation = await verification.createInvitation({
+      pool: store.pool,
+      workspaceId: "ws-1",
+      contactId: "contact-1",
+      channel: "whatsapp",
+      actorUserId: 4,
+    });
+    assert.equal(invitation.withholdDelivery, true);
+    assert.equal(invitation.token, null);
   });
 });

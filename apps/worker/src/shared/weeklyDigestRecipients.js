@@ -165,6 +165,23 @@ async function claimWeeklyDigestRecipient(
   return res.rows && res.rows[0] ? res.rows[0] : null;
 }
 
+async function releaseWeeklyDigestRecipientClaim(
+  client,
+  { workspaceId, weekStartDate, channel, recipientKey },
+) {
+  const res = await client.query(
+    `DELETE FROM weekly_digest_recipient_log
+      WHERE workspace_id = $1
+        AND week_start_date = $2
+        AND channel = $3
+        AND recipient_key = $4
+        AND status = 'pending'
+      RETURNING workspace_id`,
+    [workspaceId, weekStartDate, channel, hashDigestRecipientKey(recipientKey)],
+  );
+  return res.rowCount > 0;
+}
+
 async function markWeeklyDigestRecipientSent(
   client,
   { workspaceId, weekStartDate, channel, recipientKey },
@@ -197,6 +214,7 @@ export {
   aggregateDigestRecipients,
   invertDigestCandidates,
   claimWeeklyDigestRecipient,
+  releaseWeeklyDigestRecipientClaim,
   markWeeklyDigestRecipientSent,
   weeklyDigestWhatsAppIdempotencyKey,
   hashDigestRecipientKey,

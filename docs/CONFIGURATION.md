@@ -146,14 +146,16 @@ an incomplete configuration and SMTP is reported as not configured. With no
 
 Workspace email and WhatsApp alerts are separate from account email verification. A contact can be saved and placed in a contact group while a destination is still `pending`. Operational alerts, weekly digests, and workspace test messages are sent only after that recipient confirms the exact destination. Account verification, password reset, billing, waitlist, workspace invites, and operator incident mail are not gated by this check.
 
-Self-hosted deployments evaluate the policy in `shadow` mode until an operator sets `RECIPIENT_VERIFICATION_MODE=enforce`. Shadow still delivers and logs `recipient-verification-shadow`. `off` is available only for self-hosted rollback. TokenTimer Cloud ignores `off` and enforces unless an operator explicitly sets `shadow` for a temporary rollout. There is no workspace setting for this mode.
+Self-hosted deployments evaluate the policy in `shadow` mode until an operator sets `RECIPIENT_VERIFICATION_MODE=enforce`. Shadow still delivers and logs `recipient-verification-shadow`. `off` is available only for self-hosted rollback. Set `TT_DEPLOYMENT=cloud` on the API and every notification worker. Cloud then enforces verification. `off` is ignored. Temporary Cloud shadow also requires `RECIPIENT_VERIFICATION_CLOUD_SHADOW=1` together with `RECIPIENT_VERIFICATION_MODE=shadow`. An unrecognized `TT_DEPLOYMENT` value enforces. There is no workspace setting for this mode. The API and worker log `recipient verification mode` at startup.
 
 Set `RECIPIENT_FINGERPRINT_SECRET` (or rely on `PHONE_HASH_SALT` or `SESSION_SECRET`) before creating invitations. Set `PUBLIC_BASE_URL` or `API_URL` to the externally visible API origin. Invitation links and the Twilio inbound signature both use that origin.
 
 | Variable | Description | Default value | Scope |
 | --- | --- | --- | --- |
 | `RECIPIENT_VERIFICATION_MODE` | `enforce`, `shadow`, or, self-hosted only, `off` | `shadow` self-hosted, `enforce` on Cloud | API, worker |
-| `TT_DEPLOYMENT` | `cloud` ignores `off` | `self-hosted` in Core, `cloud` in the Cloud copy | API, worker |
+| `TT_DEPLOYMENT` | `self-hosted` or `cloud`. Any other value enforces verification | unset means `self-hosted` | API, worker |
+| `RECIPIENT_VERIFICATION_CLOUD_SHADOW` | Set to `1` with mode `shadow` to temporarily shadow Cloud | unset | API, worker |
+| `RECIPIENT_RESUBSCRIBE_IP_PER_DAY` | Public re-subscribe requests per client address | `10` | API |
 | `RECIPIENT_FINGERPRINT_SECRET` | HMAC key for destination fingerprints and token hashes | falls back to `PHONE_HASH_SALT`, then `SESSION_SECRET` | API, worker |
 | `PUBLIC_BASE_URL` | External origin for invitation links and Twilio signature validation | falls back to `API_URL` | API |
 | `RECIPIENT_VERIFY_EMAIL_DEST_PER_DAY` | Email invitations per destination | `1` | API |

@@ -17,7 +17,7 @@ import {
   pushMetrics,
 } from "./metrics.js";
 import { computeDaysLeft } from "./shared/thresholds.js";
-import { destinationAllowed, verificationMode } from "./shared/recipientDeliveryGate.js";
+import { confirmDigestConsent, destinationAllowed, verificationMode } from "./shared/recipientDeliveryGate.js";
 import {
   buildWeeklyDigestWhatsAppTemplateVariables,
   sanitizeWhatsAppTemplateVars,
@@ -32,6 +32,7 @@ import { loadAssignedGroupIdsForAssets } from "./shared/replaceAssetContactGroup
 import {
   invertDigestCandidates,
   claimWeeklyDigestRecipient,
+  releaseWeeklyDigestRecipientClaim,
   markWeeklyDigestRecipientSent,
   weeklyDigestWhatsAppIdempotencyKey,
 } from "./shared/weeklyDigestRecipients.js";
@@ -1041,6 +1042,28 @@ export async function weeklyDigestJob() {
         if (!claim) {
           skipped++;
           continue;
+        }
+        if (row.channel === "email" || row.channel === "whatsapp") {
+          const finalDecision = await destinationAllowed(
+            client,
+            ws.workspace_id,
+            row.channel,
+            row.recipientKey,
+          );
+          const consent = confirmDigestConsent({
+            mode: verificationMode(),
+            finalAllowed: finalDecision.allowed,
+          });
+          if (!consent.send) {
+            await releaseWeeklyDigestRecipientClaim(client, {
+              workspaceId: ws.workspace_id,
+              weekStartDate,
+              channel: row.channel,
+              recipientKey: row.recipientKey,
+            });
+            skipped++;
+            continue;
+          }
         }
 
         const groupNames = contributingGroupNames(

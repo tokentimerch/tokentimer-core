@@ -32,6 +32,14 @@ function verificationMode() {
   return recipientVerification.resolveEnforcementMode();
 }
 
+function confirmDigestConsent(input) {
+  return recipientVerification.confirmDigestConsent(input);
+}
+
+function describeEnforcement() {
+  return recipientVerification.describeEnforcement();
+}
+
 function queueDeliveryOutcome(results, options) {
   return recipientVerification.queueDeliveryOutcome(results, options);
 }
@@ -59,6 +67,8 @@ export {
   recheckDestination,
   destinationAllowed,
   verificationMode,
+  confirmDigestConsent,
+  describeEnforcement,
   queueDeliveryOutcome,
   selectDeliverableDestinations,
   mergeDeliveryAttempt,

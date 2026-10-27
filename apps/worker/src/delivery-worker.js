@@ -53,6 +53,7 @@ import {
 import {
   gateDestinations,
   recheckDestination,
+  describeEnforcement,
   verificationMode,
   queueDeliveryOutcome,
   selectDeliverableDestinations,
@@ -3724,6 +3725,7 @@ export async function deliveryWorkerJob({
 // Run delivery worker if this file is executed directly
 if (isNodeEntrypoint(import.meta.url)) {
   warnIfNodeUseEnvProxyUnsupported();
+  logger.info(JSON.stringify({ message: "recipient verification mode", ...describeEnforcement() }));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
 

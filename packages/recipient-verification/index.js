@@ -53,17 +53,47 @@ function limits(env = process.env) {
     testCooldownSeconds: positiveInt(env.RECIPIENT_TEST_COOLDOWN_SECONDS, 120),
     publicPerWindow: positiveInt(env.RECIPIENT_VERIFY_PUBLIC_PER_WINDOW, 60),
     publicWindowSeconds: positiveInt(env.RECIPIENT_VERIFY_PUBLIC_WINDOW_SECONDS, 10 * 60),
+    resubscribeIpPerDay: positiveInt(env.RECIPIENT_RESUBSCRIBE_IP_PER_DAY, 10),
   };
 }
 
+function deploymentIdentity(env = process.env) {
+  const raw = String(env.TT_DEPLOYMENT || "").trim().toLowerCase();
+  if (!raw) return DEFAULT_DEPLOYMENT;
+  if (raw === "cloud" || raw === "self-hosted") return raw;
+  return "unknown";
+}
+
+function cloudShadowArmed(env = process.env) {
+  return String(env.RECIPIENT_VERIFICATION_CLOUD_SHADOW || "").trim() === "1";
+}
+
 function resolveEnforcementMode(env = process.env) {
-  const deployment = String(env.TT_DEPLOYMENT || DEFAULT_DEPLOYMENT).trim().toLowerCase();
+  const deployment = deploymentIdentity(env);
   const raw = String(env.RECIPIENT_VERIFICATION_MODE || "").trim().toLowerCase();
-  if (deployment === "cloud") {
-    return raw === "shadow" ? "shadow" : "enforce";
+  if (deployment !== "self-hosted") {
+    if (deployment === "cloud" && raw === "shadow" && cloudShadowArmed(env)) return "shadow";
+    return "enforce";
   }
   if (raw === "enforce" || raw === "off" || raw === "shadow") return raw;
   return "shadow";
+}
+
+function describeEnforcement(env = process.env) {
+  const deployment = deploymentIdentity(env);
+  const requested = String(env.RECIPIENT_VERIFICATION_MODE || "").trim().toLowerCase();
+  const mode = resolveEnforcementMode(env);
+  return {
+    deployment: deployment === "unknown" ? "unrecognized" : deployment,
+    mode,
+    requestedMode: requested || "unset",
+    cloudShadowIgnored: deployment === "cloud" && requested === "shadow" && mode !== "shadow",
+  };
+}
+
+function confirmDigestConsent({ mode, finalAllowed }) {
+  if (mode === "off" || mode === "shadow") return { send: true };
+  return { send: finalAllowed === true };
 }
 
 function fingerprintSecret(env = process.env) {
@@ -842,29 +872,44 @@ async function takeBucket(client, { key, limit, windowSeconds, workspaceId }) {
   return { ok: true, retryAfter: 0 };
 }
 
-async function assertInvitationBudget(client, { channel, fingerprint, workspaceId, actorUserId }) {
+async function assertInvitationBudget(client, {
+  channel,
+  fingerprint,
+  workspaceId,
+  actorUserId,
+  budgetScope = "admin",
+  requestIp = null,
+  recoverDestination = false,
+}) {
   const config = limits();
   const dayLimit = channel === "email" ? config.emailDestPerDay : config.whatsappDestPerDay;
   const weekLimit = channel === "email" ? config.emailDestPerWeek : config.whatsappDestPerWeek;
   const lockKeys = [
     `verify:dest:${channel}:${fingerprint}`,
     `verify:ws:${workspaceId || "none"}`,
-    `verify:user:${actorUserId || "unknown"}`,
-  ].sort();
+  ];
+  if (budgetScope === "recipient") {
+    if (requestIp) lockKeys.push(`verify:resub-ip:${requestIp}`);
+  } else if (actorUserId) {
+    lockKeys.push(`verify:user:${actorUserId}`);
+  }
+  lockKeys.sort();
   for (const key of lockKeys) {
     await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [key]);
   }
-  const day = await takeBucket(client, {
-    key: `dest:${channel}:${fingerprint}:24h`,
-    limit: dayLimit,
-    windowSeconds: 24 * 60 * 60,
-    workspaceId,
-  });
-  if (!day.ok) {
-    const error = coded(429, "RECIPIENT_VERIFICATION_RATE_LIMITED", "Verification invitation limit reached for this destination", {
-      retryAfter: day.retryAfter,
+  if (!recoverDestination) {
+    const day = await takeBucket(client, {
+      key: `dest:${channel}:${fingerprint}:24h`,
+      limit: dayLimit,
+      windowSeconds: 24 * 60 * 60,
+      workspaceId,
     });
-    throw error;
+    if (!day.ok) {
+      const error = coded(429, "RECIPIENT_VERIFICATION_RATE_LIMITED", "Verification invitation limit reached for this destination", {
+        retryAfter: day.retryAfter,
+      });
+      throw error;
+    }
   }
   const week = await takeBucket(client, {
     key: `dest:${channel}:${fingerprint}:7d`,
@@ -899,8 +944,25 @@ async function assertInvitationBudget(client, { channel, fingerprint, workspaceI
       retryAfter: workspace.retryAfter,
     });
   }
+  if (budgetScope === "recipient") {
+    if (requestIp) {
+      const ipBucket = await takeBucket(client, {
+        key: `resub-ip:${requestIp}:24h`,
+        limit: config.resubscribeIpPerDay,
+        windowSeconds: 24 * 60 * 60,
+        workspaceId,
+      });
+      if (!ipBucket.ok) {
+        throw coded(429, "RECIPIENT_VERIFICATION_RATE_LIMITED", "Too many re-subscription requests from this network", {
+          retryAfter: ipBucket.retryAfter,
+        });
+      }
+    }
+    return;
+  }
+  if (!actorUserId) return;
   const user = await takeBucket(client, {
-    key: `user:${actorUserId || "unknown"}:24h`,
+    key: `user:${actorUserId}:24h`,
     limit: config.userPerDay,
     windowSeconds: 24 * 60 * 60,
     workspaceId,
@@ -910,6 +972,49 @@ async function assertInvitationBudget(client, { channel, fingerprint, workspaceI
       retryAfter: user.retryAfter,
     });
   }
+}
+
+function dispatchMarkerPrefix(workspaceId, contactId, channel) {
+  return `dispatch:${workspaceId}:${contactId}:${channel}:`;
+}
+
+async function pendingEmailDispatch(client, workspaceId, contactId) {
+  const pending = await client.query(
+    `-- RV_PENDING_CHALLENGE
+     SELECT id FROM contact_verification_challenges
+      WHERE workspace_id = $1 AND contact_id = $2 AND channel = 'email'
+        AND status = 'pending' AND expires_at > NOW()
+      LIMIT 1`,
+    [workspaceId, contactId],
+  );
+  if (!pending.rows[0]) return { state: "none" };
+  const prefix = dispatchMarkerPrefix(workspaceId, contactId, "email");
+  const markers = await client.query(
+    `-- RV_DISPATCH_EVENTS
+     SELECT bucket_key, created_at FROM recipient_verification_events
+      WHERE bucket_key LIKE $1`,
+    [`${prefix}%`],
+  );
+  let latest = null;
+  for (const row of markers.rows) {
+    const at = new Date(row.created_at).getTime();
+    if (!latest || at >= latest.at) latest = { at, key: String(row.bucket_key || "") };
+  }
+  const kind = latest ? latest.key.slice(prefix.length) : "";
+  if (kind === "failed") return { state: "failed" };
+  if (kind === "accepted") return { state: "accepted" };
+  return { state: "unconfirmed" };
+}
+
+async function noteInvitationDispatch({ pool, workspaceId, contactId, channel, outcome }) {
+  if (outcome !== "failed" && outcome !== "ambiguous" && outcome !== "accepted") {
+    throw coded(400, "VALIDATION_ERROR", "Unsupported dispatch outcome");
+  }
+  await pool.query(
+    `-- RV_INSERT_EVENT
+     INSERT INTO recipient_verification_events (bucket_key, workspace_id) VALUES ($1, $2)`,
+    [dispatchMarkerPrefix(workspaceId, contactId, channel) + outcome, workspaceId || null],
+  );
 }
 
 async function recordAbuseSuppression(pool, { channel, fingerprint }) {
@@ -924,7 +1029,7 @@ async function recordAbuseSuppression(pool, { channel, fingerprint }) {
   );
 }
 
-async function createInvitation({ pool, workspaceId, contactId, channel, actorUserId, recipientInitiated = false }) {
+async function createInvitation({ pool, workspaceId, contactId, channel, actorUserId, recipientInitiated = false, requestIp = null }) {
   if (channel !== "email" && channel !== "whatsapp") {
     throw coded(400, "VALIDATION_ERROR", "Unsupported channel");
   }
@@ -975,7 +1080,30 @@ async function createInvitation({ pool, workspaceId, contactId, channel, actorUs
         withholdDelivery: true,
       };
     }
-    await assertInvitationBudget(client, { channel, fingerprint, workspaceId, actorUserId });
+    let recoverDestination = false;
+    if (channel === "email") {
+      const pendingDispatch = await pendingEmailDispatch(client, workspaceId, contactId);
+      if (pendingDispatch.state === "unconfirmed") {
+        throw coded(409, "VERIFICATION_DISPATCH_UNCONFIRMED", "A verification email may already have been accepted. Wait before sending another.");
+      }
+      recoverDestination = pendingDispatch.state === "failed";
+    }
+    await assertInvitationBudget(client, {
+      channel,
+      fingerprint,
+      workspaceId,
+      actorUserId,
+      budgetScope: recipientInitiated ? "recipient" : "admin",
+      requestIp,
+      recoverDestination,
+    });
+    if (recoverDestination) {
+      await client.query(
+        `-- RV_INSERT_EVENT
+         INSERT INTO recipient_verification_events (bucket_key, workspace_id) VALUES ($1, $2)`,
+        [dispatchMarkerPrefix(workspaceId, contactId, "email") + "sending", workspaceId],
+      );
+    }
     await client.query(
       `-- RV_SUPERSEDE
        UPDATE contact_verification_challenges
@@ -1024,7 +1152,7 @@ async function createInvitation({ pool, workspaceId, contactId, channel, actorUs
   }
 }
 
-async function requestEmailResubscribe({ pool, email }) {
+async function requestEmailResubscribe({ pool, email, requestIp = null }) {
   const normalized = normalizeEmail(email);
   if (!normalized.ok) return [];
   const fingerprint = destinationFingerprint("email", normalized.value);
@@ -1053,11 +1181,13 @@ async function requestEmailResubscribe({ pool, email }) {
         channel: "email",
         actorUserId: null,
         recipientInitiated: true,
+        requestIp,
       });
       if (invitation && invitation.token) {
         invitations.push({
           ...invitation,
           workspaceId: row.workspace_id,
+          contactId: row.contact_id,
           workspaceName: row.workspace_name,
         });
       }
@@ -1590,6 +1720,8 @@ module.exports = {
   DEFAULT_DEPLOYMENT,
   limits,
   resolveEnforcementMode,
+  describeEnforcement,
+  confirmDigestConsent,
   fingerprintSecret,
   publicApiBase,
   normalizeEmail,
@@ -1623,6 +1755,7 @@ module.exports = {
   selectDeliverableDestinations,
   isEligibilityTerminal,
   createInvitation,
+  noteInvitationDispatch,
   requestEmailResubscribe,
   loadChallenge,
   consumeEmailChallenge,

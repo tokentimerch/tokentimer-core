@@ -73,17 +73,21 @@ router.post(
         channel,
         actorUserId: req.user.id,
       });
-      if (channel === "email" && invitation.withholdDelivery) {
+      if (invitation.withholdDelivery || !invitation.token) {
         await audit(req, "RECIPIENT_VERIFICATION_RESUBSCRIBE_REQUIRED", {
           contact_id: req.params.contactId,
           channel,
-          destination_masked: verification.maskEmail(invitation.destination),
+          destination_masked: channel === "email"
+            ? verification.maskEmail(invitation.destination)
+            : verification.maskPhone(invitation.destination),
         });
         return res.status(200).json({
           status: "opted_out",
           channel,
           code: "RECIPIENT_OPTED_OUT",
-          resubscribe_url: `${verification.publicApiBase()}/verify/recipient/resubscribe`,
+          ...(channel === "email"
+            ? { resubscribe_url: `${verification.publicApiBase()}/verify/recipient/resubscribe` }
+            : {}),
         });
       }
       if (channel === "email") {
@@ -95,8 +99,21 @@ router.post(
           text: `${workspaceName} invited this address to receive TokenTimer expiration alerts and weekly digests. Open ${link} and choose whether to confirm. This link expires in 48 hours.`,
           html: `<p><strong>${verification.escapeHtml(workspaceName)}</strong> invited this address to receive TokenTimer expiration alerts and weekly digests.</p><p><a href="${verification.escapeHtml(link)}">Review and confirm</a></p><p>The link expires in 48 hours. Opening it does not confirm anything.</p>`,
         });
+        const outcome = sent?.success ? "accepted" : (sent?.code === "SMTP_TIMEOUT" ? "ambiguous" : "failed");
+        await verification.noteInvitationDispatch({
+          pool,
+          workspaceId: req.workspace.id,
+          contactId: req.params.contactId,
+          channel,
+          outcome,
+        });
         if (!sent?.success) {
-          return res.status(502).json({ error: "Verification email could not be sent", code: "VERIFICATION_EMAIL_FAILED" });
+          return res.status(502).json({
+            error: outcome === "ambiguous"
+              ? "Verification email may already have been accepted. Wait before sending another."
+              : "Verification email could not be sent",
+            code: outcome === "ambiguous" ? "VERIFICATION_EMAIL_UNCERTAIN" : "VERIFICATION_EMAIL_FAILED",
+          });
         }
         await audit(req, "RECIPIENT_VERIFICATION_INVITED", {
           contact_id: req.params.contactId,
@@ -187,15 +204,27 @@ router.post("/verify/recipient/resubscribe", recipientVerificationPageLimiter, a
   if (await limitPublicVerification(req, res)) return undefined;
   const email = req.body && (req.body.email || req.body.destination);
   try {
-    const invitations = await verification.requestEmailResubscribe({ pool, email });
+    const invitations = await verification.requestEmailResubscribe({
+      pool,
+      email,
+      requestIp: resolveClientIp(req) || null,
+    });
     for (const invitation of invitations) {
+      if (!invitation.token) continue;
       const link = `${verification.publicApiBase()}/verify/recipient/${encodeURIComponent(invitation.token)}`;
       const workspaceName = invitation.workspaceName || "A TokenTimer workspace";
-      await sendEmail({
+      const sent = await sendEmail({
         to: invitation.destination,
         subject: "Confirm TokenTimer notifications again",
         text: `${workspaceName} can send expiration alerts to this address again only if you open ${link} and accept. This link expires in 48 hours.`,
         html: `<p><strong>${verification.escapeHtml(workspaceName)}</strong> can send expiration alerts to this address again only if you accept.</p><p><a href="${verification.escapeHtml(link)}">Review and confirm</a></p><p>The link expires in 48 hours. Opening it does not confirm anything.</p>`,
+      });
+      await verification.noteInvitationDispatch({
+        pool,
+        workspaceId: invitation.workspaceId,
+        contactId: invitation.contactId,
+        channel: "email",
+        outcome: sent?.success ? "accepted" : (sent?.code === "SMTP_TIMEOUT" ? "ambiguous" : "failed"),
       });
     }
   } catch (error) {

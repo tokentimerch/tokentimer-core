@@ -2714,6 +2714,13 @@ export default function AlertPreferences({
       const response = await apiClient.post(
         `/api/v1/workspaces/${workspaceId}/contacts/${contact.id}/verifications/whatsapp`
       );
+      if (response?.data?.code === 'RECIPIENT_OPTED_OUT' || response?.data?.status === 'opted_out') {
+        showError(
+          'This person declined WhatsApp. TokenTimer did not create a confirmation link. Only a message from their own WhatsApp number can subscribe again.'
+        );
+        await refreshContacts();
+        return;
+      }
       const shareUrl = response?.data?.share_url;
       if (!shareUrl) throw new Error('Confirmation link was not returned');
       if (navigator.clipboard?.writeText) {

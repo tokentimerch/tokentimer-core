@@ -847,6 +847,13 @@ function validateStartupConfig() {
     );
   }
 
+  try {
+    const { describeEnforcement } = require("../../packages/recipient-verification");
+    logger.info("recipient verification mode", describeEnforcement());
+  } catch (error) {
+    logger.error("recipient verification mode unavailable", { error: error.message });
+  }
+
   // Validate PUBLIC_BASE_URL for webhook signatures
   const publicBaseUrl = process.env.PUBLIC_BASE_URL?.trim();
   const apiUrlFallback = process.env.API_URL?.trim();
