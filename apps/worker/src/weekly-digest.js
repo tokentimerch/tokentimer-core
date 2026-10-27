@@ -1060,6 +1060,7 @@ export async function weeklyDigestJob() {
               weekStartDate,
               channel: row.channel,
               recipientKey: row.recipientKey,
+              claimToken: claim.claim_token,
             });
             skipped++;
             continue;
@@ -1110,6 +1111,7 @@ export async function weeklyDigestJob() {
           weekStartDate,
           channel: row.channel,
           recipientKey: row.recipientKey,
+          claimToken: claim.claim_token,
         });
 
         sent++;

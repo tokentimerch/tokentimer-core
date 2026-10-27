@@ -734,3 +734,95 @@ test("reconciliation, listing, and webhook requeue keep ledger history", async (
     assert.equal(expanded[0].channel_state, row.status === "pending" ? "pending" : row.status);
   }
 });
+
+test("an interrupted verification email recovers after the dispatch lease without a duplicate send", async () => {
+  process.env.RECIPIENT_VERIFICATION_DISPATCH_LEASE_SECONDS = "1";
+  process.env.RECIPIENT_VERIFY_EMAIL_DEST_PER_DAY = "5";
+  process.env.RECIPIENT_VERIFY_EMAIL_DEST_PER_WEEK = "8";
+  process.env.TT_DEPLOYMENT = "self-hosted";
+  const seeded = await seed();
+  const invite = {
+    pool,
+    workspaceId: seeded.workspaceId,
+    contactId: seeded.contactId,
+    channel: "email",
+    actorUserId: seeded.userId,
+  };
+  const first = await verification.createInvitation(invite);
+  await assert.rejects(
+    () => verification.createInvitation(invite),
+    (error) => error.code === "VERIFICATION_DISPATCH_UNCONFIRMED",
+  );
+  await pool.query(
+    `UPDATE recipient_verification_events
+        SET created_at = NOW() - INTERVAL '5 minutes'
+      WHERE bucket_key LIKE $1`,
+    [`dispatch:${seeded.workspaceId}:${seeded.contactId}:email:${first.challengeId}:%`],
+  );
+  const recovered = await verification.createInvitation(invite);
+  assert.notEqual(recovered.token, first.token);
+  const pending = await pool.query(
+    `SELECT id FROM contact_verification_challenges
+      WHERE contact_id = $1 AND status = 'pending'`,
+    [seeded.contactId],
+  );
+  assert.equal(pending.rows.length, 1);
+  assert.equal(String(pending.rows[0].id), String(recovered.challengeId));
+
+  await pool.query(
+    `UPDATE recipient_verification_events
+        SET created_at = NOW() - INTERVAL '5 minutes'
+      WHERE bucket_key LIKE $1`,
+    [`dispatch:${seeded.workspaceId}:${seeded.contactId}:email:${recovered.challengeId}:%`],
+  );
+  const raced = await Promise.allSettled([
+    verification.createInvitation(invite),
+    verification.createInvitation(invite),
+  ]);
+  assert.equal(raced.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(raced.filter((result) => result.status === "rejected").length, 1);
+  const stillPending = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM contact_verification_challenges
+      WHERE contact_id = $1 AND status = 'pending'`,
+    [seeded.contactId],
+  );
+  assert.equal(stillPending.rows[0].n, 1);
+
+  const current = raced.find((result) => result.status === "fulfilled").value;
+  await verification.noteInvitationDispatch({
+    pool,
+    workspaceId: seeded.workspaceId,
+    contactId: seeded.contactId,
+    channel: "email",
+    challengeId: current.challengeId,
+    outcome: "ambiguous",
+  });
+  await assert.rejects(
+    () => verification.createInvitation(invite),
+    (error) => error.code === "VERIFICATION_DISPATCH_UNCONFIRMED",
+  );
+  await pool.query(
+    "UPDATE contact_verification_challenges SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1",
+    [current.challengeId],
+  );
+  const replaced = await verification.createInvitation(invite);
+  assert.ok(replaced.token);
+  const accepted = await verification.consumeEmailChallenge({
+    pool,
+    token: replaced.token,
+    decision: "accept",
+  });
+  assert.equal(accepted.ok, true);
+  const afterVerified = await verification.createInvitation(invite);
+  assert.ok(afterVerified.token);
+  const fingerprint = verification.destinationFingerprint("email", "person@example.com");
+  await pool.query(
+    `INSERT INTO notification_suppressions
+       (channel, destination_fingerprint, scope, workspace_id, reason)
+     VALUES ('email', $1, 'workspace', $2, 'recipient_declined')`,
+    [fingerprint, seeded.workspaceId],
+  );
+  const withheld = await verification.createInvitation(invite);
+  assert.equal(withheld.withholdDelivery, true);
+  assert.equal(withheld.token, null);
+});

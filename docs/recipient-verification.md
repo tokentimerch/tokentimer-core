@@ -63,7 +63,7 @@ RECIPIENT_VERIFICATION_MODE=enforce
 
 `shadow` is the self-hosted observation mode. It logs eligibility and still delivers. Cloud verification is mandatory. Set `TT_DEPLOYMENT=cloud` and `RECIPIENT_VERIFICATION_MODE=enforce` on the API and every notification worker.
 
-1. Apply migration 79 when you enable verification. It does not mark existing contacts verified. Migration 78 remains CertOps installed-file distribution.
+1. Apply migration 80 before running the weekly digest worker, including when verification stays off. It adds the digest claim ownership token. Apply migration 79 when you enable verification. It does not mark existing contacts verified. Migration 78 remains CertOps installed-file distribution.
 2. Set `RECIPIENT_FINGERPRINT_SECRET` and `PUBLIC_BASE_URL` or `API_URL` before sending invitations.
 3. Ask workspace managers to send invitations. Existing alert groups keep their contacts.
 4. Switch self-hosted from `off` or `shadow` to `enforce` after recipients confirm.
@@ -79,7 +79,7 @@ RECIPIENT_VERIFICATION_MODE=enforce
 
 ## Limitations
 
-- A verification email the provider rejects can be retried without using another destination-day allowance. An uncertain SMTP result is not replaced while that challenge is still pending.
+- A verification email the provider rejects can be retried without using another destination-day allowance. An uncertain SMTP result is not replaced while that challenge is still pending. If the API stops after creating the challenge and before recording an outcome, another invitation is allowed after the dispatch lease (120 seconds by default), not after the 48-hour challenge lifetime.
 - The confirmation token is present on the POST URL. The response redirects to a token-free page and sets `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
 - Invitation pages return the same generic result for unknown, expired, and replayed links.
 - Apply the migration on a database before production enforcement. The migration is idempotent.

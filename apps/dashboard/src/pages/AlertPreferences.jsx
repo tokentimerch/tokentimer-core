@@ -62,6 +62,7 @@ import {
   formatRetry,
   groupChannelHint,
   groupEligibilityNote,
+  addContactTestHint,
   testNumberHint,
   verificationIntro,
 } from './contactVerificationStatus';
@@ -4427,7 +4428,7 @@ export default function AlertPreferences({
                   <FormErrorMessage>{contactPhoneError}</FormErrorMessage>
                 ) : (
                   <Text fontSize='xs' color={modalTokens.subtleText} mt={1}>
-                    Save the contact first. A WhatsApp test is available only after this number is confirmed.
+                    {addContactTestHint(recipientVerificationMode)}
                   </Text>
                 )}
                 {whatsappAvailable ? (

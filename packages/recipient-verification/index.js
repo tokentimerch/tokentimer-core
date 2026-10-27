@@ -974,21 +974,29 @@ async function assertInvitationBudget(client, {
   }
 }
 
-function dispatchMarkerPrefix(workspaceId, contactId, channel) {
-  return `dispatch:${workspaceId}:${contactId}:${channel}:`;
+function dispatchLeaseMs(env = process.env) {
+  const raw = Number(env.RECIPIENT_VERIFICATION_DISPATCH_LEASE_SECONDS);
+  if (Number.isFinite(raw) && raw > 0) return raw * 1000;
+  return 120 * 1000;
+}
+
+function dispatchMarkerPrefix(workspaceId, contactId, channel, challengeId) {
+  return `dispatch:${workspaceId}:${contactId}:${channel}:${challengeId}:`;
 }
 
 async function pendingEmailDispatch(client, workspaceId, contactId) {
   const pending = await client.query(
     `-- RV_PENDING_CHALLENGE
-     SELECT id FROM contact_verification_challenges
+     SELECT id, created_at FROM contact_verification_challenges
       WHERE workspace_id = $1 AND contact_id = $2 AND channel = 'email'
         AND status = 'pending' AND expires_at > NOW()
+      ORDER BY created_at DESC
       LIMIT 1`,
     [workspaceId, contactId],
   );
   if (!pending.rows[0]) return { state: "none" };
-  const prefix = dispatchMarkerPrefix(workspaceId, contactId, "email");
+  const challengeId = pending.rows[0].id;
+  const prefix = dispatchMarkerPrefix(workspaceId, contactId, "email", challengeId);
   const markers = await client.query(
     `-- RV_DISPATCH_EVENTS
      SELECT bucket_key, created_at FROM recipient_verification_events
@@ -1001,19 +1009,25 @@ async function pendingEmailDispatch(client, workspaceId, contactId) {
     if (!latest || at >= latest.at) latest = { at, key: String(row.bucket_key || "") };
   }
   const kind = latest ? latest.key.slice(prefix.length) : "";
-  if (kind === "failed") return { state: "failed" };
-  if (kind === "accepted") return { state: "accepted" };
-  return { state: "unconfirmed" };
+  const age = latest ? Date.now() - latest.at : Date.now() - new Date(pending.rows[0].created_at).getTime();
+  if (kind === "failed") return { state: "failed", challengeId };
+  if (kind === "accepted") return { state: "accepted", challengeId };
+  if (kind === "ambiguous") return { state: "unconfirmed", challengeId };
+  if ((!kind || kind === "sending") && age >= dispatchLeaseMs()) {
+    return { state: "interrupted", challengeId };
+  }
+  return { state: "unconfirmed", challengeId };
 }
 
-async function noteInvitationDispatch({ pool, workspaceId, contactId, channel, outcome }) {
+async function noteInvitationDispatch({ pool, workspaceId, contactId, channel, challengeId, outcome }) {
   if (outcome !== "failed" && outcome !== "ambiguous" && outcome !== "accepted") {
     throw coded(400, "VALIDATION_ERROR", "Unsupported dispatch outcome");
   }
+  if (!challengeId) throw coded(400, "VALIDATION_ERROR", "Dispatch outcome requires a challenge");
   await pool.query(
     `-- RV_INSERT_EVENT
      INSERT INTO recipient_verification_events (bucket_key, workspace_id) VALUES ($1, $2)`,
-    [dispatchMarkerPrefix(workspaceId, contactId, channel) + outcome, workspaceId || null],
+    [dispatchMarkerPrefix(workspaceId, contactId, channel, challengeId) + outcome, workspaceId || null],
   );
 }
 
@@ -1082,11 +1096,12 @@ async function createInvitation({ pool, workspaceId, contactId, channel, actorUs
     }
     let recoverDestination = false;
     if (channel === "email") {
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`verify:dest:${channel}:${fingerprint}`]);
       const pendingDispatch = await pendingEmailDispatch(client, workspaceId, contactId);
       if (pendingDispatch.state === "unconfirmed") {
         throw coded(409, "VERIFICATION_DISPATCH_UNCONFIRMED", "A verification email may already have been accepted. Wait before sending another.");
       }
-      recoverDestination = pendingDispatch.state === "failed";
+      recoverDestination = pendingDispatch.state === "failed" || pendingDispatch.state === "interrupted";
     }
     await assertInvitationBudget(client, {
       channel,
@@ -1097,13 +1112,6 @@ async function createInvitation({ pool, workspaceId, contactId, channel, actorUs
       requestIp,
       recoverDestination,
     });
-    if (recoverDestination) {
-      await client.query(
-        `-- RV_INSERT_EVENT
-         INSERT INTO recipient_verification_events (bucket_key, workspace_id) VALUES ($1, $2)`,
-        [dispatchMarkerPrefix(workspaceId, contactId, "email") + "sending", workspaceId],
-      );
-    }
     await client.query(
       `-- RV_SUPERSEDE
        UPDATE contact_verification_challenges
@@ -1134,6 +1142,13 @@ async function createInvitation({ pool, workspaceId, contactId, channel, actorUs
         actorUserId || null,
       ],
     );
+    if (channel === "email") {
+      await client.query(
+        `-- RV_INSERT_EVENT
+         INSERT INTO recipient_verification_events (bucket_key, workspace_id) VALUES ($1, $2)`,
+        [dispatchMarkerPrefix(workspaceId, contactId, "email", inserted.rows[0].id) + "sending", workspaceId],
+      );
+    }
     return {
       token,
       code,
@@ -1671,34 +1686,73 @@ async function authorizeWorkspaceTest({ pool, workspaceId, contactId, channel, d
       throw coded(403, finished.code || "RECIPIENT_NOT_VERIFIED", "This destination is not verified for notifications");
     }
   }
-  try {
-    await withTransaction(pool, async (client) => {
-      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`test:${workspaceId}:${contactId}:${channel}`]);
-      const config = limits();
-      const daily = await takeBucket(client, {
-        key: `test:${workspaceId}:${contactId}:${channel}:24h`,
-        limit: config.testPerContactPerDay,
-        windowSeconds: 24 * 60 * 60,
-        workspaceId,
-      });
-      if (!daily.ok) {
-        throw coded(429, "TEST_WHATSAPP_COOLDOWN", "Test message limit reached for this contact", { retryAfter: daily.retryAfter });
-      }
-      const cool = await takeBucket(client, {
-        key: `test:${workspaceId}:${contactId}:${channel}:cool`,
-        limit: 1,
-        windowSeconds: config.testCooldownSeconds,
-        workspaceId,
-      });
-      if (!cool.ok) {
-        throw coded(429, "TEST_WHATSAPP_COOLDOWN", "Please wait before testing this contact again", { retryAfter: cool.retryAfter });
-      }
-    });
-  } catch (error) {
-    if (mode === "off" && isMissingSchema(error)) return { destination: actual.value };
-    throw error;
-  }
+  await withTransaction(pool, async (client) => {
+    await consumeNotificationTestBudget(client, { workspaceId, contactId, channel });
+  });
   return { destination: actual.value };
+}
+
+async function consumeNotificationTestBudget(client, { workspaceId, contactId, channel }) {
+  const config = limits();
+  await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`test:${workspaceId}:${contactId}:${channel}`]);
+  const buckets = [
+    {
+      key: `test:${workspaceId}:${contactId}:${channel}:24h`,
+      limit: config.testPerContactPerDay,
+      windowSeconds: 24 * 60 * 60,
+      message: "Test message limit reached for this contact",
+    },
+    {
+      key: `test:${workspaceId}:${contactId}:${channel}:cool`,
+      limit: 1,
+      windowSeconds: config.testCooldownSeconds,
+      message: "Please wait before testing this contact again",
+    },
+  ];
+  const counts = [];
+  for (const bucket of buckets) {
+    let count;
+    try {
+      count = await client.query(
+        `-- RV_TEST_RATE_COUNT
+         SELECT COUNT(*)::int AS n
+           FROM audit_events
+          WHERE action = 'RECIPIENT_NOTIFICATION_TEST'
+            AND workspace_id = $1
+            AND metadata->>'bucket' = $2
+            AND occurred_at > NOW() - ($3::int * INTERVAL '1 second')`,
+        [workspaceId, bucket.key, bucket.windowSeconds],
+      );
+    } catch (error) {
+      if (isMissingSchema(error)) {
+        throw coded(503, "TEST_RATE_LIMIT_UNAVAILABLE", "Notification test limits are unavailable");
+      }
+      throw error;
+    }
+    counts.push(count.rows[0]?.n || 0);
+  }
+  buckets.forEach((bucket, index) => {
+    if (counts[index] >= bucket.limit) {
+      throw coded(429, "TEST_WHATSAPP_COOLDOWN", bucket.message, { retryAfter: bucket.windowSeconds });
+    }
+  });
+  for (const bucket of buckets) {
+    try {
+      await client.query(
+        `-- RV_TEST_RATE_INSERT
+         INSERT INTO audit_events
+           (actor_user_id, subject_user_id, action, target_type, channel, workspace_id, metadata)
+         VALUES (NULL, NULL, 'RECIPIENT_NOTIFICATION_TEST', 'workspace', $1, $2,
+                 jsonb_build_object('bucket', $3::text, 'contact_id', $4::text))`,
+        [channel, workspaceId, bucket.key, String(contactId)],
+      );
+    } catch (error) {
+      if (isMissingSchema(error)) {
+        throw coded(503, "TEST_RATE_LIMIT_UNAVAILABLE", "Notification test limits are unavailable");
+      }
+      throw error;
+    }
+  }
 }
 
 function verificationResponseHeaders(res) {

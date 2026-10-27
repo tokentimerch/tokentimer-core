@@ -140,6 +140,7 @@ describe("Core distribution and lifecycle migration histories", function () {
           "onboarding_sessions",
           "certops_installed_file_distribution",
           "recipient_channel_verification",
+          "weekly_digest_recipient_claim_token",
         ];
         assert.deepEqual(
           after.filter((row) => row.version >= 70).map((row) => row.name),

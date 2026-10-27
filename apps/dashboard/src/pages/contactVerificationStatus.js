@@ -69,9 +69,25 @@ export function testNumberHint(mode) {
     return "Provide a valid email or phone number. A test is available only while this saved number stays confirmed.";
   }
   if (mode === "shadow") {
-    return "Provide a valid email or phone number. A test can be sent to this saved number while confirmation is recorded.";
+    return "Provide a valid email or phone number. Confirmation is recorded and does not block a test to this saved number.";
+  }
+  if (mode === "off") {
+    return "Provide a valid email or phone number. A test uses this saved number and does not require confirmation.";
   }
   return "Provide a valid email or phone number.";
+}
+
+export function addContactTestHint(mode) {
+  if (mode === "enforce") {
+    return "Save the contact first. A WhatsApp test is available only after this number is confirmed.";
+  }
+  if (mode === "shadow") {
+    return "Save the contact first. Confirmation is recorded and does not block the test.";
+  }
+  if (mode === "off") {
+    return "Save the contact first. A WhatsApp test uses the saved number and does not require confirmation.";
+  }
+  return "Save the contact first.";
 }
 
 export function formatRetry(seconds) {

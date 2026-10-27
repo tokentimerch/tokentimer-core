@@ -153,7 +153,7 @@ describe("claimWeeklyDigestRecipient", () => {
     assert.match(sql, /RETURNING \*/);
     assert.equal(hashed.length, 64);
     assert.notEqual(hashed, "alice@example.com");
-    assert.deepEqual(state.queries[0].params, [
+    assert.deepEqual(state.queries[0].params.slice(0, 6), [
       "ws-1",
       "2026-09-14",
       "email",
@@ -161,6 +161,8 @@ describe("claimWeeklyDigestRecipient", () => {
       60000,
       3,
     ]);
+    assert.match(state.queries[0].params[6], /^[0-9a-f-]{36}$/i);
+    assert.match(sql, /claim_token = EXCLUDED.claim_token/);
   });
 
   it("returns null when RETURNING is empty so the caller does not send", async () => {
@@ -188,10 +190,13 @@ describe("claimWeeklyDigestRecipient", () => {
       weekStartDate: "2026-09-14",
       channel: "email",
       recipientKey: "alice@example.com",
+      claimToken: "claim-a",
     });
     assert.equal(row.status, "sent");
     assert.match(state.queries[0].text, /SET status = 'sent'/);
     assert.match(state.queries[0].text, /status = 'pending'/);
+    assert.match(state.queries[0].text, /claim_token = \$5/);
+    assert.equal(state.queries[0].params[4], "claim-a");
     assert.equal(
       state.queries[0].params[3],
       hashDigestRecipientKey("alice@example.com"),

@@ -2,14 +2,15 @@ import { dedupeNormalizedDestinations } from "./contactGroups.js";
 import crypto from "node:crypto";
 
 const CLAIM_SQL = `INSERT INTO weekly_digest_recipient_log (
-  workspace_id, week_start_date, channel, recipient_key, status, attempt_count, lease_expires_at, tokens_count, updated_at
-) VALUES ($1,$2,$3,$4,'pending',1, NOW() + ($5::int * interval '1 millisecond'), $6, NOW())
+  workspace_id, week_start_date, channel, recipient_key, status, attempt_count, lease_expires_at, tokens_count, claim_token, updated_at
+) VALUES ($1,$2,$3,$4,'pending',1, NOW() + ($5::int * interval '1 millisecond'), $6, $7, NOW())
 ON CONFLICT (workspace_id, week_start_date, channel, recipient_key)
 DO UPDATE SET
   status = 'pending',
   attempt_count = weekly_digest_recipient_log.attempt_count + 1,
   lease_expires_at = NOW() + ($5::int * interval '1 millisecond'),
   tokens_count = EXCLUDED.tokens_count,
+  claim_token = EXCLUDED.claim_token,
   updated_at = NOW()
 WHERE weekly_digest_recipient_log.status <> 'sent'
   AND (
@@ -161,13 +162,14 @@ async function claimWeeklyDigestRecipient(
     hashDigestRecipientKey(recipientKey),
     leaseMs,
     tokensCount,
+    crypto.randomUUID(),
   ]);
   return res.rows && res.rows[0] ? res.rows[0] : null;
 }
 
 async function releaseWeeklyDigestRecipientClaim(
   client,
-  { workspaceId, weekStartDate, channel, recipientKey },
+  { workspaceId, weekStartDate, channel, recipientKey, claimToken },
 ) {
   const res = await client.query(
     `DELETE FROM weekly_digest_recipient_log
@@ -176,15 +178,16 @@ async function releaseWeeklyDigestRecipientClaim(
         AND channel = $3
         AND recipient_key = $4
         AND status = 'pending'
+        AND claim_token = $5
       RETURNING workspace_id`,
-    [workspaceId, weekStartDate, channel, hashDigestRecipientKey(recipientKey)],
+    [workspaceId, weekStartDate, channel, hashDigestRecipientKey(recipientKey), claimToken || null],
   );
   return res.rowCount > 0;
 }
 
 async function markWeeklyDigestRecipientSent(
   client,
-  { workspaceId, weekStartDate, channel, recipientKey },
+  { workspaceId, weekStartDate, channel, recipientKey, claimToken },
 ) {
   const res = await client.query(
     `UPDATE weekly_digest_recipient_log
@@ -196,8 +199,9 @@ async function markWeeklyDigestRecipientSent(
         AND channel = $3
         AND recipient_key = $4
         AND status = 'pending'
+        AND claim_token = $5
       RETURNING *`,
-    [workspaceId, weekStartDate, channel, hashDigestRecipientKey(recipientKey)],
+    [workspaceId, weekStartDate, channel, hashDigestRecipientKey(recipientKey), claimToken || null],
   );
   return res.rows && res.rows[0] ? res.rows[0] : null;
 }

@@ -82,13 +82,13 @@ Self-hosted admin WhatsApp provider probes stay available in shadow mode. In enf
 
 ## 8. Tests and results
 
-`node --test tests/unit/recipient-verification.test.js` passed, 15 tests, 0 failures. `node --test tests/postgres/recipient-verification-concurrency.test.js` passed, 9 tests, 0 failures, against PostgreSQL 16. That run applies migration `recipient_channel_verification` twice and covers workspace and user invitation limits under concurrency, abuse suppression that survives the rolled-back invitation, decline after contact recreation, one-winner confirmation, a destination change during confirmation, the public confirmation budget, and an expired challenge.
+`node --test tests/unit/recipient-verification.test.js tests/unit/weekly-digest-recipient-aggregation.test.js tests/unit/certops-migration.test.js` passed, 140 tests, 0 failures. `node --test tests/postgres/recipient-verification-concurrency.test.js` passed, 13 tests, 0 failures, against PostgreSQL 16, including interrupted invitation recovery. `node --test tests/postgres/notification-test-rate.test.js` passed, 2 tests, and `node --test tests/postgres/weekly-digest-claim.test.js` passed, 1 test. The Postgres runs cover invitation limits under concurrency, abuse suppression, decline, one-winner confirmation, dispatch-lease recovery, WhatsApp test cooldown and daily limits without migration 79, and digest claim ownership.
 
-The suite uses an in-memory query double with serialized transactions. It does not open Postgres, SMTP, or Twilio. `tests/integration/api-test-whatsapp.test.js` was updated to expect `CONTACT_REQUIRED` for an arbitrary number. That file was not executed because no API server was running. The migration SQL was not applied to a live database in this run. No browser session was available on ports 3000, 3001, 4000, 5173, or 8080, so the contacts screen was not clicked through.
+The unit suite uses an in-memory query double. It does not open SMTP or Twilio. `tests/integration/api-test-whatsapp.test.js` was not executed in this pass. The contacts screen was not clicked through in a browser.
 
 ## 9. Limitations
 
-- A failed invitation email still consumes the 24-hour destination slot.
+- A verification email the provider rejects can be retried without using another destination-day allowance. An uncertain SMTP result is not replaced while that challenge is pending. An interrupted dispatch can be replaced after the dispatch lease.
 - Existing mail logs can include the recipient address. The token is not logged by the new route.
 - The accept POST URL contains the token until the redirect. Referrer and cache headers are set to limit leakage.
 - Partial unique suppression indexes were created by applying the migration twice on PostgreSQL 16 in `tests/postgres/recipient-verification-concurrency.test.js`.
@@ -97,7 +97,7 @@ The suite uses an in-memory query double with serialized transactions. It does n
 
 ## 10. Deployment and rollback
 
-1. Deploy the API and worker together with migration 79.
+1. Deploy the API and worker together. Apply migration 80 before the weekly digest worker. Apply migration 79 when verification is turned on. Migration 78 remains CertOps installed-file distribution.
 2. Set `RECIPIENT_FINGERPRINT_SECRET` and `PUBLIC_BASE_URL` or `API_URL`.
 3. Configure the Twilio inbound webhook.
 4. Leave self-hosted on `off` until managers are ready to collect confirmation. `shadow` records eligibility without blocking delivery.

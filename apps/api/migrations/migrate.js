@@ -5141,6 +5141,15 @@ migrations.push({
   ),
 });
 
+migrations.push({
+  version: 80,
+  name: "weekly_digest_recipient_claim_token",
+  sql: `
+    ALTER TABLE weekly_digest_recipient_log
+      ADD COLUMN IF NOT EXISTS claim_token TEXT;
+  `,
+});
+
 // Main may already contain v60 when PR #140's v58-v59 migrations arrive.
 // Apply by version rather than declaration position so each dependency exists.
 migrations.sort((a, b) => a.version - b.version);

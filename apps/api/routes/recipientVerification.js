@@ -105,6 +105,7 @@ router.post(
           workspaceId: req.workspace.id,
           contactId: req.params.contactId,
           channel,
+          challengeId: invitation.challengeId,
           outcome,
         });
         if (!sent?.success) {
@@ -224,6 +225,7 @@ router.post("/verify/recipient/resubscribe", recipientVerificationPageLimiter, a
         workspaceId: invitation.workspaceId,
         contactId: invitation.contactId,
         channel: "email",
+        challengeId: invitation.challengeId,
         outcome: sent?.success ? "accepted" : (sent?.code === "SMTP_TIMEOUT" ? "ambiguous" : "failed"),
       });
     }

@@ -23,6 +23,7 @@ function createStore() {
     verifications: [],
     suppressions: [],
     events: [],
+    audit: [],
     inbound: new Set(),
     queries: [],
     locks: [],
@@ -80,6 +81,37 @@ function createStore() {
       return rowsOf([]);
     }
 
+    if (text.includes("RV_TEST_RATE_COUNT")) {
+      if (state.auditMissing) {
+        const error = new Error("relation audit_events does not exist");
+        error.code = "42P01";
+        throw error;
+      }
+      const windowMs = Number(params[2]) * 1000;
+      const n = state.audit.filter((row) => (
+        row.workspace_id === params[0]
+        && row.bucket === params[1]
+        && row.occurred_at > Date.now() - windowMs
+      )).length;
+      return rowsOf([{ n }]);
+    }
+
+    if (text.includes("RV_TEST_RATE_INSERT")) {
+      if (state.auditMissing) {
+        const error = new Error("relation audit_events does not exist");
+        error.code = "42P01";
+        throw error;
+      }
+      state.audit.push({
+        channel: params[0],
+        workspace_id: params[1],
+        bucket: params[2],
+        contact_id: params[3],
+        occurred_at: Date.now(),
+      });
+      return rowsOf([]);
+    }
+
     if (text.includes("RV_PENDING_CHALLENGE")) {
       const pending = state.challenges.find((row) => (
         row.workspace_id === params[0]
@@ -88,7 +120,7 @@ function createStore() {
         && row.status === "pending"
         && new Date(row.expires_at).getTime() > Date.now()
       ));
-      return rowsOf(pending ? [{ id: pending.id }] : []);
+      return rowsOf(pending ? [{ id: pending.id, created_at: new Date(pending.created_at || Date.now()) }] : []);
     }
 
     if (text.includes("RV_DISPATCH_EVENTS")) {
@@ -176,6 +208,7 @@ function createStore() {
         code_hash: params[6],
         code_ciphertext: params[7],
         status: "pending",
+        created_at: Date.now(),
         expires_at: new Date(Date.now() + ttl),
         attempt_count: 0,
         created_by: params[9],
@@ -405,7 +438,7 @@ function seedContact(store, overrides = {}) {
 describe("recipient verification", () => {
   const previous = {};
   beforeEach(() => {
-    for (const key of ["RECIPIENT_FINGERPRINT_SECRET", "TT_DEPLOYMENT", "RECIPIENT_VERIFICATION_MODE", "RECIPIENT_VERIFY_EMAIL_DEST_PER_DAY", "RECIPIENT_VERIFY_EMAIL_DEST_PER_WEEK", "RECIPIENT_VERIFY_WORKSPACE_PER_DAY", "RECIPIENT_VERIFY_USER_PER_DAY"]) {
+    for (const key of ["RECIPIENT_FINGERPRINT_SECRET", "TT_DEPLOYMENT", "RECIPIENT_VERIFICATION_MODE", "RECIPIENT_VERIFY_EMAIL_DEST_PER_DAY", "RECIPIENT_VERIFY_EMAIL_DEST_PER_WEEK", "RECIPIENT_VERIFY_WORKSPACE_PER_DAY", "RECIPIENT_VERIFY_USER_PER_DAY", "RECIPIENT_VERIFICATION_DISPATCH_LEASE_SECONDS", "RECIPIENT_TEST_PER_CONTACT_PER_DAY", "RECIPIENT_TEST_COOLDOWN_SECONDS"]) {
       previous[key] = process.env[key];
     }
     process.env.RECIPIENT_FINGERPRINT_SECRET = SECRET;
@@ -415,6 +448,9 @@ describe("recipient verification", () => {
     delete process.env.RECIPIENT_VERIFY_EMAIL_DEST_PER_WEEK;
     delete process.env.RECIPIENT_VERIFY_WORKSPACE_PER_DAY;
     delete process.env.RECIPIENT_VERIFY_USER_PER_DAY;
+    delete process.env.RECIPIENT_VERIFICATION_DISPATCH_LEASE_SECONDS;
+    delete process.env.RECIPIENT_TEST_PER_CONTACT_PER_DAY;
+    delete process.env.RECIPIENT_TEST_COOLDOWN_SECONDS;
   });
   afterEach(() => {
     for (const [key, value] of Object.entries(previous)) {
@@ -782,7 +818,7 @@ describe("recipient verification", () => {
     process.env.RECIPIENT_VERIFY_EMAIL_DEST_PER_WEEK = "5";
     const store = createStore();
     seedContact(store);
-    await verification.createInvitation({
+    const invited = await verification.createInvitation({
       pool: store.pool,
       workspaceId: "ws-1",
       contactId: "contact-1",
@@ -794,6 +830,7 @@ describe("recipient verification", () => {
       workspaceId: "ws-1",
       contactId: "contact-1",
       channel: "email",
+      challengeId: invited.challengeId,
       outcome: "accepted",
     });
     await assert.rejects(
@@ -972,6 +1009,7 @@ describe("recipient verification", () => {
     assert.ok(digestLoop.indexOf("claimWeeklyDigestRecipient") < digestLoop.indexOf("confirmDigestConsent"));
     assert.ok(digestLoop.indexOf("confirmDigestConsent") < digestLoop.indexOf("deliverRecipientDigest"));
     assert.equal(digestLoop.includes("releaseWeeklyDigestRecipientClaim"), true);
+    assert.equal(digestLoop.includes("claimToken: claim.claim_token"), true);
     const preferences = fs.readFileSync(path.join(ROOT, "apps/dashboard/src/pages/AlertPreferences.jsx"), "utf8");
     const whatsappInvite = preferences.slice(preferences.indexOf("async function handleShareWhatsApp"));
     assert.ok(whatsappInvite.indexOf("RECIPIENT_OPTED_OUT") < whatsappInvite.indexOf("share_url"));
@@ -1030,6 +1068,16 @@ describe("recipient verification", () => {
       "+14155550100",
       "off",
     ), true);
+    assert.match(ui.addContactTestHint("off"), /does not require confirmation/);
+    assert.match(ui.addContactTestHint("shadow"), /does not block the test/);
+    assert.match(ui.addContactTestHint("enforce"), /only after this number is confirmed/);
+    assert.match(ui.testNumberHint("off"), /does not require confirmation/);
+    assert.match(ui.testNumberHint("shadow"), /does not block/);
+    assert.match(ui.testNumberHint("enforce"), /stays confirmed/);
+    assert.equal(ui.addContactTestHint(null), "Save the contact first.");
+    const preferences = fs.readFileSync(path.join(ROOT, "apps/dashboard/src/pages/AlertPreferences.jsx"), "utf8");
+    assert.equal(preferences.includes("addContactTestHint(recipientVerificationMode)"), true);
+    assert.equal(preferences.includes("A WhatsApp test is available only after this number is confirmed."), false);
     assert.match(ui.formatRetry(3700), /hours/);
   });
 
@@ -1589,6 +1637,7 @@ describe("recipient verification", () => {
       workspaceId: "ws-1",
       contactId: "contact-1",
       channel: "email",
+      challengeId: first.challengeId,
       outcome: "failed",
     });
     const retried = await verification.createInvitation({
@@ -1605,6 +1654,7 @@ describe("recipient verification", () => {
       workspaceId: "ws-1",
       contactId: "contact-1",
       channel: "email",
+      challengeId: retried.challengeId,
       outcome: "ambiguous",
     });
     await assert.rejects(
@@ -1624,6 +1674,114 @@ describe("recipient verification", () => {
     });
     assert.equal(accepted.ok, true);
     assert.equal(accepted.outcome, "accepted");
+  });
+
+  it("retries an interrupted verification email after the dispatch lease and still blocks an opt-out", async () => {
+    process.env.RECIPIENT_VERIFICATION_DISPATCH_LEASE_SECONDS = "1";
+    process.env.RECIPIENT_VERIFY_EMAIL_DEST_PER_DAY = "5";
+    process.env.RECIPIENT_VERIFY_EMAIL_DEST_PER_WEEK = "5";
+    const store = createStore();
+    seedContact(store);
+    const first = await verification.createInvitation({
+      pool: store.pool,
+      workspaceId: "ws-1",
+      contactId: "contact-1",
+      channel: "email",
+      actorUserId: 7,
+    });
+    await assert.rejects(
+      () => verification.createInvitation({
+        pool: store.pool,
+        workspaceId: "ws-1",
+        contactId: "contact-1",
+        channel: "email",
+        actorUserId: 7,
+      }),
+      (error) => error.code === "VERIFICATION_DISPATCH_UNCONFIRMED",
+    );
+    for (const event of store.state.events) {
+      if (String(event.bucket_key).includes(String(first.challengeId))) event.created_at = Date.now() - 5000;
+    }
+    const recovered = await verification.createInvitation({
+      pool: store.pool,
+      workspaceId: "ws-1",
+      contactId: "contact-1",
+      channel: "email",
+      actorUserId: 7,
+    });
+    assert.notEqual(recovered.token, first.token);
+    assert.equal(store.state.challenges.filter((row) => row.status === "pending").length, 1);
+    store.state.challenges.find((row) => row.id === recovered.challengeId).expires_at = new Date(Date.now() - 1000);
+    const replaced = await verification.createInvitation({
+      pool: store.pool,
+      workspaceId: "ws-1",
+      contactId: "contact-1",
+      channel: "email",
+      actorUserId: 7,
+    });
+    assert.ok(replaced.token);
+    const accepted = await verification.consumeEmailChallenge({
+      pool: store.pool,
+      token: replaced.token,
+      decision: "accept",
+    });
+    assert.equal(accepted.outcome, "accepted");
+    const again = await verification.createInvitation({
+      pool: store.pool,
+      workspaceId: "ws-1",
+      contactId: "contact-1",
+      channel: "email",
+      actorUserId: 7,
+    });
+    assert.ok(again.token);
+    store.state.suppressions.push({
+      channel: "email",
+      destination_fingerprint: verification.destinationFingerprint("email", "person@example.com"),
+      scope: "workspace",
+      workspace_id: "ws-1",
+      reason: "recipient_declined",
+      expires_at: null,
+    });
+    const withheld = await verification.createInvitation({
+      pool: store.pool,
+      workspaceId: "ws-1",
+      contactId: "contact-1",
+      channel: "email",
+      actorUserId: 7,
+    });
+    assert.equal(withheld.withholdDelivery, true);
+    assert.equal(withheld.token, null);
+  });
+
+  it("keeps WhatsApp test limits when verification tables are missing", async () => {
+    process.env.TT_DEPLOYMENT = "self-hosted";
+    delete process.env.RECIPIENT_VERIFICATION_MODE;
+    process.env.RECIPIENT_TEST_PER_CONTACT_PER_DAY = "2";
+    process.env.RECIPIENT_TEST_COOLDOWN_SECONDS = "120";
+    const store = createStore();
+    seedContact(store);
+    const input = {
+      pool: store.pool,
+      workspaceId: "ws-1",
+      contactId: "contact-1",
+      channel: "whatsapp",
+      destination: "+14155550100",
+    };
+    const first = await verification.authorizeWorkspaceTest(input);
+    assert.equal(first.destination, "+14155550100");
+    await assert.rejects(
+      () => verification.authorizeWorkspaceTest(input),
+      (error) => error.code === "TEST_WHATSAPP_COOLDOWN",
+    );
+    store.state.auditMissing = true;
+    await assert.rejects(
+      () => verification.authorizeWorkspaceTest(input),
+      (error) => error.code === "TEST_RATE_LIMIT_UNAVAILABLE" && error.status === 503,
+    );
+    await assert.rejects(
+      () => verification.authorizeWorkspaceTest({ ...input, destination: "+19998887777" }),
+      (error) => error.code === "DESTINATION_MISMATCH",
+    );
   });
 
   it("blocks a digest send when consent changes after the claim", () => {
