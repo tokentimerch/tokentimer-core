@@ -31,7 +31,9 @@ function Invoke-CertOpsArmRequest {
           continue
         }
         if($httpStatus -ge 100 -and $httpStatus -le 599){Write-Host ("CERTOPS_ARM_HTTP_FAILURE={0}:{1}" -f $Method,$httpStatus)}
-        throw 'Lab ARM request failed; private response withheld'
+        $requestFailure=[InvalidOperationException]::new('Lab ARM request failed; private response withheld')
+        $requestFailure.Data['CertOpsArmHttpStatus']=$httpStatus
+        throw $requestFailure
       }
     }
   } finally { $token=$null }
