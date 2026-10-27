@@ -331,6 +331,24 @@ test("ARM absence is explicit; subscription/access failures never become success
     lab.arm("DELETE", "https://foreign/subscriptions/unsafe"),
   );
 });
+test("missing permission introspection names its actual minimum scope before any Azure mutation", async (t) => {
+  const cp = require("node:child_process"),
+    e = { ...env(), RUNNER_TEMP: fixture(t) },
+    mutations = [];
+  t.mock.method(cp, "spawnSync", (_file, args) => {
+    if (args[0] === "account")
+      return { status: 0, stdout: e.AZURE_SUBSCRIPTION_ID };
+    if (args[args.indexOf("--method") + 1] !== "GET") mutations.push(args);
+    return {
+      status: 1,
+      stderr: "(AuthorizationFailed) sensitive server details",
+    };
+  });
+  await assert.rejects(lab.provision(e), {
+    code: "AZURE_KV_ARM_REQUIRED_Microsoft_Authorization_permissions_read_AT_LAB_SUBSCRIPTION",
+  });
+  assert.equal(mutations.length, 0);
+});
 test("actual cleanup entry point authorizes deletion only after live ownership/run/inventory checks (offline ARM)", async (t) => {
   const cp = require("node:child_process"),
     p = plan(),

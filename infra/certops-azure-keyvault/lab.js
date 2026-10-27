@@ -50,15 +50,27 @@ function load(file) {
     policy.fail("AZURE_KV_PRIVATE_STATE_DENIED");
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
-function arm(
-  method,
-  resource,
-  body,
-  permission = "Microsoft.Resources/subscriptions/resourceGroups/read",
-  allowMissing = false,
-) {
+function arm(method, resource, body, permission, allowMissing = false) {
   if (!resource.startsWith("/subscriptions/") || /[\r\n#]/.test(resource))
     policy.fail("AZURE_KV_ARM_SCOPE_DENIED");
+  if (!permission) {
+    if (method !== "GET") policy.fail("AZURE_KV_ARM_ACTION_REQUIRED");
+    // Introspection runs before provisioning. Do not misdiagnose a missing
+    // role-definition/provider/permission read as a resource-group permission.
+    permission = /\/Microsoft\.Authorization\/permissions\?/.test(resource)
+      ? "Microsoft.Authorization/permissions/read"
+      : /\/Microsoft\.Authorization\/roleDefinitions\//.test(resource)
+        ? "Microsoft.Authorization/roleDefinitions/read"
+        : /\/resourceGroups\/[^/?]+\/resources\?/.test(resource)
+          ? "Microsoft.Resources/subscriptions/resources/read"
+          : /\/Microsoft\.KeyVault\/vaults\//.test(resource)
+            ? "Microsoft.KeyVault/vaults/read"
+            : /\/providers\/Microsoft\.(?:KeyVault|ManagedIdentity)\?/.test(
+                  resource,
+                )
+              ? "Microsoft.Resources/subscriptions/providers/read"
+              : "Microsoft.Resources/subscriptions/resourceGroups/read";
+  }
   const args = [
     "rest",
     "--method",
@@ -86,7 +98,7 @@ function arm(
     )
       return null;
     policy.fail(
-      `AZURE_KV_ARM_REQUIRED_${permission.replace(/[^a-z0-9]/gi, "_")}_AT_OWNED_LAB_SCOPE`,
+      `AZURE_KV_ARM_REQUIRED_${permission.replace(/[^a-z0-9]/gi, "_")}_AT_${resource.includes("/resourceGroups/") ? "OWNED_LAB_SCOPE" : "LAB_SUBSCRIPTION"}`,
     );
   }
   try {
