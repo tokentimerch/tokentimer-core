@@ -11,6 +11,13 @@ const { applyRestrictivePermissions } = require("../platform");
 const { computeCertificateFingerprint, parseDnsSans } = require("../verify");
 const { executePinnedDeployment, reconcilePinnedDeployment, deployWroteNothing } = require("./lifecycle");
 
+test("calendar enforcement refuses a delayed deployment before material fetch or service writes", async t=>{
+  const f=await fixture(t),options=f.options();
+  options.job.materialDeployment.activationPolicy={method:"reload",disruptive:true,requiresApproval:true,timezone:"UTC",windows:[],blackouts:[],validUntil:null,emergency:null};
+  await assert.rejects(()=>executePinnedDeployment(options),{code:"material_maintenance_window_closed"});
+  assert.equal(fs.existsSync(f.record),false);
+});
+
 async function fixture(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tt-binding-test-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));

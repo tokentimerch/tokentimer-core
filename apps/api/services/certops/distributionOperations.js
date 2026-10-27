@@ -75,7 +75,8 @@ async function requestRollout({ workspaceId, groupId, materialVersionId, maxPara
     const { group, intent } = await material.buildRolloutIntent({ client, workspaceId, groupId, materialVersionId, maxParallel, verificationOnly });
     const job = await createCertificateJob({ client, workspaceId, operation: "noop", source: "control-plane",
       subjectType: "managed_certificate", subjectId: group.managed_certificate_id,
-      assignedAgentId: group.issuer_agent_id, requestedByUserId: actorUserId, requiresApproval,
+      assignedAgentId: group.issuer_agent_id, requestedByUserId: actorUserId,
+      requiresApproval:requiresApproval || (!verificationOnly && intent.bindings.some(b=>b.activationPolicy?.requiresApproval || b.activationPolicy?.disruptive)),
       idempotencyKey, payload: { distributionRollout: intent } });
     await client.query("UPDATE certificate_jobs SET distribution_request_hash=$3 WHERE workspace_id=$1 AND id=$2",[workspaceId,job.id,requestHash]);
     if (job.status === "pending") {
@@ -167,6 +168,11 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
   const active = outstanding.filter((d)=>d.job_id).length;
   let capacity = Math.max(0,rollout.max_parallel-active);
   for (const d of outstanding.filter((d)=>d.wave===wave && !d.job_id)) {
+    if(!rollout.verification_only && d.activation_policy) {
+      const maintenance=require("./distributionMaintenance");
+      if(!maintenance.supportedActivation(d.activation_policy,d.verification_policy))continue;
+      if(!maintenance.activationDecision(d.activation_policy).allowed)continue;
+    }
     if (!capacity--) break;
     const job = await createCertificateJob({ client, workspaceId, operation:"deploy-from-store",source:"control-plane",
       subjectType:"managed_certificate",subjectId:group.managed_certificate_id,assignedAgentId:d.assigned_agent_id,
@@ -176,6 +182,7 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
           providerVersion:rollout.provider_version,fingerprintSha256:rollout.fingerprint_sha256,generation:Number(rollout.generation),
           deploymentProfileRef:d.deployment_profile_ref,profileRevision:d.profile_revision,
           authorizationRevision:d.authorization_revision,verificationPolicy:d.verification_policy,
+          ...(d.activation_policy?{activationPolicy:d.activation_policy}:{}),
           ...(rollout.verification_only?{verificationOnly:true}:{}) } } });
     await client.query(`UPDATE certops_consumer_deployments SET job_id=$4 WHERE workspace_id=$1 AND rollout_id=$2 AND binding_id=$3 AND job_id IS NULL`,[workspaceId,rolloutId,d.binding_id,job.id]);
   }

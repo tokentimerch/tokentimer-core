@@ -7,6 +7,7 @@ const { createVaultStore, readProtectedFile, writeProtectedFile, writeProtectedJ
 const { applyRestrictivePermissions } = require("../platform");
 const { deployCertificateAndKey } = require("../deploy");
 const { canonicalizeJobPayload } = require("../signing");
+const {validateActivationPolicy,activationDecision}=require("../../vendor/contracts/activation-calendar.cjs");
 
 // Locks are never stolen on elapsed time: DNS/ACME/device operations can still
 // be active after an arbitrary TTL. A crashed process requires reconciliation.
@@ -165,6 +166,12 @@ function resolveBindingPolicy(job, bindings, policyEngine) {
       binding.reloadService !== undefined || binding.reloadCommandRefs !== undefined)) ||
     typeof binding.target.certPath !== "string" || typeof binding.target.keyPath !== "string") throw failure("material_binding_policy_denied");
   // Destination/reload/probes all come from approved local configuration.
+  if(intent.activationPolicy){
+    validateActivationPolicy(intent.activationPolicy);
+    // A control-plane policy cannot introduce a new customer-local action.
+    const localMethod=binding.activationMethod || (filesOnly?"none":"reload");
+    if(intent.activationPolicy.method!==localMethod || !["none","reload"].includes(localMethod))throw failure("material_activation_policy_denied");
+  }
   for (const file of [binding.target.certPath, binding.target.keyPath, binding.target.chainPath].filter(Boolean)) {
     if (!policyEngine.checkPath(file).allowed) throw failure("material_destination_denied");
   }
@@ -218,6 +225,7 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
       if (previous.uncertain) throw failure("material_binding_uncertain");
     }
     if (recoveryOnly && !previous) throw failure("material_binding_uncertain");
+    if(intent.verificationOnly!==true && !activationDecision(intent.activationPolicy).allowed)throw failure("material_maintenance_window_closed");
     await checkLease();
     const bundle = await store.fetch(intent.providerVersion);
     const facts = validateBundle(bundle, intent, store.scope);
@@ -280,6 +288,7 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
       receipt.installed = true;
       await checkLease();
       if (binding.verificationPolicy !== "installed") {
+        if(!activationDecision(intent.activationPolicy).allowed)throw failure("material_maintenance_window_closed");
         if (typeof reload !== "function" || !(await reload(binding.reloadService, binding.reloadCommandRefs))) throw failure("material_reload_failed");
         receipt.bound = true;
         const probes = [];

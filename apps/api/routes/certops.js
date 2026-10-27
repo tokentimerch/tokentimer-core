@@ -4381,6 +4381,13 @@ router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/policy",
 router.put("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/policy", ...distributionWriteGuards,requireWorkspaceCertOpsActive,
   csrRoute(req=>require("../services/certops/distributionLifecycle").putPolicy({workspaceId:req.workspace.id,groupId:req.params.groupId,
     policy:req.body?.policy,expectedRevision:req.body?.expectedRevision,actorUserId:req.user.id})));
+router.put("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers/:bindingId/activation-policy", ...distributionWriteGuards,requireWorkspaceCertOpsActive,
+  csrRoute(req=>require("../services/certops/distributionMaintenance").putConsumerPolicy({workspaceId:req.workspace.id,groupId:req.params.groupId,
+    bindingId:req.params.bindingId,policy:req.body?.policy,expectedAuthorizationRevision:req.body?.expectedAuthorizationRevision,actorUserId:req.user.id})));
+router.post("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers/:bindingId/emergency", ...distributionWriteGuards,
+  authorize("certops.distribution.emergency"),requireWorkspaceCertOpsActive,
+  csrRoute(req=>require("../services/certops/distributionMaintenance").putConsumerPolicy({workspaceId:req.workspace.id,groupId:req.params.groupId,
+    bindingId:req.params.bindingId,policy:req.body?.policy,expectedAuthorizationRevision:req.body?.expectedAuthorizationRevision,actorUserId:req.user.id,emergency:true})));
 router.post("/api/v1/workspaces/:id/certops/distribution-jobs/:jobId/retry", ...distributionWriteGuards,
   requireWorkspaceCertOpsActive,
   csrRoute((req) => distribution.retryDistributionJob({ workspaceId:req.workspace.id,jobId:req.params.jobId,actorUserId:req.user?.id })));

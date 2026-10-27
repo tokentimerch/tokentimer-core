@@ -438,6 +438,7 @@ const AGENT_CANDIDATE_CAPABILITIES = Object.freeze(
 const AGENT_DECLARED_CAPABILITIES = filterQualifiedCapabilities(
   [...AGENT_CANDIDATE_CAPABILITIES, ...(process.platform === "linux" ? [
     "material-store-vault-kv2-v1", "certificate-publication-v1", "deploy-from-store-v1",
+    "maintenance-calendar-v1",
   ] : [])],
 );
 
@@ -2544,6 +2545,7 @@ async function executeJob({
       if (executionContext.materialRecoveryOnly !== true && [
         "material_binding_policy_denied", "material_destination_denied",
         "material_intent_invalid", "material_scope_denied", "material_store_config_invalid",
+        "material_activation_policy_denied", "material_maintenance_window_closed",
       ].includes(error.code)) {
         return { status: "blocked", errorMessage: error.code };
       }
