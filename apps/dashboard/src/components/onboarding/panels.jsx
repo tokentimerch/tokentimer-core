@@ -139,10 +139,13 @@ export function StepCard({
       borderRadius='md'
       p={{ base: 3, md: 4 }}
     >
-      <Flex gap={3} align='flex-start'>
+      <Flex gap={3} align='flex-start' position='relative'>
         {n ? (
           <Flex
             aria-hidden
+            position={{ base: 'absolute', md: 'static' }}
+            top={0}
+            left={0}
             flexShrink={0}
             w='26px'
             h='26px'
@@ -159,8 +162,8 @@ export function StepCard({
             {done ? <Icon as={FiCheck} boxSize={3.5} /> : n}
           </Flex>
         ) : null}
-        <VStack align='stretch' spacing={3} flex='1' minW={0}>
-          <Box>
+        <VStack align='stretch' spacing={3} flex='1' minW={0} w='full'>
+          <Box pl={n ? { base: '38px', md: 0 } : 0}>
             <HStack spacing={2} flexWrap='wrap' align='center'>
               <Text as='h3' fontSize='sm' fontWeight='semibold'>
                 {n ? <VisuallyHidden>{n}. </VisuallyHidden> : null}
@@ -171,7 +174,15 @@ export function StepCard({
               ) : status === 'blocked' ? (
                 <StatusTag tone='orange'>Needs attention</StatusTag>
               ) : null}
-              {who ? <StatusTag>{who}</StatusTag> : null}
+              {who ? (
+                <StatusTag
+                  maxW='100%'
+                  whiteSpace='normal'
+                  overflowWrap='anywhere'
+                >
+                  {who}
+                </StatusTag>
+              ) : null}
             </HStack>
             {description ? (
               <Text fontSize='xs' color={muted} mt={0.5}>
@@ -328,7 +339,7 @@ export function DetailsSection({
   defaultOpen = false,
   testId,
 }) {
-  const { border, muted } = useDashboardTheme();
+  const { border, dashboard } = useDashboardTheme();
   return (
     <Box
       as='details'
@@ -345,8 +356,8 @@ export function DetailsSection({
         fontSize='sm'
         fontWeight='semibold'
         cursor='pointer'
-        color={muted}
-        _light={{ color: muted }}
+        color={dashboard.text.secondary}
+        _light={{ color: dashboard.text.secondary }}
         borderRadius='sm'
         _focusVisible={{ boxShadow: 'outline', outline: 'none' }}
       >
