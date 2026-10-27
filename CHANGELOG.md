@@ -9,26 +9,24 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.18.2] - 2026-10-27
+
 ### Added
 
-- **Auto-sync metrics remain available between runs and after restarts.** API `/metrics` exposes durable creation and run-outcome totals, last-attempt and last-success timestamps, and enabled-connection counts by provider. Opt-in alerts cover new creations, run failures and stale activity without paging for unused or disabled providers. **Operator guidance:** apply migrations 79–80, establish a Prometheus baseline, and scrape one stable API target per database; replica copies must not be summed. Historical activity is not backfilled.
+- **Auto-sync metrics survive restarts and cleanup.** API `/metrics` exposes durable creation and run-outcome totals, last-attempt and last-success timestamps, and enabled-connection counts by provider. Opt-in alerts cover creations, failed runs and stale activity. **Operator guidance:** apply migrations 79–80, establish a Prometheus baseline, and scrape one stable API target per database; do not sum replica copies. Historical activity is not backfilled.
 
 ### Fixed
 
-- **Additional GitHub and GitLab auto-sync connections can be enabled after a successful scan, including an empty result.** Changing credentials or scan scope requires a fresh scan; failed or late scans cannot reuse earlier approval. Suggested configuration names avoid existing names.
-- **Dashboard images require patched curl packages.** Rebuild the image to replace curl and libcurl versions affected by CVE-2026-92392.
+- **Certificate retirement and renewal remain safe.** Retirement closes management periods while allowing the bound terminal key cleanup to finish. Discovered certificates with typed DNS names renew without duplicate SANs. **Operator action:** after observing a replacement for a retired certificate, use **Re-add management** to select its renewal configuration.
+- **Vault setup supports consumer registration and recovery.** Create a bootstrap token for each new consumer and resume paused rollouts in the guide. Progress follows the selected group and current version, including active consumers assigned outside the guide; file-only completion confirms installation without claiming live verification. Retrying a deployment refreshes its timeline and agent output; certificate-trust and network failures retain their diagnostic classifications.
+- **Workspace managers can complete AD CS setup and manage renewal profiles.** Disabled setup goals explain the required role; workspace members also appear on initial load without switching workspaces.
+- **Linux agent reload and trust maintenance are more reliable.** The installer rejects legacy polkit backends that cannot enforce scoped service grants before changing an installation. Debian trust-anchor revoke uses the configured `--fresh` profile. **Operator guidance:** service reload requires a host with polkit 0.106 or later and JavaScript-rule support; use a compatible host or file-only delivery, and update affected agents.
+- **GitHub and GitLab connections can be enabled after a successful scan**, including an empty result. Changing credentials or scope requires a fresh scan; failed or late scans cannot reuse prior approval.
+- **Expiry dates remain consistent across timezones and daylight-saving changes.** Date-only values retain their stated calendar date, and relative labels, sorting and filters count calendar days.
 
-- **Vault setup includes consumer registration and recovery.** Create each consumer's bootstrap token and resume a paused rollout in the guide. Retrying a deployment refreshes its timeline and agent output without reloading the page.
-- **Linux agent installation checks reload authorization.** Legacy polkit backends that cannot enforce the scoped service grant are rejected before installation changes. Public package directories remain accessible to the service account after extraction with a restrictive umask; credential and runtime-state permissions stay private.
+### Security
 
-- **Vault connection errors identify certificate-trust and network failures.** TLS, DNS and refused-connection causes wrapped by the HTTP client retain their classification, so operators receive the corresponding troubleshooting guidance.
-- **Workspace members appear on first load.** Opening Workspaces now shows the selected workspace's members without switching away and back; late responses from a previous selection cannot replace the current list.
-- **Workspace managers can complete AD CS setup and manage renewal profiles.** Issuer configuration, CA confirmation, enrollment management and profile controls accept managers and owners; disabled setup goals explain the required role on hover and keyboard focus.
-
-- **Expiry dates stay consistent across timezones and daylight-saving changes.** Date-only values retain their stated calendar date, and badges, relative labels, sorting and filters count calendar days rather than elapsed 24-hour periods.
-- **Retiring a certificate closes its management periods without losing history or blocking terminal key cleanup.** Read-only and dry-run work does not require installation reconciliation. **Operator action:** after observing a fresh replacement, use **Re-add management** to select its renewal configuration; observing the replacement alone does not restart automation.
-- **Adopted discovered certificates renew.** A certificate found by an agent could not be renewed by the hosted worker when its common name was reported in typed form (`DNS:example.com`): the derived renewal profile listed both `example.com` and `DNS:example.com`, so every automatic renewal failed with certbot's "Inconsistent domain requests" and retried each minute. The `DNS:` prefix is now stripped before the SAN policy is built.
-- **Debian trust-anchor revoke uses the configured `--fresh` refresh.** The agent never looked up the `trust-store:update-ca-certificates-fresh` command profile, so a revoke always ran plain `update-ca-certificates`, left the removed anchor's dangling `/etc/ssl/certs` symlink in place, and recorded the "fresh profile missing" warning even when the profile was allowlisted. A Debian revoke now runs the allowlisted `--fresh` argv. Without that profile the behaviour is unchanged (plain refresh plus the warning).
+- **Dashboard images include patched curl packages** for CVE-2026-92392. **Operator action:** upgrade and redeploy the dashboard image; rebuild custom images.
 
 ## [0.18.1] - 2026-10-26
 
