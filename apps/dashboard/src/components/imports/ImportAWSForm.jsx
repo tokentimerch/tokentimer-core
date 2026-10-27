@@ -1,4 +1,5 @@
 import React from 'react';
+import { useScanVerification } from '../../hooks/useScanVerification.js';
 import {
   Box,
   VStack,
@@ -145,6 +146,8 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
     onError,
     errorContent,
     onScanSuccess,
+    onScanInvalidated,
+    scanContext,
     borderColor,
     helpTextColor,
     hideDocs = false,
@@ -253,6 +256,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
   };
 
   const doAwsScan = async () => {
+    const scanTicket = beginScanVerification();
     if (!workspaceId) {
       onError && onError('Please select a workspace first.');
       return;
@@ -293,9 +297,6 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
         setAwsItems(allItems);
         setAwsSummary(aggregateAwsSummary(res?.summary));
         setLastScanId(res?.scan_id || null);
-        if (allItems.length > 0) {
-          onScanSuccess && onScanSuccess('aws');
-        }
 
         const dups = await checkDuplicatesForItems(allItems, workspaceId);
         setAwsDuplicates(dups);
@@ -325,9 +326,6 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
         // drive cleanup scoped to whatever the backend confirms it fully
         // covered (account-wide IAM, or that one region's secrets/certs).
         setLastScanId(res?.scan_id || null);
-        if (items.length > 0) {
-          onScanSuccess && onScanSuccess('aws');
-        }
 
         const dups = await checkDuplicatesForItems(items, workspaceId);
         setAwsDuplicates(dups);
@@ -336,6 +334,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
           if (refreshIntegrationQuota) await refreshIntegrationQuota();
         }
       }
+      completeScanVerification(scanTicket);
     } catch (e) {
       setAwsItems([]);
       setAwsSummary([]);
@@ -398,16 +397,31 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
     }
   };
 
+  const getCredentials = () =>
+    buildAwsAutoSyncPayload({
+      accessKeyId: awsAccessKeyId,
+      secretAccessKey: awsSecretAccessKey,
+      awsRegion,
+      awsDetectedRegions,
+    });
+  const { beginScanVerification, completeScanVerification } =
+    useScanVerification({
+      identity: {
+        workspaceId,
+        scanContext,
+        payload: getCredentials(),
+        rawRegion: awsRegion,
+        cleanupObsolete,
+      },
+      provider: 'aws',
+      onScanSuccess,
+      onScanInvalidated,
+    });
+
   React.useImperativeHandle(ref, () => ({
     importSelected: importAwsSelected,
     getSelectedCount: () => selectedRowsAws.size,
-    getCredentials: () =>
-      buildAwsAutoSyncPayload({
-        accessKeyId: awsAccessKeyId,
-        secretAccessKey: awsSecretAccessKey,
-        awsRegion,
-        awsDetectedRegions,
-      }),
+    getCredentials,
   }));
 
   return (
