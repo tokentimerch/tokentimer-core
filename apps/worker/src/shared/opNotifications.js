@@ -12,6 +12,7 @@
  */
 import { logger } from "../logger.js";
 import { randomUUID } from "node:crypto";
+import alertEligibility from "@tokentimer/alert-eligibility";
 import {
   sendEmailNotification,
   buildOperationalIncidentEmail,
@@ -440,7 +441,7 @@ export async function reconcileStaleDeliveryIncidents(client) {
         WHERE n.category = 'delivery' AND n.resolved_at IS NULL
           AND n.metadata ? 'alert_queue_id'
           AND (aq.id IS NULL
-            OR COALESCE(t.workspace_id, ca.workspace_id) IS DISTINCT FROM n.workspace_id
+            OR COALESCE(t.workspace_id, ca.workspace_id, ${alertEligibility.resolvedTokenWorkspaceSql("t")}) IS DISTINCT FROM n.workspace_id
             OR aq.status NOT IN ('blocked', 'failed', 'partial', 'limit_exceeded'))
         ORDER BY n.updated_at, n.id
         LIMIT $1

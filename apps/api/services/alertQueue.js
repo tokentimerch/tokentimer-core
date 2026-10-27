@@ -1,5 +1,6 @@
 const { pool } = require("../db/database");
 const { currentWorkspaceAccessSql } = require("./rbac");
+const { resolvedTokenWorkspaceSql } = require("@tokentimer/alert-eligibility");
 
 /**
  * Requeue failed/blocked alerts for a user or a specific workspace.
@@ -34,7 +35,7 @@ async function requeueAlertsCore({
        SET status = 'pending', attempts = 0, attempts_email = 0, attempts_webhooks = 0, attempts_whatsapp = 0,
            error_message = NULL, next_attempt_at = NOW(), updated_at = NOW()
        WHERE COALESCE(
-         (SELECT t.workspace_id FROM tokens t WHERE t.id = aq.token_id),
+         (SELECT ${resolvedTokenWorkspaceSql("t")} FROM tokens t WHERE t.id = aq.token_id),
          (SELECT ca.workspace_id FROM certops_agents ca WHERE ca.id = aq.certops_agent_id)
        ) = $1 AND (
          aq.status IN ('failed','limit_exceeded') OR
@@ -51,7 +52,7 @@ async function requeueAlertsCore({
     ? `aq.status = 'blocked'`
     : `(aq.status = 'blocked' AND aq.error_message IS NOT NULL AND aq.error_message <> 'PLAN_LIMIT' AND aq.error_message NOT ILIKE '%PLAN_LIMIT%')`;
   const workspaceAnchor = `COALESCE(
-    (SELECT t.workspace_id FROM tokens t WHERE t.id = aq.token_id),
+    (SELECT ${resolvedTokenWorkspaceSql("t")} FROM tokens t WHERE t.id = aq.token_id),
     (SELECT ca.workspace_id FROM certops_agents ca WHERE ca.id = aq.certops_agent_id)
   )`;
   const r = await pool.query(

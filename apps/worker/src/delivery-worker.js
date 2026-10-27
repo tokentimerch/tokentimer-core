@@ -22,6 +22,8 @@ import { sendWhatsApp } from "./notify/whatsapp.js";
 import { postJson, formatPayload } from "./notify/webhooks.js";
 import { deliverPagerDutyExpiration, reconcilePagerDutyIncidents } from "./pagerduty-incidents.js";
 import { uniqueWebhookDestinations, webhookDestinationId } from "./shared/webhookDestinations.js";
+import alertEligibility from "@tokentimer/alert-eligibility";
+import { webhookDeliveryEvidence } from "./shared/deliveryEvidence.js";
 import crypto from "node:crypto";
 import { logger } from "./logger.js";
 import emailAddress from "../../../packages/email-address/index.js";
@@ -1554,7 +1556,7 @@ export async function deliveryWorkerJob({
            WHEN aq.token_id IS NOT NULL THEN COALESCE(token_groups.assigned_ids, ARRAY[]::text[])
            ELSE COALESCE(agent_groups.assigned_ids, ARRAY[]::text[])
          END AS assigned_ids,
-         COALESCE(t.workspace_id, ca.workspace_id) AS workspace_id,
+         COALESCE(t.workspace_id, ca.workspace_id, ${alertEligibility.resolvedTokenWorkspaceSql("t")}) AS workspace_id,
          COALESCE(w.name, wf.name, wj.name) AS workspace_name
        FROM alert_queue aq
        LEFT JOIN tokens t ON t.id = aq.token_id
@@ -2149,31 +2151,35 @@ export async function deliveryWorkerJob({
 
                 // Load previously successful webhook url hashes for this alert_queue
                 const priorSuccessRes = await client.query(
-                  `SELECT metadata->>'urlHash' AS h, metadata->>'destination_id' AS destination_id,
-                          metadata->>'kind' AS kind
+                  `SELECT channel, status, workspace_id, metadata
                  FROM alert_delivery_log
                  WHERE alert_queue_id = $1 AND channel = 'webhooks' AND status = 'success'
                    AND COALESCE(metadata->>'event_action', 'trigger') = 'trigger'`,
                   [alert.id],
                 );
-                const priorSuccess = new Set(
-                  priorSuccessRes.rows
-                    .map((r) => String(r.kind === "pagerduty" ? r.destination_id || "" : r.h || "").trim())
-                    .filter(Boolean),
-                );
+                const priorSuccess = new Set();
 
                 for (const wh of webhooks) {
                   const kind = resolveWebhookProviderKind(wh);
                   const url = String(wh?.url || "");
                   const routingKey = String(wh?.routingKey || "");
                   if (!url) continue;
+                  if (kind === "pagerduty" && !alert.workspace_id) {
+                    errors.push("pagerduty: asset_workspace_unavailable");
+                    continue;
+                  }
 
                   // PagerDuty integrations share their endpoint URL: identity
                   // includes the tenant and routing key, without exposing it.
                   const urlHash = webhookDestinationId(alert.workspace_id, wh);
-                  if (priorSuccess.has(urlHash)) {
+                  const evidence = webhookDeliveryEvidence(alert.workspace_id, wh, alert.webhook_urls, priorSuccessRes.rows);
+                  if (priorSuccess.has(urlHash) || evidence === "delivered" || evidence === "legacy_delivered") {
                     // Already delivered successfully to this endpoint for this alert; skip re-sending
                     webhookSuccess = true;
+                    continue;
+                  }
+                  if (evidence === "legacy_ambiguous") {
+                    errors.push("pagerduty: legacy_destination_ambiguous");
                     continue;
                   }
                   if (kind === "pagerduty" && alert.alert_key?.startsWith("token_expiry:")) {

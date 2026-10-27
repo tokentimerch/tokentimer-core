@@ -7,13 +7,26 @@ import {
   resolveContactGroupsForAsset,
   effectiveThresholds,
   getWebhookNames,
+  unionGroupsForThresholdWindow,
+  unionContactIds,
+  deliveryChannelsFromEligibleGroups,
 } from "./shared/contactGroups.js";
+import { uniqueWebhookDestinations } from "./shared/webhookDestinations.js";
+import {
+  webhookDeliveryEvidence,
+  recipientDeliveryComplete,
+} from "./shared/deliveryEvidence.js";
+import emailAddress from "../../../packages/email-address/index.js";
 import {
   pagerDutyDestinationId,
   pagerDutyDedupKey,
 } from "./shared/webhookDestinations.js";
 
-const { computeDaysLeft, isRetiredCertLifecycleStatus } = alertEligibility;
+const {
+  computeDaysLeft,
+  isRetiredCertLifecycleStatus,
+  resolvedTokenWorkspaceSql,
+} = alertEligibility;
 const RECHECK_MS = 5 * 60 * 1000;
 const LEASE_MS = 60 * 1000; // HTTP safety layer bounds requests to five seconds.
 const DEFAULT_THRESHOLDS = (process.env.ALERT_THRESHOLDS || "30,14,7,1,0")
@@ -120,6 +133,7 @@ async function loadContext(client, workspaceId, tokenId) {
     `SELECT t.id AS token_id, t.expiration::text, t.name, t.type, t.renewal_url,
             t.cert_lifecycle_status, t.source_provider, t.source_observed_at::text, t.auto_sync_managed,
             ws.webhook_urls, ws.contact_groups, ws.default_contact_group_id, ws.alert_thresholds,
+            ws.email_alerts_enabled,
             COALESCE(groups.ids, ARRAY[]::text[]) AS assigned_ids,
             EXISTS (SELECT 1 FROM managed_certificates mc
               WHERE mc.workspace_id = w.id AND mc.token_id = t.id) AS managed_backed,
@@ -135,7 +149,7 @@ async function loadContext(client, workspaceId, tokenId) {
                 AND dm.ssl_fingerprint IS NOT NULL) AS monitored_expiry_verified
        FROM workspaces w
        LEFT JOIN workspace_settings ws ON ws.workspace_id = w.id
-       LEFT JOIN tokens t ON t.workspace_id = w.id AND t.id = $2
+       LEFT JOIN tokens t ON t.id = $2 AND ${resolvedTokenWorkspaceSql("t")} = w.id
        LEFT JOIN LATERAL (SELECT array_agg(contact_group_id ORDER BY contact_group_id) AS ids
          FROM token_contact_groups WHERE workspace_id = w.id AND token_id = t.id) groups ON TRUE
       WHERE w.id = $1`,
@@ -153,17 +167,18 @@ function snapshotCondition(start) {
   return `EXISTS (
     SELECT 1 FROM tokens live
     LEFT JOIN LATERAL (SELECT configuration.* FROM workspace_settings configuration
-      WHERE configuration.workspace_id = live.workspace_id FOR SHARE SKIP LOCKED) settings ON TRUE
-    WHERE live.workspace_id = ${p(0)} AND live.id = ${p(1)} AND live.expiration = ${p(2)}::date
+      WHERE configuration.workspace_id = ${p(0)} FOR SHARE SKIP LOCKED) settings ON TRUE
+    WHERE ${resolvedTokenWorkspaceSql("live")} = ${p(0)} AND live.id = ${p(1)} AND live.expiration = ${p(2)}::date
       AND settings.contact_groups IS NOT DISTINCT FROM ${p(3)}::jsonb
       AND settings.alert_thresholds IS NOT DISTINCT FROM ${p(4)}::jsonb
       AND settings.webhook_urls IS NOT DISTINCT FROM ${p(5)}::jsonb
       AND COALESCE((SELECT array_agg(contact_group_id ORDER BY contact_group_id)
-        FROM token_contact_groups WHERE workspace_id = live.workspace_id AND token_id = live.id),
+        FROM token_contact_groups WHERE workspace_id = ${p(0)} AND token_id = live.id),
         ARRAY[]::text[]) = ${p(6)}::text[]
       AND live.source_observed_at IS NOT DISTINCT FROM ${p(7)}::timestamptz
       AND live.cert_lifecycle_status IS NOT DISTINCT FROM ${p(8)}::text
       AND settings.default_contact_group_id IS NOT DISTINCT FROM ${p(9)}::text
+      AND settings.email_alerts_enabled IS NOT DISTINCT FROM ${p(10)}::boolean
     FOR SHARE OF live SKIP LOCKED
   )`;
 }
@@ -171,7 +186,7 @@ function snapshotCondition(start) {
 function snapshotValues(incident, context) {
   return [
     incident.workspace_id,
-    incident.token_id,
+    incident.token_id_snapshot,
     context.expiration,
     context.contact_groups == null
       ? null
@@ -184,6 +199,7 @@ function snapshotValues(incident, context) {
     context.source_observed_at,
     context.cert_lifecycle_status,
     context.default_contact_group_id,
+    context.email_alerts_enabled,
   ];
 }
 
@@ -241,7 +257,8 @@ export async function enqueuePagerDutyIncident(client, { alert, webhook }) {
   )
     return null;
   const context = await loadContext(client, alert.workspace_id, alert.token_id);
-  if (!context?.token_id) return null;
+  if (!context?.token_id)
+    throw new PagerDutyEnqueueError("pagerduty_asset_workspace_unavailable");
   const threshold = destinationThreshold(
     context,
     alert.workspace_id,
@@ -260,9 +277,9 @@ export async function enqueuePagerDutyIncident(client, { alert, webhook }) {
     `INSERT INTO pagerduty_incidents
        (id, workspace_id, token_id, token_id_snapshot, destination_id, dedup_key,
         original_expiration, expiry_authority, risk_threshold_days, trigger_alert_queue_id, original_source_observed_at)
-     SELECT $1,$2,$3,$3,$4,$5,t.expiration,$6,$7,aq.id,t.source_observed_at
+     SELECT $1,$2,CASE WHEN t.workspace_id = $2 THEN t.id END,$3,$4,$5,t.expiration,$6,$7,aq.id,t.source_observed_at
        FROM tokens t JOIN alert_queue aq ON aq.token_id = t.id AND aq.id = $8
-      WHERE t.workspace_id = $2 AND t.id = $3 AND t.expiration = $9::date
+      WHERE ${resolvedTokenWorkspaceSql("t")} = $2 AND t.id = $3 AND t.expiration = $9::date
         AND aq.alert_key LIKE 'token_expiry:%' AND aq.alert_key NOT LIKE '%:previous_expiration:%'
         AND aq.expiration_snapshot = t.expiration
         AND aq.status IN ('pending','failed','partial')
@@ -283,7 +300,220 @@ export async function enqueuePagerDutyIncident(client, { alert, webhook }) {
       context.expiration,
     ],
   );
-  return result.rows[0] || null;
+  if (result.rows[0]) return result.rows[0];
+  const current = (
+    await client.query(
+      "SELECT status, alert_key FROM alert_queue WHERE id=$1 AND token_id=$2",
+      [alert.id, alert.token_id],
+    )
+  ).rows[0];
+  if (
+    current?.status === "sent" ||
+    current?.alert_key?.includes(":previous_expiration:")
+  )
+    return null;
+  throw new PagerDutyEnqueueError("pagerduty_enqueue_snapshot_changed");
+}
+
+class PagerDutyEnqueueError extends Error {
+  constructor(code) {
+    super(code);
+    this.code = code;
+  }
+}
+
+// Repair aggregate queue state from accepted delivery evidence, without another
+// send or synthetic success log. A live normal-worker claim, archived cycle,
+// changed routing snapshot or unrelated failure must remain authoritative.
+export async function reconcilePagerDutyParentAlert(client, incident) {
+  await client.query("BEGIN");
+  try {
+    const parent = (
+      await client.query(
+        `SELECT aq.* FROM alert_queue aq JOIN pagerduty_incidents p
+         ON p.trigger_alert_queue_id = aq.id AND p.token_id_snapshot = aq.token_id
+       WHERE p.id = $1 AND p.workspace_id = $2 AND p.trigger_accepted_at IS NOT NULL
+         AND aq.status IN ('pending','failed','partial','blocked')
+         AND aq.delivery_claim_id IS NULL
+         AND aq.alert_key LIKE 'token_expiry:%' AND aq.alert_key NOT LIKE '%:previous_expiration:%'
+         AND COALESCE(aq.error_message, '') !~* 'PLAN_LIMIT|limit_exceeded'
+       FOR UPDATE OF aq SKIP LOCKED`,
+        [incident.id, incident.workspace_id],
+      )
+    ).rows[0];
+    if (!parent) {
+      await client.query("COMMIT");
+      return false;
+    }
+    const context = await loadContext(
+      client,
+      incident.workspace_id,
+      incident.token_id_snapshot,
+    );
+    if (
+      !context?.token_id ||
+      alertEligibility.formatCalendarDay(parent.expiration_snapshot) !==
+        context.expiration
+    ) {
+      await client.query("COMMIT");
+      return false;
+    }
+    const groups = unionGroupsForThresholdWindow(
+      resolvedGroups(context),
+      context.alert_thresholds || DEFAULT_THRESHOLDS,
+      parent.threshold_days,
+    );
+    const liveChannels = deliveryChannelsFromEligibleGroups(groups, {
+      emailAlertsEnabled: context.email_alerts_enabled,
+      alertKey: parent.alert_key,
+    });
+    let storedChannels;
+    try {
+      storedChannels = Array.isArray(parent.channels)
+        ? parent.channels
+        : JSON.parse(parent.channels);
+    } catch {
+      storedChannels = null;
+    }
+    if (
+      !Array.isArray(storedChannels) ||
+      storedChannels.some(
+        (channel) => !["email", "webhooks", "whatsapp"].includes(channel),
+      )
+    ) {
+      await client.query("COMMIT");
+      return false;
+    }
+    const channels = [...new Set([...storedChannels, ...liveChannels])];
+    const history = (
+      await client.query(
+        `SELECT channel, status, workspace_id, metadata FROM alert_delivery_log
+        WHERE alert_queue_id = $1 AND (workspace_id = $2 OR workspace_id IS NULL)`,
+        [parent.id, incident.workspace_id],
+      )
+    ).rows;
+    const names = new Set(groups.flatMap(getWebhookNames));
+    const webhooks = uniqueWebhookDestinations(
+      (context.webhook_urls || []).filter((webhook) =>
+        names.has(String(webhook?.name || "").trim()),
+      ),
+      incident.workspace_id,
+    );
+    const webhookEvidence = webhooks.map((webhook) =>
+      ["delivered", "legacy_delivered"].includes(
+        webhookDeliveryEvidence(
+          incident.workspace_id,
+          webhook,
+          context.webhook_urls,
+          history,
+        ),
+      ),
+    );
+    const complete = {
+      webhooks: webhookEvidence.length > 0 && webhookEvidence.every(Boolean),
+    };
+    for (const channel of ["email", "whatsapp"].filter((channel) =>
+      channels.includes(channel),
+    )) {
+      const ids = unionContactIds(
+        groups,
+        channel === "email" ? "email_contact_ids" : "whatsapp_contact_ids",
+      );
+      const contacts = ids.length
+        ? (
+            await client.query(
+              "SELECT details, phone_e164 FROM workspace_contacts WHERE workspace_id=$1 AND id=ANY($2::uuid[]) FOR SHARE NOWAIT",
+              [incident.workspace_id, ids],
+            )
+          ).rows
+        : [];
+      const recipients =
+        channel === "email"
+          ? contacts
+              .map((contact) =>
+                String(contact.details?.email || "")
+                  .trim()
+                  .toLowerCase(),
+              )
+              .filter(emailAddress.isValidEmail)
+          : contacts
+              .map((contact) => String(contact.phone_e164 || "").trim())
+              .filter(Boolean);
+      complete[channel] = recipientDeliveryComplete(
+        channel,
+        recipients,
+        history,
+      );
+    }
+    // Never add a new channel/recipient to a retry or claim it was delivered.
+    if (
+      !webhookEvidence.some(Boolean) ||
+      channels.some(
+        (channel) => !complete[channel] && !storedChannels.includes(channel),
+      )
+    ) {
+      await client.query("COMMIT");
+      return false;
+    }
+    const remaining = channels.filter((channel) => !complete[channel]);
+    const status = remaining.length
+      ? parent.status === "blocked"
+        ? "blocked"
+        : "partial"
+      : "sent";
+    const changed = await client.query(
+      `UPDATE alert_queue SET status=$2::varchar(20), channels=$3::jsonb,
+         attempts_webhooks=CASE WHEN $6 THEN 0 ELSE attempts_webhooks END,
+         attempts_email=CASE WHEN $4 THEN 0 ELSE attempts_email END,
+         attempts_whatsapp=CASE WHEN $5 THEN 0 ELSE attempts_whatsapp END,
+         error_message=CASE WHEN $2 = 'sent' THEN NULL ELSE error_message END,
+         next_attempt_at=CASE WHEN $2 IN ('sent','blocked') THEN NULL ELSE next_attempt_at END,
+         updated_at=NOW()
+       WHERE id=$1 AND delivery_claim_id IS NULL AND status=$7 AND alert_key=$8
+         AND ${snapshotCondition(9)} RETURNING id`,
+      [
+        parent.id,
+        status,
+        JSON.stringify(remaining.length ? remaining : storedChannels),
+        complete.email === true,
+        complete.whatsapp === true,
+        complete.webhooks,
+        parent.status,
+        parent.alert_key,
+        ...snapshotValues(incident, context),
+      ],
+    );
+    if (changed.rowCount && status === "sent") {
+      await client.query(
+        `UPDATE operational_notifications SET resolved_at=NOW(), updated_at=NOW()
+        WHERE workspace_id=$1 AND dedupe_key=ANY($2::text[]) AND resolved_at IS NULL
+          AND type IN ('delivery_blocked','delivery_degraded','delivery_no_contacts')`,
+        [
+          incident.workspace_id,
+          [`delivery_blocked:${parent.id}`, `delivery_degraded:${parent.id}`],
+        ],
+      );
+    }
+    await client.query("COMMIT");
+    return changed.rowCount > 0;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    if (error.code === "55P03") return false;
+    throw error;
+  }
+}
+
+async function repairParent(client, incident) {
+  try {
+    await reconcilePagerDutyParentAlert(client, incident);
+  } catch (error) {
+    logger.warn("PagerDuty parent reconciliation deferred", {
+      incidentId: incident.id,
+      reason: /^[0-9A-Z]{5}$/.test(String(error.code || ""))
+        ? error.code
+        : "parent_reconciliation_failed",
+    });
+  }
 }
 
 async function postpone(
@@ -386,10 +616,11 @@ export async function processPagerDutyIncident(
     const context = await loadContext(
       client,
       incident.workspace_id,
-      incident.token_id,
+      incident.token_id_snapshot,
     );
     if (!context?.token_id)
       return await postpone(client, incident, claimId, "asset_unavailable");
+    if (incident.trigger_accepted_at) await repairParent(client, incident);
     const threshold = destinationThreshold(
       context,
       incident.workspace_id,
@@ -601,9 +832,12 @@ export async function processPagerDutyIncident(
         await client.query(
           `INSERT INTO alert_delivery_log
              (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
-           SELECT p.trigger_alert_queue_id, w.created_by, p.token_id, p.workspace_id,
+           SELECT p.trigger_alert_queue_id, w.created_by, delivered_asset.id, p.workspace_id,
                   'webhooks', $2, $3, $4::jsonb
-             FROM pagerduty_incidents p JOIN workspaces w ON w.id = p.workspace_id WHERE p.id = $1`,
+             FROM pagerduty_incidents p JOIN workspaces w ON w.id = p.workspace_id
+             LEFT JOIN tokens delivered_asset ON delivered_asset.id = p.token_id_snapshot
+               AND ${resolvedTokenWorkspaceSql("delivered_asset")} = p.workspace_id
+            WHERE p.id = $1`,
           [
             incident.id,
             outcome.success ? "success" : "failed",
@@ -631,6 +865,7 @@ export async function processPagerDutyIncident(
         error: outcome.error,
         exhausted,
       });
+    if (outcome.success) await repairParent(client, incident);
     return { success: outcome.success, error: outcome.error };
   } finally {
     await client.query(
@@ -644,7 +879,13 @@ export async function deliverPagerDutyExpiration(
   client,
   { alert, webhook, send = postJson },
 ) {
-  const incident = await enqueuePagerDutyIncident(client, { alert, webhook });
+  let incident;
+  try {
+    incident = await enqueuePagerDutyIncident(client, { alert, webhook });
+  } catch (error) {
+    if (error instanceof PagerDutyEnqueueError) return deferred(error.code);
+    throw error;
+  }
   if (!incident) return { success: true, skipped: true };
   return processPagerDutyIncident(client, incident.id, { send });
 }

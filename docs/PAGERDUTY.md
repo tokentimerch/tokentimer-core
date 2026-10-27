@@ -43,11 +43,11 @@ until recovery is established, even if there are no negative-day thresholds.
 
 For example, with a 30-day PagerDuty window:
 
-| Expiration change | Result |
-| --- | --- |
-| Tomorrow → six months away | Resolve after validating the new fact |
-| Tomorrow → five days away | Keep the same incident open |
-| Unchanged, earlier, missing or invalid | Keep the incident unresolved |
+| Expiration change                            | Result                                    |
+| -------------------------------------------- | ----------------------------------------- |
+| Tomorrow → six months away                   | Resolve after validating the new fact     |
+| Tomorrow → five days away                    | Keep the same incident open               |
+| Unchanged, earlier, missing or invalid       | Keep the incident unresolved              |
 | New risk after a resolved/recovering episode | Create a new episode with a different key |
 
 An authorized expiry edit is authoritative for a manually managed asset.
@@ -103,6 +103,29 @@ Incidents triggered before migration 79 have no recoverable correlation key.
 They are not backfilled and are not automatically resolved. Resolve those
 historical incidents in PagerDuty. New tracked episodes do not adopt them.
 
+An unsent queue row can still contain a successful pre-upgrade webhook log with
+only `metadata.urlHash`. With one distinct configured PagerDuty identity at that
+URL (including aliases of the same endpoint/key), the worker preserves the old
+notification's completed status and does not resend it. This is URL-level legacy
+evidence only: no incident, destination identity or historical `dedup_key` is
+backfilled, and no automatic resolve becomes possible. Because historical logs
+cannot prove the routing key, credential rotation cannot establish which old
+integration received that notification.
+
+If multiple configured routing keys share that URL, unproven destinations remain
+undelivered with `pagerduty: legacy_destination_ambiguous`; the worker sends none
+of those ambiguous legacy notifications. Exact new destination successes are
+still recognized, and other URLs with no success evidence can proceed. Operators
+must inspect the historical incidents in PagerDuty and reconcile their delivery
+before retrying an ambiguous queue row. Requeue alone does not remove ambiguity.
+Keep the original history; never assign it a guessed destination or dedup key.
+
+For a legacy asset with no direct workspace, routing uses its owner's sole
+workspace, or, when none is owned, its sole admin/manager membership. Multiple
+candidates at either preferred level, or no authorized candidate, fail delivery
+instead of silently succeeding. This resolution does not change asset ownership
+or grant workspace access. Modern assets retain their direct workspace scope.
+
 ## Retries and operations
 
 The existing delivery schedule drains at most 100 due lifecycle records per
@@ -117,6 +140,16 @@ marks an incident resolved. Missing credentials are polled without consuming
 network-attempt budget. Actual acceptance and its safe delivery-log entry commit
 together. Each episode uses a leased, owner-fenced claim plus a session advisory
 lock; no transaction spans HTTP. A dead process is reclaimable after a minute.
+
+After background trigger acceptance, the worker also reconciles the original
+queue row from persisted delivery logs. A channel completes only when every
+current destination or recipient has success evidence. Other failed channels
+remain pending in the row; a blocked row stays blocked while another failure
+remains. Otherwise a failed row can become partial, or fully delivered rows
+become sent and their delivery failure notifications clear. No synthetic success
+logs are added. Active queue claims, locked rows, archived expiration cycles and
+changed configuration fence this repair; open-incident sweeps retry skipped
+repairs. A deleted source row does not prevent independent incident processing.
 
 The API's existing authorized alert-requeue operation also retries exhausted
 PagerDuty actions in its scope, preserving keys and cumulative attempt/history
@@ -166,7 +199,8 @@ recovery even when Events API accepts the request. See
 This implementation is Core agnostic and adds no plan conditionals or schema
 changes to webhook configuration. Cloud/Enterprise rebases must carry migration
 79, the new worker modules, delivery-worker's lifecycle dispatch/drain hooks,
-and alertQueue's scoped retry CTEs into any overridden counterparts. Apply API
-migrations before upgraded workers start. Preserve edition-owned entitlement,
+the shared legacy-workspace and delivery-evidence helpers, operational notification
+reconciliation, and alertQueue's scoped retry CTEs into any overridden counterparts.
+Apply API migrations before upgraded workers start. Preserve edition-owned entitlement,
 freeze and dispatch guards when composing overrides; this change does not
 automatically update independently pinned edition repositories.

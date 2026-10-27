@@ -49,6 +49,19 @@ them. Expiration writes originate in multiple APIs and workers.
 8. If a renewed asset's earlier trigger acceptance is uncertain after a network
    failure/crash, retain that uncertainty for operator reconciliation. Never
    manufacture acceptance, send a stale trigger, or issue an unproven resolve.
+9. Resolve legacy assets through a unique owner workspace, then a unique
+   admin/manager membership if none is owned. Fail missing or ambiguous ownership
+   without modifying the asset or its RBAC. Keep the legacy asset ID in the
+   scoped historical snapshot; use the existing nullable modern asset foreign key.
+10. Recognize historical URL-only success as legacy notification completion when
+    its configured identity is unambiguous. Never infer historical correlation
+    or adopt the old incident. Multiple routing keys at a shared URL require
+    operator reconciliation; exact new destination evidence takes precedence.
+11. Repair parent queue state after independent acceptance using persisted
+    destination and recipient evidence, with queue ownership, archival and
+    configuration guards. Preserve unrelated failures and clear their operational
+    notification only when all delivery requirements have recovered. Retry
+    skipped repairs on open-incident sweeps without another send or history row.
 
 ## Alternatives considered
 

@@ -138,6 +138,70 @@ async function certificate() {
   ).rows[0];
 }
 
+async function history(
+  alert,
+  channel,
+  status,
+  metadata,
+  workspace = workspaceId,
+) {
+  await pool.query(
+    `INSERT INTO alert_delivery_log(alert_queue_id,user_id,token_id,workspace_id,channel,status,metadata)
+    VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)`,
+    [
+      alert.id,
+      userId,
+      alert.token_id,
+      workspace,
+      channel,
+      status,
+      JSON.stringify(metadata),
+    ],
+  );
+}
+async function blockParent(alert, channels = ["webhooks"]) {
+  await pool.query(
+    `UPDATE alert_queue SET status='blocked',channels=$2::jsonb,attempts=20,attempts_webhooks=20,
+    error_message='webhooks: retries exhausted; MAX_ATTEMPTS',delivery_claim_id=NULL,next_attempt_at=NULL WHERE id=$1`,
+    [alert.id, JSON.stringify(channels)],
+  );
+  const { raiseOperationalNotification } =
+    await import("../../apps/worker/src/shared/opNotifications.js");
+  await raiseOperationalNotification(client, {
+    workspaceId,
+    tokenId,
+    category: "delivery",
+    type: "delivery_blocked",
+    severity: "critical",
+    dedupeKey: `delivery_blocked:${alert.id}`,
+    title: "Delivery blocked",
+    message: "Retries exhausted",
+    metadata: { alert_queue_id: alert.id },
+  });
+}
+async function parentRow(alert) {
+  return (await pool.query("SELECT * FROM alert_queue WHERE id=$1", [alert.id]))
+    .rows[0];
+}
+async function legacyAsset() {
+  await pool.query("DELETE FROM tokens WHERE id=$1", [tokenId]);
+  tokenId = (
+    await pool.query(
+      `INSERT INTO tokens(user_id,created_by,workspace_id,name,type,category,expiration)
+    VALUES($1,$1,NULL,'Legacy asset','api_key','key_secret',$2) RETURNING id`,
+      [userId, day(1)],
+    )
+  ).rows[0].id;
+}
+async function openFailureNotifications(alert) {
+  return (
+    await pool.query(
+      "SELECT id FROM operational_notifications WHERE workspace_id=$1 AND dedupe_key=$2 AND resolved_at IS NULL",
+      [workspaceId, `delivery_blocked:${alert.id}`],
+    )
+  ).rowCount;
+}
+
 describe(
   "PostgreSQL PagerDuty expiration incident lifecycle",
   { concurrency: false },
@@ -163,6 +227,11 @@ describe(
         ).rowCount,
         1,
       );
+      // Old installations may retain the nullable v1 token shape. Simulate it
+      // only in this guarded disposable database; production DDL is unchanged.
+      await pool.query(
+        "ALTER TABLE tokens ALTER COLUMN workspace_id DROP NOT NULL",
+      );
       userId = (
         await pool.query(
           `INSERT INTO users(email,display_name,email_verified,password_hash)
@@ -180,6 +249,10 @@ describe(
       app.use(require("../../apps/api/routes/tokens"));
     });
     beforeEach(async () => {
+      await pool.query(
+        "DELETE FROM tokens WHERE user_id=$1 AND workspace_id IS NULL",
+        [userId],
+      );
       if (workspaceId)
         await pool.query("DELETE FROM workspaces WHERE id=$1", [workspaceId]);
       workspaceId = crypto.randomUUID();
@@ -208,11 +281,507 @@ describe(
       events = [];
     });
     after(async () => {
+      if (userId)
+        await pool.query(
+          "DELETE FROM tokens WHERE user_id=$1 AND workspace_id IS NULL",
+          [userId],
+        );
+      await pool.query(
+        "ALTER TABLE tokens ALTER COLUMN workspace_id SET NOT NULL",
+      );
       if (workspaceId)
         await pool.query("DELETE FROM workspaces WHERE id=$1", [workspaceId]);
       client?.release();
       await workerPool?.end();
       await pool.end();
+    });
+
+    it("delivers and resolves an authorized legacy asset without changing its ownership", async () => {
+      await legacyAsset();
+      await discovery.queueDiscoveryJob({ closePool: false });
+      await runWorker();
+      assert.equal(events.length, 1);
+      const [incident] = await incidentRows();
+      assert.ok(incident);
+      assert.equal(incident.token_id, null);
+      assert.equal(incident.token_id_snapshot, tokenId);
+      assert.equal(
+        (
+          await pool.query("SELECT workspace_id FROM tokens WHERE id=$1", [
+            tokenId,
+          ])
+        ).rows[0].workspace_id,
+        null,
+      );
+      const delivered = (
+        await pool.query(
+          "SELECT * FROM alert_delivery_log WHERE metadata->>'incident_id'=$1",
+          [incident.id],
+        )
+      ).rows[0];
+      assert.equal(delivered.workspace_id, workspaceId);
+      assert.equal(delivered.token_id, tokenId);
+      await Token.update(tokenId, { expiration: day(180) });
+      await due();
+      await reconcile();
+      assert.equal(events.at(-1).body.event_action, "resolve");
+      assert.equal(events[0].body.dedup_key, events[1].body.dedup_key);
+    });
+
+    it("reports missing legacy ownership as failure rather than successful delivery", async () => {
+      await legacyAsset();
+      const alert = await queue();
+      await pool.query("DELETE FROM workspaces WHERE id=$1", [workspaceId]);
+      const outcome = await lifecycle.deliverPagerDutyExpiration(client, {
+        alert,
+        webhook: pd,
+        send,
+      });
+      assert.equal(outcome.success, false);
+      assert.equal(outcome.error, "pagerduty_asset_workspace_unavailable");
+      assert.equal(events.length, 0);
+      assert.equal(
+        (
+          await pool.query(
+            "SELECT 1 FROM pagerduty_incidents WHERE token_id_snapshot=$1",
+            [tokenId],
+          )
+        ).rowCount,
+        0,
+      );
+      assert.equal(
+        (
+          await pool.query(
+            "SELECT 1 FROM alert_delivery_log WHERE alert_queue_id=$1",
+            [alert.id],
+          )
+        ).rowCount,
+        0,
+      );
+    });
+
+    it("fails closed for ambiguous legacy owners and does not borrow another tenant's configuration", async () => {
+      await legacyAsset();
+      const other = crypto.randomUUID();
+      await pool.query(
+        "INSERT INTO workspaces(id,name,created_by) VALUES($1,'Ambiguous owner',$2)",
+        [other, userId],
+      );
+      try {
+        const alert = await queue();
+        await runWorker();
+        const row = await parentRow(alert);
+        assert.equal(row.status, "failed");
+        assert.match(row.error_message, /asset_workspace_unavailable/);
+        assert.equal(events.length, 0);
+        assert.equal((await incidentRows()).length, 0);
+      } finally {
+        await pool.query("DELETE FROM workspaces WHERE id=$1", [other]);
+      }
+    });
+
+    for (const [role, allowed] of [
+      ["workspace_manager", true],
+      ["viewer", false],
+    ]) {
+      it(`legacy membership fallback ${allowed ? "accepts" : "rejects"} ${role}`, async () => {
+        const otherUser = (
+          await pool.query(
+            "INSERT INTO users(email,display_name,password_hash) VALUES($1,'Workspace owner','test-only') RETURNING id",
+            [`owner-${crypto.randomUUID()}@example.test`],
+          )
+        ).rows[0].id;
+        await pool.query("UPDATE workspaces SET created_by=$2 WHERE id=$1", [
+          workspaceId,
+          otherUser,
+        ]);
+        await pool.query(
+          "UPDATE workspace_memberships SET role=$3 WHERE workspace_id=$1 AND user_id=$2",
+          [workspaceId, userId, role],
+        );
+        await legacyAsset();
+        const outcome = await lifecycle.deliverPagerDutyExpiration(client, {
+          alert: await queue(),
+          webhook: pd,
+          send,
+        });
+        assert.equal(outcome.success, allowed);
+        assert.equal(events.length, allowed ? 1 : 0);
+        if (!allowed)
+          assert.equal(outcome.error, "pagerduty_asset_workspace_unavailable");
+      });
+    }
+
+    it("retains a valid legacy failure notification and requeues it in the resolved workspace", async () => {
+      await legacyAsset();
+      const alert = await queue();
+      await blockParent(alert);
+      const { reconcileStaleDeliveryIncidents } =
+        await import("../../apps/worker/src/shared/opNotifications.js");
+      await reconcileStaleDeliveryIncidents(client);
+      assert.equal(await openFailureNotifications(alert), 1);
+      assert.equal(await requeueAlertsCore({ userId, workspaceId }), 1);
+      assert.equal((await parentRow(alert)).status, "pending");
+      await runWorker();
+      assert.equal((await parentRow(alert)).status, "sent");
+      assert.equal(events.length, 1);
+      assert.equal(await openFailureNotifications(alert), 0);
+    });
+
+    it("recognizes a successful legacy URL delivery and does not backfill an incident", async () => {
+      const alert = await queue();
+      await history(alert, "webhooks", "success", {
+        kind: "pagerduty",
+        urlHash: crypto.createHash("sha256").update(pd.url).digest("hex"),
+      });
+      await pool.query(
+        "UPDATE alert_queue SET status='partial',attempts=1 WHERE id=$1",
+        [alert.id],
+      );
+      await runWorker();
+      assert.equal(events.length, 0);
+      assert.equal((await parentRow(alert)).status, "sent");
+      assert.equal((await incidentRows()).length, 0);
+      assert.equal(
+        (
+          await pool.query(
+            "SELECT 1 FROM alert_delivery_log WHERE alert_queue_id=$1",
+            [alert.id],
+          )
+        ).rowCount,
+        1,
+      );
+    });
+
+    it("parks ambiguous legacy URL evidence while retrying a provably pending independent endpoint", async () => {
+      const second = { ...pd, name: "second", routingKey: keyB },
+        independent = {
+          ...pd,
+          name: "independent",
+          url: "https://events.eu.pagerduty.com/v2/enqueue",
+        };
+      await settings(
+        [pd, second, independent],
+        [{ ...group, webhook_names: ["pd", "second", "independent"] }],
+      );
+      const alert = await queue();
+      await history(alert, "webhooks", "success", {
+        kind: "pagerduty",
+        urlHash: crypto.createHash("sha256").update(pd.url).digest("hex"),
+      });
+      await pool.query(
+        "UPDATE alert_queue SET status='partial',attempts=1 WHERE id=$1",
+        [alert.id],
+      );
+      await runWorker();
+      assert.equal(events.length, 1);
+      assert.equal(events[0].url, independent.url);
+      assert.match(
+        (await parentRow(alert)).error_message,
+        /legacy_destination_ambiguous/,
+      );
+      assert.equal((await incidentRows()).length, 1);
+      await runWorker();
+      assert.equal(
+        events.length,
+        1,
+        "neither old ambiguous destinations nor the new success may be resent",
+      );
+    });
+
+    it("mixed new and URL-only evidence never assigns an old success to another routing key", async () => {
+      const second = { ...pd, name: "second", routingKey: keyB };
+      await settings(
+        [pd, second],
+        [{ ...group, webhook_names: ["pd", "second"] }],
+      );
+      const alert = await queue();
+      const { webhookDestinationId } =
+        await import("../../apps/worker/src/shared/webhookDestinations.js");
+      await history(alert, "webhooks", "success", {
+        kind: "pagerduty",
+        urlHash: crypto.createHash("sha256").update(pd.url).digest("hex"),
+      });
+      await history(alert, "webhooks", "success", {
+        kind: "pagerduty",
+        destination_id: webhookDestinationId(workspaceId, pd),
+        event_action: "trigger",
+      });
+      await pool.query(
+        "UPDATE alert_queue SET status='partial',attempts=1 WHERE id=$1",
+        [alert.id],
+      );
+      await runWorker();
+      assert.equal(events.length, 0);
+      assert.match(
+        (await parentRow(alert)).error_message,
+        /legacy_destination_ambiguous/,
+      );
+      assert.equal((await incidentRows()).length, 0);
+    });
+
+    it("successful independent delivery repairs a blocked PagerDuty-only parent and its bell notification", async () => {
+      const alert = await queue(),
+        incident = await lifecycle.enqueuePagerDutyIncident(client, {
+          alert,
+          webhook: pd,
+        });
+      await blockParent(alert);
+      await reconcile();
+      const row = await parentRow(alert);
+      assert.equal(row.status, "sent");
+      assert.equal(row.error_message, null);
+      assert.equal(row.attempts_webhooks, 0);
+      assert.equal(await openFailureNotifications(alert), 0);
+      assert.equal(events.length, 1);
+      assert.equal((await incidentRows())[0].state, "open");
+      const count = (
+        await pool.query(
+          "SELECT 1 FROM alert_delivery_log WHERE alert_queue_id=$1",
+          [alert.id],
+        )
+      ).rowCount;
+      await due(incident.id);
+      await reconcile();
+      assert.equal(events.length, 1);
+      assert.equal(
+        (
+          await pool.query(
+            "SELECT 1 FROM alert_delivery_log WHERE alert_queue_id=$1",
+            [alert.id],
+          )
+        ).rowCount,
+        count,
+      );
+    });
+
+    it("PagerDuty acceptance cannot recover another failed webhook or clear its notification", async () => {
+      const other = {
+        name: "generic",
+        kind: "generic",
+        url: "https://example.test/pending",
+      };
+      await settings(
+        [pd, other],
+        [{ ...group, webhook_names: ["pd", "generic"] }],
+      );
+      const alert = await queue();
+      await lifecycle.enqueuePagerDutyIncident(client, { alert, webhook: pd });
+      await history(alert, "webhooks", "failed", {
+        kind: "generic",
+        urlHash: crypto.createHash("sha256").update(other.url).digest("hex"),
+      });
+      await blockParent(alert);
+      await reconcile();
+      assert.equal((await parentRow(alert)).status, "blocked");
+      assert.equal(await openFailureNotifications(alert), 1);
+      assert.deepEqual((await parentRow(alert)).channels, ["webhooks"]);
+      assert.equal(events.length, 1);
+    });
+
+    it("changes failed to partial until every PagerDuty destination has accepted delivery", async () => {
+      const second = { ...pd, name: "second", routingKey: keyB };
+      await settings(
+        [pd, second],
+        [{ ...group, webhook_names: ["pd", "second"] }],
+      );
+      const alert = await queue();
+      const firstIntent = await lifecycle.enqueuePagerDutyIncident(client, {
+        alert,
+        webhook: pd,
+      });
+      const secondIntent = await lifecycle.enqueuePagerDutyIncident(client, {
+        alert,
+        webhook: second,
+      });
+      await blockParent(alert);
+      await pool.query(
+        "UPDATE alert_queue SET status='failed',attempts_webhooks=3 WHERE id=$1",
+        [alert.id],
+      );
+      await lifecycle.processPagerDutyIncident(client, firstIntent.id, {
+        send,
+      });
+      const partial = await parentRow(alert);
+      assert.equal(partial.status, "partial");
+      assert.deepEqual(partial.channels, ["webhooks"]);
+      assert.equal(partial.attempts_webhooks, 3);
+      assert.equal(await openFailureNotifications(alert), 1);
+      await lifecycle.processPagerDutyIncident(client, secondIntent.id, {
+        send,
+      });
+      assert.equal((await parentRow(alert)).status, "sent");
+      assert.equal(await openFailureNotifications(alert), 0);
+      assert.equal(events.length, 2);
+    });
+
+    it("aggregate repair requires every email recipient, preserving another channel's blocked status", async () => {
+      const first = crypto.randomUUID(),
+        second = crypto.randomUUID();
+      for (const [id, email] of [
+        [first, "alice@example.test"],
+        [second, "bob@example.test"],
+      ])
+        await pool.query(
+          `INSERT INTO workspace_contacts(id,workspace_id,first_name,last_name,details)
+        VALUES($1,$2,'Recipient','Test',$3::jsonb)`,
+          [id, workspaceId, JSON.stringify({ email })],
+        );
+      await settings([pd], [{ ...group, email_contact_ids: [first, second] }]);
+      await pool.query(
+        "UPDATE workspace_settings SET email_alerts_enabled=TRUE WHERE workspace_id=$1",
+        [workspaceId],
+      );
+      const alert = await queue(),
+        incident = await lifecycle.enqueuePagerDutyIncident(client, {
+          alert,
+          webhook: pd,
+        });
+      await history(alert, "email", "success", {
+        recipient: "alice@example.test",
+      });
+      await history(alert, "email", "failed", {
+        recipient: "bob@example.test",
+      });
+      await blockParent(alert, ["email", "webhooks"]);
+      await reconcile();
+      assert.equal((await parentRow(alert)).status, "blocked");
+      assert.equal(await openFailureNotifications(alert), 1);
+      assert.deepEqual((await parentRow(alert)).channels, ["email"]);
+      await history(alert, "email", "success", {
+        recipient: "bob@example.test",
+      });
+      await due(incident.id);
+      await reconcile();
+      assert.equal((await parentRow(alert)).status, "sent");
+      assert.equal(await openFailureNotifications(alert), 0);
+      assert.equal(events.length, 1);
+      assert.equal(
+        (
+          await pool.query(
+            "SELECT 1 FROM alert_delivery_log WHERE alert_queue_id=$1 AND channel='email' AND metadata->>'recipient'='alice@example.test'",
+            [alert.id],
+          )
+        ).rowCount,
+        1,
+      );
+    });
+
+    it("fences a parent repair when email delivery is enabled after its routing snapshot", async () => {
+      const contact = crypto.randomUUID();
+      await pool.query(
+        `INSERT INTO workspace_contacts(id,workspace_id,first_name,last_name,details)
+        VALUES($1,$2,'New','Recipient','{"email":"new@example.test"}'::jsonb)`,
+        [contact, workspaceId],
+      );
+      await settings([pd], [{ ...group, email_contact_ids: [contact] }]);
+      const { alert, incident } = await trigger();
+      await blockParent(alert);
+      let changed = false;
+      const concurrent = {
+        query: async (sql, parameters) => {
+          if (!changed && sql.includes("UPDATE alert_queue SET status=")) {
+            changed = true;
+            await pool.query(
+              "UPDATE workspace_settings SET email_alerts_enabled=TRUE WHERE workspace_id=$1",
+              [workspaceId],
+            );
+          }
+          return client.query(sql, parameters);
+        },
+      };
+      assert.equal(
+        await lifecycle.reconcilePagerDutyParentAlert(concurrent, incident),
+        false,
+      );
+      assert.equal(changed, true);
+      assert.equal((await parentRow(alert)).status, "blocked");
+      assert.equal(await openFailureNotifications(alert), 1);
+      await due(incident.id);
+      await reconcile();
+      assert.equal((await parentRow(alert)).status, "blocked");
+      assert.equal(events.length, 1);
+    });
+
+    it("normal-worker ownership fences parent repair until the claim is released", async () => {
+      const alert = await queue(),
+        incident = await lifecycle.enqueuePagerDutyIncident(client, {
+          alert,
+          webhook: pd,
+        });
+      const owner = crypto.randomUUID();
+      await blockParent(alert);
+      await pool.query(
+        "UPDATE alert_queue SET status='pending',delivery_claim_id=$2,next_attempt_at=NOW()+INTERVAL '15 minutes' WHERE id=$1",
+        [alert.id, owner],
+      );
+      await reconcile();
+      const claimed = await parentRow(alert);
+      assert.equal(claimed.status, "pending");
+      assert.equal(claimed.delivery_claim_id, owner);
+      assert.equal(await openFailureNotifications(alert), 1);
+      await pool.query(
+        "UPDATE alert_queue SET status='blocked',delivery_claim_id=NULL WHERE id=$1 AND delivery_claim_id=$2",
+        [alert.id, owner],
+      );
+      await due(incident.id);
+      await reconcile();
+      assert.equal((await parentRow(alert)).status, "sent");
+      assert.equal(events.length, 1);
+    });
+
+    it("recovers skipped parent repair after a row lock without sending another trigger", async () => {
+      const { alert, incident } = await trigger();
+      await blockParent(alert);
+      const other = await pool.connect();
+      try {
+        await other.query("BEGIN");
+        await other.query("SELECT id FROM alert_queue WHERE id=$1 FOR UPDATE", [
+          alert.id,
+        ]);
+        assert.equal(
+          await lifecycle.reconcilePagerDutyParentAlert(client, incident),
+          false,
+        );
+        assert.equal((await parentRow(alert)).status, "blocked");
+      } finally {
+        await other.query("ROLLBACK");
+        other.release();
+      }
+      await due(incident.id);
+      await reconcile();
+      assert.equal((await parentRow(alert)).status, "sent");
+      assert.equal(events.length, 1);
+    });
+
+    for (const deleted of [false, true])
+      it(`independent acceptance leaves ${deleted ? "a deleted" : "an archived"} parent alone`, async () => {
+        const alert = await queue(),
+          incident = await lifecycle.enqueuePagerDutyIncident(client, {
+            alert,
+            webhook: pd,
+          });
+        if (deleted)
+          await pool.query("DELETE FROM alert_queue WHERE id=$1", [alert.id]);
+        else await Token.update(tokenId, { expiration: day(5) });
+        await reconcile();
+        assert.equal((await incidentRows())[0].state, "open");
+        assert.equal(events.length, 1);
+        const row = await parentRow(alert);
+        if (deleted) assert.equal(row, undefined);
+        else {
+          assert.equal(row.status, "sent");
+          assert.match(row.alert_key, /:previous_expiration:/);
+          assert.match(row.error_message, /Discarded:/);
+        }
+        assert.equal(events[0].body.dedup_key, incident.dedup_key);
+      });
+
+    it("replays persisted acceptance to repair an unclaimed blocked parent", async () => {
+      const { alert, incident } = await trigger();
+      await blockParent(alert);
+      await lifecycle.reconcilePagerDutyParentAlert(client, incident);
+      assert.equal((await parentRow(alert)).status, "sent");
     });
 
     it("unions group aliases, separates routing keys at one endpoint, and reuses an episode across thresholds", async () => {
@@ -1063,12 +1632,12 @@ describe(
       );
       try {
         const alert = await queue();
-        assert.equal(
-          await lifecycle.enqueuePagerDutyIncident(client, {
+        await assert.rejects(
+          lifecycle.enqueuePagerDutyIncident(client, {
             alert: { ...alert, workspace_id: foreignWorkspace },
             webhook: pd,
           }),
-          null,
+          { code: "pagerduty_asset_workspace_unavailable" },
         );
         const intent = await lifecycle.enqueuePagerDutyIncident(client, {
           alert,
