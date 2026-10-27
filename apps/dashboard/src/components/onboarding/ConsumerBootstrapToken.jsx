@@ -44,6 +44,13 @@ function WorkspaceConsumerToken({ workspaceId }) {
       </Text>
       <DashboardActionButton
         variant='outline'
+        h='auto'
+        minH='36px'
+        maxW='100%'
+        w={{ base: 'full', sm: 'auto' }}
+        alignSelf={{ base: 'stretch', sm: 'flex-start' }}
+        py={2}
+        whiteSpace='normal'
         onClick={create}
         isLoading={busy}
       >
