@@ -510,6 +510,19 @@ async function takeNextControllerProvisioningCommand({
           AND j.source = '${CONTROLLER_PROVISIONING_JOB_SOURCE}'
           AND j.operation = 'deploy'
           AND j.status IN ('pending', 'claimed', 'running')
+          -- Period closure skips a job already locked by another poll. Keep
+          -- that stale pending row out of LIMIT 1 so this cluster's next
+          -- command can progress; started commands retain their redelivery.
+          AND (
+            j.status IN ('claimed', 'running')
+            OR j.management_period_id IS NULL
+            OR EXISTS (
+              SELECT 1 FROM certops_management_periods p
+               WHERE p.workspace_id = j.workspace_id
+                 AND p.id = j.management_period_id
+                 AND p.ended_at IS NULL
+            )
+          )
           AND j.payload->>'kind' = 'cert_manager_provision'
           AND j.payload #>> '{desiredCertificate,clusterId}' = $2
           AND (
