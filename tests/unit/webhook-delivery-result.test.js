@@ -144,3 +144,32 @@ it("keeps PagerDuty response bodies out of failed delivery results", async () =>
     }
   }
 });
+
+it("validates actual PagerDuty HTTP acceptance, rate limits and authentication failures", async () => {
+  const keys = ["NODE_ENV", "WEBHOOK_ALLOW_PRIVATE_IPS", "WEBHOOK_EXTRA_PROVIDER_HOSTS", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"];
+  const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  Object.assign(process.env, { NODE_ENV: "development", WEBHOOK_ALLOW_PRIVATE_IPS: "true",
+    WEBHOOK_EXTRA_PROVIDER_HOSTS: "127.0.0.1", HTTP_PROXY: "", HTTPS_PROXY: "", NO_PROXY: "127.0.0.1,localhost" });
+  const server = http.createServer((request, response) => {
+    const status = Number(request.url.slice(1));
+    response.writeHead(status, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ status: status === 202 ? "success" : "error", routing_key: "do-not-expose" }));
+  });
+  try {
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { postJson } = await import("../../apps/worker/src/notify/webhooks.js");
+    const { classifyPagerDutyResult } = await import("../../apps/worker/src/pagerduty-incidents.js");
+    for (const status of [202, 200, 400, 401, 403, 429, 503]) {
+      const result = await postJson(`http://127.0.0.1:${server.address().port}/${status}`, {}, "pagerduty");
+      assert.equal(result.success, status === 202);
+      assert.equal(classifyPagerDutyResult(result).retryable, status === 429 || status === 503);
+      assert.doesNotMatch(JSON.stringify(result), /routing_key|do-not-expose/);
+    }
+  } finally {
+    if (server.listening) await new Promise(resolve => server.close(resolve));
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});

@@ -20,6 +20,8 @@ import {
 } from "./notify/email.js";
 import { sendWhatsApp } from "./notify/whatsapp.js";
 import { postJson, formatPayload } from "./notify/webhooks.js";
+import { deliverPagerDutyExpiration, reconcilePagerDutyIncidents } from "./pagerduty-incidents.js";
+import { uniqueWebhookDestinations, webhookDestinationId } from "./shared/webhookDestinations.js";
 import crypto from "node:crypto";
 import { logger } from "./logger.js";
 import emailAddress from "../../../packages/email-address/index.js";
@@ -87,21 +89,6 @@ function unionWebhookNames(groups) {
     }
   }
   return names;
-}
-
-function uniqueWebhooksByUrl(webhooks) {
-  const list = Array.isArray(webhooks) ? webhooks : [];
-  const urls = dedupeNormalizedDestinations(
-    list.map((webhook) => webhook && webhook.url),
-    "webhook",
-  );
-  const byUrl = new Map();
-  for (const webhook of list) {
-    const url = String(webhook?.url || "").trim();
-    if (!url || byUrl.has(url)) continue;
-    byUrl.set(url, webhook);
-  }
-  return urls.map((url) => byUrl.get(url)).filter(Boolean);
 }
 
 function contactGroupAuditFields(assignedIds, resolvedGroups, contactGroups) {
@@ -1462,6 +1449,7 @@ export const _test = {
 export async function deliveryWorkerJob({
   closePool = true,
   incidentEmailSender = sendEmailNotification,
+  webhookSender = postJson,
 } = {}) {
   const startedAt = Date.now();
   // Owner identity for this run's claims. Every renewal and terminal write
@@ -1472,6 +1460,11 @@ export async function deliveryWorkerJob({
   let processed = 0,
     sent = 0,
     failed = 0;
+
+  // Drain durable PagerDuty recovery/retries before ordinary delivery so a
+  // large recipient batch cannot starve recovery. This also runs on an empty
+  // queue, in both the Compose runner and Helm delivery CronJob.
+  await withClient((client) => reconcilePagerDutyIncidents(client, { send: webhookSender }));
 
   await withClient(async (client) => {
     // In test mode, ignore next_attempt_at gating to allow repeated processing in quick succession
@@ -2136,7 +2129,7 @@ export async function deliveryWorkerJob({
                   const filtered = webhooks.filter((w) =>
                     names.includes(String(w.name || "").trim()),
                   );
-                  webhooks = uniqueWebhooksByUrl(filtered);
+                  webhooks = uniqueWebhookDestinations(filtered, alert.workspace_id);
                 } else {
                   webhooks = [];
                 }
@@ -2150,20 +2143,22 @@ export async function deliveryWorkerJob({
                 errorMessage =
                   "No webhook names defined in the selected contact group";
               } else {
-                // Consider the webhooks channel successful if at least one endpoint succeeds
+                // Keep the channel retryable until every selected destination succeeds.
                 let webhookSuccess = false;
                 const errors = [];
 
                 // Load previously successful webhook url hashes for this alert_queue
                 const priorSuccessRes = await client.query(
-                  `SELECT metadata->>'urlHash' AS h
+                  `SELECT metadata->>'urlHash' AS h, metadata->>'destination_id' AS destination_id,
+                          metadata->>'kind' AS kind
                  FROM alert_delivery_log
-                 WHERE alert_queue_id = $1 AND channel = 'webhooks' AND status = 'success'`,
+                 WHERE alert_queue_id = $1 AND channel = 'webhooks' AND status = 'success'
+                   AND COALESCE(metadata->>'event_action', 'trigger') = 'trigger'`,
                   [alert.id],
                 );
                 const priorSuccess = new Set(
                   priorSuccessRes.rows
-                    .map((r) => String(r.h || "").trim())
+                    .map((r) => String(r.kind === "pagerduty" ? r.destination_id || "" : r.h || "").trim())
                     .filter(Boolean),
                 );
 
@@ -2173,13 +2168,23 @@ export async function deliveryWorkerJob({
                   const routingKey = String(wh?.routingKey || "");
                   if (!url) continue;
 
-                  // Compute a stable hash for the URL to identify unique endpoints without storing the raw URL
-                  const urlHash = crypto
-                    .createHash("sha256")
-                    .update(url)
-                    .digest("hex");
+                  // PagerDuty integrations share their endpoint URL: identity
+                  // includes the tenant and routing key, without exposing it.
+                  const urlHash = webhookDestinationId(alert.workspace_id, wh);
                   if (priorSuccess.has(urlHash)) {
                     // Already delivered successfully to this endpoint for this alert; skip re-sending
+                    webhookSuccess = true;
+                    continue;
+                  }
+                  if (kind === "pagerduty" && alert.alert_key?.startsWith("token_expiry:")) {
+                    await assertStillOwnsDelivery(client, alert.id, claimId, CLAIM_MARKER_MS);
+                    const result = await deliverPagerDutyExpiration(client, {
+                      alert, webhook: wh, send: webhookSender,
+                    });
+                    if (result.success) webhookSuccess = true;
+                    else errors.push(`pagerduty: ${result.error}`);
+                    // The lifecycle writer atomically records provider acceptance
+                    // and history; never fabricate a success log for an intent.
                     continue;
                   }
                   const name = alert.name || `Token #${alert.token_id}`;
@@ -2351,7 +2356,7 @@ export async function deliveryWorkerJob({
                   const endTimer = hLatency
                     .labels("webhooks", kind)
                     .startTimer();
-                  const res = await postJson(url, payload, kind);
+                  const res = await webhookSender(url, payload, kind);
                   try {
                     endTimer();
                   } catch (_) {
@@ -2395,6 +2400,7 @@ export async function deliveryWorkerJob({
                         kind,
                         urlDomain: new URL(url).hostname,
                         urlHash,
+                        ...(kind === "pagerduty" && { destination_id: urlHash }),
                         group_id: groupIdUsedForWebhooks,
                         payload_type: isEndpointHealthWebhook
                           ? "endpoint_health"
@@ -2413,7 +2419,7 @@ export async function deliveryWorkerJob({
                     ],
                   );
                 }
-                success = webhookSuccess;
+                success = webhookSuccess && errors.length === 0;
                 if (errors.length > 0) {
                   errorMessage = errors.join("; ");
                 } else if (!webhookSuccess) {
@@ -2900,14 +2906,9 @@ export async function deliveryWorkerJob({
           }
         }
 
-        // If webhooks channel present and at least one endpoint succeeded, don't force overall failure.
-        // Only force failure if all webhook endpoints failed (webhookSuccess === false) which is already
-        // reflected in the channel result above. Here we avoid overriding a true allSucceeded due to partials.
-        // allSucceeded remains as computed from per-channel success values.
-
         // Update alert queue status
         // Determine status: "sent" only when all channels succeeded; "partial" when some succeeded and others failed/blocked; "failed" when none succeeded
-        const someSucceeded = deliveryResults.some((r) => r.success);
+        const someSucceeded = deliveryResults.some((r) => r.success) || webhookPartialErrors.length > 0;
         const someFailed = deliveryResults.some((r) => !r.success);
         const hasPartialIssues = webhookPartialErrors.length > 0;
 

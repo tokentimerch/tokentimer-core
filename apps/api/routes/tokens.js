@@ -188,6 +188,16 @@ async function isManagedBackedCertificateToken(token) {
   return result.rowCount > 0;
 }
 
+async function hasVerifiedExpiryOwner(token) {
+  if (isCertificateToken(token) && token.source_provider) return true;
+  if (await isManagedBackedCertificateToken(token)) return true;
+  if (!token?.workspace_id) return false;
+  return (await pool.query(
+    "SELECT 1 FROM domain_monitors WHERE workspace_id=$1 AND token_id=$2 LIMIT 1",
+    [token.workspace_id, token.id],
+  )).rowCount > 0;
+}
+
 async function canReadToken(token, userId) {
   if (token.workspace_id) {
     const membership = await pool.query(
@@ -764,6 +774,12 @@ router.post(
           throw err;
         }
         applyMembershipToTokenData(tokenData, updateMembership);
+        if (expiration !== existingToken.expiresAt && await hasVerifiedExpiryOwner(existingToken)) {
+          return res.status(409).json({
+            error: "Certificate expiration is owned by its provider or verified certificate observation",
+            code: "VERIFIED_CERTIFICATE_EXPIRY_REQUIRED",
+          });
+        }
         // A confirmed manual import adopts inventory from auto-sync management.
         const updatedToken = await Token.update(existingToken.id, {
           ...tokenData,
@@ -1283,6 +1299,14 @@ router.put(
           }
           expirationDate = normalizedExpirationDate;
         }
+      }
+
+      if (expirationProvided && expirationDate !== existingToken.expiresAt &&
+          await hasVerifiedExpiryOwner(existingToken)) {
+        return res.status(409).json({
+          error: "Certificate expiration is owned by its provider or verified certificate observation",
+          code: "VERIFIED_CERTIFICATE_EXPIRY_REQUIRED",
+        });
       }
 
       // Validate conditional fields based on existing or new type

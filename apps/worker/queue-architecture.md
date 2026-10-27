@@ -23,6 +23,21 @@ The alert system uses a queue-based architecture with clear separation of concer
 - Successful alerts are marked as sent
 - Full audit trail of all attempts via delivery log
 
+PagerDuty expiration incidents additionally use a durable lifecycle outbox,
+`pagerduty_incidents` (migration 79). The delivery worker drains bounded due
+batches even when the ordinary queue is empty. Destination identity includes
+the workspace, endpoint and routing key digest; retry/resolve events use one
+episode key. Other webhooks retain URL deduplication. Partial webhook failures
+keep the channel retryable, and successfully delivered destinations are skipped.
+See [PagerDuty operations](../../docs/PAGERDUTY.md) and
+[ADR-0015](../../docs/adr/0015-pagerduty-expiration-incident-lifecycle.md).
+
+All expiration writers archive prior threshold keys and revoke stale claims
+through the token-expiry database hook, extending the existing CertOps archival
+behavior. Queue rows snapshot their source expiration. This preserves delivery
+history and rearms later expiration cycles without treating every change as
+PagerDuty recovery.
+
 ## Database Schema
 
 ### Alert Queue Table
