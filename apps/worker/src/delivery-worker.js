@@ -2173,13 +2173,13 @@ export async function deliveryWorkerJob({
                   // includes the tenant and routing key, without exposing it.
                   const urlHash = webhookDestinationId(alert.workspace_id, wh);
                   const evidence = webhookDeliveryEvidence(alert.workspace_id, wh, alert.webhook_urls, priorSuccessRes.rows);
-                  if (priorSuccess.has(urlHash) || evidence === "delivered" || evidence === "legacy_delivered") {
+                  if (priorSuccess.has(urlHash) || evidence === "delivered") {
                     // Already delivered successfully to this endpoint for this alert; skip re-sending
                     webhookSuccess = true;
                     continue;
                   }
                   if (evidence === "legacy_ambiguous") {
-                    errors.push("pagerduty: legacy_destination_ambiguous");
+                    errors.push("pagerduty_legacy_destination_ambiguous");
                     continue;
                   }
                   if (kind === "pagerduty" && alert.alert_key?.startsWith("token_expiry:")) {

@@ -245,6 +245,25 @@ function deferred(error) {
   return { success: false, deferred: true, error };
 }
 
+async function hasAmbiguousLegacyDelivery(
+  client,
+  workspaceId,
+  alertId,
+  webhook,
+) {
+  if (!alertId) return false;
+  const history = await client.query(
+    `SELECT channel, status, workspace_id, metadata FROM alert_delivery_log
+     WHERE alert_queue_id=$1 AND channel='webhooks' AND status='success'
+       AND (workspace_id=$2 OR workspace_id IS NULL)`,
+    [alertId, workspaceId],
+  );
+  return (
+    webhookDeliveryEvidence(workspaceId, webhook, null, history.rows) ===
+    "legacy_ambiguous"
+  );
+}
+
 // Record intent before any send, following ADR-0009. The partial unique index
 // joins repeated thresholds into the same episode. UUID episode identity also
 // isolates independently installed tenants, even if their asset ids coincide.
@@ -266,6 +285,15 @@ export async function enqueuePagerDutyIncident(client, { alert, webhook }) {
   );
   if (threshold === null || computeDaysLeft(context.expiration) > threshold)
     return null;
+  if (
+    await hasAmbiguousLegacyDelivery(
+      client,
+      alert.workspace_id,
+      alert.id,
+      webhook,
+    )
+  )
+    throw new PagerDutyEnqueueError("pagerduty_legacy_destination_ambiguous");
   const episodeId = crypto.randomUUID();
   const dedupKey = pagerDutyDedupKey({
     workspaceId: alert.workspace_id,
@@ -399,15 +427,14 @@ export async function reconcilePagerDutyParentAlert(client, incident) {
       ),
       incident.workspace_id,
     );
-    const webhookEvidence = webhooks.map((webhook) =>
-      ["delivered", "legacy_delivered"].includes(
+    const webhookEvidence = webhooks.map(
+      (webhook) =>
         webhookDeliveryEvidence(
           incident.workspace_id,
           webhook,
           context.webhook_urls,
           history,
-        ),
-      ),
+        ) === "delivered",
     );
     const complete = {
       webhooks: webhookEvidence.length > 0 && webhookEvidence.every(Boolean),
@@ -710,6 +737,24 @@ export async function processPagerDutyIncident(
         incident,
         claimId,
         "original_destination_unavailable",
+      );
+    // An older pending intent is not evidence that its routing key received a
+    // URL-only historical delivery. Park it without sending or spending budget.
+    if (
+      !incident.trigger_accepted_at &&
+      (await hasAmbiguousLegacyDelivery(
+        client,
+        incident.workspace_id,
+        incident.trigger_alert_queue_id,
+        webhook,
+      ))
+    )
+      return await postpone(
+        client,
+        incident,
+        claimId,
+        "pagerduty_legacy_destination_ambiguous",
+        { exhausted: true },
       );
     if (!/^[a-zA-Z0-9]{32}$/.test(String(webhook.routingKey || "").trim())) {
       return await postpone(

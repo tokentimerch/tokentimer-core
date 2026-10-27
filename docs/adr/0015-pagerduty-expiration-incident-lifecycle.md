@@ -53,10 +53,12 @@ them. Expiration writes originate in multiple APIs and workers.
    admin/manager membership if none is owned. Fail missing or ambiguous ownership
    without modifying the asset or its RBAC. Keep the legacy asset ID in the
    scoped historical snapshot; use the existing nullable modern asset foreign key.
-10. Recognize historical URL-only success as legacy notification completion when
-    its configured identity is unambiguous. Never infer historical correlation
-    or adopt the old incident. Multiple routing keys at a shared URL require
-    operator reconciliation; exact new destination evidence takes precedence.
+10. Treat historical URL-only PagerDuty success as ambiguous, even with a single
+    current integration: configuration cannot prove the original routing key.
+    Require exact destination-specific acceptance to establish delivery. Never
+    adopt an old incident, infer correlation, or automatically duplicate a
+    potentially delivered notification. Park ambiguity for operator reconciliation;
+    exact modern destination evidence takes precedence.
 11. Repair parent queue state after independent acceptance using persisted
     destination and recipient evidence, with queue ownership, archival and
     configuration guards. Preserve unrelated failures and clear their operational

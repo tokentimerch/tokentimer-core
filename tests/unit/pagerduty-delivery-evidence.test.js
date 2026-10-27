@@ -24,19 +24,19 @@ before(async () => {
     await import("../../apps/worker/src/shared/webhookDestinations.js");
 });
 describe("versioned PagerDuty delivery evidence", () => {
-  it("recognizes a URL-only legacy success without inventing correlation", () => {
+  it("keeps URL-only success ambiguous even with one current destination", () => {
     const row = success({
       kind: "pagerduty",
       urlHash: evidence.webhookUrlHash(pd),
     });
     assert.equal(
       evidence.webhookDeliveryEvidence(workspaceId, pd, [pd], [row]),
-      "legacy_delivered",
+      "legacy_ambiguous",
     );
     assert.equal(row.metadata.destination_id, undefined);
     assert.equal(row.metadata.dedup_key, undefined);
   });
-  it("does not count aliases as independent integrations", () => {
+  it("does not use current aliases as proof of historical routing-key identity", () => {
     const row = success(
       { kind: "pagerduty", urlHash: evidence.webhookUrlHash(pd) },
       null,
@@ -48,7 +48,61 @@ describe("versioned PagerDuty delivery evidence", () => {
         [pd, { ...pd, name: "alias" }],
         [row],
       ),
-      "legacy_delivered",
+      "legacy_ambiguous",
+    );
+  });
+  it("cannot prove delivery after routing-key rotation at the same endpoint", () => {
+    const oldDelivery = success({
+      kind: "pagerduty",
+      urlHash: evidence.webhookUrlHash(pd),
+    });
+    assert.notEqual(
+      identity.webhookDestinationId(workspaceId, pd),
+      identity.webhookDestinationId(workspaceId, second),
+    );
+    assert.equal(
+      evidence.webhookDeliveryEvidence(
+        workspaceId,
+        second,
+        [second],
+        [oldDelivery],
+      ),
+      "legacy_ambiguous",
+    );
+    assert.equal(oldDelivery.metadata.destination_id, undefined);
+    assert.equal(oldDelivery.metadata.dedup_key, undefined);
+  });
+  it("recognizes exact destination evidence despite legacy URL history", () => {
+    const rows = [
+      success({ kind: "pagerduty", urlHash: evidence.webhookUrlHash(pd) }),
+      success({
+        kind: "pagerduty",
+        destination_id: identity.webhookDestinationId(workspaceId, second),
+      }),
+    ];
+    assert.equal(
+      evidence.webhookDeliveryEvidence(workspaceId, second, [second], rows),
+      "delivered",
+    );
+    assert.equal(
+      evidence.webhookDeliveryEvidence(
+        workspaceId,
+        second,
+        [second],
+        [rows[1]],
+      ),
+      "delivered",
+    );
+  });
+  it("does not confuse a known modern delivery to the old key with delivery to its replacement", () => {
+    const row = success({
+      kind: "pagerduty",
+      destination_id: identity.webhookDestinationId(workspaceId, pd),
+      urlHash: evidence.webhookUrlHash(pd),
+    });
+    assert.equal(
+      evidence.webhookDeliveryEvidence(workspaceId, second, [second], [row]),
+      "pending",
     );
   });
   it("parks ambiguous URL history for every unproven routing key", () => {
@@ -94,7 +148,7 @@ describe("versioned PagerDuty delivery evidence", () => {
     ];
     assert.equal(
       evidence.webhookDeliveryEvidence(workspaceId, pd, [pd, other], rows),
-      "legacy_delivered",
+      "legacy_ambiguous",
     );
     assert.equal(
       evidence.webhookDeliveryEvidence(workspaceId, other, [pd, other], rows),

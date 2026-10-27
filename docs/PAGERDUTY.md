@@ -104,21 +104,27 @@ They are not backfilled and are not automatically resolved. Resolve those
 historical incidents in PagerDuty. New tracked episodes do not adopt them.
 
 An unsent queue row can still contain a successful pre-upgrade webhook log with
-only `metadata.urlHash`. With one distinct configured PagerDuty identity at that
-URL (including aliases of the same endpoint/key), the worker preserves the old
-notification's completed status and does not resend it. This is URL-level legacy
-evidence only: no incident, destination identity or historical `dedup_key` is
-backfilled, and no automatic resolve becomes possible. Because historical logs
-cannot prove the routing key, credential rotation cannot establish which old
-integration received that notification.
+only `metadata.urlHash`. That evidence cannot identify the original routing key,
+even with one current integration or several aliases of the same key. Replacing
+an integration at the same URL must never turn old acceptance into proof that
+the replacement received a notification. Only successful evidence with the exact
+workspace/endpoint/routing-key `destination_id` establishes delivery.
 
-If multiple configured routing keys share that URL, unproven destinations remain
-undelivered with `pagerduty: legacy_destination_ambiguous`; the worker sends none
-of those ambiguous legacy notifications. Exact new destination successes are
-still recognized, and other URLs with no success evidence can proceed. Operators
-must inspect the historical incidents in PagerDuty and reconcile their delivery
-before retrying an ambiguous queue row. Requeue alone does not remove ambiguity.
-Keep the original history; never assign it a guessed destination or dedup key.
+URL-only PagerDuty success therefore remains ambiguous. The worker neither marks
+that destination delivered nor sends a new correlated trigger that could duplicate
+the historical notification. It retains an observable failure with the sanitized
+code `pagerduty_legacy_destination_ambiguous`, subject to the normal queue retry
+budget and eventual blocking. Older unaccepted outbox intents with this history
+are parked without spending network-attempt budget. Parent reconciliation cannot
+use ambiguous evidence to mark a channel complete or clear its failure warning.
+Exact modern successes remain authoritative, and independently pending endpoints
+can still proceed. Non-PagerDuty URL deduplication is unchanged.
+
+Operators must inspect and reconcile historical incidents in PagerDuty; ordinary
+requeue preserves the history and does not establish the missing routing identity.
+No automated history-adoption mechanism is provided. Keep the original evidence;
+never assign it a guessed destination or historical `dedup_key`. No incident or
+automatic resolve is fabricated from a URL-only record.
 
 For a legacy asset with no direct workspace, routing uses its owner's sole
 workspace, or, when none is owned, its sole admin/manager membership. Multiple

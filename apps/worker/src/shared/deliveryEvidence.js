@@ -9,12 +9,12 @@ export function webhookUrlHash(webhook) {
     .digest("hex");
 }
 
-// Old URL-only acceptance is evidence of a completed legacy notification,
-// never evidence for a newly correlated episode or a recoverable routing key.
+// An endpoint hash cannot prove the historical routing key, even with only one
+// current integration. Only exact destination evidence can establish delivery.
 export function webhookDeliveryEvidence(
   workspaceId,
   webhook,
-  configuredWebhooks,
+  _configuredWebhooks,
   history,
 ) {
   const successes = (Array.isArray(history) ? history : []).filter(
@@ -43,16 +43,7 @@ export function webhookDeliveryEvidence(
     )
   )
     return "pending";
-  const identities = new Set(
-    (Array.isArray(configuredWebhooks) ? configuredWebhooks : [])
-      .filter(
-        (candidate) =>
-          resolveWebhookProviderKind(candidate) === "pagerduty" &&
-          webhookUrlHash(candidate) === urlHash,
-      )
-      .map((candidate) => webhookDestinationId(workspaceId, candidate)),
-  );
-  return identities.size === 1 ? "legacy_delivered" : "legacy_ambiguous";
+  return "legacy_ambiguous";
 }
 
 export function recipientDeliveryComplete(channel, recipients, history) {

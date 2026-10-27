@@ -214,6 +214,7 @@ describe(
       );
       process.env.NODE_ENV = "test";
       process.env.ENABLE_METRICS = "false";
+      process.env.ALERT_MAX_ATTEMPTS = "20";
       lifecycle = await import("../../apps/worker/src/pagerduty-incidents.js");
       worker = await import("../../apps/worker/src/delivery-worker.js");
       discovery = await import("../../apps/worker/src/queue-manager.js");
@@ -428,41 +429,75 @@ describe(
       assert.equal(await openFailureNotifications(alert), 0);
     });
 
-    it("recognizes a successful legacy URL delivery and does not backfill an incident", async () => {
-      const alert = await queue();
-      await history(alert, "webhooks", "success", {
-        kind: "pagerduty",
-        urlHash: crypto.createHash("sha256").update(pd.url).digest("hex"),
+    for (const rotated of [false, true])
+      it(`keeps URL-only success ambiguous with ${rotated ? "a rotated key" : "one current destination"}, including after requeue`, async () => {
+        const alert = await queue();
+        await history(alert, "webhooks", "success", {
+          kind: "pagerduty",
+          urlHash: crypto.createHash("sha256").update(pd.url).digest("hex"),
+        });
+        const current = rotated ? { ...pd, routingKey: keyB } : pd;
+        await settings([current]);
+        await pool.query(
+          "UPDATE alert_queue SET status='partial',attempts=1 WHERE id=$1",
+          [alert.id],
+        );
+        await runWorker();
+        assert.equal(events.length, 0);
+        assert.equal((await parentRow(alert)).status, "failed");
+        assert.match(
+          (await parentRow(alert)).error_message,
+          /pagerduty_legacy_destination_ambiguous/,
+        );
+        assert.equal((await incidentRows()).length, 0);
+        const direct = await lifecycle.deliverPagerDutyExpiration(client, {
+          alert,
+          webhook: current,
+          send,
+        });
+        assert.equal(direct.success, false);
+        assert.equal(direct.error, "pagerduty_legacy_destination_ambiguous");
+        await pool.query(
+          "UPDATE alert_queue SET attempts_webhooks=19,next_attempt_at=NOW()-INTERVAL '1 second' WHERE id=$1",
+          [alert.id],
+        );
+        await runWorker();
+        assert.equal((await parentRow(alert)).status, "blocked");
+        assert.equal((await parentRow(alert)).next_attempt_at, null);
+        assert.equal(await requeueAlertsCore({ userId, workspaceId }), 1);
+        await runWorker();
+        const retried = await parentRow(alert);
+        assert.equal(retried.status, "failed");
+        assert.match(
+          retried.error_message,
+          /pagerduty_legacy_destination_ambiguous/,
+        );
+        assert.doesNotMatch(
+          retried.error_message,
+          new RegExp(`${keyA}|${keyB}`),
+        );
+        assert.equal(events.length, 0);
+        assert.equal((await incidentRows()).length, 0);
+        assert.equal(
+          (
+            await pool.query(
+              "SELECT 1 FROM alert_delivery_log WHERE alert_queue_id=$1 AND status='success'",
+              [alert.id],
+            )
+          ).rowCount,
+          1,
+        );
       });
-      await pool.query(
-        "UPDATE alert_queue SET status='partial',attempts=1 WHERE id=$1",
-        [alert.id],
-      );
-      await runWorker();
-      assert.equal(events.length, 0);
-      assert.equal((await parentRow(alert)).status, "sent");
-      assert.equal((await incidentRows()).length, 0);
-      assert.equal(
-        (
-          await pool.query(
-            "SELECT 1 FROM alert_delivery_log WHERE alert_queue_id=$1",
-            [alert.id],
-          )
-        ).rowCount,
-        1,
-      );
-    });
 
     it("parks ambiguous legacy URL evidence while retrying a provably pending independent endpoint", async () => {
-      const second = { ...pd, name: "second", routingKey: keyB },
-        independent = {
-          ...pd,
-          name: "independent",
-          url: "https://events.eu.pagerduty.com/v2/enqueue",
-        };
+      const independent = {
+        ...pd,
+        name: "independent",
+        url: "https://events.eu.pagerduty.com/v2/enqueue",
+      };
       await settings(
-        [pd, second, independent],
-        [{ ...group, webhook_names: ["pd", "second", "independent"] }],
+        [{ ...pd, routingKey: keyB }, independent],
+        [{ ...group, webhook_names: ["pd", "independent"] }],
       );
       const alert = await queue();
       await history(alert, "webhooks", "success", {
@@ -478,10 +513,19 @@ describe(
       assert.equal(events[0].url, independent.url);
       assert.match(
         (await parentRow(alert)).error_message,
-        /legacy_destination_ambiguous/,
+        /pagerduty_legacy_destination_ambiguous/,
       );
       assert.equal((await incidentRows()).length, 1);
+      assert.equal((await parentRow(alert)).status, "partial");
+      await blockParent(alert);
+      await due();
+      await reconcile();
+      assert.equal((await parentRow(alert)).status, "blocked");
+      assert.deepEqual((await parentRow(alert)).channels, ["webhooks"]);
+      assert.equal(await openFailureNotifications(alert), 1);
+      assert.equal(await requeueAlertsCore({ userId, workspaceId }), 1);
       await runWorker();
+      assert.equal((await parentRow(alert)).status, "partial");
       assert.equal(
         events.length,
         1,
@@ -515,9 +559,65 @@ describe(
       assert.equal(events.length, 0);
       assert.match(
         (await parentRow(alert)).error_message,
-        /legacy_destination_ambiguous/,
+        /pagerduty_legacy_destination_ambiguous/,
       );
       assert.equal((await incidentRows()).length, 0);
+    });
+
+    it("recognizes exact modern destination acceptance even alongside old URL-only history", async () => {
+      await settings([{ ...pd, routingKey: keyB }]);
+      const alert = await queue();
+      const { webhookDestinationId } =
+        await import("../../apps/worker/src/shared/webhookDestinations.js");
+      await history(alert, "webhooks", "success", {
+        kind: "pagerduty",
+        urlHash: crypto.createHash("sha256").update(pd.url).digest("hex"),
+      });
+      await history(alert, "webhooks", "success", {
+        kind: "pagerduty",
+        destination_id: webhookDestinationId(workspaceId, {
+          ...pd,
+          routingKey: keyB,
+        }),
+        event_action: "trigger",
+      });
+      await runWorker();
+      assert.equal((await parentRow(alert)).status, "sent");
+      assert.equal(events.length, 0);
+      assert.equal((await incidentRows()).length, 0);
+    });
+
+    it("parks an older pending outbox intent when its source has ambiguous historical acceptance", async () => {
+      const alert = await queue();
+      const intent = await lifecycle.enqueuePagerDutyIncident(client, {
+        alert,
+        webhook: pd,
+      });
+      await history(alert, "webhooks", "success", {
+        kind: "pagerduty",
+        urlHash: crypto.createHash("sha256").update(pd.url).digest("hex"),
+      });
+      await blockParent(alert);
+      await reconcile();
+      let [incident] = await incidentRows();
+      assert.equal(
+        incident.last_error,
+        "pagerduty_legacy_destination_ambiguous",
+      );
+      assert.equal(incident.retry_exhausted, true);
+      assert.equal(incident.trigger_accepted_at, null);
+      assert.equal(incident.action_attempts, 0);
+      assert.equal(events.length, 0);
+      assert.equal((await parentRow(alert)).status, "blocked");
+      assert.equal(await openFailureNotifications(alert), 1);
+      await requeueAlertsCore({ userId, workspaceId });
+      await due(intent.id);
+      await reconcile();
+      [incident] = await incidentRows();
+      assert.equal(incident.retry_exhausted, true);
+      assert.equal(incident.action_attempts, 0);
+      assert.equal(events.length, 0);
+      assert.equal((await incidentRows()).length, 1);
     });
 
     it("successful independent delivery repairs a blocked PagerDuty-only parent and its bell notification", async () => {
