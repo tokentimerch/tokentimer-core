@@ -24,10 +24,13 @@ import {
 import { CHECK_STATUS } from '../../src/components/onboarding/verification.js';
 import { pickGoalAgent } from '../../src/components/onboarding/certopsMatrix.js';
 
-vi.mock('../../src/hooks/useDashboardTheme', async importOriginal => ({
-  ...(await importOriginal()),
-  useDashboardTheme: () => ({ muted: 'gray.500' }),
-}));
+vi.mock('../../src/hooks/useDashboardTheme', async importOriginal => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useDashboardTheme: actual.useDashboardThemeColors,
+  };
+});
 vi.mock('../../src/components/certops/certopsJobsApi.js', () => ({
   createJob: vi.fn(),
   getJob: vi.fn(),
