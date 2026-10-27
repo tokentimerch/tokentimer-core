@@ -1156,6 +1156,7 @@ async function claimJobs({
         WHERE workspace_id = $1
           AND executor_kind = 'agent'
           AND NOT (payload ? 'distributionRollout')
+          AND NOT (payload ? 'distributionPolicyApproval')
           -- Exclude contained/superseded distribution work before LIMIT.
           -- Otherwise maxJobs=1 repeatedly selects an unclaimable older job
           -- and starves a freshly approved rollout for the same consumer.

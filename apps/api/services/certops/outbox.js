@@ -44,7 +44,7 @@ const CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE = "CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE";
 // rejected rather than dropped: a caller passing something unexpected is a bug
 // worth surfacing, not data worth silently discarding.
 const PAYLOAD_FIELDS_BY_EVENT_TYPE = Object.freeze({
-  material_published: new Set(["groupId","materialVersionId"]),
+  material_published: new Set(["groupId","materialVersionId","policyRevision"]),
   distribution_approval_granted: new Set(["jobId"]),
   distribution_rollout_requested: new Set(["groupId","rolloutId"]),
   [OUTBOX_EVENT_TYPES.RENEWAL_ALERT_REQUESTED]: Object.freeze(

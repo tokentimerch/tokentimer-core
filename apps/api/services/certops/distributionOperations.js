@@ -46,7 +46,7 @@ async function putBinding({ workspaceId, groupId, bindingId = crypto.randomUUID(
     return row;
   });
 }
-async function requestRollout({ workspaceId, groupId, materialVersionId, maxParallel = 1, verificationOnly = false, requiresApproval = false, actorUserId, idempotencyKey }) {
+async function requestRollout({ workspaceId, groupId, materialVersionId, maxParallel = 1, verificationOnly = false, requiresApproval = false, actorUserId, idempotencyKey, client: transactionClient, dbPool = pool }) {
   workspaceId = material.normalizeDistributionId(workspaceId);
   groupId = material.normalizeDistributionId(groupId);
   materialVersionId = material.normalizeDistributionId(materialVersionId);
@@ -57,7 +57,7 @@ async function requestRollout({ workspaceId, groupId, materialVersionId, maxPara
     if (idempotencyKey) assertSafePublicValue(idempotencyKey);
   }
   const requestHash = rolloutRequestHash({groupId,materialVersionId,maxParallel,verificationOnly,requiresApproval,actorUserId});
-  return transaction(async (client) => {
+  const work = async (client) => {
     await lockWorkspaceForCertOpsSideEffect({client,workspaceId});
     if (idempotencyKey) {
       // Serialize even an initially absent key, across groups in this tenant.
@@ -88,7 +88,8 @@ async function requestRollout({ workspaceId, groupId, materialVersionId, maxPara
       return getCertificateJobById({ client, workspaceId, jobId: job.id });
     }
     return job;
-  });
+  };
+  return transactionClient ? work(transactionClient) : transaction(work, dbPool);
 }
 function rolloutRequestHash({groupId,materialVersionId,maxParallel=1,verificationOnly=false,requiresApproval=false,actorUserId}) {
   // Keep the legacy/default request hash stable across the upgrade.
@@ -121,6 +122,14 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
     JOIN certops_material_versions v ON v.workspace_id=r.workspace_id AND v.id=r.material_version_id
     WHERE r.workspace_id=$1 AND r.group_id=$2 AND r.id=$3 FOR UPDATE OF r`,[workspaceId,groupId,rolloutId])).rows[0];
   if (!rollout || ["retired","installed","verified"].includes(rollout.state)) return { queued: false,reason:"rollout_inactive" };
+  if (rollout.approval_job_id) {
+    try { await require("./distributionLifecycle").assertAutomaticRolloutAuthorized(client,workspaceId,group,rollout.approval_job_id); }
+    catch(error) {
+      if(error.code!=="CERTOPS_DISTRIBUTION_POLICY_STALE") throw error;
+      await client.query(`UPDATE certops_distribution_rollouts SET state='paused' WHERE workspace_id=$1 AND id=$2`,[workspaceId,rolloutId]);
+      return {queued:false,reason:"automatic_authorization_stale"};
+    }
+  }
   let stale = group.state !== "active" || !!group.ended_at || Number(group.generation)!==Number(rollout.generation);
   if (!stale) {
     try { await material.assertDeployableVersion(client,workspaceId,groupId,rollout.material_version_id); }
@@ -186,12 +195,12 @@ async function handleDistributionIntent({ dbPool = pool, row, claimId, payload }
 // Keep expansion and its acknowledgement atomic on that same connection.
 async function processDistributionIntent({client,row,payload}) {
     if (row.event_type === "material_published") {
-      const v = await client.query(`SELECT 1 FROM certops_material_versions WHERE workspace_id=$1 AND group_id=$2 AND id=$3 AND state='published'`,[row.workspace_id,payload.groupId,payload.materialVersionId]);
-      return { queued:!!v.rowCount,reason:"publication_available_for_approved_rollout" };
+      return require("./distributionLifecycle").onMaterialPublished({client,workspaceId:row.workspace_id,payload});
     }
     if (row.event_type === "distribution_approval_granted") {
       await lockWorkspaceForCertOpsSideEffect({client,workspaceId:row.workspace_id});
       const job = (await client.query(`SELECT * FROM certificate_jobs WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[row.workspace_id,payload.jobId])).rows[0];
+      if (job?.payload?.distributionPolicyApproval) return require("./distributionLifecycle").acceptPolicyApproval({client,workspaceId:row.workspace_id,job});
       if (!job?.payload?.distributionRollout || !["pending","succeeded"].includes(job.status)) return { queued:false,reason:"approval_no_longer_active" };
       const intent=job.payload.distributionRollout;
       try {

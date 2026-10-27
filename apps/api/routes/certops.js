@@ -4370,6 +4370,17 @@ router.post("/api/v1/workspaces/:id/certops/certificates/:certId/renewal-profile
 // Distribution authorization is an attributable human decision. Internal
 // workers expand approved intents through the outbox, never these mutations.
 const distributionWriteGuards = [...csrWriteGuards, requireCertOpsSessionUser];
+router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/policy", ...csrReadGuards,
+  csrRoute(async req=>{
+    const groupId=materialDistribution.normalizeDistributionId(req.params.groupId);
+    const group=(await pool.query(`SELECT id FROM certops_distribution_groups WHERE workspace_id=$1 AND id=$2`,[req.workspace.id,groupId])).rows[0];
+    if(!group) return {statusCode:404,body:{code:"CERTOPS_DISTRIBUTION_NOT_FOUND",error:"Distribution group not found"}};
+    const lifecycle=require("../services/certops/distributionLifecycle");
+    return {policy:await lifecycle.loadPolicy(pool,req.workspace.id,groupId),defaults:lifecycle.DEFAULT_POLICY};
+  }));
+router.put("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/policy", ...distributionWriteGuards,requireWorkspaceCertOpsActive,
+  csrRoute(req=>require("../services/certops/distributionLifecycle").putPolicy({workspaceId:req.workspace.id,groupId:req.params.groupId,
+    policy:req.body?.policy,expectedRevision:req.body?.expectedRevision,actorUserId:req.user.id})));
 router.post("/api/v1/workspaces/:id/certops/distribution-jobs/:jobId/retry", ...distributionWriteGuards,
   requireWorkspaceCertOpsActive,
   csrRoute((req) => distribution.retryDistributionJob({ workspaceId:req.workspace.id,jobId:req.params.jobId,actorUserId:req.user?.id })));

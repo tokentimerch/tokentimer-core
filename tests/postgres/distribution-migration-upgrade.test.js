@@ -60,6 +60,7 @@ test("an installation at main's AD CS migration 72 upgrades to distribution with
       { version: 76, name: "certops_distribution_transfer" },
       { version: 77, name: "onboarding_sessions" },
       { version: 78, name: "certops_installed_file_distribution" },
+      { version: 79, name: "certops_distribution_lifecycle" },
     ]);
     const constraints =
       await pool.query(`SELECT conname, pg_get_constraintdef(oid) AS definition

@@ -1893,7 +1893,7 @@ async function assertDeployFromStoreIdentityAllowsMutation({ db, workspaceId, su
 }
 
 async function createCertificateJob(options) {
-  if ((options.payload?.publication || options.payload?.materialDeployment || options.payload?.distributionRollout) && !options.client) {
+  if ((options.payload?.publication || options.payload?.materialDeployment || options.payload?.distributionRollout || options.payload?.distributionPolicyApproval) && !options.client) {
     throw serviceError("Material distribution requires a transaction-owned client", "CERTOPS_PUBLICATION_TRANSACTION_REQUIRED");
   }
   const db = options.client || pool;

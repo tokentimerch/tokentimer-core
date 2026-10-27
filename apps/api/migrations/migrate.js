@@ -4840,6 +4840,11 @@ const migrations = [
     name: "certops_installed_file_distribution",
     sql: fs.readFileSync(require("path").join(__dirname, "078-certops-installed-file-distribution.sql"), "utf8"),
   },
+  {
+    version: 79,
+    name: "certops_distribution_lifecycle",
+    sql: fs.readFileSync(require("path").join(__dirname, "079-certops-distribution-lifecycle.sql"), "utf8"),
+  },
 ];
 
 

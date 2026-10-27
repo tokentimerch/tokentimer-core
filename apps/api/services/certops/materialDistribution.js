@@ -65,7 +65,7 @@ async function resolveDistributionJobDefaults({ client, workspaceId, operation, 
   } else {
     await assertDeployableVersion(client, workspaceId, intent.groupId, intent.materialVersionId);
     const binding = (await client.query(`SELECT d.*,r.generation,r.material_version_id,v.provider_version,v.fingerprint_sha256,
-      r.verification_only,s.desired_generation,b.state AS binding_state,b.authorization_revision AS current_revision,r.state AS rollout_state
+      r.verification_only,r.approval_job_id,s.desired_generation,b.state AS binding_state,b.authorization_revision AS current_revision,r.state AS rollout_state
       FROM certops_consumer_deployments d JOIN certops_distribution_rollouts r ON r.workspace_id=d.workspace_id AND r.id=d.rollout_id
       JOIN certops_material_versions v ON v.workspace_id=r.workspace_id AND v.id=r.material_version_id
       JOIN certops_consumer_current_state s ON s.workspace_id=d.workspace_id AND s.binding_id=d.binding_id
@@ -78,6 +78,7 @@ async function resolveDistributionJobDefaults({ client, workspaceId, operation, 
       binding.material_version_id !== intent.materialVersionId || binding.provider_version !== intent.providerVersion ||
       binding.fingerprint_sha256 !== intent.fingerprintSha256 || binding.deployment_profile_ref !== intent.deploymentProfileRef ||
       binding.profile_revision !== intent.profileRevision || binding.verification_policy !== intent.verificationPolicy) fail("CERTOPS_DEPLOYMENT_INTENT_MISMATCH");
+    if (binding.approval_job_id) await require("./distributionLifecycle").assertAutomaticRolloutAuthorized(client,workspaceId,group,binding.approval_job_id);
   }
   return { autoAssignedAgentId: assignedAgentId };
 }
@@ -163,7 +164,8 @@ async function acceptPublicationReceipt({ client, workspaceId, agentId, job, rec
   await client.query(`UPDATE certops_distribution_groups SET latest_material_version_id=$3
     WHERE workspace_id=$1 AND id=$2`, [workspaceId, group.id, current.id]);
   await enqueueDistributionEvent(client, workspaceId, "material_published", current.id,
-    { groupId: group.id, materialVersionId: current.id });
+    { groupId: group.id, materialVersionId: current.id,
+      policyRevision: (await client.query(`SELECT revision FROM certops_distribution_policies WHERE workspace_id=$1 AND group_id=$2`,[workspaceId,group.id])).rows[0]?.revision || 0 });
   return { duplicate: false, materialVersionId: current.id };
 }
 
