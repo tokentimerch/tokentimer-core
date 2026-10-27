@@ -36,7 +36,8 @@ function Invoke-WebRequest {
    $envelopeMatch=[regex]::Match($bodyObject.script[0],"\`$certopsGuestEnvelope='([A-Za-z0-9+/=]+)'")
    if(-not $envelopeMatch.Success){throw 'Guest parameter envelope missing'}
    $envelope=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($envelopeMatch.Groups[1].Value))|ConvertFrom-Json
-   if($envelope.parameters[0].value -ne 'fixture-private-value'){throw 'Guest parameter changed'}
+   $value=[Text.UTF8Encoding]::new($false,$true).GetString([Convert]::FromBase64String($envelope.parameters[0].valueBase64))
+   if($value -ne 'fixture-private-value'){throw 'Guest parameter changed'}
    $poll=if($env:CERTOPS_ARM_MODE -eq 'foreign'){'https://attacker.invalid/steal'}else{"$base/progress?api-version=2024-07-01"}
    return [pscustomobject]@{StatusCode=202;Headers=@{'Azure-AsyncOperation'=$poll;Location="$base/result?api-version=2024-07-01"};Content=''}
  }

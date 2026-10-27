@@ -103,9 +103,13 @@ function ConvertTo-CertOpsWindowsGuestScript {
     $names[$parameter.name]=$true
   }
   $utf8=[Text.UTF8Encoding]::new($false,$true)
+  # ConvertFrom-Json can coerce date-shaped strings on PowerShell 7. Keep each
+  # value opaque until strict UTF-8 decoding immediately before parameter binding.
+  try {$encodedParameters=@(foreach($parameter in $Parameters){@{name=$parameter.name;valueBase64=[Convert]::ToBase64String($utf8.GetBytes($parameter.value))}})}
+  catch {throw 'Invalid Windows guest parameter encoding; private content withheld'}
   $parameterJson=@{parameters=@($Parameters)}|ConvertTo-Json -Depth 5 -Compress
   if($utf8.GetByteCount($parameterJson) -gt 262144 -or $utf8.GetByteCount($Script) -gt 1048576){throw 'Guest parameter envelope exceeds bounds'}
-  $json=@{schemaVersion=1;script=$Script;parameters=@($Parameters)}|ConvertTo-Json -Depth 5 -Compress
+  $json=@{schemaVersion=1;script=$Script;parameters=$encodedParameters}|ConvertTo-Json -Depth 5 -Compress
   $bytes=$utf8.GetBytes($json)
   if($bytes.Length -gt 2097152){throw 'Guest parameter envelope exceeds bounds'}
   $encoded=[Convert]::ToBase64String($bytes)
@@ -124,12 +128,17 @@ try {
   if($certopsGuestActual -cne $certopsGuestDigest){throw 'Envelope digest'}
   $certopsGuestPayload=[Text.UTF8Encoding]::new($false,$true).GetString($certopsGuestBytes)|ConvertFrom-Json -ErrorAction Stop
   if($certopsGuestPayload -isnot [pscustomobject] -or $certopsGuestPayload.schemaVersion -ne 1 -or $certopsGuestPayload.script -isnot [string] -or [Text.Encoding]::UTF8.GetByteCount($certopsGuestPayload.script) -gt 1048576 -or $certopsGuestPayload.parameters -isnot [array] -or $certopsGuestPayload.parameters.Count -gt 128){throw 'Envelope schema'}
-  $certopsGuestParameterJson=@{parameters=@($certopsGuestPayload.parameters)}|ConvertTo-Json -Depth 5 -Compress
-  if([Text.Encoding]::UTF8.GetByteCount($certopsGuestParameterJson) -gt 262144){throw 'Envelope bounds'}
+  $certopsGuestDecodedParameters=@()
   foreach($certopsGuestParameter in $certopsGuestPayload.parameters){
-    if($certopsGuestParameter.name -isnot [string] -or $certopsGuestParameter.name.Length -gt 128 -or $certopsGuestParameter.name -notmatch '^[A-Za-z][A-Za-z0-9_]*$' -or $certopsGuestParameter.value -isnot [string] -or $certopsGuestArguments.ContainsKey($certopsGuestParameter.name)){throw 'Envelope parameter'}
-    $certopsGuestArguments[$certopsGuestParameter.name]=$certopsGuestParameter.value
+    if($certopsGuestParameter.name -isnot [string] -or $certopsGuestParameter.name.Length -gt 128 -or $certopsGuestParameter.name -notmatch '^[A-Za-z][A-Za-z0-9_]*$' -or $certopsGuestParameter.valueBase64 -isnot [string] -or $certopsGuestParameter.valueBase64.Length -gt 349528 -or $certopsGuestArguments.ContainsKey($certopsGuestParameter.name)){throw 'Envelope parameter'}
+    $certopsGuestValueBytes=[Convert]::FromBase64String($certopsGuestParameter.valueBase64)
+    if($certopsGuestValueBytes.Length -gt 262144 -or [Convert]::ToBase64String($certopsGuestValueBytes) -cne $certopsGuestParameter.valueBase64){throw 'Envelope parameter encoding'}
+    $certopsGuestValue=[Text.UTF8Encoding]::new($false,$true).GetString($certopsGuestValueBytes)
+    $certopsGuestArguments[$certopsGuestParameter.name]=$certopsGuestValue
+    $certopsGuestDecodedParameters+=@{name=$certopsGuestParameter.name;value=$certopsGuestValue}
   }
+  $certopsGuestParameterJson=@{parameters=$certopsGuestDecodedParameters}|ConvertTo-Json -Depth 5 -Compress
+  if([Text.Encoding]::UTF8.GetByteCount($certopsGuestParameterJson) -gt 262144){throw 'Envelope bounds'}
 } catch {throw 'Invalid encoded guest parameters; private content withheld'}
 $certopsGuestDirectory=Join-Path ([IO.Path]::GetTempPath()) ('tt-certops-guest-'+[guid]::NewGuid().ToString('N'))
 $certopsGuestScript=Join-Path $certopsGuestDirectory 'original.ps1'
