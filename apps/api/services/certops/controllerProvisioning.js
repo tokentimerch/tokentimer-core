@@ -500,6 +500,7 @@ async function takeNextControllerProvisioningCommand({
     // cluster cannot steal a command mid-delivery.
     const selected = await client.query(
       `SELECT j.id, j.payload, j.subject_type, j.subject_id, j.status,
+              j.operation, j.management_period_id, j.certificate_identity_id,
               j.claimed_by_controller_cluster_id, j.claim_id, j.lease_expires_at,
               d.started_at, d.completed_at, d.failed_at, d.delivered_at
          FROM certificate_jobs j
@@ -603,6 +604,15 @@ async function takeNextControllerProvisioningCommand({
           WHERE id = $1`,
         [row.id, INVALID_COMMAND_ERROR_CODE],
       );
+      await client.query("COMMIT");
+      return null;
+    }
+
+    // Started commands retain their reconciliation/redelivery path after a
+    // period closes. Only a new claim needs the nonblocking admission locks.
+    if (row.status === "pending" && !await require("./managementClaim").lockManagedJobForClaim({
+      client, job: row, workspaceId: apiToken.workspaceId,
+    })) {
       await client.query("COMMIT");
       return null;
     }
