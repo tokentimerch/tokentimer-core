@@ -1138,7 +1138,7 @@ async function claimJobs({
     // certificates exactly as before.
     const selected = await client.query(
       `SELECT id, workspace_id, operation, subject_type, subject_id,
-              management_period_id, payload,
+              management_period_id, certificate_identity_id, payload,
               approved_payload_hash, approved_canonical_intent_hash,
               mode, executor_kind,
               assigned_agent_id, required_target_selector,
@@ -1198,6 +1198,7 @@ async function claimJobs({
           AND (
             cj.subject_type IS DISTINCT FROM 'managed_certificate'
             OR (cj.operation = 'protocol_smoke' AND cj.subject_id IS NULL)
+            OR certops_is_bound_enrollment_continuation(cj)
             OR EXISTS (
               SELECT 1 FROM certops_management_periods period
               LEFT JOIN certops_certificate_identities identity
@@ -1302,15 +1303,9 @@ async function claimJobs({
     const jobs = [];
     const logStreams = [];
     for (const row of selected.rows) {
-      if (row.subject_type === "managed_certificate" && row.management_period_id) {
-        const ownership = await client.query(
-          `SELECT 1 FROM certops_management_periods
-            WHERE id = $1 AND workspace_id = $2 AND ended_at IS NULL
-            FOR SHARE`,
-          [row.management_period_id, agent.workspaceId],
-        );
-        if (!ownership.rowCount) continue;
-      }
+      if (!await require("./managementClaim").lockManagedJobForClaim({
+        client, job: row, workspaceId: agent.workspaceId,
+      })) continue;
       // SQL above is a lock-efficient prefilter. This shared pure predicate
       // is authoritative and is also used by renewal-path health, preventing
       // the UI from calling a path healthy that dispatch would reject.
@@ -1335,14 +1330,14 @@ async function claimJobs({
       });
       if (!eligibility.eligible) continue;
       if(row.payload?.materialCleanup){
-        try{await require("./materialCleanup").resolveCleanupDefaults({client,workspaceId:row.workspace_id,operation:row.operation,subjectId:row.subject_id,payload:row.payload,assignedAgentId:row.assigned_agent_id,jobId:row.id});}
+        try{await require("./materialCleanup").resolveCleanupDefaults({client,workspaceId:row.workspace_id,operation:row.operation,subjectId:row.subject_id,payload:row.payload,assignedAgentId:row.assigned_agent_id,jobId:row.id,forClaim:true});}
         catch(error){if(!String(error.code || "").startsWith("CERTOPS_"))throw error;continue;}
       }
       if (row.payload?.publication || row.payload?.materialDeployment) {
         try {
           await require("./materialDistribution").resolveDistributionJobDefaults({ client,
             workspaceId: row.workspace_id, operation: row.operation, subjectId: row.subject_id,
-            payload: row.payload, assignedAgentId: row.assigned_agent_id, jobId: row.id });
+            payload: row.payload, assignedAgentId: row.assigned_agent_id, jobId: row.id, forClaim: true });
         } catch (error) {
           if (!String(error.code || "").startsWith("CERTOPS_")) throw error;
           continue;

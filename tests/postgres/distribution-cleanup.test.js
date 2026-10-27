@@ -83,6 +83,23 @@ test("explicit fresh review replaces stale cleanup authority without clearing an
   await assert.rejects(()=>resolve(f,original),{code:"CERTOPS_MATERIAL_CLEANUP_AUTHORIZATION_STALE"});
   assert.equal((await pool.query("SELECT state FROM certops_material_cleanups WHERE id=$1",[fresh.cleanupId])).rows[0].state,"fenced");
 });
+test("cleanup claim yields to a group editor without fencing and retries current authority",{timeout:10000},async t=>{
+  const f=await setup(t),requested=await request(f);await approveJob({workspaceId:f.workspaceId,jobId:requested.jobId,approverUserId:f.approver});
+  const job=await jobFor(f,requested.jobId),editor=await pool.connect(),claimant=await pool.connect();
+  const options={client:claimant,workspaceId:f.workspaceId,operation:job.operation,subjectId:job.subject_id,payload:job.payload,assignedAgentId:job.assigned_agent_id,jobId:job.id,forClaim:true};
+  try{
+    await editor.query("BEGIN");await editor.query("SELECT id FROM certops_distribution_groups WHERE id=$1 FOR UPDATE",[f.groupId]);
+    await claimant.query("BEGIN; SET LOCAL statement_timeout='1500ms'");
+    await claimant.query("SELECT id FROM certificate_jobs WHERE id=$1 FOR UPDATE",[job.id]);
+    assert.equal(await require("../../apps/api/services/certops/managementClaim").lockManagedJobForClaim({client:claimant,job,workspaceId:f.workspaceId}),true);
+    await assert.rejects(cleanup.resolveCleanupDefaults(options),{code:"CERTOPS_DISTRIBUTION_BUSY"});
+    assert.equal((await claimant.query("SELECT state FROM certops_material_cleanups WHERE id=$1",[requested.cleanupId])).rows[0].state,"planned");
+    await claimant.query("COMMIT");await editor.query("COMMIT");
+    await claimant.query("BEGIN");await cleanup.resolveCleanupDefaults(options);await claimant.query("COMMIT");
+    assert.equal((await pool.query("SELECT state FROM certops_material_cleanups WHERE id=$1",[requested.cleanupId])).rows[0].state,"fenced");
+  }finally{await Promise.all([editor.query("ROLLBACK"),claimant.query("ROLLBACK")]);editor.release();claimant.release();}
+});
+
 test("cleanup uses real signed dispatch, claim-bound receipts and the existing single-use nonce ledger",async t=>{
   const f=await setup(t),requested=await request(f),dispatch=require("../../apps/api/services/certops/agentDispatch"),signing=require("../../apps/api/services/certops/jobSigning");
   const row=(await pool.query("SELECT agent_id,agent_version,protocol_version FROM certops_agents WHERE id=$1",[f.issuer])).rows[0];

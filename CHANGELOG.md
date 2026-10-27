@@ -9,7 +9,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Auto-sync metrics remain available between runs and after restarts.** API `/metrics` exposes durable creation and run-outcome totals, last-attempt and last-success timestamps, and enabled-connection counts by provider. Opt-in alerts cover new creations, run failures and stale activity without paging for unused or disabled providers. **Operator guidance:** apply migrations 79–80, establish a Prometheus baseline, and scrape one stable API target per database; replica copies must not be summed. Historical activity is not backfilled.
+
 ### Fixed
+
+- **Additional GitHub and GitLab auto-sync connections can be enabled after a successful scan, including an empty result.** Changing credentials or scan scope requires a fresh scan; failed or late scans cannot reuse earlier approval. Suggested configuration names avoid existing names.
+- **Dashboard images require patched curl packages.** Rebuild the image to replace curl and libcurl versions affected by CVE-2026-92392.
 
 - **Vault setup includes consumer registration and recovery.** Create each consumer's bootstrap token and resume a paused rollout in the guide. Retrying a deployment refreshes its timeline and agent output without reloading the page.
 - **Linux agent installation checks reload authorization.** Legacy polkit backends that cannot enforce the scoped service grant are rejected before installation changes. Public package directories remain accessible to the service account after extraction with a restrictive umask; credential and runtime-state permissions stay private.

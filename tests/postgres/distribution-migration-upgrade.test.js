@@ -13,7 +13,7 @@ const {
   runMigrations,
 } = require("../../apps/api/migrations/migrate");
 
-test("an installation at main's AD CS migration 72 upgrades to distribution without changing its history", async () => {
+test("installations at main's migrations 72 and 80 upgrade without changing either history", async () => {
   const pending = migrations.splice(
     migrations.findIndex((entry) => entry.version === 73),
   );
@@ -36,9 +36,15 @@ test("an installation at main's AD CS migration 72 upgrades to distribution with
       before.rows[0].name,
       "certops_profile_issuer",
     );
-    migrations.push(...pending);
+    migrations.push(...pending.filter(entry=>entry.version<=80));
+    await runMigrations();
+    const currentMainLedger=(await pool.query("SELECT * FROM migrations ORDER BY version")).rows;
+    assert.equal(currentMainLedger.at(-1).version,80);
+    assert.equal(currentMainLedger.at(-1).name,"auto_sync_run_metrics");
+    migrations.push(...pending.filter(entry=>entry.version>80));
     await runMigrations();
     assert.deepEqual((await pool.query("SELECT * FROM migrations WHERE version<=72 ORDER BY version")).rows, originalLedger);
+    assert.deepEqual((await pool.query("SELECT * FROM migrations WHERE version<=80 ORDER BY version")).rows, currentMainLedger);
     const upgradedLedger = (await pool.query("SELECT * FROM migrations ORDER BY version")).rows;
     await runMigrations();
     assert.deepEqual((await pool.query("SELECT * FROM migrations ORDER BY version")).rows, upgradedLedger);
@@ -60,10 +66,12 @@ test("an installation at main's AD CS migration 72 upgrades to distribution with
       { version: 76, name: "certops_distribution_transfer" },
       { version: 77, name: "onboarding_sessions" },
       { version: 78, name: "certops_installed_file_distribution" },
-      { version: 79, name: "certops_distribution_lifecycle" },
-      { version: 80, name: "certops_distribution_incident_delivery" },
-      { version: 81, name: "certops_stable_consumer_discovery" },
-      { version: 82, name: "certops_material_cleanup" },
+      { version: 79, name: "auto_sync_provider_stats" },
+      { version: 80, name: "auto_sync_run_metrics" },
+      { version: 81, name: "certops_distribution_lifecycle" },
+      { version: 82, name: "certops_distribution_incident_delivery" },
+      { version: 83, name: "certops_stable_consumer_discovery" },
+      { version: 84, name: "certops_material_cleanup" },
     ]);
     const constraints =
       await pool.query(`SELECT conname, pg_get_constraintdef(oid) AS definition

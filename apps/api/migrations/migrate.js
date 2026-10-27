@@ -4842,20 +4842,30 @@ const migrations = [
   },
   {
     version: 79,
-    name: "certops_distribution_lifecycle",
-    sql: fs.readFileSync(require("path").join(__dirname, "079-certops-distribution-lifecycle.sql"), "utf8"),
+    name: "auto_sync_provider_stats",
+    sql: fs.readFileSync(require("path").join(__dirname, "079-auto-sync-provider-stats.sql"), "utf8"),
   },
   {
     version: 80,
-    name: "certops_distribution_incident_delivery",
-    sql: fs.readFileSync(require("path").join(__dirname,"080-certops-distribution-incident-delivery.sql"),"utf8"),
+    name: "auto_sync_run_metrics",
+    sql: fs.readFileSync(require("path").join(__dirname, "080-auto-sync-run-metrics.sql"), "utf8"),
   },
   {
-    version:81,
-    name:"certops_stable_consumer_discovery",
-    sql:fs.readFileSync(require("path").join(__dirname,"081-certops-stable-consumer-discovery.sql"),"utf8"),
+    version: 81,
+    name: "certops_distribution_lifecycle",
+    sql: fs.readFileSync(require("path").join(__dirname, "081-certops-distribution-lifecycle.sql"), "utf8"),
   },
-  {version:82,name:"certops_material_cleanup",sql:fs.readFileSync(require("path").join(__dirname,"082-certops-material-cleanup.sql"),"utf8")},
+  {
+    version: 82,
+    name: "certops_distribution_incident_delivery",
+    sql: fs.readFileSync(require("path").join(__dirname,"082-certops-distribution-incident-delivery.sql"),"utf8"),
+  },
+  {
+    version:83,
+    name:"certops_stable_consumer_discovery",
+    sql:fs.readFileSync(require("path").join(__dirname,"083-certops-stable-consumer-discovery.sql"),"utf8"),
+  },
+  {version:84,name:"certops_material_cleanup",sql:fs.readFileSync(require("path").join(__dirname,"084-certops-material-cleanup.sql"),"utf8")},
 ];
 
 

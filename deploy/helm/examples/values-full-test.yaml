@@ -160,13 +160,6 @@ monitoring:
       # ── Delivery pipeline ─────────────────────────────────────────────────
       - name: tokentimer.delivery
         rules:
-          - alert: TokenTimerAPIDown
-            expr: up{job="tokentimer-api"} == 0
-            for: 2m
-            labels:
-              severity: critical
-            annotations:
-              summary: "TokenTimer API is down"
           - alert: TokenTimerZeroSends48h
             expr: (time() - alerts_delivery_last_success_unix{worker="delivery-worker"}) > 172800
             for: 30m
@@ -422,37 +415,109 @@ monitoring:
       # ── Auto-sync ─────────────────────────────────────────────────────────
       - name: tokentimer.auto-sync
         rules:
+          - alert: AutoSyncCreatedAssets
+            expr: max by (installation, namespace, job, provider) (increase(auto_sync_items_created_total[15m])) > 0
+            for: 0m
+            labels:
+              severity: info
+            annotations:
+              summary: Auto-sync created inventory for {{ $labels.provider }}
+              description: >-
+                New committed auto-sync inventory was observed in the last 15 minutes. This is an informational
+                activity notification, not a failure or a count of current inventory.
           - alert: AutoSyncProviderFailures
             expr: |
-              sum by (provider) (increase(auto_sync_runs_total{status="failure"}[3h]))
-              >= 3
-              unless
-              sum by (provider) (increase(auto_sync_runs_total{status="success"}[3h]))
-              > 0
+              (
+                max by (installation, namespace, job, provider) (
+                  (max_over_time(auto_sync_run_outcomes_total{status="failed"}[3h]) - min_over_time(auto_sync_run_outcomes_total{status="failed"}[3h]))
+                  unless resets(auto_sync_run_outcomes_total{status="failed"}[3h]) > 0
+                ) >= 3
+                unless
+                max by (installation, namespace, job, provider) (auto_sync_last_success_timestamp_seconds) > time() - 10800
+              )
+              and on (installation, namespace, job, provider)
+              max by (installation, namespace, job, provider) (auto_sync_enabled_configurations) > 0
             for: 0m
             labels:
               severity: critical
             annotations:
-              summary: "Auto-sync provider {{ $labels.provider }} failing"
+              summary: Auto-sync provider {{ $labels.provider }} failing
               description: >-
-                Auto-sync for {{ $labels.provider }} has failed
-                {{ $value | printf "%.0f" }} times in 3 h with no successes.
-                Check credentials and network connectivity.
-              runbook_url: "https://tokentimer.ch/docs#auto-sync-troubleshooting"
+                At least three failed run outcomes were observed in 3 hours with no successful completion in that
+                window. Check credentials and connectivity; partial and superseded outcomes are separate from
+                failed.
           - alert: AutoSyncNotRunning
             expr: |
-              (time() - max by (provider) (auto_sync_last_run_timestamp{status="success"}))
-              > 90000
+              (
+                time() - max by (installation, namespace, job, provider) (auto_sync_last_attempt_timestamp_seconds) > 90000
+                and
+                max by (installation, namespace, job, provider) (auto_sync_last_attempt_timestamp_seconds) > 0
+              )
+              and on (installation, namespace, job, provider)
+              max by (installation, namespace, job, provider) (auto_sync_enabled_configurations) > 0
             for: 0m
             labels:
               severity: warning
             annotations:
-              summary: "Auto-sync for {{ $labels.provider }} has not succeeded in > 25 h"
+              summary: Auto-sync for {{ $labels.provider }} has not started in more than 25 hours
               description: >-
-                The auto-sync CronJob for {{ $labels.provider }} has not completed
-                a successful run in more than 25 hours. The CronJob may be stuck,
-                misconfigured, or disabled.
-              runbook_url: "https://tokentimer.ch/docs#auto-sync-troubleshooting"
+                An enabled provider has started before but has no recent attempt. Check worker scheduling and
+                leases. Adjust 25 hours to your longest configured schedule.
+          - alert: AutoSyncNoRecentSuccess
+            expr: |
+              (
+                time() - max by (installation, namespace, job, provider) (auto_sync_last_success_timestamp_seconds) > 90000
+                and
+                max by (installation, namespace, job, provider) (auto_sync_last_success_timestamp_seconds) > 0
+              )
+              and on (installation, namespace, job, provider)
+              max by (installation, namespace, job, provider) (auto_sync_enabled_configurations) > 0
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: Auto-sync for {{ $labels.provider }} has not fully succeeded in more than 25 hours
+              description: >-
+                Attempts may still be running, partial, or failing. Only a fully successful completion refreshes
+                this timestamp. Adjust 25 hours for weekly or custom schedules.
+          - alert: AutoSyncNeverStarted
+            expr: |
+              max by (installation, namespace, job, provider) (auto_sync_last_attempt_timestamp_seconds) == 0
+              and
+              max by (installation, namespace, job, provider) (auto_sync_enabled_configurations) > 0
+            for: 25h
+            labels:
+              severity: warning
+            annotations:
+              summary: Auto-sync for {{ $labels.provider }} has no observed attempt
+              description: >-
+                A provider has remained enabled without an observed run start for 25 hours of alert evaluation.
+                Check worker deployment and schedules; adjust the grace period for your longest schedule.
+          - alert: AutoSyncNeverSucceeded
+            expr: |
+              max by (installation, namespace, job, provider) (auto_sync_last_success_timestamp_seconds) == 0
+              and
+              max by (installation, namespace, job, provider) (auto_sync_last_attempt_timestamp_seconds) > 0
+              and
+              max by (installation, namespace, job, provider) (auto_sync_enabled_configurations) > 0
+            for: 25h
+            labels:
+              severity: warning
+            annotations:
+              summary: Auto-sync for {{ $labels.provider }} has no observed successful completion
+              description: >-
+                An enabled provider with an observed attempt has remained without a recorded full success for 25
+                hours of alert evaluation. New installations and unused providers do not page immediately.
+          - alert: TokenTimerAPIDown
+            expr: up{job="tokentimer-api"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: TokenTimer API metrics scrape is failing
+              description: >-
+                The API metrics target cannot be scraped. Check API availability, database connectivity and
+                migrations; missing telemetry must not be interpreted as zero activity.
       # ── Auth / Security ───────────────────────────────────────────────────
       - name: tokentimer.security
         rules:

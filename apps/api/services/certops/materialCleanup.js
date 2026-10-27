@@ -15,9 +15,9 @@ async function availability({client,workspaceId,group,env=process.env}){
     agent.supported_operations?.includes("cleanup-from-store") && hasFreshCapability({declaredCapabilities:agent.declared_capabilities,capabilitiesUpdatedAt:agent.capabilities_updated_at,capability:CAPABILITY});
   return {available:Boolean(available),code:available?null:"CERTOPS_MATERIAL_CLEANUP_NOT_QUALIFIED"};
 }
-async function context(client,workspaceId,groupId){
+async function context(client,workspaceId,groupId,{forClaim=false}={}){
   await assertDistributionPolicy({client,workspaceId});
-  const group=await material.lockGroup(client,workspaceId,groupId);
+  const group=await material.lockGroup(client,workspaceId,groupId,{forClaim});
   const policy=await lifecycle.loadPolicy(client,workspaceId,group.id);
   if(!policy?.policy.retention.cleanupEnabled || policy.policy.retention.reportOnly || !policy.policy.retention.requiresApproval)fail("CERTOPS_MATERIAL_CLEANUP_DISABLED");
   const readiness=await availability({client,workspaceId,group});if(!readiness.available)fail(readiness.code);
@@ -57,9 +57,9 @@ async function requestCleanup({workspaceId,groupId,materialVersionId,actorUserId
     return {cleanupId:id,jobId:job.id,status:job.status,state:existing?.state || "planned",duplicate:false};
   });
 }
-async function resolveCleanupDefaults({client,workspaceId,operation,subjectId,payload,assignedAgentId,jobId}){
+async function resolveCleanupDefaults({client,workspaceId,operation,subjectId,payload,assignedAgentId,jobId,forClaim=false}){
   const intent=material.validateDistributionContract("materialCleanup",payload.materialCleanup);
-  const {group,policy,scope}=await context(client,workspaceId,intent.groupId);
+  const {group,policy,scope}=await context(client,workspaceId,intent.groupId,{forClaim});
   const request=(await client.query("SELECT * FROM certops_material_cleanups WHERE workspace_id=$1 AND id=$2 FOR UPDATE",[workspaceId,intent.cleanupId])).rows[0];
     const version=(await client.query("SELECT provider_version,profile_revision FROM certops_material_versions WHERE workspace_id=$1 AND group_id=$2 AND id=$3",[workspaceId,group.id,intent.materialVersionId])).rows[0];
   if(operation!=="cleanup-from-store" || subjectId!==group.managed_certificate_id || assignedAgentId!==group.issuer_agent_id ||

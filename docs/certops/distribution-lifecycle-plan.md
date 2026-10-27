@@ -2,6 +2,8 @@
 
 Baseline: `origin/main` at `69371864`; PR #460 was open on 2026-10-27. Do not import its code, workflows, temporary trust exceptions, or capability claims.
 
+Integration update: main advanced to `63e97bf8` during final validation. Its merged safety changes and auto-sync migrations 79–80 were integrated without rewriting feature commits. The new lifecycle migrations now follow them at 81–84; #460 remains open and untouched.
+
 Reuse `materialDistribution`, `distributionOperations`, `distributionRead`, signed material jobs, Jobs approvals, the CertOps outbox/worker, operational notifications/contact groups/delivery eligibility, the first-distribution guide, and the read-only Deployments component.
 
 1. Add public lifecycle metadata in the next unapplied migration (current ledger ends at 78). Add revisioned, workspace/group-scoped policies, bounded standing authorization through genuine Jobs approval, and deterministic post-publication rollout requests. Defaults remain manual. Preserve workspace mandatory approval on both parent and child jobs.
