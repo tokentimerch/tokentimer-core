@@ -359,6 +359,9 @@ async function preflightPinnedDeployment({job,stores,bindings,stateDir,policyEng
     check("material_reload_allowlist",allowed?"passed":"blocked");
     const probes=binding.probes.every(probe=>typeof probe.dialAddress==="string" && Number.isInteger(probe.port) && probe.port>0 && probe.port<=65535 && typeof probe.sni==="string" && /^[a-z0-9.-]{1,253}$/i.test(probe.sni));
     check("material_probe_configuration",probes?"passed":"blocked");
+    // Configuration syntax and command allowlisting do not prove that the
+    // service exists or its listener is reachable. This tool runs no commands.
+    check("material_service_target_unverified","unknown");
   }
   try{await checkLease();const bundle=await store.fetch(intent.providerVersion);validateBundle(bundle,intent,store.scope);await checkLease();check("material_exact_version_authorized","passed");}
   catch(error){check(/^material_[a-z_]+$/.test(error.code || "")?error.code:"material_exact_version_unavailable","blocked");}

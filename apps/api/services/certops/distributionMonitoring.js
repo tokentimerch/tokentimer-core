@@ -102,14 +102,19 @@ function consumerConditions(
     failed_verification: "verification_failed",
     unknown_coverage: "unknown_coverage",
   };
-  const codes = map[health] ? [map[health]] : [];
+  const codes = new Set(map[health] ? [map[health]] : []);
+  // Health is a primary display label; independent conditions must not hide
+  // overdue proof or an offline required consumer behind an older version.
+  if(row.required && (row.agent_status!=="active" || !row.agent_last_seen_at ||
+    now-new Date(row.agent_last_seen_at).getTime()>policy.alerts.offlineSeconds*1000))codes.add("required_consumer_offline");
+  if(row.observed_at && now-new Date(row.observed_at).getTime()>=row.freshness_seconds*1000)codes.add("verification_overdue");
   const expiry = new Date(row.observed_valid_to).getTime();
   if (row.observed_valid_to && Number.isFinite(expiry)) {
-    if (expiry <= now) codes.push("consumer_certificate_expired");
+    if (expiry <= now) codes.add("consumer_certificate_expired");
     else if (expiry - now <= policy.alerts.expiryWarningDays * 86400000)
-      codes.push("consumer_certificate_expiring");
+      codes.add("consumer_certificate_expiring");
   }
-  return { health, codes };
+  return { health, codes:[...codes] };
 }
 function evidenceFor(row) {
   return {
@@ -436,7 +441,7 @@ async function monitorGroup({
       ? rows.filter((row) => row.binding_id === incident.binding_id)
       : rows.filter((row) => row.required && row.binding_state === "active");
     // Old proof, source renewal, local repair and deleting a binding cannot
-    // resolve an incident. Fresh current evidence must postdate its opening.
+    // resolve an incident. Proof must postdate its latest changed condition.
     if (
       !relevant.length ||
       !relevant.every(
@@ -445,7 +450,7 @@ async function monitorGroup({
           row.observed_material_version_id ===
             group.latest_material_version_id &&
           new Date(row.observed_at).getTime() >
-            new Date(incident.opened_at).getTime(),
+            new Date(incident.updated_at).getTime(),
       )
     )
       continue;

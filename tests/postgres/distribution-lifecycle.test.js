@@ -110,6 +110,10 @@ test("consumer incidents deduplicate, survive source publication, and resolve on
   assert.equal(incidents.length,1);assert.equal(incidents[0].code,"required_consumer_offline");assert.equal(incidents[0].revision,1);
   await pool.query("UPDATE certops_agents SET status='active',last_seen_at=clock_timestamp() WHERE id=$1",[f.consumer]);
   await monitor();assert.equal((await pool.query("SELECT resolved_at FROM certops_distribution_incidents WHERE id=$1",[incidents[0].id])).rows[0].resolved_at,null,"Old proof cannot resolve a newly opened incident");
+  await operations.requestRollout({...f,verificationOnly:true,actorUserId:f.actor});await proveConsumer(f);
+  await pool.query("UPDATE certops_agents SET status='offline' WHERE id=$1",[f.consumer]);await monitor();
+  await pool.query("UPDATE certops_agents SET status='active',last_seen_at=clock_timestamp() WHERE id=$1",[f.consumer]);await monitor();
+  assert.equal((await pool.query("SELECT resolved_at FROM certops_distribution_incidents WHERE id=$1",[incidents[0].id])).rows[0].resolved_at,null,"Proof before the latest incident condition must not resolve it after heartbeat recovery");
   await operations.requestRollout({...f,verificationOnly:true,actorUserId:f.actor});await proveConsumer(f);await monitor();
   assert.ok((await pool.query("SELECT resolved_at FROM certops_distribution_incidents WHERE id=$1",[incidents[0].id])).rows[0].resolved_at);
 });

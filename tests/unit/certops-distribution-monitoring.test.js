@@ -20,6 +20,13 @@ test("deployed expiry is independent of source renewal and evidence freshness",(
   assert.deepEqual(consumerConditions(row,DEFAULT_POLICY,now).codes,["consumer_certificate_expiring"]);
   assert.ok(consumerConditions({...row,observed_valid_to:new Date(now-1)},DEFAULT_POLICY,now).codes.includes("consumer_certificate_expired"));
 });
+
+test("one primary health label cannot hide simultaneous offline, overdue and deployed-expiry conditions",()=>{
+  const conditions=consumerConditions({...row,agent_status:"offline",observed_material_version_id:"old",
+    observed_at:new Date(now-7200000),observed_valid_to:new Date(now-1)},DEFAULT_POLICY,now);
+  assert.equal(conditions.health,"agent_offline");
+  assert.deepEqual(new Set(conditions.codes),new Set(["required_consumer_offline","verification_overdue","consumer_certificate_expired"]));
+});
 test("distribution channel payloads contain stable incident correlation and explicit recovery",async()=>{
   const module=await import("../../apps/worker/src/shared/distributionAlerts.js");
   const alert={workspace_id:"11111111-1111-4111-8111-111111111111",metadata:{incidentId:"22222222-2222-4222-8222-222222222222",groupId:"33333333-3333-4333-8333-333333333333",code:"certificate_drift",transition:"resolved",severity:"warning",evidence:{desiredVersionId:"v2"}}};

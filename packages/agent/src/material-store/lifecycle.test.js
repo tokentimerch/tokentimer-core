@@ -156,6 +156,15 @@ test("customer-local preflight reads the exact version without creating files, a
   assert.ok(!JSON.stringify(result).includes("PRIVATE KEY"));
 });
 
+test("preflight reports service existence as unknown rather than inferring it from configured command references",async t=>{
+  const f=await fixture(t),options=f.options();f.binding.reloadCommandRefs={validate:"fixture.validate",reload:"fixture.reload"};
+  options.policyEngine.checkCommandRef=()=>({allowed:true});
+  const result=await preflightPinnedDeployment(options);
+  assert.equal(result.ready,false);assert.ok(result.diagnostics.some(item=>item.code==="material_reload_allowlist" && item.status==="passed"));
+  assert.ok(result.diagnostics.some(item=>item.code==="material_service_target_unverified" && item.status==="unknown"));
+  assert.equal(fs.existsSync(f.target.certPath),false);assert.equal(fs.existsSync(options.stateDir),false);
+});
+
 test("files-only delivery writes and reads back the actual pair without reload or TLS", async (t) => {
   const f = await fixture(t);
   filesOnly(f);

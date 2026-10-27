@@ -134,11 +134,14 @@ describe("Core distribution and lifecycle migration histories", function () {
           "certops_distribution_transfer",
         ];
         const mainlineOrder = history === "distribution-first" ? [canonical[4],canonical[5],canonical[6],canonical[0],canonical[1],canonical[2],canonical[3]] : history === "enrollment-first" ? [canonical[0],canonical[4],canonical[5],canonical[6],canonical[1],canonical[2],canonical[3]] : history === "previous-distribution" ? [canonical[0],canonical[1],canonical[2],canonical[4],canonical[5],canonical[6],canonical[3]] : canonical;
-        // Onboarding and installed-file delivery land after every supported history.
+        // Additive lifecycle entries follow every supported immutable history.
         const expected = [
           ...mainlineOrder,
           "onboarding_sessions",
           "certops_installed_file_distribution",
+          "certops_distribution_lifecycle",
+          "certops_distribution_incident_delivery",
+          "certops_stable_consumer_discovery",
         ];
         assert.deepEqual(
           after.filter((row) => row.version >= 70).map((row) => row.name),
@@ -184,6 +187,9 @@ describe("Core distribution and lifecycle migration histories", function () {
           "certificate_enrollments",
           "certops_distribution_groups",
           "certops_agent_job_log",
+          "certops_distribution_policies",
+          "certops_distribution_incidents",
+          "certops_discovered_consumers",
         ]) {
           assert.equal(
             (await db.query("SELECT to_regclass($1)::text AS name", [table]))
