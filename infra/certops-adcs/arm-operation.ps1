@@ -12,19 +12,23 @@ function Assert-CertOpsArmUri {
 function Invoke-CertOpsArmRequest {
   param([uri]$Uri,[string]$Method,[string]$Body,[string]$SubscriptionId,[scriptblock]$RefreshAuthentication)
   Assert-CertOpsArmUri $Uri $SubscriptionId
-  & $RefreshAuthentication | ForEach-Object { Write-Host $_ }
-  $token=az account get-access-token --subscription $SubscriptionId --resource https://management.azure.com/ --query accessToken --output tsv --only-show-errors
-  if($LASTEXITCODE -ne 0 -or -not $token){throw 'Could not obtain fresh lab ARM access token'}
+  $token=$null
   try {
-    $request=@{Uri=$Uri;Method=$Method;Headers=@{Authorization="Bearer $token"};TimeoutSec=60;MaximumRedirection=0;ErrorAction='Stop';UseBasicParsing=$true}
+    $request=@{Uri=$Uri;Method=$Method;Headers=@{};TimeoutSec=60;MaximumRedirection=0;ErrorAction='Stop';UseBasicParsing=$true}
     if($Body){$request.Body=$Body;$request.ContentType='application/json'}
     # Read-only polls are idempotent: a transient network timeout or 5xx/429 must not
     # abandon a guest action that is still running. Submissions (POST/PUT) are never replayed.
     $maxAttempts=if($Method -eq 'GET'){8}else{1}
     for($attempt=1;$attempt -le $maxAttempts;$attempt++){
+      # A network retry can outlive the token acquired for the first attempt.
+      # Refresh at every read boundary, including a rejected authentication.
+      & $RefreshAuthentication | ForEach-Object { Write-Host $_ }
+      $token=az account get-access-token --subscription $SubscriptionId --resource https://management.azure.com/ --query accessToken --output tsv --only-show-errors
+      if($LASTEXITCODE -ne 0 -or -not $token){throw 'Could not obtain fresh lab ARM access token'}
+      $request.Headers.Authorization="Bearer $token"
       try { return (Invoke-WebRequest @request) } catch {
         $httpStatus=if($_.Exception.Response){[int]$_.Exception.Response.StatusCode}else{0}
-        $transient=($httpStatus -eq 0 -or $httpStatus -eq 408 -or $httpStatus -eq 429 -or $httpStatus -ge 500)
+        $transient=($httpStatus -eq 0 -or $httpStatus -eq 401 -or $httpStatus -eq 408 -or $httpStatus -eq 429 -or $httpStatus -ge 500)
         if($attempt -lt $maxAttempts -and $transient){
           Write-Host ("CERTOPS_ARM_POLL_RETRY={0}:{1}" -f $attempt,$httpStatus)
           Start-Sleep -Seconds ([Math]::Min(30,5*$attempt))
