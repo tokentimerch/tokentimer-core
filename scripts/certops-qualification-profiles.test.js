@@ -99,8 +99,11 @@ function workflows() {
 }
 test("all reviewed Azure workflows opt in and only manual workflows can provision", () => {
   const files = workflows();
-  assert.equal(azure.PROVISION.length + azure.LIFECYCLE.length, 2);
-  assert.ok(azure.PROVISION.includes("certops-enterprise-adcs-qualification.yml"));
+  assert.deepEqual(azure.PROVISION, ["certops-enterprise-adcs-qualification.yml"]);
+  assert.deepEqual(azure.LIFECYCLE, [
+    "certops-adcs-lab-janitor.yml",
+    "certops-azure-keyvault-janitor.yml",
+  ]);
   for (const [name, workflow] of Object.entries(files))
     assert.deepEqual(azure.validate(name, workflow), [], name);
   for (const name of azure.PROVISION) {
@@ -127,6 +130,18 @@ test("all reviewed Azure workflows opt in and only manual workflows can provisio
       run: "./infra/certops-adcs/provision-lab.ps1",
     });
     assert.ok(azure.validate(name, bad).length);
+  }
+  const keyvault = files["certops-azure-keyvault-janitor.yml"];
+  for (const mutate of [
+    (workflow) => { workflow.on.push = {}; },
+    (workflow) => { workflow.jobs.cleanup.if = "always()"; },
+    (workflow) => { workflow.jobs.cleanup.environment = "certops-adcs-cleanup"; },
+    (workflow) => { workflow.jobs.cleanup.steps[0].with.ref = "main"; },
+    (workflow) => { workflow.jobs.cleanup.steps[3].run = "az group create --name hidden"; },
+  ]) {
+    const bad = structuredClone(keyvault);
+    mutate(bad);
+    assert.ok(azure.validate("certops-azure-keyvault-janitor.yml", bad).length);
   }
   for (const step of [
     { uses: "azure/login@pinned" },

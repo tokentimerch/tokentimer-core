@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "repo": "tokentimer-core",
   "contractsPackage": "@tokentimer/contracts",
-  "version": "0.18.1",
+  "version": "0.18.2",
   "namespaces": [
     {
       "name": "queue",
@@ -65,14 +65,14 @@
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "017f0bb781e928647a8a92062a73cfb736897b8fb172e7f167140f07155168d0"
+          "sha256": "de9d63c897dbf5cce8a05cf4353af78917ba0dd0af9b97518ddc48d4717c34bc"
         },
         {
           "id": "integration-openapi-spec",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "017f0bb781e928647a8a92062a73cfb736897b8fb172e7f167140f07155168d0"
+          "sha256": "de9d63c897dbf5cce8a05cf4353af78917ba0dd0af9b97518ddc48d4717c34bc"
         },
         {
           "id": "auth-route-compat-contract",
