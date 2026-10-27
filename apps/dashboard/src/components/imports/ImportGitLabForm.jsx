@@ -1,4 +1,5 @@
 import React from 'react';
+import { useScanVerification } from '../../hooks/useScanVerification.js';
 import {
   Box,
   VStack,
@@ -88,6 +89,8 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
     onError,
     errorContent,
     onScanSuccess,
+    onScanInvalidated,
+    scanContext,
     borderColor,
     helpTextColor,
     hideDocs = false,
@@ -194,6 +197,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
   }, [selectedRowsGitlab.size, onSelectionChange]);
 
   const doGitlabScan = async () => {
+    const scanTicket = beginScanVerification();
     if (!workspaceId) {
       onError && onError('Please select a workspace first.');
       return;
@@ -237,9 +241,6 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
       setGitlabSummary(Array.isArray(res?.summary) ? res.summary : []);
       setFilterSummary(res?.filterSummary || null);
       setLastScanId(res?.scan_id || null);
-      if (items.length > 0) {
-        onScanSuccess && onScanSuccess('gitlab');
-      }
       try {
         localStorage.setItem('tt_gitlab_baseurl', gitlabBaseUrl);
       } catch (_) {}
@@ -250,6 +251,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
 
       const dups = await checkDuplicatesForItems(items, workspaceId);
       setGitlabDuplicates(dups);
+      completeScanVerification(scanTicket);
     } catch (e) {
       setGitlabItems([]);
       setGitlabSummary([]);
@@ -346,33 +348,47 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
     }
   };
 
+  const getCredentials = () => ({
+    credentials: {
+      baseUrl: gitlabBaseUrl || 'https://gitlab.com',
+      token: gitlabToken,
+    },
+    scanParams: {
+      baseUrl: gitlabBaseUrl || 'https://gitlab.com',
+      include: { tokens: true, keys: true },
+      filters: {
+        includePATs: gitlabIncludePATs,
+        includeProjectTokens: gitlabIncludeProjectTokens,
+        includeGroupTokens: gitlabIncludeGroupTokens,
+        includeDeployTokens: gitlabIncludeDeployTokens,
+        includeTriggerTokens: gitlabIncludeTriggerTokens,
+        includeSSHKeys: gitlabIncludeSSHKeys,
+        excludeUserPATs: gitlabExcludeUserPATs,
+        includeExpired: gitlabIncludeExpired,
+        includeRevoked: gitlabIncludeRevoked,
+      },
+      filterRules: sanitizeFilterRules(filterRules),
+      cleanupObsolete,
+    },
+  });
+  const { beginScanVerification, completeScanVerification } =
+    useScanVerification({
+      identity: {
+        workspaceId,
+        scanContext,
+        payload: getCredentials(),
+        rawBaseUrl: gitlabBaseUrl,
+      },
+      provider: 'gitlab',
+      onScanSuccess,
+      onScanInvalidated,
+    });
+
   React.useImperativeHandle(ref, () => ({
     importSelected: importGitlabSelected,
     getSelectedCount: () => selectedRowsGitlab.size,
     getContactGroupIds: () => bulkContactGroupIds,
-    getCredentials: () => ({
-      credentials: {
-        baseUrl: gitlabBaseUrl || 'https://gitlab.com',
-        token: gitlabToken,
-      },
-      scanParams: {
-        baseUrl: gitlabBaseUrl || 'https://gitlab.com',
-        include: { tokens: true, keys: true },
-        filters: {
-          includePATs: gitlabIncludePATs,
-          includeProjectTokens: gitlabIncludeProjectTokens,
-          includeGroupTokens: gitlabIncludeGroupTokens,
-          includeDeployTokens: gitlabIncludeDeployTokens,
-          includeTriggerTokens: gitlabIncludeTriggerTokens,
-          includeSSHKeys: gitlabIncludeSSHKeys,
-          excludeUserPATs: gitlabExcludeUserPATs,
-          includeExpired: gitlabIncludeExpired,
-          includeRevoked: gitlabIncludeRevoked,
-        },
-        filterRules: sanitizeFilterRules(filterRules),
-        cleanupObsolete,
-      },
-    }),
+    getCredentials,
   }));
 
   return (

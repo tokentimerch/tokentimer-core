@@ -1,3 +1,4 @@
+import { useScanVerification } from '../hooks/useScanVerification.js';
 import React from 'react';
 import {
   Modal,
@@ -1071,7 +1072,8 @@ function ImportTokensModalContent({
     }
   });
   const [isScanning, setIsScanning] = React.useState(false);
-  const [scanSucceededFor, setScanSucceededFor] = React.useState(new Set()); // tracks which sources had a successful scan
+  const [verifiedScanContext, setVerifiedScanContext] = React.useState(null);
+  const [scanContextVersion, setScanContextVersion] = React.useState(0);
   const [_mounts, setMounts] = React.useState([]);
   const [_vaultItems, setVaultItems] = React.useState([]);
   const [_summary, setSummary] = React.useState([]);
@@ -1623,6 +1625,34 @@ function ImportTokensModalContent({
     return { credentials, scanParams };
   };
 
+  const scanContext = JSON.stringify([
+    isOpen,
+    workspaceId,
+    source,
+    autoSyncConfig?.id,
+    requestedAutoSyncConfig,
+    scanContextVersion,
+  ]);
+  const scanVerified = verifiedScanContext === scanContext;
+  const invalidateScanVerification = React.useCallback(
+    () => setVerifiedScanContext(null),
+    []
+  );
+  const markScanVerified = React.useCallback(
+    () => setVerifiedScanContext(scanContext),
+    [scanContext]
+  );
+  const { beginScanVerification, completeScanVerification } =
+    useScanVerification({
+      identity: {
+        scanContext,
+        payload: source === 'azure-ad' ? getAutoSyncCredentials() : null,
+      },
+      provider: 'azure-ad',
+      onScanSuccess: markScanVerified,
+      onScanInvalidated: invalidateScanVerification,
+    });
+
   // Enable auto-sync confirmation modal
   const {
     isOpen: isEnableAutoSyncOpen,
@@ -1693,7 +1723,13 @@ function ImportTokensModalContent({
   };
 
   const handleEnableAutoSync = () => {
-    if (!workspaceId || source === 'file' || source === 'cert-pem') return;
+    if (
+      !workspaceId ||
+      !scanVerified ||
+      source === 'file' ||
+      source === 'cert-pem'
+    )
+      return;
     openEnableAutoSyncModal();
   };
 
@@ -1830,6 +1866,7 @@ function ImportTokensModalContent({
   };
 
   const confirmEnableAutoSync = async () => {
+    if (!scanVerified) return;
     onEnableAutoSyncClose();
     setSavingAutoSync(true);
     try {
@@ -1956,7 +1993,7 @@ function ImportTokensModalContent({
     setIncludeKV(true);
     setIncludePKI(true);
     setIsScanning(false);
-    setScanSucceededFor(new Set());
+    invalidateScanVerification();
     setMounts([]);
     setVaultItems([]);
     setSummary([]);
@@ -2307,6 +2344,7 @@ function ImportTokensModalContent({
 
   // Microsoft Entra ID scan and import
   const doAzureADScan = async () => {
+    const scanTicket = beginScanVerification();
     const workspaceId = getWorkspaceId();
     if (!workspaceId) {
       setError('Please select a workspace first.');
@@ -2351,8 +2389,6 @@ function ImportTokensModalContent({
       setAzureADItems(items);
       setAzureADSummary(Array.isArray(res?.summary) ? res.summary : []);
       setAzureADLastScanId(res?.scan_id || null);
-      if (items.length > 0)
-        setScanSucceededFor(prev => new Set(prev).add('azure-ad'));
 
       // Update quota from response (if available) or refresh from API
       if (!updateQuotaFromResponse(res)) {
@@ -2362,6 +2398,7 @@ function ImportTokensModalContent({
       // Check for duplicates
       const dups = await checkDuplicatesForItems(items, workspaceId);
       setAzureADDuplicates(dups);
+      completeScanVerification(scanTicket);
     } catch (e) {
       // Clear summary on error to prevent showing partial/error data
       setAzureADItems([]);
@@ -2993,15 +3030,31 @@ function ImportTokensModalContent({
                         size='sm'
                         variant='outline'
                         onClick={() => {
+                          invalidateScanVerification();
+                          setScanContextVersion(value => value + 1);
+                          const normalizeName = value =>
+                            String(value || '')
+                              .trim()
+                              .replace(/\s+/g, ' ')
+                              .toLowerCase();
+                          const names = new Set(
+                            autoSyncConfigs.map(config =>
+                              normalizeName(config.name)
+                            )
+                          );
+                          let suffix = 2;
+                          while (
+                            names.has(normalizeName(`${source} ${suffix}`))
+                          )
+                            suffix += 1;
+                          const name = `${source} ${suffix}`;
                           setRequestedAutoSyncConfig({
                             provider: source,
                             create: true,
-                            name: `${source} ${autoSyncConfigs.length + 1}`,
+                            name,
                           });
                           setAutoSyncConfig(false);
-                          setAutoSyncName(
-                            `${source} ${autoSyncConfigs.length + 1}`
-                          );
+                          setAutoSyncName(name);
                           setIntegrationSubTab('scan');
                         }}
                       >
@@ -3274,9 +3327,9 @@ function ImportTokensModalContent({
                     setError(err);
                     setIsImporting(false);
                   }}
-                  onScanSuccess={s =>
-                    setScanSucceededFor(prev => new Set(prev).add(s))
-                  }
+                  onScanSuccess={markScanVerified}
+                  onScanInvalidated={invalidateScanVerification}
+                  scanContext={scanContext}
                   onSelectionChange={setIntegrationSelectedCount}
                   borderColor={border}
                   helpTextColor={muted}
@@ -3304,9 +3357,9 @@ function ImportTokensModalContent({
                     setError(err);
                     setIsImporting(false);
                   }}
-                  onScanSuccess={s =>
-                    setScanSucceededFor(prev => new Set(prev).add(s))
-                  }
+                  onScanSuccess={markScanVerified}
+                  onScanInvalidated={invalidateScanVerification}
+                  scanContext={scanContext}
                   onSelectionChange={setIntegrationSelectedCount}
                   borderColor={border}
                   helpTextColor={muted}
@@ -3350,9 +3403,9 @@ function ImportTokensModalContent({
                     setError(err);
                     setIsImporting(false);
                   }}
-                  onScanSuccess={s =>
-                    setScanSucceededFor(prev => new Set(prev).add(s))
-                  }
+                  onScanSuccess={markScanVerified}
+                  onScanInvalidated={invalidateScanVerification}
+                  scanContext={scanContext}
                   onSelectionChange={setIntegrationSelectedCount}
                   borderColor={border}
                   helpTextColor={muted}
@@ -3397,9 +3450,9 @@ function ImportTokensModalContent({
                     setError(err);
                     setIsImporting(false);
                   }}
-                  onScanSuccess={s =>
-                    setScanSucceededFor(prev => new Set(prev).add(s))
-                  }
+                  onScanSuccess={markScanVerified}
+                  onScanInvalidated={invalidateScanVerification}
+                  scanContext={scanContext}
                   onSelectionChange={setIntegrationSelectedCount}
                   borderColor={border}
                   helpTextColor={muted}
@@ -3427,9 +3480,9 @@ function ImportTokensModalContent({
                     setError(err);
                     setIsImporting(false);
                   }}
-                  onScanSuccess={s =>
-                    setScanSucceededFor(prev => new Set(prev).add(s))
-                  }
+                  onScanSuccess={markScanVerified}
+                  onScanInvalidated={invalidateScanVerification}
+                  scanContext={scanContext}
                   onSelectionChange={setIntegrationSelectedCount}
                   borderColor={border}
                   helpTextColor={muted}
@@ -3459,9 +3512,9 @@ function ImportTokensModalContent({
                     setError(err);
                     setIsImporting(false);
                   }}
-                  onScanSuccess={s =>
-                    setScanSucceededFor(prev => new Set(prev).add(s))
-                  }
+                  onScanSuccess={markScanVerified}
+                  onScanInvalidated={invalidateScanVerification}
+                  scanContext={scanContext}
                   onSelectionChange={setIntegrationSelectedCount}
                   borderColor={border}
                   helpTextColor={muted}
@@ -3984,7 +4037,7 @@ function ImportTokensModalContent({
                   label={
                     !isAutoSyncAllowed
                       ? 'Auto-sync for this provider is not available in this edition'
-                      : !scanSucceededFor.has(source)
+                      : !scanVerified
                         ? 'Run a successful scan first to enable auto-sync'
                         : 'Save current credentials for scheduled automatic scans'
                   }
@@ -3998,14 +4051,8 @@ function ImportTokensModalContent({
                       colorScheme='blue'
                       onClick={handleEnableAutoSync}
                       isLoading={savingAutoSync}
-                      isDisabled={
-                        !isAutoSyncAllowed || !scanSucceededFor.has(source)
-                      }
-                      opacity={
-                        isAutoSyncAllowed && scanSucceededFor.has(source)
-                          ? 1
-                          : 0.5
-                      }
+                      isDisabled={!isAutoSyncAllowed || !scanVerified}
+                      opacity={isAutoSyncAllowed && scanVerified ? 1 : 0.5}
                     >
                       Enable auto-sync
                       {!isAutoSyncAllowed && ' (unavailable)'}

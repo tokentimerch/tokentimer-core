@@ -53,6 +53,43 @@ async function finish(run) {
 async function inventory(id) {
   return (await pool.query("SELECT * FROM tokens WHERE id = $1", [id])).rows[0];
 }
+async function createdTotal(provider = "gitlab") {
+  const result = await pool.query(
+    "SELECT items_created_total FROM auto_sync_provider_stats WHERE provider = $1",
+    [provider],
+  );
+  assert.equal(result.rowCount, 1, `Persistent statistics exist for ${provider}`);
+  return BigInt(result.rows[0].items_created_total);
+}
+
+// Fail an actual PostgreSQL write or COMMIT. Unlike a mocked rollback, this
+// detects a counter accidentally written through a separate/autocommit client.
+async function withRejectedCreation({ atCommit }, work) {
+  const name = `auto_sync_metrics_${crypto.randomUUID().replaceAll("-", "")}`;
+  const table = atCommit ? "tokens" : "auto_sync_provider_stats";
+  await pool.query(`CREATE FUNCTION ${name}() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+      RAISE EXCEPTION 'forced creation counter test failure';
+    END;
+  $$`);
+  try {
+    if (atCommit) {
+      await pool.query(`CREATE CONSTRAINT TRIGGER ${name}
+        AFTER INSERT ON tokens DEFERRABLE INITIALLY DEFERRED
+        FOR EACH ROW WHEN (NEW.workspace_id = '${workspaceId}'::uuid)
+        EXECUTE FUNCTION ${name}()`);
+    } else {
+      await pool.query(`CREATE TRIGGER ${name}
+        BEFORE INSERT OR UPDATE ON auto_sync_provider_stats
+        FOR EACH ROW WHEN (NEW.provider = 'gitlab')
+        EXECUTE FUNCTION ${name}()`);
+    }
+    await work();
+  } finally {
+    await pool.query(`DROP TRIGGER IF EXISTS ${name} ON ${table}`);
+    await pool.query(`DROP FUNCTION IF EXISTS ${name}()`);
+  }
+}
 
 describe("PostgreSQL auto-sync ownership and fencing", { concurrency: false }, () => {
   before(async () => {
@@ -164,6 +201,7 @@ describe("PostgreSQL auto-sync ownership and fencing", { concurrency: false }, (
   });
 
   it("deletes only auto-sync-created inventory after a verified zero-item scan", async () => {
+    const before = await createdTotal();
     const first = await start(await configuration());
     await scan(first, ["42"]);
     const { token } = await imported(first);
@@ -175,6 +213,7 @@ describe("PostgreSQL auto-sync ownership and fencing", { concurrency: false }, (
     assert.equal(await inventory(token.id), undefined);
     const events = await pool.query("SELECT event FROM auto_sync_token_link_events WHERE token_id_snapshot=$1 ORDER BY id", [token.id]);
     assert.deepEqual(events.rows.map(row => row.event), ["attached", "detached"]);
+    assert.equal(await createdTotal(), before + 1n, "cleanup cannot reduce the historical counter");
   });
 
   it("manual integration adoption and confirmed file import relinquish ownership", async () => {
@@ -191,6 +230,7 @@ describe("PostgreSQL auto-sync ownership and fencing", { concurrency: false }, (
   });
 
   it("concurrent first discoveries create one token and attach both configurations", async () => {
+    const before = await createdTotal();
     const a = await start(await configuration("A"));
     const b = await start(await configuration("B"));
     await scan(a, ["42"]); await scan(b, ["42"]);
@@ -198,6 +238,7 @@ describe("PostgreSQL auto-sync ownership and fencing", { concurrency: false }, (
     assert.equal(results[0].token.id, results[1].token.id);
     assert.equal(results.filter(result => result.created).length, 1);
     assert.equal((await pool.query("SELECT 1 FROM auto_sync_token_links WHERE token_id=$1", [results[0].token.id])).rowCount, 2);
+    assert.equal(await createdTotal(), before + 1n);
   });
 
   it("a concurrent attach protects managed inventory while another config detaches", async () => {
@@ -347,5 +388,174 @@ describe("PostgreSQL auto-sync ownership and fencing", { concurrency: false }, (
     await attaching.query("COMMIT");attaching.release();
     assert.deepEqual((await cleaning).deleted,[]);
     assert.ok(await inventory(token.id));
+  });
+
+  describe("durable creation counter", () => {
+    it("initializes both provider totals at zero without reconstructing historical runs", async () => {
+      const { migrations } = require("../../apps/api/migrations/migrate");
+      const migration = migrations.find((entry) => entry.name === "auto_sync_provider_stats");
+      assert.ok(migration, "durable counter migration is registered");
+      const client = await pool.connect();
+      const schema = `auto_sync_metrics_${crypto.randomUUID().replaceAll("-", "")}`;
+      try {
+        await client.query("BEGIN");
+        await client.query(`CREATE SCHEMA ${schema}`);
+        await client.query(`SET LOCAL search_path TO ${schema}`);
+        await client.query(migration.sql);
+        const rows = (await client.query(
+          "SELECT provider, items_created_total::text FROM auto_sync_provider_stats ORDER BY provider",
+        )).rows;
+        assert.deepEqual(rows, [
+          { provider: "github", items_created_total: "0" },
+          { provider: "gitlab", items_created_total: "0" },
+        ]);
+      } finally {
+        await client.query("ROLLBACK");
+        client.release();
+      }
+    });
+
+    it("counts new committed auto-sync rows, excluding updates, manual imports and adoption", async () => {
+      const before = await createdTotal();
+      const githubBefore = await createdTotal("github");
+      const run = await start(await configuration());
+      await scan(run, ["42", "manual", "legacy"]);
+      assert.equal((await imported(run)).created, true);
+      assert.equal(await createdTotal(), before + 1n);
+      assert.equal((await imported(run, { name: "Renamed credential" })).created, false);
+
+      const manual = await imported(run, {
+        source_object_id: "manual", name: "Manually imported credential",
+      }, true);
+      assert.equal(manual.created, true);
+      const rediscovered = await imported(run, {
+        source_object_id: "manual", name: "Manually imported credential",
+      });
+      assert.equal(rediscovered.created, false);
+      assert.equal(rediscovered.token.id, manual.token.id);
+
+      const legacy = await Token.create({
+        userId, workspaceId, name: "Legacy credential", location: "gitlab.example",
+        type: "api_key", expiration: "2028-01-01",
+      });
+      const adopted = await imported(run, {
+        source_object_id: "legacy", name: "Legacy credential",
+      });
+      assert.equal(adopted.created, false);
+      assert.equal(adopted.token.id, legacy.id);
+      assert.equal(await createdTotal(), before + 1n);
+      assert.equal(await createdTotal("github"), githubBefore);
+    });
+
+    for (const atCommit of [false, true]) {
+      it(`rolls back inventory and totals when ${atCommit ? "COMMIT" : "the counter write"} fails`, async () => {
+        const before = await createdTotal();
+        const run = await start(await configuration());
+        await scan(run, ["42"]);
+        await withRejectedCreation({ atCommit }, async () => {
+          await assert.rejects(imported(run), /forced creation counter test failure/);
+        });
+
+        assert.equal(await createdTotal(), before);
+        assert.equal((await pool.query(
+          "SELECT id FROM tokens WHERE workspace_id = $1", [workspaceId],
+        )).rowCount, 0);
+        assert.equal((await pool.query(
+          "SELECT token_id FROM auto_sync_token_links WHERE config_id = $1", [run.config.id],
+        )).rowCount, 0);
+        assert.equal((await pool.query(
+          "SELECT id FROM auto_sync_token_link_events WHERE workspace_id = $1", [workspaceId],
+        )).rowCount, 0);
+      });
+    }
+
+    for (const status of ["partial", "failed"]) {
+      it(`retains committed creations when the run later finishes ${status}`, async () => {
+        const before = await createdTotal();
+        const run = await start(await configuration());
+        await scan(run, ["42"]);
+        await imported(run);
+        assert.equal(await createdTotal(), before + 1n);
+
+        const result = status === "partial"
+          ? { status, discovered: 2, created: 1, errors: 1 }
+          : { status, errors: 1 };
+        await runs.withCurrentRun(run.config, (client) =>
+          runs.finishAutoSyncRun(client, run.config, result));
+        assert.equal(await createdTotal(), before + 1n);
+      });
+    }
+
+    it("survives a worker crash after import and does not recount the replacement run", async () => {
+      const before = await createdTotal();
+      const original = await start(await configuration());
+      await scan(original, ["42"]);
+      const { token } = await imported(original);
+      // The token transaction committed, but the worker never received the
+      // response or called finishAutoSyncRun. Expire its lease as after a crash.
+      const unfinished = (await pool.query(
+        "SELECT status, created_count FROM auto_sync_runs WHERE run_id = $1", [original.config.runId],
+      )).rows[0];
+      assert.deepEqual(unfinished, { status: "running", created_count: 0 });
+      assert.equal(await createdTotal(), before + 1n);
+      await pool.query(
+        "UPDATE auto_sync_configs SET lease_until = NOW() - INTERVAL '1 second' WHERE id = $1",
+        [original.config.id],
+      );
+
+      const replacement = await start(original.config);
+      await scan(replacement, ["42"]);
+      const retry = await imported(replacement);
+      assert.equal(retry.token.id, token.id);
+      assert.equal(retry.created, false);
+      await finish(replacement);
+      assert.equal((await pool.query(
+        "SELECT status FROM auto_sync_runs WHERE run_id = $1", [original.config.runId],
+      )).rows[0].status, "superseded");
+      assert.equal(await createdTotal(), before + 1n);
+    });
+
+    it("does not decrease when inventory, its configuration, or its workspace is deleted", async () => {
+      const before = await createdTotal();
+      const run = await start(await configuration());
+      await scan(run, ["42"]);
+      const { token } = await imported(run);
+      await finish(run);
+      await Token.delete(token.id);
+      assert.equal(await createdTotal(), before + 1n);
+
+      const response = await request(app).delete(
+        `/api/v1/workspaces/${workspaceId}/auto-sync/${run.config.id}`,
+      );
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+      assert.equal(await createdTotal(), before + 1n);
+      await pool.query("DELETE FROM workspaces WHERE id = $1", [workspaceId]);
+      assert.equal((await pool.query(
+        "SELECT run_id FROM auto_sync_runs WHERE workspace_id = $1", [workspaceId],
+      )).rowCount, 0);
+      assert.equal(await createdTotal(), before + 1n);
+    });
+
+    it("a fresh collector reports persisted creations when no sync configs are due", async () => {
+      const { Registry } = require("../../apps/api/node_modules/prom-client");
+      const { registerAutoSyncMetrics } = require("../../apps/api/services/autoSyncMetrics");
+      const before = await createdTotal();
+      const run = await start(await configuration());
+      await scan(run, ["42"]);
+      await imported(run);
+      await finish(run);
+      assert.deepEqual(await runs.claimDueAutoSyncRuns(), []);
+
+      for (let i = 0; i < 2; i++) {
+        const registry = new Registry();
+        registerAutoSyncMetrics(registry);
+        const metric = (await registry.getMetricsAsJSON()).find(
+          (entry) => entry.name === "auto_sync_items_created_total",
+        );
+        assert.equal(metric.type, "counter");
+        const gitlab = metric.values.find((sample) => sample.labels.provider === "gitlab");
+        assert.equal(gitlab.value, Number(before + 1n));
+      }
+    });
   });
 });
