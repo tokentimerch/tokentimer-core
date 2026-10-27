@@ -127,10 +127,17 @@ describe('Vault distribution progress', () => {
       consumers: [],
     });
     const ctx = context();
-    api.assignConsumer.mockResolvedValue({
-      ...binding(),
-      id: BINDING,
-      state: 'active',
+    api.assignConsumer.mockImplementation(() => {
+      // A successful assignment must remain visible to the regular status poll.
+      api.readDistribution.mockResolvedValue({
+        versions: [version],
+        consumers: [binding()],
+      });
+      return Promise.resolve({
+        ...binding(),
+        id: BINDING,
+        state: 'active',
+      });
     });
     render(element(ctx));
     await screen.findByText('Assign the consumers');
@@ -152,9 +159,11 @@ describe('Vault distribution progress', () => {
       })
     );
     await screen.findByText('Ready to deploy');
-    expect(
-      screen.getByRole('button', { name: 'Deploy the selected version' })
-    ).toBeEnabled();
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Deploy the selected version' })
+      ).toBeEnabled()
+    );
     expect(api.requestRollout).not.toHaveBeenCalled();
   });
 
@@ -218,9 +227,7 @@ describe('Vault distribution progress', () => {
       await waitFor(() => expect(progress().getByText(title)).toBeVisible());
       expect(progress().getByText(/0 of 1 consumers confirmed/)).toBeVisible();
       expect(
-        screen.queryByText(
-          'Certificate files installed on all selected consumers'
-        )
+        screen.queryByText('Certificate files installed on all consumers')
       ).toBeNull();
     }
   );
@@ -244,9 +251,7 @@ describe('Vault distribution progress', () => {
     expect(progress().getByText(/1 of 2 consumers confirmed/)).toBeVisible();
     expect(progress().getByText('Existing host')).toBeVisible();
     expect(
-      screen.queryByText(
-        'Certificate files installed on all selected consumers'
-      )
+      screen.queryByText('Certificate files installed on all consumers')
     ).toBeNull();
 
     ctx.summary.certops.distribution.items[0].completed = false;
@@ -258,9 +263,7 @@ describe('Vault distribution progress', () => {
     await screen.findByText('Confirming distribution completion');
     expect(progress().getByText(/2 of 2 consumers confirmed/)).toBeVisible();
     expect(
-      screen.queryByText(
-        'Certificate files installed on all selected consumers'
-      )
+      screen.queryByText('Certificate files installed on all consumers')
     ).toBeNull();
 
     ctx.refresh.mockImplementation(() => {
@@ -268,9 +271,7 @@ describe('Vault distribution progress', () => {
       return Promise.resolve();
     });
     refresh();
-    await screen.findByText(
-      'Certificate files installed on all selected consumers'
-    );
+    await screen.findByText('Certificate files installed on all consumers');
     expect(ctx.refresh).toHaveBeenCalledTimes(2);
     expect(api.requestRollout).not.toHaveBeenCalled();
   });
@@ -294,9 +295,7 @@ describe('Vault distribution progress', () => {
         expect(progress().getByText(/0 of 1 consumers confirmed/)).toBeVisible()
       );
       expect(
-        screen.queryByText(
-          'Certificate files installed on all selected consumers'
-        )
+        screen.queryByText('Certificate files installed on all consumers')
       ).toBeNull();
     }
   );
@@ -309,24 +308,18 @@ describe('Vault distribution progress', () => {
       consumers: [binding({ converged: true })],
     });
     render(element(ctx));
-    await screen.findByText(
-      'Certificate files installed on all selected consumers'
-    );
+    await screen.findByText('Certificate files installed on all consumers');
     api.readDistribution.mockRejectedValueOnce(
       new Error('Status request failed')
     );
     refresh();
     await screen.findByText('Distribution status is unavailable');
     expect(
-      screen.queryByText(
-        'Certificate files installed on all selected consumers'
-      )
+      screen.queryByText('Certificate files installed on all consumers')
     ).toBeNull();
     expect(progress().queryByRole('progressbar')).toBeNull();
     refresh();
-    await screen.findByText(
-      'Certificate files installed on all selected consumers'
-    );
+    await screen.findByText('Certificate files installed on all consumers');
   });
 
   it('does not reuse successful evidence while another distribution is loading', async () => {
@@ -337,15 +330,11 @@ describe('Vault distribution progress', () => {
       consumers: [binding({ converged: true })],
     });
     const view = render(element(ctx));
-    await screen.findByText(
-      'Certificate files installed on all selected consumers'
-    );
+    await screen.findByText('Certificate files installed on all consumers');
     api.readDistribution.mockImplementation(() => new Promise(() => {}));
     view.rerender(element(ctx, 'another-group'));
     expect(
-      screen.queryByText(
-        'Certificate files installed on all selected consumers'
-      )
+      screen.queryByText('Certificate files installed on all consumers')
     ).toBeNull();
     expect(progress().getByText('Checking distribution status')).toBeVisible();
   });
