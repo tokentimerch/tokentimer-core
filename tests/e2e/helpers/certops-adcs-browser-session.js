@@ -113,12 +113,7 @@ async function withOwnedAdcsBrowserPage(
     const destination = new URL("/certops/renewals", origin);
     destination.searchParams.set("workspace", fixture.workspaceId);
     await page.goto(destination.href);
-    const section = page.locator(
-      'button[aria-controls="certops-adcs-section"]',
-    );
-    await section.waitFor();
-    if ((await section.getAttribute("aria-expanded")) !== "true")
-      await section.click();
+    await openAdcsSection(page);
     stage = "supported-enrollment-action";
     result = await action(page, { origin });
   } catch {
@@ -136,8 +131,17 @@ async function withOwnedAdcsBrowserPage(
   if (primary) throw primary;
   return result;
 }
+async function openAdcsSection(page) {
+  // Reload remounts the disclosure closed. Reopen the actual section before
+  // checking manager controls rendered inside it.
+  const section = page.locator('button[aria-controls="certops-adcs-section"]');
+  await section.waitFor();
+  if ((await section.getAttribute("aria-expanded")) !== "true")
+    await section.click();
+}
 module.exports = {
   REQUIRED_SOURCES,
+  openAdcsSection,
   releaseBrowserResource,
   withOwnedAdcsBrowserPage,
 };
