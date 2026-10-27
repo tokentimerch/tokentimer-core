@@ -201,9 +201,8 @@ function DiscoveredCertificateStep({ ctx }) {
 }
 
 /**
- * Two honest outcomes. Generated files only ever reach "Configuration
- * prepared". "Distribution verified" requires a rollout that the control plane
- * recorded as verified, which in turn requires qualified agents.
+ * Generated configuration never proves delivery. Completion requires a
+ * rollout recorded as installed; live verification is a separate assurance.
  */
 export function vaultOutcome({ declaredByAgents, distribution }) {
   const required = requiredCapabilities('vault', 'linux');
@@ -319,7 +318,7 @@ export function VaultStep({ ctx }) {
   const chosenDistributionId = saved.chosenDistributionId || '';
   const distribution = scopeDistribution(
     ctx.summary?.certops?.distribution,
-    chosenDistributionId
+    chosenDistributionId || saved.groupId
   );
   const reusable = reusableDistributions(ctx.summary?.certops?.distribution);
   const [reuseTicked, setReuseTicked] = useState(Boolean(chosenDistributionId));
@@ -577,7 +576,9 @@ export function VaultStep({ ctx }) {
             </Text>
           ) : savedOk ? (
             <Text fontSize='xs' color={muted} data-testid='vault-saved'>
-              Saved. This step finishes by itself once a rollout is verified.
+              {reloadConsumer
+                ? 'Saved. Next becomes available once every consumer confirms the selected certificate is in use.'
+                : 'Saved. Next becomes available once every consumer confirms the selected certificate files are installed.'}
             </Text>
           ) : null}
         </VStack>
@@ -585,12 +586,14 @@ export function VaultStep({ ctx }) {
     >
       <VStack align='stretch' spacing={4}>
         <StatusPanel
-          status='warning'
+          status='info'
           title='Prepare, publish and deploy from this guide'
         >
           Apply the generated configuration on the hosts, then return here to
-          send signed checks, publish and deploy. Live deployment is only
-          confirmed by the returned consumer verification evidence.
+          send signed checks, publish and deploy.{' '}
+          {reloadConsumer
+            ? 'Each consumer must confirm that its service is using the selected certificate before you can continue.'
+            : 'Each consumer must confirm that the selected certificate files are installed before you can continue. File delivery does not check whether a service is using them.'}
         </StatusPanel>
         {choiceError ? (
           <StatusPanel status='error' testId='vault-choice-error'>

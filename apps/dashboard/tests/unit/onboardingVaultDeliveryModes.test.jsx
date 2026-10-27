@@ -311,6 +311,9 @@ describe('Vault consumer delivery choices', () => {
       vaultConsumerDeliveryMode: 'files',
       vaultMaterialVersionId: 'version',
     });
+    ctx.summary.certops.distribution.items = [
+      { id: GROUP, completed: true, verified: false },
+    ];
     api.readDistribution.mockResolvedValue({
       versions: [
         {

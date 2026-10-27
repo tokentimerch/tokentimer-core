@@ -6,6 +6,7 @@ import {
   FormLabel,
   HStack,
   Input,
+  Progress,
   Select,
   Text,
   VStack,
@@ -62,7 +63,7 @@ async function updateVault(ctx, change) {
   await ctx.refresh();
 }
 
-function useObservedJob(workspaceId, jobId) {
+function useObservedJob(workspaceId, jobId, refreshIndex = 0) {
   const [state, setState] = useState({ job: null, error: '' });
   useEffect(() => {
     setState({ job: null, error: '' });
@@ -93,7 +94,7 @@ function useObservedJob(workspaceId, jobId) {
       abort.abort();
       clearTimeout(timer);
     };
-  }, [workspaceId, jobId]);
+  }, [workspaceId, jobId, refreshIndex]);
   return state;
 }
 
@@ -216,8 +217,10 @@ export function VaultRolloutGuide({
   config,
   approvalRequired,
 }) {
-  const { muted } = useDashboardTheme();
+  const { border, muted } = useDashboardTheme();
+  const { refresh: refreshSummary, summary } = ctx;
   const saved = certopsProgress(ctx);
+  const scope = `${ctx.workspaceId}/${groupId}`;
   const filesOnly = config.consumerDeliveryMode === 'files';
   const defaultProfile = filesOnly
     ? 'certificate-files'
@@ -240,10 +243,15 @@ export function VaultRolloutGuide({
     versions: [],
     consumers: [],
     loaded: false,
+    scope: '',
     error: '',
   });
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  const [summaryFailure, setSummaryFailure] = useState(null);
+  const summaryReadFailed = Boolean(
+    summaryFailure && summaryFailure.summary === summary
+  );
   const [versionId, setVersionId] = useState(
     saved.vaultMaterialVersionId || ''
   );
@@ -260,7 +268,15 @@ export function VaultRolloutGuide({
       alive.current = false;
     };
   }, []);
-  const refresh = useCallback(() => setRefreshIndex(i => i + 1), []);
+  const refresh = useCallback(async () => {
+    setRefreshIndex(i => i + 1);
+    try {
+      await refreshSummary();
+      setSummaryFailure(null);
+    } catch (e) {
+      setSummaryFailure({ summary, error: message(e) });
+    }
+  }, [refreshSummary, summary]);
   useEffect(() => {
     let active = true;
     const abort = new AbortController();
@@ -272,13 +288,14 @@ export function VaultRolloutGuide({
         const result = await readDistribution(ctx.workspaceId, groupId, {
           signal: abort.signal,
         });
-        if (active) setState({ ...result, loaded: true, error: '' });
+        if (active) setState({ ...result, scope, loaded: true, error: '' });
       } catch (e) {
         if (active)
           setState({
             versions: [],
             consumers: [],
             loaded: false,
+            scope,
             error: message(e),
           });
       } finally {
@@ -292,8 +309,12 @@ export function VaultRolloutGuide({
       abort.abort();
       clearInterval(timer);
     };
-  }, [ctx.workspaceId, groupId, refreshIndex]);
-  const observedRollout = useObservedJob(ctx.workspaceId, rolloutId);
+  }, [ctx.workspaceId, groupId, scope, refreshIndex]);
+  const observedRollout = useObservedJob(
+    ctx.workspaceId,
+    rolloutId,
+    refreshIndex
+  );
   const persistTargets = async next => {
     await updateVault(ctx, () => ({
       vaultConsumers: next,
@@ -325,7 +346,10 @@ export function VaultRolloutGuide({
       setBusy('');
     }
   };
+  const statusLoaded = state.loaded && state.scope === scope;
+  const statusError = state.scope === scope ? state.error : '';
   const bindingFor = target =>
+    statusLoaded &&
     state.consumers.find(
       c =>
         c.binding_id === target.bindingId &&
@@ -397,9 +421,11 @@ export function VaultRolloutGuide({
       deploymentEvidenceOwners.set(jobId, target.bindingId);
     }
   }
-  const published = state.versions.filter(
-    v => v.state === 'published' && Date.parse(v.valid_to) > Date.now()
-  );
+  const published = statusLoaded
+    ? state.versions.filter(
+        v => v.state === 'published' && Date.parse(v.valid_to) > Date.now()
+      )
+    : [];
   const selected = published.find(v => v.id === versionId);
   const configured =
     targets.length > 0 &&
@@ -411,15 +437,41 @@ export function VaultRolloutGuide({
         t.confirmedRevision === b.authorization_revision
       );
     });
-  const allComplete =
-    Boolean(selected) &&
+  const bindingComplete = binding =>
+    Boolean(
+      selected &&
+      binding?.converged === true &&
+      binding.desired_material_version_id === selected.id &&
+      !['failed', 'blocked', 'orphaned_unknown_effect'].includes(
+        binding.latest_deployment?.stage
+      )
+    );
+  const complete = target => bindingComplete(bindingFor(target));
+  // Rollouts include every active binding in the distribution, including
+  // consumers assigned outside this guide and optional consumers.
+  const activeBindings = statusLoaded
+    ? state.consumers.filter(binding => binding.binding_state === 'active')
+    : [];
+  const otherBindings = activeBindings.filter(
+    binding => !targets.some(target => target.bindingId === binding.binding_id)
+  );
+  const consumerCount = targets.length + otherBindings.length;
+  const confirmedCount =
+    targets.filter(complete).length +
+    otherBindings.filter(bindingComplete).length;
+  const consumersComplete =
     targets.length > 0 &&
-    targets.every(t => {
-      const b = bindingFor(t);
-      return (
-        b?.converged === true && b.desired_material_version_id === selected.id
-      );
-    });
+    targets.every(complete) &&
+    activeBindings.every(bindingComplete);
+  const distributionFact = summary?.certops?.distribution?.items?.find(
+    item => item.id === groupId
+  );
+  // Match the wizard's authoritative completion fact as well as the current
+  // selected-version evidence. A successful coordinator job is not delivery.
+  const allComplete =
+    consumersComplete &&
+    !summaryReadFailed &&
+    Boolean(distributionFact?.completed || distributionFact?.verified);
   const rolloutLocked = Boolean(rolloutId || requestKey);
   // The coordinator job ID is not the rollout ID. Resume only a rollout
   // reported by the server for the currently selected version and bindings.
@@ -444,6 +496,151 @@ export function VaultRolloutGuide({
       bindingFor(t)?.latest_deployment?.stage
     )
   );
+  const assignedCount = targets.filter(t => bindingFor(t)).length;
+  const terminalRollout = [
+    'failed',
+    'rejected',
+    'cancelled',
+    'blocked',
+  ].includes(observedRollout.job?.status);
+  const progress = (() => {
+    if (!statusLoaded)
+      return {
+        status: statusError ? 'error' : 'info',
+        title: statusError
+          ? 'Distribution status is unavailable'
+          : 'Checking distribution status',
+        detail: statusError
+          ? 'Refresh the status to check the latest agent results. Previous results cannot confirm this step.'
+          : 'Reading the selected certificate version and consumer results.',
+      };
+    if (allComplete)
+      return {
+        status: 'success',
+        title: filesOnly
+          ? 'Certificate files installed on all selected consumers'
+          : 'All selected consumers verified',
+        detail: filesOnly
+          ? 'The agents checked the installed certificate and key on disk against the selected version. No service was reloaded or checked; this does not prove the certificate is in use.'
+          : 'The server reports current convergence on the selected version. Inspect each deployment’s evidence and make an independent TLS connection to the live services.',
+      };
+    if (consumersComplete)
+      return {
+        title: 'Confirming distribution completion',
+        detail:
+          'The consumer results are ready. Next becomes available when the server confirms the completed rollout. Refresh the status if this does not update.',
+      };
+    if (
+      targets.length > 0 &&
+      targets.every(complete) &&
+      otherBindings.some(binding => !bindingComplete(binding))
+    )
+      return {
+        title: 'Other consumers are still pending',
+        detail:
+          'This distribution also includes consumers assigned outside the guide. Check the pending consumers in Certificate Management, then refresh the status. Next requires every active consumer to finish.',
+      };
+    if (!targets.length)
+      return {
+        title: 'Choose a consumer',
+        detail: 'Add a Linux agent below to receive the certificate.',
+      };
+    if (assignedCount < targets.length)
+      return {
+        title: rolloutLocked
+          ? 'Check consumer assignments'
+          : 'Assign the consumers',
+        detail: rolloutLocked
+          ? 'A selected consumer no longer has a matching active assignment. Check its assignment in Certificate Management, then refresh the status.'
+          : 'Use Assign on each consumer card to create its installation configuration.',
+      };
+    if (!configured)
+      return {
+        title: rolloutLocked
+          ? 'Consumer configuration needs attention'
+          : 'Prepare the consumer hosts',
+        detail: rolloutLocked
+          ? 'The saved host confirmation no longer matches the current assignment. Review the consumer configuration before retrying this rollout.'
+          : 'Copy each configuration to its host, restart the agent, and confirm the current configuration below.',
+      };
+    if (!selected)
+      return {
+        title: versionId
+          ? 'The selected version is unavailable'
+          : published.length
+            ? 'Choose a certificate version'
+            : 'Waiting for certificate publication',
+        detail: versionId
+          ? 'The selected version must be published and unexpired. Review the publication and choose an available version before deploying.'
+          : published.length
+            ? 'Select the published certificate version to install on these consumers.'
+            : 'Complete the publish job above. A published, unexpired version will appear here automatically.',
+      };
+    if (observedRollout.job?.status === 'pending_approval')
+      return {
+        title: 'Rollout approval is required',
+        detail:
+          'Ask another workspace manager to approve the rollout in Certificate Management, Jobs. Installation starts after approval.',
+      };
+    if (needsRetry)
+      return {
+        status: 'warning',
+        title: 'A consumer deployment needs attention',
+        detail:
+          'Inspect the affected consumer’s job output, resolve the reported problem on its host, then retry its deployment below.',
+      };
+    if (pausedRolloutId)
+      return {
+        status: 'warning',
+        title: 'Resume the paused rollout',
+        detail:
+          'The consumers are ready to retry. Use Resume rollout below to continue the same deployment.',
+      };
+    if (terminalRollout)
+      return {
+        status: 'warning',
+        title: 'The rollout did not complete',
+        detail:
+          'Review the rollout request timeline below, resolve its reported problem, then prepare another rollout.',
+      };
+    if (!rolloutId)
+      return {
+        title: requestKey ? 'Confirm the rollout request' : 'Ready to deploy',
+        detail: requestKey
+          ? 'The request has not been confirmed. Use Deploy the selected version again to safely recover the same request.'
+          : 'Use Deploy the selected version below to start installation. Host configuration alone does not confirm delivery.',
+      };
+    return {
+      title: filesOnly
+        ? 'Waiting for confirmed file installations'
+        : 'Waiting for verified consumer deployments',
+      detail: filesOnly
+        ? 'Each consumer must report that the selected certificate and key are installed. Check its job output if progress stops.'
+        : 'Each consumer must reload its service and report the required live certificate checks. Check its job output if progress stops.',
+    };
+  })();
+  const consumerStatus = target => {
+    const binding = bindingFor(target);
+    if (!statusLoaded) return ['gray', 'Checking status'];
+    if (!binding) return ['orange', 'Assignment needed'];
+    if (complete(target))
+      return ['green', filesOnly ? 'Files installed' : 'Service verified'];
+    const deployment = binding.latest_deployment;
+    if (
+      ['failed', 'blocked', 'orphaned_unknown_effect'].includes(
+        deployment?.stage
+      )
+    )
+      return ['red', 'Deployment needs attention'];
+    if (deployment?.rolloutState === 'paused') return ['orange', 'Paused'];
+    if (target.confirmedRevision !== binding.authorization_revision)
+      return ['orange', 'Configuration needed'];
+    if (!rolloutId && !deployment) return ['blue', 'Ready'];
+    return [
+      'blue',
+      filesOnly ? 'Installation pending' : 'Verification pending',
+    ];
+  };
   const resume = async () => {
     if (!pausedRolloutId || busy || needsRetry || !configured) return;
     setBusy('resume');
@@ -492,6 +689,77 @@ export function VaultRolloutGuide({
   };
   return (
     <VStack align='stretch' spacing={5}>
+      <StatusPanel
+        status={progress.status || 'info'}
+        title={progress.title}
+        testId='vault-rollout-progress'
+        aria-live='polite'
+      >
+        <VStack align='stretch' spacing={3}>
+          <Text fontSize='sm'>{progress.detail}</Text>
+          {consumerCount > 0 && statusLoaded ? (
+            <Box>
+              <Text fontSize='xs' fontWeight='semibold' mb={1.5}>
+                {confirmedCount} of {consumerCount} consumers confirmed
+                {selected ? ' for the selected version' : ''}
+              </Text>
+              <Progress
+                value={(confirmedCount / consumerCount) * 100}
+                aria-label='Consumer deployment confirmations'
+                size='xs'
+                borderRadius='full'
+                colorScheme={allComplete ? 'green' : 'blue'}
+              />
+            </Box>
+          ) : null}
+          {otherBindings.length > 0 ? (
+            <Box>
+              <Text fontSize='xs' fontWeight='semibold' mb={1}>
+                Also in this distribution
+              </Text>
+              {otherBindings.map(binding => (
+                <HStack
+                  key={binding.binding_id}
+                  flexWrap='wrap'
+                  justify='space-between'
+                  gap={2}
+                >
+                  <Text fontSize='xs'>
+                    {binding.agent_name ||
+                      label(
+                        agents.find(
+                          agent => agent.id === binding.assigned_agent_id
+                        )
+                      )}
+                  </Text>
+                  <StatusTag
+                    tone={bindingComplete(binding) ? 'green' : 'orange'}
+                  >
+                    {bindingComplete(binding) ? 'Confirmed' : 'Pending'}
+                  </StatusTag>
+                </HStack>
+              ))}
+            </Box>
+          ) : null}
+          <HStack justify='space-between' flexWrap='wrap' gap={2}>
+            <Text fontSize='xs'>
+              Consumer status updates automatically every 5 seconds.
+            </Text>
+            <DashboardActionButton
+              size='sm'
+              variant='outline'
+              h='auto'
+              minH='36px'
+              maxW='100%'
+              py={2}
+              whiteSpace='normal'
+              onClick={refresh}
+            >
+              Refresh distribution status
+            </DashboardActionButton>
+          </HStack>
+        </VStack>
+      </StatusPanel>
       <Text fontSize='sm'>
         Assign each consumer here, copy its returned configuration to that host,
         then deploy a published certificate version. Stay in this guide to
@@ -525,6 +793,7 @@ export function VaultRolloutGuide({
       {targets.map((target, index) => {
         const agent = agents.find(a => a.id === target.agentId);
         const binding = bindingFor(target);
+        const [statusTone, statusLabel] = consumerStatus(target);
         const local =
           binding &&
           buildVaultConfigs({
@@ -541,11 +810,25 @@ export function VaultRolloutGuide({
           });
         }
         return (
-          <Box key={target.bindingId} borderWidth='1px' borderRadius='md' p={4}>
+          <Box
+            key={target.bindingId}
+            as='section'
+            aria-label={`Consumer ${label(agent)}`}
+            borderWidth='1px'
+            borderColor={border}
+            borderRadius='md'
+            p={{ base: 3, md: 4 }}
+          >
             <VStack align='stretch' spacing={3}>
-              <Text fontWeight='semibold'>
-                {label(agent)} · wave {index + 1}
-              </Text>
+              <HStack justify='space-between' flexWrap='wrap' gap={2}>
+                <Box>
+                  <Text fontWeight='semibold'>{label(agent)}</Text>
+                  <Text fontSize='xs' color={muted}>
+                    Wave {index + 1}
+                  </Text>
+                </Box>
+                <StatusTag tone={statusTone}>{statusLabel}</StatusTag>
+              </HStack>
               <FormControl>
                 <FormLabel
                   fontSize='sm'
@@ -796,7 +1079,7 @@ export function VaultRolloutGuide({
         isDisabled={
           !configured ||
           !selected ||
-          !state.loaded ||
+          !statusLoaded ||
           Boolean(busy) ||
           Boolean(rolloutId)
         }
@@ -809,9 +1092,6 @@ export function VaultRolloutGuide({
           before deployment. These confirmations do not prove a live deployment.
         </Text>
       ) : null}
-      <DashboardActionButton variant='outline' onClick={refresh}>
-        Refresh distribution status
-      </DashboardActionButton>
       {pausedRolloutId && !allComplete ? (
         <StatusPanel status='warning' title='Rollout paused'>
           <VStack align='start' spacing={3}>
@@ -843,30 +1123,7 @@ export function VaultRolloutGuide({
           />
         </>
       ) : null}
-      {allComplete ? (
-        <StatusPanel
-          status='success'
-          title={
-            filesOnly
-              ? 'Certificate files installed on all selected consumers'
-              : 'All selected consumers verified'
-          }
-        >
-          {filesOnly
-            ? 'The agents checked the installed certificate and key on disk against the selected version. No service was reloaded or checked; this does not prove the certificate is in use.'
-            : 'The server reports current convergence on the selected version. Inspect each deployment’s evidence and make an independent TLS connection to the live services.'}
-        </StatusPanel>
-      ) : (
-        <StatusTag tone='gray'>
-          {filesOnly
-            ? 'Waiting for confirmed file installations'
-            : 'Waiting for verified consumer deployments'}
-        </StatusTag>
-      )}
-      {allComplete ||
-      ['failed', 'rejected', 'cancelled', 'blocked'].includes(
-        observedRollout.job?.status
-      ) ? (
+      {allComplete || terminalRollout ? (
         <DashboardActionButton
           variant='outline'
           onClick={async () => {
@@ -887,9 +1144,12 @@ export function VaultRolloutGuide({
           Prepare another rollout
         </DashboardActionButton>
       ) : null}
-      {error || state.error || observedRollout.error ? (
+      {error || statusError || observedRollout.error || summaryReadFailed ? (
         <StatusPanel status='error'>
-          {error || state.error || observedRollout.error}
+          {error ||
+            statusError ||
+            observedRollout.error ||
+            summaryFailure?.error}
         </StatusPanel>
       ) : null}
     </VStack>

@@ -344,6 +344,13 @@ describe('Vault jobs stay in onboarding', () => {
 
   it('pins the chosen published version and keeps rollout success separate from live consumer verification', async () => {
     const context = ctx();
+    context.summary = {
+      certops: {
+        distribution: {
+          items: [{ id: GROUP, completed: true, verified: true }],
+        },
+      },
+    };
     const version = {
       id: 'published-version',
       state: 'published',
