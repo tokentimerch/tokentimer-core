@@ -4384,6 +4384,11 @@ router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/prefligh
   csrRoute(req=>require("../services/certops/distributionAdministration").preflight({workspaceId:req.workspace.id,groupId:req.params.groupId,materialVersionId:req.query.materialVersionId})));
 router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/retention", ...csrReadGuards,
   csrRoute(req=>require("../services/certops/distributionAdministration").retentionPreview({workspaceId:req.workspace.id,groupId:req.params.groupId})));
+router.post("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/cleanups", ...distributionWriteGuards,
+  authorize("certops.distribution.cleanup"),requireWorkspaceCertOpsActive,
+  csrRoute(req=>{materialDistribution.validateDistributionContract("cleanupRequest",req.body);
+    return require("../services/certops/materialCleanup").requestCleanup({workspaceId:req.workspace.id,groupId:req.params.groupId,
+      materialVersionId:req.body.materialVersionId,expectedRevision:req.body.expectedRevision,reauthorize:req.body.reauthorize===true,actorUserId:req.user.id});}));
 router.put("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/policy", ...distributionWriteGuards,requireWorkspaceCertOpsActive,
   csrRoute(req=>require("../services/certops/distributionLifecycle").putPolicy({workspaceId:req.workspace.id,groupId:req.params.groupId,
     policy:req.body?.policy,expectedRevision:req.body?.expectedRevision,actorUserId:req.user.id})));

@@ -359,10 +359,14 @@ async function preflightPinnedDeployment({job,stores,bindings,stateDir,policyEng
     check("material_reload_allowlist",allowed?"passed":"blocked");
     const probes=binding.probes.every(probe=>typeof probe.dialAddress==="string" && Number.isInteger(probe.port) && probe.port>0 && probe.port<=65535 && typeof probe.sni==="string" && /^[a-z0-9.-]{1,253}$/i.test(probe.sni));
     check("material_probe_configuration",probes?"passed":"blocked");
-    // Configuration syntax and command allowlisting do not prove that the
-    // service exists or its listener is reachable. This tool runs no commands.
-    check("material_service_target_unverified","unknown");
+    // Read-only TLS presence checks use only the customer's pinned local
+    // probes. A reachable listener is not proof that the new version is served
+    // or trusted, and no command is executed to infer service existence.
+    let present=probes;
+    if(probes)for(const probe of binding.probes){try{const observed=await probeListener(probe,intent.fingerprintSha256,"served");if(!observed.observedFingerprintSha256)present=false;}catch{present=false;}}
+    check(present?"material_service_listener_present":"material_service_target_unverified",present?"passed":"unknown");
   }
+  if(intent.verificationOnly!==true)check("material_activation_window",activationDecision(intent.activationPolicy).allowed?"passed":"blocked");
   try{await checkLease();const bundle=await store.fetch(intent.providerVersion);validateBundle(bundle,intent,store.scope);await checkLease();check("material_exact_version_authorized","passed");}
   catch(error){check(/^material_[a-z_]+$/.test(error.code || "")?error.code:"material_exact_version_unavailable","blocked");}
   return {readOnly:true,bindingId:intent.bindingId,materialVersionId:intent.materialVersionId,

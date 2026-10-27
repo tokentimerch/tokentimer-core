@@ -202,6 +202,7 @@ async function assertDeployableVersion(client, workspaceId, groupId, materialVer
   const version = await client.query(`SELECT v.id FROM certops_material_versions v
     JOIN certops_certificate_identities i ON i.workspace_id=v.workspace_id AND i.id=v.certificate_identity_id
     WHERE v.workspace_id=$1 AND v.group_id=$2 AND v.id=$3 AND v.state='published'
+      AND NOT EXISTS(SELECT 1 FROM certops_material_cleanups c WHERE c.workspace_id=v.workspace_id AND c.material_version_id=v.id AND c.state IN ('fenced','soft_deleted'))
       AND v.valid_to>clock_timestamp() AND i.lifecycle_status='active' FOR SHARE OF i`,
   [workspaceId,groupId,materialVersionId]);
   if (!version.rowCount) fail("CERTOPS_ROLLOUT_VERSION_INVALID");

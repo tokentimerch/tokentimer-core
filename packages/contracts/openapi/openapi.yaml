@@ -6532,7 +6532,7 @@ paths:
           name: operation
           schema:
             type: string
-            enum: [issue, renew, deploy, deploy-from-store, reload, revoke, noop, protocol_smoke, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
+            enum: [issue, renew, deploy, deploy-from-store, cleanup-from-store, reload, revoke, noop, protocol_smoke, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
         - in: query
           name: source
           schema:
@@ -9438,6 +9438,37 @@ paths:
           description: Authorization or policy revision changed; refresh and review again
         '422':
           description: Closed public contract or bounded policy validation failed
+  /api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/cleanups:
+    post:
+      tags: [CertOps]
+      summary: Request independently approved exact-version customer-side Vault soft deletion
+      description: >-
+        Administrator session only. Requires an active workspace, enabled non-report-only retention policy,
+        an explicitly enabled runtime cleanup setting and a freshly declared qualified customer agent capability.
+        Preview eligibility is rechecked under locks before a permanent version fence and signed agent claim.
+        Never reads private material or deletes public history. Only Vault KV v2 exact-version soft deletion is supported.
+      security:
+        - cookieAuth: []
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: groupId, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [materialVersionId, expectedRevision]
+              properties:
+                materialVersionId: {type: string, format: uuid}
+                expectedRevision: {type: integer, minimum: 1}
+                reauthorize: {type: boolean, default: false}
+      responses:
+        '200': {description: Genuine pending approval or existing request metadata; never proof of deletion}
+        '403': {description: Administrator session required}
+        '409': {description: Disabled, unqualified, protected, stale authority or live claim; no deletion}
+        '422': {description: Closed public request contract invalid}
   /api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/retention:
     get:
       tags:
@@ -11206,7 +11237,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
+          enum: [renew, deploy, deploy-from-store, cleanup-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
         status:
           type: string
           enum:
@@ -11305,7 +11336,7 @@ components:
           description: Signed execution mode. dry_run performs checks without effects and terminates as dry_run_complete, never succeeded.
         operation:
           type: string
-          enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust]
+          enum: [renew, deploy, deploy-from-store, cleanup-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust]
           description: >-
             Job operation. "issue" is control-plane-only first-time issuance;
             it is dispatched to agents as action "renew", so the agent-facing
@@ -11646,7 +11677,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
+          enum: [renew, deploy, deploy-from-store, cleanup-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
         status:
           type: string
           enum:
@@ -14371,7 +14402,7 @@ components:
                   maxItems: 16
                   items:
                     type: string
-                    enum: [renew, deploy, reload, revoke, noop, continue-enrollment, protocol_smoke, distribute-trust, revoke-trust, adcs-preflight, deploy-from-store]
+                    enum: [renew, deploy, reload, revoke, noop, continue-enrollment, protocol_smoke, distribute-trust, revoke-trust, adcs-preflight, deploy-from-store, cleanup-from-store]
     CertOpsAgentClaimResponse:
       type: object
       description: Signed claimed jobs. Each job is the signed dispatch payload the agent verifies before execution.

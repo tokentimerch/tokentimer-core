@@ -10,6 +10,16 @@ const { createVaultStore, writeProtectedJson, protectDirectory, validateBundle }
 const { applyRestrictivePermissions } = require("../platform");
 const { computeCertificateFingerprint, parseDnsSans } = require("../verify");
 const { publicationSession, withMaterialLock } = require("./lifecycle");
+const {executeMaterialCleanup}=require("./cleanup");
+
+function cleanupOptions(f,tokenFile=f.stores.customer.tokenFile){
+  // Deliberately reviewed zero-age retention for disposable test objects;
+  // production defaults remain 30 days and cleanup disabled.
+  f.scope.cleanup={softDelete:true,minimumSeconds:0,profileRevision:1,tokenFile};
+  return {job:{jobId:crypto.randomUUID(),workspaceId:f.intent.workspaceId,mode:"real",materialCleanup:{...f.intent,type:"vault-kv2-soft-delete",cleanupId:crypto.randomUUID(),
+    managementPeriodId:crypto.randomUUID(),profileRevision:1,providerVersion:1,policyRevision:1,scopeHash:"a".repeat(64),expiresAt:new Date(Date.now()+3600000).toISOString(),
+    retentionPolicy:{minimumSeconds:0,minimumVersions:2,rollbackSeconds:0,cleanupEnabled:true,reportOnly:false,requiresApproval:true}}},stores:f.stores,stateDir:path.join(f.directory,"cleanup-state"),checkLease:async()=>{},fixtureLoopbackHttp:true};
+}
 
 function fixture(t, address) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tt-vault-test-"));
@@ -108,7 +118,8 @@ test("real isolated Vault KV v2: pinned publication and idempotent CAS", { skip:
     });
     assert.equal(response.status, 204);
   }
-  await retention("delete");
+  const cleanup=cleanupOptions(f);assert.equal((await executeMaterialCleanup(cleanup)).status,"succeeded");
+  assert.equal((await executeMaterialCleanup(cleanup)).status,"succeeded","Fresh metadata makes exact-intent retry idempotent");
   await assert.rejects(client.fetch(1), { code: "material_version_unavailable" });
   assert.deepEqual(await next.fetch(1), nextBundle);
   await retention("undelete");
@@ -154,6 +165,18 @@ test("real Vault ACL separates issuer, consumer, scanner and customer prefixes",
   assert.equal((await api(object,consumer,"POST",{options:{cas:1},data:{}})).status,403);
   assert.equal((await api(`/secret/data/${crypto.randomUUID()}/other/bundles/${f.intent.materialVersionId}`,consumer)).status,403);
   assert.equal((await api(object,scanner)).status,403);
+  const cleanupName=`wildcard-cleanup-${crypto.randomUUID()}`;
+  assert.equal((await api(`/sys/policies/acl/${cleanupName}`,root,"PUT",{policy:`path "secret/metadata/${f.scope.prefix}/bundles/*" { capabilities = ["read"] }\npath "secret/delete/${f.scope.prefix}/bundles/*" { capabilities = ["update"] }`})).status,204);
+  const created=await api("/auth/token/create",root,"POST",{policies:[cleanupName],no_default_policy:true,ttl:"2m"});assert.equal(created.status,200);
+  const cleanupToken=(await created.json()).auth.client_token;
+  t.after(async()=>{await api("/auth/token/revoke",root,"POST",{token:cleanupToken});await api(`/sys/policies/acl/${cleanupName}`,root,"DELETE");});
+  const cleanupTokenFile=path.join(f.directory,"cleanup-token");fs.writeFileSync(cleanupTokenFile,cleanupToken,{mode:0o600});applyRestrictivePermissions(cleanupTokenFile);
+  assert.equal((await api(object,cleanupToken)).status,403,"Cleanup credentials cannot read private material");
+  assert.equal((await api(`/secret/metadata/${f.scope.prefix}/bundles/${f.intent.materialVersionId}`,cleanupToken,"DELETE")).status,403);
+  assert.equal((await api(`/secret/destroy/${f.scope.prefix}/bundles/${f.intent.materialVersionId}`,cleanupToken,"POST",{versions:[1]})).status,403);
+  assert.equal((await api(`/secret/delete/${crypto.randomUUID()}/other/bundles/${f.intent.materialVersionId}`,cleanupToken,"POST",{versions:[1]})).status,403);
+  assert.equal((await executeMaterialCleanup(cleanupOptions(f,cleanupTokenFile))).status,"succeeded");
+  assert.equal((await api(object,consumer)).status,404);
 });
 
 test("checkpoint without validated material exposes uncertainty and never permits a new order", async (t) => {

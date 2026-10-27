@@ -503,7 +503,7 @@ jobs:
           CERTOPS_ENABLED: "true"
         run: |
           node apps/api/migrations/migrate.js
-          node --test --test-force-exit tests/postgres/distribution-lifecycle.test.js
+          node --test --test-force-exit tests/postgres/distribution-lifecycle.test.js tests/postgres/distribution-cleanup.test.js
       - name: Prove abandoned certificate-path reuse on isolated PostgreSQL
         env:
           DB_NAME: pr329_issuance_path_reuse_ci_test

@@ -255,8 +255,8 @@ async function retryDistributionJob({ workspaceId,jobId,actorUserId }) {
   return transaction(async(client)=>{
     await lockWorkspaceForCertOpsSideEffect({client,workspaceId});
     const job=(await client.query(`SELECT * FROM certificate_jobs WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[workspaceId,jobId])).rows[0];
-    if(!job || !(job.payload?.publication || job.payload?.materialDeployment))fail("CERTOPS_MATERIAL_JOB_NOT_FOUND",404);
-    const intent=job.payload.publication||job.payload.materialDeployment;
+    if(!job || !(job.payload?.publication || job.payload?.materialDeployment || job.payload?.materialCleanup))fail("CERTOPS_MATERIAL_JOB_NOT_FOUND",404);
+    const intent=job.payload.publication||job.payload.materialDeployment||job.payload.materialCleanup;
     const group=await material.lockGroup(client,workspaceId,intent.groupId);
     if(!["failed","blocked","orphaned_unknown_effect"].includes(job.status) || job.attempt_count>=3)fail("CERTOPS_MATERIAL_RETRY_UNAVAILABLE");
     if(job.payload.materialDeployment){
@@ -274,6 +274,8 @@ async function retryDistributionJob({ workspaceId,jobId,actorUserId }) {
         current.desired_material_version_id!==intent.materialVersionId)fail("CERTOPS_MATERIAL_RETRY_AUTHORIZATION_STALE");
       await material.assertDeployableVersion(client,workspaceId,intent.groupId,intent.materialVersionId);
       await require("./distributionLifecycle").assertAutomaticRolloutAuthorized(client,workspaceId,group,current.approval_job_id);
+    }else if(job.payload.materialCleanup){
+      await require("./materialCleanup").resolveCleanupDefaults({client,workspaceId,operation:job.operation,subjectId:job.subject_id,payload:job.payload,assignedAgentId:job.assigned_agent_id,jobId:job.id});
     }else{
       await material.resolveDistributionJobDefaults({client,workspaceId,operation:job.operation,subjectId:job.subject_id,
         assignedAgentId:job.assigned_agent_id,payload:job.payload,jobId:job.id});

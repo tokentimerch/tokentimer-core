@@ -459,6 +459,164 @@
           ]
         }
       }
+    },
+    "materialCleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "cleanupId",
+        "groupId",
+        "managementPeriodId",
+        "materialVersionId",
+        "materialStoreRef",
+        "profileRevision",
+        "providerVersion",
+        "policyRevision",
+        "scopeHash",
+        "retentionPolicy",
+        "expiresAt"
+      ],
+      "properties": {
+        "type": {
+          "const": "vault-kv2-soft-delete"
+        },
+        "cleanupId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "managementPeriodId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/revision"
+        },
+        "providerVersion": {
+          "$ref": "#/definitions/revision"
+        },
+        "policyRevision": {
+          "$ref": "#/definitions/revision"
+        },
+        "scopeHash": {
+          "$ref": "#/definitions/fingerprint"
+        },
+        "retentionPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "minimumSeconds",
+            "minimumVersions",
+            "rollbackSeconds",
+            "cleanupEnabled",
+            "reportOnly",
+            "requiresApproval"
+          ],
+          "properties": {
+            "minimumSeconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 315360000
+            },
+            "minimumVersions": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 1000
+            },
+            "rollbackSeconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 31536000
+            },
+            "cleanupEnabled": {
+              "const": true
+            },
+            "reportOnly": {
+              "const": false
+            },
+            "requiresApproval": {
+              "const": true
+            }
+          }
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        }
+      }
+    },
+    "cleanupReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "workspaceId",
+        "cleanupId",
+        "groupId",
+        "materialVersionId",
+        "providerVersion",
+        "method",
+        "softDeleted",
+        "observedAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "workspaceId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "cleanupId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "providerVersion": {
+          "$ref": "#/definitions/revision"
+        },
+        "method": {
+          "const": "vault-kv2-soft-delete"
+        },
+        "softDeleted": {
+          "const": true
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        }
+      }
+    },
+    "cleanupRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "materialVersionId",
+        "expectedRevision"
+      ],
+      "properties": {
+        "materialVersionId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "expectedRevision": {
+          "$ref": "#/definitions/revision"
+        },
+        "reauthorize": {
+          "type": "boolean"
+        }
+      }
     }
   }
 }

@@ -68,7 +68,8 @@
         "revoke",
         "noop",
         "continue-enrollment",
-        "deploy-from-store"
+        "deploy-from-store",
+        "cleanup-from-store"
       ],
       "description": "Public certificate lifecycle action requested by the control plane. continue-enrollment is a follow-up step (retrieve, deferred validation, install recovery, or freeing the key after cancellation) of an enrollment an earlier job started (ADR-0014 decision 2)."
     },
@@ -621,6 +622,9 @@
     },
     "materialDeployment": {
       "$ref": "#/definitions/materialDistribution_materialDeployment"
+    },
+    "materialCleanup": {
+      "$ref": "#/definitions/materialDistribution_materialCleanup"
     }
   },
   "allOf": [
@@ -875,6 +879,46 @@
                 "materialDeployment"
               ]
             }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "cleanup-from-store"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "materialCleanup"
+        ],
+        "properties": {
+          "keyMode": {
+            "const": "vault-managed"
+          }
+        },
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "publication"
+              ]
+            },
+            {
+              "required": [
+                "materialDeployment"
+              ]
+            }
+          ]
+        }
+      },
+      "else": {
+        "not": {
+          "required": [
+            "materialCleanup"
           ]
         }
       }
@@ -1418,6 +1462,164 @@
               }
             }
           ]
+        }
+      }
+    },
+    "materialDistribution_materialCleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "cleanupId",
+        "groupId",
+        "managementPeriodId",
+        "materialVersionId",
+        "materialStoreRef",
+        "profileRevision",
+        "providerVersion",
+        "policyRevision",
+        "scopeHash",
+        "retentionPolicy",
+        "expiresAt"
+      ],
+      "properties": {
+        "type": {
+          "const": "vault-kv2-soft-delete"
+        },
+        "cleanupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "managementPeriodId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "providerVersion": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "policyRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "scopeHash": {
+          "$ref": "#/definitions/materialDistribution_fingerprint"
+        },
+        "retentionPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "minimumSeconds",
+            "minimumVersions",
+            "rollbackSeconds",
+            "cleanupEnabled",
+            "reportOnly",
+            "requiresApproval"
+          ],
+          "properties": {
+            "minimumSeconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 315360000
+            },
+            "minimumVersions": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 1000
+            },
+            "rollbackSeconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 31536000
+            },
+            "cleanupEnabled": {
+              "const": true
+            },
+            "reportOnly": {
+              "const": false
+            },
+            "requiresApproval": {
+              "const": true
+            }
+          }
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        }
+      }
+    },
+    "materialDistribution_cleanupReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "workspaceId",
+        "cleanupId",
+        "groupId",
+        "materialVersionId",
+        "providerVersion",
+        "method",
+        "softDeleted",
+        "observedAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "workspaceId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "cleanupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "providerVersion": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "method": {
+          "const": "vault-kv2-soft-delete"
+        },
+        "softDeleted": {
+          "const": true
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        }
+      }
+    },
+    "materialDistribution_cleanupRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "materialVersionId",
+        "expectedRevision"
+      ],
+      "properties": {
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "expectedRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "reauthorize": {
+          "type": "boolean"
         }
       }
     }

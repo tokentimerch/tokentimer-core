@@ -155,6 +155,14 @@ test("customer-local preflight reads the exact version without creating files, a
   assert.ok(result.diagnostics.some(item=>item.code==="material_exact_version_authorized"));
   assert.ok(!JSON.stringify(result).includes("PRIVATE KEY"));
 });
+test("preflight before the first deployment accepts only a public intent bound to the configured consumer",async t=>{
+  const f=await fixture(t);filesOnly(f);const options=f.options(),{readPublicPreflightIntent}=require("../../bin/preflight-material-binding");
+  const file=path.join(f.deployDir,"public-intent.json"),intent={...options.job.materialDeployment};delete intent.workspaceId;writeProtectedJson(file,intent);
+  options.job.materialDeployment=readPublicPreflightIntent(file,intent.bindingId);
+  assert.equal((await preflightPinnedDeployment(options)).ready,true);assert.equal(fs.existsSync(options.stateDir),false);
+  writeProtectedJson(file,{...intent,tokenFile:"not-a-public-field"});assert.throws(()=>readPublicPreflightIntent(file,intent.bindingId),{code:"material_preflight_intent_invalid"});
+  writeProtectedJson(file,intent);assert.throws(()=>readPublicPreflightIntent(file,crypto.randomUUID()),{code:"material_preflight_intent_invalid"});
+});
 
 test("preflight reports service existence as unknown rather than inferring it from configured command references",async t=>{
   const f=await fixture(t),options=f.options();f.binding.reloadCommandRefs={validate:"fixture.validate",reload:"fixture.reload"};
@@ -163,6 +171,14 @@ test("preflight reports service existence as unknown rather than inferring it fr
   assert.equal(result.ready,false);assert.ok(result.diagnostics.some(item=>item.code==="material_reload_allowlist" && item.status==="passed"));
   assert.ok(result.diagnostics.some(item=>item.code==="material_service_target_unverified" && item.status==="unknown"));
   assert.equal(fs.existsSync(f.target.certPath),false);assert.equal(fs.existsSync(options.stateDir),false);
+});
+test("read-only preflight can establish local TLS listener presence without claiming deployment or running a command",async t=>{
+  const f=await fixture(t),options=f.options();f.binding.reloadCommandRefs={validate:"fixture.validate",reload:"fixture.reload"};options.policyEngine.checkCommandRef=()=>({allowed:true});
+  const server=require("node:tls").createServer({cert:fs.readFileSync(path.join(__dirname,"../verify/fixtures/leaf.crt.pem")),key:fs.readFileSync(path.join(__dirname,"../verify/fixtures/leaf.key.pem"))},socket=>socket.end());
+  await new Promise(resolve=>server.listen(0,"127.0.0.1",resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  f.binding.probes=[{dialAddress:"127.0.0.1",port:server.address().port,sni:"example.com"}];
+  const result=await preflightPinnedDeployment(options);assert.equal(result.ready,true);assert.ok(result.diagnostics.some(item=>item.code==="material_service_listener_present" && item.status==="passed"));
+  assert.equal(result.deploymentReceipt,undefined);assert.equal(fs.existsSync(f.target.certPath),false);assert.equal(fs.existsSync(options.stateDir),false);
 });
 
 test("files-only delivery writes and reads back the actual pair without reload or TLS", async (t) => {

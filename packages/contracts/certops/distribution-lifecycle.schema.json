@@ -145,7 +145,7 @@
           "properties": {
             "minimumSeconds": {
               "type": "integer",
-              "minimum": 86400,
+              "minimum": 0,
               "maximum": 315360000
             },
             "minimumVersions": {
@@ -155,14 +155,14 @@
             },
             "rollbackSeconds": {
               "type": "integer",
-              "minimum": 86400,
+              "minimum": 0,
               "maximum": 31536000
             },
             "cleanupEnabled": {
-              "const": false
+              "type": "boolean"
             },
             "reportOnly": {
-              "const": true
+              "type": "boolean"
             },
             "requiresApproval": {
               "const": true

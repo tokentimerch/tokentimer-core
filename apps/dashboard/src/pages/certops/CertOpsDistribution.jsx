@@ -40,7 +40,10 @@ import {
   DashboardState,
 } from '../../components/DashboardPrimitives';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
-import { useCertOpsCanManage } from '../../components/certops/useCertOps.js';
+import {
+  useCertOpsCanManage,
+  useCertOpsIsWorkspaceAdmin,
+} from '../../components/certops/useCertOps.js';
 import useDistributionRead, {
   serverClockOffset,
 } from '../../components/certops/useDistributionRead.js';
@@ -244,7 +247,7 @@ function PolicyForm({ data, disabled, onSave }) {
           <NumberField
             name='Minimum retention (seconds)'
             value={policy.retention.minimumSeconds}
-            min={86400}
+            min={0}
             max={315360000}
             onChange={value => set('retention', 'minimumSeconds', value)}
           />
@@ -258,14 +261,31 @@ function PolicyForm({ data, disabled, onSave }) {
           <NumberField
             name='Rollback preservation (seconds)'
             value={policy.retention.rollbackSeconds}
-            min={86400}
+            min={0}
             max={31536000}
             onChange={value => set('retention', 'rollbackSeconds', value)}
           />
         </SimpleGrid>
+        <Checkbox
+          isChecked={policy.retention.cleanupEnabled}
+          onChange={event =>
+            set('retention', 'cleanupEnabled', event.target.checked)
+          }
+        >
+          Enable cleanup approval requests
+        </Checkbox>
+        <Checkbox
+          isChecked={policy.retention.reportOnly}
+          onChange={event =>
+            set('retention', 'reportOnly', event.target.checked)
+          }
+        >
+          Report only
+        </Checkbox>
         <Text fontSize='sm'>
-          Cleanup is report-only. Provider deletion is unavailable until its
-          customer-side operation is qualified.
+          Cleanup requires a qualified customer agent, customer-local opt-in and
+          independent approval for each exact version. Referenced material stays
+          protected. Destructive approval is always required.
         </Text>
         <Button
           alignSelf='start'
@@ -408,7 +428,15 @@ function ConsumerForm({ consumer, agents, disabled, onSave, onCancel }) {
   );
 }
 
-function MaintenanceForm({ consumer, disabled, onSave, onCancel }) {
+function MaintenanceForm({
+  consumer,
+  disabled,
+  onSave,
+  onCancel,
+  onEmergency,
+}) {
+  const [emergencyReference, setEmergencyReference] = useState(''),
+    [emergencyHours, setEmergencyHours] = useState(1);
   const [policy, setPolicy] = useState(() =>
     structuredClone(
       consumer.activation_policy || {
@@ -619,6 +647,62 @@ function MaintenanceForm({ consumer, disabled, onSave, onCancel }) {
             audit evidence before replacing this policy.
           </Alert>
         ) : null}
+        {policy.emergency ? (
+          <Button alignSelf='start' onClick={() => set('emergency', null)}>
+            Remove emergency exception from this policy
+          </Button>
+        ) : null}
+        {onEmergency ? (
+          <Box borderWidth='1px' borderRadius='md' p={3}>
+            <Text fontWeight='semibold'>Administrator emergency exception</Text>
+            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3} mt={2}>
+              <Field name='Change or incident reference'>
+                <Input
+                  aria-label='Emergency audit reference'
+                  value={emergencyReference}
+                  maxLength={64}
+                  onChange={event => setEmergencyReference(event.target.value)}
+                />
+              </Field>
+              <NumberField
+                name='Emergency duration (hours)'
+                value={emergencyHours}
+                min={1}
+                max={4}
+                onChange={setEmergencyHours}
+              />
+            </SimpleGrid>
+            <Text fontSize='sm' my={2}>
+              Blackouts and authorization expiry still apply. A new exact
+              rollout approval is required.
+            </Text>
+            <Button
+              isDisabled={
+                disabled ||
+                !/^[A-Za-z0-9_-]{1,64}$/.test(emergencyReference) ||
+                !Number.isInteger(emergencyHours) ||
+                emergencyHours < 1 ||
+                emergencyHours > 4
+              }
+              onClick={() => {
+                const start = new Date();
+                onEmergency(consumer, {
+                  ...policy,
+                  requiresApproval: true,
+                  emergency: {
+                    start: start.toISOString(),
+                    end: new Date(
+                      start.getTime() + emergencyHours * 3600000
+                    ).toISOString(),
+                    reference: emergencyReference,
+                  },
+                });
+              }}
+            >
+              Review emergency exception
+            </Button>
+          </Box>
+        ) : null}
         <HStack>
           <Button type='submit' isDisabled={disabled}>
             Save activation policy
@@ -632,7 +716,7 @@ function MaintenanceForm({ consumer, disabled, onSave, onCancel }) {
   );
 }
 
-function Management({ workspaceId, groupId, canManage, paused }) {
+function Management({ workspaceId, groupId, canManage, canAdmin, paused }) {
   const read = useCallback(
     async (signal, startedAt) => {
       const data = await distributionApi.management(
@@ -787,7 +871,11 @@ function Management({ workspaceId, groupId, canManage, paused }) {
             >
               <option value=''>Select version</option>
               {data.versions
-                .filter(value => value.state === 'published')
+                .filter(
+                  value =>
+                    value.state === 'published' &&
+                    !['fenced', 'soft_deleted'].includes(value.cleanup_state)
+                )
                 .map(value => (
                   <option key={value.id} value={value.id}>
                     {value.provider_version} · {value.id} · expires{' '}
@@ -858,12 +946,35 @@ function Management({ workspaceId, groupId, canManage, paused }) {
                 material, filesystem permissions, service targets and probes.
               </Text>
               {preflight.consumers.map(value => (
-                <Text key={value.bindingId} fontSize='sm'>
-                  {value.bindingId}:{' '}
-                  {value.diagnostics
-                    .map(item => diagnosticExplanation(item.code))
-                    .join('; ')}
-                </Text>
+                <Box key={value.bindingId}>
+                  <Text fontSize='sm'>
+                    {value.bindingId}:{' '}
+                    {value.diagnostics
+                      .map(item => diagnosticExplanation(item.code))
+                      .join('; ')}
+                  </Text>
+                  {value.publicIntent ? (
+                    <Button
+                      size='sm'
+                      mt={2}
+                      onClick={() => {
+                        const url = URL.createObjectURL(
+                          new Blob(
+                            [JSON.stringify(value.publicIntent, null, 2)],
+                            { type: 'application/json' }
+                          )
+                        );
+                        const anchor = document.createElement('a');
+                        anchor.href = url;
+                        anchor.download = `${value.bindingId}.preflight.json`;
+                        anchor.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                    >
+                      Download public preflight intent
+                    </Button>
+                  ) : null}
+                </Box>
               ))}
             </Box>
           ) : null}
@@ -1048,6 +1159,29 @@ function Management({ workspaceId, groupId, canManage, paused }) {
               consumer={maintenance}
               disabled={disabled}
               onCancel={() => setMaintenance(null)}
+              onEmergency={
+                canAdmin
+                  ? (consumer, policy) =>
+                      confirm(
+                        'Authorize emergency exception',
+                        `Authorize this consumer for a bounded emergency period (${policy.emergency.reference}). Blackouts still apply and a separate rollout approval is required.`,
+                        () =>
+                          run(async () => {
+                            await distributionApi.emergency(
+                              workspaceId,
+                              groupId,
+                              consumer.binding_id,
+                              {
+                                policy,
+                                expectedAuthorizationRevision:
+                                  consumer.authorization_revision,
+                              }
+                            );
+                            setMaintenance(null);
+                          }, 'Emergency authorization saved. Request a fresh rollout approval.')
+                      )
+                  : undefined
+              }
               onSave={(consumer, policy) =>
                 run(async () => {
                   await distributionApi.activation(
@@ -1242,6 +1376,7 @@ function Management({ workspaceId, groupId, canManage, paused }) {
           isDisabled={busy}
           onClick={() =>
             run(async () => {
+              setRetention(null);
               setRetention(
                 await distributionApi.retention(workspaceId, groupId)
               );
@@ -1253,15 +1388,82 @@ function Management({ workspaceId, groupId, canManage, paused }) {
         {retention ? (
           <Stack mt={3} spacing={2}>
             <Text fontSize='sm'>
-              Report-only. Destructive cleanup is unavailable for this build.
+              {retention.cleanupAvailable
+                ? 'Exact-version soft deletion requires an independent Jobs approval.'
+                : `Cleanup unavailable or report-only. ${label(retention.diagnosticCode || 'customer agent qualification required')}`}
             </Text>
             {retention.versions.map(value => (
-              <Text key={value.id} fontSize='sm'>
-                Version {value.provider_version || value.id}:{' '}
-                {value.retainedReasons.length
-                  ? value.retainedReasons.map(label).join(', ')
-                  : 'Metadata eligible; cleanup authorization and provider qualification still required'}
-              </Text>
+              <Box key={value.id} borderWidth='1px' borderRadius='md' p={3}>
+                <Text fontSize='sm'>
+                  Version {value.provider_version || value.id}:{' '}
+                  {value.retainedReasons.length
+                    ? value.retainedReasons.map(label).join(', ')
+                    : 'Metadata eligible; cleanup authorization and provider qualification still required'}
+                </Text>
+                {value.cleanup_state ? (
+                  <Text fontSize='sm'>
+                    Cleanup: {label(value.cleanup_state)}
+                    {value.cleanup_job_status
+                      ? ` · ${label(value.cleanup_job_status)}`
+                      : ''}
+                  </Text>
+                ) : null}
+                {value.cleanup_job_id ? (
+                  <Link
+                    as={RouterLink}
+                    to={`/certops/jobs?job=${value.cleanup_job_id}`}
+                    color='blue.500'
+                  >
+                    View cleanup job and approval
+                  </Link>
+                ) : null}
+                {canAdmin &&
+                retention.cleanupAvailable &&
+                (value.metadataEligible ||
+                  value.cleanup_state === 'planned' ||
+                  value.cleanup_state === 'fenced') ? (
+                  <Button
+                    size='sm'
+                    ml={2}
+                    isDisabled={
+                      disabled ||
+                      ['claimed', 'running'].includes(value.cleanup_job_status)
+                    }
+                    onClick={() =>
+                      confirm(
+                        'Request cleanup approval',
+                        `Request independent approval to soft delete only material version ${value.id} in the customer-controlled Vault. Protected versions cannot be deleted. A permanent fence prevents later rollout reuse once execution is authorized.`,
+                        () =>
+                          run(
+                            async () => {
+                              const result = await distributionApi.cleanup(
+                                workspaceId,
+                                groupId,
+                                {
+                                  materialVersionId: value.id,
+                                  expectedRevision: data.policy.revision,
+                                  reauthorize: Boolean(value.cleanup_id),
+                                }
+                              );
+                              setRetention(null);
+                              return result;
+                            },
+                            result =>
+                              result.requiresReauthorization
+                                ? 'Authority changed. Refresh and request a new exact-version review.'
+                                : result.status === 'pending_approval'
+                                  ? 'Cleanup approval requested in Jobs. Nothing has been deleted.'
+                                  : 'Cleanup request already exists. Inspect the original job evidence.'
+                          )
+                      )
+                    }
+                  >
+                    {value.cleanup_id
+                      ? 'Request fresh cleanup review'
+                      : 'Request cleanup approval'}
+                  </Button>
+                ) : null}
+              </Box>
             ))}
           </Stack>
         ) : null}
@@ -1300,6 +1502,7 @@ function Management({ workspaceId, groupId, canManage, paused }) {
 export default function CertOpsDistribution() {
   const { workspaceId } = useWorkspace(),
     canManage = useCertOpsCanManage(),
+    canAdmin = useCertOpsIsWorkspaceAdmin(),
     { certOpsPaused } = useOutletContext() || {};
   const [params, setParams] = useSearchParams();
   const read = useCallback(
@@ -1370,6 +1573,7 @@ export default function CertOpsDistribution() {
           workspaceId={workspaceId}
           groupId={groupId}
           canManage={canManage}
+          canAdmin={canAdmin}
           paused={Boolean(certOpsPaused)}
         />
       )}

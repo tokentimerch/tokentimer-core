@@ -419,7 +419,8 @@
               "distribute-trust",
               "revoke-trust",
               "adcs-preflight",
-              "deploy-from-store"
+              "deploy-from-store",
+              "cleanup-from-store"
             ]
           },
           "description": "Subset of job-payload.schema.json actions this agent build can execute, plus protocol_smoke for diagnostic-kind agents (ADR-0012 decision 7): a diagnostic agent must declare supportedActions: [\"protocol_smoke\"] to ever match a protocol_smoke job, since the claim query joins this array against certificate_jobs.operation directly. distribute-trust/revoke-trust are the two trust-anchor actions (ADR-0012 decisions 17/20i). adcs-preflight is the read-only AD CS issuer validation job (adcs-preflight-payload.schema.json, ADR-0014 decision 5)."
@@ -561,6 +562,9 @@
             "null"
           ],
           "description": "Typed result of an adcs-preflight job, absent (or null) otherwise. Shape-only here; the authoritative contract is adcs-preflight-result-contract.schema.json."
+        },
+        "cleanupReceipt": {
+          "$ref": "#/definitions/materialDistribution_cleanupReceipt"
         }
       },
       "allOf": [
@@ -1282,6 +1286,164 @@
               }
             }
           ]
+        }
+      }
+    },
+    "materialDistribution_materialCleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "cleanupId",
+        "groupId",
+        "managementPeriodId",
+        "materialVersionId",
+        "materialStoreRef",
+        "profileRevision",
+        "providerVersion",
+        "policyRevision",
+        "scopeHash",
+        "retentionPolicy",
+        "expiresAt"
+      ],
+      "properties": {
+        "type": {
+          "const": "vault-kv2-soft-delete"
+        },
+        "cleanupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "managementPeriodId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "providerVersion": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "policyRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "scopeHash": {
+          "$ref": "#/definitions/materialDistribution_fingerprint"
+        },
+        "retentionPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "minimumSeconds",
+            "minimumVersions",
+            "rollbackSeconds",
+            "cleanupEnabled",
+            "reportOnly",
+            "requiresApproval"
+          ],
+          "properties": {
+            "minimumSeconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 315360000
+            },
+            "minimumVersions": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 1000
+            },
+            "rollbackSeconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 31536000
+            },
+            "cleanupEnabled": {
+              "const": true
+            },
+            "reportOnly": {
+              "const": false
+            },
+            "requiresApproval": {
+              "const": true
+            }
+          }
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        }
+      }
+    },
+    "materialDistribution_cleanupReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "workspaceId",
+        "cleanupId",
+        "groupId",
+        "materialVersionId",
+        "providerVersion",
+        "method",
+        "softDeleted",
+        "observedAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "workspaceId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "cleanupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "providerVersion": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "method": {
+          "const": "vault-kv2-soft-delete"
+        },
+        "softDeleted": {
+          "const": true
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        }
+      }
+    },
+    "materialDistribution_cleanupRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "materialVersionId",
+        "expectedRevision"
+      ],
+      "properties": {
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "expectedRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "reauthorize": {
+          "type": "boolean"
         }
       }
     }

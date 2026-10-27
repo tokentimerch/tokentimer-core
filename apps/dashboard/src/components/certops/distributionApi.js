@@ -24,12 +24,22 @@ export const distributionApi = {
     ).data,
   retention: async (workspaceId, groupId) =>
     (await apiClient.get(`${groupRoot(workspaceId, groupId)}/retention`)).data,
+  cleanup: async (workspaceId, groupId, body) =>
+    (await apiClient.post(`${groupRoot(workspaceId, groupId)}/cleanups`, body))
+      .data,
   policy: async (workspaceId, groupId, policy, expectedRevision) =>
     (
       await apiClient.put(`${groupRoot(workspaceId, groupId)}/policy`, {
         policy,
         expectedRevision,
       })
+    ).data,
+  emergency: async (workspaceId, groupId, bindingId, body) =>
+    (
+      await apiClient.post(
+        `${groupRoot(workspaceId, groupId)}/consumers/${bindingId}/emergency`,
+        body
+      )
     ).data,
   consumer: async (workspaceId, groupId, bindingId, binding) =>
     (

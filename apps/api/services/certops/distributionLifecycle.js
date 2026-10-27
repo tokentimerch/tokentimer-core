@@ -102,18 +102,13 @@ function validatePolicy(value, now = Date.now()) {
   )
     fail("CERTOPS_LIFECYCLE_POLICY_INVALID");
   object(value.retention, Object.keys(DEFAULT_POLICY.retention));
-  integer(value.retention.minimumSeconds, 86400, 315360000);
+  integer(value.retention.minimumSeconds, 0, 315360000);
   integer(value.retention.minimumVersions, 2, 1000);
-  integer(value.retention.rollbackSeconds, 86400, 31536000);
+  integer(value.retention.rollbackSeconds, 0, 31536000);
   for (const key of ["cleanupEnabled", "reportOnly", "requiresApproval"])
     boolean(value.retention[key]);
-  // This baseline has no qualified provider deletion operation. Never pretend
-  // that a metadata preview authorizes destructive customer-side effects.
-  if (
-    value.retention.cleanupEnabled ||
-    !value.retention.reportOnly ||
-    !value.retention.requiresApproval
-  )
+  // Each exact-object destructive job requires independent human approval.
+  if (!value.retention.requiresApproval)
     fail("CERTOPS_MATERIAL_CLEANUP_NOT_QUALIFIED");
   return structuredClone(value);
 }
@@ -180,7 +175,7 @@ async function loadPolicy(client, workspaceId, groupId) {
 }
 async function notifyApproval(client, workspaceId, job) {
   const intent =
-    job.payload?.distributionRollout || job.payload?.distributionPolicyApproval;
+    job.payload?.distributionRollout || job.payload?.distributionPolicyApproval || job.payload?.materialCleanup;
   if (job.status !== "pending_approval" || !intent) return;
   await client.query(
     `INSERT INTO operational_notifications(workspace_id,category,type,severity,dedupe_key,title,message,metadata)
@@ -189,7 +184,7 @@ async function notifyApproval(client, workspaceId, job) {
     [
       workspaceId,
       `distribution_approval:${job.id}`,
-      job.payload.distributionRollout
+      job.payload.materialCleanup ? "Review exact-version customer-store soft deletion" : job.payload.distributionRollout
         ? "Review certificate distribution rollout"
         : "Review bounded certificate distribution policy",
       "An authorized reviewer must approve the exact public intent in Jobs before execution.",

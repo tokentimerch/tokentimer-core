@@ -142,6 +142,7 @@ describe("Core distribution and lifecycle migration histories", function () {
           "certops_distribution_lifecycle",
           "certops_distribution_incident_delivery",
           "certops_stable_consumer_discovery",
+          "certops_material_cleanup",
         ];
         assert.deepEqual(
           after.filter((row) => row.version >= 70).map((row) => row.name),

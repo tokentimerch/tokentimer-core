@@ -4855,6 +4855,7 @@ const migrations = [
     name:"certops_stable_consumer_discovery",
     sql:fs.readFileSync(require("path").join(__dirname,"081-certops-stable-consumer-discovery.sql"),"utf8"),
   },
+  {version:82,name:"certops_material_cleanup",sql:fs.readFileSync(require("path").join(__dirname,"082-certops-material-cleanup.sql"),"utf8")},
 ];
 
 

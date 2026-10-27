@@ -2,7 +2,7 @@
 const { pool } = require("../../db/database");
 const material = require("./materialDistribution");
 const { loadPolicy } = require("./distributionLifecycle");
-const { nextActivation,activationDeadline } = require("./distributionMaintenance");
+const { activationPlanner,activationDeadline } = require("./distributionMaintenance");
 const {
   resolveContactGroupsForAsset,
   deliveryChannelsFromEligibleGroups,
@@ -326,6 +326,7 @@ async function monitorGroup({
     )
   ).rows[0];
   const conditions = [];
+  const plan=activationPlanner(now);
   for (const row of rows.filter((row) => row.binding_state === "active")) {
     const { codes } = consumerConditions(
       row,
@@ -365,7 +366,7 @@ async function monitorGroup({
         )
       ).rows[0]?.valid_to;
       const deadline=activationDeadline(expiry,row.observed_valid_to);
-      const next = nextActivation(row.activation_policy, deadline, now);
+      const next = plan(row.activation_policy, deadline);
       if (!next.at)
         conditions.push({
           bindingId: row.binding_id,

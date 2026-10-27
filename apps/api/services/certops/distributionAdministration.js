@@ -4,7 +4,7 @@ const material = require("./materialDistribution");
 const { DEFAULT_POLICY, loadPolicy,isPreauthorized } = require("./distributionLifecycle");
 const { consumerHealth } = require("./distributionMonitoring");
 const {
-  nextActivation,
+  activationPlanner,
   supportedActivation,
   activationDeadline,
 } = require("./distributionMaintenance");
@@ -42,8 +42,9 @@ async function overview({ client = pool, workspaceId, groupId }) {
   });
   const versions = (
     await client.query(
-      `SELECT id,state,provider_version,fingerprint_sha256,valid_to,published_at,created_at,publishing_job_id
-    FROM certops_material_versions WHERE workspace_id=$1 AND group_id=$2 ORDER BY created_at DESC LIMIT 1000`,
+      `SELECT v.id,v.state,v.provider_version,v.fingerprint_sha256,v.valid_to,v.published_at,v.created_at,v.publishing_job_id,c.state AS cleanup_state
+    FROM certops_material_versions v LEFT JOIN certops_material_cleanups c ON c.workspace_id=v.workspace_id AND c.material_version_id=v.id
+    WHERE v.workspace_id=$1 AND v.group_id=$2 ORDER BY v.created_at DESC LIMIT 1000`,
       [workspaceId, group.id],
     )
   ).rows;
@@ -56,7 +57,7 @@ async function overview({ client = pool, workspaceId, groupId }) {
   const approvals = (
     await client.query(
       `SELECT id,status,operation,created_at,approved_at FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2
-    AND (payload ? 'distributionRollout' OR payload ? 'distributionPolicyApproval') ORDER BY created_at DESC LIMIT 50`,
+    AND (payload ? 'distributionRollout' OR payload ? 'distributionPolicyApproval' OR payload ? 'materialCleanup') ORDER BY created_at DESC LIMIT 50`,
       [workspaceId, group.managed_certificate_id],
     )
   ).rows;
@@ -130,13 +131,14 @@ async function preflight({
   groupId,
   materialVersionId,
 }) {
+  const plan=activationPlanner();
   const group = await groupFor(client, workspaceId, groupId);
   const versionId = materialVersionId
     ? material.normalizeDistributionId(materialVersionId)
     : group.latest_material_version_id;
   const version = (
     await client.query(
-      `SELECT id,state,valid_to FROM certops_material_versions WHERE workspace_id=$1 AND group_id=$2 AND id=$3`,
+      `SELECT id,state,valid_to,provider_version,fingerprint_sha256 FROM certops_material_versions WHERE workspace_id=$1 AND group_id=$2 AND id=$3`,
       [workspaceId, group.id, versionId],
     )
   ).rows[0];
@@ -201,7 +203,7 @@ async function preflight({
           code: "CERTOPS_LOCAL_RECONCILIATION_REQUIRED",
           status: "blocked",
         });
-      const window = nextActivation(row.activation_policy, activationDeadline(version?.valid_to,row.observed_valid_to));
+      const window = plan(row.activation_policy, activationDeadline(version?.valid_to,row.observed_valid_to));
       if (!window.at)
         diagnostics.push({
           code: "CERTOPS_ACTIVATION_WINDOW_UNAVAILABLE",
@@ -214,6 +216,10 @@ async function preflight({
       });
       return {
         bindingId: row.binding_id,
+        publicIntent:version?.state==="published"?{groupId:group.id,bindingId:row.binding_id,materialVersionId:version.id,materialStoreRef:group.material_store_ref,
+          providerVersion:version.provider_version,fingerprintSha256:version.fingerprint_sha256,generation:Math.max(1,Number(group.generation)+1),
+          deploymentProfileRef:row.deployment_profile_ref,profileRevision:row.profile_revision,authorizationRevision:row.authorization_revision,
+          verificationPolicy:row.verification_policy,...(row.activation_policy?{activationPolicy:row.activation_policy}:{})}:null,
         authorizationRevision: row.authorization_revision,
         profileRevision: row.profile_revision,
         diagnostics,
@@ -271,7 +277,10 @@ async function retentionPreview({ client = pool, workspaceId, groupId }) {
       DEFAULT_POLICY.retention;
   const versions = (
     await client.query(
-      `SELECT id,state,provider_version,created_at,published_at,valid_to FROM certops_material_versions WHERE workspace_id=$1 AND group_id=$2 ORDER BY created_at DESC,id DESC`,
+      `SELECT v.id,v.state,v.provider_version,v.profile_revision,v.created_at,v.published_at,v.valid_to,c.state AS cleanup_state,c.id AS cleanup_id,c.job_id AS cleanup_job_id,j.status AS cleanup_job_status
+        FROM certops_material_versions v LEFT JOIN certops_material_cleanups c ON c.workspace_id=v.workspace_id AND c.material_version_id=v.id
+        LEFT JOIN certificate_jobs j ON j.workspace_id=c.workspace_id AND j.id=c.job_id
+        WHERE v.workspace_id=$1 AND v.group_id=$2 ORDER BY v.created_at DESC,v.id DESC`,
       [workspaceId, group.id],
     )
   ).rows;
@@ -294,15 +303,16 @@ async function retentionPreview({ client = pool, workspaceId, groupId }) {
     references.get(ref.id).push(ref.reason);
   }
   const now = Date.now();
+  const cleanupReadiness=await require("./materialCleanup").availability({client,workspaceId,group});
   return {
     evaluated_at: new Date(now).toISOString(),
-    reportOnly: true,
-    cleanupAvailable: false,
-    diagnosticCode: "CERTOPS_MATERIAL_CLEANUP_NOT_QUALIFIED",
+    reportOnly: policy.reportOnly,
+    cleanupAvailable: cleanupReadiness.available && policy.cleanupEnabled && !policy.reportOnly,
+    diagnosticCode: cleanupReadiness.code,
     policy,
     providerSemantics: {
       vault_kv2:
-        "Version soft deletion, destroy and metadata deletion are distinct; no deletion job is enabled.",
+        "Only independently approved exact-version soft deletion is implemented. Destroy, metadata deletion and purge are unavailable.",
       openbao_kv2:
         "Requires merged provider extension and reviewed KV v2 deletion qualification.",
       azure_key_vault:
@@ -310,7 +320,7 @@ async function retentionPreview({ client = pool, workspaceId, groupId }) {
     },
     versions: versions.map((version) => {
       const rank = versions
-        .filter((value) => value.state === "published")
+        .filter((value) => value.state === "published" && !["fenced","soft_deleted"].includes(value.cleanup_state))
         .findIndex((value) => value.id === version.id);
       const reasons = retentionReasons(version, {
         rank: rank < 0 ? 0 : rank,
@@ -319,6 +329,8 @@ async function retentionPreview({ client = pool, workspaceId, groupId }) {
         references,
         latestId: group.latest_material_version_id,
       });
+      if(["fenced","soft_deleted"].includes(version.cleanup_state))reasons.push("material_cleanup_fenced");
+      if(version.profile_revision!==group.profile_revision)reasons.push("customer_store_profile_revision_changed");
       return {
         ...version,
         retainedReasons: reasons,

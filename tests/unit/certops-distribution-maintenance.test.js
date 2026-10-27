@@ -39,3 +39,9 @@ test("activation classes are explicit and unsafe policies are rejected",()=>{
 test("maintenance escalation uses the earlier deployed expiry even after source renewal",()=>{
   assert.equal(activationDeadline("2027-01-01T00:00:00Z","2026-11-01T00:00:00Z"),"2026-11-01T00:00:00.000Z");
 });
+test("forecast preserves short future emergency periods and exact blackout ends between minute boundaries",()=>{
+  const future={...policy,timezone:"UTC",windows:[],emergency:{start:"2026-10-27T10:00:10Z",end:"2026-10-27T10:00:20Z",reference:"change_248"}};
+  assert.equal(nextActivation(future,"2026-10-27T11:00:00Z",Date.parse("2026-10-27T10:00:05Z")).at,"2026-10-27T10:00:10.000Z");
+  const blackout={...future,disruptive:false,emergency:null,blackouts:[{start:"2026-10-27T10:00:00Z",end:"2026-10-27T10:00:20Z"}]};
+  assert.equal(nextActivation(blackout,"2026-10-27T10:00:30Z",Date.parse("2026-10-27T10:00:05Z")).at,"2026-10-27T10:00:20.000Z");
+});

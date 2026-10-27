@@ -10,12 +10,12 @@ function run(command,args,env=process.env,log){const r=spawnSync(command,args,{c
 async function main(){let created=false;try{
   run("docker",["run","-d","--name",container,"--label",`tokentimer.lifecycle-owner=${nonce}`,"--memory=512m","-p","127.0.0.1::5432","-e","POSTGRES_PASSWORD=synthetic-disposable-only","-e","POSTGRES_DB=postgres","postgres:17-alpine"]);created=true;
   const port=run("docker",["port",container,"5432/tcp"]).trim().match(/^127\.0\.0\.1:(\d+)$/)?.[1];if(!port)throw new Error("No owned loopback port");
-  let ready=false;for(let i=0;i<60;i++){if(spawnSync("docker",["exec",container,"pg_isready","-U","postgres"],{windowsHide:true,stdio:"ignore"}).status===0){ready=true;break;}await new Promise(resolve=>setTimeout(resolve,250));}if(!ready)throw new Error("PostgreSQL unavailable");
+  let ready=false;for(let i=0;i<60;i++){if(spawnSync("docker",["exec",container,"pg_isready","-h","127.0.0.1","-U","postgres"],{windowsHide:true,stdio:"ignore"}).status===0){ready=true;break;}await new Promise(resolve=>setTimeout(resolve,250));}if(!ready)throw new Error("PostgreSQL unavailable");
   const database=`distribution_lifecycle_${nonce}_test`;run("docker",["exec",container,"createdb","-U","postgres",database]);
   const env={...process.env,NODE_ENV:"test",CERTOPS_ENABLED:"true",DB_HOST:"127.0.0.1",DB_PORT:port,DB_NAME:database,DB_USER:"postgres",DB_PASSWORD:"synthetic-disposable-only",
     CERTOPS_SIGNING_ENCRYPTION_KEY:crypto.randomBytes(32).toString("hex"),CERTOPS_REGISTRATION_ENCRYPTION_KEY:crypto.randomBytes(32).toString("hex")};
   run(process.execPath,["apps/api/migrations/migrate.js"],env,"migration.log");
-  process.stdout.write(run(process.execPath,["--test","--test-force-exit","tests/postgres/distribution-lifecycle.test.js"],env,"tests.log"));
+  process.stdout.write(run(process.execPath,["--test","--test-force-exit","tests/postgres/distribution-lifecycle.test.js","tests/postgres/distribution-cleanup.test.js"],env,"tests.log"));
   const upgradeDatabase=`pr329_distribution_upgrade_${nonce}_test`;run("docker",["exec",container,"createdb","-U","postgres",upgradeDatabase]);
   process.stdout.write(run(process.execPath,["--test","--test-force-exit","tests/postgres/distribution-migration-upgrade.test.js"],{...env,DB_NAME:upgradeDatabase},"upgrade-tests.log"));
   process.stdout.write(run(process.execPath,["node_modules/mocha/bin/mocha.js","--no-config","tests/integration/certops-distribution-upgrade.test.js","--timeout","120000","--exit"],env,"migration-histories.log"));

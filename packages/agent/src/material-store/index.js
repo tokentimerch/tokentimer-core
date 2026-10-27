@@ -137,18 +137,19 @@ function createVaultStore(stores, intent, options = {}) {
   const { config, scope, address, objectRef, timeoutMs, fixtureHttp } = resolved;
   const apiPath = `/v1/${config.mount}/data/${objectRef}`;
 
-  async function request(method, suffix = "", body = null) {
+  async function request(method, suffix = "", body = null, area="data") {
     let token;
     let ca;
     try {
-      token = readProtectedFile(config.tokenFile, 4096).trim();
+      token = readProtectedFile(area==="data"?config.tokenFile:scope.cleanup?.tokenFile, 4096).trim();
       if (!/^[A-Za-z0-9_.-]{8,4096}$/.test(token)) throw failure("material_auth_unavailable");
       ca = config.caFile ? fs.readFileSync(config.caFile) : undefined;
     } catch { throw failure("material_auth_unavailable"); }
     const payload = body === null ? null : Buffer.from(JSON.stringify(body));
     const transport = fixtureHttp ? http : https;
     return new Promise((resolve, reject) => {
-      const req = transport.request(new URL(apiPath + suffix, address), {
+      const endpoint=area==="data"?apiPath:`/v1/${config.mount}/${area}/${objectRef}`;
+      const req = transport.request(new URL(endpoint + suffix, address), {
         method, ca, rejectUnauthorized: true,
         headers: { "X-Vault-Token": token,
           ...(config.namespace ? { "X-Vault-Namespace": config.namespace } : {}),
@@ -165,10 +166,11 @@ function createVaultStore(stores, intent, options = {}) {
         response.on("end", () => {
           // Never forward Vault bodies/errors, headers, tokens or URLs.
           if (response.statusCode === 404) { resolve({ missing: true }); return; }
-          if (response.statusCode === 400 && method === "POST") { resolve({ conflict: true }); return; }
+          if (response.statusCode === 400 && method === "POST" && area==="data") { resolve({ conflict: true }); return; }
           if (response.statusCode < 200 || response.statusCode >= 300) {
             reject(failure(response.statusCode === 403 ? "material_auth_denied" : "material_store_unavailable")); return;
           }
+          if(response.statusCode===204){resolve({accepted:true});return;}
           try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); }
           catch { reject(failure("material_response_invalid")); }
         });
@@ -209,7 +211,32 @@ function createVaultStore(stores, intent, options = {}) {
       validTo: facts.validTo };
   }
 
-  return Object.freeze({ publish, fetch, scope, objectRef });
+  async function softDeleteVersion(providerVersion,{checkLease,beforeDelete}){
+    const policy=scope.cleanup;
+    if(intent.type!=="vault-kv2-soft-delete" || policy?.softDelete!==true || policy.profileRevision!==intent.profileRevision ||
+      !Number.isInteger(policy.minimumSeconds) || policy.minimumSeconds<0 || policy.minimumSeconds>315360000 || !Number.isSafeInteger(providerVersion) || providerVersion<1 ||
+      !Number.isInteger(intent.retentionPolicy?.minimumSeconds) || intent.retentionPolicy.minimumSeconds<0 ||
+      intent.retentionPolicy.cleanupEnabled!==true || intent.retentionPolicy.reportOnly!==false || intent.retentionPolicy.requiresApproval!==true ||
+      !Number.isFinite(Date.parse(intent.expiresAt)) || Date.parse(intent.expiresAt)<=Date.now() || Date.parse(intent.expiresAt)>Date.now()+86430000)throw failure("material_cleanup_policy_denied");
+    await checkLease();
+    const metadata=await request("GET","",null,"metadata");
+    const version=metadata.data?.versions?.[String(providerVersion)];
+    // A missing object/version is not evidence that this cleanup deleted it.
+    if(metadata.missing || !version || typeof version.destroyed!=="boolean" || typeof version.deletion_time!=="string")throw failure("material_cleanup_metadata_unavailable");
+    if(version.destroyed===true)throw failure("material_cleanup_version_destroyed");
+    if(version.deletion_time){if(!Number.isFinite(Date.parse(version.deletion_time)))throw failure("material_cleanup_metadata_unavailable");return {alreadyDeleted:true};}
+    const created=Date.parse(version.created_time);
+    if(!Number.isFinite(created) || Date.now()-created<Math.max(policy.minimumSeconds,intent.retentionPolicy.minimumSeconds)*1000)throw failure("material_cleanup_retention_protected");
+    await checkLease();if(Date.parse(intent.expiresAt)<=Date.now())throw failure("material_cleanup_authorization_expired");
+    await beforeDelete();
+    // Only a named KV v2 version is soft deleted. Never DELETE data/metadata,
+    // destroy versions, undelete, purge, or follow provider redirects.
+    await request("POST","",{versions:[providerVersion]},"delete");
+    const observed=await request("GET","",null,"metadata");
+    if(!observed.data?.versions?.[String(providerVersion)]?.deletion_time || observed.data.versions[String(providerVersion)].destroyed)throw failure("material_cleanup_uncertain");
+    await checkLease();return {alreadyDeleted:false};
+  }
+  return Object.freeze({ publish, fetch, softDeleteVersion, scope, objectRef });
 }
 
 module.exports = { createVaultStore, resolveStore, validateBundle, readProtectedFile, writeProtectedFile, writeProtectedJson, protectDirectory, sameSans, failure, UUID, ALIAS, MAX_BUNDLE_BYTES };

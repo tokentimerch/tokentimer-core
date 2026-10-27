@@ -200,18 +200,27 @@ function nextActivation(policy, expiry, now = Date.now()) {
     [
       "activation_authorization_expired",
       "manual_activation_required",
-      "maintenance_window_required",
     ].includes(initial.reason)
   )
     return { at: null, reason: initial.reason };
+  // Weekly windows start on minute boundaries, but emergency starts and
+  // blackout ends are exact instants. Never skip a short authorized interval.
+  const special=[policy.emergency?.start,...policy.blackouts.map(period=>period.end)]
+    .map(value=>Date.parse(value)).filter(instant=>Number.isFinite(instant) && instant>=now && instant<horizon)
+    .sort((a,b)=>a-b).find(instant=>evaluateValidated(policy,instant).allowed);
+  if(initial.reason==="maintenance_window_required")return special===undefined?
+    {at:null,reason:initial.reason}:{at:new Date(special).toISOString(),reason:"scheduled"};
+  const authorizationEnd=policy.validUntil?Date.parse(policy.validUntil):Infinity;
+  const searchEnd=Math.min(horizon,authorizationEnd,special===undefined?Infinity:special);
   for (
     let instant = Math.ceil(now / 60000) * 60000;
-    instant < horizon;
+    instant < searchEnd;
     instant += 60000
   ) {
     if (evaluateValidated(policy, instant).allowed)
       return { at: new Date(instant).toISOString(), reason: "scheduled" };
   }
+  if(special!==undefined)return {at:new Date(special).toISOString(),reason:"scheduled"};
   return {
     at: null,
     reason:

@@ -97,4 +97,12 @@ function activationDeadline(desiredExpiry,deployedExpiry){
   const deadline=Math.min(desired,deployed);
   return Number.isFinite(deadline)?new Date(deadline).toISOString():null;
 }
-module.exports = { ...calendar, putConsumerPolicy, supportedActivation,activationDeadline };
+function activationPlanner(now=Date.now()){
+  const results=new Map();
+  return (policy,expiry)=>{
+    const key=material.hashIntent({policy:policy || null,expiry:expiry || null});
+    if(!results.has(key))results.set(key,calendar.nextActivation(policy,expiry,now));
+    return results.get(key);
+  };
+}
+module.exports = { ...calendar, putConsumerPolicy, supportedActivation,activationDeadline,activationPlanner };

@@ -145,6 +145,7 @@ test("management/preflight/retention reads are non-mutating and do not expose cr
   assert.equal(view.discoveryCoverage,"partial");assert.equal(view.consumers[0].binding_id,f.bindingId);
   const preflight=await administration.preflight({client:pool,workspaceId:f.workspaceId,groupId:f.groupId});
   assert.equal(preflight.nonMutating,true);assert.equal(preflight.consumers[0].ready,false);
+  assert.equal(preflight.consumers[0].publicIntent.materialVersionId,f.materialVersionId);assert.equal(preflight.consumers[0].publicIntent.bindingId,f.bindingId);
   const retention=await administration.retentionPreview({client:pool,workspaceId:f.workspaceId,groupId:f.groupId});
   assert.equal(retention.cleanupAvailable,false);assert.ok(retention.versions[0].retainedReasons.includes("desired_consumer_version"));
   assert.equal((await pool.query("SELECT count(*) AS count FROM certificate_jobs WHERE workspace_id=$1",[f.workspaceId])).rows[0].count,count);
@@ -199,6 +200,9 @@ test("real HTTP routes preserve session, manager, emergency-admin, tenant and pr
   assert.equal((await request(app).get(`${base}/management`).set("X-Test-Session",String(other.actor))).status,403);
   const saved=await request(app).put(`${base}/policy`).set("X-Test-Session",String(f.approver)).send({policy:structuredClone(lifecycle.DEFAULT_POLICY),expectedRevision:0});
   assert.equal(saved.status,200,JSON.stringify(saved.body));
+  assert.equal((await request(app).post(`${base}/cleanups`).set("X-Test-Session",String(f.approver)).send({materialVersionId:f.materialVersionId,expectedRevision:1})).status,403,"Cleanup requests require an administrator, independently of manager access");
+  assert.equal((await request(app).post(`${base}/cleanups`).set("X-Test-Session",String(f.actor)).send({materialVersionId:f.materialVersionId,expectedRevision:1,token:"forbidden-field"})).status,422);
+  assert.equal((await request(app).post(`${base}/cleanups`).set("X-Test-Session",String(f.actor)).send({materialVersionId:f.materialVersionId,expectedRevision:1})).status,409,"Disabled cleanup never creates an executable operation");
   const emergency={method:"reload",disruptive:true,requiresApproval:true,timezone:"UTC",windows:[],blackouts:[],validUntil:null,
     emergency:{start:new Date().toISOString(),end:new Date(Date.now()+3600000).toISOString(),reference:"change248"}};
   assert.equal((await request(app).post(`${base}/consumers/${f.bindingId}/emergency`).set("X-Test-Session",String(f.approver)).send({policy:emergency,expectedAuthorizationRevision:1})).status,403);

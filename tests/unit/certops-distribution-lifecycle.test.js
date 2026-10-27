@@ -10,9 +10,9 @@ test("existing installations default to manual, verification disabled, retention
   assert.equal(policy.retention.cleanupEnabled,false); assert.equal(policy.retention.reportOnly,true);
   policy.verification.enabled=true; assert.equal(DEFAULT_POLICY.verification.enabled,false);
 });
-test("lifecycle policy rejects unknown inputs, credentials, destructive cleanup and unbounded authority",()=>{
+test("lifecycle policy rejects unknown inputs, credentials, unapproved destructive cleanup and unbounded authority",()=>{
   for (const change of [p=>p.token="bearer-value",p=>p.maxParallel=17,p=>p.verification.intervalSeconds=0,
-    p=>p.retention.cleanupEnabled=true,p=>p.retention.reportOnly=false,p=>p.mode="automatic",
+    p=>p.retention.requiresApproval=false,p=>p.mode="automatic",
     p=>{p.mode="preauthorized";},p=>{p.authorizationExpiresAt=new Date(Date.now()+31*86400000).toISOString();}]) {
     const policy=structuredClone(DEFAULT_POLICY);change(policy);assert.throws(()=>validatePolicy(policy));
   }

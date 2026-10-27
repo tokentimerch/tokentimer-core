@@ -27,6 +27,7 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
         "material-store-vault-kv2-v1",
         "certificate-publication-v1",
         "deploy-from-store-v1",
+        "material-cleanup-vault-kv2-v1",
       ],
     );
   });
@@ -41,12 +42,13 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
     assert.deepEqual([...filterQualifiedCapabilities(candidates)].sort(), [...candidates].sort());
   });
 
-  it("ships with all seven gated capabilities qualified after real-host verification", () => {
+  it("preserves the seven existing qualifications and leaves material cleanup unqualified", () => {
     // The original three passed Windows Server, Debian/Ubuntu and
     // RHEL/AlmaLinux verification. AD CS enrollment and Vault distribution
     // were qualified by the 0.18.0 release campaigns.
     const manifest = loadQualifiedCapabilitiesManifest();
-    assert.deepEqual([...manifest.qualified].sort(), [...GATED_CAPABILITIES].sort());
+    assert.deepEqual([...manifest.qualified].sort(), GATED_CAPABILITIES.filter(capability=>capability!=="material-cleanup-vault-kv2-v1").sort());
+    assert.equal(manifest.qualified.includes("material-cleanup-vault-kv2-v1"),false);
   });
 
   it("advertises all three real-host-verified gated capabilities plus any ungated candidate", () => {
@@ -176,7 +178,8 @@ describe("qualified-capabilities loader startup rejection (defense in depth agai
 
     _resetQualifiedCapabilitiesCacheForTests();
     const manifest = loadQualifiedCapabilitiesManifest();
-    assert.deepEqual([...manifest.qualified].sort(), [...GATED_CAPABILITIES].sort());
+    assert.deepEqual([...manifest.qualified].sort(), GATED_CAPABILITIES.filter(capability=>capability!=="material-cleanup-vault-kv2-v1").sort());
+    assert.equal(manifest.qualified.includes("material-cleanup-vault-kv2-v1"),false);
   });
 });
 

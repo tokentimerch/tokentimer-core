@@ -4207,6 +4207,14 @@ describe("renew chain deployment", () => {
     assert.equal(client.calls.reportEvidence.length, 0);
   });
 
+  it("refuses cleanup execution while its new capability is absent from the immutable release manifest",async()=>{
+    const client=createRecordingClient();
+    const outcome=await executeJob({jobId:"job-cleanup",claimId:"claim-cleanup",job:{action:"cleanup-from-store",mode:"real"},
+      policyEngine:permissiveEngine(),client,executionContext:makeExecutionContext(),log:silentLog});
+    assert.equal(outcome.status,"blocked");assert.match(outcome.errorMessage,/has not qualified material-(?:store|cleanup)-vault-kv2-v1/);
+    assert.equal(client.calls.reportEvidence.length,0);
+  });
+
   // skip-reason: no-host - Linux declares the material capabilities, so this refusal only applies to other hosts.
   it("refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities", { skip: process.platform === "linux" }, async () => {
     const shared = {

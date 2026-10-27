@@ -23,12 +23,19 @@ test("connectors expose bounded typed actions without advertising unmerged Windo
   assert.equal(CONNECTORS.find(value=>value.id==="windows-material-iis-v1").available,false);
   assert.ok(!JSON.stringify(CONNECTORS).includes("shell"));
 });
-test("lifecycle public schema accepts manual defaults and rejects credentials or cleanup enablement",()=>{
+test("lifecycle public schema accepts manual defaults and rejects credentials or unapproved cleanup",()=>{
   const Ajv=require("ajv"),addFormats=require("ajv-formats"),ajv=new Ajv({strict:false});addFormats(ajv);
   const schema=require("../../packages/contracts/certops/distribution-lifecycle.schema.json");ajv.addSchema(schema);
   const valid=ajv.compile({$ref:`${schema.$id}#/definitions/policyRequest`});
   assert.equal(valid({policy:structuredClone(DEFAULT_POLICY),expectedRevision:0}),true);
   assert.equal(valid({policy:{...structuredClone(DEFAULT_POLICY),token:"secret"},expectedRevision:0}),false);
-  const policy=structuredClone(DEFAULT_POLICY);policy.retention.cleanupEnabled=true;
+  const policy=structuredClone(DEFAULT_POLICY);policy.retention.requiresApproval=false;
   assert.equal(valid({policy,expectedRevision:0}),false);
+});
+test("cleanup contracts permit only one exact Vault version and exclude credentials, purge and unapproved deletion",()=>{
+  const {validate}=require("../../packages/contracts/certops/validate-material-distribution.cjs"),{randomUUID}=require("node:crypto");
+  const value={type:"vault-kv2-soft-delete",cleanupId:randomUUID(),groupId:randomUUID(),managementPeriodId:randomUUID(),materialVersionId:randomUUID(),materialStoreRef:"customer",profileRevision:1,providerVersion:1,
+    policyRevision:1,scopeHash:"a".repeat(64),expiresAt:new Date(Date.now()+3600000).toISOString(),retentionPolicy:{minimumSeconds:0,minimumVersions:2,rollbackSeconds:0,cleanupEnabled:true,reportOnly:false,requiresApproval:true}};
+  assert.equal(validate("materialCleanup",value),true);
+  for(const change of [{type:"azure-purge"},{providerVersion:[1,2]},{providerVersion:0},{tokenFile:"forbidden"},{privateKeyPem:"forbidden"},{retentionPolicy:{...value.retentionPolicy,requiresApproval:false}},{retentionPolicy:{...value.retentionPolicy,reportOnly:true}}])assert.equal(validate("materialCleanup",{...value,...change}),false);
 });

@@ -367,6 +367,7 @@ const EXECUTABLE_JOB_ACTIONS = Object.freeze([
   "continue-enrollment",
   "deploy",
   "deploy-from-store",
+  "cleanup-from-store",
   "reload",
   "distribute-trust",
   "revoke-trust",
@@ -439,6 +440,7 @@ const AGENT_DECLARED_CAPABILITIES = filterQualifiedCapabilities(
   [...AGENT_CANDIDATE_CAPABILITIES, ...(process.platform === "linux" ? [
     "material-store-vault-kv2-v1", "certificate-publication-v1", "deploy-from-store-v1",
     "maintenance-calendar-v1",
+    "material-cleanup-vault-kv2-v1",
   ] : [])],
 );
 
@@ -2196,6 +2198,7 @@ async function handleSignedJob({
         ...(outcome.publicationReceipt ? { publicationReceipt: outcome.publicationReceipt,
           publicationCertificatePem: outcome.publicationCertificatePem } : {}),
         ...(outcome.deploymentReceipt ? { deploymentReceipt: outcome.deploymentReceipt } : {}),
+        ...(outcome.cleanupReceipt?{cleanupReceipt:outcome.cleanupReceipt}:{}),
         // ADR-0014: awaiting_issuer (and other AD CS outcomes) carry enrollment
         // state; required by agent-protocol when status is awaiting_issuer.
         ...(outcome.enrollmentResult
@@ -2476,7 +2479,7 @@ async function executeJob({
     });
   }
 
-  if (job.publication || action === "deploy-from-store") {
+  if (job.publication || action === "deploy-from-store" || action==="cleanup-from-store") {
     // Same rule as AD CS: advertisement filtering is not enough. A signed job
     // that reaches this process must still stop when the release manifest has
     // not qualified material distribution.
@@ -2493,6 +2496,7 @@ async function executeJob({
         "deploy-from-store-v1",
       );
     }
+    if(action==="cleanup-from-store")requiredMaterialCapabilities.push("material-store-vault-kv2-v1","material-cleanup-vault-kv2-v1");
     const missingMaterialCapability = requiredMaterialCapabilities.find(
       (capability) => !AGENT_DECLARED_CAPABILITIES.includes(capability),
     );
@@ -2512,10 +2516,11 @@ async function executeJob({
     };
     try {
       if (jobMode === "dry_run") {
-        resolveStore(executionContext.materialStores, { ...(job.publication || job.materialDeployment), workspaceId: job.workspaceId });
+        resolveStore(executionContext.materialStores, { ...(job.publication || job.materialDeployment || job.materialCleanup), workspaceId: job.workspaceId });
         if (job.materialDeployment) resolveBindingPolicy(job,executionContext.materialBindings,policyEngine);
         return { status: "dry_run_complete", keyRotated: null };
       }
+      if(action==="cleanup-from-store")return await require("./material-store/cleanup").executeMaterialCleanup({job,stores:executionContext.materialStores,stateDir,checkLease,onBeforeMutation:markMutation});
       if (action === "deploy-from-store") return await executePinnedDeployment({
         job, stores: executionContext.materialStores, bindings: executionContext.materialBindings,
         stateDir, policyEngine, checkLease, recoveryOnly: executionContext.materialRecoveryOnly === true,
