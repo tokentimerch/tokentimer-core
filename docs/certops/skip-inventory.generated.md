@@ -73,8 +73,8 @@ Total skips found: 81
 | `tests/e2e/certops-agent-e2e.test.js` | 827 | sequence enforcement: monotonic accepted, regression 409, re-register resets the generation, sequence-less accepted | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-enrollment-policy-api-e2e.test.js` | 15 | public AD CS enrollment policy bounds and immutable snapshots | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-enrollment-recovery-api-e2e.test.js` | 20 | AD CS installation retry through real API and PostgreSQL | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/material-providers-real.test.js` | 74 | real KV v2: AppRole, ACLs, rotation, exact versions, CAS and uncertain writes | test(..., { skip }) option-object | `no-host` |
-| `tests/e2e/material-providers-real.test.js` | 238 | real Azure Key Vault Secrets: publication, recovery and exact immutable retrieval | test(..., { skip }) option-object | `no-host` |
+| `tests/e2e/material-providers-real.test.js` | 80 | real KV v2: AppRole, ACLs, rotation, exact versions, CAS and uncertain writes | test(..., { skip }) option-object | `no-host` |
+| `tests/e2e/material-providers-real.test.js` | 244 | real Azure Key Vault Secrets: publication, recovery and exact immutable retrieval | test(..., { skip }) option-object | `no-host` |
 | `tests/e2e/windows-material-custody-real.test.js` | 10 | native Windows existing-key custody and association reject unsafe reuse without mutation | test(..., { skip }) option-object | `no-host` |
 | `tests/e2e/windows-material-real.test.js` | 33 | (unknown - no enclosing describe()/it()/test() title found above this line) | it(..., { skip }) option-object | `no-host` |
 | `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 50 | (unknown - no enclosing it()/test() title found above this line) | dynamic (this.skip() / t.skip()) | `no-host` |

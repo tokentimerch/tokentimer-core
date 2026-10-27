@@ -1,0 +1,127 @@
+name: "CertOps / Real Azure Key Vault qualification"
+on:
+  workflow_dispatch:
+    inputs:
+      location:
+        description: Approved lab subscription region (one Standard vault, no VMs)
+        type: choice
+        options: [swedencentral, westeurope, northeurope]
+        default: swedencentral
+permissions:
+  contents: read
+concurrency:
+  group: certops-azure-keyvault-provisioning
+  cancel-in-progress: false
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Reject untrusted refs and absent spending opt-in before any credentials
+        env:
+          OPT_IN: ${{ vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/main || { echo 'Trusted main required'; exit 1; }
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch || exit 1
+          test "$OPT_IN" = true || { echo 'Explicit Key Vault lab opt-in required'; exit 1; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: "24"
+      - name: Require independently approved main-only environment and active cleanup
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CERTOPS_AZURE_KEYVAULT_LAB_ENABLED: ${{ vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED }}
+        run: node infra/certops-azure-keyvault/lab.js github-preflight
+  lab:
+    needs: preflight
+    if: github.ref == 'refs/heads/main' && vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: certops-azure-keyvault-lab
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: kvqual
+          POSTGRES_PASSWORD: isolated-ci-fixture-only
+          POSTGRES_DB: kvqual
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U kvqual" --health-interval 5s --health-retries 12
+    env:
+      CERTOPS_AZURE_KEYVAULT_LAB_ENABLED: ${{ vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      AZURE_KV_ISSUER_ROLE_ID: ${{ vars.AZURE_KV_ISSUER_ROLE_ID }}
+      AZURE_KV_ATTRIBUTES_ROLE_ID: ${{ vars.AZURE_KV_ATTRIBUTES_ROLE_ID }}
+      LAB_LOCATION: ${{ inputs.location }}
+      GH_TOKEN: ${{ github.token }}
+      NODE_ENV: test
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_USER: kvqual
+      DB_PASSWORD: isolated-ci-fixture-only
+      DB_NAME: kvqual
+      TT_REAL_AZURE: "1"
+      TT_AZURE_QUALIFICATION_REQUIRED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: "24"
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: "11.28.8"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.3"
+          cache: false
+      - run: pnpm install --frozen-lockfile
+      - name: Authenticate isolated provisioning identity using OIDC
+        shell: pwsh
+        run: ./infra/certops-azure-keyvault/login-oidc.ps1
+      - name: Check actual permissions and provision only the run-owned vault and identities
+        run: node infra/certops-azure-keyvault/lab.js provision
+      - name: Build the exact qualification-only package and prepare real identities
+        run: node tests/e2e/azure-keyvault-real.cjs prepare
+      - name: Run existing Azure baseline against Microsoft Azure
+        run: node --test tests/e2e/material-providers-real.test.js
+      - name: Execute mandatory provider and signed agent/PostgreSQL integration campaign
+        run: node tests/e2e/azure-keyvault-real.cjs run
+      - name: Verify sanitized campaign evidence
+        run: node scripts/certops-azure-keyvault-report.js qualification-results/azure-keyvault-evidence.json
+      - name: Reauthenticate for cleanup even after cancellation or failed qualification
+        if: always()
+        shell: pwsh
+        run: ./infra/certops-azure-keyvault/login-oidc.ps1
+      - name: Remove only verified run-owned resources; never purge
+        if: always()
+        run: node infra/certops-azure-keyvault/lab.js cleanup
+      - name: Remove private local credentials and staging
+        if: always()
+        run: node tests/e2e/azure-keyvault-real.cjs scrub
+      - name: Check evidence allowlist before upload
+        id: evidence-check
+        if: always()
+        run: node scripts/certops-azure-keyvault-report.js --artifact-check qualification-results
+      - name: Upload only sanitized evidence, never packages or credential files
+        if: always() && steps.evidence-check.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: azure-keyvault-sanitized-evidence
+          path: |
+            qualification-results/azure-keyvault-evidence.json
+            qualification-results/azure-keyvault-cleanup.json
+          if-no-files-found: error

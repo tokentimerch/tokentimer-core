@@ -1,5 +1,13 @@
 # Distribution extension qualification
 
+2026-10-27: the [real Azure CI campaign and activation runbook](azure-keyvault-ci-qualification.md)
+adds a mandatory trusted-main, OIDC-backed Key Vault campaign with isolated
+issuer/consumer identities, signed packaged-agent/PostgreSQL integration,
+owned cleanup and a janitor. **AWAITING AZURE ACCESS / TRUSTED WORKFLOW DISPATCH**:
+the dedicated environments, grants and default-branch workflows are not yet
+available. No live Azure results or artifacts are claimed. The evidence below
+retains the original execution dates; production capabilities remain disabled.
+
 The [merged distribution validation](distribution-extensions-merge-2026-10-26.md)
 records integration with main's installed-file policy and the canonical
 78/79 migration sequence. The reports below retain their original candidate
@@ -46,7 +54,7 @@ absent from the shipped qualified manifest. API/contract availability does not
 grant those capabilities. Dispatch requires a fresh provider-specific
 declaration; the agent checks the build manifest again before execution.
 
-The workstation's Azure service-principal credential was expired and no
+At the initial run, the workstation's Azure service-principal credential was expired and no
 dedicated customer-local test identity/vault was available. Do not enable the
 Azure gate on mock evidence. Real identity renewal, least-privilege issuer and
 consumer roles, denied/missing/disabled versions, network interruption and
@@ -124,11 +132,14 @@ $env:TT_REAL_AZURE_CONFIG = 'C:\ProgramData\TokenTimer\qualification-store.json'
 node --test tests/e2e/material-providers-real.test.js
 ```
 
-The gated real test currently proves actual publish, exact retrieval,
-idempotent recovery and missing-version rejection. The broader Azure release
-campaign must also exercise independent read-only consumer access, denial,
-revocation/renewal and a lost provider response. The local fixture tests prove
-those protocol boundaries but do not substitute for the live campaign.
+This optional baseline exercises publication, exact retrieval, idempotent
+recovery and missing-version rejection when explicitly enabled. Use the
+[mandatory CI campaign](azure-keyvault-ci-qualification.md) for independent
+read-only consumer access, denial, revocation/renewal, a committed write with
+lost response, and signed-agent/PostgreSQL deployment/reconciliation/rollback.
+That new campaign is implemented but has not run against Azure yet. Local
+fixtures validate its harness and protocol boundaries without supplying live
+or exact-release-artifact evidence.
 
 ## Repeat native Windows/IIS tests
 

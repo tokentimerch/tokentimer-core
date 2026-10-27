@@ -513,7 +513,7 @@ jobs:
       - name: Replay all supported immutable migration histories
         run: pnpm exec mocha --no-config tests/integration/certops-distribution-upgrade.test.js --timeout 120000 --exit
       - name: Verify material provider version pins and retained-version rollback
-        run: pnpm exec mocha --no-config tests/integration/certops-material-providers.test.js --timeout 180000 --exit
+        run: pnpm exec mocha --no-config tests/integration/certops-material-providers.test.js tests/integration/certops-azure-keyvault-qualification.test.js --timeout 180000 --exit
       - name: Fence pinned rollback identities and late deployment evidence
         env:
           DB_NAME: wildcard_candidate_ci_test

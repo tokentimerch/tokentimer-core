@@ -1,0 +1,40 @@
+name: "CertOps / Expired owned Key Vault lab cleanup"
+on:
+  schedule:
+    - cron: "43 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: certops-azure-keyvault-cleanup
+  cancel-in-progress: false
+jobs:
+  cleanup:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: certops-azure-keyvault-cleanup
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: "24"
+      - name: Authenticate separate cleanup identity with OIDC
+        shell: pwsh
+        run: ./infra/certops-azure-keyvault/login-oidc.ps1
+      - name: Delete only expired owned Key Vault qualification groups with verified GitHub owners
+        run: node infra/certops-azure-keyvault/lab.js janitor
+      - name: Remove cached credentials
+        if: always()
+        run: node tests/e2e/azure-keyvault-real.cjs scrub

@@ -99,7 +99,7 @@ function workflows() {
 }
 test("all reviewed Azure workflows opt in and only manual workflows can provision", () => {
   const files = workflows();
-  assert.equal(azure.PROVISION.length + azure.LIFECYCLE.length, 2);
+  assert.equal(azure.PROVISION.length + azure.LIFECYCLE.length, 4);
   assert.ok(azure.PROVISION.includes("certops-enterprise-adcs-qualification.yml"));
   for (const [name, workflow] of Object.entries(files))
     assert.deepEqual(azure.validate(name, workflow), [], name);
@@ -112,7 +112,7 @@ test("all reviewed Azure workflows opt in and only manual workflows can provisio
       assert.ok(azure.validate(name, bad).length);
     }
     const bad = structuredClone(original);
-    Object.values(bad.jobs)[0].if = "github.ref == 'refs/heads/main'";
+    Object.values(bad.jobs).find(job => job.environment).if = "github.ref == 'refs/heads/main'";
     assert.ok(azure.validate(name, bad).length);
   }
   for (const name of azure.LIFECYCLE) {

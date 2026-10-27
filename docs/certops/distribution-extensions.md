@@ -68,6 +68,11 @@ and read at version 1. Deleted/destroyed versions fail rather than using latest.
 
 ## Azure Key Vault
 
+The [dedicated Azure CI runbook](azure-keyvault-ci-qualification.md) describes
+trusted-main OIDC activation, exact issuer/consumer roles, disposable vault
+ownership and cleanup, and the mandatory provider/signed-service campaign.
+Live execution is pending; Azure production capability remains disabled.
+
 Use a dedicated customer-controlled **public Azure Key Vault Secrets**
 namespace. Private endpoints are supported through customer DNS resolving the
 normal `<name>.vault.azure.net` hostname and a trusted TLS chain. Managed HSM,

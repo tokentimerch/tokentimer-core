@@ -16,6 +16,12 @@ const {
   parseDnsSans,
 } = require("../../packages/agent/src/verify");
 
+if (
+  process.env.TT_AZURE_QUALIFICATION_REQUIRED === "1" &&
+  process.env.TT_REAL_AZURE !== "1"
+)
+  throw new Error("AZURE_KV_MANDATORY_REAL_BASELINE_REQUIRED");
+
 function fixture(t, provider, address) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tt-provider-real-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
@@ -237,26 +243,40 @@ test(
   // skip-reason: no-host — customer-local Azure identity and dedicated vault only.
   { skip: process.env.TT_REAL_AZURE !== "1", timeout: 180000 },
   async (t) => {
-    const config = JSON.parse(
-      readProtectedFile(process.env.TT_REAL_AZURE_CONFIG, 32768),
-    );
-    assert.equal(config.provider, "azure-key-vault");
-    const f = fixture(t, "azure-key-vault", config.address);
-    // The vault and identity must be dedicated to this test. Unique names are
-    // deliberately retained; the test requires no delete/purge permission.
-    const stores = {
-      qualification: { ...config, groups: { [f.intent.groupId]: f.scope } },
-    };
-    const client = createMaterialStore(stores, f.intent);
-    const first = await client.publish(f.bundle);
-    assert.deepEqual(await client.fetch(first.providerVersion), f.bundle);
-    assert.deepEqual(
-      await client.publish(f.bundle, { writeAttempted: true }),
-      first,
-    );
-    await assert.rejects(client.fetch("0".repeat(32)), {
-      code: "material_version_unavailable",
-    });
-    assert.equal(JSON.stringify(first).includes("PRIVATE KEY"), false);
+    try {
+      const config = JSON.parse(
+        readProtectedFile(process.env.TT_REAL_AZURE_CONFIG, 32768),
+      );
+      assert.equal(config.provider, "azure-key-vault");
+      const f = fixture(t, "azure-key-vault", config.address);
+      // The vault and identity must be dedicated to this test. Unique names are
+      // deliberately retained; the test requires no delete/purge permission.
+      const stores = {
+        qualification: { ...config, groups: { [f.intent.groupId]: f.scope } },
+      };
+      const client = createMaterialStore(stores, f.intent);
+      const first = await client.publish(f.bundle);
+      // An assertion diff of a certificate bundle would print its private key.
+      assert.ok(
+        require("node:util").isDeepStrictEqual(
+          await client.fetch(first.providerVersion),
+          f.bundle,
+        ),
+        "exact Azure material readback failed",
+      );
+      assert.deepEqual(
+        await client.publish(f.bundle, { writeAttempted: true }),
+        first,
+      );
+      await assert.rejects(client.fetch("0".repeat(32)), {
+        code: "material_version_unavailable",
+      });
+      assert.equal(JSON.stringify(first).includes("PRIVATE KEY"), false);
+    } catch {
+      // Do not forward assertion objects, HTTP bodies, credential paths or causes.
+      throw new Error(
+        "AZURE_KV_REAL_BASELINE_FAILED_SENSITIVE_DETAILS_SUPPRESSED",
+      );
+    }
   },
 );
