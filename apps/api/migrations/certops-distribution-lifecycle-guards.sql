@@ -146,8 +146,11 @@ BEGIN
     WHERE id=NEW.management_period_id AND workspace_id=NEW.workspace_id FOR SHARE;
   -- The existing management-period guard owns closure and reconciliation.
   IF NOT FOUND OR period_row.ended_at IS NOT NULL THEN RETURN NEW; END IF;
+  -- Retirement owns the identity before closing this period. Dispatchers
+  -- prelock it without waiting; other writers must fail fast, never form the
+  -- inverse period -> identity wait while holding this period's SHARE lock.
   SELECT lifecycle_status INTO lifecycle FROM certops_certificate_identities
-    WHERE workspace_id=NEW.workspace_id AND id=NEW.certificate_identity_id FOR SHARE;
+    WHERE workspace_id=NEW.workspace_id AND id=NEW.certificate_identity_id FOR SHARE NOWAIT;
   IF install_continuation THEN
     IF lifecycle IN ('revoked','decommissioned') THEN
       RAISE EXCEPTION 'CertOps certificate lifecycle blocks this operation' USING ERRCODE='55000';
@@ -242,8 +245,9 @@ BEGIN
     RETURN NEW;
   END IF;
   IF NEW.status NOT IN ('claimed', 'running') OR already_started THEN RETURN NEW; END IF;
+  -- See the identity-start guard: never wait for retirement after locking its period.
   SELECT lifecycle_status, fingerprint_sha256 INTO lifecycle, fingerprint FROM certops_certificate_identities
-    WHERE workspace_id = NEW.workspace_id AND id = COALESCE(NEW.certificate_identity_id, period_row.current_identity_id) FOR SHARE;
+    WHERE workspace_id = NEW.workspace_id AND id = COALESCE(NEW.certificate_identity_id, period_row.current_identity_id) FOR SHARE NOWAIT;
   IF lifecycle IN ('revoked', 'decommissioned') AND NEW.operation IN ('renew', 'deploy', 'reload')
     AND NOT (certops_normalize_fingerprint(NEW.payload->>'targetFingerprintSha256') IS NOT NULL
       AND certops_normalize_fingerprint(NEW.payload->>'targetFingerprintSha256') <> fingerprint

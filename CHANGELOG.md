@@ -11,6 +11,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Dashboard images require patched curl packages.** Rebuild the image to replace curl and libcurl versions affected by CVE-2026-92392.
+
 - **Vault setup includes consumer registration and recovery.** Create each consumer's bootstrap token and resume a paused rollout in the guide. Retrying a deployment refreshes its timeline and agent output without reloading the page.
 - **Linux agent installation checks reload authorization.** Legacy polkit backends that cannot enforce the scoped service grant are rejected before installation changes. Public package directories remain accessible to the service account after extraction with a restrictive umask; credential and runtime-state permissions stay private.
 

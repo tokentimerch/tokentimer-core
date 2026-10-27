@@ -10,6 +10,7 @@ const {
   canonicalizeControllerProvisioningTerminalOccurredAt,
   normalizeDesiredCertificate,
   normalizeHumanProvisionRequest,
+  takeNextControllerProvisioningCommand,
   validateAuthenticatedProvisioningBinding,
 } = require("../../apps/api/services/certops/controllerProvisioning");
 
@@ -28,6 +29,36 @@ const desired = Object.freeze({
 });
 
 describe("controller provisioning normalization", () => {
+  for (const status of ["pending", "claimed", "running"]) {
+    it(`preserves ${status} command admission semantics after its management period closes`, async () => {
+      let delivered = false;
+      const client = { release() {}, async query(sql) {
+        if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [] };
+        if (sql.includes("FROM system_settings")) return { rows: [{ certops_settings: { enabled: true } }] };
+        if (sql.includes("FROM workspaces")) return { rows: [{ id: workspaceId, certops_paused: false }] };
+        if (sql.includes("FROM certificate_jobs j")) return { rows: [{ id: desired.jobId, status,
+          subject_type: "managed_certificate", subject_id: desired.managedCertificateId,
+          operation: "deploy", management_period_id: "00000000-0000-4000-8000-000000000004",
+          payload: { desiredCertificate: desired }, claimed_by_controller_cluster_id: "cluster-a" }] };
+        if (sql.includes("FROM managed_certificates mc")) return { rows: [{ id: desired.managedCertificateId }] };
+        if (sql.includes("FROM certops_management_periods")) return { rows: [] }; // Closed period.
+        if (sql.includes("INSERT INTO certificate_controller_provision_deliveries")) {
+          delivered = true;
+          return { rows: [{ job_id: desired.jobId }] };
+        }
+        if (sql.includes("UPDATE certificate_jobs")) return { rows: [{ status }] };
+        throw new Error(`unexpected query: ${sql}`);
+      } };
+      const result = await takeNextControllerProvisioningCommand({
+        dbPool: { connect: async () => client }, env: { CERTOPS_ENABLED: "true" },
+        apiToken: { workspaceId, controllerClusterId: "cluster-a" },
+      });
+      assert.equal(delivered, status !== "pending");
+      if (status === "pending") assert.equal(result, null);
+      else assert.equal(result.command.jobId, desired.jobId);
+    });
+  }
+
   it("uses the delivery row as an atomic admission gate before a controller claim", async () => {
     const calls = [];
     const admitted = await admitControllerProvisioningDelivery({

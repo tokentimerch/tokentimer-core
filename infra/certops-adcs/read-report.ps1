@@ -41,7 +41,19 @@ if len(b) > ${offset}:
 PY
 "@
   }
-  $response=Invoke-CertOpsVmRunCommand -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -ResourceGroup $ResourceGroup -Machine $machine -Script $script -RefreshAuthentication {if($env:GITHUB_ACTIONS -eq 'true'){& (Join-Path $PSScriptRoot 'login-oidc.ps1')}}
+  # These generated scripts only read report bytes. A 409 means the guest
+  # channel rejected this submission as busy; wait before another read. Never
+  # apply this retry to native actions or uncertain server/network failures.
+  for($readAttempt=0;$readAttempt -le 12;$readAttempt++){
+    try {
+      $response=Invoke-CertOpsVmRunCommand -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -ResourceGroup $ResourceGroup -Machine $machine -Script $script -RefreshAuthentication {if($env:GITHUB_ACTIONS -eq 'true'){& (Join-Path $PSScriptRoot 'login-oidc.ps1')}}
+      break
+    } catch {
+      if($_.Exception.Data['CertOpsArmHttpStatus'] -ne 409 -or $readAttempt -eq 12){throw}
+      Write-Output ("CERTOPS_REPORT_CHANNEL_BUSY={0}" -f ($readAttempt+1))
+      Start-Sleep -Seconds 5
+    }
+  }
   if($LASTEXITCODE -ne 0){throw 'Could not retrieve sanitized guest execution evidence'}
   $message=($response.value|ForEach-Object message)-join "`n"
   $match=[regex]::Match($message,'CERTOPS_REPORT_LENGTH=([0-9]+)')
