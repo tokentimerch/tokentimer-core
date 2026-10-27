@@ -3,7 +3,7 @@ const crypto=require("node:crypto");
 const {pool}=require("../../apps/api/db/database");
 const operations=require("../../apps/api/services/certops/distributionOperations");
 const {createCertificateIssuanceJob}=require("../../apps/api/services/certops/issuance");
-async function fixture({requireApproval=false}={}) {
+async function fixture({requireApproval=false,published=true}={}) {
   const workspaceId=crypto.randomUUID();
   async function user(){return (await pool.query(`INSERT INTO users(email,display_name,password_hash,auth_method)
     VALUES($1,'Lifecycle fixture','synthetic-test-only','local') RETURNING id`,[`${crypto.randomUUID()}@example.test`])).rows[0].id;}
@@ -26,11 +26,11 @@ async function fixture({requireApproval=false}={}) {
   const fingerprint=crypto.randomBytes(32).toString("hex");
   const identity=(await pool.query(`INSERT INTO certops_certificate_identities(workspace_id,fingerprint_sha256) VALUES($1,$2) RETURNING id`,[workspaceId,fingerprint])).rows[0].id;
   // Public synthetic receipt metadata only; no service execution is claimed.
-  await pool.query(`UPDATE certops_material_versions SET state='published',certificate_identity_id=$2,provider_version=1,
+  if(published){await pool.query(`UPDATE certops_material_versions SET state='published',certificate_identity_id=$2,provider_version=1,
     fingerprint_sha256=$3,valid_to=clock_timestamp()+interval '30 days',published_at=clock_timestamp(),publishing_claim_id=$4 WHERE id=$1`,
     [materialVersionId,identity,fingerprint,crypto.randomUUID()]);
   await pool.query(`UPDATE certops_distribution_groups SET latest_material_version_id=$3 WHERE workspace_id=$1 AND id=$2`,[workspaceId,groupId,materialVersionId]);
-  await pool.query(`UPDATE certificate_jobs SET status='succeeded',completed_at=NOW() WHERE id=$1`,[issued.job.id]);
+  await pool.query(`UPDATE certificate_jobs SET status='succeeded',completed_at=NOW() WHERE id=$1`,[issued.job.id]);}
   const bindingId=crypto.randomUUID(),binding={agentId:consumer,deploymentProfileRef:"web",profileRevision:1,required:true,wave:0,verificationPolicy:"served",freshnessSeconds:3600,state:"active"};
   await operations.putBinding({workspaceId,groupId,bindingId,binding,actorUserId:actor});
   return {workspaceId,actor,approver,issuer,consumer,groupId,materialVersionId,bindingId,binding,certificateId:issued.job.subjectId,identity,fingerprint};

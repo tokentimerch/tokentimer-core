@@ -39,6 +39,9 @@ test("concurrent/restarted publication handling creates exactly one genuine pend
 test("preauthorized mode needs a real bounded policy review; workspace mandatory approval cannot be bypassed",async()=>{
   for(const requireApproval of [false,true]){
     const f=await fixture({requireApproval}),policy=await configure(f,"preauthorized");
+    const review=(await pool.query("SELECT payload FROM certificate_jobs WHERE id=$1",[policy.approval_job_id])).rows[0].payload.distributionPolicyApproval;
+    assert.equal(review.scope.bindings[0].bindingId,f.bindingId);assert.equal(review.scope.bindings[0].activationClass,"reload");
+    assert.equal(review.scope.policy.maxParallel,1);assert.equal(review.scope.rolloutBehavior.requiredFailure,"pause");
     await approve(f,policy.approval_job_id);const result=await publish(f,policy.revision);
     assert.equal(result.reason,requireApproval?"authorization_stale":"authorized");
     const rollouts=(await pool.query("SELECT * FROM certops_distribution_rollouts WHERE workspace_id=$1",[f.workspaceId])).rows;
@@ -110,6 +113,16 @@ test("consumer incidents deduplicate, survive source publication, and resolve on
   await operations.requestRollout({...f,verificationOnly:true,actorUserId:f.actor});await proveConsumer(f);await monitor();
   assert.ok((await pool.query("SELECT resolved_at FROM certops_distribution_incidents WHERE id=$1",[incidents[0].id])).rows[0].resolved_at);
 });
+test("a failed publishing job opens an incident while its exact material allocation remains unresolved",async()=>{
+  const f=await fixture({published:false}),policy=structuredClone(lifecycle.DEFAULT_POLICY);policy.alerts.enabled=true;
+  await lifecycle.putPolicy({...f,policy,expectedRevision:0,actorUserId:f.actor});
+  await pool.query("UPDATE certificate_jobs SET status='failed',completed_at=clock_timestamp() WHERE id=(SELECT publishing_job_id FROM certops_material_versions WHERE workspace_id=$1 AND id=$2)",[f.workspaceId,f.materialVersionId]);
+  await operations.transaction(client=>monitoring.monitorGroup({client,workspaceId:f.workspaceId,groupId:f.groupId}));
+  const incident=(await pool.query("SELECT code,evidence FROM certops_distribution_incidents WHERE workspace_id=$1",[f.workspaceId])).rows[0];
+  assert.equal(incident.code,"publication_failed");assert.equal(incident.evidence.materialVersionId,f.materialVersionId);
+  assert.equal((await pool.query("SELECT state FROM certops_material_versions WHERE id=$1",[f.materialVersionId])).rows[0].state,"allocated");
+});
+
 test("stable discovered consumers survive fingerprint rotation, stale observations and tenant boundaries",async()=>{
   const f=await fixture(),other=await fixture();
   const observation={workspaceId:f.workspaceId,agentRowId:f.consumer,targetHost:"web",locationKind:"iis_binding",locationSlot:"default:443",
@@ -138,6 +151,39 @@ test("revoking a policy reviewer invalidates previously approved automatic rollo
   const f=await fixture(),policy=await configure(f,"preauthorized");await approve(f,policy.approval_job_id);
   await pool.query("UPDATE workspace_memberships SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[f.workspaceId,f.approver]);
   assert.equal((await publish(f,policy.revision)).reason,"authorization_stale");
+});
+test("unchanged configuration can obtain a fresh policy review after consumer authorization changes",async()=>{
+  const f=await fixture(),policy=await configure(f,"preauthorized");await approve(f,policy.approval_job_id);
+  await operations.putBinding({...f,binding:{...f.binding,wave:1},actorUserId:f.actor});
+  const next=await lifecycle.putPolicy({...f,policy:policy.policy,expectedRevision:policy.revision,actorUserId:f.actor});
+  assert.equal(next.revision,policy.revision+1);assert.notEqual(next.approval_job_id,policy.approval_job_id);
+  assert.equal((await pool.query("SELECT status FROM certificate_jobs WHERE id=$1",[next.approval_job_id])).rows[0].status,"pending_approval");
+});
+test("cancelled approval requests close their notification without creating a rollout",async()=>{
+  const f=await fixture(),policy=await configure(f,"preauthorized");
+  assert.equal((await pool.query("SELECT 1 FROM operational_notifications WHERE workspace_id=$1 AND resolved_at IS NULL",[f.workspaceId])).rowCount,1);
+  await pool.query("UPDATE certificate_jobs SET status='cancelled' WHERE workspace_id=$1 AND id=$2",[f.workspaceId,policy.approval_job_id]);
+  assert.equal((await pool.query("SELECT 1 FROM operational_notifications WHERE workspace_id=$1 AND resolved_at IS NULL",[f.workspaceId])).rowCount,0);
+  assert.equal((await pool.query("SELECT 1 FROM certops_distribution_rollouts WHERE workspace_id=$1",[f.workspaceId])).rowCount,0);
+});
+test("retry refuses changed consumer authorization without clearing the original uncertain stage",async()=>{
+  const f=await fixture(),parent=await operations.requestRollout({...f,actorUserId:f.actor});
+  const rollout=(await pool.query("SELECT id FROM certops_distribution_rollouts WHERE approval_job_id=$1",[parent.id])).rows[0];
+  await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,rollout.id));
+  const job=(await pool.query("SELECT job_id FROM certops_consumer_deployments WHERE workspace_id=$1 AND binding_id=$2",[f.workspaceId,f.bindingId])).rows[0];
+  await pool.query("UPDATE certificate_jobs SET status='orphaned_unknown_effect',attempt_count=1 WHERE id=$1",[job.job_id]);
+  await pool.query("UPDATE certops_consumer_deployments SET stage='orphaned_unknown_effect' WHERE job_id=$1",[job.job_id]);
+  await operations.putBinding({...f,binding:{...f.binding,wave:2},actorUserId:f.actor});
+  await assert.rejects(()=>operations.retryDistributionJob({workspaceId:f.workspaceId,jobId:job.job_id,actorUserId:f.actor}),{code:"CERTOPS_MATERIAL_RETRY_AUTHORIZATION_STALE"});
+  assert.equal((await pool.query("SELECT stage FROM certops_consumer_deployments WHERE job_id=$1",[job.job_id])).rows[0].stage,"orphaned_unknown_effect");
+});
+test("historical canary success with expired proof cannot authorize later waves or complete a rollout",async()=>{
+  const f=await fixture();await operations.requestRollout({...f,actorUserId:f.actor});const proof=await proveConsumer(f);
+  await pool.query("UPDATE certops_distribution_rollouts SET state='deploying' WHERE id=$1",[proof.rollout.id]);
+  await pool.query("UPDATE certops_consumer_deployments SET observed_at=clock_timestamp()-interval '2 hours' WHERE rollout_id=$1",[proof.rollout.id]);
+  const result=await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,proof.rollout.id));
+  assert.equal(result.reason,"consumer_verification_stale");
+  assert.equal((await pool.query("SELECT state FROM certops_distribution_rollouts WHERE id=$1",[proof.rollout.id])).rows[0].state,"paused");
 });
 test("real HTTP routes preserve session, manager, emergency-admin, tenant and private-material boundaries",async()=>{
   const f=await fixture(),other=await fixture(),express=require("../../apps/api/node_modules/express"),app=express();

@@ -19,8 +19,9 @@ test("lifecycle policy rejects unknown inputs, credentials, destructive cleanup 
 });
 test("standing policy authority requires a genuine exact, nonexpired approval and matching revision",()=>{
   const expiresAt=new Date(Date.now()+86400000).toISOString();
-  const policy={group_id:"group",revision:1,scope_hash:"a".repeat(64),policy:{authorizationExpiresAt:expiresAt}};
-  const job={status:"pending",approved_by_user_id:2,approved_at:new Date(),payload:{distributionPolicyApproval:{groupId:"group",revision:1,scopeHash:policy.scope_hash,expiresAt}}};
+  const scope={groupId:"group",bindings:[{bindingId:"consumer",activationClass:"reload"}]};
+  const policy={group_id:"group",revision:1,scope_hash:computeJobPayloadApprovalHash(scope),policy:{authorizationExpiresAt:expiresAt}};
+  const job={status:"pending",approved_by_user_id:2,approved_at:new Date(),payload:{distributionPolicyApproval:{groupId:"group",revision:1,scopeHash:policy.scope_hash,scope,expiresAt}}};
   job.approved_payload_hash=computeJobPayloadApprovalHash(job.payload);
   assert.equal(approvalMatches(job,policy),true);
   for (const changed of [{...job,approved_by_user_id:null},{...job,approved_payload_hash:null},{...job,status:"cancelled"},

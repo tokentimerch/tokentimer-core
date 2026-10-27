@@ -169,6 +169,18 @@ test("files-only delivery writes and reads back the actual pair without reload o
   assert.equal((await f.deploy({ recoveryOnly: true })).status, "succeeded");
 });
 
+test("manual activation permits read-only verification but never authorizes destination mutation",async t=>{
+  const f=await fixture(t);filesOnly(f);assert.equal((await f.deploy()).status,"succeeded");
+  const before=fs.readFileSync(f.target.certPath);
+  f.binding.activationMethod="manual";
+  const options=f.options({generation:2,verificationOnly:true,reload:()=>assert.fail("Manual verification must never reload")});
+  options.job.materialDeployment.activationPolicy={method:"manual",disruptive:true,requiresApproval:true,timezone:"UTC",windows:[],blackouts:[],validUntil:null,emergency:null};
+  assert.equal((await executePinnedDeployment(options)).status,"succeeded");
+  assert.deepEqual(fs.readFileSync(f.target.certPath),before);
+  const mutating=f.options({generation:3});mutating.job.materialDeployment.activationPolicy=options.job.materialDeployment.activationPolicy;
+  await assert.rejects(()=>executePinnedDeployment(mutating),{code:"material_activation_policy_denied"});
+});
+
 test("files-only rejects mismatched local policy, service hooks, and stale generations before writing", async (t) => {
   const f = await fixture(t);
   filesOnly(f);

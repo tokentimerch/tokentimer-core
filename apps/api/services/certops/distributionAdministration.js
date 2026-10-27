@@ -1,11 +1,12 @@
 "use strict";
 const { pool } = require("../../db/database");
 const material = require("./materialDistribution");
-const { DEFAULT_POLICY, loadPolicy } = require("./distributionLifecycle");
+const { DEFAULT_POLICY, loadPolicy,isPreauthorized } = require("./distributionLifecycle");
 const { consumerHealth } = require("./distributionMonitoring");
 const {
   nextActivation,
   supportedActivation,
+  activationDeadline,
 } = require("./distributionMaintenance");
 const {
   CONNECTORS,
@@ -31,6 +32,9 @@ async function groupFor(client, workspaceId, groupId) {
 async function overview({ client = pool, workspaceId, groupId }) {
   const group = await groupFor(client, workspaceId, groupId);
   const policy = await loadPolicy(client, workspaceId, group.id);
+  const authorization=policy?.policy.mode==="preauthorized"?
+    {state:await isPreauthorized(client,workspaceId,group,policy)?"authorized":"review_required_or_scope_changed",expiresAt:policy.policy.authorizationExpiresAt}:
+    {state:policy?.policy.mode || "manual",expiresAt:null};
   const consumers = await material.consumerMatrix({
     client,
     workspaceId,
@@ -107,6 +111,7 @@ async function overview({ client = pool, workspaceId, groupId }) {
         latestVersionId: group.latest_material_version_id,
       }),
     })),
+    authorization,
     versions,
     rollouts,
     approvals,
@@ -196,7 +201,7 @@ async function preflight({
           code: "CERTOPS_LOCAL_RECONCILIATION_REQUIRED",
           status: "blocked",
         });
-      const window = nextActivation(row.activation_policy, version?.valid_to);
+      const window = nextActivation(row.activation_policy, activationDeadline(version?.valid_to,row.observed_valid_to));
       if (!window.at)
         diagnostics.push({
           code: "CERTOPS_ACTIVATION_WINDOW_UNAVAILABLE",

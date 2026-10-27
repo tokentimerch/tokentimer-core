@@ -170,7 +170,7 @@ function resolveBindingPolicy(job, bindings, policyEngine) {
     validateActivationPolicy(intent.activationPolicy);
     // A control-plane policy cannot introduce a new customer-local action.
     const localMethod=binding.activationMethod || (filesOnly?"none":"reload");
-    if(intent.activationPolicy.method!==localMethod || !["none","reload"].includes(localMethod))throw failure("material_activation_policy_denied");
+    if(intent.activationPolicy.method!==localMethod || !["none","reload",...(intent.verificationOnly===true?["manual"]:[])].includes(localMethod))throw failure("material_activation_policy_denied");
   }
   for (const file of [binding.target.certPath, binding.target.keyPath, binding.target.chainPath].filter(Boolean)) {
     if (!policyEngine.checkPath(file).allowed) throw failure("material_destination_denied");

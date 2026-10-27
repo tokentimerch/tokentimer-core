@@ -92,4 +92,9 @@ function supportedActivation(policy, verificationPolicy) {
     ? policy.method === "none"
     : policy.method === "reload";
 }
-module.exports = { ...calendar, putConsumerPolicy, supportedActivation };
+function activationDeadline(desiredExpiry,deployedExpiry){
+  const desired=new Date(desiredExpiry).getTime(),deployed=deployedExpiry?new Date(deployedExpiry).getTime():Infinity;
+  const deadline=Math.min(desired,deployed);
+  return Number.isFinite(deadline)?new Date(deadline).toISOString():null;
+}
+module.exports = { ...calendar, putConsumerPolicy, supportedActivation,activationDeadline };

@@ -2,7 +2,7 @@
 const { pool } = require("../../db/database");
 const material = require("./materialDistribution");
 const { loadPolicy } = require("./distributionLifecycle");
-const { nextActivation } = require("./distributionMaintenance");
+const { nextActivation,activationDeadline } = require("./distributionMaintenance");
 const {
   resolveContactGroupsForAsset,
   deliveryChannelsFromEligibleGroups,
@@ -315,7 +315,8 @@ async function monitorGroup({
   const rows = await material.consumerMatrix({ client, workspaceId, groupId });
   const version = (
     await client.query(
-      `SELECT * FROM certops_material_versions WHERE workspace_id=$1 AND group_id=$2 ORDER BY created_at DESC,id DESC LIMIT 1`,
+      `SELECT v.*,j.status AS publishing_status FROM certops_material_versions v JOIN certificate_jobs j ON j.workspace_id=v.workspace_id AND j.id=v.publishing_job_id
+        WHERE v.workspace_id=$1 AND v.group_id=$2 ORDER BY v.created_at DESC,v.id DESC LIMIT 1`,
       [workspaceId, groupId],
     )
   ).rows[0];
@@ -358,7 +359,8 @@ async function monitorGroup({
           [workspaceId, groupId, row.desired_material_version_id],
         )
       ).rows[0]?.valid_to;
-      const next = nextActivation(row.activation_policy, expiry, now);
+      const deadline=activationDeadline(expiry,row.observed_valid_to);
+      const next = nextActivation(row.activation_policy, deadline, now);
       if (!next.at)
         conditions.push({
           bindingId: row.binding_id,
@@ -367,7 +369,8 @@ async function monitorGroup({
         });
     }
   }
-  if (version && ["failed", "orphaned_unknown_effect"].includes(version.state))
+  if (version && (version.state==="orphaned_unknown_effect" || version.state==="failed" && !version.allocation_release_reason ||
+    ["failed","blocked","orphaned_unknown_effect"].includes(version.publishing_status)))
     conditions.push({
       code: "publication_failed",
       evidence: {

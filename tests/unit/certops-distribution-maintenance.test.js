@@ -1,6 +1,7 @@
 "use strict";
 const test=require("node:test"),assert=require("node:assert/strict");
 const {activationDecision,nextActivation,validateActivationPolicy}=require("../../packages/contracts/certops/activation-calendar.cjs");
+const {activationDeadline}=require("../../apps/api/services/certops/distributionMaintenance");
 const policy={method:"reload",disruptive:true,requiresApproval:true,timezone:"Europe/Berlin",windows:[{days:[0],start:"02:00",end:"03:00"}],blackouts:[],validUntil:null,emergency:null};
 const allowed=(value,time)=>activationDecision(value,Date.parse(time)).allowed;
 test("IANA calendars handle DST gaps, both repeated hours, end exclusivity and UTC",()=>{
@@ -34,4 +35,7 @@ test("activation classes are explicit and unsafe policies are rejected",()=>{
   assert.throws(()=>validateActivationPolicy({...policy,windows:[{days:[0],start:"01:00",end:"01:00"}]}));
   assert.equal(activationDecision({...policy,method:"manual"}).reason,"manual_activation_required");
   assert.equal(activationDecision({...policy,windows:[]}).allowed,false);
+});
+test("maintenance escalation uses the earlier deployed expiry even after source renewal",()=>{
+  assert.equal(activationDeadline("2027-01-01T00:00:00Z","2026-11-01T00:00:00Z"),"2026-11-01T00:00:00.000Z");
 });

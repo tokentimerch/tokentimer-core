@@ -143,10 +143,7 @@ async function authorizationScope(client, workspaceId, group, policy) {
       [workspaceId, group.id],
     )
   ).rows;
-  return {
-    workspace,
-    bindings,
-    hash: material.hashIntent({
+  const snapshot={
       workspaceId,
       groupId: group.id,
       managementPeriodId: group.management_period_id,
@@ -161,9 +158,15 @@ async function authorizationScope(client, workspaceId, group, policy) {
       workspaceOwner: workspace.created_by,
       reviewers,
       policy,
-      bindings,
-    }),
+      bindings:bindings.map(binding=>({bindingId:binding.id,agentId:binding.assigned_agent_id,
+        profileRef:binding.deployment_profile_ref,profileRevision:binding.profile_revision,
+        authorizationRevision:binding.authorization_revision,required:binding.required,wave:binding.wave,
+        verificationPolicy:binding.verification_policy,freshnessSeconds:binding.freshness_seconds,
+        activationClass:binding.activation_policy?.method || (binding.verification_policy==="installed"?"none":"reload"),
+        activationPolicy:binding.activation_policy || null})),
+      rolloutBehavior:{requiredFailure:"pause",optionalFailure:"degraded",waveOrder:"ascending",rollback:"explicit_approval",verificationBeforeNextWave:true},
   };
+  return {workspace,bindings,snapshot,hash:material.hashIntent(snapshot)};
 }
 async function loadPolicy(client, workspaceId, groupId) {
   return (
@@ -216,11 +219,8 @@ async function putPolicy({
     const prior = await loadPolicy(client, workspaceId, groupId);
     if (expectedRevision !== (prior?.revision || 0))
       fail("CERTOPS_LIFECYCLE_POLICY_REVISION_CHANGED", 409);
-    if (
-      prior &&
-      material.hashIntent(prior.policy) === material.hashIntent(policy)
-    )
-      return prior;
+    const unchanged=prior && material.hashIntent(prior.policy)===material.hashIntent(policy);
+    if(unchanged && policy.mode!=="preauthorized")return prior;
     const settings = (
       await client.query(
         `SELECT contact_groups FROM workspace_settings WHERE workspace_id=$1`,
@@ -237,6 +237,10 @@ async function putPolicy({
     )
       fail("CERTOPS_CONTACT_GROUP_NOT_FOUND", 422);
     const scope = await authorizationScope(client, workspaceId, group, policy);
+    if(unchanged && prior.scope_hash===scope.hash && prior.approval_job_id){
+      const previousApproval=(await client.query(`SELECT status FROM certificate_jobs WHERE workspace_id=$1 AND id=$2 FOR SHARE`,[workspaceId,prior.approval_job_id])).rows[0];
+      if(["pending_approval","pending","succeeded"].includes(previousApproval?.status))return prior;
+    }
     if (policy.mode !== "manual" && !scope.bindings.length)
       fail("CERTOPS_ROLLOUT_POLICY_INVALID", 422);
     const row = (
@@ -265,6 +269,7 @@ async function putPolicy({
             groupId,
             revision: row.revision,
             scopeHash: scope.hash,
+            scope:scope.snapshot,
             expiresAt: policy.authorizationExpiresAt,
           },
         },
@@ -310,6 +315,7 @@ function approvalMatches(job, policy) {
     intent.groupId === policy.group_id &&
     intent.revision === policy.revision &&
     intent.scopeHash === policy.scope_hash &&
+    intent.scope && material.hashIntent(intent.scope)===intent.scopeHash &&
     intent.expiresAt === policy.policy.authorizationExpiresAt &&
     Date.parse(intent.expiresAt) > Date.now()
   );
