@@ -2,7 +2,11 @@
 /** Paid domain infrastructure is an explicit repository opt-in. Scheduled jobs
  * may only finish/clean an already owned manual campaign, never create a lab. */
 const PROVISION = Object.freeze(["certops-enterprise-adcs-qualification.yml"]);
-const LIFECYCLE = Object.freeze(["certops-adcs-lab-janitor.yml"]);
+const KEYVAULT_CLEANUP = "certops-azure-keyvault-janitor.yml";
+const LIFECYCLE = Object.freeze([
+  "certops-adcs-lab-janitor.yml",
+  KEYVAULT_CLEANUP,
+]);
 const MAIN = "github.ref == 'refs/heads/main'";
 const PROVISION_IF = MAIN + " && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'";
 const LIFECYCLE_IF = MAIN;
@@ -12,6 +16,8 @@ function allowedCondition(name, value) {
     : LIFECYCLE.includes(name) && value === LIFECYCLE_IF;
 }
 function validate(name, workflow) {
+  if (name === KEYVAULT_CLEANUP)
+    return require("./certops-keyvault-bootstrap-policy").validate(workflow);
   const errors = [];
   const known = PROVISION.includes(name) || LIFECYCLE.includes(name);
   const runs = Object.values(workflow.jobs || {}).flatMap((job) =>
