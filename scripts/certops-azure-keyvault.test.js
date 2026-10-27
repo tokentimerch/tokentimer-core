@@ -221,7 +221,7 @@ test("role definitions have exact read/write or read-only rights and no delete, 
     false,
   );
 });
-test("protected environments require main only, independent approval and separate unattended cleanup", () => {
+test("protected environments require exact reviewed branches, independent approval and separate unattended cleanup", () => {
   const branches = { branch_policies: [{ name: "main", type: "branch" }] };
   const metadata = {
     name: subject.LAB_ENV,
@@ -238,6 +238,30 @@ test("protected environments require main only, independent approval and separat
     ],
   };
   subject.requireEnvironment(metadata, branches, subject.LAB_ENV);
+  const temporary = {
+    branch_policies: [
+      ...branches.branch_policies,
+      { name: subject.TEMPORARY_BRANCH, type: "branch" },
+    ],
+  };
+  subject.requireEnvironment(metadata, temporary, subject.LAB_ENV);
+  for (const rules of [
+    [{ name: subject.TEMPORARY_BRANCH, type: "branch" }],
+    [...temporary.branch_policies, { name: "other", type: "branch" }],
+    [...branches.branch_policies, { name: "main", type: "branch" }],
+    [
+      ...branches.branch_policies,
+      { name: subject.TEMPORARY_BRANCH, type: "tag" },
+    ],
+    [...branches.branch_policies, { name: "feat/*", type: "branch" }],
+  ])
+    assert.throws(() =>
+      subject.requireEnvironment(
+        metadata,
+        { branch_policies: rules },
+        subject.LAB_ENV,
+      ),
+    );
   for (const mutate of [
     (m) => {
       m.protection_rules = [];
@@ -283,7 +307,7 @@ test("protected environments require main only, independent approval and separat
     ),
   );
 });
-test("janitor verifies actual GitHub owner workflow, source and manual main run", () => {
+test("janitor verifies actual GitHub owner workflow, source and manual reviewed-branch run", () => {
   const p = plan(),
     run = {
       id: Number(p.tags.runId),
@@ -295,6 +319,7 @@ test("janitor verifies actual GitHub owner workflow, source and manual main run"
       created_at: p.tags.createdAt,
     };
   subject.verifyRun(run, p.tags);
+  subject.verifyRun({ ...run, head_branch: subject.TEMPORARY_BRANCH }, p.tags);
   for (const patch of [
     { event: "pull_request" },
     { head_branch: "feature" },
@@ -304,6 +329,38 @@ test("janitor verifies actual GitHub owner workflow, source and manual main run"
     { run_attempt: 0 },
   ])
     assert.throws(() => subject.verifyRun({ ...run, ...patch }, p.tags));
+});
+
+test("temporary branch exception remains exact, manual and Key Vault only", () => {
+  const branchEnv = {
+    ...env(),
+    GITHUB_REF: `refs/heads/${subject.TEMPORARY_BRANCH}`,
+  };
+  subject.plan(branchEnv);
+  subject.requireTrusted(branchEnv, false);
+  for (const patch of [
+    { GITHUB_EVENT_NAME: "push" },
+    { GITHUB_EVENT_NAME: "schedule" },
+    { GITHUB_EVENT_NAME: "pull_request" },
+    { GITHUB_REF: "refs/heads/feat/other" },
+    { GITHUB_REF: `refs/tags/${subject.TEMPORARY_BRANCH}` },
+    { GITHUB_REPOSITORY: "foreign/core" },
+  ]) {
+    assert.throws(() => subject.plan({ ...branchEnv, ...patch }));
+    assert.throws(() =>
+      subject.requireTrusted({ ...branchEnv, ...patch }, false),
+    );
+  }
+  assert.throws(() =>
+    subject.plan({ ...branchEnv, CERTOPS_AZURE_KEYVAULT_LAB_ENABLED: "false" }),
+  );
+  const qualifier = workflow("certops-azure-keyvault-qualification.yml");
+  const janitor = workflow("certops-azure-keyvault-janitor.yml");
+  for (const [name, condition] of [
+    ["certops-enterprise-adcs-qualification.yml", qualifier.jobs.lab.if],
+    ["certops-adcs-lab-janitor.yml", janitor.jobs.cleanup.if],
+  ])
+    assert.equal(scope.allowedCondition(name, condition), false);
 });
 test("ARM absence is explicit; subscription/access failures never become successful cleanup", (t) => {
   const cp = require("node:child_process");

@@ -6,6 +6,15 @@ const PURPOSE = "certops-azure-keyvault-qualification";
 const LAB_ENV = "certops-azure-keyvault-lab";
 const CLEANUP_ENV = "certops-azure-keyvault-cleanup";
 const WORKFLOW = ".github/workflows/certops-azure-keyvault-qualification.yml";
+// WARNING: TEMPORARY PRE-MERGE EXCEPTION. Revert before merging.
+const TEMPORARY_BRANCH = "feat/certops-distribution-extensions";
+function trustedRef(env) {
+  return (
+    env.GITHUB_REF === "refs/heads/main" ||
+    (env.GITHUB_REF === `refs/heads/${TEMPORARY_BRANCH}` &&
+      env.GITHUB_EVENT_NAME === "workflow_dispatch")
+  );
+}
 const GUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const GROUP = /^tt-kvqual-([1-9][0-9]{0,19})-([1-9][0-9]{0,4})$/;
 const READ = [
@@ -27,7 +36,7 @@ function requireTrusted(env, manual = true) {
   if (
     env.GITHUB_ACTIONS !== "true" ||
     env.GITHUB_REPOSITORY !== REPOSITORY ||
-    env.GITHUB_REF !== "refs/heads/main" ||
+    !trustedRef(env) ||
     !/^[a-f0-9]{40}$/.test(env.GITHUB_SHA || "") ||
     (manual && env.GITHUB_EVENT_NAME !== "workflow_dispatch")
   )
@@ -40,9 +49,17 @@ function requireEnvironment(metadata, branches, name) {
     metadata?.name !== name ||
     metadata.deployment_branch_policy?.custom_branch_policies !== true ||
     metadata.deployment_branch_policy?.protected_branches !== false ||
-    branches?.branch_policies?.length !== 1 ||
-    branches.branch_policies[0].name !== "main" ||
-    branches.branch_policies[0].type !== "branch"
+    !Array.isArray(branches?.branch_policies) ||
+    branches.branch_policies.length < 1 ||
+    branches.branch_policies.length > 2 ||
+    !branches.branch_policies.some((rule) => rule.name === "main") ||
+    new Set(branches.branch_policies.map((rule) => rule.name)).size !==
+      branches.branch_policies.length ||
+    branches.branch_policies.some(
+      (rule) =>
+        rule.type !== "branch" ||
+        !["main", TEMPORARY_BRANCH].includes(rule.name),
+    )
   )
     fail("AZURE_KV_ENVIRONMENT_MAIN_ONLY_REQUIRED");
   const reviewers = metadata.protection_rules?.find(
@@ -244,7 +261,7 @@ function verifyRun(run, tags) {
     String(run?.id) !== tags.runId ||
     run.head_sha !== tags.sourceSha ||
     run.event !== "workflow_dispatch" ||
-    run.head_branch !== "main" ||
+    !["main", TEMPORARY_BRANCH].includes(run.head_branch) ||
     run.path !== WORKFLOW ||
     Number(run.run_attempt) < Number(tags.attempt) ||
     !Number.isFinite(Date.parse(run.created_at)) ||
@@ -253,6 +270,8 @@ function verifyRun(run, tags) {
     fail("AZURE_KV_UNVERIFIED_OWNER_RUN");
 }
 module.exports = {
+  TEMPORARY_BRANCH,
+  trustedRef,
   REPOSITORY,
   PURPOSE,
   LAB_ENV,

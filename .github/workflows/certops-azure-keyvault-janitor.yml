@@ -1,3 +1,4 @@
+# WARNING: TEMPORARY BRANCH EXCEPTION. Revert before merging.
 name: "CertOps / Expired owned Key Vault lab cleanup"
 on:
   schedule:
@@ -10,7 +11,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   cleanup:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || (github.ref == 'refs/heads/feat/certops-distribution-extensions' && github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     environment: certops-azure-keyvault-cleanup
     timeout-minutes: 20

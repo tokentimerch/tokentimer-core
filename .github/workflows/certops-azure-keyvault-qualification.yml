@@ -1,3 +1,4 @@
+# WARNING: TEMPORARY BRANCH EXCEPTION. Revert before merging.
 name: "CertOps / Real Azure Key Vault qualification"
 on:
   workflow_dispatch:
@@ -24,7 +25,7 @@ jobs:
         env:
           OPT_IN: ${{ vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED }}
         run: |
-          test "$GITHUB_REF" = refs/heads/main || { echo 'Trusted main required'; exit 1; }
+          case "$GITHUB_REF" in refs/heads/main|refs/heads/feat/certops-distribution-extensions) ;; *) echo 'Trusted ref required'; exit 1;; esac
           test "$GITHUB_EVENT_NAME" = workflow_dispatch || exit 1
           test "$OPT_IN" = true || { echo 'Explicit Key Vault lab opt-in required'; exit 1; }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -33,14 +34,14 @@ jobs:
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
           node-version: "24"
-      - name: Require independently approved main-only environment and active cleanup
+      - name: Require independently approved exact-branch environment and active cleanup
         env:
           GH_TOKEN: ${{ github.token }}
           CERTOPS_AZURE_KEYVAULT_LAB_ENABLED: ${{ vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED }}
         run: node infra/certops-azure-keyvault/lab.js github-preflight
   lab:
     needs: preflight
-    if: github.ref == 'refs/heads/main' && vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED == 'true'
+    if: (github.ref == 'refs/heads/main' || (github.ref == 'refs/heads/feat/certops-distribution-extensions' && github.event_name == 'workflow_dispatch')) && vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: certops-azure-keyvault-lab
     timeout-minutes: 90

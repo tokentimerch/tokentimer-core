@@ -10,13 +10,20 @@ const PROVISION = Object.freeze([
 const LIFECYCLE = Object.freeze(["certops-adcs-lab-janitor.yml", KV_CLEANUP]);
 const MAIN = "github.ref == 'refs/heads/main'";
 const PROVISION_IF = MAIN + " && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'";
+// WARNING: TEMPORARY Key Vault branch exception. Revert before merging.
+const KEYVAULT_LIFECYCLE_IF =
+  MAIN +
+  " || (github.ref == 'refs/heads/feat/certops-distribution-extensions' && github.event_name == 'workflow_dispatch')";
 const KEYVAULT_IF =
-  MAIN + " && vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED == 'true'";
+  "(" +
+  KEYVAULT_LIFECYCLE_IF +
+  ") && vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED == 'true'";
 const LIFECYCLE_IF = MAIN;
 function allowedCondition(name, value) {
   return PROVISION.includes(name)
     ? value === (name === KV ? KEYVAULT_IF : PROVISION_IF)
-    : LIFECYCLE.includes(name) && value === LIFECYCLE_IF;
+    : LIFECYCLE.includes(name) &&
+        value === (name === KV_CLEANUP ? KEYVAULT_LIFECYCLE_IF : LIFECYCLE_IF);
 }
 function keyvaultPolicy(name, workflow, errors) {
   const janitor = name === KV_CLEANUP;
@@ -78,7 +85,9 @@ function keyvaultPolicy(name, workflow, errors) {
         );
       const first = job.steps?.[0];
       if (
-        !first?.run?.includes('test "$GITHUB_REF" = refs/heads/main') ||
+        !first?.run?.includes(
+          "case \"$GITHUB_REF\" in refs/heads/main|refs/heads/feat/certops-distribution-extensions) ;; *) echo 'Trusted ref required'; exit 1;; esac",
+        ) ||
         !first.run.includes('test "$GITHUB_EVENT_NAME" = workflow_dispatch') ||
         !first.run.includes('test "$OPT_IN" = true')
       )

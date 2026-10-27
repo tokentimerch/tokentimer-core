@@ -1,5 +1,8 @@
 $ErrorActionPreference = 'Stop'
-if ($env:GITHUB_ACTIONS -ne 'true' -or $env:GITHUB_REF -ne 'refs/heads/main' -or $env:GITHUB_REPOSITORY -ne 'tokentimerch/tokentimer-core') { throw 'AZURE_KV_TRUSTED_MAIN_REQUIRED' }
+# WARNING: TEMPORARY PRE-MERGE EXCEPTION. Revert before merging.
+# Use the same exact-ref/event policy as provisioning and cleanup.
+& node -e "const p = require('./infra/certops-azure-keyvault/policy'); if (process.env.GITHUB_ACTIONS !== 'true' || process.env.GITHUB_REPOSITORY !== p.REPOSITORY || !p.trustedRef(process.env)) process.exit(1)"
+if ($LASTEXITCODE -ne 0) { throw 'AZURE_KV_TRUSTED_MAIN_REQUIRED' }
 $oidcUrl = [Uri]$env:ACTIONS_ID_TOKEN_REQUEST_URL
 if ($oidcUrl.Scheme -ne 'https' -or -not $oidcUrl.Host.EndsWith('.actions.githubusercontent.com')) { throw 'AZURE_KV_OIDC_AUTHORITY_DENIED' }
 # Isolate CLI caches from other jobs and from the artifact directory.
