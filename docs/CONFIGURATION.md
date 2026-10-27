@@ -144,15 +144,21 @@ an incomplete configuration and SMTP is reported as not configured. With no
 
 ## Recipient verification
 
-Workspace email and WhatsApp alerts are separate from account email verification. A contact can be saved and placed in a contact group while a destination is still `pending`. Operational alerts, weekly digests, and workspace test messages are sent only after that recipient confirms the exact destination. Account verification, password reset, billing, waitlist, workspace invites, and operator incident mail are not gated by this check.
+Workspace email and WhatsApp alerts are separate from account email verification. A contact can be saved and placed in a contact group while a destination is still `pending`. Account verification, password reset, billing, waitlist, workspace invites, and operator incident mail are not gated by this check.
 
-Self-hosted deployments evaluate the policy in `shadow` mode until an operator sets `RECIPIENT_VERIFICATION_MODE=enforce`. Shadow still delivers and logs `recipient-verification-shadow`. `off` is available only for self-hosted rollback. Set `TT_DEPLOYMENT=cloud` on the API and every notification worker. Cloud then enforces verification. `off` is ignored. Temporary Cloud shadow also requires `RECIPIENT_VERIFICATION_CLOUD_SHADOW=1` together with `RECIPIENT_VERIFICATION_MODE=shadow`. An unrecognized `TT_DEPLOYMENT` value enforces. There is no workspace setting for this mode. The API and worker log `recipient verification mode` at startup.
+Self-hosted deployments leave recipient verification `off`. Alerts, weekly digests, and workspace tests send without confirmation, and they do not need the verification secret or `PUBLIC_BASE_URL`. To require confirmation:
 
-Set `RECIPIENT_FINGERPRINT_SECRET` (or rely on `PHONE_HASH_SALT` or `SESSION_SECRET`) before creating invitations. Set `PUBLIC_BASE_URL` or `API_URL` to the externally visible API origin. Invitation links and the Twilio inbound signature both use that origin.
+```env
+RECIPIENT_VERIFICATION_MODE=enforce
+```
+
+`shadow` is optional for self-hosted operators who want eligibility logged without blocking delivery. Set `TT_DEPLOYMENT=cloud` and `RECIPIENT_VERIFICATION_MODE=enforce` on the API and every notification worker. Cloud then enforces verification. `off` is ignored. Temporary Cloud shadow also requires `RECIPIENT_VERIFICATION_CLOUD_SHADOW=1` together with `RECIPIENT_VERIFICATION_MODE=shadow`. An unrecognized nonempty `TT_DEPLOYMENT` value enforces. There is no workspace setting for this mode. The API and worker log `recipient verification mode` at startup.
+
+Set `RECIPIENT_FINGERPRINT_SECRET` (or rely on `PHONE_HASH_SALT` or `SESSION_SECRET`) before creating invitations. Set `PUBLIC_BASE_URL` or `API_URL` to the externally visible API origin. Invitation links and the Twilio inbound signature both use that origin. Those values are required only when verification is `shadow` or `enforce`.
 
 | Variable | Description | Default value | Scope |
 | --- | --- | --- | --- |
-| `RECIPIENT_VERIFICATION_MODE` | `enforce`, `shadow`, or, self-hosted only, `off` | `shadow` self-hosted, `enforce` on Cloud | API, worker |
+| `RECIPIENT_VERIFICATION_MODE` | `off`, `shadow`, or `enforce`. Cloud ignores `off` | `off` self-hosted, `enforce` on Cloud | API, worker |
 | `TT_DEPLOYMENT` | `self-hosted` or `cloud`. Any other value enforces verification | unset means `self-hosted` | API, worker |
 | `RECIPIENT_VERIFICATION_CLOUD_SHADOW` | Set to `1` with mode `shadow` to temporarily shadow Cloud | unset | API, worker |
 | `RECIPIENT_RESUBSCRIBE_IP_PER_DAY` | Public re-subscribe requests per client address | `10` | API |

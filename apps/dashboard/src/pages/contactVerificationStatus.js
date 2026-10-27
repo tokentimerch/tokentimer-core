@@ -23,10 +23,55 @@ export function channelStatus(contact, channel) {
   };
 }
 
-export function canTestSavedWhatsApp(contact, phoneNow) {
+export function canTestSavedWhatsApp(contact, phoneNow, mode = "enforce") {
   const status = channelStatus(contact, "whatsapp");
-  if (!contact?.id || !status || status.status !== "verified") return false;
-  return String(contact.phone_e164 || "").trim() === String(phoneNow || "").trim();
+  if (!contact?.id || !status) return false;
+  if (String(contact.phone_e164 || "").trim() !== String(phoneNow || "").trim()) return false;
+  if (mode === "enforce") return status.status === "verified";
+  return true;
+}
+
+export function verificationControlsVisible(mode) {
+  return mode === "enforce" || mode === "shadow";
+}
+
+export function verificationIntro(mode) {
+  if (mode === "enforce") {
+    return "A contact can be saved before they confirm. Email and WhatsApp alerts wait until that person confirms the exact address or number.";
+  }
+  if (mode === "shadow") {
+    return "Recipient verification is recording confirmation status. Notifications are still sent.";
+  }
+  if (mode === "off") {
+    return "Contacts receive workspace alerts at the address or number you save. Recipient confirmation is off for this deployment.";
+  }
+  return "Manage people who can receive workspace alerts.";
+}
+
+export function verificationWaitCopy(mode) {
+  if (mode === "enforce") return "Alerts wait until this person confirms the address or number.";
+  if (mode === "shadow") return "Confirmation is recorded. Notifications are still sent.";
+  return null;
+}
+
+export function groupChannelHint(mode) {
+  if (mode === "enforce") {
+    return "Unverified people stay in the group and do not receive email or WhatsApp until they confirm.";
+  }
+  if (mode === "shadow") {
+    return "Unverified people stay in the group. Notifications are still sent while verification is recording status.";
+  }
+  return "Each selected person receives alerts at the saved address or number.";
+}
+
+export function testNumberHint(mode) {
+  if (mode === "enforce") {
+    return "Provide a valid email or phone number. A test is available only while this saved number stays confirmed.";
+  }
+  if (mode === "shadow") {
+    return "Provide a valid email or phone number. A test can be sent to this saved number while confirmation is recorded.";
+  }
+  return "Provide a valid email or phone number.";
 }
 
 export function formatRetry(seconds) {
@@ -41,7 +86,8 @@ export function formatRetry(seconds) {
   return `Please wait ${Math.ceil(value)} seconds before trying again.`;
 }
 
-export function groupEligibilityNote(contacts, emailIds, whatsappIds) {
+export function groupEligibilityNote(contacts, emailIds, whatsappIds, mode = "enforce") {
+  if (mode !== "enforce") return [];
   const list = Array.isArray(contacts) ? contacts : [];
   const notes = [];
   const selected = (ids, channel) => {

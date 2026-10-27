@@ -28,7 +28,7 @@ Account, password, billing, waitlist, workspace-invite, and operator incident ma
 
 ## 3. Architecture
 
-`packages/recipient-verification` is the policy. Core defaults to self-hosted shadow mode. The Cloud copy defaults to enforce. `RECIPIENT_VERIFICATION_MODE=off` is ignored when the deployment is Cloud. `shadow` still delivers and logs. Tests call `evaluateRecipient`, which does not honor shadow, so a workspace test cannot use shadow to reach an arbitrary number.
+`packages/recipient-verification` is the policy. A standard Core deployment defaults to self-hosted `off`. Cloud defaults to `enforce` when `TT_DEPLOYMENT=cloud`. `RECIPIENT_VERIFICATION_MODE=off` is ignored when the deployment is Cloud. `shadow` still delivers and logs. Workspace tests follow the effective mode: `off` and `shadow` can reach a saved matching destination that is not yet verified, and `enforce` cannot. An arbitrary number that does not match the saved contact is still rejected.
 
 Email: a manager requests an invitation. After the rate-limit transaction commits, the API sends one standard message. The page is GET-only. Accept and decline are POST, then a 303 to a token-free result page. Tokens and WhatsApp codes are HMAC'd at rest. The short WhatsApp code is also sealed with AES-256-GCM so the page can rebuild the `wa.me` link.
 
@@ -92,7 +92,7 @@ The suite uses an in-memory query double with serialized transactions. It does n
 - Existing mail logs can include the recipient address. The token is not logged by the new route.
 - The accept POST URL contains the token until the redirect. Referrer and cache headers are set to limit leakage.
 - Partial unique suppression indexes were created by applying the migration twice on PostgreSQL 16 in `tests/postgres/recipient-verification-concurrency.test.js`.
-- Shadow mode on self-hosted still delivers. That is the compatibility default, not a customer toggle.
+- Self-hosted verification is off unless an operator sets `shadow` or `enforce`. `shadow` still delivers.
 - WhatsApp decline is implemented in the route transaction rather than the shared consume function. Email decline is in the package.
 
 ## 10. Deployment and rollback
@@ -100,8 +100,8 @@ The suite uses an in-memory query double with serialized transactions. It does n
 1. Deploy the API and worker together with migration 79.
 2. Set `RECIPIENT_FINGERPRINT_SECRET` and `PUBLIC_BASE_URL` or `API_URL`.
 3. Configure the Twilio inbound webhook.
-4. Leave self-hosted on shadow until managers send invitations.
+4. Leave self-hosted on `off` until managers are ready to collect confirmation. `shadow` records eligibility without blocking delivery.
 5. Set `RECIPIENT_VERIFICATION_MODE=enforce` when ready.
-6. Self-hosted rollback is `shadow` or `off`. Consent rows stay. Cloud does not honor `off`.
+6. Self-hosted rollback is `off` or `shadow`. Consent rows stay. Cloud does not honor `off`.
 
 Do not treat this document as a production enablement on TokenTimer Cloud. Cloud enforcement is a separate deployment of the Cloud branch.

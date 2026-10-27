@@ -76,7 +76,7 @@ function resolveEnforcementMode(env = process.env) {
     return "enforce";
   }
   if (raw === "enforce" || raw === "off" || raw === "shadow") return raw;
-  return "shadow";
+  return "off";
 }
 
 function describeEnforcement(env = process.env) {
@@ -1636,7 +1636,7 @@ async function attachVerification(db, workspaceId, contacts) {
 }
 
 async function authorizeWorkspaceTest({ pool, workspaceId, contactId, channel, destination }) {
-  if (!contactId) throw coded(400, "CONTACT_REQUIRED", "Test a saved, verified contact");
+  if (!contactId) throw coded(400, "CONTACT_REQUIRED", "Test a saved contact");
   const contact = await pool.query(
     `-- RV_CONTACT
      SELECT id, phone_e164, details FROM workspace_contacts WHERE workspace_id = $1 AND id = $2`,
@@ -1648,44 +1648,56 @@ async function authorizeWorkspaceTest({ pool, workspaceId, contactId, channel, d
   if (!actual.ok || !requested.ok || actual.value !== requested.value) {
     throw coded(400, "DESTINATION_MISMATCH", "The test destination must match the saved contact");
   }
-  let decision;
+  const mode = resolveEnforcementMode();
+  if (mode !== "off") {
+    let decision;
+    try {
+      decision = await evaluateRecipient({
+        client: pool,
+        workspaceId,
+        contactId,
+        channel,
+        destination: actual.value,
+      });
+    } catch (error) {
+      if (!isMissingSchema(error)) throw error;
+      if (mode === "enforce") {
+        throw coded(503, "RECIPIENT_VERIFICATION_UNAVAILABLE", "Recipient verification is not available");
+      }
+      decision = { allowed: false, code: "RECIPIENT_VERIFICATION_UNAVAILABLE" };
+    }
+    const finished = finishForMode(mode, decision);
+    if (!finished.allowed) {
+      throw coded(403, finished.code || "RECIPIENT_NOT_VERIFIED", "This destination is not verified for notifications");
+    }
+  }
   try {
-    decision = await evaluateRecipient({
-      client: pool,
-      workspaceId,
-      contactId,
-      channel,
-      destination: actual.value,
+    await withTransaction(pool, async (client) => {
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`test:${workspaceId}:${contactId}:${channel}`]);
+      const config = limits();
+      const daily = await takeBucket(client, {
+        key: `test:${workspaceId}:${contactId}:${channel}:24h`,
+        limit: config.testPerContactPerDay,
+        windowSeconds: 24 * 60 * 60,
+        workspaceId,
+      });
+      if (!daily.ok) {
+        throw coded(429, "TEST_WHATSAPP_COOLDOWN", "Test message limit reached for this contact", { retryAfter: daily.retryAfter });
+      }
+      const cool = await takeBucket(client, {
+        key: `test:${workspaceId}:${contactId}:${channel}:cool`,
+        limit: 1,
+        windowSeconds: config.testCooldownSeconds,
+        workspaceId,
+      });
+      if (!cool.ok) {
+        throw coded(429, "TEST_WHATSAPP_COOLDOWN", "Please wait before testing this contact again", { retryAfter: cool.retryAfter });
+      }
     });
   } catch (error) {
-    if (isMissingSchema(error)) throw coded(503, "RECIPIENT_VERIFICATION_UNAVAILABLE", "Recipient verification is not available");
+    if (mode === "off" && isMissingSchema(error)) return { destination: actual.value };
     throw error;
   }
-  if (!decision.allowed) {
-    throw coded(403, decision.code || "RECIPIENT_NOT_VERIFIED", "This destination is not verified for notifications");
-  }
-  await withTransaction(pool, async (client) => {
-    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`test:${workspaceId}:${contactId}:${channel}`]);
-    const config = limits();
-    const daily = await takeBucket(client, {
-      key: `test:${workspaceId}:${contactId}:${channel}:24h`,
-      limit: config.testPerContactPerDay,
-      windowSeconds: 24 * 60 * 60,
-      workspaceId,
-    });
-    if (!daily.ok) {
-      throw coded(429, "TEST_WHATSAPP_COOLDOWN", "Test message limit reached for this contact", { retryAfter: daily.retryAfter });
-    }
-    const cool = await takeBucket(client, {
-      key: `test:${workspaceId}:${contactId}:${channel}:cool`,
-      limit: 1,
-      windowSeconds: config.testCooldownSeconds,
-      workspaceId,
-    });
-    if (!cool.ok) {
-      throw coded(429, "TEST_WHATSAPP_COOLDOWN", "Please wait before testing this contact again", { retryAfter: cool.retryAfter });
-    }
-  });
   return { destination: actual.value };
 }
 

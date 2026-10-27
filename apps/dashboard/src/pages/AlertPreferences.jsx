@@ -60,7 +60,10 @@ import ContactVerificationControls from './ContactVerificationControls';
 import {
   canTestSavedWhatsApp,
   formatRetry,
+  groupChannelHint,
   groupEligibilityNote,
+  testNumberHint,
+  verificationIntro,
 } from './contactVerificationStatus';
 import { showSuccess, showWarning, showError } from '../utils/toast.js';
 import DashboardPageLayout from '../components/DashboardPageLayout';
@@ -945,6 +948,7 @@ export default function AlertPreferences({
   const [groupWeeklyDigestWebhooks, setGroupWeeklyDigestWebhooks] =
     useState(false);
   const [contacts, setContacts] = useState([]);
+  const [recipientVerificationMode, setRecipientVerificationMode] = useState(null);
   const [contactSortConfig, setContactSortConfig] = useState({
     key: 'name',
     direction: 'asc',
@@ -1077,7 +1081,7 @@ export default function AlertPreferences({
           const refreshed = await apiClient.get(
             `/api/v1/workspaces/${workspaceId}/contacts`
           );
-          setContacts(refreshed?.data?.items || []);
+          applyContactList(refreshed?.data);
         } catch (_) {}
       resetNewContactForm();
       onAddContactClose();
@@ -1136,7 +1140,8 @@ export default function AlertPreferences({
     contacts.find(item => item.id === editingContactId) || null;
   const canTestEditingContactWhatsApp = canTestSavedWhatsApp(
     editingContact,
-    editContactPhoneE164
+    editContactPhoneE164,
+    recipientVerificationMode
   );
 
   useEffect(() => {
@@ -1345,6 +1350,7 @@ export default function AlertPreferences({
         setDwEnd('23:59');
         setDwTz('UTC');
         setContacts(TOUR_MOCK_WORKSPACE_CONTACTS);
+        setRecipientVerificationMode(null);
         setEmailEnabled(true);
         setWebhookUrls(
           TOUR_MOCK_WEBHOOKS.map(webhook =>
@@ -1382,7 +1388,7 @@ export default function AlertPreferences({
           const contactsRes = await apiClient.get(
             `/api/v1/workspaces/${workspaceId}/contacts`
           );
-          setContacts(contactsRes?.data?.items || []);
+          applyContactList(contactsRes?.data);
         } catch (_) {
           setContacts([]);
           if (groupCreationOnly) setGroupLoadError(true);
@@ -2665,7 +2671,15 @@ export default function AlertPreferences({
     const refreshed = await apiClient.get(
       `/api/v1/workspaces/${workspaceId}/contacts`
     );
-    setContacts(refreshed?.data?.items || []);
+    applyContactList(refreshed?.data);
+  }
+
+  function applyContactList(data) {
+    setContacts(Array.isArray(data?.items) ? data.items : []);
+    const mode = data?.verification_summary?.mode;
+    if (mode === 'enforce' || mode === 'shadow' || mode === 'off') {
+      setRecipientVerificationMode(mode);
+    }
   }
 
   function verificationErrorMessage(error) {
@@ -2847,6 +2861,7 @@ export default function AlertPreferences({
           />
           <ContactVerificationControls
             contact={contact}
+            mode={recipientVerificationMode}
             isViewer={isViewer}
             busyKey={verificationBusy}
             onInviteEmail={handleInviteEmail}
@@ -3251,7 +3266,7 @@ export default function AlertPreferences({
             <DashboardPanel data-tour='preferences-contacts' minW={0}>
               <PreferencesPanelHeader
                 title='Contacts'
-                description='Manage people who can receive workspace alerts. A contact can be saved before they confirm. Email and WhatsApp alerts wait until that person confirms the exact address or number.'
+                description={verificationIntro(recipientVerificationMode)}
                 muted={bodySecondary}
                 action={
                   !isViewer ? (
@@ -3375,6 +3390,7 @@ export default function AlertPreferences({
                                 </Text>
                                 <ContactVerificationControls
                                   contact={c}
+                                  mode={recipientVerificationMode}
                                   isViewer={isViewer}
                                   busyKey={verificationBusy}
                                   onInviteEmail={handleInviteEmail}
@@ -3803,7 +3819,7 @@ export default function AlertPreferences({
                   mb={2}
                   lineHeight='1.5'
                 >
-                  Select per-contact which channels to use. Unverified people stay in the group and do not receive email or WhatsApp until they confirm.
+                  Select per-contact which channels to use. {groupChannelHint(recipientVerificationMode)}
                   {whatsappAvailable
                     ? ' Each person can have both email and WhatsApp.'
                     : ''}
@@ -3828,7 +3844,8 @@ export default function AlertPreferences({
                 {groupEligibilityNote(
                   contacts,
                   groupEmailContactIds,
-                  groupWhatsappContactIds
+                  groupWhatsappContactIds,
+                  recipientVerificationMode
                 ).map(note => (
                   <Text key={note} fontSize='xs' color={bodySecondary} mb={2}>
                     {note}
@@ -4550,6 +4567,7 @@ export default function AlertPreferences({
             <VStack align='stretch' spacing={4}>
               <ContactVerificationControls
                 contact={editingContact}
+                mode={recipientVerificationMode}
                 isViewer={isViewer}
                 busyKey={verificationBusy}
                 onInviteEmail={handleInviteEmail}
@@ -4607,7 +4625,7 @@ export default function AlertPreferences({
                   <FormErrorMessage>{editContactPhoneError}</FormErrorMessage>
                 ) : (
                   <Text fontSize='xs' color={modalTokens.subtleText} mt={1}>
-                    Provide a valid email or phone number. A test is available only while this saved number stays confirmed.
+                    {testNumberHint(recipientVerificationMode)}
                   </Text>
                 )}
                 {whatsappAvailable ? (

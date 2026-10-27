@@ -423,7 +423,9 @@ describe("recipient verification", () => {
     }
   });
 
-  it("keeps Cloud fail-closed and self-hosted shadow unless an operator sets a mode", () => {
+  it("defaults Cloud to enforce and self-hosted to off", () => {
+    assert.equal(verification.resolveEnforcementMode({ TT_DEPLOYMENT: "cloud" }), "enforce");
+    assert.equal(verification.resolveEnforcementMode({ TT_DEPLOYMENT: "cloud", RECIPIENT_VERIFICATION_MODE: "enforce" }), "enforce");
     assert.equal(verification.resolveEnforcementMode({ TT_DEPLOYMENT: "cloud", RECIPIENT_VERIFICATION_MODE: "off" }), "enforce");
     assert.equal(verification.resolveEnforcementMode({ TT_DEPLOYMENT: "cloud", RECIPIENT_VERIFICATION_MODE: "shadow" }), "enforce");
     assert.equal(verification.resolveEnforcementMode({
@@ -431,19 +433,89 @@ describe("recipient verification", () => {
       RECIPIENT_VERIFICATION_MODE: "shadow",
       RECIPIENT_VERIFICATION_CLOUD_SHADOW: "1",
     }), "shadow");
-    assert.equal(verification.resolveEnforcementMode({ TT_DEPLOYMENT: "cloud" }), "enforce");
     assert.equal(verification.resolveEnforcementMode({ TT_DEPLOYMENT: "prod" }), "enforce");
-    assert.equal(verification.resolveEnforcementMode({ TT_DEPLOYMENT: "self-hosted" }), "shadow");
-    assert.equal(verification.resolveEnforcementMode({ TT_DEPLOYMENT: "self-hosted", RECIPIENT_VERIFICATION_MODE: "enforce" }), "enforce");
+    assert.equal(verification.resolveEnforcementMode({ TT_DEPLOYMENT: "self-hosted" }), "off");
     assert.equal(verification.resolveEnforcementMode({ TT_DEPLOYMENT: "self-hosted", RECIPIENT_VERIFICATION_MODE: "off" }), "off");
+    assert.equal(verification.resolveEnforcementMode({ TT_DEPLOYMENT: "self-hosted", RECIPIENT_VERIFICATION_MODE: "shadow" }), "shadow");
+    assert.equal(verification.resolveEnforcementMode({ TT_DEPLOYMENT: "self-hosted", RECIPIENT_VERIFICATION_MODE: "enforce" }), "enforce");
     const cloudReport = verification.describeEnforcement({ TT_DEPLOYMENT: "cloud" });
     assert.equal(cloudReport.mode, "enforce");
     assert.equal(cloudReport.deployment, "cloud");
     if (verification.DEFAULT_DEPLOYMENT === "cloud") {
       assert.equal(verification.resolveEnforcementMode({}), "enforce");
     } else {
-      assert.equal(verification.resolveEnforcementMode({}), "shadow");
+      assert.equal(verification.resolveEnforcementMode({}), "off");
     }
+  });
+
+  it("sends to unverified recipients when verification is off and blocks them when Cloud enforces", async () => {
+    delete process.env.RECIPIENT_FINGERPRINT_SECRET;
+    process.env.TT_DEPLOYMENT = "self-hosted";
+    delete process.env.RECIPIENT_VERIFICATION_MODE;
+    const store = createStore();
+    seedContact(store);
+    const recipients = [{ contactId: "contact-1", destination: "person@example.com" }];
+    const off = await verification.filterDeliveryRecipients({
+      client: store.client,
+      workspaceId: "ws-1",
+      channel: "email",
+      recipients,
+    });
+    assert.equal(off.mode, "off");
+    assert.equal(off.allowed.length, 1);
+    assert.equal(off.code, null);
+    const digest = await verification.canDeliverToDestination({
+      client: store.client,
+      workspaceId: "ws-1",
+      channel: "email",
+      destination: "person@example.com",
+    });
+    assert.equal(digest.allowed, true);
+    assert.equal(digest.mode, "off");
+    const tested = await verification.authorizeWorkspaceTest({
+      pool: store.pool,
+      workspaceId: "ws-1",
+      contactId: "contact-1",
+      channel: "email",
+      destination: "person@example.com",
+    });
+    assert.equal(tested.destination, "person@example.com");
+    assert.equal(verification.confirmDigestConsent({ mode: "off", finalAllowed: false }).send, true);
+
+    process.env.RECIPIENT_FINGERPRINT_SECRET = SECRET;
+    process.env.TT_DEPLOYMENT = "cloud";
+    delete process.env.RECIPIENT_VERIFICATION_MODE;
+    const blocked = await verification.filterDeliveryRecipients({
+      client: store.client,
+      workspaceId: "ws-1",
+      channel: "email",
+      recipients,
+    });
+    assert.equal(blocked.mode, "enforce");
+    assert.equal(blocked.allowed.length, 0);
+    assert.equal(blocked.code, "NO_VERIFIED_RECIPIENTS");
+    await assert.rejects(
+      () => verification.authorizeWorkspaceTest({
+        pool: store.pool,
+        workspaceId: "ws-1",
+        contactId: "contact-1",
+        channel: "email",
+        destination: "person@example.com",
+      }),
+      (error) => error.code === "RECIPIENT_NOT_VERIFIED",
+    );
+    process.env.RECIPIENT_VERIFICATION_MODE = "shadow";
+    process.env.TT_DEPLOYMENT = "self-hosted";
+    const shadowTest = await verification.authorizeWorkspaceTest({
+      pool: store.pool,
+      workspaceId: "ws-1",
+      contactId: "contact-1",
+      channel: "whatsapp",
+      destination: "+14155550100",
+    });
+    assert.equal(shadowTest.destination, "+14155550100");
+    assert.equal(verification.confirmDigestConsent({ mode: "shadow", finalAllowed: false }).send, true);
+    assert.equal(verification.confirmDigestConsent({ mode: "enforce", finalAllowed: false }).send, false);
   });
 
   it("fingerprints destinations with HMAC and refuses a missing secret", () => {
@@ -940,6 +1012,24 @@ describe("recipient verification", () => {
       [],
     );
     assert.equal(notes.length, 1);
+    assert.equal(ui.groupEligibilityNote([contact], ["contact-1"], [], "off").length, 0);
+    assert.equal(ui.groupEligibilityNote([contact], ["contact-1"], [], "shadow").length, 0);
+    assert.equal(ui.verificationControlsVisible("off"), false);
+    assert.equal(ui.verificationControlsVisible("enforce"), true);
+    assert.equal(ui.verificationControlsVisible("shadow"), true);
+    assert.match(ui.verificationWaitCopy("enforce"), /Alerts wait until/);
+    assert.match(ui.verificationWaitCopy("shadow"), /still sent/);
+    assert.equal(ui.verificationWaitCopy("off"), null);
+    assert.match(ui.verificationIntro("off"), /confirmation is off/i);
+    assert.doesNotMatch(ui.verificationIntro("shadow"), /Alerts wait until/);
+    assert.doesNotMatch(ui.groupChannelHint("off"), /do not receive/);
+    assert.match(ui.groupChannelHint("enforce"), /do not receive/);
+    assert.equal(ui.canTestSavedWhatsApp(contact, "+14155550100", "off"), true);
+    assert.equal(ui.canTestSavedWhatsApp(
+      { id: "contact-1", phone_e164: "+14155550100", details: { email: "person@example.com" } },
+      "+14155550100",
+      "off",
+    ), true);
     assert.match(ui.formatRetry(3700), /hours/);
   });
 

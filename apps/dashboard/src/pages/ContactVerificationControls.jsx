@@ -1,5 +1,5 @@
 import { Badge, Button, HStack, Text, VStack } from "@chakra-ui/react";
-import { channelStatus } from "./contactVerificationStatus";
+import { channelStatus, verificationWaitCopy } from "./contactVerificationStatus";
 
 const COLORS = {
   pending: "orange",
@@ -45,15 +45,18 @@ function ChannelLine({ label, entry, actionLabel, onAction, busy, disabled }) {
 
 export default function ContactVerificationControls({
   contact,
+  mode,
   isViewer,
   busyKey,
   onInviteEmail,
   onShareWhatsApp,
   onRevoke,
 }) {
+  if (mode !== "enforce" && mode !== "shadow") return null;
   const email = channelStatus(contact, "email");
   const whatsapp = channelStatus(contact, "whatsapp");
   if (!email && !whatsapp) return null;
+  const waitCopy = verificationWaitCopy(mode);
   const actionFor = (channel, entry) => {
     if (isViewer) return null;
     if (entry.status === "verified") {
@@ -77,9 +80,11 @@ export default function ContactVerificationControls({
   const whatsappAction = whatsapp ? actionFor("whatsapp", whatsapp) : null;
   return (
     <VStack align="flex-start" spacing={1} mt={2}>
-      <Text fontSize="xs">
-        Alerts wait until this person confirms the address or number.
-      </Text>
+      {waitCopy ? (
+        <Text fontSize="xs">
+          {waitCopy}
+        </Text>
+      ) : null}
       {email && emailAction ? (
         <ChannelLine
           label="Email"
