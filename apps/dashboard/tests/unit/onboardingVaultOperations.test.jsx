@@ -425,6 +425,7 @@ describe('Vault jobs stay in onboarding', () => {
         {
           ...binding,
           converged: true,
+          live_verified: true,
           desired_material_version_id: version.id,
           latest_deployment: {
             jobId: 'deployment-job',

@@ -79,7 +79,7 @@ function context(saved = {}) {
     },
   };
 }
-function element(ctx, groupId = GROUP) {
+function element(ctx, groupId = GROUP, consumerDeliveryMode = 'files') {
   return (
     <ChakraProvider>
       <DashboardThemeProvider>
@@ -96,7 +96,7 @@ function element(ctx, groupId = GROUP) {
             names: ['web.example.com'],
             zone: 'example.com',
             dnsProvider: 'rfc2136',
-            consumerDeliveryMode: 'files',
+            consumerDeliveryMode,
             deployPath: '/srv/certificates',
           }}
           approvalRequired={false}
@@ -355,4 +355,150 @@ describe('Vault distribution progress', () => {
     expect(api.getJob).toHaveBeenCalledTimes(2);
     expect(api.requestRollout).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    'uses neutral whole-group assurance for a service guide with an external file consumer, even when an older summary verified flag is %s',
+    async verified => {
+      const ctx = context({ vaultRolloutJobId: 'rollout' });
+      Object.assign(ctx.summary.certops.distribution.items[0], {
+        completed: true,
+        verified,
+      });
+      api.readDistribution.mockResolvedValue({
+        versions: [version],
+        consumers: [
+          binding({
+            verification_policy: 'trust',
+            deployment_profile_ref: 'nginx-public',
+            converged: true,
+            live_verified: true,
+            latest_deployment: { stage: 'trust_validated' },
+          }),
+          binding({
+            binding_id: 'external-files',
+            assigned_agent_id: 'external',
+            converged: true,
+            live_verified: false,
+            latest_deployment: { stage: 'files_installed' },
+          }),
+        ],
+      });
+      render(element(ctx, GROUP, 'service'));
+      await waitFor(() =>
+        expect(progress().getByText(/2 of 2 consumers confirmed/)).toBeVisible()
+      );
+      expect(
+        progress().getByText('Distribution completed on all consumers')
+      ).toBeVisible();
+      expect(screen.queryByText('All consumers verified')).toBeNull();
+      expect(api.requestRollout).not.toHaveBeenCalled();
+    }
+  );
+
+  it('uses neutral whole-group assurance for a file guide with an external service consumer', async () => {
+    const ctx = context({ vaultRolloutJobId: 'rollout' });
+    Object.assign(ctx.summary.certops.distribution.items[0], {
+      completed: true,
+      verified: false,
+    });
+    api.readDistribution.mockResolvedValue({
+      versions: [version],
+      consumers: [
+        binding({ converged: true, live_verified: false }),
+        binding({
+          binding_id: 'external-service',
+          assigned_agent_id: 'external',
+          verification_policy: 'trust',
+          deployment_profile_ref: 'nginx-public',
+          converged: true,
+          live_verified: true,
+          latest_deployment: { stage: 'trust_validated' },
+        }),
+      ],
+    });
+    render(element(ctx));
+    await waitFor(() =>
+      expect(progress().getByText(/2 of 2 consumers confirmed/)).toBeVisible()
+    );
+    expect(
+      progress().getByText('Distribution completed on all consumers')
+    ).toBeVisible();
+    expect(screen.queryByText('All consumers verified')).toBeNull();
+    expect(
+      progress().queryByText(/No service was reloaded or checked/)
+    ).toBeNull();
+    expect(api.requestRollout).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    'requires the authoritative whole-group verified fact (%s) even when current service consumers are live verified',
+    async verified => {
+      const ctx = context({ vaultRolloutJobId: 'rollout' });
+      Object.assign(ctx.summary.certops.distribution.items[0], {
+        completed: true,
+        verified,
+      });
+      api.readDistribution.mockResolvedValue({
+        versions: [version],
+        consumers: [
+          binding({
+            verification_policy: 'trust',
+            deployment_profile_ref: 'nginx-public',
+            converged: true,
+            live_verified: true,
+          }),
+        ],
+      });
+      render(element(ctx, GROUP, 'service'));
+      await waitFor(() =>
+        expect(progress().getByText(/1 of 1 consumers confirmed/)).toBeVisible()
+      );
+      expect(
+        progress().getByText(
+          verified
+            ? 'All consumers verified'
+            : 'Distribution completed on all consumers'
+        )
+      ).toBeVisible();
+    }
+  );
+
+  it.each([
+    { desired_material_version_id: 'older-version' },
+    { converged: false, stale: true, live_verified: false },
+  ])(
+    'does not claim whole-group verification from older or stale consumer evidence: %j',
+    async overrides => {
+      const ctx = context({ vaultRolloutJobId: 'rollout' });
+      Object.assign(ctx.summary.certops.distribution.items[0], {
+        completed: true,
+        verified: true,
+      });
+      const service = {
+        verification_policy: 'trust',
+        deployment_profile_ref: 'nginx-public',
+        converged: true,
+        live_verified: true,
+      };
+      api.readDistribution.mockResolvedValue({
+        versions: [version],
+        consumers: [
+          binding(service),
+          binding({
+            ...service,
+            binding_id: 'external-service',
+            assigned_agent_id: 'external',
+            ...overrides,
+          }),
+        ],
+      });
+      render(element(ctx, GROUP, 'service'));
+      await screen.findByText('Other consumers are still pending');
+      expect(progress().getByText(/1 of 2 consumers confirmed/)).toBeVisible();
+      expect(screen.queryByText('All consumers verified')).toBeNull();
+      expect(
+        screen.queryByText('Distribution completed on all consumers')
+      ).toBeNull();
+    }
+  );
 });

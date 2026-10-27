@@ -508,6 +508,17 @@ export function VaultRolloutGuide({
     consumersComplete &&
     !summaryReadFailed &&
     Boolean(distributionFact?.completed || distributionFact?.verified);
+  const wholeGroupLiveVerified =
+    distributionFact?.verified === true &&
+    activeBindings.length > 0 &&
+    activeBindings.every(
+      binding => bindingComplete(binding) && binding.live_verified === true
+    );
+  const allConsumersFilesOnly =
+    activeBindings.length > 0 &&
+    activeBindings.every(
+      binding => binding.verification_policy === 'installed'
+    );
   const rolloutLocked = Boolean(rolloutId || requestKey);
   // The coordinator job ID is not the rollout ID. Resume only a rollout
   // reported by the server for the currently selected version and bindings.
@@ -550,15 +561,26 @@ export function VaultRolloutGuide({
           ? 'Refresh the status to check the latest agent results. Previous results cannot confirm this step.'
           : 'Reading the selected certificate version and consumer results.',
       };
+    if (allComplete && wholeGroupLiveVerified)
+      return {
+        status: 'success',
+        title: 'All consumers verified',
+        detail:
+          'The server reports current live verification on the selected version for every consumer. Inspect each deployment’s evidence and make an independent TLS connection to the live services.',
+      };
+    if (allComplete && allConsumersFilesOnly)
+      return {
+        status: 'success',
+        title: 'Certificate files installed on all consumers',
+        detail:
+          'The agents checked the installed certificate and key on disk against the selected version. File-only completion does not include live-service verification; this does not prove the certificate is in use.',
+      };
     if (allComplete)
       return {
         status: 'success',
-        title: filesOnly
-          ? 'Certificate files installed on all consumers'
-          : 'All consumers verified',
-        detail: filesOnly
-          ? 'The agents checked the installed certificate and key on disk against the selected version. No service was reloaded or checked; this does not prove the certificate is in use.'
-          : 'The server reports current convergence on the selected version. Inspect each deployment’s evidence and make an independent TLS connection to the live services.',
+        title: 'Distribution completed on all consumers',
+        detail:
+          'Each consumer completed its configured delivery checks for the selected version. File installation and live service verification are different assurances; inspect each consumer’s deployment evidence.',
       };
     if (consumersComplete)
       return {
