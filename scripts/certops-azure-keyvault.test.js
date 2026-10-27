@@ -35,6 +35,63 @@ const env = () => ({
   ),
 });
 const plan = () => subject.plan(env(), Date.now() - 60000, "test-nonce");
+test("OIDC assertion uses the exact trusted run ref and preserves issuer, audience, subject and SHA checks", async (t) => {
+  const e = {
+    ...env(),
+    GITHUB_REF: `refs/heads/${subject.TEMPORARY_BRANCH}`,
+    ACTIONS_ID_TOKEN_REQUEST_URL:
+      "https://fixture.actions.githubusercontent.com/token",
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN: "synthetic-request-token",
+  };
+  const original = {
+    iss: "https://token.actions.githubusercontent.com",
+    aud: "api://AzureADTokenExchange",
+    sub: `repo:${subject.REPOSITORY}:environment:${subject.LAB_ENV}`,
+    ref: e.GITHUB_REF,
+    sha: e.GITHUB_SHA,
+    exp: Math.floor(Date.now() / 1000) + 300,
+  };
+  let claims = { ...original };
+  const writes = [];
+  t.mock.method(global, "fetch", async () => ({
+    status: 200,
+    json: async () => ({
+      value: `synthetic.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.signature`,
+    }),
+  }));
+  t.mock.method(process.stdout, "write", () => true);
+  t.mock.method(fs, "writeFileSync", (...args) => writes.push(args));
+  t.mock.method(fs, "chmodSync", () => {});
+  await io.assertion("synthetic-root", e);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0][2].mode, 0o600);
+  claims = { ...original, ref: "refs/heads/main" };
+  await io.assertion("synthetic-root", { ...e, GITHUB_REF: "refs/heads/main" });
+  for (const patch of [
+    { ref: "refs/heads/main" },
+    { ref: "refs/heads/other" },
+    { ref: `refs/tags/${subject.TEMPORARY_BRANCH}` },
+    { sha: "b".repeat(40) },
+    { iss: "https://foreign.test" },
+    { aud: "foreign-audience" },
+    { sub: `repo:${subject.REPOSITORY}:environment:certops-adcs-lab` },
+  ]) {
+    claims = { ...original, ...patch };
+    await assert.rejects(io.assertion("synthetic-root", e), {
+      code: "AZURE_KV_GITHUB_OIDC_CONTEXT_DENIED",
+    });
+  }
+  claims = { ...original };
+  await assert.rejects(
+    io.assertion("synthetic-root", { ...e, GITHUB_EVENT_NAME: "push" }),
+    { code: "AZURE_KV_GITHUB_OIDC_CONTEXT_DENIED" },
+  );
+  assert.equal(
+    writes.length,
+    2,
+    "denied contexts must never write assertion files",
+  );
+});
 const group = (p) => ({
   name: p.group,
   id: lab.groupId(p),
