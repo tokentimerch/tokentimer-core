@@ -145,6 +145,7 @@ describe("Core distribution and lifecycle migration histories", function () {
           "certops_distribution_incident_delivery",
           "certops_stable_consumer_discovery",
           "certops_material_cleanup",
+          "certops_consumer_verification_failures",
         ];
         assert.deepEqual(
           after.filter((row) => row.version >= 70).map((row) => row.name),
@@ -197,6 +198,7 @@ describe("Core distribution and lifecycle migration histories", function () {
           "auto_sync_run_outcome_stats",
           "auto_sync_run_freshness",
           "certops_material_cleanups",
+          "certops_consumer_verification_outcomes",
         ]) {
           assert.equal(
             (await db.query("SELECT to_regclass($1)::text AS name", [table]))

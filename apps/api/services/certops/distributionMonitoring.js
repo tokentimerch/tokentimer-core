@@ -32,6 +32,7 @@ function consumerHealth(
 ) {
   if (row.binding_state !== "active") return "inactive";
   if (
+    row.latest_deployment?.needsOperatorReconciliation === true ||
     row.latest_deployment?.stage === "orphaned_unknown_effect" ||
     row.latest_deployment?.jobStatus === "orphaned_unknown_effect"
   )
@@ -133,6 +134,32 @@ function evidenceFor(row) {
     jobId: row.latest_deployment?.jobId || null,
     rolloutId: row.latest_deployment?.rolloutId || null,
   };
+}
+async function verificationFailureCounts(client, workspaceId, groupId) {
+  const result = await client.query(
+    `SELECT b.id,
+    CASE WHEN s.verification_failure_revision=b.authorization_revision THEN s.verification_failure_count ELSE 0 END AS failures,
+    CASE WHEN s.verification_failure_revision=b.authorization_revision THEN s.verification_outcome_generation ELSE 0 END AS generation,
+    COALESCE(j.needs_operator_reconciliation,false) AS uncertain
+    FROM certops_consumer_bindings b LEFT JOIN certops_consumer_current_state s
+      ON s.workspace_id=b.workspace_id AND s.binding_id=b.id
+    LEFT JOIN certops_distribution_rollouts r ON r.workspace_id=s.workspace_id AND r.group_id=s.group_id AND r.generation=s.desired_generation
+    LEFT JOIN certops_consumer_deployments d ON d.workspace_id=r.workspace_id AND d.rollout_id=r.id AND d.binding_id=b.id
+    LEFT JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=d.job_id
+    WHERE b.workspace_id=$1 AND b.group_id=$2 AND b.state='active'`,
+    [workspaceId, groupId],
+  );
+  return new Map(result.rows.map((row) => [row.id, {
+    failures: Number(row.failures),
+    generation: Number(row.generation),
+    uncertain: row.uncertain,
+  }]));
+}
+function consumerVerificationFailureCount(row, counts) {
+  const own = counts.get(row.binding_id);
+  // Only the currently failing verification can use this streak. A manual
+  // deployment failure or a newer pending cycle cannot borrow an older count.
+  return own && own.generation === Number(row.desired_generation) ? own.failures : 0;
 }
 async function queueIncident(
   client,
@@ -327,11 +354,11 @@ async function monitorGroup({
     )
   ).rows[0];
   const conditions = [];
-  const failedCycles = policy.verification.enabled ? (
-    await client.query("SELECT failures FROM certops_distribution_schedules WHERE workspace_id=$1 AND group_id=$2", [workspaceId,groupId])
-  ).rows[0]?.failures || 0 : 0;
+  const failureCounts = await verificationFailureCounts(client, workspaceId, groupId);
   const plan=activationPlanner(now);
   for (const row of rows.filter((row) => row.binding_state === "active")) {
+    if (failureCounts.get(row.binding_id)?.uncertain)
+      row.latest_deployment = { ...row.latest_deployment, needsOperatorReconciliation: true };
     const { codes } = consumerConditions(
       row,
       policy,
@@ -339,7 +366,8 @@ async function monitorGroup({
       group.latest_material_version_id,
     );
     for (const code of codes) {
-      const failureCount = Math.max(row.latest_deployment?.attemptCount || 0, row.required ? failedCycles : 0);
+      const failureCount = code === "verification_failed"
+        ? consumerVerificationFailureCount(row, failureCounts) : row.latest_deployment?.attemptCount || 0;
       if (
         code === "unknown_coverage" &&
         now - new Date(group.created_at).getTime() <
@@ -530,6 +558,8 @@ module.exports = {
   consumerHealth,
   consumerConditions,
   evidenceFor,
+  verificationFailureCounts,
+  consumerVerificationFailureCount,
   recordIncident,
   monitorGroup,
   runDistributionMonitoring,
