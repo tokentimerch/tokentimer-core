@@ -35,6 +35,18 @@ const { chromium } = require("playwright");
         await p.setViewportSize({ width, height: 1080 });
         await p.goto(url);
         await p.locator(".chakra-badge[title]:visible").first().waitFor();
+        // Include the seeded long actions even after other demo actions add
+        // newer events to the first ten rows.
+        await p
+          .locator("select:visible")
+          .filter({ has: p.locator('option[value="100"]') })
+          .first()
+          .selectOption("100");
+        await p
+          .locator(".chakra-badge[title]:visible")
+          .filter({ hasText: /[A-Z_]{31}/ })
+          .first()
+          .waitFor();
         await p.evaluate(() => document.fonts.ready);
         const labels = await p
           .locator(".chakra-badge[title]")

@@ -12,11 +12,12 @@
     "height": 900,
     "framesPerSecond": 12,
     "loop": true,
-    "theme": "light",
-    "overview": "Continuous real-browser recording: edit and save asset notes; control center and audit; save a workspace role and delivery window; inspect certificate inventory, expanded renewal profiles and agent fleet.",
+    "overview": "Continuous light-theme browser recording of asset edits, permissions, alert settings and certificate management.",
     "workflow": "Continuous real-browser recording: discover subdomains, select results, assign a section, import 14 certificates and create 14 endpoint monitors; scan Vault, select and assign 15 items, import, filter the resulting inventory.",
     "presentation": "Visible pointer follows real mouse events. Only initial loading is trimmed; no internal cuts or speed changes.",
-    "sampleApiAdjustment": "Local Vault scan-summary adapter groups returned sample items by mount and supplies the current found-count schema."
+    "sampleApiAdjustment": "Local Vault scan-summary adapter groups returned sample items by mount and supplies the current found-count schema.",
+    "workflowTheme": "dark",
+    "overviewTheme": "light"
   },
   "assets": [
     {
@@ -30,8 +31,9 @@
       "file": "audit-log.png",
       "width": 1920,
       "height": 1080,
-      "bytes": 838414,
-      "sha256": "7e78e9d353fc2782341f916a9ae5bbc74cb8af9fa5f59826b49b5a20f70c62e0"
+      "bytes": 832530,
+      "sha256": "bfe324f8695a48b78d1a30ae87e1beba0fd2886497113b9737ca75c37f9a6949",
+      "capturedFromCommit": "9ffa8102"
     },
     {
       "file": "certops-agents.png",
@@ -50,9 +52,10 @@
     {
       "file": "certops-jobs-timeline-evidence.png",
       "width": 1920,
-      "height": 1080,
-      "bytes": 772937,
-      "sha256": "24da1349910ebfa56a127bd9f109f52f0f3282a0b1e5642575285fc5dfdf9853"
+      "height": 1440,
+      "bytes": 842231,
+      "sha256": "3321cdee27b1fc05f6e4cd2c16bf28e32efe56d5010614cbacc079522d661fe1",
+      "capturedFromCommit": "9ffa8102"
     },
     {
       "file": "certops-renewals.png",
@@ -108,9 +111,10 @@
       "file": "dashboard-workflow.gif",
       "width": 1600,
       "height": 900,
-      "bytes": 20702751,
-      "sha256": "611c01e36500821faed8eafc303d154b3eb3fc1b20a7b1f70c3bdd31ff45e8f1",
-      "durationSeconds": 54.83
+      "bytes": 30331890,
+      "sha256": "27068575ea7b100dd5e1d99c015f8706780c5a7d4a2c0649897df54a21f8738c",
+      "durationSeconds": 57.08,
+      "capturedFromCommit": "9ffa8102"
     },
     {
       "file": "system-settings-dark.png",
