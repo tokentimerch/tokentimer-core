@@ -33,6 +33,7 @@ COPY --chown=nodejs:nodejs apps/api/src/shared/replaceAssetContactGroups.js ./ap
 COPY --chown=nodejs:nodejs apps/api/utils/secretMaterial.js ./apps/api/utils/secretMaterial.js
 COPY --chown=nodejs:nodejs apps/api/services/audit.js ./apps/api/services/audit.js
 COPY --chown=nodejs:nodejs apps/api/utils/logger.js ./apps/api/utils/logger.js
+COPY --chown=nodejs:nodejs apps/api/utils/request-context.js ./apps/api/utils/request-context.js
 COPY --chown=nodejs:nodejs apps/api/config/runtime-labels.js ./apps/api/config/runtime-labels.js
 COPY --chown=nodejs:nodejs apps/api/db/database.js ./apps/api/db/database.js
 
