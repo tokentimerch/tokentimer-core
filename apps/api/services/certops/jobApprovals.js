@@ -145,20 +145,19 @@ function approvalFromRow(row) {
  */
 async function assertOperatorRequestStillApprovable(db, job) {
   if (!job.requestedByConnectionId) return;
-  const conn = await db.query(
-    `SELECT status, expires_at FROM operator_connections WHERE id = $1 FOR SHARE`,
-    [job.requestedByConnectionId],
-  );
-  const row = conn.rows[0];
-  const ended = !row || row.status !== "active" || new Date(row.expires_at) <= new Date();
+  const allowed = await require("../operator/jobAuthority").lockOperatorJobAuthority({
+    client: db, connectionId: job.requestedByConnectionId,
+    workspaceId: job.workspaceId, requesterUserId: job.requestedByUserId,
+    operation: job.operation,
+  });
   const request = await db.query(
     `SELECT approval_expires_at, state_override FROM operator_action_requests
       WHERE job_id = $1 AND workspace_id = $2`,
     [job.id, job.workspaceId],
   );
   const req = request.rows[0];
-  const lapsed = req && (req.state_override || new Date(req.approval_expires_at) <= new Date());
-  if (ended || lapsed) {
+  const lapsed = !req || req.state_override || new Date(req.approval_expires_at) <= new Date();
+  if (!allowed || lapsed) {
     throw serviceError(
       "This request came from an assistant connection that has ended or whose approval window passed",
       CERTOPS_APPROVAL_REQUEST_STALE,

@@ -47,7 +47,8 @@
         "rejected",
         "expired",
         "cancelled",
-        "stale"
+        "stale",
+        "unknown_effect"
       ]
     },
     "tt_preview_renew_input": {

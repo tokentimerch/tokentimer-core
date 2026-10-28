@@ -39,7 +39,7 @@ describe("outbound secret check", () => {
   });
 
   it("withholds every TokenTimer credential family, which the shared detector does not know", () => {
-    for (const prefix of ["ttopc_", "ttagent_", "ttboot_", "ttx_"]) {
+    for (const prefix of ["ttopc_", "ttopg_", "ttagent_", "ttboot_", "ttx_"]) {
       const verdict = inspectOutbound({ commonName: { value: `CN=${prefix}${ID}_${"a".repeat(64)}`, untrusted: true, truncated: false } });
       assert.equal(verdict.clean, false, prefix);
       assert.equal(verdict.reason, "credential_shape", prefix);

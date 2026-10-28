@@ -28,13 +28,28 @@ function canonicalize(value) {
   return value;
 }
 
-function hashPlan({ operation, workspaceId, connectionId, subjectId, boundFingerprint, boundProfileId, effect }) {
+function hashPlan({ operation, workspaceId, connectionId, subjectId, boundFingerprint, boundProfileId, intentHash, effect }) {
   // Everything the plan is bound to is inside the hash, so a plan cannot be
   // replayed against another certificate, connection or workspace.
+  // Advisory availability warnings do not change the authorized effect. A
+  // pause/resume must block/defer work, not invalidate otherwise valid consent.
+  const { warnings: _warnings, ...resolvedEffect } = effect;
   const body = JSON.stringify(
-    canonicalize({ operation, workspaceId, connectionId, subjectId, boundFingerprint, boundProfileId, effect }),
+    canonicalize({ operation, workspaceId, connectionId, subjectId, boundFingerprint, boundProfileId, intentHash, effect: resolvedEffect }),
   );
   return crypto.createHash("sha256").update(body, "utf8").digest("hex");
+}
+
+// The material version identifier is allocated per deliberate submission.
+// Everything that determines execution, including the profile snapshot and
+// publication destination/revision, remains bound to the preview.
+function hashRenewalIntent(payload) {
+  const intent = { ...payload };
+  if (intent.publication) {
+    intent.publication = { ...intent.publication };
+    delete intent.publication.materialVersionId;
+  }
+  return crypto.createHash("sha256").update(JSON.stringify(canonicalize(intent)), "utf8").digest("hex");
 }
 
 // Renewal needs approval by someone other than the requester. That is a
@@ -54,10 +69,10 @@ function renewEffect({ certificate, workspacePaused, requireApprovalAlways }) {
     approvalAuthority: "other_manager_or_admin",
     warnings,
     target: {
-      commonName: untrustedText(certificate.commonName),
-      notAfter: certificate.notAfter ? new Date(certificate.notAfter).toISOString() : null,
+      commonName: untrustedText(certificate.common_name),
+      notAfter: certificate.not_after ? new Date(certificate.not_after).toISOString() : null,
     },
   };
 }
 
-module.exports = { APPROVAL_TTL_MS, PLAN_TTL_MS, canonicalize, hashPlan, renewEffect };
+module.exports = { APPROVAL_TTL_MS, PLAN_TTL_MS, canonicalize, hashPlan, hashRenewalIntent, renewEffect };

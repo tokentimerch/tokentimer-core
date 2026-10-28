@@ -1,6 +1,6 @@
 {
   "name": "@tokentimer/mcp",
-  "version": "0.18.0",
+  "version": "0.18.2",
   "private": true,
   "description": "TokenTimer MCP adapter: a stateless stdio server that exposes the operator read API to MCP clients",
   "license": "AGPL-3.0-or-later",

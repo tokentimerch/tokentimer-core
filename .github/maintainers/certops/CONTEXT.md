@@ -351,7 +351,12 @@ addendum to ADR-0007 supersedes its earlier source-row lifecycle description.
   with the exact SHA-256 fingerprint precondition, `revoked` or
   `decommissioned`, and a reason. The old record-based route also requires the
   fingerprint precondition. Rows, instances, and evidence are preserved;
-  linked token lifecycle status is updated only when no independently active
+  Open management periods still pointing to the retired fingerprint close and
+  disable automation; periods already rotated to another identity remain open.
+  Closing the last open period releases that identity's quota unit. Observation
+  of a replacement does not resume management: explicit re-add selects its
+  renewal configuration and cannot reactivate a retired fingerprint.
+  Linked token lifecycle status is updated only when no independently active
   fingerprint shares that token. Retiring also stops
   expiry and renewal-failure alerts for that certificate: pending
   renewal-failure alerts are discarded with their history retained; pending expiry alerts are
@@ -512,3 +517,22 @@ registrations, including stopping, restarting, and history visibility, see
 [Certificate details](../../../docs/certops/certificate-details.md).
 
 Existing open management periods may rotate to a different fingerprint even when other sources retain the old certificate and quota usage temporarily exceeds the limit. New period enrollment still requires admission; joining an already managed fingerprint adds no unit. Core migration 64 (Cloud migration 82) repairs the earlier admission function without rewriting historical migrations or management history.
+
+## Assistant operator boundary
+
+ADR-0015 defines an optional operator connection representing one user in one
+workspace. Effective authority intersects scopes, its fixed role ceiling and
+the user's live membership. Approval and fresh dispatch revalidate that
+authority transactionally; background cleanup does not grant execution.
+Every assistant renewal still requires another manager or admin to approve,
+even where ordinary Vault workflows allow a single operator. Preview consent
+binds the resolved execution snapshot, not just its mutable profile ID.
+
+Renewal/publication, consumer rollout, installed-file convergence and live TLS
+verification are separate outcomes. Unknown execution effects require human
+reconciliation. File-only delivery does not establish live TLS. Profile and
+issuer management are manager-or-admin actions; kill switches, assistant
+write enablement, trust anchors and diagnostic credential issuance retain
+their distinct admin permissions. New assistant scopes are never implied by
+those session permissions. The baseline manual-renew tool does not orchestrate
+AD CS enrollment, general token writes or issuer-side revocation.

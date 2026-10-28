@@ -191,14 +191,21 @@ function connectionFromRow(row, now = new Date()) {
 // membership row wins, then the implicit workspace-owner rule) is shared with
 // session authorization in rbac.js; only the queries live here so they can run
 // on a caller-supplied transaction client.
-async function resolveCurrentWorkspaceRole(db, { userId, workspaceId }) {
+async function resolveCurrentWorkspaceRole(db, { userId, workspaceId, lock = false, skipLocked = false }) {
+  const suffix = lock ? ` FOR SHARE${skipLocked ? " SKIP LOCKED" : ""}` : "";
   const membership = await db.query(
-    "SELECT role FROM workspace_memberships WHERE user_id = $1 AND workspace_id = $2",
+    `SELECT role FROM workspace_memberships WHERE user_id = $1 AND workspace_id = $2${suffix}`,
     [userId, workspaceId],
   );
+  // A busy membership is not an absent membership: never fall back to owner
+  // authority when a concurrent demotion/removal holds that row.
+  if (skipLocked && !membership.rows[0]) {
+    const exists = await db.query("SELECT 1 FROM workspace_memberships WHERE user_id = $1 AND workspace_id = $2", [userId, workspaceId]);
+    if (exists.rows[0]) return null;
+  }
   const owner = membership.rows[0]?.role
     ? { rows: [] }
-    : await db.query("SELECT created_by FROM workspaces WHERE id = $1", [workspaceId]);
+    : await db.query(`SELECT created_by FROM workspaces WHERE id = $1${suffix}`, [workspaceId]);
   return effectiveWorkspaceRole({
     membershipRole: membership.rows[0]?.role || null,
     workspaceCreatedBy: owner.rows[0]?.created_by,
@@ -448,12 +455,12 @@ async function authenticateCredential({ client, rawCredential, now = new Date() 
 // once a revocation commits, no later authorization can commit (ADR-0015
 // section 8): the revoke has to wait for this transaction, and anything that
 // starts after it sees the connection as revoked.
-async function lockConnectionAuthority({ client, connectionId, now = new Date() }) {
+async function lockConnectionAuthority({ client, connectionId, now = new Date(), skipLocked = false }) {
   if (!client || typeof client.query !== "function") {
     throw serviceError("A transaction client is required", CONNECTION_INVALID);
   }
   const found = await client.query(
-    `SELECT ${SAFE_SELECT_FIELDS} FROM operator_connections WHERE id = $1 LIMIT 1 FOR SHARE`,
+    `SELECT ${SAFE_SELECT_FIELDS} FROM operator_connections WHERE id = $1 LIMIT 1 FOR SHARE${skipLocked ? " SKIP LOCKED" : ""}`,
     [connectionId],
   );
   const row = found.rows[0];
@@ -463,6 +470,8 @@ async function lockConnectionAuthority({ client, connectionId, now = new Date() 
   const currentRole = await resolveCurrentWorkspaceRole(client, {
     userId: row.user_id,
     workspaceId: row.workspace_id,
+    lock: true,
+    skipLocked,
   });
   const authority = computeAuthority({ connection, currentRole });
   if (!authority.effectiveRole) return invalid();

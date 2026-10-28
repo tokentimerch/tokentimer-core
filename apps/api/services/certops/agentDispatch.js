@@ -1137,8 +1137,8 @@ async function claimJobs({
     // without the capability keeps claiming ordinary renewals of active
     // certificates exactly as before.
     const selected = await client.query(
-      `SELECT id, workspace_id, operation, subject_type, subject_id,
-              management_period_id, certificate_identity_id, payload,
+      `SELECT id, workspace_id, operation, status, subject_type, subject_id,
+              management_period_id, certificate_identity_id, requested_by_connection_id, requested_by_user_id, payload,
               approved_payload_hash, approved_canonical_intent_hash,
               mode, executor_kind,
               assigned_agent_id, required_target_selector,
@@ -1313,6 +1313,12 @@ async function claimJobs({
     const jobs = [];
     const logStreams = [];
     for (const row of selected.rows) {
+      // Reclaims are already authorized work. Only a fresh dispatch must
+      // revalidate the originating connection and requester membership.
+      if (row.status === "pending" && !await require("../operator/jobAuthority").lockOperatorJobAuthority({
+        client, connectionId: row.requested_by_connection_id, workspaceId: agent.workspaceId,
+        requesterUserId: row.requested_by_user_id, operation: row.operation, skipLocked: true,
+      })) continue;
       if (!await require("./managementClaim").lockManagedJobForClaim({
         client, job: row, workspaceId: agent.workspaceId,
       })) continue;

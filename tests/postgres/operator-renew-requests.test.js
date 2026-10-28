@@ -417,6 +417,20 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
     }
     const approve = (jobId, userId) => approvals.approveJob({ workspaceId, jobId, approverUserId: userId, reason: "ok" });
 
+    it("refuses approval immediately after requester demotion or removal without a sweep", async () => {
+      for (const removed of [false, true]) {
+        await restoreRoles();
+        await clearInFlight();
+        const request = await mustFile();
+        try {
+          if (removed) await pool.query("DELETE FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2", [workspaceId, manager]);
+          else await member(manager, workspaceId, "viewer");
+          await assert.rejects(approvals.approveJob({ workspaceId, jobId: request.jobId, approverUserId: approver, reason: "reviewed" }), { code: "CERTOPS_APPROVAL_REQUEST_STALE" });
+          assert.equal((await jobRow(request.jobId)).status, "pending_approval");
+        } finally { await restoreRoles(); }
+      }
+    });
+
     it("cannot be approved by the person who owns the connection, whatever role they hold", async () => {
       const request = await pendingRequest();
       for (const self of [manager]) {
@@ -580,6 +594,42 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
       assert.equal(response.status, 409);
       assert.equal(response.body.code, "CERTOPS_WORKSPACE_PAUSED");
       assert.equal(await pool.query("SELECT COUNT(*)::int AS n FROM operator_action_requests WHERE plan_id = $1", [plan.planId]).then((r) => r.rows[0].n), 0);
+    });
+  });
+
+  describe("resolved preview intent", () => {
+    const { afterEach } = require("node:test");
+    afterEach(clearInFlight);
+    it("returns the known certificate name and expiry", async () => {
+      const response = await preview();
+      assert.equal(response.status, 201);
+      assert.equal(response.body.effect.target.commonName.value, "app.example.com");
+      assert.ok(response.body.effect.target.notAfter);
+    });
+    it("rejects an in-place edit of the previewed profile", async () => {
+      const plan = (await preview()).body;
+      const original = (await pool.query("SELECT public_metadata FROM certificate_profiles WHERE id = $1", [certA.profileId])).rows[0].public_metadata;
+      try {
+        await pool.query("UPDATE certificate_profiles SET public_metadata = jsonb_set(public_metadata, '{renewalProfile,keySize}', '4096') WHERE id = $1", [certA.profileId]);
+        const response = await submit(plan, crypto.randomUUID());
+        assert.equal(response.status, 409);
+        assert.equal(response.body.code, "OPERATOR_INTENT_STALE");
+        assert.equal((await pool.query("SELECT COUNT(*)::int AS n FROM operator_action_requests WHERE plan_id = $1", [plan.planId])).rows[0].n, 0);
+      } finally {
+        await pool.query("UPDATE certificate_profiles SET public_metadata = $2::jsonb WHERE id = $1", [certA.profileId, JSON.stringify(original)]);
+      }
+    });
+    it("preserves human capacity when the configured cap is one", async () => {
+      const previous = process.env.CERTOPS_RENEWAL_PER_CA_CAP;
+      process.env.CERTOPS_RENEWAL_PER_CA_CAP = "1";
+      try {
+        const response = await submit((await preview()).body, crypto.randomUUID());
+        assert.equal(response.status, 429);
+        assert.equal(response.body.code, "OPERATOR_PENDING_LIMIT");
+      } finally {
+        if (previous === undefined) delete process.env.CERTOPS_RENEWAL_PER_CA_CAP;
+        else process.env.CERTOPS_RENEWAL_PER_CA_CAP = previous;
+      }
     });
   });
 
@@ -1050,6 +1100,37 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
       await pool.query("UPDATE operator_connections SET status = 'revoked', revoked_at = NOW() WHERE id = $1", [own.id]);
       assert.deepEqual((await claim()).jobs, []);
       assert.equal((await jobRow(request.jobId)).status, "pending");
+    });
+
+    it("does not claim approved work after requester demotion or removal without a sweep", async () => {
+      for (const removed of [false, true]) {
+        await clearInFlight();
+        await restoreRoles();
+        const request = await approved();
+        try {
+          if (removed) await pool.query("DELETE FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2", [workspaceId, manager]);
+          else await member(manager, workspaceId, "viewer");
+          assert.deepEqual((await claim()).jobs, []);
+          assert.equal((await jobRow(request.jobId)).status, "pending");
+        } finally { await restoreRoles(); }
+      }
+    });
+
+    it("skips a connection or membership being changed concurrently instead of deadlocking", async () => {
+      for (const membership of [false, true]) {
+        await clearInFlight();
+        const request = await approved();
+        const holder = await pool.connect();
+        try {
+          await holder.query("BEGIN");
+          if (membership) await holder.query("UPDATE workspace_memberships SET role = 'viewer' WHERE workspace_id = $1 AND user_id = $2", [workspaceId, manager]);
+          else await holder.query("UPDATE operator_connections SET status = 'revoked', revoked_at = NOW() WHERE id = $1", [connectionId]);
+          assert.deepEqual((await claim()).jobs, []);
+          assert.equal((await jobRow(request.jobId)).status, "pending");
+          await holder.query("ROLLBACK");
+          assert.deepEqual((await claim()).jobs.map(j => j.jobId), [request.jobId]);
+        } finally { await holder.query("ROLLBACK"); holder.release(); }
+      }
     });
 
     it("still claims ordinary work that came from nobody's connection, so existing behaviour is unchanged", async () => {

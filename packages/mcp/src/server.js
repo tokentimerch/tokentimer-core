@@ -31,6 +31,7 @@ const WRITE_INSTRUCTIONS = [
   "It creates a request that a different person must approve in TokenTimer, and only after that does anything run.",
   "Preview first, show the user what the preview says, and submit only if they want it.",
   "After submitting, tell the user the request is waiting for someone else to approve, not that the certificate was renewed.",
+  "An unknown_effect result requires human reconciliation; do not submit a replacement request or claim the operation failed safely.",
   "Use a new random UUID as requestId for each deliberate submission, and reuse it only to retry that same submission.",
   "Requests can be refused: writes may be switched off, the plan may expire, or the certificate may have changed. Report that plainly.",
 ].join(" ");

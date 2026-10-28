@@ -2,15 +2,17 @@
 
 ## Status
 
-Proposed (2026-10-19). Not yet reviewed. The credential and authorization
-foundation described below is implemented on a feature branch behind a rollout
-flag that is off by default: operator connections, the early route guard, the
-shared credential primitives, session-only connection management and one
-operator route (`whoami`). Nothing that reads certificate data for a connection,
-no enrollment flow, and no write execution exists. The contracts under
-`packages/contracts/mcp/` describe the full first read-only release and are
-ahead of the implementation; the catalog marks each route `implemented` or
-`planned`, and a test keeps that honest.
+Proposed (2026-10-19), updated 2026-10-28 against the released 0.18.2
+behavior. The feature branch implements eight read tools, strict one-time
+enrollment, and five renewal preview/request/status/withdrawal tools. All
+policy is enforced by REST; the stdio adapter has no database access. Both
+interface and write flags remain off by default. The baseline supports the
+manual ACME renewal path; AD CS manual renewal is not supported by that path.
+The route catalog distinguishes implemented tools from separately scoped
+follow-ons. Independent security/protocol qualification and a supported real
+assistant-client journey remain release gates. Assistant writes must remain
+disabled until the human approval surface identifies assistant origin and
+shows the full resolved effect and expiries.
 
 Each decision below carries one of two labels:
 
@@ -205,7 +207,8 @@ client behavior and are never an authorization control.
   requests record the connection's user as the requester plus the connection id.
   They are never recorded with a null requester or as anonymous machine work.
   The user a connection represents therefore cannot approve its own request,
-  including through another connection. A same-user confirmation mode is
+  including through another connection. Optional approval for ordinary Vault
+  jobs does not relax this assistant-specific requirement. A same-user confirmation mode is
   deferred and would need its own ADR amendment, interface and tests.
 - **Enrollment consent is capability access, not approval** of any later
   operation.
@@ -242,9 +245,11 @@ Three operations are kept distinct in tool names, responses, explanations and
 approval screens:
 
 - **Mark revoked** and **decommission** change the exact certificate
-  fingerprint's lifecycle. Neither contacts a CA. Neither closes management
-  periods or releases quota. Decommission is an operator declaration, not proof
-  of absence.
+  fingerprint's lifecycle. Neither contacts a CA. Both close open management periods still pointing to that exact fingerprint
+  and disable their automation. The final open period releases the identity's quota unit; a source that already rotated to another identity stays managed.
+  Decommission is an operator declaration, not proof of absence. Observing a
+  replacement does not resume management: explicit re-add selects its renewal
+  configuration and cannot reactivate a retired fingerprint.
 - **Stop managing** ends a selected management period. It is a separate
   operation and is outside the initial tool set.
 - **CA-backed revocation** is an issuer-side effect through a supported
@@ -332,7 +337,7 @@ Recommended position:
 - Revoking a connection therefore means "stop this connection and its
   outstanding work", not "disable every renewal profile created through it".
   Stopping standing renewal stays a separate authorized management action
-  (switching the profile off, admin only, which exists today).
+  (switching the profile off, manager or admin, which exists today).
 - The issuance preview and approval screen state "issuance followed by automatic
   renewal" and the issuer, target, names, key parameters and renewal settings
   that define the permitted recurring activity. The connection-revocation screen
@@ -340,7 +345,7 @@ Recommended position:
   keep running until separately disabled.
 - Required approval authority follows the complete resolved effect, not the tool
   name. An issuance that creates standing renewal needs an approver with
-  authority at the level of renewal-profile management (admin) in addition to
+  authority at the level of renewal-profile management (manager or admin) in addition to
   the non-requester rule. A request that does not create standing renewal does
   not.
 - The first write release preserves the existing derivation behavior and
@@ -408,7 +413,8 @@ narrow exception:
 
 > An authenticated and authorized connection may withdraw its own request while
 > it is still `pending_approval`, even when new operational requests are
-> disabled by workspace pause or the MCP write flags.
+> disabled by workspace pause or the MCP write flags, or by Cloud downgrade
+> or freeze. This containment exception does not admit any new work.
 
 - Authentication, scope, workspace and ownership checks still apply. The
   exception does not permit cancelling another connection's request, changing
@@ -670,6 +676,50 @@ approval or a withdrawal.
 - Plans are never deleted. They are small and expire in ten minutes, but nothing
   removes old rows, and a preview is rate limited only by the shared API limiter.
 
+## Consistency amendments after 0.18.2
+
+- Core migrations append at 81–83 after released onboarding, file delivery and
+  auto-sync telemetry. Never rename an applied migration. Preview databases
+  that applied the earlier draft 77–79 history require an explicit recovery
+  plan; they are not supported upgrade sources for the released history.
+- Preview binds the resolved execution intent and current workspace approval
+  policy, not merely a mutable profile ID. Submit locks the source and profile
+  while comparing that intent and creating the job; changed intent requires a
+  fresh preview. Generated publication-version IDs are bookkeeping and do not
+  change the authorized destination or profile revision.
+- Approval and fresh dispatch re-read scopes, role ceiling and current
+  requester membership while holding authority locks. Claim skips busy rows to
+  avoid reversing the revocation lock order. The sweep is cleanup, not the
+  authorization boundary; already claimed work retains reconciliation rules.
+- An unknown execution effect is `unknown_effect` with
+  `reconciliation_required`. It must not be narrated as a confirmed failure or
+  retried as a new deliberate request before human reconciliation.
+- A per-CA capacity of one admits no waiting assistant requests, preserving
+  capacity for humans and the scheduler. The ordinary default of five admits
+  two waiting requests across the workspace.
+- Current managers may configure renewal profiles and issuers. The proposed
+  future issuance approval follows that same role floor plus the non-requester
+  rule; this does not enable a reserved scope or lower the admin requirements
+  for kill switches, assistant write enablement, diagnostic credentials, trust
+  anchors or issuer-side revocation.
+- Vault renewal/publication, consumer rollout, installed-file convergence and
+  live TLS verification are separate facts. Publishing a certificate does not
+  start a rollout. File-only installation makes no live-TLS claim, and paused
+  rollout recovery requires an explicit resume. Future bounded projections may
+  expose those phases without paths, key references, Vault credentials or raw
+  shell output. Mutation of those workflows needs a separately accepted scope.
+- Safe context should distinguish stopped management, retired fingerprint,
+  observed replacement, selected renewal mechanism and explicit re-add.
+  MCP `daysUntilExpiry` currently counts complete elapsed 24-hour intervals;
+  dashboard calendar-day labels use their own timezone semantics. They are not
+  interchangeable. No additional data or mutation scope is granted by this
+  clarification.
+- General token CRUD/extraction, issuance/decommission requests, AD CS request
+  orchestration and CA-backed revoke remain follow-ons under public issue
+  [#502](https://github.com/tokentimerch/tokentimer-core/issues/502), with the
+  existing issuer/egress dependencies unchanged. Scheduled auto-sync telemetry
+  is not implicitly part of the operator read scope.
+
 ## Open decisions and proposed defaults
 
 These are product-policy settings, not protocol requirements. The values are
@@ -797,7 +847,7 @@ must not be inferred from it.
   upfront issuance creating a provisioning certificate with the job.
 - **Renewal profiles** (`renewalProfileDerivation.js`, `renewalProfileAdmin.js`,
   ADR-0010): derivation inserts an active profile; profile status can be set to
-  `active` or `disabled`; profile management is an admin action
+  `active` or `disabled`; profile management is a manager-or-admin action
   (`certops.renewal_profile.manage`).
 - **Explanations** (`renewalPathHealth.js`, `jobPendingReason.js`,
   `agentJobEligibility.js`): `explainAgentJobEligibility` is already shared by

@@ -13,6 +13,7 @@ const { containsGenericSecretMaterial } = require("@tokentimer/log-scrub/secret-
 // TokenTimer's own credential families. The shared detector does not know
 // these shapes, so they are matched here.
 const CREDENTIAL_SHAPES = [
+  /\bttopg_[a-f0-9]{16}_[a-f0-9]{64}\b/i,
   /\bttopc_[a-f0-9]{16}_[a-f0-9]{64}\b/i,
   /\bttagent_[a-f0-9]{16}_[a-f0-9]{64}\b/i,
   /\bttboot_[a-f0-9]{16}_[a-f0-9]{64}\b/i,

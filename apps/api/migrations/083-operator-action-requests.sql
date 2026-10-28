@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS operator_action_plans (
   bound_fingerprint_sha256 TEXT NULL
     CHECK (bound_fingerprint_sha256 IS NULL OR bound_fingerprint_sha256 ~ '^[a-f0-9]{64}$'),
   bound_profile_id UUID NULL,
+  bound_intent_hash TEXT NOT NULL CHECK (bound_intent_hash ~ '^[a-f0-9]{64}$'),
   -- Hash of the canonical effect shown to the person. The submission must
   -- present it back, so what is approved is what was previewed.
   plan_hash TEXT NOT NULL CHECK (plan_hash ~ '^[a-f0-9]{64}$'),

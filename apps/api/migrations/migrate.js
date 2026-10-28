@@ -4863,17 +4863,17 @@ const migrations = [
   {
     version: 83,
     name: "operator_connections",
-    sql: fs.readFileSync(require("path").join(__dirname, "077-operator-connections.sql"), "utf8"),
+    sql: fs.readFileSync(require("path").join(__dirname, "081-operator-connections.sql"), "utf8"),
   },
   {
     version: 84,
     name: "operator_enrollment_grants",
-    sql: fs.readFileSync(require("path").join(__dirname, "078-operator-enrollment-grants.sql"), "utf8"),
+    sql: fs.readFileSync(require("path").join(__dirname, "082-operator-enrollment-grants.sql"), "utf8"),
   },
   {
     version: 85,
     name: "operator_action_requests",
-    sql: fs.readFileSync(require("path").join(__dirname, "079-operator-action-requests.sql"), "utf8"),
+    sql: fs.readFileSync(require("path").join(__dirname, "083-operator-action-requests.sql"), "utf8"),
   },
 ];
 

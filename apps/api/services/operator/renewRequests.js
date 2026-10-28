@@ -10,6 +10,7 @@ const { crypto: _c, reads, hashPlan, renewEffect, lockWorkspaceForCertOpsSideEff
 const { PLAN_TTL_MS, APPROVAL_TTL_MS, MAX_PENDING_PER_CONNECTION } = base;
 const { untrustedText } = require("./projections");
 const { resolveRenewalPerCaCap } = require("../certops/renewalCapacity");
+const { hashRenewalIntent } = require("./planEffects");
 const { endLapsedWindows } = require("./requestMaintenance");
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -29,10 +30,23 @@ async function resolveRenewable({ workspaceId, identityId }) {
   return record;
 }
 
+// Hold the source and profile stable through preflight and job materialization.
+async function lockRenewalSources(client, workspaceId, certificateId) {
+  const source = await client.query("SELECT profile_id FROM managed_certificates WHERE workspace_id = $1 AND id = $2 FOR SHARE", [workspaceId, certificateId]);
+  if (source.rows[0]?.profile_id) {
+    await client.query("SELECT id FROM certificate_profiles WHERE workspace_id = $1 AND id = $2 FOR SHARE", [workspaceId, source.rows[0].profile_id]);
+  }
+}
+
+function assistantPendingLimit(perCaCap) {
+  return Math.max(0, Math.floor(perCaCap / 2));
+}
+
 async function createRenewPlan({ client, operator, identityId, now = new Date() }) {
   await authorize({ client, operator });
   const record = await resolveRenewable({ workspaceId: operator.workspaceId, identityId });
 
+  await lockRenewalSources(client, operator.workspaceId, record.managedCertificateId);
   const certificate = await loadManagedCertificateForRenewal({
     db: client,
     workspaceId: operator.workspaceId,
@@ -42,8 +56,9 @@ async function createRenewPlan({ client, operator, identityId, now = new Date() 
 
   // The same validation a real renewal runs, writing nothing. If it would be
   // refused, the preview says so now instead of after someone approves it.
+  let materialized;
   try {
-    await preflightManualRenewalJob({
+    materialized = await preflightManualRenewalJob({
       client,
       workspaceId: operator.workspaceId,
       certificateId: record.managedCertificateId,
@@ -64,6 +79,7 @@ async function createRenewPlan({ client, operator, identityId, now = new Date() 
     workspacePaused: ws.rows[0]?.certops_paused === true,
     requireApprovalAlways: ws.rows[0]?.certops_require_approval_always === true,
   });
+  const intentHash = hashRenewalIntent(materialized);
   const fingerprint = (record.fingerprintSha256 || "").toLowerCase() || null;
   const planHash = hashPlan({
     operation: "renew",
@@ -72,14 +88,15 @@ async function createRenewPlan({ client, operator, identityId, now = new Date() 
     subjectId: record.managedCertificateId,
     boundFingerprint: fingerprint,
     boundProfileId: certificate.profile_id || null,
+    intentHash,
     effect,
   });
   const expiresAt = new Date(now.getTime() + PLAN_TTL_MS);
   const inserted = await client.query(
     `INSERT INTO operator_action_plans
        (workspace_id, connection_id, operation, identity_id, subject_id,
-        bound_fingerprint_sha256, bound_profile_id, plan_hash, effect, created_at, expires_at)
-     VALUES ($1, $2, 'renew', $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
+        bound_fingerprint_sha256, bound_profile_id, plan_hash, effect, created_at, expires_at, bound_intent_hash)
+     VALUES ($1, $2, 'renew', $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11)
      RETURNING id`,
     [
       operator.workspaceId,
@@ -92,6 +109,7 @@ async function createRenewPlan({ client, operator, identityId, now = new Date() 
       JSON.stringify(effect),
       now,
       expiresAt,
+      intentHash,
     ],
   );
   return { planId: inserted.rows[0].id, planHash, expiresAt: expiresAt.toISOString(), effect };
@@ -111,7 +129,7 @@ const JOB_STATE = Object.freeze({
   cancelled: "cancelled",
   blocked: "failed",
   dry_run_complete: "succeeded",
-  orphaned_unknown_effect: "failed",
+  orphaned_unknown_effect: "unknown_effect",
   awaiting_issuer: "executing",
 });
 
@@ -126,6 +144,7 @@ function requestView(row, job, { replayed = false } = {}) {
       state = "expired";
       reason = reason || "approval_window_ended";
     }
+    if (job.status === "orphaned_unknown_effect") reason = "reconciliation_required";
     if (!reason && job.error_code) reason = snake(job.error_code);
   } else {
     state = "failed";
@@ -218,7 +237,7 @@ async function submitRenewRequest({ client, operator, planId, planHash, requestI
         AND requested_by_connection_id IS NOT NULL`,
     [operator.workspaceId, operator.connectionId],
   );
-  const workspaceLimit = Math.max(1, Math.floor(resolveRenewalPerCaCap() / 2));
+  const workspaceLimit = assistantPendingLimit(resolveRenewalPerCaCap());
   if (waiting.rows[0].mine >= MAX_PENDING_PER_CONNECTION || waiting.rows[0].workspace_total >= workspaceLimit) {
     throw fail(CODES.PENDING_LIMIT, "Too many assistant requests are waiting for approval");
   }
@@ -228,6 +247,7 @@ async function submitRenewRequest({ client, operator, planId, planHash, requestI
   await lockWorkspaceForCertOpsSideEffect({ client, workspaceId: operator.workspaceId });
 
   // 5. The world must still be what was previewed.
+  await lockRenewalSources(client, operator.workspaceId, plan.subject_id);
   const record = await reads.loadIdentity({ workspaceId: operator.workspaceId, identityId: plan.identity_id });
   const certificate = record
     ? await loadManagedCertificateForRenewal({ db: client, workspaceId: operator.workspaceId, certificateId: plan.subject_id })
@@ -240,6 +260,17 @@ async function submitRenewRequest({ client, operator, planId, planHash, requestI
     (certificate.profile_id || null) === (plan.bound_profile_id || null) &&
     (!record.lifecycleStatus || record.lifecycleStatus === "active");
   if (!stillSame) throw fail(CODES.INTENT_STALE, "The certificate changed since the preview; preview again");
+  let currentPayload;
+  try {
+    currentPayload = await preflightManualRenewalJob({ client, workspaceId: operator.workspaceId, certificateId: plan.subject_id, payload: {} });
+  } catch (_error) {
+    throw fail(CODES.INTENT_STALE, "The renewal configuration changed; preview again");
+  }
+  const policy = await client.query("SELECT certops_paused, certops_require_approval_always FROM workspaces WHERE id = $1", [operator.workspaceId]);
+  const effect = renewEffect({ certificate, workspacePaused: policy.rows[0]?.certops_paused === true, requireApprovalAlways: policy.rows[0]?.certops_require_approval_always === true });
+  if (hashRenewalIntent(currentPayload) !== plan.bound_intent_hash || hashPlan({ operation: "renew", workspaceId: operator.workspaceId, connectionId: operator.connectionId, subjectId: plan.subject_id, boundFingerprint: plan.bound_fingerprint_sha256, boundProfileId: plan.bound_profile_id, intentHash: plan.bound_intent_hash, effect }) !== plan.plan_hash) {
+    throw fail(CODES.INTENT_STALE, "The renewal intent changed since the preview; preview again");
+  }
 
   // 6. The job goes through the existing path, so approval, per-CA caps, the
   // lifecycle checks and the dispatch guards all apply unchanged. It always
@@ -344,6 +375,7 @@ async function cancelRequest({ client, operator, requestRecordId }) {
 }
 
 module.exports = {
+  assistantPendingLimit,
   createRenewPlan,
   submitRenewRequest,
   getRequest,

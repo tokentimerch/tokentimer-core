@@ -75,11 +75,11 @@ describe("worker image contents", () => {
     // Without this, a bug in the scan itself would let the first test pass for nothing.
     const withoutOne = dockerfile
       .split("\n")
-      .filter((line) => !line.includes("services/operator/requestMaintenance.js"))
+      .filter((line) => !line.includes("COPY apps/api/services/operator "))
       .join("\n");
     assert.ok(withoutOne.length < dockerfile.length, "the operator sweep module is listed in the Dockerfile");
     const missing = filesMissingFromImage(withoutOne);
-    assert.equal(missing.length, 1);
-    assert.match(missing[0], /apps\/api\/services\/operator\/requestMaintenance\.js \(required by apps\/worker\/src\/certops-worker\.js\)/);
+    assert.ok(missing.some((file) => /apps\/api\/services\/operator\/requestMaintenance\.js \(required by apps\/worker\/src\/certops-worker\.js\)/.test(file)));
+    assert.ok(missing.some((file) => file.includes("services/operator/jobAuthority.js")));
   });
 });
