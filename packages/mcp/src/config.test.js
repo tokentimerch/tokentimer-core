@@ -164,6 +164,7 @@ describe("adapter configuration: the stored credential file", () => {
     );
   });
 
+  // skip-reason: no-host — POSIX file modes and symlink permissions require a POSIX host.
   it("refuses a stored credential that other users can read, and says how to fix it", { skip: !posix }, () => {
     dir = mkdir();
     try {
@@ -186,6 +187,7 @@ describe("adapter configuration: the stored credential file", () => {
     }
   });
 
+  // skip-reason: no-host — POSIX file modes and symlink permissions require a POSIX host.
   it("refuses a stored credential reached through a symbolic link", { skip: !posix }, () => {
     dir = mkdir();
     try {

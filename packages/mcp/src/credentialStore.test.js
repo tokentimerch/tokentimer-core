@@ -52,6 +52,7 @@ describe("credential store: writing", () => {
     assert.equal(fs.readFileSync(file, "utf8"), `${SECRET}\n`);
   });
 
+  // skip-reason: no-host — POSIX file modes and symlink permissions require a POSIX host.
   it("creates the file private to the owner (mode 0600) and the directory 0700", { skip: !posix }, () => {
     const file = path.join(dir, "private", "credential");
     writeCredential(file, SECRET);
@@ -68,6 +69,7 @@ describe("credential store: writing", () => {
     assert.equal(fs.readFileSync(file, "utf8"), `${SECRET}\n`);
   });
 
+  // skip-reason: no-host — POSIX file modes and symlink permissions require a POSIX host.
   it("refuses to write through a symbolic link, even with replace", { skip: !posix }, () => {
     const target = path.join(dir, "elsewhere");
     fs.writeFileSync(target, "UNTOUCHED\n");
@@ -119,6 +121,7 @@ describe("credential store: writing", () => {
     assert.ok(calls[0].args[0].endsWith(".tmp") || fs.existsSync(file), "the restriction is applied before the rename");
   });
 
+  // skip-reason: no-host — Real Windows ACL checks require a Windows host.
   it("really restricts the file to the current user on Windows (real icacls, not a mock)", { skip: posix }, () => {
     const file = path.join(dir, "real", "credential");
     writeCredential(file, SECRET);
@@ -139,6 +142,7 @@ describe("credential store: writing", () => {
     assert.equal(fs.readFileSync(file, "utf8"), `${SECRET}\n`, "and the owner can still read it");
   });
 
+  // skip-reason: no-host — Real Windows ACL checks require a Windows host.
   it("can replace a restricted file on Windows", { skip: posix }, () => {
     const file = path.join(dir, "again", "credential");
     writeCredential(file, SECRET);
@@ -222,6 +226,7 @@ describe("credential store: checking a destination without writing", () => {
     assert.deepEqual(fs.readdirSync(dir), [], "the check must not create anything");
   });
 
+  // skip-reason: no-host — POSIX file modes and symlink permissions require a POSIX host.
   it("applies the same refusals as the write", { skip: !posix }, () => {
     const file = path.join(dir, "credential");
     fs.writeFileSync(file, "x");
@@ -238,6 +243,7 @@ describe("credential store: checking a destination without writing", () => {
     refused(() => checkDestination(path.join(blocker, "credential")), /not a directory|not writable/);
   });
 
+  // skip-reason: no-host — POSIX file modes and symlink permissions require a POSIX host.
   it("refuses a read-only directory", { skip: !posix || process.getuid?.() === 0 }, () => {
     const ro = path.join(dir, "ro");
     fs.mkdirSync(ro, { mode: 0o500 });
@@ -246,6 +252,7 @@ describe("credential store: checking a destination without writing", () => {
 });
 
 describe("credential store: reading back", () => {
+  // skip-reason: no-host — POSIX file modes and symlink permissions require a POSIX host.
   it("accepts an owner-only file and rejects one other users can read", { skip: !posix }, () => {
     const file = path.join(dir, "credential");
     fs.writeFileSync(file, SECRET, { mode: 0o600 });
@@ -257,6 +264,7 @@ describe("credential store: reading back", () => {
     }
   });
 
+  // skip-reason: no-host — POSIX file modes and symlink permissions require a POSIX host.
   it("rejects a symbolic link and a missing file", { skip: !posix }, () => {
     const real = path.join(dir, "real");
     fs.writeFileSync(real, SECRET, { mode: 0o600 });
