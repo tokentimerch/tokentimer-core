@@ -26,8 +26,7 @@ name: CertOps / AD CS and Vault supporting checks
       - infra/certops-adcs/**
       - packages/agent/src/windows-adcs/**
       - packages/agent/src/material-store/**
-      - docs/certops/qualification-suites.json
-      - docs/certops/qualification-suites.json
+      - .github/maintainers/certops/qualification-suites.json
       - package.json
       - pnpm-lock.yaml
       - .github/workflows/certops-qualification.yml

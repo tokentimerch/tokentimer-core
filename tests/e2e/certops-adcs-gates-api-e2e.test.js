@@ -65,7 +65,7 @@ test("unqualified AD CS onboarding and dispatch gates through real API", { timeo
     }, { oracle: "Public manual job route cannot inject private service-only dispatch privileges" });
   } catch (error) { primaryError = error; throw error; }
   finally {
-    try { if (ready) { await gate.scenario("adcs-api-gate-cleanup", fixture.cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["adcs-api-release-gates"] }); } else await fixture.cleanup(); }
+    try { if (ready) { await gate.scenario("adcs-api-gate-cleanup", fixture.cleanup); await gate.finish({ requiredScenarios: require("../../.github/maintainers/certops/qualification-suites.json").suites["adcs-api-release-gates"] }); } else await fixture.cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "AD CS API gates and finalization failed"); throw error; }
   }
 });

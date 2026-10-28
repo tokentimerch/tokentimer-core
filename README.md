@@ -62,7 +62,7 @@ Three complementary pillars organize the platform:
   <img src="docs/assets/control-center.png" alt="TokenTimer control center: what needs attention, inventory snapshot, scoped credentials, auto-sync health, and managed certificates in one view" width="888" />
 </p>
 
-Screenshots and GIFs show the current interface with illustrative sample data. [Media capture notes](docs/assets/MEDIA.md).
+Screenshots and GIFs show the current interface with illustrative sample data. [Media capture notes](.github/maintainers/MEDIA.md).
 
 ## What makes TokenTimer different?
 
@@ -153,7 +153,7 @@ TokenTimer stores expiration metadata, ownership, and status information without
 | [First asset and alert check](https://tokentimer.ch/docs/self-hosted/quickstart) | Verify the installation with a tracked asset and an alert |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Local development, worker runner, and cron scheduling |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Environment variables and Vault AppRole inventory authentication |
-| [docs/certops/CONTEXT.md](docs/certops/CONTEXT.md) | Certificate Lifecycle Management domain model and behavior (`certops` technical namespace) |
+| [.github/maintainers/certops/CONTEXT.md](.github/maintainers/certops/CONTEXT.md) | Certificate Lifecycle Management domain model and behavior (`certops` technical namespace) |
 | [Agent overview](docs/certops/agent.md) | Installation, policy, and focused operator references |
 | [Install an agent on Linux](docs/certops/agent/install-linux.md) | systemd installation and registration |
 | [Install an agent on Windows](docs/certops/agent/install-windows.md) | Native service installation and registration |

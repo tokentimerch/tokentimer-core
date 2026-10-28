@@ -4,7 +4,7 @@ The opt-in `CERTOPS_DISTRIBUTION_QUALIFICATION=1` mode adds thirteen mandatory
 phases, real Chromium and external TLS probes, scoped/revoked Vault credentials,
 rollback, drift, rollout controls and a read-only custody audit. It requires a
 fresh project and `Test -Phase all`; partial/resumed runs cannot pass. See
-[qualification instructions and feature gaps](../../../docs/certops/qualification/distribution/README.md).
+[qualification instructions and feature gaps](../../../.github/maintainers/certops/qualification/distribution/README.md).
 `ordinary` is also supported as a certificate mode; both listeners use the one
 approved ordinary DNS name as SNI. Distribution read/mutation routes follow the
 actual operator role contract; viewers receive 403.

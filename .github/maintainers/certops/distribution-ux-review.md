@@ -74,4 +74,4 @@ The lab uses synthetic publication and deployment evidence. It does not validate
 - `apps/dashboard/src/components/certops/useDistributionRead.js`
 - `apps/dashboard/tests/unit/DeploymentBadge.test.jsx`
 - `apps/dashboard/tests/unit/DeploymentHelp.test.jsx`
-- `docs/certops/distribution-ux-review.md`
+- `.github/maintainers/certops/distribution-ux-review.md`
