@@ -1219,6 +1219,10 @@ function ImportTokensModalContent({
   const [autoSyncConfig, setAutoSyncConfig] = React.useState(null); // null = not loaded, false = not exists, object = exists
   const [autoSyncConfigs, setAutoSyncConfigs] = React.useState([]);
   const [autoSyncName, setAutoSyncName] = React.useState('');
+  const [
+    allowHighCardinalityMetricLabels,
+    setAllowHighCardinalityMetricLabels,
+  ] = React.useState(false);
   const [autoSyncMetricSettings, setAutoSyncMetricSettings] = React.useState(
     DEFAULT_METRIC_SETTINGS
   );
@@ -1305,6 +1309,9 @@ function ImportTokensModalContent({
             ? configs.find(c => c.provider === source && c.id === requestedId)
             : configs.find(c => c.provider === source);
         setAutoSyncConfig(existing || false);
+        setAllowHighCardinalityMetricLabels(
+          res.data?.metric_label_policy?.high_cardinality_enabled === true
+        );
         setAutoSyncMetricSettings(
           existing?.metrics_settings || DEFAULT_METRIC_SETTINGS
         );
@@ -3084,6 +3091,7 @@ function ImportTokensModalContent({
                     </FormControl>
                     <AutoSyncMetricSettings
                       value={autoSyncMetricSettings}
+                      allowHighCardinality={allowHighCardinalityMetricLabels}
                       onChange={setAutoSyncMetricSettings}
                     />
                     {autoSyncConfig.last_sync_status === 'failed' ||
@@ -4126,6 +4134,7 @@ function ImportTokensModalContent({
               </FormControl>
               <AutoSyncMetricSettings
                 value={autoSyncMetricSettings}
+                allowHighCardinality={allowHighCardinalityMetricLabels}
                 onChange={setAutoSyncMetricSettings}
               />
               <AutoSyncGroupLine

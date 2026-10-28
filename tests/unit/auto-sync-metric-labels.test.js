@@ -1,7 +1,7 @@
 "use strict";
-const { describe, it } = require("node:test");
+const { describe, it, beforeEach, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
-const { normalizeMetricSettings, metricSettingsError, creationDimensions, metricSourceDimensions } = require("../../apps/api/services/autoSyncMetricLabels");
+const { normalizeMetricSettings, metricSettingsError, creationDimensions, metricSourceDimensions, highCardinalityLabelsEnabled } = require("../../apps/api/services/autoSyncMetricLabels");
 describe("selectable auto-sync metric metadata", () => {
   it("defaults to no detailed exposure and validates an explicit label allowlist", () => {
     assert.deepEqual(normalizeMetricSettings(), { enabled: false, labels: [], monitoring_group: "" });
@@ -12,9 +12,9 @@ describe("selectable auto-sync metric metadata", () => {
     const payload = { name: "deploy", source_kind: "gitlab-project-token", source_dimensions: { project: "platform/backend", group: "platform", token: "must-not-appear" } };
     assert.deepEqual(creationDimensions(payload), { kind: "gitlab-project-token", asset_name: "", project: "", group: "" });
     const settings = { enabled: true, labels: ["asset_name", "project"] };
-    assert.deepEqual(creationDimensions(payload, settings), { kind: "gitlab-project-token", asset_name: "deploy", project: "platform/backend", group: "" });
-    assert.equal(creationDimensions({ ...payload, source_kind: "user-controlled-kind" }, settings).kind, "other");
-    assert.equal(JSON.stringify(creationDimensions(payload, settings)).includes("must-not-appear"), false);
+    assert.deepEqual(creationDimensions(payload, settings, { AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS: "true" }), { kind: "gitlab-project-token", asset_name: "deploy", project: "platform/backend", group: "" });
+    assert.equal(creationDimensions({ ...payload, source_kind: "user-controlled-kind" }, settings, { AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS: "true" }).kind, "other");
+    assert.equal(JSON.stringify(creationDimensions(payload, settings, { AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS: "true" })).includes("must-not-appear"), false);
   });
   it("selects only non-secret scanner scope metadata and preserves full repository paths", () => {
     assert.deepEqual(metricSourceDimensions({ project_path: "platform/backend", project_name: "backend", group_path: "platform", token: "secret" }), { project: "platform/backend", group: "platform" });
@@ -26,6 +26,10 @@ const { Registry } = require("../../apps/api/node_modules/prom-client");
 const { pool } = require("../../apps/api/db/database");
 const { registerAutoSyncMetrics } = require("../../apps/api/services/autoSyncMetrics");
 describe("optional detailed metric collection", () => {
+  let previousPolicy;
+  beforeEach(() => { previousPolicy = process.env.AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS; process.env.AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS = "true"; });
+  afterEach(() => { if (previousPolicy === undefined) delete process.env.AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS; else process.env.AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS = previousPolicy; });
+
   const row = { provider: "gitlab", configuration_id: "critical-config", configuration_name: "Critical GitLab",
     kind: "gitlab-project-token", asset_name: "deploy-token", project: "platform/backend", group_name: "platform",
     items_created_total: "2", last_created: "1793000000", metrics_settings: { enabled: true,
@@ -67,4 +71,25 @@ describe("optional detailed metric collection", () => {
     invalid = { ...row, last_created: "invalid" };
     await assert.rejects(registry.getSingleMetric("auto_sync_last_creation_timestamp_seconds").get(), /timestamp/);
   });
+  it("defaults high-cardinality labels off and suppresses saved names even if a client opted in", async t => {
+    assert.equal(highCardinalityLabelsEnabled({}), false);
+    assert.equal(highCardinalityLabelsEnabled({ AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS: "TRUE" }), false);
+    assert.equal(highCardinalityLabelsEnabled({ AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS: "true" }), true);
+    process.env.AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS = "false";
+    const selected = { enabled: true, labels: ["asset_name", "project", "group", "kind", "monitoring_group"], monitoring_group: "critical" };
+    t.mock.method(pool, "query", async () => ({ rows: [{ ...row, metrics_settings: selected }] }));
+    const registry = new Registry(); registerAutoSyncMetrics(registry);
+    const collector = registry.getSingleMetric("auto_sync_items_created_detailed_total");
+    const labels = (await collector.get()).values[0].labels;
+    assert.equal(labels.asset_name, ""); assert.equal(labels.project, ""); assert.equal(labels.group, "");
+    assert.equal(labels.kind, "gitlab-project-token"); assert.equal(labels.monitoring_group, "critical");
+    assert.equal(labels.label_set, "kind,monitoring_group");
+    assert.deepEqual(creationDimensions({ name: "private-name", source_kind: "gitlab-project-token", source_dimensions: { project: "private-project", group: "private-group" } }, selected),
+      { kind: "gitlab-project-token", asset_name: "", project: "", group: "" });
+    process.env.AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS = "true";
+    assert.equal((await collector.get()).values[0].labels.asset_name, "deploy-token");
+    process.env.AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS = "false";
+    assert.equal((await collector.get()).values[0].labels.asset_name, "");
+  });
+
 });

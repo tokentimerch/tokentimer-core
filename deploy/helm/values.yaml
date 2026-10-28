@@ -606,6 +606,8 @@ twilio:
 monitoring:
   metrics:
     enabled: false
+    # Warning: token-name and project/group labels can greatly increase time series and expose metadata.
+    allowHighCardinalityLabels: false
     pushgatewayUrl: ""
 
   serviceMonitor:

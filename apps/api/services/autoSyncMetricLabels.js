@@ -3,6 +3,11 @@
 const { createHash } = require("node:crypto");
 
 const OPTIONAL_LABELS = ["configuration_name", "monitoring_group", "kind", "asset_name", "project", "group"];
+const HIGH_CARDINALITY_LABELS = ["asset_name", "project", "group"];
+function highCardinalityLabelsEnabled(env = process.env) {
+  return env.AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS === "true";
+}
+
 const KNOWN_KINDS = new Set([
   "aws-acm", "aws-iam-key", "aws-secrets-manager", "azure-ad-certificate", "azure-ad-client-secret",
   "azure-ad-sp-certificate", "azure-ad-sp-secret", "azure-key-vault-certificate", "azure-key-vault-key",
@@ -27,13 +32,18 @@ function normalizeMetricSettings(value = {}) {
   return { enabled: value.enabled === true, labels: [...(value.labels || [])].sort(),
     monitoring_group: (value.monitoring_group || "").trim() };
 }
+function effectiveMetricSettings(value, env = process.env) {
+  const settings = normalizeMetricSettings(value);
+  if (!highCardinalityLabelsEnabled(env)) settings.labels = settings.labels.filter(label => !HIGH_CARDINALITY_LABELS.includes(label));
+  return settings;
+}
 function metadata(value) { return typeof value === "string" && value.length <= 512 ? value : ""; }
 function metricSourceDimensions(item) {
   return { project: metadata(item.project_path || item.project_name || item.repository || item.projectId),
     group: metadata(item.group_path || item.group_name) };
 }
-function creationDimensions(payload, settings) {
-  const selected = normalizeMetricSettings(settings);
+function creationDimensions(payload, settings, env = process.env) {
+  const selected = effectiveMetricSettings(settings, env);
   const exposes = label => selected.enabled && selected.labels.includes(label);
   return { kind: KNOWN_KINDS.has(payload.source_kind) ? payload.source_kind : "other",
     asset_name: exposes("asset_name") ? metadata(payload.name) : "",
@@ -53,4 +63,4 @@ async function recordCreationMetrics(client, context, payload, settings) {
   [context.configId, dimensions.kind, dimensions.asset_name, dimensions.project, dimensions.group,
     createHash("sha256").update(JSON.stringify(dimensions)).digest("hex")]);
 }
-module.exports = { KNOWN_KINDS, OPTIONAL_LABELS, metricSettingsError, normalizeMetricSettings, metricSourceDimensions, creationDimensions, recordCreationMetrics };
+module.exports = { HIGH_CARDINALITY_LABELS, highCardinalityLabelsEnabled, effectiveMetricSettings, KNOWN_KINDS, OPTIONAL_LABELS, metricSettingsError, normalizeMetricSettings, metricSourceDimensions, creationDimensions, recordCreationMetrics };

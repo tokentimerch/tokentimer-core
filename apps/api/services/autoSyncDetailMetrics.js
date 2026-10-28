@@ -1,6 +1,6 @@
 "use strict";
 const { pool } = require("../db/database");
-const { OPTIONAL_LABELS, KNOWN_KINDS, normalizeMetricSettings } = require("./autoSyncMetricLabels");
+const { OPTIONAL_LABELS, KNOWN_KINDS, effectiveMetricSettings } = require("./autoSyncMetricLabels");
 
 function counter(value) {
   const number = Number(value);
@@ -18,7 +18,7 @@ async function detailedSamples() {
     ORDER BY c.id, s.dimension_key`);
   const samples = new Map();
   for (const row of rows) {
-    const settings = normalizeMetricSettings(row.metrics_settings);
+    const settings = effectiveMetricSettings(row.metrics_settings);
     if (!settings.enabled) continue;
     // A new selection gets a distinct series, even when optional values are blank.
     // Configuration identity is mandatory so deletion cannot subtract from another config's counter.

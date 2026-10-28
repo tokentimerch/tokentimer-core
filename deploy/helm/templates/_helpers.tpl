@@ -288,6 +288,7 @@ NODE_OPTIONS: "--disable-warning=UNDICI-EHPA"
 {{- if .Values.monitoring.metrics.enabled }}
 ENABLE_METRICS: "true"
 {{- end }}
+AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS: {{ .Values.monitoring.metrics.allowHighCardinalityLabels | default false | quote }}
 {{- if .Values.monitoring.metrics.pushgatewayUrl }}
 PUSHGATEWAY_URL: {{ .Values.monitoring.metrics.pushgatewayUrl | quote }}
 {{- end }}

@@ -188,7 +188,10 @@ describe.each(['gitlab', 'github'])(
       scan().mockReset().mockResolvedValue(result);
       apiGetMock.mockImplementation(url =>
         Promise.resolve({
-          data: { items: String(url).endsWith('/auto-sync') ? configs : [] },
+          data: {
+            metric_label_policy: { high_cardinality_enabled: true },
+            items: String(url).endsWith('/auto-sync') ? configs : [],
+          },
         })
       );
       apiClient.post.mockReset().mockImplementation((_url, body) => {

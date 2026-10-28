@@ -229,7 +229,8 @@
         "metrics": {
           "type": "object",
           "properties": {
-            "enabled": { "type": "boolean" }
+            "enabled": { "type": "boolean" },
+            "allowHighCardinalityLabels": { "type": "boolean", "default": false, "description": "Allow opt-in token-name and project/group labels; warning: increases series and exposes metadata." }
           }
         },
         "serviceMonitor": {

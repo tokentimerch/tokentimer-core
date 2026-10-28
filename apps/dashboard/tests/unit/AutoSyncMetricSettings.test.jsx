@@ -5,11 +5,15 @@ import { ChakraProvider } from '@chakra-ui/react';
 import AutoSyncMetricSettings, {
   DEFAULT_METRIC_SETTINGS,
 } from '../../src/components/imports/AutoSyncMetricSettings.jsx';
-function Harness() {
+function Harness({ allowHighCardinality = true }) {
   const [settings, setSettings] = React.useState(DEFAULT_METRIC_SETTINGS);
   return (
     <ChakraProvider>
-      <AutoSyncMetricSettings value={settings} onChange={setSettings} />
+      <AutoSyncMetricSettings
+        value={settings}
+        allowHighCardinality={allowHighCardinality}
+        onChange={setSettings}
+      />
       <output data-testid='settings'>{JSON.stringify(settings)}</output>
     </ChakraProvider>
   );
@@ -80,5 +84,29 @@ describe('auto-sync metric exposure controls', () => {
     expect(
       screen.queryByRole('textbox', { name: 'Monitoring group label' })
     ).not.toBeInTheDocument();
+  });
+  it('disables token names and project/group labels when the deployment gate is off', () => {
+    render(<Harness allowHighCardinality={false} />);
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: 'Expose additional auto-sync metrics',
+      })
+    );
+    for (const name of [
+      'Token / asset name',
+      'Project / repository',
+      'Source group',
+    ]) {
+      expect(
+        screen.getByRole('checkbox', { name, exact: true })
+      ).toBeDisabled();
+      expect(
+        screen.getByRole('checkbox', { name, exact: true })
+      ).not.toBeChecked();
+    }
+    expect(
+      screen.getByRole('checkbox', { name: 'Asset type', exact: true })
+    ).toBeEnabled();
+    expect(screen.getByText(/disabled by deployment settings/)).toBeVisible();
   });
 });

@@ -2304,6 +2304,10 @@ paths:
               schema:
                 type: object
                 properties:
+                  metric_label_policy:
+                    type: object
+                    properties:
+                      high_cardinality_enabled: { type: boolean, default: false }
                   items:
                     type: array
                     items:
@@ -9545,7 +9549,7 @@ components:
     AutoSyncMetricSettings:
       type: object
       additionalProperties: false
-      description: Opt-in metric metadata for this connection. Configuration ID is always included; changing these settings does not restart a scan. Names and project/group labels can multiply time series and expose metadata to metrics readers. No credential values are exported.
+      description: Opt-in metric metadata for this connection. Configuration ID is always included; changing these settings does not restart a scan. Names and project/group labels can multiply time series and expose metadata to metrics readers. No credential values are exported. Token-name and project/group selections are inactive unless the deployment allows high-cardinality labels.
       properties:
         enabled:
           type: boolean

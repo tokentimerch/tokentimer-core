@@ -158,6 +158,8 @@ services:
 
       # Metrics (Prometheus)
       ENABLE_METRICS: ${ENABLE_METRICS:-false}
+      # Warning: token-name and project/group labels can greatly increase time series and expose metadata.
+      AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS: ${AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS:-false}
       ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
 
       # SMTP (optional - configure here or via System Settings UI)

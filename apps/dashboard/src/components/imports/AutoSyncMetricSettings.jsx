@@ -27,12 +27,13 @@ const CHOICES = [
 export default function AutoSyncMetricSettings({
   value = DEFAULT_METRIC_SETTINGS,
   onChange,
+  allowHighCardinality = false,
 }) {
   const settings = { ...DEFAULT_METRIC_SETTINGS, ...value };
   const selected = settings.labels || [];
-  const detailed = selected.some(label =>
-    ['asset_name', 'project', 'group'].includes(label)
-  );
+  const detailed =
+    allowHighCardinality &&
+    selected.some(label => ['asset_name', 'project', 'group'].includes(label));
   return (
     <Box borderWidth='1px' borderRadius='md' p={3}>
       <VStack align='stretch' spacing={3}>
@@ -61,7 +62,15 @@ export default function AutoSyncMetricSettings({
               {CHOICES.map(([label, title]) => (
                 <Checkbox
                   key={label}
-                  isChecked={selected.includes(label)}
+                  isChecked={
+                    (allowHighCardinality ||
+                      !['asset_name', 'project', 'group'].includes(label)) &&
+                    selected.includes(label)
+                  }
+                  isDisabled={
+                    !allowHighCardinality &&
+                    ['asset_name', 'project', 'group'].includes(label)
+                  }
                   onChange={event =>
                     onChange({
                       ...settings,
@@ -75,6 +84,12 @@ export default function AutoSyncMetricSettings({
                 </Checkbox>
               ))}
             </SimpleGrid>
+            {!allowHighCardinality ? (
+              <Text fontSize='sm'>
+                Token names and project/group labels are disabled by deployment
+                settings.
+              </Text>
+            ) : null}
             {selected.includes('monitoring_group') ? (
               <FormControl>
                 <FormLabel fontSize='sm'>Monitoring group label</FormLabel>

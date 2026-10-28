@@ -1,4 +1,4 @@
-const { normalizeMetricSettings } = require("../services/autoSyncMetricLabels");
+const { normalizeMetricSettings, highCardinalityLabelsEnabled } = require("../services/autoSyncMetricLabels");
 const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
@@ -330,7 +330,7 @@ router.get(
          FROM auto_sync_configs WHERE workspace_id = $1 ORDER BY provider, LOWER(connection_key), id`,
         [req.workspace.id],
       );
-      res.json({ items: result.rows.map((row) => ({
+      res.json({ metric_label_policy: { high_cardinality_enabled: highCardinalityLabelsEnabled() }, items: result.rows.map((row) => ({
         ...row, last_sync_error: sanitizePublicAutoSyncError(row.last_sync_error),
       })) });
     } catch (e) {
