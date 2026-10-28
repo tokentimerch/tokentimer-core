@@ -62,7 +62,7 @@ Three complementary pillars organize the platform:
   <img src="docs/assets/control-center.png" alt="TokenTimer control center: what needs attention, inventory snapshot, scoped credentials, auto-sync health, and managed certificates in one view" width="888" />
 </p>
 
-Screenshots and GIFs show the current interface with illustrative sample data. [Media capture notes](docs/assets/MEDIA.md).
+Screenshots and GIFs show the current interface with illustrative sample data. [Media capture notes](.github/maintainers/MEDIA.md).
 
 ## What makes TokenTimer different?
 

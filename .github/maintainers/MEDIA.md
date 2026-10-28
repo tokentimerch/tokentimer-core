@@ -1,5 +1,8 @@
 # Product media
 
+Capture assets and their [manifest](../../docs/assets/media-manifest.json)
+remain in `docs/assets/`; the instructions below are for maintainers.
+
 Base captures were made October 28, 2026 from Core 0.18.2 (`3c209435`). The audit and expanded-job screenshots and dark workflow GIF were recaptured from the audit-layout fix (`9ffa8102`), based on released main. Per-asset source revisions are recorded in `media-manifest.json`. All images show the actual dashboard with illustrative in-memory sample data. Provider discovery, certificate data, endpoint monitors, imports, roles and notification settings are simulated. These assets do not establish live certificate renewal or alert delivery.
 
 ## Screenshots

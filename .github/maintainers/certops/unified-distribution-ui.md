@@ -75,7 +75,7 @@ Contracts and tests:
 - apps/dashboard/tests/unit/certopsMultiCert.test.js
 - apps/dashboard/tests/unit/certopsTokenResolution.test.js
 - apps/dashboard/tests/unit/useCertOps.test.jsx
-- docs/certops/unified-distribution-ui.md (this report)
+- .github/maintainers/certops/unified-distribution-ui.md (this report)
 
 ## Validation
 
