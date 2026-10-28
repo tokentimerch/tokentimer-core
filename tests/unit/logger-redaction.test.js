@@ -5,11 +5,13 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 
 const {
+  logger,
   buildOrderedLogRecord,
   redactSensitiveFields,
   scrubLogString,
   safeErrorName,
 } = require(path.resolve(__dirname, "../../apps/api/utils/logger.js"));
+const { requestCorrelation } = require("../../apps/api/utils/request-context");
 const {
   PRIVATE_KEY_REDACTION_PLACEHOLDER,
 } = require(path.resolve(__dirname, "../../apps/api/utils/secretMaterial.js"));
@@ -53,6 +55,19 @@ function fakePkcs12Buffer() {
 }
 
 describe("logger content-based redaction", () => {
+  it("adds request context to emitted logs while retaining secret scrubbing", async () => {
+    const record = new Promise((resolve) => logger.once("data", resolve));
+    const req = {};
+    requestCorrelation(req, { setHeader() {} }, () => {
+      logger.info("request test", {
+        correlationId: "forged",
+        password: "synthetic-secret",
+      });
+    });
+    const emitted = await record;
+    assert.equal(emitted.correlationId, req.correlationId);
+    assert.equal(emitted.password, "[REDACTED]");
+  });
   it("keeps field-name redaction as the first defense layer", () => {
     const out = redactSensitiveFields({
       password: "should-not-appear",
