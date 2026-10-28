@@ -251,7 +251,9 @@ auto-sync SQL executed. Use this explicit procedure only for that exact preview:
    it relocates only the proven PagerDuty entry to v81, retaining its name and
    original execution timestamp, and executes/registers the released auto-sync
    migrations at v79 and v80. Strict history validation runs before commit.
-   Any failure rolls back both ledger edits and telemetry DDL. PagerDuty data,
+   Database errors roll back both ledger edits and telemetry DDL. If the connection
+   is lost during commit, inspect the final history before retrying; a completed
+   recovery rejects repeat application. PagerDuty data,
    keys, claims, queue state, delivery history, functions and triggers are not
    rewritten. PagerDuty SQL is never rerun.
 4. Run `node apps/api/migrations/migrate.js`, then verify the final slots below.

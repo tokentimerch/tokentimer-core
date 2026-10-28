@@ -245,7 +245,7 @@ if (require.main === module) {
       .catch(() => {
         // Never print raw database errors or connection/provider credentials.
         console.error(
-          "pagerduty_v79_reconciliation_failed: no changes committed; inspect history/schema and the operator procedure",
+          "pagerduty_v79_reconciliation_failed: inspect migration history/schema and the operator procedure before retrying",
         );
         process.exitCode = 1;
       })
