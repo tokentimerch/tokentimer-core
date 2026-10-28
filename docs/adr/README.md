@@ -125,7 +125,7 @@ connection principal (not an agent, not an executor token) whose limits are
 enforced in the REST API, a small read-only first release, and an
 approval-controlled write path that keeps the non-requester rule and makes
 standing renewal authority explicit. It is `Proposed`: the tool contracts under
-`packages/contracts/mcp/` ship with it, and nothing else is implemented.
+`packages/contracts/mcp/` accompany the development implementation: eight read tools, enrollment and five renewal tools. Both deployment flags default to false. Real assistant setup and an approval UI showing assistant origin and the full resolved effect remain qualification gates.
 
 Changing a published contract or an accepted invariant is a new or updated ADR,
 not a silent code edit.
