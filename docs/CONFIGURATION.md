@@ -12,6 +12,13 @@ Defaults come from code fallbacks in `apps/*` and `packages/config/*`, then from
 
 ## Core runtime and bootstrap
 
+API responses include `X-Request-Id` (also exposed to cross-origin dashboard
+clients). This server-generated ID appears as `correlationId` on request-scoped
+API logs and the `HTTP request completed` record. Send it to your operator when
+reporting a failed request. Incoming request IDs are ignored. Completion records
+use matched route templates rather than raw paths or query strings. These IDs
+currently cover the API request only; queued worker jobs do not yet inherit them.
+
 | Variable                  | Description                              | Default value                  | Scope                  |
 | ------------------------- | ---------------------------------------- | ------------------------------ | ---------------------- |
 | `TT_MODE`                 | Core variant mode                        | `oss`                          | App mode               |

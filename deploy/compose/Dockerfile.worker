@@ -33,6 +33,7 @@ COPY apps/api/src/shared/replaceAssetContactGroups.js ./apps/api/src/shared/repl
 COPY apps/api/services/audit.js ./apps/api/services/audit.js
 COPY apps/api/utils/secretMaterial.js ./apps/api/utils/secretMaterial.js
 COPY apps/api/utils/logger.js ./apps/api/utils/logger.js
+COPY apps/api/utils/request-context.js ./apps/api/utils/request-context.js
 COPY apps/api/config/runtime-labels.js ./apps/api/config/runtime-labels.js
 COPY apps/api/db/database.js ./apps/api/db/database.js
 

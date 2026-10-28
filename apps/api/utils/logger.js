@@ -1,5 +1,6 @@
 const winston = require("winston");
 const client = require("prom-client");
+const { captureRequestContext } = require("./request-context");
 const { getRuntimeLabels } = require("../config/runtime-labels");
 const {
   redactSensitiveFields: sharedRedactSensitiveFields,
@@ -154,6 +155,8 @@ const logger = winston.createLogger({
   defaultMeta: { service: SERVICE_NAME },
   transports: [],
 });
+
+captureRequestContext(logger);
 
 if (isDev) {
   logger.add(
