@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { onboardingAPI } from '../../utils/onboardingApi.js';
+import { onboardingPath } from '../../utils/onboardingPath.js';
 import { useCertOpsCanManage } from '../certops/useCertOps.js';
 import SetupBanner from './SetupBanner.jsx';
 import { CERTOPS_FLOW, shouldShowCertopsBanner } from './certopsBannerRules.js';
@@ -88,7 +89,9 @@ export default function CertopsSetupBanner({
       title='Certificate Management is not set up yet.'
       message='Nothing is reporting certificates here. The setup guide connects an agent and shows your first certificates.'
       actionLabel='Start the setup guide'
-      onAction={() => navigate('/onboarding?area=certops')}
+      onAction={() =>
+        navigate(onboardingPath({ workspaceId, area: 'certops' }))
+      }
       onHide={hide}
     />
   );
