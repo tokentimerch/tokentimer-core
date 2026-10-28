@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   Box,
   Button,
+  Checkbox,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -23,6 +24,8 @@ import {
   subjectTypeLabel,
   truncateId,
 } from './certopsJobsFormat';
+import AssistantApprovalReview from './AssistantApprovalReview.jsx';
+import { getApprovalReview } from './certopsJobsApi.js';
 
 /**
  * Confirm dialog for approving or rejecting a job at `pending_approval`.
@@ -35,6 +38,7 @@ export default function ApprovalDecisionModal({
   job,
   decision,
   onDecide,
+  workspaceId,
 }) {
   const {
     overlayProps,
@@ -49,6 +53,35 @@ export default function ApprovalDecisionModal({
 
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [reviewState, setReviewState] = useState(null);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [now, setNow] = useState(Date.now());
+  const assistant = Boolean(job?.requestedByConnectionId);
+
+  useEffect(() => {
+    setReviewState(null);
+    setAcknowledged(false);
+    if (!isOpen || !assistant || !workspaceId || !job?.id) return;
+    const controller = new AbortController();
+    getApprovalReview(workspaceId, job.id, { signal: controller.signal })
+      .then(result => {
+        if (!controller.signal.aborted)
+          setReviewState(
+            result.review ? { review: result.review } : { error: true }
+          );
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setReviewState({ error: true });
+      });
+    return () => controller.abort();
+  }, [isOpen, assistant, workspaceId, job?.id]);
+
+  useEffect(() => {
+    if (!isOpen || !assistant) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [isOpen, assistant]);
 
   useEffect(() => {
     if (isOpen) {
@@ -58,6 +91,13 @@ export default function ApprovalDecisionModal({
   }, [isOpen]);
 
   const approving = decision === 'approve';
+  const review = reviewState?.review;
+  const reviewValid =
+    review?.canApprove !== false &&
+    review?.current === true &&
+    new Date(review.approvalExpiresAt).getTime() > now &&
+    new Date(review.connection.expiresAt).getTime() > now;
+  const approvalBlocked = assistant && (!reviewValid || !acknowledged);
 
   const handleClose = () => {
     if (submitting) return;
@@ -65,10 +105,17 @@ export default function ApprovalDecisionModal({
   };
 
   const handleConfirm = async () => {
-    if (submitting) return;
+    if (submitting || (approving && approvalBlocked)) return;
     setSubmitting(true);
     try {
-      await onDecide(reason.trim() || undefined);
+      const accepted = await onDecide(
+        reason.trim() || undefined,
+        approving && assistant ? review.reviewHash : undefined
+      );
+      if (assistant && accepted === false) {
+        setReviewState({ error: true });
+        setAcknowledged(false);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -79,7 +126,8 @@ export default function ApprovalDecisionModal({
       <ModalOverlay {...overlayProps} />
       <DashboardModalFrame
         type={approving ? 'standard' : 'danger'}
-        maxW={{ base: 'calc(100vw - 24px)', md: '520px' }}
+        maxW={{ base: 'calc(100vw - 24px)', md: assistant ? '720px' : '520px' }}
+        maxH='calc(100vh - 48px)'
       >
         <ModalHeader {...headerProps}>
           <DashboardModalTitle>
@@ -92,8 +140,39 @@ export default function ApprovalDecisionModal({
           </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} isDisabled={submitting} />
-        <ModalBody {...bodyProps}>
+        <ModalBody {...bodyProps} overflowY='auto'>
           <VStack align='stretch' spacing={3}>
+            {assistant && !reviewState ? (
+              <Text role='status'>Loading assistant approval review…</Text>
+            ) : null}
+            {assistant && reviewState?.error ? (
+              <Text role='alert'>
+                Cannot load the assistant review. Close and reopen to retry.
+                Approval is unavailable; rejection remains available.
+              </Text>
+            ) : null}
+            {review ? <AssistantApprovalReview review={review} /> : null}
+            {review?.canApprove === false ? (
+              <Text role='alert'>
+                You requested this job. A different workspace manager or admin
+                must approve it.
+              </Text>
+            ) : null}
+            {review && !reviewValid && review.canApprove !== false ? (
+              <Text role='alert'>
+                This request changed, ended or expired. Do not approve it;
+                request a fresh preview.
+              </Text>
+            ) : null}
+            {assistant && approving && reviewValid ? (
+              <Checkbox
+                isChecked={acknowledged}
+                onChange={event => setAcknowledged(event.target.checked)}
+              >
+                I reviewed the requester, connection, destinations and complete
+                renewal effect.
+              </Checkbox>
+            ) : null}
             {job ? (
               <Text fontSize='sm'>
                 {jobOperationLabel(job.operation)} job{' '}
@@ -136,6 +215,7 @@ export default function ApprovalDecisionModal({
             ml={3}
             onClick={handleConfirm}
             isLoading={submitting}
+            isDisabled={approving && approvalBlocked}
             loadingText={approving ? 'Approving' : 'Rejecting'}
           >
             {approving ? 'Approve' : 'Reject'}

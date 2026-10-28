@@ -9,7 +9,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const { Client } = require("@modelcontextprotocol/client");
 const { StdioClientTransport } = require("@modelcontextprotocol/client/stdio");
 
@@ -160,6 +160,33 @@ for (const [label, negotiation] of ERAS) {
 }
 
 describe("stdio server, startup and compatibility policy", () => {
+  it("serves the qualified assistant's 2025-06-18 handshake with the same tool schema enforcement", async () => {
+    const child = spawn(process.execPath, [BIN], { stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, TOKENTIMER_API_URL: apiUrl, TOKENTIMER_MCP_CREDENTIAL: CREDENTIAL } });
+    const lines = require("node:readline").createInterface({ input: child.stdout });
+    const pending = new Map();
+    lines.on("line", line => { const message = JSON.parse(line); pending.get(message.id)?.(message); });
+    let id = 0;
+    const call = (method, params) => new Promise((resolve, reject) => {
+      const requestId = ++id;
+      const timer = setTimeout(() => reject(new Error("Legacy handshake timed out")), 10000);
+      pending.set(requestId, value => { clearTimeout(timer); pending.delete(requestId); resolve(value); });
+      child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: requestId, method, params }) + "\n");
+    });
+    try {
+      const initialized = await call("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "qualification-regression", version: "1" } });
+      assert.equal(initialized.result.protocolVersion, "2025-06-18");
+      child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
+      assert.equal((await call("tools/list", {})).result.tools.length, 8);
+      const result = await call("tools/call", { name: "tt_whoami", arguments: {} });
+      assert.deepEqual(result.result.structuredContent, fixtures.tt_whoami.output.valid[0]);
+      const before = requests.length;
+      const invalid = await call("tools/call", { name: "tt_whoami", arguments: { force: true } });
+      assert.ok(invalid.error || invalid.result?.isError);
+      assert.equal(requests.length, before);
+    } finally { lines.close(); child.stdin.end(); child.kill(); }
+  });
+
   it("serves a 2025-era client by default and refuses one when told to reject legacy", async () => {
     await withClient({ env: { TOKENTIMER_MCP_LEGACY: "serve" } }, async ({ client }) => {
       assert.equal((await client.listTools()).tools.length, 8);

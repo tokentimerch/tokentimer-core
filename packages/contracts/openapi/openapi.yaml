@@ -6983,6 +6983,62 @@ paths:
                 code: CERTOPS_JOB_NOT_FOUND
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/jobs/{jobId}/approval-review:
+    get:
+      tags: [CertOps]
+      summary: Review an assistant-originated renewal before human approval
+      operationId: reviewCertOpsJobApproval
+      description: >-
+        Session-only workspace manager/admin surface. Returns assistant origin,
+        requester, advisory client label, connection and approval deadlines and
+        the complete public renewal snapshot. Does not grant approval. A null
+        review identifies an ordinary job. Accepted requests remain reviewable
+        after their preview submission deadline. Responses must not be cached.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Current human review and exact decision binding
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [jobId, review]
+                properties:
+                  jobId:
+                    type: string
+                    format: uuid
+                  review:
+                    type: object
+                    nullable: true
+                    description: >-
+                      Assistant review with origin, reviewHash, current,
+                      canApprove, requester, connection, requestRecordId,
+                      approvalExpiresAt, previewExpiresAt and effect. Effect
+                      contains the public renewalProfile and publication
+                      snapshot, certificate identity, expiry, standing renewal
+                      and verification consequences. Never a raw job payload.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Assistant provenance is missing or the source cannot be resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/jobs/{jobId}/approve:
     post:
       tags: [CertOps]
@@ -6995,7 +7051,9 @@ paths:
         cannot approve it. The approval is bound to a canonical SHA256 hash of
         the job payload at decision time; if the payload changes afterwards
         the claim path voids the approval and returns the job to
-        pending_approval. Available while the workspace kill switch is paused.
+        pending_approval. Available while the workspace kill switch is paused. Assistant jobs additionally
+        require the reviewHash returned by the human approval-review endpoint;
+        changed or expired requests must be previewed again.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path
@@ -7012,6 +7070,10 @@ paths:
               type: object
               additionalProperties: false
               properties:
+                reviewHash:
+                  type: string
+                  pattern: '^[a-f0-9]{64}$'
+                  description: Required for assistant jobs; binds the displayed human review.
                 reason:
                   type: string
                   maxLength: 1024
@@ -7040,7 +7102,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: Job is not awaiting approval (CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL)
+          description: Job is no longer awaiting approval, the assistant request is stale, or its exact reviewHash is missing (CERTOPS_APPROVAL_REVIEW_REQUIRED)
           content:
             application/json:
               schema:

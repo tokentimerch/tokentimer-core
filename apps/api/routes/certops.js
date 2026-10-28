@@ -237,6 +237,7 @@ const {
   CERTOPS_APPROVAL_REASON_INVALID,
   CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN,
   approveJob,
+  requestApprovalReview,
   rejectJob,
 } = require("../services/certops/jobApprovals");
 const { writeAudit } = require("../services/audit");
@@ -683,10 +684,10 @@ function handleCertOpsError(res, err) {
     });
   }
 
-  if (err?.code === CERTOPS_APPROVAL_REQUEST_STALE) {
+  if (err?.code === CERTOPS_APPROVAL_REQUEST_STALE || err?.code === "CERTOPS_APPROVAL_REVIEW_REQUIRED") {
     return res.status(409).json({
       error: err.message,
-      code: CERTOPS_APPROVAL_REQUEST_STALE,
+      code: err.code,
     });
   }
 
@@ -1411,6 +1412,7 @@ function jobApprovalDecisionHandler(decision, {
         jobId,
         approverUserId: req.user?.id || null,
         reason: req.body?.reason,
+        ...(req.body?.reviewHash !== undefined ? { reviewHash: req.body.reviewHash } : {}),
       });
 
       // Audit is written inside the approval transaction (jobApprovals.js).
@@ -1514,6 +1516,7 @@ function jobSummary(job) {
     completedAt: job.completedAt,
     cancelledAt: job.cancelledAt,
     requestedByUserId: job.requestedByUserId,
+    requestedByConnectionId: job.requestedByConnectionId ?? null,
     requestedByApiTokenId: job.requestedByApiTokenId,
     approvedByUserId: job.approvedByUserId,
     approvedByDisplayName: job.approvedByDisplayName ?? null,
@@ -2814,6 +2817,22 @@ router.post(
 // paused is safe because the agent claim path is itself blocked by the
 // kill switch, and a rejection is exactly the kind of action an operator
 // may need during an incident.
+router.get(
+  "/api/v1/workspaces/:id/certops/jobs/:jobId/approval-review",
+  getApiLimiter(), requireCertOpsEnabled, requireCertOpsSessionUser, requireCertOpsWriteRole,
+  async (req, res) => {
+    const jobId = jobIdFromParams(req, res);
+    if (!jobId) return null;
+    try { res.set("Cache-Control", "no-store"); return res.json(await requestApprovalReview({ workspaceId: req.workspace.id, jobId, viewerUserId: req.user?.id })); }
+    catch (error) {
+      const handled = handleCertOpsError(res, error);
+      if (handled) return handled;
+      logger.error("CertOps approval review failed", { code: error.code, workspaceId: req.workspace?.id, jobId });
+      return res.status(500).json({ error: "Failed to load approval review", code: "INTERNAL_ERROR" });
+    }
+  },
+);
+
 router.post(
   "/api/v1/workspaces/:id/certops/jobs/:jobId/approve",
   getApiLimiter(),

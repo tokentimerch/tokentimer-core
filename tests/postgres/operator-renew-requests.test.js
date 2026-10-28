@@ -31,6 +31,12 @@ ajv.addSchema(readJson("mcp-common.schema.json"));
 ajv.addSchema(renewSchema);
 const valid = (name) => ajv.getSchema(`${renewSchema.$id}#/definitions/${name}`);
 
+async function approveReviewed(options) {
+  let review;
+  try { ({ review } = await approvals.requestApprovalReview(options)); } catch { /* decision owns the authoritative refusal */ }
+  return approvals.approveJob({ ...options, reviewHash: review?.reviewHash });
+}
+
 const WRITE = ["mcp:identity:read", "mcp:certs:read", "mcp:requests:read", "mcp:renew:request"];
 
 let app;
@@ -122,6 +128,7 @@ function buildApp() {
     requireWorkspaceMembership,
   );
   server.use(require("../../apps/api/routes/operator"));
+  server.use(require("../../apps/api/routes/certops"));
   return server;
 }
 
@@ -415,7 +422,63 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
       assert.equal(response.status, 201, `submit failed: ${JSON.stringify(response.body)}`);
       return response.body;
     }
-    const approve = (jobId, userId) => approvals.approveJob({ workspaceId, jobId, approverUserId: userId, reason: "ok" });
+    const approve = (jobId, userId) => approveReviewed({ workspaceId, jobId, approverUserId: userId, reason: "ok" });
+
+    it("exposes review only to human managers in the same workspace", async () => {
+      const pending = await pendingRequest();
+      const route = `/api/v1/workspaces/${workspaceId}/certops/jobs/${pending.jobId}/approval-review`;
+      const reviewer = await request(app).get(route).set(as(approver));
+      assert.equal(reviewer.status, 200);
+      assert.equal(reviewer.headers["cache-control"], "no-store");
+      assert.equal(reviewer.body.review.canApprove, true);
+      const self = await request(app).get(route).set(as(manager));
+      assert.equal(self.body.review.canApprove, false);
+      assert.equal((await request(app).get(route).set(as(viewer))).status, 403);
+      assert.equal((await get(route)).status, 403);
+      const other = `/api/v1/workspaces/${otherWorkspaceId}/certops/jobs/${pending.jobId}/approval-review`;
+      assert.equal((await request(app).get(other).set(as(owner))).status, 404);
+    });
+
+    it("requires the exact human review and rejects an edited intent without creating a decision", async () => {
+      const pending = await pendingRequest();
+      const options = { workspaceId, jobId: pending.jobId, approverUserId: approver };
+      const { review } = await approvals.requestApprovalReview(options);
+      assert.equal(review.origin, "assistant");
+      assert.equal(review.current, true);
+      assert.equal(review.requester.id, String(manager));
+      assert.equal(review.connection.id, connectionId);
+      assert.equal(review.effect.renewalProfile.ca.endpoint, profile().ca.endpoint);
+      assert.equal(review.effect.renewalProfile.deploymentTargets[0].certPath, "/etc/ssl/certs/app.pem");
+      assert.ok(review.approvalExpiresAt && review.connection.expiresAt);
+      assert.ok(!JSON.stringify(review).includes("SENTINEL_KEY_REF"));
+      await assert.rejects(approvals.approveJob(options), { code: "CERTOPS_APPROVAL_REVIEW_REQUIRED" });
+      await assert.rejects(approvals.approveJob({ ...options, reviewHash: "0".repeat(64) }), { code: "CERTOPS_APPROVAL_REVIEW_REQUIRED" });
+      await pool.query("UPDATE certificate_jobs SET payload = jsonb_set(payload, '{caEndpoint}', '\"https://changed.example.test\"') WHERE id = $1", [pending.jobId]);
+      await assert.rejects(approvals.approveJob({ ...options, reviewHash: review.reviewHash }), { code: "CERTOPS_APPROVAL_REQUEST_STALE" });
+      assert.equal((await jobRow(pending.jobId)).status, "pending_approval");
+      const decisions = await pool.query("SELECT id FROM certops_job_approvals WHERE job_id = $1", [pending.jobId]);
+      assert.equal(decisions.rowCount, 0);
+    });
+
+    it("does not approve a source profile changed after review", async () => {
+      const pending = await pendingRequest();
+      const options = { workspaceId, jobId: pending.jobId, approverUserId: approver };
+      const { review } = await approvals.requestApprovalReview(options);
+      const original = (await pool.query("SELECT public_metadata FROM certificate_profiles WHERE id = $1", [certA.profileId])).rows[0].public_metadata;
+      try {
+        await pool.query("UPDATE certificate_profiles SET public_metadata = jsonb_set(public_metadata, '{renewalProfile,ca,endpoint}', '\"https://changed.example.test\"') WHERE id = $1", [certA.profileId]);
+        const after = await approvals.requestApprovalReview(options);
+        assert.equal(after.review.current, false);
+        await assert.rejects(approvals.approveJob({ ...options, reviewHash: review.reviewHash }), { code: "CERTOPS_APPROVAL_REQUEST_STALE" });
+      } finally { await pool.query("UPDATE certificate_profiles SET public_metadata = $2::jsonb WHERE id = $1", [certA.profileId, JSON.stringify(original)]); }
+    });
+
+    it("accepted requests remain approvable after preview submission expiry", async () => {
+      const pending = await pendingRequest();
+      await pool.query("UPDATE operator_action_plans SET expires_at = NOW() - INTERVAL '1 minute', created_at = NOW() - INTERVAL '11 minutes' WHERE id = (SELECT plan_id FROM operator_action_requests WHERE job_id = $1)", [pending.jobId]);
+      await approve(pending.jobId, approver);
+      assert.equal((await jobRow(pending.jobId)).status, "pending");
+    });
 
     it("refuses approval immediately after requester demotion or removal without a sweep", async () => {
       for (const removed of [false, true]) {
@@ -425,7 +488,7 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
         try {
           if (removed) await pool.query("DELETE FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2", [workspaceId, manager]);
           else await member(manager, workspaceId, "viewer");
-          await assert.rejects(approvals.approveJob({ workspaceId, jobId: request.jobId, approverUserId: approver, reason: "reviewed" }), { code: "CERTOPS_APPROVAL_REQUEST_STALE" });
+          await assert.rejects(approveReviewed({ workspaceId, jobId: request.jobId, approverUserId: approver, reason: "reviewed" }), { code: "CERTOPS_APPROVAL_REQUEST_STALE" });
           assert.equal((await jobRow(request.jobId)).status, "pending_approval");
         } finally { await restoreRoles(); }
       }
@@ -841,7 +904,7 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
       const request = (await submit(plan, crypto.randomUUID())).body;
       const [withdrawn, approved] = await Promise.allSettled([
         post(`/api/v1/operator/requests/${request.requestRecordId}/cancel`, {}),
-        approvals.approveJob({ workspaceId, jobId: request.jobId, approverUserId: approver, reason: "go" }),
+        approveReviewed({ workspaceId, jobId: request.jobId, approverUserId: approver, reason: "go" }),
       ]);
       const withdrewOk = withdrawn.status === "fulfilled" && withdrawn.value.status === 200;
       const approvedOk = approved.status === "fulfilled";
@@ -1007,7 +1070,7 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
     it("leaves a request still inside its window, and one a person already approved, alone", async () => {
       const waiting = await mustFile();
       const approvedOne = await mustFile();
-      await approvals.approveJob({ workspaceId, jobId: approvedOne.jobId, approverUserId: approver, reason: "ok" });
+      await approveReviewed({ workspaceId, jobId: approvedOne.jobId, approverUserId: approver, reason: "ok" });
       await lapse(approvedOne.requestRecordId);
       await run((client) => maintenance.sweepOperatorRequests({ client }));
       assert.equal((await jobRow(waiting.jobId)).status, "pending_approval");
@@ -1036,7 +1099,7 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
       const own = await newConnection(manager);
       const waiting = (await mustFile(own.credential));
       const approvedOne = (await mustFile(own.credential));
-      await approvals.approveJob({ workspaceId, jobId: approvedOne.jobId, approverUserId: approver, reason: "ok" });
+      await approveReviewed({ workspaceId, jobId: approvedOne.jobId, approverUserId: approver, reason: "ok" });
       await expireConnection(own.id);
       const ended = await run((client) => maintenance.endOrphanedRequests(client, workspaceId));
       assert.equal(ended, 2);
@@ -1059,7 +1122,7 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
         await member(manager, workspaceId, "workspace_manager");
       }
       const held = (await mustFile(own.credential));
-      await approvals.approveJob({ workspaceId, jobId: held.jobId, approverUserId: approver, reason: "ok" });
+      await approveReviewed({ workspaceId, jobId: held.jobId, approverUserId: approver, reason: "ok" });
       await pool.query("UPDATE certificate_jobs SET status = 'claimed', claim_id = gen_random_uuid() WHERE id = $1", [held.jobId]);
       await member(manager, workspaceId, "viewer");
       try {
@@ -1074,7 +1137,7 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
     it("leaves work an agent already holds when its connection expires, to be reconciled by the existing paths", async () => {
       const own = await newConnection(manager);
       const held = await mustFile(own.credential);
-      await approvals.approveJob({ workspaceId, jobId: held.jobId, approverUserId: approver, reason: "ok" });
+      await approveReviewed({ workspaceId, jobId: held.jobId, approverUserId: approver, reason: "ok" });
       await pool.query("UPDATE certificate_jobs SET status = 'claimed', claim_id = gen_random_uuid() WHERE id = $1", [held.jobId]);
       await expireConnection(own.id);
       assert.equal(await run((client) => maintenance.endOrphanedRequests(client, workspaceId)), 0);
@@ -1087,7 +1150,7 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
     it("ends the waiting requests the moment an admin switches assistant writes off, and leaves approved ones", async () => {
       const waiting = await mustFile();
       const approvedOne = await mustFile();
-      await approvals.approveJob({ workspaceId, jobId: approvedOne.jobId, approverUserId: approver, reason: "ok" });
+      await approveReviewed({ workspaceId, jobId: approvedOne.jobId, approverUserId: approver, reason: "ok" });
       const off = await request(app).put(`/api/v1/workspaces/${workspaceId}/operator/settings`).set(as(owner)).send({ writesEnabled: false });
       assert.equal(off.status, 200);
       assert.equal((await jobRow(waiting.jobId)).status, "cancelled");
@@ -1145,7 +1208,7 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
       });
     const approved = async (who = credential) => {
       const request = await mustFile(who);
-      await approvals.approveJob({ workspaceId, jobId: request.jobId, approverUserId: approver, reason: "ok" });
+      await approveReviewed({ workspaceId, jobId: request.jobId, approverUserId: approver, reason: "ok" });
       return request;
     };
     const expire = async (id) => {

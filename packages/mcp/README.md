@@ -24,8 +24,9 @@ absolute path to this checkout's `packages/mcp/bin/tokentimer-mcp.js` when
 configuring the Node command. No published npm package is available yet.
 
 The server requires `MCP_OPERATOR_INTERFACE_ENABLED=true` and CertOps enabled
-for operational reads. Keep assistant writes disabled until the human approval
-surface identifies assistant origin, resolved effects and expiries. Write
+for operational reads. The human approval surface identifies assistant origin,
+resolved effects and expiries and binds approval to that exact review. Keep
+production MCP flags off until release approval. Write
 requests additionally require `MCP_OPERATOR_WRITES_ENABLED=true`, the admin's
 workspace operator setting, `mcp:renew:request`, and local adapter opt-in
 `TOKENTIMER_MCP_ENABLE_WRITES=true`. Turning ordinary Vault approval off does
@@ -41,6 +42,14 @@ An `unknown_effect` request requires human reconciliation. Do not submit a new
 request merely because a previous response was lost; retry the original
 `requestId` for that same deliberate submission. Publication does not prove
 consumer installation or live TLS verification.
+
+Codex CLI `0.165.0-alpha.1.2` was qualified over stdio revision `2025-06-18`;
+keep `TOKENTIMER_MCP_LEGACY=serve` for that client. Codex uses TOML rather than
+the enrollment command's generic JSON: register its printed command, arguments
+and environment using `codex mcp add tokentimer --env NAME=VALUE -- node
+<absolute-adapter-path>`, repeating `--env` for the API URL and credential-file
+path. Its tool permission authorizes sending a request; a different TokenTimer
+user still approves the resolved effect. Other clients remain unqualified.
 
 See [configuration](../../docs/CONFIGURATION.md) and
 [ADR-0015](../../docs/adr/0015-mcp-operator-interface.md).

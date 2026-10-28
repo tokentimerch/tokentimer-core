@@ -394,6 +394,13 @@ async function requestApprovalState(options) {
  * because an approved-but-not-yet-claimable intermediate state has no
  * separate meaning in this per-job gate.
  */
+async function requestApprovalReview(options) {
+  const db = options.client || pool;
+  const job = await loadJobForApproval(db, normalizeWorkspaceId(options.workspaceId), normalizeRequiredId(options.jobId));
+  const review = await require("../operator/approvalReview").buildAssistantApprovalReview({ db, job, intentHash: computeCanonicalIntentHash(job) });
+  return { jobId: job.id, review: review ? { ...review, canApprove: options.viewerUserId == null || String(job.requestedByUserId) !== String(options.viewerUserId) } : null };
+}
+
 async function approveJob(options) {
   const workspaceId = normalizeWorkspaceId(options.workspaceId);
   const jobId = normalizeRequiredId(options.jobId);
@@ -411,6 +418,15 @@ async function approveJob(options) {
   }
   assertNonRequester(job, approverUserId);
   await assertOperatorRequestStillApprovable(db, job);
+    if (job.requestedByConnectionId) {
+      const { buildAssistantApprovalReview, REVIEW_REQUIRED, STALE } = require("../operator/approvalReview");
+      const review = await buildAssistantApprovalReview({ db, job, intentHash: computeCanonicalIntentHash(job), lockSources: true });
+      if (!review.current) throw serviceError("The assistant request changed or ended. Request a fresh preview.", STALE);
+      if (!options.reviewHash || options.reviewHash !== review.reviewHash) {
+        throw serviceError("Review the current assistant request before approving it", REVIEW_REQUIRED);
+      }
+    }
+
 
   // H6: approval binds against a fully resolved renewal profile snapshot in
   // the job payload, not a mutable certificate_profiles row reference.
@@ -432,10 +448,14 @@ async function approveJob(options) {
             updated_at = NOW()
       WHERE workspace_id = $1
         AND id = $2
-        AND status = 'pending_approval'
+        AND status = 'pending_approval' AND payload = $6::jsonb
+        AND COALESCE(mode, 'real') = $7 AND operation = $8
+        AND subject_type IS NOT DISTINCT FROM $9 AND subject_id IS NOT DISTINCT FROM $10
+        AND requested_by_connection_id IS NOT DISTINCT FROM $11
+        AND requested_by_user_id IS NOT DISTINCT FROM $12
       RETURNING id, status, approved_by_user_id, approved_at,
                 approved_payload_hash, approved_canonical_intent_hash`,
-    [workspaceId, jobId, approverUserId, payloadHash, canonicalIntentHash],
+    [workspaceId, jobId, approverUserId, payloadHash, canonicalIntentHash, JSON.stringify(job.payload), job.mode || "real", job.operation, job.subjectType, job.subjectId, job.requestedByConnectionId, job.requestedByUserId],
   );
   const row = updated.rows[0];
   if (!row) {
@@ -672,6 +692,7 @@ module.exports = {
   invalidateApprovalForClaim,
   rejectJob,
   requestApprovalState,
+  requestApprovalReview,
   _test: {
     approvalFromRow,
     assertNonRequester,

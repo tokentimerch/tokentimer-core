@@ -243,8 +243,21 @@ export async function createJob(
  * (403 CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN).
  * @returns {Promise<{ job: object }>}
  */
-export async function approveJob(workspaceId, jobId, { reason } = {}) {
+export async function getApprovalReview(workspaceId, jobId, { signal } = {}) {
+  const res = await apiClient.get(
+    `${workspaceBase(workspaceId)}/jobs/${encodeURIComponent(jobId)}/approval-review`,
+    { signal }
+  );
+  return res.data;
+}
+
+export async function approveJob(
+  workspaceId,
+  jobId,
+  { reason, reviewHash } = {}
+) {
   const body = {};
+  if (reviewHash !== undefined) body.reviewHash = reviewHash;
   if (reason !== undefined) body.reason = reason;
   const res = await apiClient.post(
     `${workspaceBase(workspaceId)}/jobs/${encodeURIComponent(jobId)}/approve`,

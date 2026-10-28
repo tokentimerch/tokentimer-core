@@ -79,9 +79,10 @@ called stable while it is open.
   ([#502](https://github.com/tokentimerch/tokentimer-core/issues/502),
   implementation [PR #406](https://github.com/tokentimerch/tokentimer-core/pull/406)).
   Workspace-scoped queries, secure enrollment and approval-gated renewal
-  requests are in development, not released. General token CRUD and
-  text-to-token extraction are later follow-ons. Cloud and Enterprise
-  adoption is separate.
+  requests are in development, not released. The Codex development-client and
+  dashboard review journeys are qualified; independent security review and
+  edition release acceptance remain open. General token CRUD and text-to-token
+  extraction are later follow-ons. Cloud and Enterprise adoption is separate.
 
 ---
 

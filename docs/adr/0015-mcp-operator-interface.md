@@ -9,10 +9,10 @@ policy is enforced by REST; the stdio adapter has no database access. Both
 interface and write flags remain off by default. The baseline supports the
 manual ACME renewal path; AD CS manual renewal is not supported by that path.
 The route catalog distinguishes implemented tools from separately scoped
-follow-ons. Independent security/protocol qualification and a supported real
-assistant-client journey remain release gates. Assistant writes must remain
-disabled until the human approval surface identifies assistant origin and
-shows the full resolved effect and expiries.
+follow-ons. The development client and human approval journeys were qualified
+on 2026-10-28 with Codex CLI 0.165.0-alpha.1.2 and the real dashboard; see
+section 15 and the implementation notes below. This does not establish a
+release or independent security sign-off. Both production flags remain off.
 
 Each decision below carries one of two labels:
 
@@ -559,6 +559,13 @@ Workspace pause blocks new write requests, subject to section 11.
   package's own `LATEST_PROTOCOL_VERSION` constant still reports `2025-11-25`;
   the modern revision is selected through the client's version-negotiation
   option, not that constant.
+- **Real assistant compatibility (2026-10-28).** Codex CLI
+  `0.165.0-alpha.1.2` negotiated `2025-06-18` over stdio with the actual
+  adapter. Leave `TOKENTIMER_MCP_LEGACY=serve` for this client; `reject`
+  excludes it. The matching SDK client cannot pin that older revision, so
+  the automated regression sends the observed handshake over real stdio
+  rather than mislabelling an SDK default as a Codex journey. A client-side
+  tool permission to submit a renewal does not grant TokenTimer approval.
 - **Dependency review.** The server package adds only its core package and
   `zod` 4.6.7 at runtime (Apache-2.0, Node 20 or later). The larger set (`jose`,
   `eventsource`, `pkce-challenge`, `cross-spawn`) arrives only with the client
@@ -668,11 +675,22 @@ The sweeps skip rows another transaction holds rather than waiting for them, and
 take locks in the same order as withdrawal, so they cannot deadlock with an
 approval or a withdrawal.
 
+**Human review and client qualification (2026-10-28).** The session-only review
+identifies the requester, connection, advisory client label, both expiry windows
+and the complete public renewal/publication snapshot. The reviewer acknowledges
+that effect; approval requires its exact `reviewHash`, rechecks live authority
+and source intent, and atomically refuses concurrent job changes. Ordinary jobs
+retain their existing approval flow. Preview expiry limits submission only.
+
+The opt-in `scripts/qualify-mcp-client.cjs` journey used real session/CSRF
+enrollment, the enrollment CLI and a restricted credential file, actual Codex
+tool calls, duplicate submission replay, an independent dashboard approval,
+post-approval client status, and browser self-approval/viewer/expiry refusals
+and rejection. No executor, issuer, consumer rollout or live TLS was exercised.
+This is development qualification, not support for other untested clients.
+
 **Known gaps in what was built.**
 
-- The dashboard approvals screen does not yet show that a request came from an
-  assistant, which connection made it, or the resolved effect. Approvers see an
-  ordinary renewal job.
 - Plans are never deleted. They are small and expire in ten minutes, but nothing
   removes old rows, and a preview is rate limited only by the shared API limiter.
 
