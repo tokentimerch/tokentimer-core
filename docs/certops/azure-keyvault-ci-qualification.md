@@ -1,12 +1,5 @@
 # Real Azure Key Vault CI qualification
 
-> [!WARNING]
-> **TEMPORARY BRANCH EXCEPTION — REVERT BEFORE MERGING.** Manual Key Vault
-> runs temporarily accept `feat/certops-distribution-extensions` as well as
-> `main`. See the [mandatory rollback checklist](azure-keyvault-temporary-branch-warning.md).
-> The main-only policy below is the required final state. Workflow registration
-> and independent cleanup remain prerequisites; spending is still disabled.
-
 Status on 2026-10-27: **AWAITING AZURE ACCESS / TRUSTED WORKFLOW DISPATCH**.
 No live Azure campaign has run for this change. No Azure scenarios have passed
 or failed, and no live evidence artifact exists yet. Offline protocol tests and
