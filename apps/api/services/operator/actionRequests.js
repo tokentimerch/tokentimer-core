@@ -59,7 +59,9 @@ async function assertWriteAllowed({ client, authority, workspaceId, requireGates
   }
   if (!requireGates) return;
   const instance = String(process.env.MCP_OPERATOR_WRITES_ENABLED || "").trim().toLowerCase() === "true";
-  const row = await client.query("SELECT operator_writes_enabled FROM workspaces WHERE id = $1", [workspaceId]);
+  // Serialize admission with the admin's write-disable and cancellation sweep.
+  // Hold this lock until the preview/request transaction commits or rolls back.
+  const row = await client.query("SELECT operator_writes_enabled FROM workspaces WHERE id = $1 FOR SHARE", [workspaceId]);
   if (!instance || row.rows[0]?.operator_writes_enabled !== true) {
     throw fail(CODES.WRITES_DISABLED, "Write requests are not enabled here");
   }

@@ -119,6 +119,9 @@ vi.mock('../../src/styles/theme.js', async importOriginal => ({
 }));
 
 const GITLAB_SELF_HOSTED = 'https://gitlab.selfhosted.example';
+// Real provider forms inside the composed modal exceed five seconds under
+// full-suite V8 coverage. Keep the complete journeys and their assertions.
+const AUTO_SYNC_FLOW_TIMEOUT = 20000;
 
 function renderModal(openRequest, extraProps = {}) {
   return (
@@ -226,7 +229,7 @@ describe.each(['gitlab', 'github'])(
         screen.getByRole('button', { name: 'Add another', exact: true })
       );
       expect(enable()).toBeDisabled();
-    });
+    }, AUTO_SYNC_FLOW_TIMEOUT);
     it('requires a fresh scan after credentials or scope change and after failed or stale scans', async () => {
       const secret = await addAnother();
       scan().mockResolvedValue({
@@ -288,7 +291,7 @@ describe.each(['gitlab', 'github'])(
       });
       fireEvent.click(confirm);
       expect(apiClient.post).not.toHaveBeenCalled();
-    });
+    }, AUTO_SYNC_FLOW_TIMEOUT);
     it('persists selected metric labels without another scan and clears them for the next configuration', async () => {
       await addAnother();
       fireEvent.click(scanButton());
@@ -381,6 +384,6 @@ describe.each(['gitlab', 'github'])(
       });
       const input = screen.getByRole('textbox', { name: 'Configuration name' });
       expect(input).toHaveValue(`${provider} 4`);
-    });
+    }, AUTO_SYNC_FLOW_TIMEOUT);
   }
 );

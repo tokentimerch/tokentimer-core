@@ -524,6 +524,8 @@ ADR-0015 defines an optional operator connection representing one user in one
 workspace. Effective authority intersects scopes, its fixed role ceiling and
 the user's live membership. Approval and fresh dispatch revalidate that
 authority transactionally; background cleanup does not grant execution.
+Write admission holds the workspace lock through commit, so disabling writes
+either prevents the request or cancels its pending job after admission commits.
 Every assistant renewal still requires another manager or admin to approve,
 even where ordinary Vault workflows allow a single operator. Preview consent
 binds the resolved execution snapshot, not just its mutable profile ID.

@@ -728,6 +728,85 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
     before(clearInFlight);
     afterEach(clearInFlight);
 
+    async function waitForWorkspaceLock(waiter, holder) {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const result = await pool.query("SELECT $2::int = ANY(pg_blocking_pids($1::int)) AS blocked", [waiter, holder]);
+        if (result.rows[0].blocked) return;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      assert.fail("the competing transaction did not wait for the workspace lock");
+    }
+
+    it("a write-disable transaction that commits first prevents a concurrent submission", async () => {
+      const plan = (await preview()).body;
+      const admin = await pool.connect();
+      const submitter = await pool.connect();
+      let pending;
+      try {
+        await admin.query("BEGIN");
+        await submitter.query("BEGIN");
+        const adminPid = (await admin.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+        const submitterPid = (await submitter.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+        // Use an explicit manager membership, so the owner fallback cannot
+        // accidentally provide the workspace lock the write gate needs.
+        await admin.query("SELECT id FROM workspaces WHERE id = $1 FOR UPDATE", [workspaceId]);
+        await admin.query("UPDATE workspaces SET operator_writes_enabled = FALSE WHERE id = $1", [workspaceId]);
+        pending = require("../../apps/api/services/operator/renewRequests").submitRenewRequest({
+          client: submitter, operator: { connectionId, userId: manager, workspaceId },
+          planId: plan.planId, planHash: plan.planHash, requestId: crypto.randomUUID(),
+        }).then((value) => ({ value }), (error) => ({ error }));
+        await waitForWorkspaceLock(submitterPid, adminPid);
+        await require("../../apps/api/services/operator/requestMaintenance").endWaitingForWorkspace(admin, workspaceId);
+        await admin.query("COMMIT");
+        const outcome = await pending;
+        assert.equal(outcome.error?.code, "OPERATOR_WRITES_DISABLED", JSON.stringify(outcome.value));
+        const created = await submitter.query("SELECT COUNT(*)::int AS n FROM operator_action_requests WHERE plan_id = $1", [plan.planId]);
+        assert.equal(created.rows[0].n, 0, "no request or job can slip past the completed disable sweep");
+      } finally {
+        await admin.query("ROLLBACK").catch(() => {});
+        if (pending) await pending;
+        await submitter.query("ROLLBACK").catch(() => {});
+        admin.release();
+        submitter.release();
+        await setWorkspaceWrites(true);
+      }
+    });
+
+    it("write-disable waits for an authorized submission and then cancels its pending job", async () => {
+      const plan = (await preview()).body;
+      const submitter = await pool.connect();
+      const admin = await pool.connect();
+      let disabling;
+      try {
+        await submitter.query("BEGIN");
+        await admin.query("BEGIN");
+        const submitterPid = (await submitter.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+        const adminPid = (await admin.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+        const created = await require("../../apps/api/services/operator/renewRequests").submitRenewRequest({
+          client: submitter, operator: { connectionId, userId: manager, workspaceId },
+          planId: plan.planId, planHash: plan.planHash, requestId: crypto.randomUUID(),
+        });
+        disabling = admin.query("SELECT id FROM workspaces WHERE id = $1 FOR UPDATE", [workspaceId]);
+        await waitForWorkspaceLock(adminPid, submitterPid);
+        await submitter.query("COMMIT");
+        await disabling;
+        await admin.query("UPDATE workspaces SET operator_writes_enabled = FALSE WHERE id = $1", [workspaceId]);
+        const cancelled = await require("../../apps/api/services/operator/requestMaintenance").endWaitingForWorkspace(admin, workspaceId);
+        await admin.query("COMMIT");
+        assert.equal(cancelled, 1);
+        assert.equal((await jobRow(created.jobId)).status, "cancelled");
+        assert.equal((await get(`/api/v1/operator/requests/${created.requestRecordId}`)).body.state, "cancelled");
+      } finally {
+        await submitter.query("ROLLBACK").catch(() => {});
+        if (disabling) await disabling.catch(() => {});
+        await admin.query("ROLLBACK").catch(() => {});
+        submitter.release();
+        admin.release();
+        await setWorkspaceWrites(true);
+      }
+    });
+
     it("a revocation that commits first always beats a submission, and the submission cannot slip in after", async () => {
       const own = await newConnection(manager);
       const plan = (await preview(certA.identityId, own.credential)).body;
