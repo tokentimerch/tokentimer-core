@@ -291,6 +291,69 @@ describe.each(['gitlab', 'github'])(
       fireEvent.click(confirm);
       expect(apiClient.post).not.toHaveBeenCalled();
     });
+    it('persists selected metric labels without another scan and clears them for the next configuration', async () => {
+      await addAnother();
+      fireEvent.click(scanButton());
+      await waitFor(() => expect(enable()).toBeEnabled());
+      fireEvent.click(enable());
+      fireEvent.click(
+        await screen.findByRole('checkbox', {
+          name: 'Expose additional auto-sync metrics',
+        })
+      );
+      fireEvent.change(
+        screen.getByRole('textbox', { name: 'Monitoring group label' }),
+        { target: { value: 'critical' } }
+      );
+      fireEvent.click(
+        screen.getByRole('checkbox', { name: 'Token / asset name' })
+      );
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Enable Auto-Sync', exact: true })
+      );
+      await waitFor(() =>
+        expect(apiClient.post).toHaveBeenCalledWith(
+          '/api/v1/workspaces/ws-1/auto-sync',
+          expect.objectContaining({
+            metrics_settings: {
+              enabled: true,
+              labels: [
+                'configuration_name',
+                'monitoring_group',
+                'kind',
+                'asset_name',
+              ],
+              monitoring_group: 'critical',
+            },
+          })
+        )
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole('combobox', { name: 'Configuration' })
+        ).toHaveValue('created-config')
+      );
+      await waitFor(() =>
+        expect(
+          screen.getAllByRole('textbox', { name: 'Monitoring group label' })
+        ).toHaveLength(1)
+      );
+      expect(
+        screen.getByRole('textbox', { name: 'Monitoring group label' })
+      ).toHaveValue('critical');
+      expect(scan()).toHaveBeenCalledTimes(1);
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Add another', exact: true })
+      );
+      fireEvent.click(scanButton());
+      await waitFor(() => expect(enable()).toBeEnabled());
+      fireEvent.click(enable());
+      expect(
+        await screen.findByRole('checkbox', {
+          name: 'Expose additional auto-sync metrics',
+        })
+      ).not.toBeChecked();
+    });
     it('allocates an unused configuration name despite deletions, whitespace and case', async () => {
       await addAnother();
       scan().mockResolvedValue({ ...result, items: [{ name: 'fixture' }] });

@@ -4850,6 +4850,11 @@ const migrations = [
     name: "auto_sync_run_metrics",
     sql: fs.readFileSync(require("path").join(__dirname, "080-auto-sync-run-metrics.sql"), "utf8"),
   },
+  {
+    version: 81,
+    name: "auto_sync_metric_labels",
+    sql: fs.readFileSync(require("path").join(__dirname, "081-auto-sync-metric-labels.sql"), "utf8"),
+  },
 ];
 
 

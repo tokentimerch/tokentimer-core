@@ -1,3 +1,6 @@
+import AutoSyncMetricSettings, {
+  DEFAULT_METRIC_SETTINGS,
+} from './imports/AutoSyncMetricSettings.jsx';
 import { useScanVerification } from '../hooks/useScanVerification.js';
 import React from 'react';
 import {
@@ -1216,6 +1219,9 @@ function ImportTokensModalContent({
   const [autoSyncConfig, setAutoSyncConfig] = React.useState(null); // null = not loaded, false = not exists, object = exists
   const [autoSyncConfigs, setAutoSyncConfigs] = React.useState([]);
   const [autoSyncName, setAutoSyncName] = React.useState('');
+  const [autoSyncMetricSettings, setAutoSyncMetricSettings] = React.useState(
+    DEFAULT_METRIC_SETTINGS
+  );
   const [autoSyncRuns, setAutoSyncRuns] = React.useState([]);
   const [autoSyncRunsFor, setAutoSyncRunsFor] = React.useState(null);
   const autoSyncHistoryKey = `${workspaceId}/${autoSyncConfig?.id}`;
@@ -1299,6 +1305,9 @@ function ImportTokensModalContent({
             ? configs.find(c => c.provider === source && c.id === requestedId)
             : configs.find(c => c.provider === source);
         setAutoSyncConfig(existing || false);
+        setAutoSyncMetricSettings(
+          existing?.metrics_settings || DEFAULT_METRIC_SETTINGS
+        );
         setAutoSyncName(
           existing?.name || (creating ? requestedAutoSyncConfig.name : source)
         );
@@ -1759,6 +1768,7 @@ function ImportTokensModalContent({
     const { credentials, scanParams } = getAutoSyncCredentials();
     const payload = {
       name: autoSyncName,
+      metrics_settings: autoSyncMetricSettings,
       frequency: enableSyncFrequency,
       schedule_time: enableSyncTime,
       schedule_tz: enableSyncTz,
@@ -1876,6 +1886,7 @@ function ImportTokensModalContent({
         {
           provider: source,
           name: autoSyncName,
+          metrics_settings: autoSyncMetricSettings,
           credentials,
           scan_params: { ...scanParams, contactGroupIds: autoSyncGroupIds },
           frequency: enableSyncFrequency,
@@ -3031,6 +3042,7 @@ function ImportTokensModalContent({
                         variant='outline'
                         onClick={() => {
                           invalidateScanVerification();
+                          setAutoSyncMetricSettings(DEFAULT_METRIC_SETTINGS);
                           setScanContextVersion(value => value + 1);
                           const normalizeName = value =>
                             String(value || '')
@@ -3070,6 +3082,10 @@ function ImportTokensModalContent({
                         maxLength={255}
                       />
                     </FormControl>
+                    <AutoSyncMetricSettings
+                      value={autoSyncMetricSettings}
+                      onChange={setAutoSyncMetricSettings}
+                    />
                     {autoSyncConfig.last_sync_status === 'failed' ||
                     autoSyncConfig.last_sync_status === 'partial' ? (
                       <Alert
@@ -4108,6 +4124,10 @@ function ImportTokensModalContent({
                   maxLength={255}
                 />
               </FormControl>
+              <AutoSyncMetricSettings
+                value={autoSyncMetricSettings}
+                onChange={setAutoSyncMetricSettings}
+              />
               <AutoSyncGroupLine
                 groupIds={autoSyncGroupIds}
                 onChange={setAutoSyncGroupIds}

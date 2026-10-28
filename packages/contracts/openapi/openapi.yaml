@@ -2309,6 +2309,9 @@ paths:
                     items:
                       type: object
                       additionalProperties: true
+                      properties:
+                        metrics_settings:
+                          $ref: "#/components/schemas/AutoSyncMetricSettings"
         "500":
           $ref: "#/components/responses/InternalError"
     post:
@@ -2339,6 +2342,8 @@ paths:
                   type: object
                   description: Scan filters and scope. `contactGroupIds` (array of contact group IDs) sets the alert groups for assets this configuration creates; assets it already imported or later edited keep their groups, and an empty or missing list uses the workspace default. Changing it does not restart a scan.
                   additionalProperties: true
+                metrics_settings:
+                  $ref: "#/components/schemas/AutoSyncMetricSettings"
                 frequency:
                   type: string
                 schedule_time:
@@ -2494,6 +2499,9 @@ paths:
             schema:
               type: object
               additionalProperties: true
+              properties:
+                metrics_settings:
+                  $ref: "#/components/schemas/AutoSyncMetricSettings"
       responses:
         "200":
           description: Updated auto-sync config
@@ -9534,6 +9542,25 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    AutoSyncMetricSettings:
+      type: object
+      additionalProperties: false
+      description: Opt-in metric metadata for this connection. Configuration ID is always included; changing these settings does not restart a scan. Names and project/group labels can multiply time series and expose metadata to metrics readers. No credential values are exported.
+      properties:
+        enabled:
+          type: boolean
+          default: false
+        labels:
+          type: array
+          uniqueItems: true
+          maxItems: 6
+          items:
+            type: string
+            enum: [configuration_name, monitoring_group, kind, asset_name, project, group]
+        monitoring_group:
+          type: string
+          maxLength: 64
+          description: Readable alerting classification, such as critical. Surrounding whitespace is trimmed.
     CertOpsManagementConflict:
       type: object
       required: [error, code]

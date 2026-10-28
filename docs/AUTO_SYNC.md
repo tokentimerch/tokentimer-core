@@ -69,6 +69,18 @@ freshness/grace periods for your longest schedule. Alertmanager controls deliver
 Collector errors can return HTTP 500; connection failures may terminate the API.
 Both cause scrape failures, not evidence of zero activity.
 
+### Optional configuration and asset labels
+
+**Operator action:** apply migration 81 with matching API code. In each connection's **Manage auto-sync** form (or the enable dialog), turn on **Expose additional auto-sync metrics** and select the labels. Set **Monitoring group label** to `critical` for configurations that need a separate alert. Label-only changes do not restart a running scan.
+
+The existing provider counter stays unchanged. `auto_sync_items_created_by_kind_total{provider,kind}` adds a bounded asset-type breakdown, collected from migration 81 onward; historical totals are not backfilled. For opted-in configurations, `auto_sync_items_created_detailed_total` and `auto_sync_last_creation_timestamp_seconds` expose the selected metadata. Configuration ID always separates connections; `label_set` separates different selections. Unselected optional label values are empty.
+
+Token/asset names and project/group values are captured only for new creations while selected. GitLab exports full project/group paths; GitHub exports repository names where available. Other providers leave unavailable scope labels empty. Secrets, credentials and token values are never metric labels. An asset seen by two configurations counts only for the configuration that creates its inventory row; retries, updates and adoption remain excluded.
+
+Each unique label combination creates a series on every scraped replica. Names and scope labels can multiply series and alerts, and expose metadata to metrics readers. Configuration renames, monitoring-group changes and new label selections can start new series. Turning exposure off hides the additional series on the next scrape; previous Prometheus samples remain until retention expires. Deleting a configuration removes its detailed statistics; provider and kind totals retain history.
+
+The supplied **AutoSyncCriticalAssetsCreated** example selects `monitoring_group="critical"`, deduplicates replicas and uses the persisted creation timestamp. It detects an import already present on the first scrape, while a new per-asset counter starting at 1 may have no `increase()`. It fires for creations in the last 15 minutes, not once per event; configure Alertmanager grouping and repeat intervals accordingly. Select configuration name, monitoring group, asset type and any desired asset/project/group fields to include those details in the alert. Adjust the monitoring group and window for your installation.
+
 ## Cleanup and removal
 
 Enable destructive cleanup only when it matches your retention policy. Partial, truncated, rate-limited or inaccessible scans must not be treated as proof that an asset disappeared. Complete scans reconcile only the scope actually covered.
