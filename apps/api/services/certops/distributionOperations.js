@@ -128,7 +128,8 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
   const rollout = (await client.query(`SELECT r.*,v.provider_version,v.fingerprint_sha256,v.valid_to FROM certops_distribution_rollouts r
     JOIN certops_material_versions v ON v.workspace_id=r.workspace_id AND v.id=r.material_version_id
     WHERE r.workspace_id=$1 AND r.group_id=$2 AND r.id=$3 FOR UPDATE OF r`,[workspaceId,groupId,rolloutId])).rows[0];
-  if (!rollout || ["retired","installed","verified"].includes(rollout.state)) return { queued: false,reason:"rollout_inactive" };
+  if (!rollout || ["retired","installed","verified"].includes(rollout.state) ||
+    rollout.verification_only && rollout.state==="degraded") return { queued: false,reason:"rollout_inactive" };
   if (rollout.approval_job_id) {
     try { await require("./distributionLifecycle").assertAutomaticRolloutAuthorized(client,workspaceId,group,rollout.approval_job_id); }
     catch(error) {
@@ -150,7 +151,9 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
     return { queued:false,reason:"rollout_superseded" };
   }
   if (rollout.state === "paused") return {queued:false,reason:"rollout_inactive"};
-  const rows = (await client.query(`SELECT d.*,j.status AS job_status,b.state AS binding_state,b.authorization_revision AS current_revision
+  const rows = (await client.query(`SELECT d.*,j.status AS job_status,j.needs_operator_reconciliation,
+    j.payload->'materialDeployment'->>'verificationOnly' AS job_verification_only,
+    b.state AS binding_state,b.authorization_revision AS current_revision
     FROM certops_consumer_deployments d LEFT JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=d.job_id
     JOIN certops_consumer_bindings b ON b.workspace_id=d.workspace_id AND b.id=d.binding_id
     WHERE d.workspace_id=$1 AND d.rollout_id=$2 ORDER BY d.wave,d.binding_id FOR UPDATE OF d`,[workspaceId,rolloutId])).rows;
@@ -158,15 +161,38 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
     : d.stage === "trust_validated" || d.stage === "served_verified" && d.verification_policy === "served";
   const failed = (d) => ["failed","blocked","cancelled","rejected","orphaned_unknown_effect"].includes(d.job_status) || d.binding_state !== "active" || d.current_revision !== d.authorization_revision;
   const now=Date.now();
+  if (rows.some((d)=>d.required && failed(d))) {
+    // A scheduler-owned read-only cycle may finish unsuccessfully, rather than
+    // becoming a resumable deployment. Never infer this from a paused rollout:
+    // an operator pause (including an older ambiguous pause) remains a fence.
+    const recurring = rollout.verification_only && (await client.query(`SELECT 1
+      FROM certops_distribution_schedules s JOIN certificate_jobs j ON j.workspace_id=s.workspace_id AND j.id=s.last_job_id
+      WHERE s.workspace_id=$1 AND s.group_id=$2 AND s.last_job_id=$3
+        AND j.idempotency_key='verification:' || s.group_id::text || ':' || s.sequence::text
+        AND j.payload->'distributionRollout'->>'verificationOnly'='true'`,
+    [workspaceId,groupId,rollout.approval_job_id])).rowCount;
+    const safe = recurring && rows.every(d=>d.binding_state==="active" && d.current_revision===d.authorization_revision &&
+      d.stage!=="orphaned_unknown_effect" && !d.needs_operator_reconciliation && (!d.job_id ||
+        d.job_verification_only==="true" && ["pending_approval","pending","claimed","running","succeeded","failed","blocked"].includes(d.job_status)));
+    if(safe){
+      // Already-created children must settle. Do not start more waves or
+      // supersede a live claim merely because a different consumer failed.
+      if(rows.some(d=>d.job_id && ["pending_approval","pending","claimed","running"].includes(d.job_status)))
+        return {deferred:true,retryInMs:15000,reason:"waiting_for_verification_children"};
+      await client.query(`UPDATE certops_distribution_rollouts SET state='degraded' WHERE workspace_id=$1 AND id=$2`,[workspaceId,rolloutId]);
+      await require("../audit").writeAudit({client,workspaceId,action:"CERTOPS_RECURRING_VERIFICATION_FAILED",
+        targetType:"certops_distribution_rollout",targetId:rolloutId,
+        metadata:{groupId,rolloutId,jobId:rollout.approval_job_id}});
+      return {queued:false,reason:"recurring_verification_failed"};
+    }
+    await client.query(`UPDATE certops_distribution_rollouts SET state='paused' WHERE workspace_id=$1 AND id=$2`,[workspaceId,rolloutId]);
+    return { queued:false,reason:"required_consumer_failed" };
+  }
   if(rows.some(d=>done(d) && !failed(d) && (!d.observed_at || !d.observed_valid_to ||
     now-new Date(d.observed_at).getTime()>=d.freshness_seconds*1000 || new Date(d.observed_at).getTime()>now+30000 ||
     new Date(d.observed_valid_to).getTime()<=now))){
     await client.query(`UPDATE certops_distribution_rollouts SET state='paused' WHERE workspace_id=$1 AND id=$2`,[workspaceId,rolloutId]);
     return {queued:false,reason:"consumer_verification_stale"};
-  }
-  if (rows.some((d)=>d.required && failed(d))) {
-    await client.query(`UPDATE certops_distribution_rollouts SET state='paused' WHERE workspace_id=$1 AND id=$2`,[workspaceId,rolloutId]);
-    return { queued:false,reason:"required_consumer_failed" };
   }
   const outstanding = rows.filter((d)=>!done(d) && !failed(d));
   if (!outstanding.length) {

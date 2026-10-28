@@ -66,13 +66,7 @@ function consumerHealth(
     return row.verification_policy === "installed"
       ? "installed_not_proven_served"
       : "up_to_date_fresh";
-  if (row.verification_method === "installed")
-    return "installed_not_proven_served";
-  if (
-    row.verification_method === "served" &&
-    row.verification_policy === "trust"
-  )
-    return "served_trust_unknown";
+  // Old installation/served evidence cannot hide a failed current cycle.
   if (
     row.latest_deployment?.stage === "failed" ||
     ["failed", "blocked", "rejected", "cancelled"].includes(
@@ -80,6 +74,13 @@ function consumerHealth(
     )
   )
     return "failed_verification";
+  if (row.verification_method === "installed")
+    return "installed_not_proven_served";
+  if (
+    row.verification_method === "served" &&
+    row.verification_policy === "trust"
+  )
+    return "served_trust_unknown";
   return "unknown_coverage";
 }
 function consumerConditions(
@@ -326,6 +327,9 @@ async function monitorGroup({
     )
   ).rows[0];
   const conditions = [];
+  const failedCycles = policy.verification.enabled ? (
+    await client.query("SELECT failures FROM certops_distribution_schedules WHERE workspace_id=$1 AND group_id=$2", [workspaceId,groupId])
+  ).rows[0]?.failures || 0 : 0;
   const plan=activationPlanner(now);
   for (const row of rows.filter((row) => row.binding_state === "active")) {
     const { codes } = consumerConditions(
@@ -335,6 +339,7 @@ async function monitorGroup({
       group.latest_material_version_id,
     );
     for (const code of codes) {
+      const failureCount = Math.max(row.latest_deployment?.attemptCount || 0, row.required ? failedCycles : 0);
       if (
         code === "unknown_coverage" &&
         now - new Date(group.created_at).getTime() <
@@ -346,12 +351,11 @@ async function monitorGroup({
         code,
         evidence: {
           ...evidenceFor(row),
-          failureCount: row.latest_deployment?.attemptCount || 0,
+          failureCount,
         },
         notificationEligible:
           code !== "verification_failed" ||
-          (row.latest_deployment?.attemptCount || 0) >=
-            policy.verification.failureThreshold,
+          failureCount >= policy.verification.failureThreshold,
       });
     }
     if (

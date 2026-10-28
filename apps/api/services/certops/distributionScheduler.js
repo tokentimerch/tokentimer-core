@@ -1,7 +1,7 @@
 "use strict";
 const { pool } = require("../../db/database");
 const material = require("./materialDistribution");
-const { loadPolicy } = require("./distributionLifecycle");
+const { loadPolicy, authorizationScope } = require("./distributionLifecycle");
 const { assertDistributionPolicy } = require("./distributionPolicy");
 const operations = require("./distributionOperations");
 function backoffSeconds(policy, failures) {
@@ -17,7 +17,7 @@ async function scheduleGroup({
   now = Date.now(),
 }) {
   await assertDistributionPolicy({ client, workspaceId });
-  await material.lockGroup(client, workspaceId, groupId);
+  const group = await material.lockGroup(client, workspaceId, groupId);
   const policy = await loadPolicy(client, workspaceId, groupId);
   if (!policy?.policy.verification.enabled)
     return { scheduled: false, reason: "verification_disabled" };
@@ -59,7 +59,13 @@ async function scheduleGroup({
   if (schedule.last_job_id) {
     const last = (
       await client.query(
-        `SELECT status,created_at FROM certificate_jobs WHERE workspace_id=$1 AND id=$2`,
+        `SELECT j.status,j.created_at,j.completed_at,j.idempotency_key,r.id AS rollout_id,
+          r.state AS rollout_state,r.verification_only,
+          (SELECT max(COALESCE(child.completed_at,child.updated_at))
+            FROM certops_consumer_deployments d JOIN certificate_jobs child ON child.workspace_id=d.workspace_id AND child.id=d.job_id
+            WHERE d.workspace_id=r.workspace_id AND d.rollout_id=r.id AND d.required AND child.status IN ('failed','blocked')) AS verification_failed_at
+        FROM certificate_jobs j LEFT JOIN certops_distribution_rollouts r ON r.workspace_id=j.workspace_id AND r.approval_job_id=j.id
+        WHERE j.workspace_id=$1 AND j.id=$2`,
         [workspaceId, schedule.last_job_id],
       )
     ).rows[0];
@@ -74,7 +80,24 @@ async function scheduleGroup({
           ? "verification_approval_pending"
           : "verification_job_in_progress",
       );
-    if (last?.status === "succeeded") {
+    const failedAt = last?.verification_only && last.rollout_state === "degraded" &&
+      last.idempotency_key === `verification:${groupId}:${schedule.sequence}` && last.verification_failed_at ||
+      last && ["failed", "blocked", "cancelled", "rejected"].includes(last.status) && (last.completed_at || last.created_at);
+    if (failedAt) {
+      // Consume this cycle exactly once under the schedule/group locks. Keep
+      // immutable job/receipt/audit history; only the scheduler cursor advances.
+      schedule.failures++;
+      const retryAt = new Date(Math.min(now, new Date(failedAt).getTime()) + backoffSeconds(verification, schedule.failures) * 1000);
+      await client.query(`UPDATE certops_distribution_schedules SET last_job_id=NULL,failures=$3,
+        last_outcome='verification_failed',next_run_at=$4 WHERE workspace_id=$1 AND group_id=$2`,
+      [workspaceId,groupId,schedule.failures,retryAt]);
+      await require("../audit").writeAudit({client,workspaceId,action:"CERTOPS_RECURRING_VERIFICATION_BACKOFF",
+        targetType:"certops_distribution_rollout",targetId:last.rollout_id,
+        metadata:{groupId,rolloutId:last.rollout_id || null,jobId:schedule.last_job_id,
+          sequence:Number(schedule.sequence),failures:schedule.failures,retryAt:retryAt.toISOString()}});
+      schedule.last_job_id = null;
+      if (retryAt.getTime() > now) return {scheduled:false,reason:"verification_backoff"};
+    } else if (last?.status === "succeeded") {
       const proof = await material.consumerMatrix({
         client,
         workspaceId,
@@ -85,11 +108,7 @@ async function scheduleGroup({
         proof.every((row) => row.binding_state !== "active" || row.converged)
       )
         schedule.failures = 0;
-    } else if (
-      last &&
-      ["failed", "blocked", "cancelled", "rejected"].includes(last.status)
-    )
-      schedule.failures++;
+    }
   }
   const bindings = (
     await client.query(
@@ -122,15 +141,19 @@ async function scheduleGroup({
     return defer("required_agent_offline", true);
   const uncertain = await client.query(
     `SELECT 1 FROM certops_consumer_deployments d JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=d.job_id
-    WHERE d.workspace_id=$1 AND d.group_id=$2 AND (d.stage='orphaned_unknown_effect' OR j.status='orphaned_unknown_effect')
-      AND NOT EXISTS(SELECT 1 FROM certops_consumer_deployments later
+    WHERE d.workspace_id=$1 AND d.group_id=$2 AND (d.stage='orphaned_unknown_effect' OR j.status='orphaned_unknown_effect' OR j.needs_operator_reconciliation)
+      AND (j.needs_operator_reconciliation OR NOT EXISTS(SELECT 1 FROM certops_consumer_deployments later
         JOIN certops_distribution_rollouts lr ON lr.workspace_id=later.workspace_id AND lr.id=later.rollout_id
         JOIN certops_distribution_rollouts dr ON dr.workspace_id=d.workspace_id AND dr.id=d.rollout_id
         WHERE later.workspace_id=d.workspace_id AND later.binding_id=d.binding_id AND lr.generation>dr.generation
-          AND later.stage IN ('installed','served_verified','trust_validated')) LIMIT 1`,
+          AND later.stage IN ('installed','served_verified','trust_validated'))) LIMIT 1`,
     [workspaceId, groupId],
   );
   if (uncertain.rowCount) return defer("unresolved_uncertain_effects", true);
+  const authority = await authorizationScope(client, workspaceId, group, policy.policy);
+  if (String(authority.workspace.created_by) !== String(policy.configured_by_user_id) &&
+    !authority.snapshot.reviewers.some(reviewer=>String(reviewer.user_id)===String(policy.configured_by_user_id)))
+    return defer("verification_authorization_stale", true);
   const sequence = Number(schedule.sequence) + 1;
   const job = await operations.requestRollout({
     client,
@@ -153,7 +176,7 @@ async function scheduleGroup({
       job.status === "pending_approval"
         ? "verification_approval_pending"
         : "verification_requested",
-      backoffSeconds(verification, schedule.failures),
+      verification.intervalSeconds,
       schedule.failures,
     ],
   );

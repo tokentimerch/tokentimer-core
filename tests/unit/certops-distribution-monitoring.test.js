@@ -20,6 +20,14 @@ test("deployed expiry is independent of source renewal and evidence freshness",(
   assert.deepEqual(consumerConditions(row,DEFAULT_POLICY,now).codes,["consumer_certificate_expiring"]);
   assert.ok(consumerConditions({...row,observed_valid_to:new Date(now-1)},DEFAULT_POLICY,now).codes.includes("consumer_certificate_expired"));
 });
+test("a failed current verification is not hidden by older installed or served evidence",()=>{
+  for(const method of ["installed","served","trust"]){
+    const failed={...row,verification_policy:method,verification_method:"installed",converged:false,
+      latest_deployment:{stage:"failed",jobStatus:"failed",attemptCount:1}};
+    assert.equal(consumerHealth(failed,{now}),"failed_verification");
+    assert.ok(consumerConditions(failed,DEFAULT_POLICY,now).codes.includes("verification_failed"));
+  }
+});
 
 test("one primary health label cannot hide simultaneous offline, overdue and deployed-expiry conditions",()=>{
   const conditions=consumerConditions({...row,agent_status:"offline",observed_material_version_id:"old",

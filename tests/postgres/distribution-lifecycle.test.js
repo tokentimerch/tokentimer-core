@@ -233,3 +233,283 @@ test("pending retained-version approvals protect an otherwise eligible old mater
   const after=await administration.retentionPreview({client:pool,workspaceId:f.workspaceId,groupId:f.groupId});
   assert.ok(after.versions.find(row=>row.id===old).retainedReasons.includes("job_or_pending_approval"));assert.equal(after.cleanupAvailable,false);
 });
+
+// Public database fixtures only. Advancing due timestamps exercises durable
+// scheduling without sleeping through production backoff intervals.
+async function verificationTick(f){
+  return operations.transaction(client=>scheduler.scheduleGroup({client,workspaceId:f.workspaceId,groupId:f.groupId}));
+}
+async function verificationDue(f){
+  await pool.query("UPDATE certops_distribution_schedules SET next_run_at=clock_timestamp()-interval '1 second' WHERE workspace_id=$1 AND group_id=$2",[f.workspaceId,f.groupId]);
+}
+async function verificationSchedule(f){
+  return (await pool.query("SELECT * FROM certops_distribution_schedules WHERE workspace_id=$1 AND group_id=$2",[f.workspaceId,f.groupId])).rows[0];
+}
+async function verificationRollout(f){
+  return (await pool.query("SELECT * FROM certops_distribution_rollouts WHERE workspace_id=$1 AND group_id=$2 ORDER BY generation DESC LIMIT 1",[f.workspaceId,f.groupId])).rows[0];
+}
+async function verificationJobs(f){
+  return (await pool.query("SELECT * FROM certificate_jobs WHERE workspace_id=$1 AND idempotency_key LIKE 'verification:%' ORDER BY created_at",[f.workspaceId])).rows;
+}
+async function proveVerification(f,{skipBindingIds=[]}={}){
+  const material=require("../../apps/api/services/certops/materialDistribution"),crypto=require("node:crypto");
+  const rollout=await verificationRollout(f);
+  await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,rollout.id));
+  const children=(await pool.query("SELECT d.*,j.status AS job_status FROM certops_consumer_deployments d JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=d.job_id WHERE d.workspace_id=$1 AND d.rollout_id=$2",[f.workspaceId,rollout.id])).rows;
+  assert.ok(children.length);
+  const version=(await pool.query("SELECT * FROM certops_material_versions WHERE workspace_id=$1 AND id=$2",[f.workspaceId,rollout.material_version_id])).rows[0];
+  for(const child of children){
+    if(skipBindingIds.includes(child.binding_id))continue;
+    if(child.job_status==="pending_approval")await approveJob({workspaceId:f.workspaceId,jobId:child.job_id,approverUserId:f.approver});
+    const job=(await pool.query("UPDATE certificate_jobs SET status='claimed',claim_id=$2,claimed_by_agent_id=assigned_agent_id,lease_expires_at=clock_timestamp()+interval '5 minutes',attempt_count=1 WHERE workspace_id=$1 AND id=$3 RETURNING *",[f.workspaceId,crypto.randomUUID(),child.job_id])).rows[0];
+    const receipt={schemaVersion:1,workspaceId:f.workspaceId,groupId:f.groupId,bindingId:child.binding_id,materialVersionId:version.id,
+      generation:Number(rollout.generation),fetched:true,installed:true,bound:child.verification_policy!=="installed",
+      servedVerified:child.verification_policy!=="installed",trustValidated:child.verification_policy==="trust",
+      fingerprintSha256:version.fingerprint_sha256,validTo:new Date(version.valid_to).toISOString(),observedAt:new Date().toISOString()};
+    await operations.transaction(client=>material.acceptDeploymentReceipt({client,workspaceId:f.workspaceId,agentId:child.assigned_agent_id,job,receipt,jobStatus:"succeeded"}));
+    await pool.query("UPDATE certificate_jobs SET status='succeeded',completed_at=clock_timestamp() WHERE id=$1",[job.id]);
+  }
+  await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,rollout.id));
+  return rollout;
+}
+async function prepareVerification({requireApproval=false,method="served",optional=false,alerts=false,configuredBy="actor"}={}){
+  const f=await fixture({requireApproval});
+  if(method!=="served"){f.binding={...f.binding,verificationPolicy:method};await operations.putBinding({...f,binding:f.binding,actorUserId:f.actor});}
+  if(optional){
+    f.optionalBindingId=require("node:crypto").randomUUID();
+    await operations.putBinding({...f,bindingId:f.optionalBindingId,binding:{...f.binding,agentId:f.issuer,deploymentProfileRef:"optional_web",required:false},actorUserId:f.actor});
+  }
+  const initial=await operations.requestRollout({...f,maxParallel:optional?2:1,actorUserId:f.actor});
+  if(initial.status==="pending_approval")await approve(f,initial.id);
+  await proveVerification(f);
+  const policy=structuredClone(lifecycle.DEFAULT_POLICY);
+  policy.maxParallel=optional?2:1;Object.assign(policy.verification,{enabled:true,intervalSeconds:300,maxBackoffSeconds:1200,failureThreshold:2});
+  policy.alerts.enabled=alerts;
+  await lifecycle.putPolicy({...f,policy,expectedRevision:0,actorUserId:f[configuredBy]});
+  return f;
+}
+async function failVerification(f,{advance=true,status="failed",reconciliation=false}={}){
+  const rollout=await verificationRollout(f);
+  await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,rollout.id));
+  const child=(await pool.query("SELECT * FROM certops_consumer_deployments WHERE workspace_id=$1 AND rollout_id=$2 AND binding_id=$3",[f.workspaceId,rollout.id,f.bindingId])).rows[0];
+  const original=(await pool.query("SELECT status FROM certificate_jobs WHERE id=$1",[child.job_id])).rows[0];
+  if(original.status==="pending_approval")await approveJob({workspaceId:f.workspaceId,jobId:child.job_id,approverUserId:f.approver});
+  await pool.query("UPDATE certificate_jobs SET status=$2,attempt_count=1,error_code='CERTOPS_VERIFICATION_FAILED',error_message='Synthetic listener mismatch',completed_at=clock_timestamp(),needs_operator_reconciliation=$3 WHERE id=$1",[child.job_id,status,reconciliation]);
+  await pool.query("UPDATE certops_consumer_deployments SET stage=$2,failure_code='material_listener_mismatch' WHERE workspace_id=$1 AND job_id=$3",[f.workspaceId,status==="orphaned_unknown_effect"?"orphaned_unknown_effect":"failed",child.job_id]);
+  const result=advance?await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,rollout.id)):null;
+  return {rollout,child,result};
+}
+
+test("required recurring verification recovers automatically with fresh installed, served and trust proof and preserved failure history",async()=>{
+  for(const method of ["installed","served","trust"]){
+    const f=await prepareVerification({method});
+    assert.equal((await verificationTick(f)).scheduled,true);
+    const failed=await failVerification(f);assert.equal(failed.result.reason,"recurring_verification_failed");
+    assert.equal((await verificationRollout(f)).state,"degraded");
+    const oldJob=(await pool.query("SELECT * FROM certificate_jobs WHERE id=$1",[failed.child.job_id])).rows[0];
+    const oldChild=(await pool.query("SELECT * FROM certops_consumer_deployments WHERE job_id=$1",[failed.child.job_id])).rows[0];
+    await verificationDue(f);
+    assert.equal((await verificationTick(f)).reason,"verification_backoff");
+    const backedOff=await verificationSchedule(f);assert.equal(backedOff.failures,1);assert.equal(backedOff.last_job_id,null);
+    assert.ok(new Date(backedOff.next_run_at).getTime()>Date.now()+590000);
+    assert.equal((await verificationTick(f)).reason,"not_due");
+    const audits=(await pool.query("SELECT * FROM audit_events WHERE workspace_id=$1 ORDER BY id",[f.workspaceId])).rows;
+    await verificationDue(f);
+    const recovery=await Promise.all(Array.from({length:5},()=>verificationTick(f)));
+    assert.equal(recovery.filter(result=>result.scheduled).length,1);
+    const parent=(await verificationJobs(f)).at(-1),latest=await verificationRollout(f);
+    assert.equal(parent.payload.distributionRollout.verificationOnly,true);
+    assert.equal(parent.payload.distributionRollout.materialVersionId,f.materialVersionId);
+    assert.ok(Number(latest.generation)>Number(failed.rollout.generation));
+    await proveVerification(f);
+    const row=(await require("../../apps/api/services/certops/materialDistribution").consumerMatrix({client:pool,workspaceId:f.workspaceId,groupId:f.groupId}))[0];
+    assert.equal(row.converged,true);assert.equal(row.verification_method,method);
+    const newChild=(await pool.query("SELECT j.payload FROM certops_consumer_deployments d JOIN certificate_jobs j ON j.id=d.job_id WHERE d.rollout_id=$1",[latest.id])).rows[0];
+    assert.equal(newChild.payload.materialDeployment.verificationOnly,true);
+    assert.equal(newChild.payload.materialDeployment.authorizationRevision,oldChild.authorization_revision);
+    assert.deepEqual((await pool.query("SELECT * FROM certificate_jobs WHERE id=$1",[failed.child.job_id])).rows[0],oldJob);
+    assert.deepEqual((await pool.query("SELECT * FROM certops_consumer_deployments WHERE job_id=$1",[failed.child.job_id])).rows[0],oldChild);
+    const after=(await pool.query("SELECT * FROM audit_events WHERE workspace_id=$1 ORDER BY id",[f.workspaceId])).rows;
+    assert.deepEqual(after.filter(event=>audits.some(old=>old.id===event.id)),audits);
+  }
+});
+test("repeated recurring failures consume each outcome once, cap exponential backoff and reset after fresh success",async()=>{
+  const f=await prepareVerification();assert.equal((await verificationTick(f)).scheduled,true);
+  for(const expectedFailures of [1,2,3]){
+    const failed=await failVerification(f);
+    assert.equal((await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,failed.rollout.id))).reason,"rollout_inactive");
+    await verificationDue(f);
+    const outcomes=await Promise.all(Array.from({length:4},()=>verificationTick(f)));
+    assert.equal(outcomes.filter(result=>result.reason==="verification_backoff").length,1);
+    const schedule=await verificationSchedule(f),seconds=Math.min(1200,300*2**expectedFailures);
+    assert.equal(schedule.failures,expectedFailures);assert.equal(Number(schedule.sequence),expectedFailures);
+    assert.ok(Math.abs(new Date(schedule.next_run_at).getTime()-Date.now()-seconds*1000)<2000);
+    assert.equal((await verificationJobs(f)).length,expectedFailures);
+    await verificationDue(f);
+    const retried=await Promise.all(Array.from({length:4},()=>verificationTick(f)));
+    assert.equal(retried.filter(result=>result.scheduled).length,1);
+    assert.ok(Math.abs(new Date((await verificationSchedule(f)).next_run_at).getTime()-Date.now()-300000)<2000);
+  }
+  await proveVerification(f);await verificationDue(f);await verificationTick(f);
+  assert.equal((await verificationSchedule(f)).failures,0);
+});
+test("active deployments and manually requested paused verification stay protected from recurring recovery",async()=>{
+  for(const verificationOnly of [false,true]){
+    const f=await prepareVerification();
+    await operations.requestRollout({...f,verificationOnly,actorUserId:f.actor});
+    const rollout=await verificationRollout(f);
+    assert.equal((await verificationTick(f)).reason,"rollout_in_progress");
+    await failVerification(f);
+    assert.equal((await verificationRollout(f)).state,"paused");
+    await verificationDue(f);assert.equal((await verificationTick(f)).scheduled,false);
+    assert.equal((await verificationJobs(f)).length,0);
+    assert.equal((await pool.query("SELECT state FROM certops_distribution_rollouts WHERE id=$1",[rollout.id])).rows[0].state,"paused");
+  }
+});
+test("an explicit or legacy ambiguous pause is never automatically resumed, even when its verification jobs failed",async()=>{
+  for(const legacy of [false,true]){
+    const f=await prepareVerification();await verificationTick(f);const failed=await failVerification(f,{advance:false});
+    if(legacy)await pool.query("UPDATE certops_distribution_rollouts SET state='paused' WHERE id=$1",[failed.rollout.id]);
+    else await operations.setRolloutState({...f,rolloutId:failed.rollout.id,state:"paused",actorUserId:f.actor});
+    await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,failed.rollout.id));
+    await verificationDue(f);assert.equal((await verificationTick(f)).scheduled,false);
+    assert.equal((await verificationRollout(f)).state,"paused");assert.equal((await verificationJobs(f)).length,1);
+    // Explicit operator resume re-enters normal admission; it can then settle
+    // the old failed cycle and hand subsequent attempts back to the scheduler.
+    await operations.setRolloutState({...f,rolloutId:failed.rollout.id,state:"deploying",actorUserId:f.actor});
+    assert.equal((await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,failed.rollout.id))).reason,"recurring_verification_failed");
+    await verificationDue(f);assert.equal((await verificationTick(f)).reason,"verification_backoff");
+  }
+});
+test("failed recurring cycles wait for already-created optional claims and do not start additional work",async()=>{
+  const f=await prepareVerification({optional:true});await verificationTick(f);
+  const failed=await failVerification(f,{advance:false});
+  const optional=(await pool.query("SELECT job_id FROM certops_consumer_deployments WHERE rollout_id=$1 AND binding_id=$2",[failed.rollout.id,f.optionalBindingId])).rows[0];
+  const claim=require("node:crypto").randomUUID();
+  await pool.query("UPDATE certificate_jobs SET status='claimed',claim_id=$2,claimed_by_agent_id=assigned_agent_id,lease_expires_at=clock_timestamp()+interval '5 minutes' WHERE id=$1",[optional.job_id,claim]);
+  const result=await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,failed.rollout.id));
+  assert.equal(result.reason,"waiting_for_verification_children");assert.equal(result.deferred,true);
+  await verificationDue(f);assert.equal((await verificationTick(f)).scheduled,false);
+  assert.equal((await pool.query("SELECT claim_id FROM certificate_jobs WHERE id=$1",[optional.job_id])).rows[0].claim_id,claim);
+  assert.equal((await verificationJobs(f)).length,1);
+  await pool.query("UPDATE certificate_jobs SET status='failed',completed_at=clock_timestamp() WHERE id=$1",[optional.job_id]);
+  await pool.query("UPDATE certops_consumer_deployments SET stage='failed' WHERE job_id=$1",[optional.job_id]);
+  assert.equal((await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,failed.rollout.id))).reason,"recurring_verification_failed");
+});
+test("optional failure remains degraded and does not acquire a required-failure recovery gate",async()=>{
+  const f=await prepareVerification({optional:true});await verificationTick(f);
+  const rollout=await proveVerification(f,{skipBindingIds:[f.optionalBindingId]});
+  const optional=(await pool.query("SELECT job_id FROM certops_consumer_deployments WHERE rollout_id=$1 AND binding_id=$2",[rollout.id,f.optionalBindingId])).rows[0];
+  // Model the settled optional failure before normal rollout completion.
+  await pool.query("UPDATE certificate_jobs SET status='failed',completed_at=clock_timestamp() WHERE id=$1",[optional.job_id]);
+  await pool.query("UPDATE certops_consumer_deployments SET stage='failed',failure_code='material_optional_probe_failed' WHERE job_id=$1",[optional.job_id]);
+  assert.equal((await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,rollout.id))).reason,"rollout_completed");
+  assert.equal((await verificationRollout(f)).state,"degraded");
+  await verificationDue(f);assert.equal((await verificationTick(f)).scheduled,true);
+  assert.equal((await verificationSchedule(f)).failures,0);
+});
+test("uncertain effects and reconciliation fences never become automatic verification failures",async()=>{
+  for(const facts of [{status:"orphaned_unknown_effect"},{status:"failed",reconciliation:true}]){
+    const f=await prepareVerification();await verificationTick(f);
+    const failed=await failVerification(f,facts);
+    assert.equal(failed.result.reason,"required_consumer_failed");
+    assert.equal((await verificationRollout(f)).state,"paused");
+    const before=(await pool.query("SELECT * FROM certificate_jobs WHERE id=$1",[failed.child.job_id])).rows[0];
+    await verificationDue(f);assert.equal((await verificationTick(f)).scheduled,false);
+    assert.equal((await verificationJobs(f)).length,1);
+    assert.deepEqual((await pool.query("SELECT * FROM certificate_jobs WHERE id=$1",[failed.child.job_id])).rows[0],before);
+  }
+});
+test("binding authorization changes fence failed cycles and reject stale original execution",async()=>{
+  const f=await prepareVerification();await verificationTick(f);const failed=await failVerification(f,{advance:false});
+  await operations.putBinding({...f,binding:{...f.binding,wave:1},actorUserId:f.actor});
+  assert.equal((await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,failed.rollout.id))).reason,"required_consumer_failed");
+  await verificationDue(f);assert.equal((await verificationTick(f)).scheduled,false);
+  const job=(await pool.query("SELECT * FROM certificate_jobs WHERE id=$1",[failed.child.job_id])).rows[0];
+  await assert.rejects(()=>operations.transaction(client=>require("../../apps/api/services/certops/materialDistribution").resolveDistributionJobDefaults({
+    client,workspaceId:f.workspaceId,operation:job.operation,subjectId:job.subject_id,assignedAgentId:job.assigned_agent_id,payload:job.payload,jobId:job.id})),{code:"CERTOPS_DEPLOYMENT_INTENT_MISMATCH"});
+  assert.equal((await verificationJobs(f)).length,1);
+});
+test("offline agents, revoked configuration owners and paused workspaces defer fresh recovery attempts",async()=>{
+  for(const condition of ["offline","revoked","paused"]){
+    const f=await prepareVerification({configuredBy:condition==="revoked"?"approver":"actor"});
+    await verificationTick(f);await failVerification(f);await verificationDue(f);await verificationTick(f);
+    if(condition==="offline")await pool.query("UPDATE certops_agents SET last_seen_at=clock_timestamp()-interval '1 day' WHERE id=$1",[f.consumer]);
+    if(condition==="revoked")await pool.query("UPDATE workspace_memberships SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[f.workspaceId,f.approver]);
+    if(condition==="paused")await pool.query("UPDATE workspaces SET certops_paused=true WHERE id=$1",[f.workspaceId]);
+    await verificationDue(f);
+    if(condition==="paused")await assert.rejects(()=>verificationTick(f),{code:"CERTOPS_WORKSPACE_PAUSED"});
+    else assert.equal((await verificationTick(f)).reason,condition==="offline"?"required_agent_offline":"verification_authorization_stale");
+    assert.equal((await verificationJobs(f)).length,1);
+  }
+});
+test("each recovery cycle still requires real workspace approval and pending approvals prevent duplicate attempts",async()=>{
+  const f=await prepareVerification({requireApproval:true});
+  const first=await verificationTick(f);assert.equal(first.scheduled,true);
+  let parent=(await verificationJobs(f))[0];assert.equal(parent.status,"pending_approval");assert.equal(parent.approved_by_user_id,null);
+  await verificationDue(f);assert.equal((await verificationTick(f)).reason,"verification_approval_pending");
+  await approve(f,parent.id);
+  const rollout=await verificationRollout(f);await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,rollout.id));
+  const child=(await pool.query("SELECT j.* FROM certops_consumer_deployments d JOIN certificate_jobs j ON j.id=d.job_id WHERE d.rollout_id=$1",[rollout.id])).rows[0];
+  assert.equal(child.status,"pending_approval");
+  await verificationDue(f);assert.equal((await verificationTick(f)).scheduled,false);
+  await failVerification(f);await verificationDue(f);assert.equal((await verificationTick(f)).reason,"verification_backoff");
+  await verificationDue(f);
+  const attempts=await Promise.all(Array.from({length:4},()=>verificationTick(f)));assert.equal(attempts.filter(result=>result.scheduled).length,1);
+  parent=(await verificationJobs(f)).at(-1);assert.equal(parent.status,"pending_approval");assert.equal(parent.approved_by_user_id,null);
+  assert.equal((await pool.query("SELECT 1 FROM certops_distribution_rollouts WHERE approval_job_id=$1",[parent.id])).rowCount,0);
+});
+test("recovery incidents retain failed evidence and resolve only after fresh current consumer proof",async()=>{
+  const f=await prepareVerification({alerts:true,method:"installed"});await verificationTick(f);await failVerification(f);
+  const monitor=()=>operations.transaction(client=>monitoring.monitorGroup({client,workspaceId:f.workspaceId,groupId:f.groupId}));
+  await monitor();
+  const incident=(await pool.query("SELECT * FROM certops_distribution_incidents WHERE workspace_id=$1 AND code='verification_failed' AND binding_id=$2",[f.workspaceId,f.bindingId])).rows[0];
+  assert.ok(incident);
+  await verificationDue(f);await verificationTick(f);await monitor();
+  assert.equal((await pool.query("SELECT resolved_at FROM certops_distribution_incidents WHERE id=$1",[incident.id])).rows[0].resolved_at,null);
+  await verificationDue(f);await verificationTick(f);await monitor();
+  assert.equal((await pool.query("SELECT resolved_at FROM certops_distribution_incidents WHERE id=$1",[incident.id])).rows[0].resolved_at,null,"Creating a fresh cycle is not successful verification");
+  await proveVerification(f);await monitor();
+  assert.ok((await pool.query("SELECT resolved_at FROM certops_distribution_incidents WHERE id=$1",[incident.id])).rows[0].resolved_at);
+  assert.equal((await pool.query("SELECT state FROM certops_distribution_rollouts WHERE workspace_id=$1 AND state='degraded'",[f.workspaceId])).rowCount,1);
+});
+test("fresh later proof cannot clear an older job's unresolved operator reconciliation fence",async()=>{
+  const f=await prepareVerification();await verificationTick(f);
+  const failed=await failVerification(f,{status:"orphaned_unknown_effect",reconciliation:true});
+  await operations.setRolloutState({...f,rolloutId:failed.rollout.id,state:"retired",actorUserId:f.actor});
+  await operations.requestRollout({...f,verificationOnly:true,actorUserId:f.actor});await proveVerification(f);
+  await verificationDue(f);assert.equal((await verificationTick(f)).reason,"unresolved_uncertain_effects");
+  const original=(await pool.query("SELECT status,needs_operator_reconciliation FROM certificate_jobs WHERE id=$1",[failed.child.job_id])).rows[0];
+  assert.equal(original.status,"orphaned_unknown_effect");assert.equal(original.needs_operator_reconciliation,true);
+  assert.equal((await verificationJobs(f)).length,1);
+});
+test("recovery pins the current authorized desired version rather than an unapproved newer publication",async()=>{
+  const f=await prepareVerification();await verificationTick(f);await failVerification(f);await verificationDue(f);await verificationTick(f);
+  const before=await administration.retentionPreview({client:pool,workspaceId:f.workspaceId,groupId:f.groupId});
+  assert.ok(before.versions.find(row=>row.id===f.materialVersionId).retainedReasons.includes("uncertain_or_reconcilable_deployment"));
+  const id=require("node:crypto").randomUUID();
+  const publishing=await require("../../apps/api/services/certops/jobs").createCertificateJob({workspaceId:f.workspaceId,operation:"noop",source:"api",subjectType:"managed_certificate",subjectId:f.certificateId});
+  await pool.query("INSERT INTO certops_material_versions(id,workspace_id,group_id,management_period_id,publishing_job_id,profile_revision,state,certificate_identity_id,provider_version,fingerprint_sha256,valid_to,published_at,publishing_claim_id) SELECT $1,workspace_id,group_id,management_period_id,$2,profile_revision,'published',certificate_identity_id,1,fingerprint_sha256,valid_to,clock_timestamp(),$3 FROM certops_material_versions WHERE workspace_id=$4 AND id=$5",
+    [id,publishing.id,require("node:crypto").randomUUID(),f.workspaceId,f.materialVersionId]);
+  await pool.query("UPDATE certops_distribution_groups SET latest_material_version_id=$3 WHERE workspace_id=$1 AND id=$2",[f.workspaceId,f.groupId,id]);
+  await verificationDue(f);await verificationTick(f);
+  assert.equal((await verificationJobs(f)).at(-1).payload.distributionRollout.materialVersionId,f.materialVersionId);
+  await proveVerification(f);
+  await operations.requestRollout({...f,materialVersionId:id,actorUserId:f.actor});await proveVerification(f);
+  await verificationDue(f);await verificationTick(f);
+  assert.equal((await verificationJobs(f)).at(-1).payload.distributionRollout.materialVersionId,id);
+  const after=await administration.retentionPreview({client:pool,workspaceId:f.workspaceId,groupId:f.groupId});
+  assert.ok(after.versions.find(row=>row.id===f.materialVersionId).retainedReasons.includes("uncertain_or_reconcilable_deployment"));
+});
+test("required verification escalation counts failed cycles even though every fresh job has only one attempt",async()=>{
+  const f=await prepareVerification({alerts:true});await verificationTick(f);
+  let incidentId;
+  for(const count of [1,2]){
+    await failVerification(f);await verificationDue(f);await verificationTick(f);
+    await operations.transaction(client=>monitoring.monitorGroup({client,workspaceId:f.workspaceId,groupId:f.groupId}));
+    const incident=(await pool.query("SELECT * FROM certops_distribution_incidents WHERE workspace_id=$1 AND binding_id=$2 AND code='verification_failed' AND resolved_at IS NULL",[f.workspaceId,f.bindingId])).rows[0];
+    assert.equal(incident.evidence.failureCount,count);
+    if(incidentId)assert.equal(incident.id,incidentId);else incidentId=incident.id;
+    if(count<2){await verificationDue(f);await verificationTick(f);}
+  }
+});
