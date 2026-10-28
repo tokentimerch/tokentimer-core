@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-28 against main 9b65f3c6 for v0.18.2. Other
+Last reviewed: 2026-10-28 against main c4a701b7 for v0.18.2. Other
 certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
 
 This page is the repository milestone index: what Core takes next, what must
@@ -60,7 +60,8 @@ called stable while they are open.
   Correlation identifiers across API and workers; production error
   reporting with secret scrubbing.
   API request logs now share a generated `correlationId`, returned as
-  `X-Request-Id`. Worker propagation and frontend reporting remain open.
+  `X-Request-Id`, which dashboard API errors display as a request reference.
+  Worker propagation and production error-boundary reporting remain open.
 
 ---
 

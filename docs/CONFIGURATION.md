@@ -12,12 +12,11 @@ Defaults come from code fallbacks in `apps/*` and `packages/config/*`, then from
 
 ## Core runtime and bootstrap
 
-API responses include `X-Request-Id` (also exposed to cross-origin dashboard
-clients). This server-generated ID appears as `correlationId` on request-scoped
-API logs and the `HTTP request completed` record. Send it to your operator when
-reporting a failed request. Incoming request IDs are ignored. Completion records
-use matched route templates rather than raw paths or query strings. These IDs
-currently cover the API request only; queued worker jobs do not yet inherit them.
+API error messages in the dashboard show a **Reference** when the response
+includes a valid server-generated `X-Request-Id`. Include it when contacting
+support or your operator; it matches `correlationId` in API logs. This is enabled
+by default. Network failures and older servers or proxies that omit the header
+have no reference. Queued worker jobs do not yet inherit the request ID.
 
 | Variable                  | Description                              | Default value                  | Scope                  |
 | ------------------------- | ---------------------------------------- | ------------------------------ | ---------------------- |
