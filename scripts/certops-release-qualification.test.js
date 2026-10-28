@@ -14,7 +14,7 @@ const { verifyMatrix, validateMatrix } = require("./certops-release-qualificatio
 
 const { catalogCoverage, validateQualificationSummary } = require("./certops-release-qualification");
 
-const contract = require("../docs/certops/qualification-suites.json");
+const contract = require("../.github/maintainers/certops/qualification-suites.json");
 
 const root = path.resolve(__dirname, "..");
 

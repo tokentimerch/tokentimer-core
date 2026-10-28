@@ -3,7 +3,7 @@
 /**
  * TokenTimer Agent - execution-plane entry.
  *
- * Structural scope note (docs/certops/CONTEXT.md): this package is the
+ * Structural scope note (.github/maintainers/certops/CONTEXT.md): this package is the
  * execution plane, the only component that touches private keys. It holds
  * keys on the host it runs on; TokenTimer's control plane never receives or
  * stores them. Every module here must stay safe to run against an untrusted

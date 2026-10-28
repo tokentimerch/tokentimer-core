@@ -2,7 +2,7 @@
 "use strict";
 
 // Guard: keeps the auto-generated skip inventory from drifting silently.
-// Regenerates docs/certops/skip-inventory.generated.md from the
+// Regenerates .github/maintainers/certops/skip-inventory.generated.md from the
 // real test suite (scripts/generate-skip-inventory.cjs owns the scan/
 // classify/render logic, required here so the two can never disagree about
 // what counts as a skip) and fails if the committed copy differs, so the

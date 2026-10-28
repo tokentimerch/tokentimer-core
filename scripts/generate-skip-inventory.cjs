@@ -18,7 +18,7 @@
 // counts as a skip.
 //
 // This is a line-oriented heuristic scan, not a JS parser. It recognizes the
-// skip syntaxes actually used in this codebase today (see docs/certops/ for
+// skip syntaxes actually used in this codebase today (see .github/maintainers/certops/ for
 // the generated inventory): mocha's `describe.skip(...)` / `it.skip(...)`
 // (a statically-named skip), mocha's `this.skip()` / node:test's
 // `t.skip(...)` (a dynamic, conditional skip inside a test body, attributed
@@ -40,7 +40,8 @@ const path = require("node:path");
 const repoRoot = path.resolve(__dirname, "..");
 const OUTPUT_PATH = path.join(
   repoRoot,
-  "docs",
+  ".github",
+  "maintainers",
   "certops",
   "skip-inventory.generated.md",
 );

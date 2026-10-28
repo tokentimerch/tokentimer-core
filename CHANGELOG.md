@@ -222,7 +222,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- `docs/certops/CONTEXT.md` documents the previously-undocumented `GET /api/v1/workspaces/:id/certops/trust-anchors/:anchorId/installations` endpoint.
+- `.github/maintainers/certops/CONTEXT.md` documents the previously-undocumented `GET /api/v1/workspaces/:id/certops/trust-anchors/:anchorId/installations` endpoint.
 - `docs/certops/agent.md` documents `PrivateTmp=true` in the shipped systemd unit: without it, `ProtectSystem=strict` leaves `/tmp` read-only, and `update-ca-certificates`/`update-ca-trust extract` both fail at `mktemp` before ever touching the anchors directory - easy to mistake for the anchors-directory grant itself being missing.
 
 ## [0.14.1] - 2026-09-01

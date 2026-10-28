@@ -6,7 +6,7 @@ function validate(root = path.resolve(__dirname, "..")) {
   const errors = [],
     matrix = JSON.parse(
       fs.readFileSync(
-        path.join(root, "docs/certops/qualification-suites.json"),
+        path.join(root, ".github/maintainers/certops/qualification-suites.json"),
       ),
     );
   const {
@@ -14,7 +14,7 @@ function validate(root = path.resolve(__dirname, "..")) {
     SUITE,
   } = require("../tests/wildcard-vault/ux-lab/qualification.cjs");
   const q = JSON.parse(
-    fs.readFileSync(path.join(root, "docs/certops/qualification-suites.json")),
+    fs.readFileSync(path.join(root, ".github/maintainers/certops/qualification-suites.json")),
   );
   if (
     JSON.stringify(q.suites[SUITE]) !==
