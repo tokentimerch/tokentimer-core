@@ -4840,6 +4840,16 @@ const migrations = [
     name: "certops_installed_file_distribution",
     sql: fs.readFileSync(require("path").join(__dirname, "078-certops-installed-file-distribution.sql"), "utf8"),
   },
+  {
+    version: 79,
+    name: "auto_sync_provider_stats",
+    sql: fs.readFileSync(require("path").join(__dirname, "079-auto-sync-provider-stats.sql"), "utf8"),
+  },
+  {
+    version: 80,
+    name: "auto_sync_run_metrics",
+    sql: fs.readFileSync(require("path").join(__dirname, "080-auto-sync-run-metrics.sql"), "utf8"),
+  },
 ];
 
 
@@ -5133,7 +5143,7 @@ migrations.push({
 });
 
 migrations.push({
-  version: 79,
+  version: 81,
   name: "recipient_channel_verification",
   sql: fs.readFileSync(
     require("path").join(__dirname, "../../../packages/recipient-verification/migration.sql"),
@@ -5142,11 +5152,13 @@ migrations.push({
 });
 
 migrations.push({
-  version: 80,
+  version: 82,
   name: "weekly_digest_recipient_claim_token",
   sql: `
     ALTER TABLE weekly_digest_recipient_log
       ADD COLUMN IF NOT EXISTS claim_token TEXT;
+    ALTER TABLE weekly_digest_recipient_log
+      ADD COLUMN IF NOT EXISTS provider_accepted_at TIMESTAMPTZ;
   `,
 });
 

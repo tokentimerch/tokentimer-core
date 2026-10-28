@@ -63,7 +63,7 @@ RECIPIENT_VERIFICATION_MODE=enforce
 
 `shadow` is the self-hosted observation mode. It logs eligibility and still delivers. Cloud verification is mandatory. Set `TT_DEPLOYMENT=cloud` and `RECIPIENT_VERIFICATION_MODE=enforce` on the API and every notification worker.
 
-1. Apply migration 80 before running the weekly digest worker, including when verification stays off. It adds the digest claim ownership token. Apply migration 79 when you enable verification. It does not mark existing contacts verified. Migration 78 remains CertOps installed-file distribution.
+1. Apply migration 82 before running the weekly digest worker, including when verification stays off. It adds the digest claim ownership token. Apply migration 81 when you enable verification. It does not mark existing contacts verified. Migration 78 remains CertOps installed-file distribution. Migrations 79 and 80 are auto-sync metrics.
 2. Set `RECIPIENT_FINGERPRINT_SECRET` and `PUBLIC_BASE_URL` or `API_URL` before sending invitations.
 3. Ask workspace managers to send invitations. Existing alert groups keep their contacts.
 4. Switch self-hosted from `off` or `shadow` to `enforce` after recipients confirm.

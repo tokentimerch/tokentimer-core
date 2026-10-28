@@ -1,4 +1,5 @@
 import React from 'react';
+import { useScanVerification } from '../../hooks/useScanVerification.js';
 import {
   Box,
   VStack,
@@ -82,6 +83,8 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
     onError,
     errorContent,
     onScanSuccess,
+    onScanInvalidated,
+    scanContext,
     borderColor,
     helpTextColor,
     hideDocs = false,
@@ -138,6 +141,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
   }, [initialVaultUrl, autoSyncManageMode, replacingCredentials]);
 
   const doAzureScan = async () => {
+    const scanTicket = beginScanVerification();
     if (!workspaceId) {
       onError && onError('Please select a workspace first.');
       return;
@@ -179,9 +183,6 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
       setAzureItems(items);
       setAzureSummary(Array.isArray(res?.summary) ? res.summary : []);
       setLastScanId(res?.scan_id || null);
-      if (items.length > 0) {
-        onScanSuccess && onScanSuccess('azure');
-      }
 
       if (updateQuotaFromResponse && !updateQuotaFromResponse(res)) {
         if (refreshIntegrationQuota) await refreshIntegrationQuota();
@@ -189,6 +190,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
 
       const dups = await checkDuplicatesForItems(items, workspaceId);
       setAzureDuplicates(dups);
+      completeScanVerification(scanTicket);
     } catch (e) {
       setAzureItems([]);
       setAzureSummary([]);
@@ -259,6 +261,37 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
     setAzureAuthMethod('token');
   };
 
+  const getCredentials = () => {
+    const scanParams = {
+      vaultUrl: azureVaultUrl,
+      include: { secrets: true, certificates: true, keys: true },
+    };
+    if (autoSyncManageMode && !replacingCredentials) {
+      return { credentials: {}, scanParams };
+    }
+    const credentials = buildAzureInventoryCredentials({
+      vaultUrl: azureVaultUrl,
+      authMethod: azureAuthMethod,
+      token: azureToken,
+      tenantId: azureTenantId,
+      clientId: azureClientId,
+      clientSecret: azureClientSecret,
+    });
+    return { credentials, scanParams };
+  };
+  const { beginScanVerification, completeScanVerification } =
+    useScanVerification({
+      identity: {
+        workspaceId,
+        scanContext,
+        payload: getCredentials(),
+        cleanupObsolete,
+      },
+      provider: 'azure',
+      onScanSuccess,
+      onScanInvalidated,
+    });
+
   React.useImperativeHandle(ref, () => ({
     importSelected: importAzureSelected,
     getSelectedCount: () => selectedRowsAzure.size,
@@ -278,24 +311,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
       setPersistedAzureVaultUrl(azureVaultUrl);
       clearAzureAuthFields();
     },
-    getCredentials: () => {
-      const scanParams = {
-        vaultUrl: azureVaultUrl,
-        include: { secrets: true, certificates: true, keys: true },
-      };
-      if (autoSyncManageMode && !replacingCredentials) {
-        return { credentials: {}, scanParams };
-      }
-      const credentials = buildAzureInventoryCredentials({
-        vaultUrl: azureVaultUrl,
-        authMethod: azureAuthMethod,
-        token: azureToken,
-        tenantId: azureTenantId,
-        clientId: azureClientId,
-        clientSecret: azureClientSecret,
-      });
-      return { credentials, scanParams };
-    },
+    getCredentials,
   }));
 
   return (

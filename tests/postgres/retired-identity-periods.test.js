@@ -6,7 +6,11 @@ assert.equal(process.env.DB_HOST, "127.0.0.1");
 assert.match(process.env.DB_NAME || "", /^pr329_.*_test$/);
 assert.equal(process.env.NODE_ENV, "test");
 const { pool } = require("../../apps/api/db/database");
-const { retireCertificateIdentity, readdManagingSource, listCertificateIdentities } = require("../../apps/api/services/certops/certificateIdentity");
+const { retireCertificateIdentity, readdManagingSource, listCertificateIdentities, stopManagingSource } = require("../../apps/api/services/certops/certificateIdentity");
+const { claimJobs } = require("../../apps/api/services/certops/agentDispatch");
+const { cancelEnrollment } = require("../../apps/api/services/certops/certificateEnrollments");
+const { createControllerProvisionIntent, takeNextControllerProvisioningCommand, DELIVERY_RETRY_INTERVAL_SECONDS } = require("../../apps/api/services/certops/controllerProvisioning");
+const { lockWorkspaceForCertOpsSideEffect } = require("../../apps/api/services/certops/workspaceKillSwitch");
 after(() => pool.end());
 
 for (const status of ["revoked", "decommissioned"]) {
@@ -67,4 +71,323 @@ for (const status of ["revoked", "decommissioned"]) {
       (await pool.query("SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2", [workspaceId, replacement])).rows[0].id);
   });
   }
+}
+
+async function claimFixture({ enrollmentState = null, createJob = true, lateIdentity = false, enrollmentOperation = "continue-enrollment" } = {}) {
+  const workspaceId = crypto.randomUUID();
+  const fingerprint = crypto.randomBytes(32).toString("hex");
+  const user = (await pool.query(`INSERT INTO users(email,display_name,password_hash,auth_method)
+    VALUES($1,'Claim regression','synthetic-fixture','local') RETURNING id`, [`claim-${workspaceId}@example.test`])).rows[0].id;
+  await pool.query("INSERT INTO workspaces(id,name,created_by,plan) VALUES($1,'Claim fixture',$2,'team')", [workspaceId, user]);
+  const certificateId = (await pool.query(`INSERT INTO managed_certificates(workspace_id,name,status,source,fingerprint_sha256)
+    VALUES($1,'Claim source','active','agent_filesystem',$2) RETURNING id`, [workspaceId, lateIdentity ? null : fingerprint])).rows[0].id;
+  const period = (await pool.query("SELECT id,current_identity_id FROM certops_management_periods WHERE managed_certificate_id=$1", [certificateId])).rows[0];
+  const agentId = (await pool.query(`INSERT INTO certops_agents(workspace_id,agent_id,name,agent_version,protocol_version,
+    credential_prefix,credential_hash,status,declared_capabilities,capabilities_updated_at)
+    VALUES($1,$2,'Claim agent','0.18.1','1.0.0',$3,$4,'active','["adcs-enroll-v1"]',NOW()) RETURNING id`,
+  [workspaceId, crypto.randomUUID(), "ttagent_" + crypto.randomBytes(8).toString("hex"), crypto.randomBytes(32).toString("hex")])).rows[0].id;
+  const f = { workspaceId, fingerprint, user, certificateId, periodId: period.id, identityId: period.current_identity_id, agentId, enrollmentOperation };
+  if (enrollmentState) {
+    const issuerId = (await pool.query("INSERT INTO certificate_issuers(workspace_id,kind,name,current_version) VALUES($1,'adcs','Claim CA',1) RETURNING id", [workspaceId])).rows[0].id;
+    f.enrollmentId = (await pool.query(`INSERT INTO certificate_enrollments(workspace_id,certificate_id,issuer_id,issuer_version,
+      agent_id,state,snapshot_bytes,snapshot_sha256,deploy_target,attempt)
+      VALUES($1,$2,$3,1,$4,'pending_issuance',$5,$6,'{}',1) RETURNING id`,
+    [workspaceId, certificateId, issuerId, agentId, Buffer.from("{}"), crypto.createHash("sha256").update("{}").digest("hex")])).rows[0].id;
+  }
+  if (createJob) await addClaimJob(f);
+  if (lateIdentity) {
+    // Historical jobs can predate the first observed fingerprint. Their own
+    // immutable identity remains NULL; admission must lock the period's one.
+    await pool.query("UPDATE managed_certificates SET fingerprint_sha256=$2 WHERE id=$1", [certificateId, fingerprint]);
+    f.identityId = (await pool.query("SELECT current_identity_id FROM certops_management_periods WHERE id=$1", [f.periodId])).rows[0].current_identity_id;
+    assert.equal((await pool.query("SELECT certificate_identity_id FROM certificate_jobs WHERE id=$1", [f.jobId])).rows[0].certificate_identity_id, null);
+  }
+  if (enrollmentState) await pool.query("UPDATE certificate_enrollments SET state=$2 WHERE id=$1", [f.enrollmentId, enrollmentState]);
+  return f;
+}
+
+async function addClaimJob(f) {
+  f.jobId = (await pool.query(`INSERT INTO certificate_jobs(workspace_id,operation,subject_type,subject_id,executor_kind,assigned_agent_id,enrollment_id)
+    VALUES($1,$2,'managed_certificate',$3,'agent',$4,$5) RETURNING id`,
+  [f.workspaceId, f.enrollmentId ? f.enrollmentOperation : "renew", f.certificateId, f.agentId, f.enrollmentId || null])).rows[0].id;
+  if (f.enrollmentId) await pool.query("UPDATE certificate_enrollments SET current_job_id=$2 WHERE id=$1", [f.enrollmentId, f.jobId]);
+}
+
+function retireFixture(f, status, client = pool) {
+  return retireCertificateIdentity({ client, workspaceId: f.workspaceId, identityId: f.identityId,
+    expectedFingerprintSha256: f.fingerprint, status, reason: "Retirement claim regression",
+    acknowledgeUncertainty: true, actorUserId: f.user });
+}
+
+function pollFixture(f, dbPool = pool) {
+  return claimJobs({ dbPool, agent: { id: f.agentId, agentId: f.agentId, workspaceId: f.workspaceId,
+    status: "active", protocolVersion: "1.0.0", agentVersion: "0.18.1" },
+  body: { maxJobs: 16, supportedActions: ["renew", "continue-enrollment"] },
+  env: { CERTOPS_ENABLED: "true" }, deps: { signJobForDispatch: async ({ job }) => job } });
+}
+
+for (const status of ["revoked", "decommissioned"]) {
+  for (const lateIdentity of [false, true]) {
+  test(`${status}, late identity=${lateIdentity}: real dispatch skips a concurrent retirement and SQL guards never wait for its identity`, { timeout: 10000 }, async () => {
+    const f = await claimFixture({ lateIdentity, enrollmentState: lateIdentity ? "pending_issuance" : null });
+    const retirementClient = await pool.connect();
+    const directClaim = await pool.connect();
+    const locked = Promise.withResolvers(), resume = Promise.withResolvers();
+    let retirement;
+    try {
+      await retirementClient.query("BEGIN");
+      await directClaim.query("BEGIN; SET LOCAL statement_timeout='1500ms'");
+      retirement = retireFixture(f, status, { async query(sql, params) {
+        const result = await retirementClient.query(sql, params);
+        if (sql.includes("FOR NO KEY UPDATE")) { locked.resolve(); await resume.promise; }
+        return result;
+      } });
+      await locked.promise;
+      // The candidate is visible as active, but its identity is locked by the
+      // actual retirement transaction. The complete poll must still commit.
+      assert.deepEqual((await pollFixture(f)).jobs, []);
+      assert.equal((await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [f.jobId])).rows[0].status, "pending");
+      await assert.rejects(directClaim.query("UPDATE certificate_jobs SET status='claimed' WHERE id=$1", [f.jobId]),
+        { code: "55P03" }, "direct writers fail immediately instead of waiting while holding the period");
+      await directClaim.query("ROLLBACK");
+      resume.resolve();
+      await retirement;
+      await retirementClient.query("COMMIT");
+      const period = (await pool.query("SELECT ended_at,ended_reason FROM certops_management_periods WHERE id=$1", [f.periodId])).rows[0];
+      assert.ok(period.ended_at);
+      assert.equal(period.ended_reason, `certificate_${status}`);
+      assert.equal((await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [f.jobId])).rows[0].status, lateIdentity ? "pending" : "cancelled");
+      assert.deepEqual((await pollFixture(f)).jobs, [], "a preserved continuation cannot install after retirement");
+    } finally {
+      resume.resolve();
+      if (retirement) await retirement.catch(() => {});
+      await Promise.all([retirementClient.query("ROLLBACK"), directClaim.query("ROLLBACK")]);
+      retirementClient.release(); directClaim.release();
+    }
+  });
+  }
+
+  for (const state of ["cancelled", "expired", "abandoned"]) {
+    test(`${status}: real dispatch signs ${state} cleanup after closing its management period`, async () => {
+      const f = await claimFixture({ enrollmentState: state });
+      await retireFixture(f, status);
+      const result = await pollFixture(f);
+      assert.equal(result.jobs.length, 1);
+      assert.equal(result.jobs[0].jobId, f.jobId);
+      assert.equal(result.jobs[0].enrollment.enrollmentId, f.enrollmentId);
+      assert.equal(result.jobs[0].enrollment.terminalState, state);
+      assert.equal((await pool.query("SELECT ended_at FROM certops_management_periods WHERE id=$1", [f.periodId])).rows[0].ended_at != null, true);
+    });
+  }
+
+  test(`${status}: cleanup created after retirement is claimable without invented period attribution`, async () => {
+    const f = await claimFixture({ enrollmentState: "cancelled", createJob: false });
+    await retireFixture(f, status);
+    await addClaimJob(f);
+    const job = (await pool.query("SELECT management_period_id,certificate_identity_id FROM certificate_jobs WHERE id=$1", [f.jobId])).rows[0];
+    assert.equal(job.management_period_id, null);
+    assert.equal(job.certificate_identity_id, null);
+    assert.equal((await pollFixture(f)).jobs[0].enrollment.terminalState, "cancelled");
+  });
+
+  test(`${status}: an installation continuation remains fenced`, async () => {
+    const f = await claimFixture({ enrollmentState: "issued" });
+    await retireFixture(f, status);
+    assert.deepEqual((await pollFixture(f)).jobs, []);
+  });
+}
+
+for (const binding of ["current_job_id", "agent_id", "certificate_id"]) {
+  test(`terminal cleanup cannot bypass retirement with a missing ${binding} binding`, async () => {
+    const f = await claimFixture({ enrollmentState: "cancelled" });
+    await retireFixture(f, "revoked");
+    await pool.query(`UPDATE certificate_enrollments SET ${binding}=NULL WHERE id=$1`, [f.enrollmentId]);
+    assert.deepEqual((await pollFixture(f)).jobs, []);
+  });
+}
+
+test("cleanup skips an enrollment locked by cancellation and succeeds on the next poll", { timeout: 10000 }, async () => {
+  const f = await claimFixture({ enrollmentState: "cancelled" });
+  await retireFixture(f, "revoked");
+  const cancellation = await pool.connect();
+  try {
+    await cancellation.query("BEGIN");
+    await cancellation.query("SELECT id FROM certificate_enrollments WHERE id=$1 FOR UPDATE", [f.enrollmentId]);
+    assert.deepEqual((await pollFixture(f)).jobs, []);
+    await cancellation.query("COMMIT");
+    assert.equal((await pollFixture(f)).jobs[0].enrollment.terminalState, "cancelled");
+  } finally {
+    await cancellation.query("ROLLBACK");
+    cancellation.release();
+  }
+});
+
+test("cleanup rechecks its current-job binding after candidate selection", async () => {
+  const f = await claimFixture({ enrollmentState: "cancelled" });
+  await retireFixture(f, "revoked");
+  let selected = false;
+  const dbPool = { async connect() {
+    const client = await pool.connect();
+    return { release: () => client.release(), async query(sql, params) {
+      const result = await client.query(sql, params);
+      if (sql.includes("FROM certificate_jobs cj") && sql.includes("FOR UPDATE SKIP LOCKED")) {
+        assert.equal(result.rows[0].id, f.jobId);
+        selected = true;
+        await pool.query("UPDATE certificate_enrollments SET current_job_id=NULL WHERE id=$1", [f.enrollmentId]);
+      }
+      return result;
+    } };
+  } };
+  assert.deepEqual((await pollFixture(f, dbPool)).jobs, []);
+  assert.equal(selected, true);
+});
+
+test("an initial enrollment claim skips concurrent cancellation before initializing its attempt", { timeout: 10000 }, async () => {
+  const f = await claimFixture({ enrollmentState: "prepared", enrollmentOperation: "renew" });
+  await pool.query("UPDATE certificate_enrollments SET attempt=0 WHERE id=$1", [f.enrollmentId]);
+  const cancellationClient = await pool.connect();
+  const locked = Promise.withResolvers(), resume = Promise.withResolvers();
+  let cancellation;
+  try {
+    cancellation = cancelEnrollment({ workspaceId: f.workspaceId, enrollmentId: f.enrollmentId, actorUserId: f.user,
+      audit: async () => {}, client: { async query(sql, params) {
+        const result = await cancellationClient.query(sql, params);
+        if (sql.includes("FOR UPDATE OF e")) { locked.resolve(); await resume.promise; }
+        return result;
+      } } });
+    await locked.promise;
+    assert.deepEqual((await pollFixture(f)).jobs, []);
+    resume.resolve();
+    await cancellation;
+    const enrollment = (await pool.query("SELECT state,attempt FROM certificate_enrollments WHERE id=$1", [f.enrollmentId])).rows[0];
+    assert.equal(enrollment.state, "cancelled");
+    assert.equal(enrollment.attempt, 0);
+    assert.equal((await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [f.jobId])).rows[0].status, "cancelled");
+  } finally {
+    resume.resolve();
+    if (cancellation) await cancellation.catch(() => {});
+    await cancellationClient.query("ROLLBACK");
+    cancellationClient.release();
+  }
+});
+
+async function controllerFixture() {
+  const workspaceId = crypto.randomUUID();
+  const user = (await pool.query(`INSERT INTO users(email,display_name,password_hash,auth_method)
+    VALUES($1,'Controller queue regression','synthetic-fixture','local') RETURNING id`,
+  [`controller-queue-${workspaceId}@example.test`])).rows[0].id;
+  await pool.query(`INSERT INTO workspaces(id,name,created_by,plan,certops_paused,certops_require_approval_always)
+    VALUES($1,'Controller queue fixture',$2,'team',FALSE,FALSE)`, [workspaceId, user]);
+  return { workspaceId, user, clusterId: `queue-${crypto.randomUUID().slice(0, 8)}` };
+}
+
+async function addControllerCommand(f) {
+  const name = `queue-${crypto.randomUUID().slice(0, 8)}`;
+  const intent = await createControllerProvisionIntent({
+    workspaceId: f.workspaceId, actorUserId: f.user, idempotencyKey: crypto.randomUUID(),
+    lockWorkspace: options => lockWorkspaceForCertOpsSideEffect({ ...options, env: { CERTOPS_ENABLED: "true" } }),
+    request: {
+      schemaVersion: 1, clusterId: f.clusterId, namespace: "certops",
+      certificateName: name, secretName: `${name}-tls`,
+      issuerRef: { group: "cert-manager.io", kind: "ClusterIssuer", name: "public-issuer" },
+      dnsNames: ["example.test"],
+    },
+  });
+  const job = (await pool.query("SELECT id,management_period_id,status,attempt_count FROM certificate_jobs WHERE id=$1", [intent.job.id])).rows[0];
+  assert.equal(job.status, "pending");
+  assert.equal(job.attempt_count, 0);
+  assert.ok(job.management_period_id);
+  return { jobId: job.id, periodId: job.management_period_id, certificateId: intent.managedCertificateId };
+}
+
+function pollControllerFixture(f, dbPool = pool) {
+  return takeNextControllerProvisioningCommand({
+    dbPool, env: { CERTOPS_ENABLED: "true" },
+    apiToken: { workspaceId: f.workspaceId, controllerClusterId: f.clusterId },
+  });
+}
+
+test("controller pending command skipped by source stop cannot starve the next command", { timeout: 10000 }, async () => {
+  const f = await controllerFixture();
+  const stale = await addControllerCommand(f);
+  const healthy = await addControllerCommand(f);
+  const selected = Promise.withResolvers(), resume = Promise.withResolvers();
+  const pausingPool = { async connect() {
+    const client = await pool.connect();
+    return { release: () => client.release(), async query(sql, params) {
+      const result = await client.query(sql, params);
+      if (sql.includes("FROM certificate_jobs j") && sql.includes("FOR UPDATE OF j SKIP LOCKED")) {
+        assert.equal(result.rows[0]?.id, stale.jobId);
+        selected.resolve();
+        await resume.promise;
+      }
+      return result;
+    } };
+  } };
+  let firstPoll;
+  try {
+    firstPoll = pollControllerFixture(f, pausingPool);
+    await Promise.race([
+      selected.promise,
+      firstPoll.then(() => { throw new Error("Controller poll returned before locking its pending command"); }),
+    ]);
+    // The actual period-close trigger must skip the job held by the poll.
+    await stopManagingSource({ workspaceId: f.workspaceId, periodId: stale.periodId, actorUserId: f.user });
+    resume.resolve();
+    assert.equal(await firstPoll, null);
+    const period = (await pool.query("SELECT ended_at,ended_reason FROM certops_management_periods WHERE id=$1", [stale.periodId])).rows[0];
+    assert.ok(period.ended_at);
+    assert.equal(period.ended_reason, "stopped_by_operator");
+    const staleJob = (await pool.query("SELECT status,attempt_count,claim_id FROM certificate_jobs WHERE id=$1", [stale.jobId])).rows[0];
+    assert.deepEqual(staleJob, { status: "pending", attempt_count: 0, claim_id: null });
+    const next = await pollControllerFixture(f);
+    assert.equal(next?.command.jobId, healthy.jobId, "the closed-period pending row must not occupy LIMIT 1");
+    assert.equal(await pollControllerFixture(f), null, "the stopped command is never delivered");
+    assert.equal((await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [stale.jobId])).rows[0].status, "pending");
+  } finally {
+    resume.resolve();
+    if (firstPoll) await firstPoll.catch(() => {});
+  }
+});
+
+test("controller claim retries period contention without consuming an attempt or cancelling work", { timeout: 10000 }, async () => {
+  const f = await controllerFixture();
+  const command = await addControllerCommand(f);
+  const owner = await pool.connect();
+  try {
+    await owner.query("BEGIN");
+    await owner.query("SELECT id FROM certops_management_periods WHERE id=$1 FOR UPDATE", [command.periodId]);
+    assert.equal(await pollControllerFixture(f), null);
+    const skipped = (await pool.query("SELECT status,attempt_count,claim_id,lease_expires_at FROM certificate_jobs WHERE id=$1", [command.jobId])).rows[0];
+    assert.deepEqual(skipped, { status: "pending", attempt_count: 0, claim_id: null, lease_expires_at: null });
+    assert.equal((await pool.query("SELECT COUNT(*)::int AS n FROM certificate_controller_provision_deliveries WHERE job_id=$1", [command.jobId])).rows[0].n, 0);
+    await owner.query("COMMIT");
+    assert.equal((await pollControllerFixture(f))?.command.jobId, command.jobId);
+    const claimed = (await pool.query("SELECT status,attempt_count FROM certificate_jobs WHERE id=$1", [command.jobId])).rows[0];
+    assert.deepEqual(claimed, { status: "claimed", attempt_count: 1 });
+  } finally {
+    await owner.query("ROLLBACK");
+    owner.release();
+  }
+});
+
+for (const status of ["claimed", "running"]) {
+  test(`controller ${status} command remains eligible for redelivery after source stop`, { timeout: 10000 }, async () => {
+    const f = await controllerFixture();
+    const command = await addControllerCommand(f);
+    assert.equal((await pollControllerFixture(f))?.command.jobId, command.jobId);
+    if (status === "running") {
+      await pool.query("UPDATE certificate_jobs SET status='running',started_at=COALESCE(started_at,NOW()) WHERE id=$1", [command.jobId]);
+    }
+    const before = (await pool.query("SELECT claim_id,attempt_count FROM certificate_jobs WHERE id=$1", [command.jobId])).rows[0];
+    assert.ok(before.claim_id);
+    assert.equal(before.attempt_count, 1);
+    await stopManagingSource({ workspaceId: f.workspaceId, periodId: command.periodId, actorUserId: f.user });
+    assert.ok((await pool.query("SELECT ended_at FROM certops_management_periods WHERE id=$1", [command.periodId])).rows[0].ended_at);
+    await pool.query("UPDATE certificate_controller_provision_deliveries SET delivered_at=NOW()-make_interval(secs=>$2) WHERE job_id=$1",
+      [command.jobId, DELIVERY_RETRY_INTERVAL_SECONDS + 1]);
+    assert.equal((await pollControllerFixture(f))?.command.jobId, command.jobId);
+    const after = (await pool.query("SELECT status,claim_id,attempt_count,needs_operator_reconciliation FROM certificate_jobs WHERE id=$1", [command.jobId])).rows[0];
+    assert.deepEqual(after, { status, claim_id: before.claim_id, attempt_count: before.attempt_count, needs_operator_reconciliation: true });
+  });
 }

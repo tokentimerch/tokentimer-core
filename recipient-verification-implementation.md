@@ -43,7 +43,7 @@ Delivery uses `filterDeliveryRecipients` before send and `canDeliverToRecipient`
 - `packages/recipient-verification/` policy, migration SQL, and a local copy of the email syntax check
 - `apps/api/routes/recipientVerification.js`
 - `apps/api/routes/contacts.js`, `whatsapp.js`, `alerts.js`, `apps/api/index.js`
-- `apps/api/migrations/migrate.js` version 79
+- `apps/api/migrations/migrate.js` version 81
 - `apps/worker/src/delivery-worker.js`, `weekly-digest.js`, `shared/recipientDeliveryGate.js`
 - `apps/dashboard/src/pages/AlertPreferences.jsx` and the small verification controls beside it
 - `tests/unit/recipient-verification.test.js`
@@ -52,7 +52,7 @@ Delivery uses `filterDeliveryRecipients` before send and `canDeliverToRecipient`
 
 ## 5. Database
 
-Migration name `recipient_channel_verification`, version 79. Tables:
+Migration name `recipient_channel_verification`, version 81. Tables:
 
 - `contact_channel_verifications`
 - `contact_verification_challenges`
@@ -82,7 +82,7 @@ Self-hosted admin WhatsApp provider probes stay available in shadow mode. In enf
 
 ## 8. Tests and results
 
-`node --test tests/unit/recipient-verification.test.js tests/unit/weekly-digest-recipient-aggregation.test.js tests/unit/certops-migration.test.js` passed, 140 tests, 0 failures. `node --test tests/postgres/recipient-verification-concurrency.test.js` passed, 13 tests, 0 failures, against PostgreSQL 16, including interrupted invitation recovery. `node --test tests/postgres/notification-test-rate.test.js` passed, 2 tests, and `node --test tests/postgres/weekly-digest-claim.test.js` passed, 1 test. The Postgres runs cover invitation limits under concurrency, abuse suppression, decline, one-winner confirmation, dispatch-lease recovery, WhatsApp test cooldown and daily limits without migration 79, and digest claim ownership.
+`node --test tests/unit/recipient-verification.test.js tests/unit/weekly-digest-recipient-aggregation.test.js tests/unit/certops-migration.test.js` passed, 142 tests, 0 failures. `node --test tests/postgres/recipient-verification-concurrency.test.js` passed, 13 tests, 0 failures, against PostgreSQL 16. `node --test tests/postgres/notification-test-rate.test.js` passed, 2 tests. `node --test tests/postgres/weekly-digest-claim.test.js` passed, 2 tests. `node --test tests/postgres/contact-verification-atomicity.test.js` passed, 1 test. Those Postgres runs cover invitation limits, dispatch-lease recovery, WhatsApp test limits without migration 81, digest claim ownership, atomic contact updates, and stale WhatsApp declines.
 
 The unit suite uses an in-memory query double. It does not open SMTP or Twilio. `tests/integration/api-test-whatsapp.test.js` was not executed in this pass. The contacts screen was not clicked through in a browser.
 
@@ -97,7 +97,7 @@ The unit suite uses an in-memory query double. It does not open SMTP or Twilio. 
 
 ## 10. Deployment and rollback
 
-1. Deploy the API and worker together. Apply migration 80 before the weekly digest worker. Apply migration 79 when verification is turned on. Migration 78 remains CertOps installed-file distribution.
+1. Deploy the API and worker together. Apply migration 82 before the weekly digest worker. Apply migration 81 when verification is turned on. Migration 78 remains CertOps installed-file distribution. Migrations 79 and 80 are auto-sync metrics.
 2. Set `RECIPIENT_FINGERPRINT_SECRET` and `PUBLIC_BASE_URL` or `API_URL`.
 3. Configure the Twilio inbound webhook.
 4. Leave self-hosted on `off` until managers are ready to collect confirmation. `shadow` records eligibility without blocking delivery.

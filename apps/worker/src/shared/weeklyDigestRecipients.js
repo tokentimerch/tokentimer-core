@@ -206,6 +206,34 @@ async function markWeeklyDigestRecipientSent(
   return res.rows && res.rows[0] ? res.rows[0] : null;
 }
 
+async function noteWeeklyDigestProviderAccepted(
+  client,
+  { workspaceId, weekStartDate, channel, recipientKey, claimToken },
+) {
+  const res = await client.query(
+    `UPDATE weekly_digest_recipient_log
+        SET provider_accepted_at = COALESCE(provider_accepted_at, NOW()),
+            updated_at = NOW()
+      WHERE workspace_id = $1
+        AND week_start_date = $2
+        AND channel = $3
+        AND recipient_key = $4
+        AND status = 'pending'
+        AND claim_token = $5
+      RETURNING claim_token, provider_accepted_at`,
+    [workspaceId, weekStartDate, channel, hashDigestRecipientKey(recipientKey), claimToken || null],
+  );
+  return res.rows && res.rows[0] ? res.rows[0] : null;
+}
+
+async function finalizeWeeklyDigestDelivery(client, input) {
+  const accepted = await noteWeeklyDigestProviderAccepted(client, input);
+  if (!accepted) return { completion: "delivered-ownership-lost", row: null };
+  const finalized = await markWeeklyDigestRecipientSent(client, input);
+  if (!finalized) return { completion: "delivered-ownership-lost", row: null };
+  return { completion: "confirmed", row: finalized };
+}
+
 function weeklyDigestWhatsAppIdempotencyKey({
   workspaceId,
   weekStartDate,
@@ -220,6 +248,8 @@ export {
   claimWeeklyDigestRecipient,
   releaseWeeklyDigestRecipientClaim,
   markWeeklyDigestRecipientSent,
+  noteWeeklyDigestProviderAccepted,
+  finalizeWeeklyDigestDelivery,
   weeklyDigestWhatsAppIdempotencyKey,
   hashDigestRecipientKey,
 };

@@ -34,6 +34,7 @@ import {
   claimWeeklyDigestRecipient,
   releaseWeeklyDigestRecipientClaim,
   markWeeklyDigestRecipientSent,
+  finalizeWeeklyDigestDelivery,
   weeklyDigestWhatsAppIdempotencyKey,
 } from "./shared/weeklyDigestRecipients.js";
 
@@ -1007,6 +1008,42 @@ export async function weeklyDigestJob() {
       const groupChannelsSent = new Map();
       const groupSuccessCount = new Map();
 
+      const recordConfirmedDelivery = (row) => {
+        sent++;
+        digestCount++;
+        totalTokensIncluded += row.tokens.length;
+        for (const gid of row.contributingGroupIds || []) {
+          const groupId = String(gid);
+          successfulGroupIds.add(groupId);
+          if (!groupChannelsSent.has(groupId)) {
+            groupChannelsSent.set(groupId, new Set());
+          }
+          groupChannelsSent.get(groupId).add(row.channel);
+          groupSuccessCount.set(
+            groupId,
+            (groupSuccessCount.get(groupId) || 0) + 1,
+          );
+        }
+        try {
+          cWeeklyDigestSent.labels(row.channel, "success").inc();
+        } catch (_) {}
+      };
+
+      const logUnconfirmedDelivery = (row, completion) => {
+        logger.warn(
+          JSON.stringify({
+            level: "WARN",
+            message: "weekly-digest-delivery-unconfirmed",
+            workspace: ws.workspace_id,
+            channel: row.channel,
+            completion,
+          }),
+        );
+        try {
+          cWeeklyDigestSent.labels(row.channel, "unconfirmed").inc();
+        } catch (_) {}
+      };
+
       for (const row of inverted) {
         processed++;
         if (row.channel === "email" || row.channel === "whatsapp") {
@@ -1041,6 +1078,21 @@ export async function weeklyDigestJob() {
         });
         if (!claim) {
           skipped++;
+          continue;
+        }
+        if (claim.provider_accepted_at) {
+          const finalized = await markWeeklyDigestRecipientSent(client, {
+            workspaceId: ws.workspace_id,
+            weekStartDate,
+            channel: row.channel,
+            recipientKey: row.recipientKey,
+            claimToken: claim.claim_token,
+          });
+          if (!finalized) {
+            logUnconfirmedDelivery(row, "ownership-lost");
+            continue;
+          }
+          recordConfirmedDelivery(row);
           continue;
         }
         if (row.channel === "email" || row.channel === "whatsapp") {
@@ -1096,40 +1148,25 @@ export async function weeklyDigestJob() {
           res = { success: false };
         }
 
-        try {
-          cWeeklyDigestSent
-            .labels(row.channel, res && res.success ? "success" : "failure")
-            .inc();
-        } catch (_) {}
-
         if (!res || !res.success) {
+          try {
+            cWeeklyDigestSent.labels(row.channel, "failure").inc();
+          } catch (_) {}
           continue;
         }
 
-        await markWeeklyDigestRecipientSent(client, {
+        const finalized = await finalizeWeeklyDigestDelivery(client, {
           workspaceId: ws.workspace_id,
           weekStartDate,
           channel: row.channel,
           recipientKey: row.recipientKey,
           claimToken: claim.claim_token,
         });
-
-        sent++;
-        digestCount++;
-        totalTokensIncluded += row.tokens.length;
-
-        for (const gid of row.contributingGroupIds || []) {
-          const groupId = String(gid);
-          successfulGroupIds.add(groupId);
-          if (!groupChannelsSent.has(groupId)) {
-            groupChannelsSent.set(groupId, new Set());
-          }
-          groupChannelsSent.get(groupId).add(row.channel);
-          groupSuccessCount.set(
-            groupId,
-            (groupSuccessCount.get(groupId) || 0) + 1,
-          );
+        if (finalized.completion !== "confirmed") {
+          logUnconfirmedDelivery(row, finalized.completion);
+          continue;
         }
+        recordConfirmedDelivery(row);
       }
 
       for (const groupId of successfulGroupIds) {

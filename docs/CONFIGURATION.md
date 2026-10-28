@@ -181,7 +181,7 @@ Set `RECIPIENT_FINGERPRINT_SECRET` (or rely on `PHONE_HASH_SALT` or `SESSION_SEC
 
 Point Twilio's inbound WhatsApp webhook at `POST /webhooks/twilio/whatsapp/inbound`. The signature is checked against `PUBLIC_BASE_URL` or `API_URL` plus the request path and the raw form body. A missing base URL or auth token returns 503 and does not confirm a number. Delivery status callbacks are not consent.
 
-Migration 79 (`recipient_channel_verification`) adds the verification tables and does not mark existing contacts verified. See [recipient verification](recipient-verification.md).
+Migration 81 (`recipient_channel_verification`) adds the verification tables and does not mark existing contacts verified. Migration 82 (`weekly_digest_recipient_claim_token`) adds digest claim ownership. Migration 78 remains CertOps installed-file distribution, and migrations 79 and 80 are auto-sync metrics. See [recipient verification](recipient-verification.md).
 
 ## Alerts, limits, and webhooks
 
@@ -628,6 +628,11 @@ TokenTimer stores only public certificate material (fingerprints, serials, issue
 | `ENABLE_METRICS`     | Enable `/metrics` and metric push attempts when `true`     | `false`       | API, worker    |
 | `PUSHGATEWAY_URL`    | Prometheus Pushgateway endpoint                            | `unset`       | Worker metrics |
 | `ENVIRONMENT_SUFFIX` | Metrics environment label (if you have multiple instances) | `unset`       | Worker metrics |
+
+API `/metrics` exposes `auto_sync_items_created_total{provider}` when
+`ENABLE_METRICS=true`, along with durable run outcomes and last-attempt and
+last-success timestamps; no Pushgateway is required. See
+[auto-sync monitoring](AUTO_SYNC.md#new-inventory-metrics).
 
 ## WhatsApp (Twilio)
 

@@ -1,0 +1,23 @@
+name: "CertOps / Real Azure Key Vault qualification"
+# Registration only. The full campaign is dispatched from its reviewed branch.
+on:
+  workflow_dispatch:
+    inputs:
+      location:
+        description: Approved lab subscription region
+        type: choice
+        options: [swedencentral, westeurope, northeurope]
+        default: swedencentral
+permissions:
+  contents: read
+jobs:
+  registration-only:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Explain that main has no qualification campaign yet
+        run: |
+          echo 'Registration placeholder only; no Azure qualification ran.'
+          echo 'Dispatch the reviewed qualification branch after cleanup and approval are ready.'
+          exit 1

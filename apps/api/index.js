@@ -101,6 +101,7 @@ const metricsEnabled = process.env.ENABLE_METRICS === "true";
 
 // Metrics endpoint (Prometheus scrape)
 if (metricsEnabled) {
+  require("./services/autoSyncMetrics").registerAutoSyncMetrics(client.register);
   app.get("/metrics", async (_req, res) => {
     try {
       res.set("Content-Type", client.register.contentType);

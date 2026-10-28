@@ -76,7 +76,7 @@ test.beforeEach(async () => {
   process.env.RECIPIENT_TEST_COOLDOWN_SECONDS = "120";
 });
 
-test("self-hosted off limits WhatsApp tests without migration 79", async () => {
+test("self-hosted off limits WhatsApp tests without the recipient verification migration", async () => {
   const seeded = await seed();
   const input = {
     pool,

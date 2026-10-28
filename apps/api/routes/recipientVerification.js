@@ -272,9 +272,9 @@ router.post("/verify/recipient/:token/decline", recipientVerificationPageLimiter
   if (await limitPublicVerification(req, res)) return undefined;
   try {
     const loaded = await verification.loadChallenge(pool, req.params.token);
-    if (loaded.channel === "whatsapp" && loaded.state === "pending") {
-      await declineWhatsAppChallenge(req.params.token);
-      return res.redirect(303, "/verify/recipient/done?result=declined");
+    if (loaded.channel === "whatsapp") {
+      const result = await verification.declineWhatsAppChallenge({ pool, token: req.params.token });
+      return res.redirect(303, `/verify/recipient/done?result=${result.ok ? "declined" : "invalid"}`);
     }
     const result = await verification.consumeEmailChallenge({ pool, token: req.params.token, decision: "decline" });
     return res.redirect(303, `/verify/recipient/done?result=${result.ok ? "declined" : "invalid"}`);
@@ -283,48 +283,6 @@ router.post("/verify/recipient/:token/decline", recipientVerificationPageLimiter
     return res.redirect(303, "/verify/recipient/done?result=invalid");
   }
 });
-
-async function declineWhatsAppChallenge(token) {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const consumed = await client.query(
-      `UPDATE contact_verification_challenges
-          SET status = 'declined', consumed_at = NOW(), attempt_count = attempt_count + 1
-        WHERE token_hash = $1 AND channel = 'whatsapp' AND status = 'pending' AND expires_at > NOW()
-        RETURNING workspace_id, contact_id, channel, destination_normalized, destination_fingerprint`,
-      [verification.hashToken(token)],
-    );
-    const row = consumed.rows[0];
-    if (!row) {
-      await client.query("ROLLBACK");
-      return;
-    }
-    await client.query(
-      `INSERT INTO contact_channel_verifications
-         (workspace_id, contact_id, channel, destination_normalized, destination_fingerprint, status, opted_out_at, opt_out_method, updated_at)
-       VALUES ($1,$2,$3,$4,$5,'opted_out', NOW(), 'recipient_declined', NOW())
-       ON CONFLICT (workspace_id, contact_id, channel) DO UPDATE
-         SET status = 'opted_out', opted_out_at = NOW(), opt_out_method = 'recipient_declined',
-             verified_at = NULL, consent_at = NULL, updated_at = NOW()`,
-      [row.workspace_id, row.contact_id, row.channel, row.destination_normalized, row.destination_fingerprint],
-    );
-    await client.query(
-      `INSERT INTO notification_suppressions
-         (channel, destination_fingerprint, scope, workspace_id, reason)
-       VALUES ($1,$2,'workspace',$3,'recipient_declined')
-       ON CONFLICT (channel, destination_fingerprint, workspace_id, reason) WHERE scope = 'workspace'
-       DO NOTHING`,
-      [row.channel, row.destination_fingerprint, row.workspace_id],
-    );
-    await client.query("COMMIT");
-  } catch (error) {
-    try { await client.query("ROLLBACK"); } catch (_) { /* ignore */ }
-    throw error;
-  } finally {
-    client.release();
-  }
-}
 
 async function officialWhatsAppFrom() {
   const envFrom = process.env.TWILIO_WHATSAPP_FROM;

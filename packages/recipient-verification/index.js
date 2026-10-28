@@ -1372,6 +1372,54 @@ async function consumeEmailChallenge({ pool, token, decision }) {
   });
 }
 
+async function declineWhatsAppChallenge({ pool, token }) {
+  if (!token || String(token).length < 20) return { ok: false };
+  return withTransaction(pool, async (client) => {
+    const pending = await client.query(
+      `-- RV_PREVIEW_CHALLENGE
+       SELECT workspace_id, contact_id, channel, destination_normalized, destination_fingerprint
+         FROM contact_verification_challenges
+        WHERE token_hash = $1
+          AND channel = 'whatsapp'
+          AND status = 'pending'
+          AND expires_at > NOW()`,
+      [hashToken(token)],
+    );
+    const preview = pending.rows[0];
+    if (!preview) return { ok: false };
+    await client.query(
+      `-- RV_LOCK_CONTACT
+       SELECT id FROM workspace_contacts WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+      [preview.workspace_id, preview.contact_id],
+    );
+    const contact = await client.query(
+      `-- RV_CONTACT
+       SELECT phone_e164 FROM workspace_contacts WHERE workspace_id = $1 AND id = $2`,
+      [preview.workspace_id, preview.contact_id],
+    );
+    const current = normalizePhone(contact.rows[0]?.phone_e164);
+    if (!current.ok || current.value !== preview.destination_normalized) {
+      return { ok: false, stale: true };
+    }
+    const consumed = await client.query(
+      `-- RV_CONSUME_CHALLENGE
+       UPDATE contact_verification_challenges
+          SET status = 'declined', consumed_at = NOW(), attempt_count = attempt_count + 1
+        WHERE token_hash = $1
+          AND channel = 'whatsapp'
+          AND status = 'pending'
+          AND expires_at > NOW()
+          AND destination_normalized = $2
+        RETURNING workspace_id, contact_id, channel, destination_normalized, destination_fingerprint`,
+      [hashToken(token), current.value],
+    );
+    const row = consumed.rows[0];
+    if (!row) return { ok: false };
+    await upsertVerification(client, row, "opted_out", "recipient_declined");
+    return { ok: true, outcome: "declined" };
+  });
+}
+
 async function confirmWhatsAppInbound({ pool, from, body, messageSid }) {
   const code = parseConfirmCode(body);
   const sender = normalizePhone(from);
@@ -1517,39 +1565,126 @@ function renderDone(result) {
 async function invalidateChangedDestination({ client, workspaceId, contactId, channel, previousDestination, nextDestination }) {
   const previous = normalizeDestination(channel, previousDestination);
   const next = normalizeDestination(channel, nextDestination);
-  if (previous.ok && next.ok && previous.value === next.value) return;
-  await client.query(
-    `-- RV_LOCK_CONTACT
-     SELECT id FROM workspace_contacts WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
-    [workspaceId, contactId],
-  );
-  await client.query(
-    `-- RV_SUPERSEDE
-     UPDATE contact_verification_challenges
-        SET status = 'superseded'
-      WHERE workspace_id = $1 AND contact_id = $2 AND channel = $3 AND status = 'pending'`,
-    [workspaceId, contactId, channel],
-  );
-  if (!next.ok) {
+  if (previous.ok && next.ok && previous.value === next.value) return { changed: false };
+  const mode = resolveEnforcementMode();
+  try {
     await client.query(
-      `-- RV_DELETE_VERIFICATION
-       DELETE FROM contact_channel_verifications
-        WHERE workspace_id = $1 AND contact_id = $2 AND channel = $3`,
+      `-- RV_LOCK_CONTACT
+       SELECT id FROM workspace_contacts WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+      [workspaceId, contactId],
+    );
+    await client.query(
+      `-- RV_SUPERSEDE
+       UPDATE contact_verification_challenges
+          SET status = 'superseded'
+        WHERE workspace_id = $1 AND contact_id = $2 AND channel = $3 AND status = 'pending'`,
       [workspaceId, contactId, channel],
     );
-    return;
+    if (!next.ok) {
+      await client.query(
+        `-- RV_DELETE_VERIFICATION
+         DELETE FROM contact_channel_verifications
+          WHERE workspace_id = $1 AND contact_id = $2 AND channel = $3`,
+        [workspaceId, contactId, channel],
+      );
+      return { changed: true };
+    }
+    const fingerprint = destinationFingerprint(channel, next.value);
+    if (!fingerprint) {
+      if (mode === "off") return { changed: false, skipped: "unconfigured" };
+      throw coded(503, "RECIPIENT_VERIFICATION_UNAVAILABLE", "Recipient verification is not available");
+    }
+    await client.query(
+      `-- RV_INVALIDATE
+       UPDATE contact_channel_verifications
+          SET status = 'pending', verified_at = NULL, consent_at = NULL, revoked_at = NULL,
+              opted_out_at = NULL, destination_normalized = $4, destination_fingerprint = $5, updated_at = NOW()
+        WHERE workspace_id = $1 AND contact_id = $2 AND channel = $3
+          AND destination_normalized IS DISTINCT FROM $4`,
+      [workspaceId, contactId, channel, next.value, fingerprint],
+    );
+    return { changed: true };
+  } catch (error) {
+    if (error && error.code === "RECIPIENT_VERIFICATION_UNAVAILABLE") throw error;
+    if (isMissingSchema(error)) {
+      if (mode === "off") return { changed: false, skipped: "schema" };
+      throw coded(503, "RECIPIENT_VERIFICATION_UNAVAILABLE", "Recipient verification is not available");
+    }
+    throw error;
   }
-  const fingerprint = destinationFingerprint(channel, next.value);
-  if (!fingerprint) return;
-  await client.query(
-    `-- RV_INVALIDATE
-     UPDATE contact_channel_verifications
-        SET status = 'pending', verified_at = NULL, consent_at = NULL, revoked_at = NULL,
-            opted_out_at = NULL, destination_normalized = $4, destination_fingerprint = $5, updated_at = NOW()
-      WHERE workspace_id = $1 AND contact_id = $2 AND channel = $3
-        AND destination_normalized IS DISTINCT FROM $4`,
-    [workspaceId, contactId, channel, next.value, fingerprint],
-  );
+}
+
+async function updateContactWithVerification({
+  pool,
+  workspaceId,
+  contactId,
+  firstName,
+  lastName,
+  phoneE164,
+  hasPhoneField,
+  details,
+  hasDetails,
+}) {
+  return withTransaction(pool, async (client) => {
+    const existing = await client.query(
+      `SELECT phone_e164, details FROM workspace_contacts WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+      [workspaceId, contactId],
+    );
+    if (!existing.rows[0]) throw coded(404, "CONTACT_NOT_FOUND", "Contact not found");
+    const fields = [];
+    const params = [];
+    let index = 1;
+    if (firstName && String(firstName).trim()) {
+      fields.push(`first_name = $${index++}`);
+      params.push(String(firstName).trim());
+    }
+    if (lastName && String(lastName).trim()) {
+      fields.push(`last_name = $${index++}`);
+      params.push(String(lastName).trim());
+    }
+    if (hasPhoneField) {
+      fields.push(`phone_e164 = $${index++}`);
+      params.push(phoneE164);
+    }
+    let detailsObj = null;
+    if (hasDetails) {
+      detailsObj = details && typeof details === "object" ? { ...details } : {};
+      const emailStr = String(detailsObj.email || "").trim().toLowerCase();
+      if (emailStr) detailsObj.email = emailStr;
+      fields.push(`details = $${index++}`);
+      params.push(JSON.stringify(detailsObj));
+    }
+    if (fields.length === 0) throw coded(400, "VALIDATION_ERROR", "No fields to update");
+    fields.push("updated_at = NOW()");
+    params.push(workspaceId, contactId);
+    const updated = await client.query(
+      `UPDATE workspace_contacts SET ${fields.join(", ")} WHERE workspace_id = $${index} AND id = $${index + 1} RETURNING id, first_name, last_name, phone_e164, details, created_at, updated_at`,
+      params,
+    );
+    if (!updated.rows[0]) throw coded(404, "CONTACT_NOT_FOUND", "Contact not found");
+    const previous = existing.rows[0];
+    const previousEmail = previous.details?.email || "";
+    const nextEmail = hasDetails ? String(detailsObj.email || "").trim().toLowerCase() : previousEmail;
+    await invalidateChangedDestination({
+      client,
+      workspaceId,
+      contactId,
+      channel: "email",
+      previousDestination: previousEmail,
+      nextDestination: nextEmail,
+    });
+    if (hasPhoneField) {
+      await invalidateChangedDestination({
+        client,
+        workspaceId,
+        contactId,
+        channel: "whatsapp",
+        previousDestination: previous.phone_e164,
+        nextDestination: phoneE164,
+      });
+    }
+    return updated.rows[0];
+  });
 }
 
 async function revokeChannel({ pool, workspaceId, contactId, channel, actorUserId }) {
@@ -1599,7 +1734,7 @@ async function attachVerification(db, workspaceId, contacts) {
   try {
     const status = await db.query(
       `-- RV_LIST_STATUS
-       SELECT contact_id, channel, status, verified_at, consent_at
+       SELECT contact_id, channel, status, verified_at, consent_at, destination_normalized
          FROM contact_channel_verifications
         WHERE workspace_id = $1 AND contact_id = ANY($2::uuid[])`,
       [workspaceId, list.map((contact) => contact.id)],
@@ -1607,7 +1742,7 @@ async function attachVerification(db, workspaceId, contacts) {
     rows = status.rows;
     const pending = await db.query(
       `-- RV_LIST_CHALLENGES
-       SELECT contact_id, channel, expires_at
+       SELECT contact_id, channel, expires_at, destination_normalized
          FROM contact_verification_challenges
         WHERE workspace_id = $1 AND contact_id = ANY($2::uuid[])
           AND status = 'pending' AND expires_at > NOW()`,
@@ -1624,21 +1759,39 @@ async function attachVerification(db, workspaceId, contacts) {
       status: row.status,
       verified_at: row.verified_at,
       consent_at: row.consent_at,
+      destination_normalized: row.destination_normalized,
     };
   }
   const challengeByContact = new Map();
   for (const row of challenges) {
     if (!challengeByContact.has(String(row.contact_id))) challengeByContact.set(String(row.contact_id), {});
-    challengeByContact.get(String(row.contact_id))[row.channel] = { expires_at: row.expires_at };
+    challengeByContact.get(String(row.contact_id))[row.channel] = {
+      expires_at: row.expires_at,
+      destination_normalized: row.destination_normalized,
+    };
   }
   const items = list.map((contact) => {
     const stored = byContact.get(String(contact.id)) || {};
     const invites = challengeByContact.get(String(contact.id)) || {};
     const email = normalizeEmail(contact.details?.email);
     const phone = normalizePhone(contact.phone_e164);
+    const channelView = (normalized, storedRow, invite) => {
+      if (!normalized.ok) return null;
+      const storedMatches = storedRow && storedRow.destination_normalized === normalized.value;
+      const invitation = invite && invite.destination_normalized === normalized.value
+        ? { expires_at: invite.expires_at }
+        : null;
+      if (!storedMatches) return { status: "pending", invitation };
+      return {
+        status: storedRow.status || "pending",
+        verified_at: storedRow.verified_at || null,
+        consent_at: storedRow.consent_at || null,
+        invitation,
+      };
+    };
     const verification = {
-      email: email.ok ? { status: stored.email?.status || "pending", ...(stored.email || {}), invitation: invites.email || null } : null,
-      whatsapp: phone.ok ? { status: stored.whatsapp?.status || "pending", ...(stored.whatsapp || {}), invitation: invites.whatsapp || null } : null,
+      email: channelView(email, stored.email, invites.email),
+      whatsapp: channelView(phone, stored.whatsapp, invites.whatsapp),
     };
     for (const channel of ["email", "whatsapp"]) {
       const entry = verification[channel];
@@ -1825,6 +1978,7 @@ module.exports = {
   requestEmailResubscribe,
   loadChallenge,
   consumeEmailChallenge,
+  declineWhatsAppChallenge,
   confirmWhatsAppInbound,
   parseConfirmCode,
   verifyTwilioSignature,
@@ -1834,6 +1988,7 @@ module.exports = {
   renderResubscribeAccepted,
   renderDone,
   invalidateChangedDestination,
+  updateContactWithVerification,
   revokeChannel,
   attachVerification,
   authorizeWorkspaceTest,

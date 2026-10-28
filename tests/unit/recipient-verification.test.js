@@ -248,15 +248,18 @@ function createStore() {
     }
 
     if (text.includes("RV_CONSUME_CHALLENGE") && text.includes("channel = 'whatsapp'")) {
-      const challenge = state.challenges.find((row) => (
-        row.code_hash === params[0]
-        && row.channel === "whatsapp"
-        && row.status === "pending"
-        && new Date(row.expires_at).getTime() > Date.now()
-        && row.destination_normalized === params[1]
-      ));
+      const challenge = state.challenges.find((row) => {
+        const hashMatch = text.includes("token_hash")
+          ? row.token_hash === params[0]
+          : row.code_hash === params[0];
+        return hashMatch
+          && row.channel === "whatsapp"
+          && row.status === "pending"
+          && new Date(row.expires_at).getTime() > Date.now()
+          && row.destination_normalized === params[1];
+      });
       if (!challenge) return rowsOf([]);
-      challenge.status = "consumed";
+      challenge.status = text.includes("status = 'declined'") ? "declined" : "consumed";
       challenge.consumed_at = new Date();
       challenge.attempt_count += 1;
       return rowsOf([{ ...challenge }]);
@@ -1010,6 +1013,12 @@ describe("recipient verification", () => {
     assert.ok(digestLoop.indexOf("confirmDigestConsent") < digestLoop.indexOf("deliverRecipientDigest"));
     assert.equal(digestLoop.includes("releaseWeeklyDigestRecipientClaim"), true);
     assert.equal(digestLoop.includes("claimToken: claim.claim_token"), true);
+    assert.equal(digestLoop.includes("finalizeWeeklyDigestDelivery"), true);
+    assert.equal(digestLoop.includes("completion !== \"confirmed\""), true);
+    assert.equal(digest.includes("weekly-digest-delivery-unconfirmed"), true);
+    const digestClaims = fs.readFileSync(path.join(ROOT, "apps/worker/src/shared/weeklyDigestRecipients.js"), "utf8");
+    assert.equal(digestClaims.includes("noteWeeklyDigestProviderAccepted"), true);
+    assert.equal(digestClaims.includes("provider_accepted_at"), true);
     const preferences = fs.readFileSync(path.join(ROOT, "apps/dashboard/src/pages/AlertPreferences.jsx"), "utf8");
     const whatsappInvite = preferences.slice(preferences.indexOf("async function handleShareWhatsApp"));
     assert.ok(whatsappInvite.indexOf("RECIPIENT_OPTED_OUT") < whatsappInvite.indexOf("share_url"));
@@ -1789,6 +1798,58 @@ describe("recipient verification", () => {
     assert.equal(verification.confirmDigestConsent({ mode: "enforce", finalAllowed: true }).send, true);
     assert.equal(verification.confirmDigestConsent({ mode: "shadow", finalAllowed: false }).send, true);
     assert.equal(verification.confirmDigestConsent({ mode: "off", finalAllowed: false }).send, true);
+  });
+
+  it("does not report a verified status for a different destination", async () => {
+    const store = createStore();
+    const contact = seedContact(store);
+    store.state.verifications.push({
+      workspace_id: "ws-1",
+      contact_id: contact.id,
+      channel: "email",
+      status: "verified",
+      destination_normalized: "old@example.com",
+      verified_at: new Date(),
+    });
+    store.state.challenges.push({
+      workspace_id: "ws-1",
+      contact_id: contact.id,
+      channel: "email",
+      status: "pending",
+      destination_normalized: "old@example.com",
+      expires_at: new Date(Date.now() + 60000),
+    });
+    const stale = await verification.attachVerification(store.pool, "ws-1", [contact]);
+    assert.equal(stale.items[0].verification.email.status, "pending");
+    assert.equal(stale.items[0].verification.email.invitation, null);
+    assert.equal(stale.items[0].verification.email.verified_at, undefined);
+    store.state.verifications[0].destination_normalized = "person@example.com";
+    store.state.challenges[0].destination_normalized = "person@example.com";
+    const current = await verification.attachVerification(store.pool, "ws-1", [contact]);
+    assert.equal(current.items[0].verification.email.status, "verified");
+    assert.ok(current.items[0].verification.email.invitation);
+  });
+
+  it("does not let a stale WhatsApp decline replace the current number", async () => {
+    const store = createStore();
+    seedContact(store);
+    const invitation = await verification.createInvitation({
+      pool: store.pool,
+      workspaceId: "ws-1",
+      contactId: "contact-1",
+      channel: "whatsapp",
+      actorUserId: 4,
+    });
+    assert.ok(invitation.token);
+    store.state.contacts.get("ws-1:contact-1").phone_e164 = "+14155550999";
+    const declined = await verification.declineWhatsAppChallenge({
+      pool: store.pool,
+      token: invitation.token,
+    });
+    assert.equal(declined.ok, false);
+    assert.equal(declined.stale, true);
+    assert.equal(store.state.verifications.length, 0);
+    assert.equal(store.state.challenges[0].status, "pending");
   });
 
   it("withholds a WhatsApp invitation after a decline", async () => {

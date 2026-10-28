@@ -139,6 +139,8 @@ describe("Core distribution and lifecycle migration histories", function () {
           ...mainlineOrder,
           "onboarding_sessions",
           "certops_installed_file_distribution",
+          "auto_sync_provider_stats",
+          "auto_sync_run_metrics",
           "recipient_channel_verification",
           "weekly_digest_recipient_claim_token",
         ];
@@ -186,6 +188,9 @@ describe("Core distribution and lifecycle migration histories", function () {
           "certificate_enrollments",
           "certops_distribution_groups",
           "certops_agent_job_log",
+          "auto_sync_provider_stats",
+          "auto_sync_run_outcome_stats",
+          "auto_sync_run_freshness",
         ]) {
           assert.equal(
             (await db.query("SELECT to_regclass($1)::text AS name", [table]))

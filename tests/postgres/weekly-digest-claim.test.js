@@ -36,12 +36,24 @@ async function applySchema() {
       lease_expires_at TIMESTAMPTZ NULL,
       tokens_count INTEGER NOT NULL DEFAULT 0,
       claim_token TEXT,
+      provider_accepted_at TIMESTAMPTZ NULL,
       metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE UNIQUE INDEX IF NOT EXISTS uq_weekly_digest_recipient_week_channel
       ON weekly_digest_recipient_log(workspace_id, week_start_date, channel, recipient_key);
+    ALTER TABLE weekly_digest_recipient_log
+      ADD COLUMN IF NOT EXISTS provider_accepted_at TIMESTAMPTZ;
+    CREATE TABLE IF NOT EXISTS weekly_digest_log (
+      workspace_id UUID NOT NULL,
+      contact_group_id UUID NOT NULL,
+      week_start_date DATE NOT NULL,
+      tokens_count INTEGER NOT NULL DEFAULT 0,
+      channels JSONB NOT NULL DEFAULT '[]'::jsonb,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      PRIMARY KEY (workspace_id, contact_group_id, week_start_date)
+    );
   `);
 }
 
@@ -55,6 +67,7 @@ test.after(async () => {
 });
 
 test.beforeEach(async () => {
+  await pool.query("DELETE FROM weekly_digest_log");
   await pool.query("DELETE FROM weekly_digest_recipient_log");
   await pool.query("DELETE FROM workspaces");
 });
@@ -146,6 +159,88 @@ test("a stale digest worker cannot release or complete another worker's claim", 
       claimToken: retry.claim_token,
     });
     assert.equal(sent.status, "sent");
+  } finally {
+    client.release();
+  }
+});
+
+test("a lost digest claim is not counted and a recorded acceptance is not sent again", async () => {
+  const digest = await import(digestHref);
+  const workspace = await pool.query("INSERT INTO workspaces (name) VALUES ('Workspace') RETURNING id");
+  const workspaceId = workspace.rows[0].id;
+  const groupId = "11111111-1111-4111-8111-111111111111";
+  const claimInput = {
+    workspaceId,
+    weekStartDate: "2026-10-26",
+    channel: "email",
+    recipientKey: "person@example.com",
+    tokensCount: 2,
+    leaseMs: 60000,
+  };
+  const sends = [];
+  const recordGroup = async () => {
+    await pool.query(
+      `INSERT INTO weekly_digest_log (workspace_id, contact_group_id, week_start_date, tokens_count, channels, metadata)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`,
+      [workspaceId, groupId, claimInput.weekStartDate, 2, JSON.stringify(["email"]), JSON.stringify({ sent_to_count: 1 })],
+    );
+  };
+  const client = await pool.connect();
+  try {
+    const owner = await digest.claimWeeklyDigestRecipient(client, claimInput);
+    sends.push("owner");
+    await pool.query(
+      "UPDATE weekly_digest_recipient_log SET lease_expires_at = NOW() - INTERVAL '1 second' WHERE claim_token = $1",
+      [owner.claim_token],
+    );
+    const reclaimed = await digest.claimWeeklyDigestRecipient(client, claimInput);
+    const lost = await digest.finalizeWeeklyDigestDelivery(client, {
+      ...claimInput,
+      claimToken: owner.claim_token,
+    });
+    assert.equal(lost.completion, "delivered-ownership-lost");
+    assert.equal(lost.row, null);
+    const groups = await pool.query("SELECT COUNT(*)::int AS n FROM weekly_digest_log");
+    assert.equal(groups.rows[0].n, 0);
+    assert.equal(reclaimed.provider_accepted_at, null);
+    sends.push("reclaimed");
+    const reclaimedDone = await digest.markWeeklyDigestRecipientSent(client, {
+      ...claimInput,
+      claimToken: reclaimed.claim_token,
+    });
+    assert.equal(reclaimedDone.status, "sent");
+    assert.deepEqual(sends, ["owner", "reclaimed"]);
+
+    await pool.query("DELETE FROM weekly_digest_recipient_log");
+    sends.length = 0;
+    const acceptedOwner = await digest.claimWeeklyDigestRecipient(client, claimInput);
+    sends.push("owner");
+    const noted = await digest.noteWeeklyDigestProviderAccepted(client, {
+      ...claimInput,
+      claimToken: acceptedOwner.claim_token,
+    });
+    assert.ok(noted.provider_accepted_at);
+    await pool.query(
+      "UPDATE weekly_digest_recipient_log SET lease_expires_at = NOW() - INTERVAL '1 second' WHERE claim_token = $1",
+      [acceptedOwner.claim_token],
+    );
+    const nextOwner = await digest.claimWeeklyDigestRecipient(client, claimInput);
+    assert.ok(nextOwner.provider_accepted_at);
+    const staleFinish = await digest.finalizeWeeklyDigestDelivery(client, {
+      ...claimInput,
+      claimToken: acceptedOwner.claim_token,
+    });
+    assert.equal(staleFinish.completion, "delivered-ownership-lost");
+    if (!nextOwner.provider_accepted_at) sends.push("reclaimed");
+    const finished = await digest.markWeeklyDigestRecipientSent(client, {
+      ...claimInput,
+      claimToken: nextOwner.claim_token,
+    });
+    assert.equal(finished.status, "sent");
+    await recordGroup();
+    assert.deepEqual(sends, ["owner"]);
+    const logged = await pool.query("SELECT COUNT(*)::int AS n FROM weekly_digest_log");
+    assert.equal(logged.rows[0].n, 1);
   } finally {
     client.release();
   }
