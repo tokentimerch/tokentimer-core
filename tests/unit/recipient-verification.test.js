@@ -42,6 +42,7 @@ function createStore() {
     const text = String(sql);
     state.queries.push(text);
     if (text === "BEGIN" || text === "COMMIT" || text === "ROLLBACK") return rowsOf([]);
+    if (text.includes("SAVEPOINT rv_optional_verification")) return rowsOf([]);
     if (text.includes("pg_advisory_xact_lock")) {
       state.locks.push(params[0]);
       return rowsOf([]);
@@ -1013,9 +1014,12 @@ describe("recipient verification", () => {
     assert.ok(digestLoop.indexOf("confirmDigestConsent") < digestLoop.indexOf("deliverRecipientDigest"));
     assert.equal(digestLoop.includes("releaseWeeklyDigestRecipientClaim"), true);
     assert.equal(digestLoop.includes("claimToken: claim.claim_token"), true);
-    assert.equal(digestLoop.includes("finalizeWeeklyDigestDelivery"), true);
+    assert.equal(digestLoop.includes("runOwnedDigestDelivery"), true);
     assert.equal(digestLoop.includes("completion !== \"confirmed\""), true);
+    assert.equal(digestLoop.includes("delivery_state === \"uncertain\""), true);
     assert.equal(digest.includes("weekly-digest-delivery-unconfirmed"), true);
+    assert.equal(digest.includes("weeklyDigestWhatsAppIdempotencyKey"), true);
+    assert.equal(digest.includes("isUncertainProviderFailure"), true);
     const digestClaims = fs.readFileSync(path.join(ROOT, "apps/worker/src/shared/weeklyDigestRecipients.js"), "utf8");
     assert.equal(digestClaims.includes("noteWeeklyDigestProviderAccepted"), true);
     assert.equal(digestClaims.includes("provider_accepted_at"), true);

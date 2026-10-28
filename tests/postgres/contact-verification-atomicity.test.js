@@ -329,6 +329,37 @@ test("contact changes and verification stay in one transaction", async () => {
   assert.notEqual(racedPhoneStatus && racedPhoneStatus.status, "verified");
   assert.notEqual(racedPhoneStatus && racedPhoneStatus.destination_normalized, "+14155550180");
 
+  process.env.TT_DEPLOYMENT = "self-hosted";
+  process.env.RECIPIENT_VERIFICATION_MODE = "off";
+  const offPresent = await seed({ email: "off-present@example.com", phone: "+14155550192" });
+  await markVerified(offPresent, "email", "off-present@example.com");
+  await verification.updateContactWithVerification({
+    pool,
+    workspaceId: offPresent.workspaceId,
+    contactId: offPresent.contactId,
+    hasPhoneField: false,
+    hasDetails: true,
+    details: { email: "off-present-next@example.com" },
+  });
+  const persistedOffPresent = await contactRow(offPresent);
+  assert.equal(persistedOffPresent.details.email, "off-present-next@example.com");
+  assert.equal((await verificationRow(offPresent, "email")).status, "pending");
+  assert.equal((await verificationRow(offPresent, "email")).destination_normalized, "off-present-next@example.com");
+
+  process.env.RECIPIENT_VERIFICATION_MODE = "shadow";
+  const shadowPresent = await seed({ email: "shadow-present@example.com", phone: "+14155550193" });
+  await markVerified(shadowPresent, "email", "shadow-present@example.com");
+  await verification.updateContactWithVerification({
+    pool,
+    workspaceId: shadowPresent.workspaceId,
+    contactId: shadowPresent.contactId,
+    hasPhoneField: false,
+    hasDetails: true,
+    details: { email: "shadow-present-next@example.com" },
+  });
+  assert.equal((await contactRow(shadowPresent)).details.email, "shadow-present-next@example.com");
+  assert.equal((await verificationRow(shadowPresent, "email")).status, "pending");
+
   const offContact = await seed({ email: "off@example.com", phone: "+14155550190" });
   await hideVerificationTables();
   try {
@@ -343,6 +374,29 @@ test("contact changes and verification stay in one transaction", async () => {
       details: { email: "off-next@example.com" },
     });
     assert.equal(offUpdated.details.email, "off-next@example.com");
+    const persistedOffEmail = await pool.query(
+      "SELECT details, phone_e164 FROM workspace_contacts WHERE id = $1",
+      [offContact.contactId],
+    );
+    assert.equal(persistedOffEmail.rows[0].details.email, "off-next@example.com");
+    const offPhone = await verification.updateContactWithVerification({
+      pool,
+      workspaceId: offContact.workspaceId,
+      contactId: offContact.contactId,
+      hasPhoneField: true,
+      phoneE164: "+14155550194",
+      hasDetails: false,
+    });
+    assert.equal(offPhone.phone_e164, "+14155550194");
+    const persistedOffPhone = await pool.query(
+      "SELECT details, phone_e164 FROM workspace_contacts WHERE id = $1",
+      [offContact.contactId],
+    );
+    assert.equal(persistedOffPhone.rows[0].phone_e164, "+14155550194");
+    assert.equal(persistedOffPhone.rows[0].details.email, "off-next@example.com");
+    const sessionOk = await pool.query("SELECT 1 AS ok");
+    assert.equal(sessionOk.rows[0].ok, 1);
+
     process.env.TT_DEPLOYMENT = "cloud";
     delete process.env.RECIPIENT_VERIFICATION_MODE;
     const enforceContact = await pool.query(
@@ -366,6 +420,32 @@ test("contact changes and verification stay in one transaction", async () => {
       [enforceContact.rows[0].id],
     );
     assert.equal(unchanged.rows[0].details.email, "cloud@example.com");
+
+    process.env.TT_DEPLOYMENT = "self-hosted";
+    process.env.RECIPIENT_VERIFICATION_MODE = "enforce";
+    const selfHostedEnforce = await pool.query(
+      `INSERT INTO workspace_contacts (workspace_id, first_name, phone_e164, details)
+       VALUES ($1, 'Hosted', '+14155550195', $2::jsonb) RETURNING id`,
+      [offContact.workspaceId, JSON.stringify({ email: "hosted@example.com" })],
+    );
+    await assert.rejects(
+      () => verification.updateContactWithVerification({
+        pool,
+        workspaceId: offContact.workspaceId,
+        contactId: selfHostedEnforce.rows[0].id,
+        hasPhoneField: false,
+        hasDetails: true,
+        details: { email: "hosted-next@example.com" },
+      }),
+      (error) => error.status === 503 && error.code === "RECIPIENT_VERIFICATION_UNAVAILABLE",
+    );
+    const hostedUnchanged = await pool.query(
+      "SELECT details FROM workspace_contacts WHERE id = $1",
+      [selfHostedEnforce.rows[0].id],
+    );
+    assert.equal(hostedUnchanged.rows[0].details.email, "hosted@example.com");
+    const afterFailure = await pool.query("SELECT 1 AS ok");
+    assert.equal(afterFailure.rows[0].ok, 1);
   } finally {
     await restoreVerificationTables();
     process.env.TT_DEPLOYMENT = "self-hosted";

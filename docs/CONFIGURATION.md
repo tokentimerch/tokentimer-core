@@ -119,6 +119,7 @@ the origins users and integrations actually use in the browser.
 | `ALLOW_LOCAL_DEV_CORS`                     | In production, also allow `http://localhost:*` and `http://127.0.0.1:*` in CORS (local troubleshooting only) | `false`                                | API security |
 | `PHONE_HASH_SALT`                          | Optional salt for phone hashing                                                 | `unset`                                | API privacy  |
 | `WEEKLY_DIGEST_RECIPIENT_KEY`              | HMAC secret for weekly-digest skip keys. Falls back to `SESSION_SECRET`. Rotating it re-sends already claimed recipients for the current week. | `unset` | Worker privacy |
+| `WEEKLY_DIGEST_UNCERTAIN_RETRY_SECONDS`    | How long a weekly digest waits after an in-flight or ambiguous provider call before another worker may send | `900` | Worker |
 | `TRUST_PROXY_HOPS`                         | Number of trusted reverse-proxy hops in front of the API (affects `req.ip` and `req.protocol` resolution). `0` = no proxy, `1` = single ingress/reverse proxy, `2` = LB -> ingress. | `2`                                    | API security |
 | `WORKER_API_KEY`                           | Worker-to-API auth key. Bearer requests authenticated with this key are CSRF-exempt, as are CertOps machine-token paths. CSRF is enforced in development as well as production. | `unset (falls back to SESSION_SECRET)` | Worker, API  |
 
@@ -181,7 +182,7 @@ Set `RECIPIENT_FINGERPRINT_SECRET` (or rely on `PHONE_HASH_SALT` or `SESSION_SEC
 
 Point Twilio's inbound WhatsApp webhook at `POST /webhooks/twilio/whatsapp/inbound`. The signature is checked against `PUBLIC_BASE_URL` or `API_URL` plus the request path and the raw form body. A missing base URL or auth token returns 503 and does not confirm a number. Delivery status callbacks are not consent.
 
-Migration 81 (`recipient_channel_verification`) adds the verification tables and does not mark existing contacts verified. Migration 82 (`weekly_digest_recipient_claim_token`) adds digest claim ownership. Migration 78 remains CertOps installed-file distribution, and migrations 79 and 80 are auto-sync metrics. See [recipient verification](recipient-verification.md).
+The standard migration runner applies pending migrations in version order. Migration 78 is CertOps installed-file distribution. Migrations 79 and 80 are auto-sync metrics. Migration 81 (`recipient_channel_verification`) adds the verification tables and does not mark existing contacts verified. Migration 82 (`weekly_digest_recipient_claim_token`) adds weekly-digest claim ownership, in-flight delivery state, and provider-acceptance tracking. Both 81 and 82 are installed together. Self-hosted `off` means verification is not enforced. It does not mean migration 81 should be skipped. See [recipient verification](recipient-verification.md).
 
 ## Alerts, limits, and webhooks
 

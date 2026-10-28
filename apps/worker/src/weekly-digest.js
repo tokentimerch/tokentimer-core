@@ -33,8 +33,8 @@ import {
   invertDigestCandidates,
   claimWeeklyDigestRecipient,
   releaseWeeklyDigestRecipientClaim,
-  markWeeklyDigestRecipientSent,
-  finalizeWeeklyDigestDelivery,
+  runOwnedDigestDelivery,
+  isUncertainProviderFailure,
   weeklyDigestWhatsAppIdempotencyKey,
 } from "./shared/weeklyDigestRecipients.js";
 
@@ -44,6 +44,10 @@ const APP_URL = (process.env.APP_URL || "http://localhost:5173").replace(
 );
 
 const WEEKLY_DIGEST_CLAIM_LEASE_MS = 300000;
+const WEEKLY_DIGEST_LEASE_RENEW_MS = Math.min(
+  60000,
+  Math.max(5000, Math.floor(WEEKLY_DIGEST_CLAIM_LEASE_MS / 3)),
+);
 
 function getWeekStartDate() {
   const now = new Date();
@@ -1080,19 +1084,28 @@ export async function weeklyDigestJob() {
           skipped++;
           continue;
         }
+        const claimInput = {
+          workspaceId: ws.workspace_id,
+          weekStartDate,
+          channel: row.channel,
+          recipientKey: row.recipientKey,
+          claimToken: claim.claim_token,
+          leaseMs: WEEKLY_DIGEST_CLAIM_LEASE_MS,
+        };
         if (claim.provider_accepted_at) {
-          const finalized = await markWeeklyDigestRecipientSent(client, {
-            workspaceId: ws.workspace_id,
-            weekStartDate,
-            channel: row.channel,
-            recipientKey: row.recipientKey,
-            claimToken: claim.claim_token,
-          });
-          if (!finalized) {
-            logUnconfirmedDelivery(row, "ownership-lost");
+          const finalized = await runOwnedDigestDelivery(client, {
+            ...claimInput,
+            providerAcceptedAt: claim.provider_accepted_at,
+          }, async () => ({ success: false }));
+          if (finalized.completion !== "confirmed") {
+            logUnconfirmedDelivery(row, finalized.completion);
             continue;
           }
           recordConfirmedDelivery(row);
+          continue;
+        }
+        if (claim.delivery_state === "uncertain") {
+          skipped++;
           continue;
         }
         if (row.channel === "email" || row.channel === "whatsapp") {
@@ -1124,46 +1137,54 @@ export async function weeklyDigestJob() {
           row.contributingGroupIds,
         );
 
-        let res;
-        try {
-          res = await deliverRecipientDigest({
-            row,
-            ws,
-            weekStartDate,
-            groupNames,
-            phoneNameByKey,
-            webhookByUrl,
-            weeklyDigestTemplateSid,
-          });
-        } catch (err) {
-          logger.error(
-            JSON.stringify({
-              level: "ERROR",
-              message: "weekly-digest-recipient-send-failed",
-              workspace: ws.workspace_id,
-              channel: row.channel,
-              error: err.message,
-            }),
-          );
-          res = { success: false };
-        }
-
-        if (!res || !res.success) {
+        const outcome = await runOwnedDigestDelivery(client, claimInput, async ({ renew }) => {
+          const timer = setInterval(() => {
+            renew().catch((error) => {
+              logger.warn(
+                JSON.stringify({
+                  level: "WARN",
+                  message: "weekly-digest-lease-renew-failed",
+                  workspace: ws.workspace_id,
+                  channel: row.channel,
+                  error: error && error.message,
+                }),
+              );
+            });
+          }, WEEKLY_DIGEST_LEASE_RENEW_MS);
+          if (typeof timer.unref === "function") timer.unref();
+          try {
+            return await deliverRecipientDigest({
+              row,
+              ws,
+              weekStartDate,
+              groupNames,
+              phoneNameByKey,
+              webhookByUrl,
+              weeklyDigestTemplateSid,
+            });
+          } catch (err) {
+            logger.error(
+              JSON.stringify({
+                level: "ERROR",
+                message: "weekly-digest-recipient-send-failed",
+                workspace: ws.workspace_id,
+                channel: row.channel,
+                error: err.message,
+              }),
+            );
+            return { success: false, uncertain: isUncertainProviderFailure(err) };
+          } finally {
+            clearInterval(timer);
+          }
+        });
+        if (outcome.completion === "rejected") {
           try {
             cWeeklyDigestSent.labels(row.channel, "failure").inc();
           } catch (_) {}
           continue;
         }
-
-        const finalized = await finalizeWeeklyDigestDelivery(client, {
-          workspaceId: ws.workspace_id,
-          weekStartDate,
-          channel: row.channel,
-          recipientKey: row.recipientKey,
-          claimToken: claim.claim_token,
-        });
-        if (finalized.completion !== "confirmed") {
-          logUnconfirmedDelivery(row, finalized.completion);
+        if (outcome.completion !== "confirmed") {
+          logUnconfirmedDelivery(row, outcome.completion);
           continue;
         }
         recordConfirmedDelivery(row);

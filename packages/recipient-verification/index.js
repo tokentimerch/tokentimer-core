@@ -1562,11 +1562,19 @@ function renderDone(result) {
   return renderPage("Invitation unavailable", "<h1>This invitation is unavailable</h1><p>The link is invalid, expired, or already used.</p>");
 }
 
+async function releaseOptionalSavepoint(client, optional) {
+  if (optional) await client.query("RELEASE SAVEPOINT rv_optional_verification");
+}
+
 async function invalidateChangedDestination({ client, workspaceId, contactId, channel, previousDestination, nextDestination }) {
   const previous = normalizeDestination(channel, previousDestination);
   const next = normalizeDestination(channel, nextDestination);
   if (previous.ok && next.ok && previous.value === next.value) return { changed: false };
   const mode = resolveEnforcementMode();
+  // Off mode may run before migration 81. A missing-table error aborts the
+  // surrounding transaction, so the optional work sits in a savepoint.
+  const optional = mode === "off";
+  if (optional) await client.query("SAVEPOINT rv_optional_verification");
   try {
     await client.query(
       `-- RV_LOCK_CONTACT
@@ -1587,11 +1595,15 @@ async function invalidateChangedDestination({ client, workspaceId, contactId, ch
           WHERE workspace_id = $1 AND contact_id = $2 AND channel = $3`,
         [workspaceId, contactId, channel],
       );
+      await releaseOptionalSavepoint(client, optional);
       return { changed: true };
     }
     const fingerprint = destinationFingerprint(channel, next.value);
     if (!fingerprint) {
-      if (mode === "off") return { changed: false, skipped: "unconfigured" };
+      if (mode === "off") {
+        await releaseOptionalSavepoint(client, optional);
+        return { changed: false, skipped: "unconfigured" };
+      }
       throw coded(503, "RECIPIENT_VERIFICATION_UNAVAILABLE", "Recipient verification is not available");
     }
     await client.query(
@@ -1603,11 +1615,16 @@ async function invalidateChangedDestination({ client, workspaceId, contactId, ch
           AND destination_normalized IS DISTINCT FROM $4`,
       [workspaceId, contactId, channel, next.value, fingerprint],
     );
+    await releaseOptionalSavepoint(client, optional);
     return { changed: true };
   } catch (error) {
+    if (optional && isMissingSchema(error)) {
+      await client.query("ROLLBACK TO SAVEPOINT rv_optional_verification");
+      await client.query("RELEASE SAVEPOINT rv_optional_verification");
+      return { changed: false, skipped: "schema" };
+    }
     if (error && error.code === "RECIPIENT_VERIFICATION_UNAVAILABLE") throw error;
     if (isMissingSchema(error)) {
-      if (mode === "off") return { changed: false, skipped: "schema" };
       throw coded(503, "RECIPIENT_VERIFICATION_UNAVAILABLE", "Recipient verification is not available");
     }
     throw error;

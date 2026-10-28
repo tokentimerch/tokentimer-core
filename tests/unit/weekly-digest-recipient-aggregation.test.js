@@ -162,7 +162,9 @@ describe("claimWeeklyDigestRecipient", () => {
       3,
     ]);
     assert.match(state.queries[0].params[6], /^[0-9a-f-]{36}$/i);
+    assert.equal(state.queries[0].params[7], 900);
     assert.match(sql, /claim_token = EXCLUDED.claim_token/);
+    assert.match(sql, /delivery_state = 'in_progress'/);
   });
 
   it("returns null when RETURNING is empty so the caller does not send", async () => {

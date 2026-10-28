@@ -97,7 +97,7 @@ The unit suite uses an in-memory query double. It does not open SMTP or Twilio. 
 
 ## 10. Deployment and rollback
 
-1. Deploy the API and worker together. Apply migration 82 before the weekly digest worker. Apply migration 81 when verification is turned on. Migration 78 remains CertOps installed-file distribution. Migrations 79 and 80 are auto-sync metrics.
+1. Deploy the API and worker together. The standard migration runner applies migration 81 and then migration 82. Migration 78 remains CertOps installed-file distribution. Migrations 79 and 80 are auto-sync metrics. Migration 81 is the recipient verification schema. Migration 82 is weekly-digest ownership, in-flight delivery state, and provider-acceptance tracking. Self-hosted `off` is an enforcement setting, not a reason to skip migration 81.
 2. Set `RECIPIENT_FINGERPRINT_SECRET` and `PUBLIC_BASE_URL` or `API_URL`.
 3. Configure the Twilio inbound webhook.
 4. Leave self-hosted on `off` until managers are ready to collect confirmation. `shadow` records eligibility without blocking delivery.

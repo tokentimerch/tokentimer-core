@@ -63,7 +63,7 @@ RECIPIENT_VERIFICATION_MODE=enforce
 
 `shadow` is the self-hosted observation mode. It logs eligibility and still delivers. Cloud verification is mandatory. Set `TT_DEPLOYMENT=cloud` and `RECIPIENT_VERIFICATION_MODE=enforce` on the API and every notification worker.
 
-1. Apply migration 82 before running the weekly digest worker, including when verification stays off. It adds the digest claim ownership token. Apply migration 81 when you enable verification. It does not mark existing contacts verified. Migration 78 remains CertOps installed-file distribution. Migrations 79 and 80 are auto-sync metrics.
+1. Run the standard migration runner. It applies pending migrations in version order, so migration 81 is installed before migration 82. Migration 78 is CertOps installed-file distribution. Migrations 79 and 80 are auto-sync metrics. Migration 81 is the recipient verification schema and does not mark existing contacts verified. Migration 82 adds weekly-digest claim ownership, in-flight delivery state, and provider-acceptance tracking. Leaving verification off does not mean skipping migration 81. Schema installation, `RECIPIENT_VERIFICATION_MODE`, and enforcement are separate. Do not hand-apply migration 82 while skipping 81.
 2. Set `RECIPIENT_FINGERPRINT_SECRET` and `PUBLIC_BASE_URL` or `API_URL` before sending invitations.
 3. Ask workspace managers to send invitations. Existing alert groups keep their contacts.
 4. Switch self-hosted from `off` or `shadow` to `enforce` after recipients confirm.
@@ -83,3 +83,4 @@ RECIPIENT_VERIFICATION_MODE=enforce
 - The confirmation token is present on the POST URL. The response redirects to a token-free page and sets `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
 - Invitation pages return the same generic result for unknown, expired, and replayed links.
 - Apply the migration on a database before production enforcement. The migration is idempotent.
+- A weekly digest renews its claim lease during the provider call. If that lease expires while a send is still in progress, the next worker records the delivery as uncertain and waits `WEEKLY_DIGEST_UNCERTAIN_RETRY_SECONDS` (default 900) before trying again. SMTP cannot promise that a crash after the provider accepts the message, and before that acceptance is stored, will never send a second copy. WhatsApp retries keep the same idempotency key. A recorded provider acceptance is finished without sending again.
