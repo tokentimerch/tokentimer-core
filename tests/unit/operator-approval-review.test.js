@@ -20,3 +20,10 @@ it("human labels cannot disclose credential-shaped strings or URL credentials", 
   assert.ok(!safeText("https://person:password@ca.example.test/directory").includes("password"));
   assert.equal(safeText("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----"), "[redacted]");
 });
+it("assistant approval intent binds executor routing as well as payload", () => {
+  const { computeCanonicalIntentHash } = require("../../apps/api/services/certops/jobApprovals");
+  const job = { requestedByConnectionId: "connection", operation: "renew", subjectId: "certificate", payload: { target: { reference: "web" } }, assignedAgentId: "agent-a", requiredCommandProfile: "renew" };
+  for (const field of ["assignedAgentId", "requiredTargetSelector", "requiredDnsProvider", "requiredCommandProfile"]) {
+    assert.notEqual(computeCanonicalIntentHash(job), computeCanonicalIntentHash({ ...job, [field]: "changed" }), field);
+  }
+});

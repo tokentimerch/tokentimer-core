@@ -198,6 +198,12 @@ function buildCanonicalExecutionIntent(job) {
     profileSnapshot: payload.profileSnapshot || payload.profile || null,
     commandRef: payload.commandRef || null,
     action: payload.action || null,
+    ...(job.requestedByConnectionId ? { operatorRouting: {
+      assignedAgentId: job.assignedAgentId ?? null,
+      requiredTargetSelector: job.requiredTargetSelector ?? null,
+      requiredDnsProvider: job.requiredDnsProvider ?? null,
+      requiredCommandProfile: job.requiredCommandProfile ?? null,
+    } } : {}),
     payload,
   };
 }
@@ -285,7 +291,8 @@ function assertNonRequester(job, approverUserId) {
 async function loadJobForApproval(db, workspaceId, jobId) {
   const result = await db.query(
     `SELECT id, workspace_id, operation, status, mode, payload,
-            subject_type, subject_id,
+            subject_type, subject_id, assigned_agent_id, required_target_selector,
+            required_dns_provider, required_command_profile,
             requested_by_user_id, requested_by_api_token_id, requested_by_connection_id,
             approved_by_user_id, approved_at, approved_payload_hash,
             approved_canonical_intent_hash
@@ -453,9 +460,13 @@ async function approveJob(options) {
         AND subject_type IS NOT DISTINCT FROM $9 AND subject_id IS NOT DISTINCT FROM $10
         AND requested_by_connection_id IS NOT DISTINCT FROM $11
         AND requested_by_user_id IS NOT DISTINCT FROM $12
+        AND assigned_agent_id IS NOT DISTINCT FROM $13
+        AND required_target_selector IS NOT DISTINCT FROM $14
+        AND required_dns_provider IS NOT DISTINCT FROM $15
+        AND required_command_profile IS NOT DISTINCT FROM $16
       RETURNING id, status, approved_by_user_id, approved_at,
                 approved_payload_hash, approved_canonical_intent_hash`,
-    [workspaceId, jobId, approverUserId, payloadHash, canonicalIntentHash, JSON.stringify(job.payload), job.mode || "real", job.operation, job.subjectType, job.subjectId, job.requestedByConnectionId, job.requestedByUserId],
+    [workspaceId, jobId, approverUserId, payloadHash, canonicalIntentHash, JSON.stringify(job.payload), job.mode || "real", job.operation, job.subjectType, job.subjectId, job.requestedByConnectionId, job.requestedByUserId, job.assignedAgentId ?? null, job.requiredTargetSelector ?? null, job.requiredDnsProvider ?? null, job.requiredCommandProfile ?? null],
   );
   const row = updated.rows[0];
   if (!row) {

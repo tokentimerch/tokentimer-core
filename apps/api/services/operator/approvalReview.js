@@ -89,6 +89,12 @@ async function buildAssistantApprovalReview({ db, job, intentHash, lockSources =
     effect: {
       operation: job.operation, certificateId: job.subjectId, fingerprintSha256: row.bound_fingerprint_sha256,
       certificateExpiry: job.payload.notAfter,
+      executionRouting: {
+        assignedAgentId: job.assignedAgentId ?? null,
+        requiredTargetSelector: job.requiredTargetSelector == null ? null : safeText(job.requiredTargetSelector),
+        requiredDnsProvider: job.requiredDnsProvider == null ? null : safeText(job.requiredDnsProvider),
+        requiredCommandProfile: job.requiredCommandProfile == null ? null : safeText(job.requiredCommandProfile),
+      },
       renewalProfile: publicFields(job.payload.renewalProfile, profileSchema),
       publication: job.payload.publication ? publicFields(job.payload.publication, payloadSchema.properties.publication, payloadSchema) : null,
       standingRenewal: "Renews an existing managed certificate. Creates no new automatic-renewal authority; existing renewal management and current workspace policies continue.",

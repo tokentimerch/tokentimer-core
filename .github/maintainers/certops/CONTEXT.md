@@ -530,7 +530,8 @@ Every assistant renewal still requires another manager or admin to approve,
 even where ordinary Vault workflows allow a single operator. Preview consent
 binds the resolved execution snapshot, not just its mutable profile ID.
 The human review shows assistant provenance, deadlines and the complete public
-renewal/publication snapshot; approval must match that review and live intent.
+renewal/publication snapshot and executor routing; approval and claim must match
+that review and live intent.
 The qualified development client is Codex CLI 0.165.0-alpha.1.2 using legacy
 stdio revision 2025-06-18. Production flags remain false; see ADR-0015 for scope.
 

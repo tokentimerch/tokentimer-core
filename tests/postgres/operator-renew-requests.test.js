@@ -473,6 +473,19 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
       } finally { await pool.query("UPDATE certificate_profiles SET public_metadata = $2::jsonb WHERE id = $1", [certA.profileId, JSON.stringify(original)]); }
     });
 
+    it("requires a fresh human review if execution routing changes without a payload edit", async () => {
+      const pending = await pendingRequest();
+      const options = { workspaceId, jobId: pending.jobId, approverUserId: approver };
+      const { review } = await approvals.requestApprovalReview(options);
+      assert.ok(Object.hasOwn(review.effect.executionRouting, "assignedAgentId"));
+      const before = await jobRow(pending.jobId);
+      await pool.query("UPDATE certificate_jobs SET required_command_profile='other-command' WHERE id=$1", [pending.jobId]);
+      const after = await jobRow(pending.jobId);
+      assert.deepEqual(after.payload, before.payload);
+      await assert.rejects(approvals.approveJob({ ...options, reviewHash: review.reviewHash }), { code: "CERTOPS_APPROVAL_REVIEW_REQUIRED" });
+      assert.equal((await jobRow(pending.jobId)).status, "pending_approval");
+    });
+
     it("accepted requests remain approvable after preview submission expiry", async () => {
       const pending = await pendingRequest();
       await pool.query("UPDATE operator_action_plans SET expires_at = NOW() - INTERVAL '1 minute', created_at = NOW() - INTERVAL '11 minutes' WHERE id = (SELECT plan_id FROM operator_action_requests WHERE job_id = $1)", [pending.jobId]);
@@ -511,7 +524,11 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
 
     it("can be approved by someone else, then reads as approved without a second copy of the state", async () => {
       const request = await pendingRequest();
-      await approve(request.jobId, approver);
+      const decision = await approve(request.jobId, approver);
+      const yaml = require("node:module").createRequire(require.resolve("mocha/package.json"))("js-yaml");
+      const spec = yaml.load(fs.readFileSync(path.resolve(__dirname, "../../packages/contracts/openapi/openapi.yaml"), "utf8"));
+      const validateDecision = ajv.compile(spec.components.schemas.CertOpsJobApprovalDecisionResponse);
+      assert.equal(validateDecision(decision), true, JSON.stringify(validateDecision.errors));
       const job = await jobRow(request.jobId);
       assert.equal(job.status, "pending", "now claimable by an agent, as any approved job is");
       assert.equal(job.approved_by_user_id, approver);
@@ -1225,6 +1242,19 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
       const result = await claim();
       assert.deepEqual(result.jobs.map((j) => j.jobId), [request.jobId]);
       assert.equal((await jobRow(request.jobId)).status, "claimed");
+    });
+
+    it("invalidates an assistant approval if its eligible executor routing changes", async () => {
+      const request = await approved();
+      const before = await jobRow(request.jobId);
+      assert.equal(before.assigned_agent_id, null);
+      await pool.query("UPDATE certificate_jobs SET assigned_agent_id=$2 WHERE id=$1", [request.jobId, agentRow.id]);
+      assert.deepEqual((await claim()).jobs, []);
+      const after = await jobRow(request.jobId);
+      assert.deepEqual(after.payload, before.payload);
+      assert.equal(after.status, "pending_approval");
+      const history = await pool.query("SELECT decision FROM certops_job_approvals WHERE job_id=$1 ORDER BY created_at DESC", [request.jobId]);
+      assert.equal(history.rows[0].decision, "invalidated");
     });
 
     it("does not claim approved work once the connection has expired", async () => {

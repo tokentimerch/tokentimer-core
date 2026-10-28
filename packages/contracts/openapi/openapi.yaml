@@ -7080,7 +7080,7 @@ paths:
                   description: Optional attributable justification stored in the decision ledger.
       responses:
         "200":
-          description: Job approved; status moves to approved and the payload hash is recorded
+          description: Job approved; status moves to pending (claimable) and the payload hash is recorded
           content:
             application/json:
               schema:
@@ -12698,10 +12698,10 @@ components:
           format: uuid
         status:
           type: string
-          enum: [approved, rejected]
+          enum: [pending, rejected]
         approvedByUserId:
-          type: string
-          format: uuid
+          type: integer
+          format: int64
           nullable: true
         approvedAt:
           type: string
@@ -12734,8 +12734,8 @@ components:
               type: string
               enum: [approved, rejected]
             approvedByUserId:
-              type: string
-              format: uuid
+              type: integer
+              format: int64
               nullable: true
             payloadHash:
               type: string

@@ -1403,6 +1403,11 @@ async function claimJobs({
           operation: row.operation,
           subjectType: row.subject_type,
           subjectId: row.subject_id,
+          requestedByConnectionId: row.requested_by_connection_id,
+          assignedAgentId: row.assigned_agent_id,
+          requiredTargetSelector: row.required_target_selector,
+          requiredDnsProvider: row.required_dns_provider,
+          requiredCommandProfile: row.required_command_profile,
           payload: rowPayload,
         });
         const intentMismatch =

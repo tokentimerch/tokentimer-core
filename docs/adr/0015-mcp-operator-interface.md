@@ -677,9 +677,10 @@ approval or a withdrawal.
 
 **Human review and client qualification (2026-10-28).** The session-only review
 identifies the requester, connection, advisory client label, both expiry windows
-and the complete public renewal/publication snapshot. The reviewer acknowledges
+and the complete public renewal/publication snapshot and executor routing. The reviewer acknowledges
 that effect; approval requires its exact `reviewHash`, rechecks live authority
-and source intent, and atomically refuses concurrent job changes. Ordinary jobs
+and source intent, and atomically refuses concurrent job changes. Assistant
+approval and claim bind the same executor-routing fields. Ordinary jobs
 retain their existing approval flow. Preview expiry limits submission only.
 
 The opt-in `scripts/qualify-mcp-client.cjs` journey used real session/CSRF
