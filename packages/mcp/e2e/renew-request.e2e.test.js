@@ -184,7 +184,8 @@ describe("an assistant requests a renewal, a person approves it", { concurrency:
       assert.equal(mine.items[0].requestRecordId, request.requestRecordId);
 
       // A different person approves, and only then does the job become claimable.
-      await approvals.approveJob({ workspaceId, jobId: request.jobId, approverUserId: approver, reason: "reviewed" });
+      const review = await approvals.requestApprovalReview({ workspaceId, jobId: request.jobId, viewerUserId: approver });
+      await approvals.approveJob({ workspaceId, jobId: request.jobId, approverUserId: approver, reason: "reviewed", reviewHash: review.review.reviewHash });
       const after = data(await call(client, "tt_get_action_request", { requestRecordId: request.requestRecordId }));
       assert.equal(after.state, "approved");
       assert.equal((await pool.query("SELECT status FROM certificate_jobs WHERE id = $1", [request.jobId])).rows[0].status, "pending");
@@ -210,7 +211,8 @@ describe("an assistant requests a renewal, a person approves it", { concurrency:
       assert.equal(JSON.parse(reuse.content[0].text).reason, "plan_used");
       const plan2 = data(await call(client, "tt_preview_renew", { identityId }));
       const second = data(await call(client, "tt_request_renew", { planId: plan2.planId, planHash: plan2.planHash, requestId: crypto.randomUUID() }));
-      await approvals.approveJob({ workspaceId, jobId: second.jobId, approverUserId: approver, reason: "first" });
+      const review = await approvals.requestApprovalReview({ workspaceId, jobId: second.jobId, viewerUserId: approver });
+      await approvals.approveJob({ workspaceId, jobId: second.jobId, approverUserId: approver, reason: "first", reviewHash: review.review.reviewHash });
       const late = await call(client, "tt_cancel_request", { requestRecordId: second.requestRecordId });
       assert.equal(late.isError, true);
       const error = JSON.parse(late.content[0].text);

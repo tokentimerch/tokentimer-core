@@ -153,13 +153,19 @@ async function browserJourney() {
 
 async function cleanup() {
   const state = fixture();
-  await pool.query("DELETE FROM workspaces WHERE id=$1", [state.workspaceId]);
-  for (const person of state.people) {
-    await pool.query("DELETE FROM workspaces WHERE created_by=$1", [person.id]);
-    await pool.query("DELETE FROM users WHERE id=$1", [person.id]);
-  }
+  // Immutable audit rows intentionally prevent hard-deleting attributable
+  // fixture users. Contain their connection here; the runner removes the
+  // entire disposable database/container after all qualification phases.
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    if (state.connectionId) await require("../apps/api/services/operator/connections").revokeConnection({ client, workspaceId: state.workspaceId, connectionId: state.connectionId, revokedBy: state.people[0].id });
+    await client.query("UPDATE workspaces SET operator_writes_enabled=FALSE WHERE id=$1", [state.workspaceId]);
+    await client.query("COMMIT");
+  } catch (error) { await client.query("ROLLBACK"); throw error; }
+  finally { client.release(); }
   fs.rmSync(credentialFile, { force: true }); fs.rmSync(fixturePath, { force: true });
-  console.log("Disposable users, workspaces and credential file removed.");
+  console.log("Connection revoked, workspace writes disabled and private files removed. Remove the disposable database/container to erase audit fixtures.");
 }
 async function negativeBrowserJourney() {
   const state = fixture();
@@ -214,5 +220,5 @@ async function negativeBrowserJourney() {
   } finally { await browser.close(); }
 }
 const phases = { prepare, client: () => clientJourney(false), browser: browserJourney, after: () => clientJourney(true), negative: negativeBrowserJourney, cleanup };
-assert.ok(phases[process.argv[2]], "Choose prepare, client, browser, after or cleanup");
+assert.ok(phases[process.argv[2]], "Choose prepare, client, browser, after, negative or cleanup");
 phases[process.argv[2]]().catch(error => { console.error(error.message); process.exitCode = 1; }).finally(() => pool.end());
