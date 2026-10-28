@@ -248,7 +248,7 @@ function getAuditEventKey(ev) {
   return String(ev?.id ?? `${ev?.action || 'event'}-${ev?.occurred_at || ''}`);
 }
 
-/** Truncate long action names in the pill; full name on hover. */
+/** Keep full action names readable within fixed-width cells and mobile cards. */
 function AuditActionBadge({ action }) {
   const label = action || '';
   return (
@@ -257,7 +257,6 @@ function AuditActionBadge({ action }) {
       hasArrow
       placement='top'
       openDelay={300}
-      shouldWrapChildren
     >
       <Badge
         colorScheme='blue'
@@ -265,9 +264,9 @@ function AuditActionBadge({ action }) {
         display='inline-block'
         maxW='100%'
         minW={0}
-        overflow='hidden'
-        textOverflow='ellipsis'
-        whiteSpace='nowrap'
+        whiteSpace='normal'
+        overflowWrap='anywhere'
+        textAlign='left'
         title={label}
       >
         {label}
