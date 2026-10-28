@@ -4,8 +4,9 @@ const { createHash } = require("node:crypto");
 
 const OPTIONAL_LABELS = ["configuration_name", "monitoring_group", "kind", "asset_name", "project", "group"];
 const HIGH_CARDINALITY_LABELS = ["asset_name", "project", "group"];
-function highCardinalityLabelsEnabled(env = process.env) {
-  return env.AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS === "true";
+function permittedExtraLabels(env = process.env) {
+  const requested = String(env.AUTO_SYNC_METRICS_EXTRA_LABELS || "").split(",").map(label => label.trim());
+  return HIGH_CARDINALITY_LABELS.filter(label => requested.includes(label));
 }
 
 const KNOWN_KINDS = new Set([
@@ -34,7 +35,8 @@ function normalizeMetricSettings(value = {}) {
 }
 function effectiveMetricSettings(value, env = process.env) {
   const settings = normalizeMetricSettings(value);
-  if (!highCardinalityLabelsEnabled(env)) settings.labels = settings.labels.filter(label => !HIGH_CARDINALITY_LABELS.includes(label));
+  const permitted = permittedExtraLabels(env);
+  settings.labels = settings.labels.filter(label => !HIGH_CARDINALITY_LABELS.includes(label) || permitted.includes(label));
   return settings;
 }
 function metadata(value) { return typeof value === "string" && value.length <= 512 ? value : ""; }
@@ -63,4 +65,4 @@ async function recordCreationMetrics(client, context, payload, settings) {
   [context.configId, dimensions.kind, dimensions.asset_name, dimensions.project, dimensions.group,
     createHash("sha256").update(JSON.stringify(dimensions)).digest("hex")]);
 }
-module.exports = { HIGH_CARDINALITY_LABELS, highCardinalityLabelsEnabled, effectiveMetricSettings, KNOWN_KINDS, OPTIONAL_LABELS, metricSettingsError, normalizeMetricSettings, metricSourceDimensions, creationDimensions, recordCreationMetrics };
+module.exports = { permittedExtraLabels, HIGH_CARDINALITY_LABELS, effectiveMetricSettings, KNOWN_KINDS, OPTIONAL_LABELS, metricSettingsError, normalizeMetricSettings, metricSourceDimensions, creationDimensions, recordCreationMetrics };

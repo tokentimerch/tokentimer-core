@@ -73,7 +73,7 @@ Both cause scrape failures, not evidence of zero activity.
 
 - Apply migration 81 with matching API/dashboard code; existing provider counters remain unchanged.
 - Enable additional metrics per connection. Configuration IDs remain stable; monitoring group `critical` selects the example alert.
-- Token names and project/group labels are deployment-disabled by default. Allow them with `AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS=true` or Helm `monitoring.metrics.allowHighCardinalityLabels=true`, then select them per connection.
+- Token names and project/group labels are deployment-disabled by default. Allow them with `AUTO_SYNC_METRICS_EXTRA_LABELS=asset_name,project,group` or Helm `monitoring.metrics.extraLabels=[asset_name,project,group]`, then select them per connection.
 - **Warning:** extra labels multiply series/alerts and expose metadata, never secrets. Old Prometheus samples remain until retention expires.
 - Details cover future creations; overlapping configurations credit the actual creator. Timestamp alerts work on the first scrape.
 

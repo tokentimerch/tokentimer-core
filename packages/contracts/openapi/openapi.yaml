@@ -2307,7 +2307,11 @@ paths:
                   metric_label_policy:
                     type: object
                     properties:
-                      high_cardinality_enabled: { type: boolean, default: false }
+                      extra_labels:
+                        type: array
+                        default: []
+                        uniqueItems: true
+                        items: { type: string, enum: [asset_name, project, group] }
                   items:
                     type: array
                     items:

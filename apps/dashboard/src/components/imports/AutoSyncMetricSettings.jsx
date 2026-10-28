@@ -27,13 +27,11 @@ const CHOICES = [
 export default function AutoSyncMetricSettings({
   value = DEFAULT_METRIC_SETTINGS,
   onChange,
-  allowHighCardinality = false,
+  allowedExtraLabels = [],
 }) {
   const settings = { ...DEFAULT_METRIC_SETTINGS, ...value };
   const selected = settings.labels || [];
-  const detailed =
-    allowHighCardinality &&
-    selected.some(label => ['asset_name', 'project', 'group'].includes(label));
+  const detailed = selected.some(label => allowedExtraLabels.includes(label));
   return (
     <Box borderWidth='1px' borderRadius='md' p={3}>
       <VStack align='stretch' spacing={3}>
@@ -63,12 +61,12 @@ export default function AutoSyncMetricSettings({
                 <Checkbox
                   key={label}
                   isChecked={
-                    (allowHighCardinality ||
+                    (allowedExtraLabels.includes(label) ||
                       !['asset_name', 'project', 'group'].includes(label)) &&
                     selected.includes(label)
                   }
                   isDisabled={
-                    !allowHighCardinality &&
+                    !allowedExtraLabels.includes(label) &&
                     ['asset_name', 'project', 'group'].includes(label)
                   }
                   onChange={event =>
@@ -84,7 +82,7 @@ export default function AutoSyncMetricSettings({
                 </Checkbox>
               ))}
             </SimpleGrid>
-            {!allowHighCardinality ? (
+            {allowedExtraLabels.length === 0 ? (
               <Text fontSize='sm'>
                 Token names and project/group labels are disabled by deployment
                 settings.

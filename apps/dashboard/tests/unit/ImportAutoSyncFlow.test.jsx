@@ -7,7 +7,6 @@ import {
   fireEvent,
   cleanup,
   act,
-  within,
 } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 
@@ -15,10 +14,7 @@ import ImportTokensModal from '../../src/components/ImportTokensModal.jsx';
 import apiClient, {
   gitlabAPI,
   githubAPI,
-  tokenAPI,
-  integrationAPI,
 } from '../../src/utils/apiClient';
-import { IMPORT_DOCS } from '../../src/utils/docsUrls.js';
 
 const { apiGetMock, apiDeleteMock, gitlabFormProps, githubFormProps, wsCtx } =
   vi.hoisted(() => ({
@@ -189,7 +185,9 @@ describe.each(['gitlab', 'github'])(
       apiGetMock.mockImplementation(url =>
         Promise.resolve({
           data: {
-            metric_label_policy: { high_cardinality_enabled: true },
+            metric_label_policy: {
+              extra_labels: ['asset_name', 'project', 'group'],
+            },
             items: String(url).endsWith('/auto-sync') ? configs : [],
           },
         })
@@ -368,7 +366,7 @@ describe.each(['gitlab', 'github'])(
         exact: true,
       });
       const input = screen.getByRole('textbox', { name: 'Configuration name' });
-      expect(input).toHaveValue(provider + ' 4');
+      expect(input).toHaveValue(`${provider  } 4`);
     });
   }
 );

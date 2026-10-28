@@ -106,7 +106,7 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     app.use(require("../../apps/api/routes/integrations"));
   });
   beforeEach(async () => {
-    process.env.AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS = "true";
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "asset_name,project,group";
     if (workspaceId) await pool.query("DELETE FROM workspaces WHERE id = $1", [workspaceId]);
     workspaceId = crypto.randomUUID();
     await pool.query("INSERT INTO workspaces(id, name, created_by) VALUES ($1, 'Fencing test', $2)", [workspaceId, userId]);
@@ -228,18 +228,24 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     assert.equal(value.labels.project, project); assert.equal(value.labels.group, group);
   });
 
-  it("enforces deployment opt-out despite saved high-cardinality preferences and reports that policy", async () => {
+  it("enforces the deployment allowlist for storage, export and API policy despite saved preferences", async () => {
     const config = await configuration(); await settings(config); const run = await start(config); await scan(run, ["42", "43"]);
-    process.env.AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS = "false";
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "";
     await imported(run);
     const stored = (await pool.query("SELECT asset_name, project, group_name FROM auto_sync_creation_stats WHERE config_id=$1", [config.id])).rows[0];
     assert.deepEqual(stored, { asset_name: "", project: "", group_name: "" });
     const response = await request(app).get(`/api/v1/workspaces/${workspaceId}/auto-sync`);
-    assert.equal(response.body.metric_label_policy.high_cardinality_enabled, false);
-    process.env.AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS = "true";
+    assert.equal(response.body.metric_label_policy.extra_labels.length, 0);
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "asset_name,project,group";
     await imported(run, { name: "Second credential", source_object_id: "43", location: "second-location" });
     assert.ok((await metric("auto_sync_items_created_detailed_total")).some(sample => sample.labels.asset_name === "Second credential"));
-    process.env.AUTO_SYNC_METRICS_ALLOW_HIGH_CARDINALITY_LABELS = "false";
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "project";
+    const partial = await metric("auto_sync_items_created_detailed_total");
+    assert.ok(partial.every(sample => sample.labels.asset_name === "" && sample.labels.group === ""));
+    assert.ok(partial.some(sample => sample.labels.project === "platform/backend"));
+    const policy = await request(app).get(`/api/v1/workspaces/${workspaceId}/auto-sync`);
+    assert.deepEqual(policy.body.metric_label_policy.extra_labels, ["project"]);
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "";
     const hidden = await metric("auto_sync_items_created_detailed_total");
     assert.ok(hidden.every(sample => sample.labels.asset_name === "" && sample.labels.project === "" && sample.labels.group === ""));
     assert.equal(hidden.reduce((total, sample) => total + sample.value, 0), 2);

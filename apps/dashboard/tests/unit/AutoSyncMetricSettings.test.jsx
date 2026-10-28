@@ -5,13 +5,13 @@ import { ChakraProvider } from '@chakra-ui/react';
 import AutoSyncMetricSettings, {
   DEFAULT_METRIC_SETTINGS,
 } from '../../src/components/imports/AutoSyncMetricSettings.jsx';
-function Harness({ allowHighCardinality = true }) {
+function Harness({ allowedExtraLabels = ['asset_name', 'project', 'group'] }) {
   const [settings, setSettings] = React.useState(DEFAULT_METRIC_SETTINGS);
   return (
     <ChakraProvider>
       <AutoSyncMetricSettings
         value={settings}
-        allowHighCardinality={allowHighCardinality}
+        allowedExtraLabels={allowedExtraLabels}
         onChange={setSettings}
       />
       <output data-testid='settings'>{JSON.stringify(settings)}</output>
@@ -85,8 +85,37 @@ describe('auto-sync metric exposure controls', () => {
       screen.queryByRole('textbox', { name: 'Monitoring group label' })
     ).not.toBeInTheDocument();
   });
+  it('enables only the extra labels permitted by the deployment', () => {
+    render(<Harness allowedExtraLabels={['project']} />);
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: 'Expose additional auto-sync metrics',
+      })
+    );
+    expect(
+      screen.getByRole('checkbox', {
+        name: 'Project / repository',
+        exact: true,
+      })
+    ).toBeEnabled();
+    expect(
+      screen.getByRole('checkbox', { name: 'Token / asset name', exact: true })
+    ).toBeDisabled();
+    expect(
+      screen.getByRole('checkbox', { name: 'Source group', exact: true })
+    ).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: 'Project / repository',
+        exact: true,
+      })
+    );
+    expect(
+      JSON.parse(screen.getByTestId('settings').textContent).labels
+    ).toContain('project');
+  });
   it('disables token names and project/group labels when the deployment gate is off', () => {
-    render(<Harness allowHighCardinality={false} />);
+    render(<Harness allowedExtraLabels={[]} />);
     fireEvent.click(
       screen.getByRole('checkbox', {
         name: 'Expose additional auto-sync metrics',

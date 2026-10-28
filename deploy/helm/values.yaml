@@ -606,8 +606,8 @@ twilio:
 monitoring:
   metrics:
     enabled: false
-    # Warning: token-name and project/group labels can greatly increase time series and expose metadata.
-    allowHighCardinalityLabels: false
+    # Options: asset_name, project, group. Combining labels can increase cardinality and expose metadata.
+    extraLabels: []
     pushgatewayUrl: ""
 
   serviceMonitor:
