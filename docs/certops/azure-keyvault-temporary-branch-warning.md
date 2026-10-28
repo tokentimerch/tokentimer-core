@@ -6,7 +6,7 @@
 > **Remove this exception before merging. This is not a permanent trust policy.**
 
 The exception is confined to Key Vault workflow job gates, the credential-free
-preflight, the OIDC wrapper and assertion claims check, shared ref/environment policy, cleanup owner-run
+preflight, the OIDC wrapper, shared ref/environment policy, cleanup owner-run
 verification, and the corresponding workflow validation/tests. Other branches,
 tags, PR events and automatic branch runs remain denied. AD CS is unchanged.
 Independent lab approval, spending opt-in, exact data roles, owned inventory,
@@ -28,7 +28,7 @@ does not bypass its preflight check.
 
 ## Mandatory rollback before merge
 
-- [ ] Revert the temporary OIDC assertion follow-up first, then the dedicated temporary-exception commit, including workflow,
+- [ ] Revert the dedicated temporary-exception commit, including workflow,
       PowerShell, shared policy, validator and test changes. Preserve any later
       independent fixes and live evidence.
 - [ ] Remove the exact temporary environment deployment policies below. Retain

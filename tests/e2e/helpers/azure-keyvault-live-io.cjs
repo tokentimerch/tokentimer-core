@@ -10,7 +10,6 @@ const {
   fail,
   REPOSITORY,
   LAB_ENV,
-  trustedRef,
 } = require("../../../infra/certops-azure-keyvault/policy");
 const { save, sleep } = require("../../../infra/certops-azure-keyvault/lab");
 
@@ -60,8 +59,7 @@ async function assertion(root, env = process.env) {
     claims.iss === "https://token.actions.githubusercontent.com" &&
       claims.aud === "api://AzureADTokenExchange" &&
       claims.sub === `repo:${REPOSITORY}:environment:${LAB_ENV}` &&
-      trustedRef(env) &&
-      claims.ref === env.GITHUB_REF &&
+      claims.ref === "refs/heads/main" &&
       claims.sha === env.GITHUB_SHA &&
       Number.isFinite(claims.exp),
     "AZURE_KV_GITHUB_OIDC_CONTEXT_DENIED",
