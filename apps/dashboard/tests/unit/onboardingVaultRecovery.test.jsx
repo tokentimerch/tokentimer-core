@@ -160,7 +160,7 @@ it('refreshes a terminal job and its output after retrying the same job ID', asy
   fireEvent.click(
     screen.getByRole('button', { name: 'Retry deployment to Web server' })
   );
-  await screen.findByText('Deployment: trust_validated');
+  await screen.findByText('Deployment: Certificate and TLS trust validated');
   expect(
     (await screen.findAllByText(/New attempt output/)).length
   ).toBeGreaterThan(0);
@@ -186,7 +186,7 @@ it('resumes the server-reported rollout after reload without using the request j
     )
   );
   expect(api.requestRollout).not.toHaveBeenCalled();
-  expect(screen.queryByText('All selected consumers verified')).toBeNull();
+  expect(screen.queryByText('All consumers verified')).toBeNull();
 });
 
 it('requires a retry of a failed or uncertain consumer before allowing resume', async () => {
@@ -220,5 +220,5 @@ it('shows a refused resume without claiming convergence or creating a replacemen
   );
   await screen.findByText('Workspace is paused');
   expect(api.requestRollout).not.toHaveBeenCalled();
-  expect(screen.queryByText('All selected consumers verified')).toBeNull();
+  expect(screen.queryByText('All consumers verified')).toBeNull();
 });

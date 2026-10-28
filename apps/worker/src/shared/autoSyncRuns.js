@@ -35,7 +35,9 @@ export async function claimDueAutoSyncRuns(limit = 10) {
       [limit],
     );
     const claimed = [];
-    for (const config of rows) {
+    // Claim batches retain their due-time selection, but acquire durable
+    // provider-statistic row locks in one order across concurrent workers.
+    for (const config of rows.sort((a, b) => a.provider.localeCompare(b.provider))) {
       const runId = crypto.randomUUID();
       const leaseOwner = crypto.randomUUID();
       const generation = Number(config.run_generation) + 1;

@@ -588,6 +588,11 @@ TokenTimer stores only public certificate material (fingerprints, serials, issue
 | `PUSHGATEWAY_URL`    | Prometheus Pushgateway endpoint                            | `unset`       | Worker metrics |
 | `ENVIRONMENT_SUFFIX` | Metrics environment label (if you have multiple instances) | `unset`       | Worker metrics |
 
+API `/metrics` exposes `auto_sync_items_created_total{provider}` when
+`ENABLE_METRICS=true`, along with durable run outcomes and last-attempt and
+last-success timestamps; no Pushgateway is required. See
+[auto-sync monitoring](AUTO_SYNC.md#new-inventory-metrics).
+
 ## WhatsApp (Twilio)
 
 | Variable                                               | Description                                        | Default value | Scope               |

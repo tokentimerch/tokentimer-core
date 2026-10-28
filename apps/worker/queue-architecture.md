@@ -24,7 +24,7 @@ The alert system uses a queue-based architecture with clear separation of concer
 - Full audit trail of all attempts via delivery log
 
 PagerDuty expiration incidents additionally use a durable lifecycle outbox,
-`pagerduty_incidents` (migration 79). The delivery worker drains bounded due
+`pagerduty_incidents` (migration 81). The delivery worker drains bounded due
 batches even when the ordinary queue is empty. Destination identity includes
 the workspace, endpoint and routing key digest; retry/resolve events use one
 episode key. Other webhooks retain URL deduplication. Partial webhook failures

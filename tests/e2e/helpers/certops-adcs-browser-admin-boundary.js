@@ -338,13 +338,14 @@ async function qualifyAdminRoleBoundary(context, enrollmentId) {
             ...context,
             fixture: { ...actor, workspaceId: fixture.workspaceId },
           },
-          async (page) => {
-            const denied = page.getByText(
-              "AD CS issuer management requires a workspace manager or owner",
-              { exact: true },
-            );
+          async (page, { origin }) => {
+            const renewals = new URL("/certops/renewals", origin);
+            renewals.searchParams.set("workspace", fixture.workspaceId);
             const managerAllowed = async () => {
-              await page.reload();
+              // A viewer is denied by the route guard and redirected away.
+              // Navigate back after restoration, then reopen the disclosure.
+              await page.goto(renewals.href);
+              await session.openAdcsSection(page);
               await page.getByRole("button", { name: "New issuer", exact: true }).waitFor();
               const response = await actor.request(`${api}/issuers`);
               observations.managerReadStatuses.push(response.status);
@@ -372,7 +373,8 @@ async function qualifyAdminRoleBoundary(context, enrollmentId) {
                 assert.equal(response.status, 403);
                 assert.ok(response.body?.error==="Forbidden: insufficient role","Expected authoritative workspace role refusal");
               }
-              await denied.waitFor();
+              await page.getByRole("heading", { name: "Asset Inventory", exact: true }).waitFor();
+              assert.equal(await page.getByRole("button", { name: "New issuer", exact: true }).count(), 0);
             };
             changed = true;
             assert.equal(
@@ -382,7 +384,7 @@ async function qualifyAdminRoleBoundary(context, enrollmentId) {
             );
             observations.roles.push(await role());
             await page.reload();
-            await denied.waitFor();
+            await page.waitForURL((url) => url.pathname === "/dashboard");
             await forbidden();
             assert.equal(
               (
@@ -405,7 +407,7 @@ async function qualifyAdminRoleBoundary(context, enrollmentId) {
       {
         evidenceLevel: "real-host",
         oracle:
-          "real non-owner manager issuer access, viewer UI and two API refusals, public manager→viewer→manager transitions and owner-demotion refusal",
+          "real non-owner manager issuer access, viewer route denial and two API refusals, public manager→viewer→manager transitions and owner-demotion refusal",
       },
     );
   } catch (error) {

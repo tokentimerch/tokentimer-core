@@ -19,13 +19,17 @@ them. Expiration writes originate in multiple APIs and workers.
    PagerDuty destination identity is SHA-256 over a versioned tuple of workspace,
    endpoint and routing key. Other webhook kinds still dedupe by URL. Raw keys
    and URLs are not copied into the lifecycle table or delivery evidence.
-2. Migration 79 adds `pagerduty_incidents`, a minimal ledger and durable outbox.
+2. Migration 81 adds `pagerduty_incidents`, a minimal ledger and durable outbox.
    It holds an episode UUID, workspace/asset identity, destination digest, opaque
    `dedup_key`, original expiration/authority, risk-window boundary, delivery
    evidence, retries, timestamps and leased claims. One partial unique index
    permits at most one pending/open episode per workspace/asset/destination.
    Resolve-pending episodes may coexist with a newer active episode, using
    distinct keys. No legacy incident is inferred or backfilled.
+   Released auto-sync migrations retain slots 79/80. An old preview with
+   PagerDuty recorded at v79 requires explicit validated maintenance to move
+   that entry to v81 and apply 79/80 atomically, without replaying PagerDuty DDL.
+   The normal migration runner continues to reject the conflicting history.
 3. Enqueue intent before sending. Persist explicit provider acceptance together
    with its delivery evidence in a short transaction after HTTP. Session advisory
    locks serialize dispatch for an episode across lease expiry, while claim IDs

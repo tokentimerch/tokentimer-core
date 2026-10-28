@@ -1747,6 +1747,9 @@ describe("agentDispatch.claimJobs", () => {
           ],
         };
       }
+      if (sql.includes("SELECT state FROM certificate_enrollments")) {
+        return { rows: [{ state: "pending_issuance" }] };
+      }
       if (sql.includes("certificate_enrollments")) {
         seen.enrollmentLookup = true;
         return { rows: [] };

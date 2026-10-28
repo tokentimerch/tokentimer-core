@@ -99,7 +99,7 @@ Deleting an asset, revoking a certificate or stopping monitoring does not prove
 renewal and does not send a resolve. Deleted assets retain a historical anchor
 and `asset_unavailable`. Workspace deletion erases its lifecycle records.
 
-Incidents triggered before migration 79 have no recoverable correlation key.
+Incidents triggered before the PagerDuty lifecycle migration have no recoverable correlation key.
 They are not backfilled and are not automatically resolved. Resolve those
 historical incidents in PagerDuty. New tracked episodes do not adopt them.
 
@@ -204,9 +204,73 @@ recovery even when Events API accepts the request. See
 
 This implementation is Core agnostic and adds no plan conditionals or schema
 changes to webhook configuration. Cloud/Enterprise rebases must carry migration
-79, the new worker modules, delivery-worker's lifecycle dispatch/drain hooks,
+81, the new worker modules, delivery-worker's lifecycle dispatch/drain hooks,
 the shared legacy-workspace and delivery-evidence helpers, operational notification
 reconciliation, and alertQueue's scoped retry CTEs into any overridden counterparts.
 Apply API migrations before upgraded workers start. Preserve edition-owned entitlement,
 freeze and dispatch guards when composing overrides; this change does not
 automatically update independently pinned edition repositories.
+
+## Migration 81 and preview-version compatibility
+
+PagerDuty uses `apps/api/migrations/081-pagerduty-incident-lifecycle.sql`.
+Released migration 79 is `auto_sync_provider_stats`; migration 80 is
+`auto_sync_run_metrics`. Their names, versions and SQL are unchanged. The
+PagerDuty SQL is unchanged from its unpublished v79 preview; only its registry
+slot and filename moved. Fresh installations and databases at v78 or canonical
+v80 run the normal migration command and reach v81 without special handling.
+
+The PR's earlier v79 migration was executable, so preview/dev/staging databases
+may already have recorded `79 / pagerduty_incident_lifecycle`. Its use outside
+the disposable validation databases is not known. Inspect each deployment's
+history before upgrading; never infer its state from the application version:
+
+```sql
+SELECT version, name, executed_at FROM migrations ORDER BY version;
+```
+
+The normal runner deliberately rejects the colliding preview history. It does
+not treat PagerDuty as an alias of the released auto-sync migration, overwrite
+the ledger, or replay PagerDuty SQL. Do not delete the v79 row or manually mark
+auto-sync SQL executed. Use this explicit procedure only for that exact preview:
+
+1. Stop all API/worker nodes and migration runners. Take and verify a restorable
+   database backup. Retain a copy of the original migration history, incident
+   ledger, delivery logs and schema. Rehearse recovery on a restored copy first.
+2. Use the merged Core checkout and the same database/TLS environment as normal
+   migrations. The tool requires the standard `public` Core schema and sufficient
+   migration privileges. Run `node scripts/reconcile-pagerduty-v79.cjs --check`.
+   It requires a complete validated v1-v78 prefix plus exactly PagerDuty v79,
+   no v80/v81/future history, and no unrecorded auto-sync telemetry schema.
+   It compares the full PagerDuty ledger columns, defaults, constraints and
+   indexes, expiration snapshot column, function bodies/attributes and both
+   enabled triggers with temporary reference DDL. Persistent state is unchanged.
+3. After successful preflight, run
+   `node scripts/reconcile-pagerduty-v79.cjs --apply`. This explicit maintenance
+   operation locks migration history and repeats validation. In one transaction
+   it relocates only the proven PagerDuty entry to v81, retaining its name and
+   original execution timestamp, and executes/registers the released auto-sync
+   migrations at v79 and v80. Strict history validation runs before commit.
+   Any failure rolls back both ledger edits and telemetry DDL. PagerDuty data,
+   keys, claims, queue state, delivery history, functions and triggers are not
+   rewritten. PagerDuty SQL is never rerun.
+4. Run `node apps/api/migrations/migrate.js`, then verify the final slots below.
+   Compare the preserved records and original PagerDuty execution timestamp with
+   the backup. Restart matching components only after normal migrations succeed.
+
+```sql
+SELECT version, name, executed_at FROM migrations WHERE version >= 79 ORDER BY version;
+-- 79 auto_sync_provider_stats
+-- 80 auto_sync_run_metrics
+-- 81 pagerduty_incident_lifecycle (original preview timestamp if reconciled)
+SELECT id, destination_id, dedup_key, state, trigger_accepted_at,
+       trigger_attempts, resolve_attempts, claim_id FROM pagerduty_incidents;
+```
+
+The tool fails closed on unexpected histories, partial/unrecorded telemetry,
+schema drift, missing or disabled triggers, and repeat application after recovery.
+It prints only a sanitized failure code; DB specialists can compare the saved
+history/schema with the shipped SQL to investigate. Do not bypass these checks.
+For customized schemas or other mixed histories, retain the backup and obtain an
+installation-specific reviewed recovery procedure. This is an opt-in preview
+repair, not an automatic production migration or a general migration renumberer.

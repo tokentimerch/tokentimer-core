@@ -1,4 +1,5 @@
 import React from 'react';
+import { useScanVerification } from '../../hooks/useScanVerification.js';
 import {
   Box,
   VStack,
@@ -93,6 +94,8 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
     onError,
     errorContent,
     onScanSuccess,
+    onScanInvalidated,
+    scanContext,
     borderColor,
     helpTextColor,
     hideDocs = false,
@@ -175,6 +178,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
   }, [selectedRowsGithub.size, onSelectionChange]);
 
   const doGithubScan = async () => {
+    const scanTicket = beginScanVerification();
     if (!workspaceId) {
       onError && onError('Please select a workspace first.');
       return;
@@ -212,9 +216,6 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
       setGithubSummary(Array.isArray(res?.summary) ? res.summary : []);
       setFilterSummary(res?.filterSummary || null);
       setLastScanId(res?.scan_id || null);
-      if (items.length > 0) {
-        onScanSuccess && onScanSuccess('github');
-      }
       try {
         localStorage.setItem('tt_github_baseurl', githubBaseUrl);
       } catch (_) {}
@@ -225,6 +226,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
 
       const dups = await checkDuplicatesForItems(items, workspaceId);
       setGithubDuplicates(dups);
+      completeScanVerification(scanTicket);
     } catch (e) {
       setGithubItems([]);
       setGithubSummary([]);
@@ -321,27 +323,41 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
     }
   };
 
+  const getCredentials = () => ({
+    credentials: {
+      baseUrl: githubBaseUrl || 'https://api.github.com',
+      token: githubToken,
+    },
+    scanParams: {
+      baseUrl: githubBaseUrl || 'https://api.github.com',
+      include: {
+        tokens: githubIncludeTokens,
+        sshKeys: githubIncludeSSHKeys,
+        deployKeys: githubIncludeDeployKeys,
+        secrets: githubIncludeSecrets,
+      },
+      filterRules: sanitizeFilterRules(filterRules),
+      cleanupObsolete,
+    },
+  });
+  const { beginScanVerification, completeScanVerification } =
+    useScanVerification({
+      identity: {
+        workspaceId,
+        scanContext,
+        payload: getCredentials(),
+        rawBaseUrl: githubBaseUrl,
+      },
+      provider: 'github',
+      onScanSuccess,
+      onScanInvalidated,
+    });
+
   React.useImperativeHandle(ref, () => ({
     importSelected: importGithubSelected,
     getSelectedCount: () => selectedRowsGithub.size,
     getContactGroupIds: () => bulkContactGroupIds,
-    getCredentials: () => ({
-      credentials: {
-        baseUrl: githubBaseUrl || 'https://api.github.com',
-        token: githubToken,
-      },
-      scanParams: {
-        baseUrl: githubBaseUrl || 'https://api.github.com',
-        include: {
-          tokens: githubIncludeTokens,
-          sshKeys: githubIncludeSSHKeys,
-          deployKeys: githubIncludeDeployKeys,
-          secrets: githubIncludeSecrets,
-        },
-        filterRules: sanitizeFilterRules(filterRules),
-        cleanupObsolete,
-      },
-    }),
+    getCredentials,
   }));
 
   return (

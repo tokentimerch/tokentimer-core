@@ -223,7 +223,7 @@ describe(
       assert.equal(
         (
           await pool.query(
-            "SELECT 1 FROM migrations WHERE version=79 AND name='pagerduty_incident_lifecycle'",
+            "SELECT 1 FROM migrations WHERE version=81 AND name='pagerduty_incident_lifecycle'",
           )
         ).rowCount,
         1,

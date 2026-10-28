@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-26 against main c7a289af, including manager access to certificate setup, role explanations and initial workspace-member loading. Other
+Last reviewed: 2026-10-27 against main 63e97bf8 for v0.18.2. Other
 certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
 
 This page is the repository milestone index: what Core takes next, what must
@@ -99,9 +99,6 @@ Per-user personal default already exists. v1.0.0 adds a separate
 - **Prove fresh install and supported 0.x upgrades**, including recovery
   limits and overlay consumers
   ([#244](https://github.com/tokentimerch/tokentimer-core/issues/244)).
-  Helm post-install smoke
-  ([#234](https://github.com/tokentimerch/tokentimer-core/issues/234))
-  is part of this proof, not a separate product feature.
 
 ---
 

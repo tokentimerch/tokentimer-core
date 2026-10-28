@@ -1,4 +1,5 @@
 import React from 'react';
+import { useScanVerification } from '../../hooks/useScanVerification.js';
 import {
   Box,
   VStack,
@@ -95,6 +96,8 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
     onError,
     errorContent,
     onScanSuccess,
+    onScanInvalidated,
+    scanContext,
     borderColor,
     helpTextColor,
     hideDocs = false,
@@ -130,6 +133,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
   }, [selectedRowsGcp.size, onSelectionChange]);
 
   const doGcpScan = async () => {
+    const scanTicket = beginScanVerification();
     if (!workspaceId) {
       onError && onError('Please select a workspace first.');
       return;
@@ -163,9 +167,6 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
       setGcpItems(items);
       setGcpSummary(Array.isArray(res?.summary) ? res.summary : []);
       setLastScanId(res?.scan_id || null);
-      if (items.length > 0) {
-        onScanSuccess && onScanSuccess('gcp');
-      }
 
       if (updateQuotaFromResponse && !updateQuotaFromResponse(res)) {
         if (refreshIntegrationQuota) await refreshIntegrationQuota();
@@ -173,6 +174,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
 
       const dups = await checkDuplicatesForItems(items, workspaceId);
       setGcpDuplicates(dups);
+      completeScanVerification(scanTicket);
     } catch (e) {
       setGcpItems([]);
       setGcpSummary([]);
@@ -235,16 +237,30 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
     }
   };
 
+  const getCredentials = () => ({
+    credentials: { projectId: gcpProjectId, accessToken: gcpAccessToken },
+    scanParams: {
+      projectId: gcpProjectId,
+      include: { secrets: scanSecrets, certificates: scanCertificates },
+    },
+  });
+  const { beginScanVerification, completeScanVerification } =
+    useScanVerification({
+      identity: {
+        workspaceId,
+        scanContext,
+        payload: getCredentials(),
+        cleanupObsolete,
+      },
+      provider: 'gcp',
+      onScanSuccess,
+      onScanInvalidated,
+    });
+
   React.useImperativeHandle(ref, () => ({
     importSelected: importGcpSelected,
     getSelectedCount: () => selectedRowsGcp.size,
-    getCredentials: () => ({
-      credentials: { projectId: gcpProjectId, accessToken: gcpAccessToken },
-      scanParams: {
-        projectId: gcpProjectId,
-        include: { secrets: scanSecrets, certificates: scanCertificates },
-      },
-    }),
+    getCredentials,
   }));
 
   return (

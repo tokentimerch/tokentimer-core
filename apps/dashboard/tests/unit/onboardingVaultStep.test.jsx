@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -106,6 +107,35 @@ const ready = {
 };
 
 describe('Vault step structure', () => {
+  it('keeps polling the selected distribution while another distribution is already complete', async () => {
+    vi.useFakeTimers();
+    const ctx = ctxWith(ready);
+    ctx.summary.certops.distribution = {
+      groups: 2,
+      completed: true,
+      verified: true,
+      items: [
+        { id: 'another-group', completed: true, verified: true },
+        { id: GROUP, completed: false, verified: false },
+      ],
+    };
+    let view;
+    try {
+      view = show(ctx);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15000);
+      });
+      expect(ctx.refresh).toHaveBeenCalled();
+      expect(screen.getByText('Setup in progress')).toBeInTheDocument();
+      expect(
+        screen.queryByText('Distribution verified')
+      ).not.toBeInTheDocument();
+    } finally {
+      view?.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it('recovers a lost publication response with the saved key, but a fresh setup has a new key', async () => {
     const ctx = ctxWith(ready);
     createJob.mockRejectedValueOnce(new Error('Response lost'));

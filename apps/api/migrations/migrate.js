@@ -4842,8 +4842,18 @@ const migrations = [
   },
   {
     version: 79,
+    name: "auto_sync_provider_stats",
+    sql: fs.readFileSync(require("path").join(__dirname, "079-auto-sync-provider-stats.sql"), "utf8"),
+  },
+  {
+    version: 80,
+    name: "auto_sync_run_metrics",
+    sql: fs.readFileSync(require("path").join(__dirname, "080-auto-sync-run-metrics.sql"), "utf8"),
+  },
+  {
+    version: 81,
     name: "pagerduty_incident_lifecycle",
-    sql: fs.readFileSync(require("path").join(__dirname, "079-pagerduty-incident-lifecycle.sql"), "utf8"),
+    sql: fs.readFileSync(require("path").join(__dirname, "081-pagerduty-incident-lifecycle.sql"), "utf8"),
   },
 ];
 
@@ -4865,6 +4875,9 @@ const historicalMigrationAliases = new Map([
 ]);
 
 function validateMigrationHistory(rows) {
+  if (rows.some(row => row.version === 79 && row.name === "pagerduty_incident_lifecycle")) {
+    throw new Error("PagerDuty preview migration 79 conflicts with released auto-sync history; stop and follow the explicit recovery procedure in docs/PAGERDUTY.md#migration-81-and-preview-version-compatibility");
+  }
   const planned = resolveMigrationPlan(rows);
   for (const { version, name } of rows) {
     const current = planned.find(
