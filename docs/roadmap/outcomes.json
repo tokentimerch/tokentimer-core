@@ -13,9 +13,19 @@
       "feedback": [
         {
           "slug": "certops-features",
-          "status": "Planned"
+          "status": "In Progress",
+          "scope": "Active distribution increments; issuer/service extensions remain separately scoped",
+          "implementationPrs": [
+            498,
+            460
+          ]
         }
-      ]
+      ],
+      "implementationPrs": [
+        498,
+        460
+      ],
+      "planningStatus": "In Progress"
     },
     {
       "id": "outbound",
@@ -31,13 +41,7 @@
       "issue": 246,
       "edition": "core",
       "horizon": "pre-v1",
-      "inRoadmap": true,
-      "feedback": [
-        {
-          "slug": "certops-features",
-          "status": "Planned"
-        }
-      ]
+      "inRoadmap": true
     },
     {
       "id": "diagnostics",
@@ -113,7 +117,10 @@
       "feedback": [
         {
           "slug": "mcp-server-to-interact-with-tokentimer",
-          "status": "In Progress"
+          "status": "In Progress",
+          "implementationPrs": [
+            406
+          ]
         }
       ]
     },
@@ -127,8 +134,21 @@
       "feedback": [
         {
           "slug": "incident-response-workflows",
-          "status": "Planned"
+          "status": "In Progress",
+          "implementationPrs": [
+            496,
+            498
+          ]
         }
+      ],
+      "implementationPrs": [
+        496,
+        498
+      ],
+      "relatedIssues": [
+        364,
+        378,
+        387
       ]
     },
     {
@@ -138,11 +158,23 @@
       "edition": "core",
       "horizon": "later",
       "inRoadmap": true,
-      "feedback": [
-        {
-          "slug": "certops-features",
-          "status": "Planned"
-        }
+      "implementationPrs": [
+        498,
+        460
+      ],
+      "relatedIssues": [
+        369,
+        366,
+        368,
+        367,
+        372,
+        375,
+        374,
+        373,
+        371,
+        376,
+        379,
+        377
       ]
     },
     {
@@ -169,6 +201,9 @@
           "slug": "integration-with-vaults-secrets-manager",
           "status": "Planned"
         }
+      ],
+      "relatedIssues": [
+        353
       ]
     },
     {
@@ -220,11 +255,8 @@
       "edition": "core",
       "horizon": "later",
       "inRoadmap": true,
-      "feedback": [
-        {
-          "slug": "certops-features",
-          "status": "Planned"
-        }
+      "implementationPrs": [
+        498
       ]
     },
     {

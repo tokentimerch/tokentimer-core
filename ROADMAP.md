@@ -48,6 +48,11 @@ called stable while they are open.
   certificate, including ordinary and wildcard certificates, shipped in 0.18.0
   (see [CHANGELOG.md](CHANGELOG.md)); the remaining destination scope stays
   open on the issue.
+  Active, unmerged increments are [PR #498](https://github.com/tokentimerch/tokentimer-core/pull/498)
+  for the distribution lifecycle and [PR #460](https://github.com/tokentimerch/tokentimer-core/pull/460)
+  for Windows/IIS shared material and provider extensions. Functional
+  implementation is separate from remaining fleet/protected qualification;
+  neither PR completes every #248 requirement.
 - **Shared outbound policy**
   ([#233](https://github.com/tokentimerch/tokentimer-core/issues/233)).
   Wire offline mode and outbound allowlists into API and worker egress.
@@ -122,10 +127,15 @@ does not promise a version or add a v1.0.0 gate.
   ([#503](https://github.com/tokentimerch/tokentimer-core/issues/503)):
   owner/backup thresholds, acknowledgement, delivery fallback and external
   incident lifecycle are distinct outcomes.
+  PagerDuty expiration incidents ([PR #496](https://github.com/tokentimerch/tokentimer-core/pull/496))
+  and distribution incidents ([PR #498](https://github.com/tokentimerch/tokentimer-core/pull/498))
+  are active increments, not completion of the entire umbrella.
 - **Windows service certificates beyond IIS**
   ([#504](https://github.com/tokentimerch/tokentimer-core/issues/504)):
   service discovery, typed connectors, controlled activation and fleet
   operations build on shipped Windows/IIS and AD CS support.
+  #498 provides metadata/contract groundwork; #460 covers Windows/IIS shared
+  material under #248. Additional service executors remain separate.
 - **Workspace readiness and actionable recovery**
   ([#505](https://github.com/tokentimerch/tokentimer-core/issues/505)):
   persistent readiness, safe diagnostics, verified recipes and contributor

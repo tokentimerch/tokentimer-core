@@ -36,6 +36,10 @@ certificate renewal are distinct outcomes.
       heading, and update Last reviewed.
 - [ ] Reconcile internal status and customer card scope/status per edition.
       Core delivery alone does not establish downstream availability.
+- [ ] Inspect active implementation PRs as well as issues. Record partial
+      coverage and outstanding qualification. Coordinate overlapping
+      migration numbers before integrating parallel feature branches;
+      never renumber migrations already deployed on main.
 - [ ] Update docs/roadmap/outcomes.json for accepted, rescheduled or shipped outcomes.
 - [ ] Run node scripts/check-roadmap-drift.mjs and reconcile findings.
       Review missing or stale companion evidence before claiming a full audit.
@@ -56,13 +60,16 @@ node --test scripts/check-roadmap-drift.test.mjs
 
 The checker reads the outcome index and ROADMAP.md, then makes GET-only
 GitHub API calls. It never edits files, comments, tickets or status. It
-checks missing roadmap links/issues, closed active issues, shipped records,
-active implementation evidence, companion status/link conflicts and stale
+checks roadmap section/horizon mismatches, missing links/issues, closed
+active issues, published-release evidence, explicitly referenced unindexed
+active PRs, companion status/canonical-link conflicts and stale
 snapshots (seven days). It is on demand, not a scheduled job or new CI gate.
 
 For offline use pass --snapshot and a JSON path containing capturedAt and
-an issues array of GitHub objects with number/state; optional pulls use
-number/state/merged_at. Use --json for machine-readable output.
+an issues array of GitHub objects with number/state. Include body and
+pull_request for PR discovery; pulls use number/state/merged_at. Released
+outcomes require releases with tag_name, draft, prerelease and published_at.
+Use --json for machine-readable output.
 
 Pass --companion and a local JSON path for exported internal planning and
 Featurebase evidence. Keep that private file outside this public repository:
@@ -70,7 +77,10 @@ Featurebase evidence. Keep that private file outside this public repository:
 ```json
 {
   "capturedAt": "2026-10-28T12:00:00Z",
-  "planning": [{ "issue": 502, "status": "In Progress" }],
+  "planning": [{
+    "issue": 502, "status": "In Progress",
+    "links": ["https://github.com/tokentimerch/tokentimer-core/issues/502"]
+  }],
   "feedback": [{
     "url": "https://tokentimer.featurebase.app/en/p/mcp-server-to-interact-with-tokentimer",
     "status": "In Progress",
@@ -83,5 +93,19 @@ Featurebase evidence. Keep that private file outside this public repository:
 Shared cards can link multiple issues. Only mapped outcomes are compared;
 unrelated backlog issues are intentionally outside coverage. Missing
 companion evidence is reported as partial coverage, never agreement.
+For umbrella mappings, set deliveryIssue to the actual child delivery issue,
+declare that child in relatedIssues in the index, and preserve its observed
+link and status. Open work can legitimately be Backlog, Todo, In Progress or
+In Review; only explicit planningStatus expectations require one exact state.
+Use implementationPrs to record multiple partial implementations. A card's
+overall In Progress state does not make every linked subfeature active.
+planningCapturedAt and feedbackCapturedAt may retain independent collection
+times. Edition metadata identifies the mapped scope; it does not prove
+availability or adoption in another edition.
+
+The report checks mechanical status, links and placement. It does not
+certify implementation completeness, acceptance, merge readiness or native
+production qualification. Manually reconcile those against PR scope and
+release evidence even when the mechanical report has no findings.
 Exit codes: 0 no drift in supplied coverage, 1 drift, 2 invalid input or
 access failure. A finding does not automatically change a release gate.
