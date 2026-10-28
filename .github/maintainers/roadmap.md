@@ -1,5 +1,9 @@
 # Roadmap maintenance
 
+For maintainers coordinating public roadmap scope, release evidence and
+tracker consistency. Operator installation and usage guides remain in
+`docs/`; contributor entry points are in `CONTRIBUTING.md`.
+
 ## Responsibilities
 
 GitHub delivery issues own public Core scope, acceptance and evidence.
@@ -40,7 +44,8 @@ certificate renewal are distinct outcomes.
       coverage and outstanding qualification. Coordinate overlapping
       migration numbers before integrating parallel feature branches;
       never renumber migrations already deployed on main.
-- [ ] Update docs/roadmap/outcomes.json for accepted, rescheduled or shipped outcomes.
+- [ ] Update .github/maintainers/roadmap-outcomes.json for accepted,
+      rescheduled or shipped outcomes.
 - [ ] Run node scripts/check-roadmap-drift.mjs and reconcile findings.
       Review missing or stale companion evidence before claiming a full audit.
 - [ ] Scan changed public files for private references. Use the normal PR

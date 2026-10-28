@@ -204,7 +204,7 @@ export function main(argv) {
     } else throw Error('Unknown option: ' + arg);
   }
   const root = resolve(options.root ?? fileURLToPath(new URL('..', import.meta.url)));
-  const index = readJson(resolve(root, 'docs/roadmap/outcomes.json'));
+  const index = readJson(resolve(root, '.github/maintainers/roadmap-outcomes.json'));
   if (index.repository !== repository) throw Error('Invalid Core outcome index repository');
   const roadmap = readFileSync(resolve(root, 'ROADMAP.md'), 'utf8');
   const snapshot = options.snapshot ? readJson(resolve(options.snapshot)) : live(index);

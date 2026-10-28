@@ -16,9 +16,6 @@ for calling v1.0.0 stable, not a substitute for the RBAC contract below.
 compatible upgrades.
 Review this page in each release PR; move shipped outcomes into the
 changelog.
-The [maintenance process](docs/ROADMAP_PROCESS.md) defines scope, edition and
-status reconciliation. The [outcome index](docs/roadmap/outcomes.json) powers
-a read-only drift check; issue acceptance criteria remain authoritative.
 
 Certificate Lifecycle Management (CLM) keeps zero control-plane private-key custody (CI-enforced) and does
 not change the role model. Inventory, executor reporting, the Kubernetes
