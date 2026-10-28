@@ -1,0 +1,151 @@
+{
+  "capturedOn": "2026-10-28",
+  "coreCommit": "3c209435",
+  "coreVersion": "0.18.2",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "data": "Illustrative in-memory sample data; no real certificate operations or notification delivery demonstrated.",
+  "gif": {
+    "width": 1600,
+    "height": 900,
+    "framesPerSecond": 12,
+    "loop": true,
+    "theme": "light",
+    "overview": "Continuous real-browser recording: edit and save asset notes; control center and audit; save a workspace role and delivery window; inspect certificate inventory, expanded renewal profiles and agent fleet.",
+    "workflow": "Continuous real-browser recording: discover subdomains, select results, assign a section, import 14 certificates and create 14 endpoint monitors; scan Vault, select and assign 15 items, import, filter the resulting inventory.",
+    "presentation": "Visible pointer follows real mouse events. Only initial loading is trimmed; no internal cuts or speed changes.",
+    "sampleApiAdjustment": "Local Vault scan-summary adapter groups returned sample items by mount and supplies the current found-count schema."
+  },
+  "assets": [
+    {
+      "file": "asset-inventory.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 847972,
+      "sha256": "58abf93b857513969c546320c3597de90c4c02510283899e75ad259fb866044e"
+    },
+    {
+      "file": "audit-log.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 838414,
+      "sha256": "7e78e9d353fc2782341f916a9ae5bbc74cb8af9fa5f59826b49b5a20f70c62e0"
+    },
+    {
+      "file": "certops-agents.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 824535,
+      "sha256": "91a1e487dd8734a7e24ce790336c06920b4d29f19ece48c7273f448ecf4d23b9"
+    },
+    {
+      "file": "certops-certificates.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 801115,
+      "sha256": "c41d3d13751e74bb9816029fd0b6cf8b8e12df77d1f892072686ee605666586f"
+    },
+    {
+      "file": "certops-jobs-timeline-evidence.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 772937,
+      "sha256": "24da1349910ebfa56a127bd9f109f52f0f3282a0b1e5642575285fc5dfdf9853"
+    },
+    {
+      "file": "certops-renewals.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 780510,
+      "sha256": "9b8d8e8471e931b4ae7b4525d0e97089a0f6e2016a5ba008e763df805f4e23a8"
+    },
+    {
+      "file": "control-center-overview-dark.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 825835,
+      "sha256": "5c5c6e31a64b4c5219be5b997abe780b204250ee018aba48984893ec669bdc50"
+    },
+    {
+      "file": "control-center-overview.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 353198,
+      "sha256": "f62a68f1b5e31b3dc43821e4663605b6f318fde8bf098774c1afc4669a1141dd"
+    },
+    {
+      "file": "control-center.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 825835,
+      "sha256": "5c5c6e31a64b4c5219be5b997abe780b204250ee018aba48984893ec669bdc50"
+    },
+    {
+      "file": "dashboard-overview-dark.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 847972,
+      "sha256": "58abf93b857513969c546320c3597de90c4c02510283899e75ad259fb866044e"
+    },
+    {
+      "file": "dashboard-overview.gif",
+      "width": 1600,
+      "height": 900,
+      "bytes": 25614807,
+      "sha256": "65b99eecaa1684ee304fca4a8311c60c228e2281a237a68d0c600cc8599c9a8b",
+      "durationSeconds": 54.16
+    },
+    {
+      "file": "dashboard-overview.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 366757,
+      "sha256": "2622199d54edbb520e36e013c3e94581c07ddd8c64df7148942abf8043c9b264"
+    },
+    {
+      "file": "dashboard-workflow.gif",
+      "width": 1600,
+      "height": 900,
+      "bytes": 20702751,
+      "sha256": "611c01e36500821faed8eafc303d154b3eb3fc1b20a7b1f70c3bdd31ff45e8f1",
+      "durationSeconds": 54.83
+    },
+    {
+      "file": "system-settings-dark.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 792352,
+      "sha256": "4f246c8f53c0557caf0f843745e63a0f1990a3af345586ed2e679089f9994665"
+    },
+    {
+      "file": "system-settings.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 436020,
+      "sha256": "c99ec27e40b0decd470c9f6a5e2550d237b96fce98af85ea4426a3a7630ddc9b"
+    },
+    {
+      "file": "workspace-alerting.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 792951,
+      "sha256": "8276a702189395dd513b86c166c8a49512561c2a4c1a9a047c8137801cd32a2a"
+    },
+    {
+      "file": "workspace-preferences-dark.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 866325,
+      "sha256": "11f48fb639d1047b794aa161f32af0ffe4e2502358fdda418cff4fa154d3563f"
+    },
+    {
+      "file": "workspace-preferences.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 509199,
+      "sha256": "fdc16065dc1a2426924f2d3c1a31b95ffa14f95b9814b9369bb58c891d0b19d8"
+    }
+  ]
+}

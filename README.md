@@ -62,6 +62,8 @@ Three complementary pillars organize the platform:
   <img src="docs/assets/control-center.png" alt="TokenTimer control center: what needs attention, inventory snapshot, scoped credentials, auto-sync health, and managed certificates in one view" width="888" />
 </p>
 
+Screenshots and GIFs show the current interface with illustrative sample data. [Media capture notes](docs/assets/MEDIA.md).
+
 ## What makes TokenTimer different?
 
 ### Certificate Lifecycle Management (CLM)
@@ -75,15 +77,15 @@ An outbound-only agent renews, deploys, reloads, and verifies certificates on yo
 <table align="center">
   <tr>
     <td align="center" width="33%" valign="top">
-      <img src="docs/assets/certops-renewals.png" alt="Upcoming renewals and renewal profiles" width="888" height="392" />
-      <br /><sub>Upcoming renewals and profiles</sub>
+      <img src="docs/assets/certops-renewals.png" alt="Renewal profiles and AD CS issuer setup" width="888" />
+      <br /><sub>Renewal profiles and issuer setup</sub>
     </td>
     <td align="center" width="33%" valign="top">
-      <img src="docs/assets/certops-jobs-timeline-evidence.png" alt="Machine executor jobs with pending approvals and audit-log timeline evidence" width="888" height="392" />
-      <br /><sub>Executor jobs with approval gates and timeline evidence</sub>
+      <img src="docs/assets/certops-jobs-timeline-evidence.png" alt="Certificate jobs with pending approvals and an expanded job details panel linking to the audit log" width="888" />
+      <br /><sub>Approval gates and job details linked to the audit log</sub>
     </td>
     <td align="center" width="33%" valign="top">
-      <img src="docs/assets/certops-agents.png" alt="Agent fleet health and signing keys" width="888" height="392" />
+      <img src="docs/assets/certops-agents.png" alt="Agent fleet health and signing keys" width="888" />
       <br /><sub>Agent fleet health</sub>
     </td>
   </tr>
@@ -110,7 +112,7 @@ Notify teams through email, Slack, Microsoft Teams, Discord, PagerDuty, WhatsApp
 Connect TokenTimer to providers like HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, Microsoft Entra ID, GCP Secret Manager, GitHub, and GitLab to automatically import and keep expiration metadata up to date, discover public subdomains for SSL certificate imports, and monitor HTTPS endpoints for SSL expiry and health.
 
 <p align="center">
-  <img src="docs/assets/dashboard-workflow.gif" alt="Import, subdomain discovery, and dashboard filtering in TokenTimer" width="888" />
+  <img src="docs/assets/dashboard-workflow.gif" alt="Subdomain discovery and monitored certificate import, Vault scanning and import, and filtering the resulting inventory" width="888" />
 </p>
 
 ### Built for teams and audits
