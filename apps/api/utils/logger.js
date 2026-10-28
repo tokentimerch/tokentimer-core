@@ -1,6 +1,6 @@
 const winston = require("winston");
 const client = require("prom-client");
-const { attachRequestContext } = require("./request-context");
+const { captureRequestContext } = require("./request-context");
 const { getRuntimeLabels } = require("../config/runtime-labels");
 const {
   redactSensitiveFields: sharedRedactSensitiveFields,
@@ -148,7 +148,6 @@ const orderedJsonLineFormat = winston.format.printf((info) =>
 const logger = winston.createLogger({
   level: isDev ? "debug" : "info",
   format: winston.format.combine(
-    winston.format(attachRequestContext)(),
     winston.format.timestamp(),
     winston.format.errors({ stack: true }),
     safeJsonFormat(),
@@ -156,6 +155,8 @@ const logger = winston.createLogger({
   defaultMeta: { service: SERVICE_NAME },
   transports: [],
 });
+
+captureRequestContext(logger);
 
 if (isDev) {
   logger.add(

@@ -14,6 +14,15 @@ function attachRequestContext(record) {
   return record;
 }
 
+function captureRequestContext(logger) {
+  const write = logger.write;
+  // Winston can defer formatters under backpressure. Capture the request at
+  // stream admission, before buffering can run formatting in another context.
+  logger.write = function (record, ...args) {
+    return write.call(this, attachRequestContext(record), ...args);
+  };
+}
+
 function requestCorrelation(req, res, next) {
   // Generate locally: incoming headers may contain secrets or forged IDs.
   const correlationId = randomUUID();
@@ -22,4 +31,9 @@ function requestCorrelation(req, res, next) {
   requestContext.run(Object.freeze({ correlationId }), next);
 }
 
-module.exports = { getRequestContext, attachRequestContext, requestCorrelation };
+module.exports = {
+  getRequestContext,
+  attachRequestContext,
+  captureRequestContext,
+  requestCorrelation,
+};
