@@ -252,12 +252,7 @@ function getAuditEventKey(ev) {
 function AuditActionBadge({ action }) {
   const label = action || '';
   return (
-    <Tooltip
-      label={label}
-      hasArrow
-      placement='top'
-      openDelay={300}
-    >
+    <Tooltip label={label} hasArrow placement='top' openDelay={300}>
       <Badge
         colorScheme='blue'
         variant='subtle'
