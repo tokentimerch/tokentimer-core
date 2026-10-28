@@ -9,7 +9,7 @@ const test = require("node:test"),
   )("js-yaml");
 const subject = require("./certops-qualification-profiles"),
   azure = require("./certops-azure-scope-policy");
-const matrix = require("../docs/certops/qualification-suites.json");
+const matrix = require("../.github/maintainers/certops/qualification-suites.json");
 test("native AD CS collection requires every runnable cohort and exposes deferred contracts", () => {
   const selected = subject.selectProfile(matrix, "adcs-native");
   assert.deepEqual(new Set(selected.specification.slots.map(slot => slot.suite)), new Set(subject.ADCS_NATIVE));
@@ -57,7 +57,7 @@ test("unknown empty and newly unclassified domain profiles fail closed", () => {
     subject.selectProfile({ slots: [matrix.slots[0]] }, "adcs"),
   );
   const caps =
-    require("../docs/certops/qualification-suites.json").requiredCapabilities;
+    require("../.github/maintainers/certops/qualification-suites.json").requiredCapabilities;
   caps["new-domain-fixture"] = ["domain"];
   try {
     assert.throws(() =>

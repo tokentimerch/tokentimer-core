@@ -1,6 +1,6 @@
 # Agent protocol and job contracts
 
-Advanced reference for agent implementers and operators investigating dispatch. For onboarding, start with [Linux](install-linux.md) or [Windows](install-windows.md) installation.
+Advanced reference for agent implementers and operators investigating dispatch. For onboarding, start with [Linux](../../../../docs/certops/agent/install-linux.md) or [Windows](../../../../docs/certops/agent/install-windows.md) installation.
 
 <a id="3-protocol"></a>
 
@@ -286,7 +286,7 @@ Current behavior:
   `target.reference` is used as the deploy destination when it is an
   absolute path (POSIX or Windows form). `job.deploymentTargets` deploys to
   every listed destination with optional per-target `keyPath`, `chainPath`,
-  modes, ownership, and backup settings (see [Execution](execution.md)). Neither a
+  modes, ownership, and backup settings (see [Execution](../../../../docs/certops/agent/execution.md)). Neither a
   resolvable cert destination nor a usable target list means the job fails
   with a clear message. `keysDir` never substitutes for a missing
   production `keyPath`.
@@ -311,4 +311,4 @@ Current behavior:
 
 ## Related
 
-[Agent overview](../agent.md) · [Configuration](configuration.md) · [Operations](operations.md)
+[Agent overview](../../../../docs/certops/agent.md) · [Configuration](../../../../docs/certops/agent/configuration.md) · [Operations](../../../../docs/certops/agent/operations.md)

@@ -153,7 +153,7 @@ TokenTimer stores expiration metadata, ownership, and status information without
 | [First asset and alert check](https://tokentimer.ch/docs/self-hosted/quickstart) | Verify the installation with a tracked asset and an alert |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Local development, worker runner, and cron scheduling |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Environment variables and Vault AppRole inventory authentication |
-| [docs/certops/CONTEXT.md](docs/certops/CONTEXT.md) | Certificate Lifecycle Management domain model and behavior (`certops` technical namespace) |
+| [.github/maintainers/certops/CONTEXT.md](.github/maintainers/certops/CONTEXT.md) | Certificate Lifecycle Management domain model and behavior (`certops` technical namespace) |
 | [Agent overview](docs/certops/agent.md) | Installation, policy, and focused operator references |
 | [Install an agent on Linux](docs/certops/agent/install-linux.md) | systemd installation and registration |
 | [Install an agent on Windows](docs/certops/agent/install-windows.md) | Native service installation and registration |

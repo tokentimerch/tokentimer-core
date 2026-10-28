@@ -3,7 +3,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { REQUIRED_SCENARIOS } = require("../e2e/helpers/certops-adcs-browser-admin-boundary");
-const catalog = require("../../docs/certops/qualification-suites.json");
+const catalog = require("../../.github/maintainers/certops/qualification-suites.json");
 
 test("AD CS role-boundary qualification retains the catalogued real-host scenarios", () => {
   for (const scenario of REQUIRED_SCENARIOS) {
