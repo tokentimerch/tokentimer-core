@@ -9,6 +9,14 @@ const { Client } = require("pg");
 
 describe("Core distribution and lifecycle migration histories", function () {
   this.timeout(120000);
+  const extensionHistories = {
+    "mainline-installed-78": ["certops_installed_file_distribution"],
+    "mainline-stats-79": ["certops_installed_file_distribution", "auto_sync_provider_stats"],
+    "mainline-metrics-80": ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics"],
+    "provider-preview-78": ["certops_material_providers"],
+    "provider-preview-79": ["certops_installed_file_distribution", "certops_material_providers"],
+    "provider-preview-78-installed-79": ["certops_material_providers", "certops_installed_file_distribution"],
+  };
 
   for (const history of [
     "fresh",
@@ -19,6 +27,10 @@ describe("Core distribution and lifecycle migration histories", function () {
     "previous-distribution",
     "mainline-installed-78",
     "provider-preview-78",
+    "mainline-stats-79",
+    "mainline-metrics-80",
+    "provider-preview-79",
+    "provider-preview-78-installed-79",
   ]) {
     it(`upgrades ${history} through the actual composed executor`, async () => {
       const root = path.resolve(__dirname, "../..");
@@ -94,10 +106,10 @@ describe("Core distribution and lifecycle migration histories", function () {
           const count = history === "distribution-first" ? 3 : history === "enrollment-first" || history === "mainline-alert-context" ? 4 : history === "previous-distribution" ? 6 : 3;
           // Run real historical SQL through the original executor. The ledger
           // is created by migration execution, never fabricated with inserts.
-          const legacyExtension = ["mainline-installed-78", "provider-preview-78"].includes(history);
+          const legacyExtension = extensionHistories[history];
           const script = legacyExtension
-            ? "const c=require('./migrations/migrate');const preview=" + JSON.stringify(history === "provider-preview-78") +
-              ";const list=c.migrations.filter(m=>m.version<=77||m.name===(preview?'certops_material_providers':'certops_installed_file_distribution')).map(m=>m.name==='certops_material_providers'?{...m,version:78}:m);c.migrations.splice(0,c.migrations.length,...list);c.runMigrations().then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1)});"
+            ? "const c=require('./migrations/migrate');const names=" + JSON.stringify(legacyExtension) +
+              ";const list=[...c.migrations.filter(m=>m.version<=77),...names.map((name,i)=>({...c.migrations.find(m=>m.name===name),version:78+i}))];c.migrations.splice(0,c.migrations.length,...list);c.runMigrations().then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1)});"
             :
             "const c=require('./migrations/migrate');const {composeMigrations}=require('./migrations/compose-migrations');const names=" +
             JSON.stringify(names.slice(0, count)) +
@@ -145,7 +157,7 @@ describe("Core distribution and lifecycle migration histories", function () {
             const version = (await db.query(`INSERT INTO certops_material_versions(workspace_id,group_id,management_period_id,publishing_job_id,publishing_claim_id,profile_revision,state,provider_version,certificate_identity_id,fingerprint_sha256,valid_to,published_at)
               VALUES($1,$2,$3,$4,$5,1,'published',1,$6,$7,NOW()+INTERVAL '1 day',NOW()) RETURNING id`,
             [workspace.id, group, period.id, oldJob.id, randomUUID(), period.current_identity_id, fingerprint])).rows[0].id;
-            const policy = history === "mainline-installed-78" ? "installed" : "served";
+            const policy = legacyExtension.includes("certops_installed_file_distribution") ? "installed" : "served";
             const binding = (await db.query(`INSERT INTO certops_consumer_bindings(workspace_id,group_id,assigned_agent_id,deployment_profile_ref,profile_revision,verification_policy)
               VALUES($1,$2,$3,'retained',1,$4) RETURNING id`, [workspace.id, group, agent, policy])).rows[0].id;
             await db.query(`INSERT INTO certops_consumer_current_state(workspace_id,group_id,binding_id,desired_material_version_id,desired_generation,accepted_generation,observed_material_version_id,observed_fingerprint_sha256,observed_valid_to,verification_method,observed_at)
@@ -161,11 +173,19 @@ describe("Core distribution and lifecycle migration histories", function () {
               state: (await db.query("SELECT * FROM certops_consumer_current_state WHERE binding_id=$1", [binding])).rows[0],
             });
             retained = { read, before: await read() };
+            if (legacyExtension.includes("auto_sync_provider_stats")) {
+              await db.query("UPDATE auto_sync_provider_stats SET items_created_total=17 WHERE provider='github'");
+              retained.telemetry = (await db.query("SELECT * FROM auto_sync_provider_stats ORDER BY provider")).rows;
+            }
+            if (legacyExtension.includes("auto_sync_run_metrics")) {
+              await db.query("INSERT INTO auto_sync_run_outcome_stats(provider,status,runs_total) VALUES('github','success',9)");
+              retained.metrics = (await db.query("SELECT * FROM auto_sync_run_outcome_stats ORDER BY provider,status")).rows;
+            }
           }
         }
         // The CLI must finish after the committed work, without waiting for
         // the imported Core executor's 30-second idle pool timeout.
-        if (["fresh", "mainline-installed-78", "provider-preview-78"].includes(history)) await executeConcurrent();
+        if (history === "fresh" || extensionHistories[history]) await executeConcurrent();
         else execute(["migrations/migrate.js"], 10000);
         const after = (
           await db.query(
@@ -173,6 +193,8 @@ describe("Core distribution and lifecycle migration histories", function () {
           )
         ).rows;
         if (retained) assert.deepEqual(await retained.read(), retained.before, "upgrade preserves published pins, installed/served assurance and accepted evidence");
+        if (retained?.telemetry) assert.deepEqual((await db.query("SELECT * FROM auto_sync_provider_stats ORDER BY provider")).rows, retained.telemetry);
+        if (retained?.metrics) assert.deepEqual((await db.query("SELECT * FROM auto_sync_run_outcome_stats ORDER BY provider,status")).rows, retained.metrics);
         const combined = (await db.query(`SELECT
           EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='certops_distribution_groups' AND column_name='material_store_provider') AS provider,
           EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='certops_material_versions' AND column_name='provider_version_ref') AS opaque,
@@ -196,8 +218,11 @@ describe("Core distribution and lifecycle migration histories", function () {
         const expected = [
           ...mainlineOrder,
           "onboarding_sessions",
-          ...(history === "provider-preview-78" ? ["certops_material_providers", "certops_installed_file_distribution"] :
-            ["certops_installed_file_distribution", "certops_material_providers"]),
+          ...(history.startsWith("provider-preview-78")
+            ? ["certops_material_providers", "certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics"]
+            : history === "provider-preview-79"
+              ? ["certops_installed_file_distribution", "certops_material_providers", "auto_sync_provider_stats", "auto_sync_run_metrics"]
+              : ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "certops_material_providers"]),
         ];
         assert.deepEqual(
           after.filter((row) => row.version >= 70).map((row) => row.name),
@@ -243,6 +268,9 @@ describe("Core distribution and lifecycle migration histories", function () {
           "certificate_enrollments",
           "certops_distribution_groups",
           "certops_agent_job_log",
+          "auto_sync_provider_stats",
+          "auto_sync_run_outcome_stats",
+          "auto_sync_run_freshness",
         ]) {
           assert.equal(
             (await db.query("SELECT to_regclass($1)::text AS name", [table]))

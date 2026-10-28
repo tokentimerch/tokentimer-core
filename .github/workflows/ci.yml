@@ -509,7 +509,7 @@ jobs:
           CERTOPS_ENABLED: "true"
         run: |
           node apps/api/migrations/migrate.js
-          node --test --test-force-exit tests/postgres/workspace-delete-certops.test.js tests/postgres/retired-identity-periods.test.js
+          node --test --test-force-exit tests/postgres/workspace-delete-certops.test.js tests/postgres/retired-identity-periods.test.js tests/postgres/distribution-claim-locking.test.js
       - name: Replay all supported immutable migration histories
         run: pnpm exec mocha --no-config tests/integration/certops-distribution-upgrade.test.js --timeout 120000 --exit
       - name: Verify material provider version pins and retained-version rollback

@@ -1,16 +1,19 @@
 # Distribution extension qualification
 
-2026-10-27: the [real Azure CI campaign and activation runbook](azure-keyvault-ci-qualification.md)
-adds a mandatory trusted-main, OIDC-backed Key Vault campaign with isolated
-issuer/consumer identities, signed packaged-agent/PostgreSQL integration,
-owned cleanup and a janitor. **AWAITING AZURE ACCESS / TRUSTED WORKFLOW DISPATCH**:
-the dedicated environments, grants and default-branch workflows are not yet
-available. No live Azure results or artifacts are claimed. The evidence below
-retains the original execution dates; production capabilities remain disabled.
+2026-10-27: the [real Azure development campaign](https://github.com/tokentimerch/tokentimer-core/actions/runs/40486274037)
+passed **18/18 mandatory scenarios**, with no failures/skips/pending cases and
+completed owned-resource/database cleanup. Source `a53d063460eb0f447cc4fd821dd75c7abe46bb95`
+and the qualification package hash, sanitized artifact and exact scope are
+recorded in the [Azure runbook](azure-keyvault-ci-qualification.md). The campaign
+predates the trust rollback and latest-main merge; it does not validate final
+HEAD or a production release artifact. Future campaigns require trusted main,
+OIDC, independent approval and explicit spending opt-in. Production capabilities
+remain disabled. Earlier dated reports below retain their original scope.
 
 The [merged distribution validation](distribution-extensions-merge-2026-10-26.md)
 records integration with main's installed-file policy and the canonical
-78/79 migration sequence. The reports below retain their original candidate
+78/79 migration sequence at that date. Current main owns migrations 78-80;
+provider references now append at 81. The reports below retain their original candidate
 identities and pre-merge migration numbering.
 
 The [PR #460 review follow-up](distribution-extensions-pr-460-review.md)
@@ -28,16 +31,16 @@ and the [operator runbook](distribution-extensions.md).
 
 ## Evidence and release gates
 
-| Surface | Infrastructure actually exercised | Result / boundary |
-| --- | --- | --- |
-| OpenBao KV v2 | Real OpenBao 2.3.2 and 2.4.1 Docker services, from native Windows Node and Linux Node 24 | Publication, CAS=0, immutable version 1, exact reads after a privileged version 2 write, AppRole login, ACL denial, token rotation/revocation, delete/undelete/destroy, and recovery after a real committed write loses its HTTP response passed. The adapter is shared with Vault. |
-| HashiCorp Vault regression | Real Vault 1.21.0 Docker service | The same KV v2 compatibility scenarios passed. Existing Vault configuration and numeric wire references remain valid. |
-| Provider orchestration | Real PostgreSQL 17 | All three provider types passed claim-bound publication, immutable provider authority, numeric/opaque version constraints, public reads, approval snapshots, exact deployment pins, failure evidence, and a retained-version rollback while the source has a newer identity. |
-| Existing distribution governance | Real PostgreSQL 17, unchanged distribution regression suites | 55 tests passed across publication/renewal, approvals, frozen waves, retirement, concurrency, late receipts, transfer containment, required/optional failures and rollback. |
-| Windows PKCS#12 and key handles | Native Windows 11 CryptoAPI/CNG | Encrypted PKCS#12 parsing, private-key signing association, independent CNG handle lifetime, and effective ACL mask comparison passed. The parser test creates no persisted production key. |
-| Windows shared consumer | Real Windows Server 2022 GitHub Actions VM with IIS installed | The native campaign passed: two distinct IIS SNI consumers, non-exportable machine CNG import, exact protected ACLs, actual key use as NetworkService, exact IIS/HTTP.sys and served TLS, idempotent retry, read-only verify, lease interruption after import, reconciliation/original retry, stale/unauthorized rejection, CA-material rejection before mutation, new leaf activation and retained rollback. The material-store transport in this cohort is a local fixture. |
-| Azure Key Vault | Local bounded HTTP fixtures and injected identity transport | Token sink rotation/expiry, workload federation renewal, fixed IMDS scope/headers, authorization denial, opaque pins, ambiguous writes, no blind PUT retry, conflicting versions, hostile paging, metadata-only material and unsupported configuration rejection passed. **No real Azure vault was tested.** |
-| Linux consumers | Existing agent suite plus real local TLS listener fixtures | Existing file deployment, listener verification, journals, fencing and reconciliation remain covered. This run does not replace the separate containerized nginx/Apache/HAProxy release campaign. |
+| Surface                          | Infrastructure actually exercised                                                        | Result / boundary                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| -------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OpenBao KV v2                    | Real OpenBao 2.3.2 and 2.4.1 Docker services, from native Windows Node and Linux Node 24 | Publication, CAS=0, immutable version 1, exact reads after a privileged version 2 write, AppRole login, ACL denial, token rotation/revocation, delete/undelete/destroy, and recovery after a real committed write loses its HTTP response passed. The adapter is shared with Vault.                                                                                                                                                                                           |
+| HashiCorp Vault regression       | Real Vault 1.21.0 Docker service                                                         | The same KV v2 compatibility scenarios passed. Existing Vault configuration and numeric wire references remain valid.                                                                                                                                                                                                                                                                                                                                                         |
+| Provider orchestration           | Real PostgreSQL 17                                                                       | All three provider types passed claim-bound publication, immutable provider authority, numeric/opaque version constraints, public reads, approval snapshots, exact deployment pins, failure evidence, and a retained-version rollback while the source has a newer identity.                                                                                                                                                                                                  |
+| Existing distribution governance | Real PostgreSQL 17, unchanged distribution regression suites                             | 55 tests passed across publication/renewal, approvals, frozen waves, retirement, concurrency, late receipts, transfer containment, required/optional failures and rollback.                                                                                                                                                                                                                                                                                                   |
+| Windows PKCS#12 and key handles  | Native Windows 11 CryptoAPI/CNG                                                          | Encrypted PKCS#12 parsing, private-key signing association, independent CNG handle lifetime, and effective ACL mask comparison passed. The parser test creates no persisted production key.                                                                                                                                                                                                                                                                                   |
+| Windows shared consumer          | Real Windows Server 2022 GitHub Actions VM with IIS installed                            | The native campaign passed: two distinct IIS SNI consumers, non-exportable machine CNG import, exact protected ACLs, actual key use as NetworkService, exact IIS/HTTP.sys and served TLS, idempotent retry, read-only verify, lease interruption after import, reconciliation/original retry, stale/unauthorized rejection, CA-material rejection before mutation, new leaf activation and retained rollback. The material-store transport in this cohort is a local fixture. |
+| Azure Key Vault                  | Local bounded HTTP fixtures and injected identity transport                              | Token sink rotation/expiry, workload federation renewal, fixed IMDS scope/headers, authorization denial, opaque pins, ambiguous writes, no blind PUT retry, conflicting versions, hostile paging, metadata-only material and unsupported configuration rejection passed. **No real Azure vault was tested.**                                                                                                                                                                  |
+| Linux consumers                  | Existing agent suite plus real local TLS listener fixtures                               | Existing file deployment, listener verification, journals, fencing and reconciliation remain covered. This run does not replace the separate containerized nginx/Apache/HAProxy release campaign.                                                                                                                                                                                                                                                                             |
 
 The real Windows campaign passed against implementation commit
 `2de2a6a50f22a2716720a6ba269b3fe10797e0c5` in
@@ -137,9 +140,9 @@ recovery and missing-version rejection when explicitly enabled. Use the
 [mandatory CI campaign](azure-keyvault-ci-qualification.md) for independent
 read-only consumer access, denial, revocation/renewal, a committed write with
 lost response, and signed-agent/PostgreSQL deployment/reconciliation/rollback.
-That new campaign is implemented but has not run against Azure yet. Local
-fixtures validate its harness and protocol boundaries without supplying live
-or exact-release-artifact evidence.
+The eighteen-case development campaign passed at the historical SHA above.
+Local fixtures remain harness/protocol evidence; a production release still
+requires its own exact packaged artifact campaign and hash validation.
 
 ## Repeat native Windows/IIS tests
 
@@ -200,7 +203,7 @@ tokens or customer key material as CI artifacts.
 
 Core owns the implementation. Enterprise composes the base CertOps services;
 Cloud has an older Core pin and an independent migration/route overlay.
-Adopt migrations 78 (installed-file assurance) and 79 (provider references),
+Adopt migrations 78 (installed-file assurance), 79/80 (released auto-sync) and 81 (provider references),
 widened contracts, provider-aware services and agent
 capabilities together when those editions update their Core pin. Review
 Cloud's migration ordering and route composition and rerun each edition's

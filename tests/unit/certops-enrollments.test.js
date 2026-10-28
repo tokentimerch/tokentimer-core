@@ -702,7 +702,7 @@ describe("enrollment rows", () => {
 
     const stored = db.enrollments.get(ENROLLMENT);
     const agent = {
-      id: "agent-row-1",
+      id: stored.agent_id,
       workspaceId: WORKSPACE,
       agentId: "agent-01",
       name: "Windows agent",
@@ -741,6 +741,10 @@ describe("enrollment rows", () => {
         if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [] };
         if (sql.includes("SAVEPOINT") || sql.includes("RELEASE SAVEPOINT")) return { rows: [] };
         if (sql.includes("FROM certificate_enrollments e")) return db.query(text, params);
+        if (sql.includes("SELECT state FROM certificate_enrollments")) {
+          assert.deepEqual(params, [WORKSPACE, ENROLLMENT, stored.certificate_id, stored.agent_id, JOB_ID]);
+          return { rows: [{ state: stored.state }] };
+        }
         if (sql.includes("SELECT last_sequence")) return { rows: [{ last_sequence: 0 }] };
         if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
         if (sql.includes("SELECT declared_target_selectors")) {

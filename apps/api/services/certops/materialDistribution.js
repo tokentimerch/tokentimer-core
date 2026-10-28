@@ -50,19 +50,29 @@ function enqueueDistributionEvent(client, workspaceId, eventType, dedupeKey, pay
   return require("./outbox").enqueueOutboxEvent({ client,workspaceId,eventType,dedupeKey,payload });
 }
 
-async function lockGroup(client, workspaceId, groupId, { allowInactive = false } = {}) {
+async function lockGroup(client, workspaceId, groupId, { allowInactive = false, forClaim = false } = {}) {
   groupId = normalizeDistributionId(groupId);
   const group = (await client.query(`SELECT g.*, p.ended_at FROM certops_distribution_groups g
     JOIN certops_management_periods p ON p.workspace_id=g.workspace_id AND p.id=g.management_period_id
-    WHERE g.workspace_id=$1 AND g.id=$2 FOR UPDATE OF g,p`, [workspaceId, groupId])).rows[0];
+    WHERE g.workspace_id=$1 AND g.id=$2 FOR UPDATE OF g,p${forClaim ? " SKIP LOCKED" : ""}`, [workspaceId, groupId])).rows[0];
+  if (!group && forClaim) {
+    // Dispatch already owns a job and a shared period lock. Never wait for a
+    // group editor or another claim to upgrade that period: yield this job and
+    // retry on the next poll. The unlocked probe only distinguishes contention
+    // from absence; authorization below always uses the successfully locked row.
+    const existing = await client.query(`SELECT 1 FROM certops_distribution_groups g
+      JOIN certops_management_periods p ON p.workspace_id=g.workspace_id AND p.id=g.management_period_id
+      WHERE g.workspace_id=$1 AND g.id=$2`, [workspaceId, groupId]);
+    if (existing.rowCount) fail("CERTOPS_DISTRIBUTION_BUSY");
+  }
   if (!group) fail("CERTOPS_DISTRIBUTION_NOT_FOUND", 404);
   if (!allowInactive && (group.state !== "active" || group.ended_at)) fail("CERTOPS_DISTRIBUTION_INACTIVE");
   return group;
 }
 
-async function resolveDistributionJobDefaults({ client, workspaceId, operation, subjectId, payload, assignedAgentId, jobId }) {
+async function resolveDistributionJobDefaults({ client, workspaceId, operation, subjectId, payload, assignedAgentId, jobId, forClaim = false }) {
   const intent = validateDistributionContract(payload.publication ? "publication" : "materialDeployment", payload.publication || payload.materialDeployment);
-  const group = await lockGroup(client, workspaceId, intent.groupId);
+  const group = await lockGroup(client, workspaceId, intent.groupId, { forClaim });
   if (providerOf(intent) !== (group.material_store_provider || "vault-kv2")) fail("CERTOPS_MATERIAL_PROVIDER_MISMATCH");
   // Manual renewals may omit routing. Publication always belongs to this
   // group's issuer; an explicitly different agent remains forbidden.

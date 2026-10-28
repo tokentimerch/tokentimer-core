@@ -10,6 +10,7 @@ const {
   fail,
   REPOSITORY,
   LAB_ENV,
+  requireTrusted,
 } = require("../../../infra/certops-azure-keyvault/policy");
 const { save, sleep } = require("../../../infra/certops-azure-keyvault/lab");
 
@@ -34,6 +35,7 @@ async function eventually(task, code, timeoutMs = 600000) {
   fail(code);
 }
 async function assertion(root, env = process.env) {
+  requireTrusted(env);
   const url = new URL(env.ACTIONS_ID_TOKEN_REQUEST_URL);
   check(
     url.protocol === "https:" &&

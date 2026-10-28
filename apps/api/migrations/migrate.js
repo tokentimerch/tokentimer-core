@@ -4840,14 +4840,24 @@ const migrations = [
     name: "certops_installed_file_distribution",
     sql: fs.readFileSync(require("path").join(__dirname, "078-certops-installed-file-distribution.sql"), "utf8"),
   },
+  {
+    version: 79,
+    name: "auto_sync_provider_stats",
+    sql: fs.readFileSync(require("path").join(__dirname, "079-auto-sync-provider-stats.sql"), "utf8"),
+  },
+  {
+    version: 80,
+    name: "auto_sync_run_metrics",
+    sql: fs.readFileSync(require("path").join(__dirname, "080-auto-sync-run-metrics.sql"), "utf8"),
+  },
 ];
 
 
 
 migrations.push({
-  version: 79,
+  version: 81,
   name: "certops_material_providers",
-  sql: fs.readFileSync(require("path").join(__dirname, "079-certops-material-providers.sql"), "utf8"),
+  sql: fs.readFileSync(require("path").join(__dirname, "081-certops-material-providers.sql"), "utf8"),
 });
 
 const { composeMigrations } = require("./compose-migrations");

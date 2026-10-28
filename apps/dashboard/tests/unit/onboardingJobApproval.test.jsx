@@ -10,10 +10,13 @@ import {
 } from '../../src/components/certops/certopsJobsApi.js';
 import { getWorkspaceCertOpsPauseState } from '../../src/components/certops/certopsApi.js';
 
-vi.mock('../../src/hooks/useDashboardTheme', async importOriginal => ({
-  ...(await importOriginal()),
-  useDashboardTheme: () => ({ muted: 'gray.500' }),
-}));
+vi.mock('../../src/hooks/useDashboardTheme', async importOriginal => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useDashboardTheme: actual.useDashboardThemeColors,
+  };
+});
 vi.mock('../../src/components/certops/certopsJobsApi.js', () => ({
   createJob: vi.fn(),
   getJob: vi.fn(),

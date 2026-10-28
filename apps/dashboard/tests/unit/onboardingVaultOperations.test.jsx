@@ -120,7 +120,7 @@ describe('Vault jobs stay in onboarding', () => {
       job: { id: 'vault-retry', status: 'pending' },
     });
     wrap(<VaultAgentTest ctx={context} agent={first} isIssuer />);
-    await screen.findByText('Test status: failed');
+    await screen.findByText('Test status: Failed');
     fireEvent.click(
       screen.getByRole('button', {
         name: /(?:Send a test job to|Retry test for) First web server/,
@@ -192,7 +192,7 @@ describe('Vault jobs stay in onboarding', () => {
       },
     });
     wrap(<VaultAgentTest ctx={context} agent={first} />);
-    await screen.findByText('Test status: dry_run_complete');
+    await screen.findByText('Test status: Dry-run complete');
     expect(screen.queryByText('Signed dry run completed')).toBeNull();
   });
 
@@ -206,7 +206,7 @@ describe('Vault jobs stay in onboarding', () => {
     });
     wrap(<VaultAgentTest ctx={context} agent={first} />);
     await waitFor(() =>
-      expect(screen.getByText('Test status: failed')).toBeTruthy()
+      expect(screen.getByText('Test status: Failed')).toBeTruthy()
     );
     expect(screen.queryByText('Signed dry run completed')).toBeNull();
     expect(api.createJob).not.toHaveBeenCalled();
@@ -344,6 +344,13 @@ describe('Vault jobs stay in onboarding', () => {
 
   it('pins the chosen published version and keeps rollout success separate from live consumer verification', async () => {
     const context = ctx();
+    context.summary = {
+      certops: {
+        distribution: {
+          items: [{ id: GROUP, completed: true, verified: true }],
+        },
+      },
+    };
     const version = {
       id: 'published-version',
       state: 'published',
@@ -411,13 +418,14 @@ describe('Vault jobs stay in onboarding', () => {
     expect(api.requestRollout.mock.calls[0][3]).toMatch(
       /^wizard-vault-rollout-/
     );
-    expect(screen.queryByText('All selected consumers verified')).toBeNull();
+    expect(screen.queryByText('All consumers verified')).toBeNull();
     api.readDistribution.mockResolvedValue({
       versions: [version],
       consumers: [
         {
           ...binding,
           converged: true,
+          live_verified: true,
           desired_material_version_id: version.id,
           latest_deployment: {
             jobId: 'deployment-job',
@@ -430,7 +438,7 @@ describe('Vault jobs stay in onboarding', () => {
       screen.getByRole('button', { name: 'Refresh distribution status' })
     );
     await waitFor(() =>
-      expect(screen.getByText('All selected consumers verified')).toBeTruthy()
+      expect(screen.getByText('All consumers verified')).toBeTruthy()
     );
     expect(screen.getByText('Timeline for deployment-job')).toBeTruthy();
     view.unmount();

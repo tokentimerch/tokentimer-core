@@ -134,6 +134,27 @@ test("main 78 and provider-preview 78 retain their recorded definitions and appe
   assert.throws(() => composeMigrations([...registry, { version: 79, name: "collision", sql: "unsafe" }]), /Duplicate Core migration version/);
   assert.throws(() => composeMigrations(registry, [...prior, { version: 78, name: "unknown" }]), /Unsupported Core migration history/);
 });
+test("released 78-80 and both provider preview histories compose uniquely without rewriting applied rows", () => {
+  const names = ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "certops_material_providers"];
+  const extensions = names.map((name, i) => ({ version: 78 + i, name, sql: `immutable-${name}` }));
+  const registry = [...core, ...extensions], prior = [...ledger(canonical), { version: 77, name: "future" }];
+  for (const order of [names, [names[3], names[0], names[1], names[2]], [names[0], names[3], names[1], names[2]]]) {
+    for (let count = order === names ? 0 : 2; count <= order.length; count++) {
+      const recorded = [...prior, ...order.slice(0, count).map((name, i) => ({ version: 78 + i, name }))];
+      const result = composeMigrations(registry, recorded);
+      assert.equal(new Set(result.map(row => row.version)).size, result.length);
+      for (const row of recorded) assert.equal(result.find(entry => entry.version === row.version).name, row.name);
+      assert.deepEqual(result.slice(-4).map(row => row.name), order);
+      for (const entry of result.slice(-4)) assert.equal(entry.sql, `immutable-${entry.name}`);
+      assert.deepEqual(composeMigrations(registry, result), result, "replay keeps the same version/name/SQL plan");
+    }
+  }
+  const { migrations } = require("../../apps/api/migrations/migrate");
+  assert.deepEqual(migrations.filter(row => row.version >= 78).map(({version, name}) => ({version, name})), extensions.map(({version, name}) => ({version, name})));
+  for (const count of [1, 2, 3]) assert.deepEqual(composeMigrations(registry, [...prior, ...extensions.slice(0, count)]), registry);
+  assert.throws(() => composeMigrations(registry, [...prior, ...extensions.slice(0, 2), {version: 80, name: names[3]}]), /Unsupported Core migration history/);
+});
+
 test("all 72 legacy distribution-first definitions retain their immutable historical SQL", () => {
   const coreRoot = path.resolve(__dirname, "../..");
   const { migrations } = require(

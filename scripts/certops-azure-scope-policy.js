@@ -20,6 +20,30 @@ function allowedCondition(name, value) {
 }
 function keyvaultPolicy(name, workflow, errors) {
   const janitor = name === KV_CLEANUP;
+  if (janitor) {
+    if (
+      JSON.stringify(Object.keys(workflow.on || {})) !==
+        JSON.stringify(["schedule", "workflow_dispatch"]) ||
+      JSON.stringify(workflow.on.schedule) !==
+        JSON.stringify([{ cron: "43 * * * *" }]) ||
+      workflow.on.workflow_dispatch != null
+    )
+      errors.push(
+        "Key Vault cleanup requires its hourly schedule and input-free dispatch",
+      );
+    if (
+      JSON.stringify(workflow.jobs?.cleanup?.env) !==
+      JSON.stringify({
+        AZURE_CLIENT_ID: "${{ vars.AZURE_CLIENT_ID }}",
+        AZURE_TENANT_ID: "${{ vars.AZURE_TENANT_ID }}",
+        AZURE_SUBSCRIPTION_ID: "${{ vars.AZURE_SUBSCRIPTION_ID }}",
+        GH_TOKEN: "${{ github.token }}",
+      })
+    )
+      errors.push(
+        "Cleanup must use only its separate identity variables, without spending gates",
+      );
+  }
   const expectedJobs = janitor ? ["cleanup"] : ["preflight", "lab"];
   if (
     JSON.stringify(Object.keys(workflow.jobs || {})) !==
@@ -143,7 +167,8 @@ function keyvaultPolicy(name, workflow, errors) {
         janitor &&
         !steps.some(
           (step) =>
-            step.run === "node infra/certops-azure-keyvault/lab.js janitor",
+            step.run === "node infra/certops-azure-keyvault/lab.js janitor" &&
+            !step.if,
         )
       )
         errors.push(
@@ -163,6 +188,20 @@ function keyvaultPolicy(name, workflow, errors) {
       )
         errors.push(
           "Janitor command inventory cannot provision or accept arbitrary Azure commands",
+        );
+      if (
+        janitor &&
+        (steps.length !== 5 ||
+          !steps.some(
+            (step) =>
+              step.run === "./infra/certops-azure-keyvault/login-oidc.ps1" &&
+              step.shell === "pwsh" &&
+              !step.if,
+          ) ||
+          steps.filter((step) => step.uses).length !== 2)
+      )
+        errors.push(
+          "Cleanup authentication, deletion and private staging scrub must remain mandatory",
         );
       if (!janitor) {
         for (const command of [

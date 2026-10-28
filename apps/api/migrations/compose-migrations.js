@@ -23,13 +23,20 @@ function composeMigrations(migrations, recorded = []) {
       throw new Error(`Missing or inconsistent pinned Core migration: ${name}`);
     }
   }
-  // Canonical main keeps installed-file assurance at 78 and providers at 79.
-  // Early, unreleased PR builds applied providers as 78. Recognize that exact
-  // ledger by name; retain its SQL/version and move only the unapplied change.
+  // Released main owns 78 (installed assurance), 79 and 80 (auto-sync).
+  // Providers now append at 81. Preserve both known unreleased PR histories:
+  // providers at 78, then installed at 79; or installed at 78, providers at 79.
+  // Only unapplied entries move, in these explicitly recognized sequences.
   const installed = "certops_installed_file_distribution", providers = "certops_material_providers";
-  const preview = recorded.some(entry => entry.version === 78 && entry.name === providers);
-  const extensions = migrations.some(entry => entry.name === installed) && migrations.some(entry => entry.name === providers)
-    ? new Map((preview ? [providers, installed] : [installed, providers]).map((name, offset) => {
+  const telemetry = ["auto_sync_provider_stats", "auto_sync_run_metrics"].filter(name => migrations.some(entry => entry.name === name));
+  const canonicalExtensions = [installed, ...telemetry, providers];
+  const applied = recorded.filter(entry => entry.version >= 78 && entry.version < 78 + canonicalExtensions.length).slice().sort((a, b) => a.version - b.version);
+  const extensionOrder = [canonicalExtensions, [providers, installed, ...telemetry], [installed, providers, ...telemetry]]
+    .find(names => applied.every((row, offset) => row.version === 78 + offset && row.name === names[offset]));
+  if (new Set(migrations.map(entry => entry.version)).size !== migrations.length)
+    throw new Error("Duplicate Core migration version");
+  const extensions = migrations.some(entry => entry.name === installed) && migrations.some(entry => entry.name === providers) && extensionOrder
+    ? new Map(extensionOrder.map((name, offset) => {
       const entry = migrations.find(migration => migration.name === name);
       return [name, { ...entry, version: 78 + offset }];
     })) : new Map();

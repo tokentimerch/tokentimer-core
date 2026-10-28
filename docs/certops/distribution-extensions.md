@@ -16,7 +16,7 @@ qualification claim. See [qualification](distribution-extensions-qualification.m
 for exact evidence and remaining gates.
 
 The canonical schema sequence is migration 78 for installed-file assurance,
-then migration 79 for immutable provider references. Upgrade API/worker and
+released auto-sync migrations 79/80, then migration 81 for immutable provider references. Upgrade API/worker and
 consumer agents together. Previously applied migration rows are retained;
 recognized early provider-first preview databases append the missing assurance
 change without renumbering their ledger.
@@ -71,7 +71,10 @@ and read at version 1. Deleted/destroyed versions fail rather than using latest.
 The [dedicated Azure CI runbook](azure-keyvault-ci-qualification.md) describes
 trusted-main OIDC activation, exact issuer/consumer roles, disposable vault
 ownership and cleanup, and the mandatory provider/signed-service campaign.
-Live execution is pending; Azure production capability remains disabled.
+The [real development campaign](azure-keyvault-ci-qualification.md) passed all eighteen
+mandatory scenarios at its recorded source/package hashes. Final merged HEAD and
+the exact production release artifact require their own validation; the Azure
+production capability remains disabled.
 
 Use a dedicated customer-controlled **public Azure Key Vault Secrets**
 namespace. Private endpoints are supported through customer DNS resolving the
@@ -181,7 +184,7 @@ configuration uses the existing binding/profile authorization fields plus:
     }
   },
   "probes": [
-    {"dialAddress":"127.0.0.1","port":443,"sni":"web.example.com"}
+    { "dialAddress": "127.0.0.1", "port": 443, "sni": "web.example.com" }
   ]
 }
 ```

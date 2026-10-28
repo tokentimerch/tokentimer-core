@@ -1,9 +1,20 @@
 # Real Azure Key Vault CI qualification
 
-Status on 2026-10-27: **AWAITING AZURE ACCESS / TRUSTED WORKFLOW DISPATCH**.
-No live Azure campaign has run for this change. No Azure scenarios have passed
-or failed, and no live evidence artifact exists yet. Offline protocol tests and
-the PostgreSQL bridge regression are supporting tests, never live qualification.
+The [real Azure development campaign](https://github.com/tokentimerch/tokentimer-core/actions/runs/40486274037)
+passed on 2026-10-27: **18 passed, 0 failed, 0 skipped, 0 pending**, with completed
+database and owned-resource cleanup and no purge. Tested source:
+`a53d063460eb0f447cc4fd821dd75c7abe46bb95`; qualification-only package SHA-256:
+`99000ad68b7ed98e87f30b4edb390583c9739925def357a8253a657c4f1bfb3c`.
+The [sanitized evidence artifact](https://github.com/tokentimerch/tokentimer-core/actions/runs/40486274037/artifacts/12727270201)
+records all eighteen scenarios, one ambiguous PUT/one recovered version, two
+accepted provider pins, actual Azure 401/403 and Entra exchanges. Its archive
+digest is `sha256:e6d30820afc4bd4e36dbdfdb17487f32ba98fadcec9abc95fa7e0ef36936f5e3`.
+
+That run used a temporary, independently approved branch exception before the
+main-only rollback and merge with current main. It is historical evidence for
+those exact bytes, **not validation of the final merged HEAD or a production
+release artifact**. All future provisioning requires the permanent main-only
+policy below. Both production extension capability gates remain disabled.
 
 ## Existing infrastructure and prerequisites
 
@@ -12,11 +23,9 @@ and uses `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` with GitHub OIDC. The Key Vault
 login wrapper reuses `infra/certops-adcs/login-oidc.ps1`, with an isolated CLI
 cache. It does not provision an AD CS domain or use the AD CS cleanup helpers.
 
-Read-only GitHub inspection found `certops-adcs-lab`, `certops-adcs-cleanup`
-and the repository opt-in `CERTOPS_ADCS_LAB_ENABLED`. The dedicated Key Vault
-environments, opt-in, role variables and registered workflows did not exist.
-The existing identity's Key Vault and role-assignment permissions remain
-**unknown**: dispatching the paid domain lab merely to probe them is unnecessary.
+The successful campaign used dedicated Key Vault environments and OIDC
+identities, separate from `certops-adcs-lab` and `certops-adcs-cleanup`.
+Do not dispatch the paid AD CS domain lab to probe Key Vault permissions.
 The new trusted-main campaign checks actual ARM permissions and exact role
 definitions before creating a resource group, then proves data access against
 Azure. It reports a sanitized missing-action/scope code and fails on denial.
@@ -143,8 +152,11 @@ node scripts/certops-azure-keyvault-report.js azure-evidence/azure-keyvault-evid
 
 GitHub normally requires a newly dispatched workflow to exist on the default
 branch ([workflow dispatch](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)).
-Until then the result is **AWAITING AZURE ACCESS / TRUSTED WORKFLOW DISPATCH**,
-not a failed Azure campaign and not a passing qualification.
+PR #493 initially registered the workflow and independent cleanup. The final
+implementation replaces that registration placeholder and pinned bootstrap
+helpers with the reviewed campaign and janitor from the workflow's own main
+SHA. An unexecuted future candidate remains unqualified regardless of the
+historical development campaign above.
 
 ## Evidence and scope
 

@@ -35,6 +35,76 @@ const env = () => ({
   ),
 });
 const plan = () => subject.plan(env(), Date.now() - 60000, "test-nonce");
+test("OIDC assertion accepts main only and rejects altered issuer, audience, subject, ref and SHA without writing credentials", async (t) => {
+  const e = {
+    ...env(),
+    ACTIONS_ID_TOKEN_REQUEST_URL:
+      "https://fixture.actions.githubusercontent.com/token",
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN: "synthetic-request-token",
+  };
+  const original = {
+    iss: "https://token.actions.githubusercontent.com",
+    aud: "api://AzureADTokenExchange",
+    sub: `repo:${subject.REPOSITORY}:environment:${subject.LAB_ENV}`,
+    ref: e.GITHUB_REF,
+    sha: e.GITHUB_SHA,
+    exp: Math.floor(Date.now() / 1000) + 300,
+  };
+  let claims = { ...original };
+  let requests = 0;
+  const writes = [];
+  t.mock.method(global, "fetch", async () => {
+    requests++;
+    return {
+      status: 200,
+      json: async () => ({
+        value: `synthetic.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.signature`,
+      }),
+    };
+  });
+  t.mock.method(process.stdout, "write", () => true);
+  t.mock.method(fs, "writeFileSync", (...args) => writes.push(args));
+  t.mock.method(fs, "chmodSync", () => {});
+  await io.assertion("synthetic-root", e);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0][2].mode, 0o600);
+  for (const patch of [
+    { ref: "refs/heads/feat/certops-distribution-extensions" },
+    { ref: "refs/heads/other" },
+    { ref: "refs/tags/main" },
+    { sha: "b".repeat(40) },
+    { iss: "https://foreign.test" },
+    { aud: "foreign-audience" },
+    { sub: `repo:${subject.REPOSITORY}:environment:certops-adcs-lab` },
+  ]) {
+    claims = { ...original, ...patch };
+    await assert.rejects(io.assertion("synthetic-root", e), {
+      code: "AZURE_KV_GITHUB_OIDC_CONTEXT_DENIED",
+    });
+  }
+  claims = { ...original };
+  const fetched = requests;
+  for (const patch of [
+    { GITHUB_REF: "refs/heads/feat/certops-distribution-extensions" },
+    { GITHUB_REF: "refs/tags/main" },
+    { GITHUB_EVENT_NAME: "pull_request" },
+    { GITHUB_EVENT_NAME: "push" },
+    { GITHUB_REPOSITORY: "foreign/core" },
+  ])
+    await assert.rejects(io.assertion("synthetic-root", { ...e, ...patch }), {
+      code: "AZURE_KV_TRUSTED_MAIN_REQUIRED",
+    });
+  assert.equal(
+    requests,
+    fetched,
+    "untrusted context must not fetch an assertion",
+  );
+  assert.equal(
+    writes.length,
+    1,
+    "denied contexts must never write assertion files",
+  );
+});
 const group = (p) => ({
   name: p.group,
   id: lab.groupId(p),
@@ -65,9 +135,152 @@ function workflow(name) {
   );
 }
 
+test("permanent janitor preserves bootstrap protections using current main helpers and canonical private cleanup", () => {
+  const name = "certops-azure-keyvault-janitor.yml",
+    w = workflow(name);
+  assert.deepEqual(scope.validate(name, w), []);
+  assert.doesNotMatch(JSON.stringify(w), /LAB_ENABLED|sparse-checkout/);
+  for (const mutate of [
+    (w) => {
+      w.jobs.cleanup.if =
+        "github.ref == 'refs/heads/feat/certops-distribution-extensions'";
+    },
+    (w) => {
+      w.jobs.cleanup.environment = subject.LAB_ENV;
+    },
+    (w) => {
+      w.jobs.cleanup.env.AZURE_CLIENT_SECRET = "unexpected";
+    },
+    (w) => {
+      w.on.push = {};
+    },
+    (w) => {
+      delete w.on.schedule;
+    },
+    (w) => {
+      w.on.schedule = [{ cron: "* * * * *" }];
+    },
+    (w) => {
+      w.on.workflow_dispatch = { inputs: { ref: { type: "string" } } };
+    },
+    (w) => {
+      w.jobs.cleanup.steps[0].with.ref = "b".repeat(40);
+    },
+    (w) => {
+      w.jobs.cleanup.steps[0].with.repository = "foreign/core";
+    },
+    (w) => {
+      w.jobs.cleanup.steps[3].run =
+        "node infra/certops-azure-keyvault/lab.js provision";
+    },
+    (w) => {
+      w.jobs.cleanup.steps[3].run = "az group delete --name production";
+    },
+    (w) => {
+      w.jobs.cleanup.steps[2].if = "false";
+    },
+    (w) => {
+      w.jobs.cleanup.steps[3].if = "false";
+    },
+    (w) => {
+      w.jobs.cleanup.steps[4].if = "success()";
+    },
+    (w) => {
+      w.jobs.cleanup.steps.push({ run: "az keyvault secret show" });
+    },
+    (w) => {
+      w.jobs.cleanup["continue-on-error"] = true;
+    },
+    (w) => {
+      w.jobs.cleanup.permissions.contents = "write";
+    },
+    (w) => {
+      w.jobs.cleanup.env.AZURE_CLIENT_ID = "${{ vars.FOREIGN_CLIENT_ID }}";
+    },
+    (w) => {
+      w.jobs.cleanup.env.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED =
+        "${{ vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED }}";
+    },
+  ]) {
+    const bad = structuredClone(w);
+    mutate(bad);
+    assert.ok(scope.validate(name, bad).length, mutate.toString());
+  }
+});
+
+test("qualification rejects former feature-branch conditions, PR events and tags before credentials", () => {
+  const name = "certops-azure-keyvault-qualification.yml",
+    w = workflow(name);
+  assert.deepEqual(scope.validate(name, w), []);
+  for (const mutate of [
+    (w) => {
+      w.jobs.lab.if +=
+        " || github.ref == 'refs/heads/feat/certops-distribution-extensions'";
+    },
+    (w) => {
+      w.jobs.lab.if = "github.ref == 'refs/tags/main'";
+    },
+    (w) => {
+      w.on.pull_request = {};
+    },
+    (w) => {
+      w.on.pull_request_target = {};
+    },
+    (w) => {
+      w.jobs.preflight.steps[0].run = w.jobs.preflight.steps[0].run.replace(
+        'test "$GITHUB_REF" = refs/heads/main',
+        "true",
+      );
+    },
+  ]) {
+    const bad = structuredClone(w);
+    mutate(bad);
+    assert.ok(scope.validate(name, bad).length, mutate.toString());
+  }
+});
+
+test("janitor canonical scrub works from a clean checkout without installed dependencies", (t) => {
+  const root = fixture(t),
+    checkout = path.join(root, "checkout"),
+    runner = path.join(root, "runner");
+  fs.mkdirSync(runner);
+  for (const file of [
+    "tests/e2e/azure-keyvault-real.cjs",
+    "tests/e2e/helpers/azure-keyvault-live-io.cjs",
+    "infra/certops-azure-keyvault/policy.js",
+    "infra/certops-azure-keyvault/lab.js",
+    "scripts/certops-agent-package.js",
+    "scripts/certops-azure-keyvault-report.js",
+  ]) {
+    const target = path.join(checkout, file);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(path.resolve(__dirname, "..", file), target);
+  }
+  const staging = lab.privateRoot({ ...env(), RUNNER_TEMP: runner });
+  fs.writeFileSync(path.join(staging, "owned-cache"), "synthetic-cache");
+  const childEnv = { ...env(), RUNNER_TEMP: runner };
+  delete childEnv.NODE_TEST_CONTEXT;
+  const child = spawnSync(
+    process.execPath,
+    ["tests/e2e/azure-keyvault-real.cjs", "scrub"],
+    {
+      cwd: checkout,
+      env: childEnv,
+      encoding: "utf8",
+      timeout: 10000,
+      windowsHide: true,
+    },
+  );
+  assert.equal(child.status, 0, child.stderr);
+  assert.equal(fs.existsSync(staging), false);
+  assert.equal(fs.existsSync(runner), true);
+});
+
 test("Key Vault provisioning rejects every untrusted ref, event, missing opt-in and invalid configuration", () => {
   for (const patch of [
     { GITHUB_REF: "refs/heads/feature" },
+    { GITHUB_REF: "refs/heads/feat/certops-distribution-extensions" },
+    { GITHUB_REF: "refs/tags/main" },
     { GITHUB_EVENT_NAME: "schedule" },
     { GITHUB_EVENT_NAME: "pull_request_target" },
     { GITHUB_REPOSITORY: "foreign/core" },
@@ -238,6 +451,29 @@ test("protected environments require main only, independent approval and separat
     ],
   };
   subject.requireEnvironment(metadata, branches, subject.LAB_ENV);
+  for (const rules of [
+    [{ name: "feat/certops-distribution-extensions", type: "branch" }],
+    [
+      ...branches.branch_policies,
+      { name: "feat/certops-distribution-extensions", type: "branch" },
+    ],
+  ])
+    for (const name of [subject.LAB_ENV, subject.CLEANUP_ENV]) {
+      assert.throws(
+        () =>
+          subject.requireEnvironment(
+            {
+              ...metadata,
+              name,
+              protection_rules:
+                name === subject.LAB_ENV ? metadata.protection_rules : [],
+            },
+            { branch_policies: rules },
+            name,
+          ),
+        { code: "AZURE_KV_ENVIRONMENT_MAIN_ONLY_REQUIRED" },
+      );
+    }
   for (const mutate of [
     (m) => {
       m.protection_rules = [];
@@ -298,6 +534,7 @@ test("janitor verifies actual GitHub owner workflow, source and manual main run"
   for (const patch of [
     { event: "pull_request" },
     { head_branch: "feature" },
+    { head_branch: "feat/certops-distribution-extensions" },
     { head_sha: "b".repeat(40) },
     { path: ".github/workflows/certops-enterprise-adcs-qualification.yml" },
     { id: 999 },
