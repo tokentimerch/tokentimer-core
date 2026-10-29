@@ -66,6 +66,7 @@ RUN addgroup -g 1000 -S tokentimer && adduser -u 1000 -S tokentimer -G tokentime
         /var/cache/nginx/proxy_temp \
         /var/cache/nginx/fastcgi_temp \
         /var/cache/nginx/uwsgi_temp \
+        /var/cache/nginx/scgi_temp \
         /var/run \
         /var/log/nginx \
         /var/lib/nginx/logs \
