@@ -42,7 +42,8 @@ function windowsAccount(env) {
 
 function restrictToCurrentUserWindows(file, { env, execFileSync }) {
   // execFile, not a shell: nothing here is ever interpreted as a command line.
-  execFileSync("icacls", [file, "/inheritance:r", "/grant:r", `${windowsAccount(env)}:(R,W)`], {
+  const icacls = path.join(process.env.SystemRoot || process.env.WINDIR || "C:\\Windows", "System32", "icacls.exe");
+  execFileSync(icacls, [file, "/inheritance:r", "/grant:r", `${windowsAccount(env)}:(R,W)`], {
     stdio: "ignore",
     windowsHide: true,
   });
@@ -103,7 +104,8 @@ $items+=@{owner=$a.GetOwner([System.Security.Principal.SecurityIdentifier]).Valu
 $parent=[System.IO.Directory]::GetParent($p); if($null -eq $parent){break}; $p=$parent.FullName }
 @{userSid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value;directories=$items}|ConvertTo-Json -Depth 8 -Compress`;
   try {
-    return JSON.parse(childProcess.execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+    const powershell = path.join(process.env.SystemRoot || process.env.WINDIR || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+    return JSON.parse(childProcess.execFileSync(powershell, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
       encoding: "utf8", windowsHide: true, timeout: 15000,
       stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, TT_MCP_DIRECTORY_CHECK: directory },
     }));

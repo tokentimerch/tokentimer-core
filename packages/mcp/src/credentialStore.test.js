@@ -153,7 +153,7 @@ describe("credential store: writing", () => {
       execFileSync: (command, args) => calls.push({ command, args }),
     });
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].command, "icacls");
+    assert.equal(calls[0].command, path.join(process.env.SystemRoot || process.env.WINDIR || "C:\\Windows", "System32", "icacls.exe"));
     assert.ok(Array.isArray(calls[0].args));
     assert.deepEqual(calls[0].args.slice(1), ["/inheritance:r", "/grant:r", "CORP\\alice:(R,W)"]);
     assert.ok(calls[0].args[0].endsWith(".tmp") || fs.existsSync(file), "the restriction is applied before the rename");
