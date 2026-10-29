@@ -12,8 +12,8 @@ async function lockOperatorJobAuthority({ client, connectionId, workspaceId, req
   // Claim owns the job row: skip a busy workspace instead of reversing the
   // write-disable lock order (workspace before cancellation of queued jobs).
   if (requireWriteGates) {
-    if (String(process.env.MCP_OPERATOR_INTERFACE_ENABLED).toLowerCase() !== "true" ||
-        String(process.env.MCP_OPERATOR_WRITES_ENABLED).toLowerCase() !== "true") return false;
+    if (String(process.env.MCP_OPERATOR_INTERFACE_ENABLED || "").trim().toLowerCase() !== "true" ||
+        String(process.env.MCP_OPERATOR_WRITES_ENABLED || "").trim().toLowerCase() !== "true") return false;
     const workspace = await client.query(
       `SELECT operator_writes_enabled FROM workspaces WHERE id = $1 FOR SHARE${skipLocked ? " SKIP LOCKED" : ""}`,
       [workspaceId],

@@ -1331,6 +1331,7 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
         await setWorkspaceWrites(false);
         assert.deepEqual((await claim()).jobs, []);
         await setWorkspaceWrites(true);
+        process.env.MCP_OPERATOR_WRITES_ENABLED = " TrUe ";
         const result = await claim();
         assert.deepEqual(result.jobs.map(j => j.jobId), [queued.jobId]);
         const job = await jobRow(queued.jobId);
