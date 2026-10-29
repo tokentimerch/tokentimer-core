@@ -25,6 +25,17 @@ test("unknown execution effect remains explicit and requires reconciliation", ()
   assert.equal(view.state, "unknown_effect");
   assert.equal(view.stateReason, "reconciliation_required");
 });
+
+test("queued work is distinct from human approval and has no approval deadline", () => {
+  const row = { id: "request", request_id: "retry", approval_expires_at: "2026-12-01T00:00:00Z" };
+  assert.equal(requestView(row, { id: "job", status: "pending", approved_at: null }).state, "pending");
+  assert.equal(requestView(row, { id: "job", status: "pending", approved_at: null }).approvalExpiresAt, null);
+  assert.equal(requestView(row, { id: "job", status: "pending", approved_at: "2026-11-01T00:00:00Z" }).state, "approved");
+  assert.equal(requestView(row, { id: "job", status: "pending_approval" }).approvalExpiresAt, "2026-12-01T00:00:00.000Z");
+  for (const enabled of [false, true]) {
+    assert.equal(renewEffect({ certificate: {}, requireApprovalAlways: enabled }).approvalAuthority, enabled ? "other_manager_or_admin" : "none");
+  }
+});
 test("a low CA cap cannot be exhausted by waiting assistant requests", () => {
   assert.equal(assistantPendingLimit(1), 0);
   assert.equal(assistantPendingLimit(2), 1);

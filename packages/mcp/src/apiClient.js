@@ -46,7 +46,7 @@ const CODE_ERRORS = Object.freeze({
   OPERATOR_INTENT_STALE: ["MCP_INTENT_STALE", "The certificate changed since the preview. Preview again.", false, null],
   OPERATOR_IDEMPOTENCY_CONFLICT: ["MCP_IDEMPOTENCY_CONFLICT", "This request id was already used for something different. Use a new request id.", false, null],
   OPERATOR_PENDING_LIMIT: ["MCP_RATE_LIMITED", "Too many assistant requests are already waiting for approval.", true, "pending_limit"],
-  OPERATOR_REQUEST_NOT_CANCELLABLE: ["MCP_CONFLICT", "The request is no longer waiting for approval.", false, "not_cancellable"],
+  OPERATOR_REQUEST_NOT_CANCELLABLE: ["MCP_CONFLICT", "The request was approved or has already moved beyond the queue.", false, "not_cancellable"],
   OPERATOR_CERTIFICATE_NOT_MANAGED: ["MCP_CONFLICT", "TokenTimer is not managing this certificate.", false, "not_managed"],
   OPERATOR_CERTIFICATE_RETIRED: ["MCP_CONFLICT", "The certificate is retired.", false, "retired"],
   OPERATOR_RENEWAL_NOT_POSSIBLE: ["MCP_CONFLICT", "A renewal cannot be requested for this certificate.", false, "renewal_not_possible"],

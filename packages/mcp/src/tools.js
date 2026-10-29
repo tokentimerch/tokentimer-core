@@ -59,13 +59,13 @@ const DESCRIPTIONS = Object.freeze({
   tt_explain_certificate_state:
     "Explain why a certificate is in its current state, as stable reason codes with plain wording and the areas where evidence is missing.",
   tt_preview_renew:
-    "Preview renewing one certificate. Changes nothing. Returns a plan to submit, its hash, when it expires and exactly what a renewal would do, including that it contacts the issuer and needs approval from someone else. Give the certificate id from a list.",
+    "Preview renewing one certificate. Changes nothing. Returns a plan, its hash, expiry and renewal effect, including issuer contact and whether workspace policy requires approval from someone else. Give the certificate id from a list.",
   tt_request_renew:
-    "Submit a previewed renewal for approval. This does not renew anything: it creates a request that a different person must approve in TokenTimer before anything runs. Pass the plan id and hash from the preview and a new random UUID as requestId. Reuse that same requestId only to retry the same submission after a lost response; it will return the original outcome and never run twice.",
-  tt_get_action_request: "Show one of your requests: whether it is waiting for approval, approved, running, finished, rejected, withdrawn or expired.",
+    "Submit a previewed renewal. Submission does not prove renewal: it queues a job under workspace CertOps job approval policy. When approval is on, a different person must approve before execution; when off, an eligible agent can claim it immediately. Pass the plan id and hash and a new random UUID as requestId. Reuse that requestId only to retry the same submission after a lost response; it returns the original outcome and never runs twice.",
+  tt_get_action_request: "Show one of your requests: whether it is queued without approval, waiting for approval, approved, running, finished, rejected, withdrawn or expired.",
   tt_list_my_requests: "List your own requests, newest first.",
   tt_cancel_request:
-    "Withdraw one of your requests while it is still waiting for approval. This works even when new requests are switched off. If a person approved it first, it reports that instead of claiming to have stopped anything.",
+    "Withdraw your request while waiting for approval or queued without approval. This works even when new requests are switched off. If approval or agent claim won first, it refuses rather than claiming to have stopped execution.",
 });
 
 // Write tools are only offered when the person running the adapter asks for

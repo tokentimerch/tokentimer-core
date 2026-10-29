@@ -201,15 +201,17 @@ client behavior and are never an authorization control.
 
 ### 6. Approval model (settled direction, with one open proposal in section 9)
 
-- **No certificate lifecycle mutation executes without a human approval made
-  outside the assistant.** Approval is a session-only action in the dashboard.
+- **Implemented renewals follow the workspace CertOps Job approval setting.**
+  When on, approval is a session-only action by a different manager or admin.
+  When off, a submitted renewal is immediately claimable by an eligible agent.
+  This exception is limited to renewals; other planned lifecycle mutations keep
+  their separately specified approval requirements.
 - **The existing non-requester rule is preserved.** MCP-created jobs and
   requests record the connection's user as the requester plus the connection id.
   They are never recorded with a null requester or as anonymous machine work.
   The user a connection represents therefore cannot approve its own request,
-  including through another connection. Optional approval for ordinary Vault
-  jobs does not relax this assistant-specific requirement. A same-user confirmation mode is
-  deferred and would need its own ADR amendment, interface and tests.
+  including through another connection, whenever approval is required. Turning
+  Job approval off does not record a human approval or permit self-approval.
 - **Enrollment consent is capability access, not approval** of any later
   operation.
 - **Approval covers the full resolved effect** of an operation, including
@@ -412,15 +414,15 @@ MCP write flags must not remove the ability to withdraw a request. Proposed
 narrow exception:
 
 > An authenticated and authorized connection may withdraw its own request while
-> it is still `pending_approval`, even when new operational requests are
+> it is still `pending_approval` or queued without human approval, even when new operational requests are
 > disabled by workspace pause or the MCP write flags, or by Cloud downgrade
 > or freeze. This containment exception does not admit any new work.
 
 - Authentication, scope, workspace and ownership checks still apply. The
   exception does not permit cancelling another connection's request, changing
   execution parameters, or starting work.
-- "Pending" means exactly `pending_approval`, not a claimable job.
-- Withdrawal and approval race atomically. If approval wins, withdrawal returns a
+- Claimable `pending` jobs may be withdrawn only while no human approved them.
+- Withdrawal, approval and agent claim race atomically. If approval or claim wins, withdrawal returns a
   conflict and does not claim that execution was prevented.
 - A revoked or expired connection cannot authenticate through this exception.
   The dashboard remains the human recovery path.
@@ -591,11 +593,14 @@ also showed that parts of the original plan rest on premises that do not hold.
 
 **What exists.** A connection holding `mcp:renew:request` can preview a
 renewal, submit the previewed plan, read and list its own requests, and withdraw
-one that still waits. A submission creates an ordinary CertOps renewal job that
-always starts at `pending_approval`, recorded against the person and the
-connection, so it reuses the existing approval ledger, per-CA capacity gate,
-lifecycle checks and dispatch guards unchanged. The existing rule that the
-requester cannot approve their own job applies, from the dashboard as well.
+one that still waits or is queued without approval. A submission creates an
+ordinary CertOps renewal job: `pending_approval` with Job approval on, otherwise
+claimable `pending`. It records the person and connection and reuses the shared
+capacity, lifecycle and dispatch guards. Policy changes invalidate unsubmitted
+previews in either direction; existing jobs keep their original approval gate.
+Request state `pending` means queued without human approval, with no exposed
+approval deadline; `approved` requires an actual approval timestamp. Required
+approval still rejects self-approval from the dashboard as well.
 
 **Decisions this settles.**
 

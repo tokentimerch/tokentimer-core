@@ -3,7 +3,7 @@
 // Renew requests from an operator connection, on real PostgreSQL (ADR-0015).
 //
 // The properties under test are the ones that make an assistant's write safe:
-// it can only ask, a different person must approve, a revocation or a pause
+// it follows workspace approval policy, a revocation or a pause
 // always wins a race, a retry never repeats work, and nothing here can be made
 // to skip a gate by what the caller sends.
 
@@ -196,6 +196,7 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
     await member(viewer, workspaceId, "viewer");
     certA = await seedRenewable(workspaceId, "a");
     await setWorkspaceWrites(true);
+    await pool.query("UPDATE workspaces SET certops_require_approval_always = TRUE WHERE id = $1", [workspaceId]);
     app = buildApp();
     ({ credential, id: connectionId } = await newConnection(manager));
   });
@@ -205,6 +206,87 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
     delete process.env.MCP_OPERATOR_WRITES_ENABLED;
     delete process.env.CERTOPS_ENABLED;
     await pool.end();
+  });
+
+  describe("workspace job approval policy", () => {
+    const { afterEach } = require("node:test");
+    before(clearInFlight);
+    afterEach(async () => {
+      await clearInFlight();
+      await setWorkspaceWrites(true);
+      await pool.query("UPDATE workspaces SET certops_require_approval_always = TRUE WHERE id = $1", [workspaceId]);
+    });
+    const policy = async (enabled) => pool.query("UPDATE workspaces SET certops_require_approval_always = $2 WHERE id = $1", [workspaceId, enabled]);
+
+    it("queues a renewal without inventing approval when the workspace policy is off", async () => {
+      await policy(false);
+      const plan = (await preview()).body;
+      assert.equal(plan.effect.approvalAuthority, "none");
+      const requestId = crypto.randomUUID();
+      const response = await submit(plan, requestId);
+      assert.equal(response.status, 201);
+      const queued = response.body;
+      assert.equal(valid("tt_request_renew_output")(queued), true);
+      assert.equal(queued.state, "pending");
+      assert.equal(queued.approvalExpiresAt, null);
+      const job = await jobRow(queued.jobId);
+      assert.equal(job.status, "pending");
+      assert.equal(job.approved_at, null);
+      assert.equal(job.started_at, null);
+      assert.equal(job.requested_by_user_id, manager);
+      assert.equal(job.requested_by_connection_id, connectionId);
+      const replay = await submit(plan, requestId);
+      assert.equal(replay.body.replayed, true);
+      assert.equal(replay.body.jobId, queued.jobId);
+      assert.equal(replay.body.state, "pending");
+      assert.equal((await get(`/api/v1/operator/requests/${queued.requestRecordId}`)).body.state, "pending");
+      const mine = (await get("/api/v1/operator/requests")).body.items;
+      assert.equal(mine.find(r => r.requestRecordId === queued.requestRecordId).approvalExpiresAt, null);
+      await pool.query("UPDATE operator_action_requests SET approval_expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1", [queued.requestRecordId]);
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await require("../../apps/api/services/operator/requestMaintenance").endLapsedWindows(client, workspaceId);
+        await client.query("COMMIT");
+      } finally { client.release(); }
+      assert.equal((await jobRow(queued.jobId)).status, "pending", "a non-approval job has no approval timeout");
+      const cancelled = await post(`/api/v1/operator/requests/${queued.requestRecordId}/cancel`, {});
+      assert.equal(cancelled.status, 200);
+      assert.equal(cancelled.body.state, "cancelled");
+    });
+
+    it("requires a fresh preview after either direction of approval-policy change", async () => {
+      for (const enabled of [false, true]) {
+        await policy(enabled);
+        const plan = (await preview()).body;
+        await policy(!enabled);
+        const response = await submit(plan);
+        assert.equal(response.status, 409);
+        assert.equal(response.body.code, "OPERATOR_INTENT_STALE");
+      }
+    });
+
+    it("uses ordinary capacity when approval is off, not the waiting-approval reserve", async () => {
+      const waiting = await mustFile();
+      await mustFile();
+      await policy(false);
+      const queued = await fileRequest();
+      assert.equal(queued.status, 201);
+      assert.equal(queued.body.state, "pending");
+      assert.equal((await jobRow(waiting.jobId)).status, "pending_approval", "changing policy preserves existing approvals");
+    });
+
+    it("write-disable contains an unapproved queued job but preserves human-approved work", async () => {
+      const approved = await mustFile();
+      await approveReviewed({ workspaceId, jobId: approved.jobId, approverUserId: approver, reason: "reviewed" });
+      await policy(false);
+      const queued = await mustFile();
+      const result = await request(app).put(`/api/v1/workspaces/${workspaceId}/operator/settings`).set(as(owner)).send({ writesEnabled: false });
+      assert.equal(result.status, 200);
+      assert.equal((await jobRow(queued.jobId)).status, "cancelled");
+      assert.equal((await jobRow(queued.jobId)).error_code, "writes_disabled");
+      assert.equal((await jobRow(approved.jobId)).status, "pending");
+    });
   });
 
   describe("the three write gates", () => {
@@ -255,6 +337,7 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
     });
 
     it("never lets a connection change the workspace setting, only an admin with a session", async () => {
+      const auditBefore = (await pool.query("SELECT COUNT(*)::int AS n FROM audit_events WHERE workspace_id = $1 AND action IN ('OPERATOR_WRITES_ENABLED','OPERATOR_WRITES_DISABLED')", [workspaceId])).rows[0].n;
       const viaConnection = await request(app)
         .put(`/api/v1/workspaces/${workspaceId}/operator/settings`)
         .set("Authorization", `Bearer ${credential}`)
@@ -267,7 +350,7 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
       assert.equal((await request(app).get(`/api/v1/workspaces/${workspaceId}/operator/settings`).set(as(manager))).body.writesEnabled, false);
       await request(app).put(`/api/v1/workspaces/${workspaceId}/operator/settings`).set(as(owner)).send({ writesEnabled: true });
       const audit = await pool.query("SELECT COUNT(*)::int AS n FROM audit_events WHERE workspace_id = $1 AND action IN ('OPERATOR_WRITES_ENABLED','OPERATOR_WRITES_DISABLED')", [workspaceId]);
-      assert.equal(audit.rows[0].n, 2, "both changes are audited");
+      assert.equal(audit.rows[0].n - auditBefore, 2, "both changes are audited");
       for (const body of [{}, { writesEnabled: "yes" }, { writesEnabled: true, extra: 1 }]) {
         assert.equal((await request(app).put(`/api/v1/workspaces/${workspaceId}/operator/settings`).set(as(owner)).send(body)).status, 400);
       }
@@ -1237,11 +1320,49 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
       }
     };
 
+    it("claims policy-off work without human approval, rechecks write gates, and refuses late withdrawal", async () => {
+      await pool.query("UPDATE workspaces SET certops_require_approval_always = FALSE WHERE id = $1", [workspaceId]);
+      try {
+        const queued = await mustFile();
+        assert.equal(queued.state, "pending");
+        process.env.MCP_OPERATOR_WRITES_ENABLED = "false";
+        assert.deepEqual((await claim()).jobs, []);
+        process.env.MCP_OPERATOR_WRITES_ENABLED = "true";
+        await setWorkspaceWrites(false);
+        assert.deepEqual((await claim()).jobs, []);
+        await setWorkspaceWrites(true);
+        const result = await claim();
+        assert.deepEqual(result.jobs.map(j => j.jobId), [queued.jobId]);
+        const job = await jobRow(queued.jobId);
+        assert.equal(job.status, "claimed");
+        assert.equal(job.approved_at, null);
+        const cancelled = await post(`/api/v1/operator/requests/${queued.requestRecordId}/cancel`, {});
+        assert.equal(cancelled.status, 409);
+        assert.equal(cancelled.body.code, "OPERATOR_REQUEST_NOT_CANCELLABLE");
+      } finally {
+        process.env.MCP_OPERATOR_WRITES_ENABLED = "true";
+        await setWorkspaceWrites(true);
+        await pool.query("UPDATE workspaces SET certops_require_approval_always = TRUE WHERE id = $1", [workspaceId]);
+      }
+    });
+
     it("claims an approved request from a live connection, which proves the harness really claims", async () => {
       const request = await approved();
       const result = await claim();
       assert.deepEqual(result.jobs.map((j) => j.jobId), [request.jobId]);
       assert.equal((await jobRow(request.jobId)).status, "claimed");
+    });
+
+    it("preserves human-approved dispatch when new MCP writes are disabled", async () => {
+      const request = await approved();
+      await setWorkspaceWrites(false);
+      process.env.MCP_OPERATOR_WRITES_ENABLED = "false";
+      try {
+        assert.deepEqual((await claim()).jobs.map(j => j.jobId), [request.jobId]);
+      } finally {
+        process.env.MCP_OPERATOR_WRITES_ENABLED = "true";
+        await setWorkspaceWrites(true);
+      }
     });
 
     it("invalidates an assistant approval if its eligible executor routing changes", async () => {
@@ -1306,6 +1427,7 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
     });
 
     it("still claims ordinary work that came from nobody's connection, so existing behaviour is unchanged", async () => {
+      await pool.query("UPDATE workspaces SET certops_require_approval_always = FALSE WHERE id = $1", [workspaceId]);
       // A job a person creates, through the same service, with no connection.
       const person = await pool.connect();
       let plainId;

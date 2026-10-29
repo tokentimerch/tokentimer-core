@@ -52,8 +52,7 @@ function hashRenewalIntent(payload) {
   return crypto.createHash("sha256").update(JSON.stringify(canonicalize(intent)), "utf8").digest("hex");
 }
 
-// Renewal needs approval by someone other than the requester. That is a
-// property of every request from a connection, not of the certificate.
+// The workspace policy decides whether this submission needs another person.
 function renewEffect({ certificate, workspacePaused, requireApprovalAlways }) {
   const warnings = [];
   if (workspacePaused) warnings.push("CertOps is paused for this workspace, so a request cannot be submitted until it resumes.");
@@ -66,7 +65,7 @@ function renewEffect({ certificate, workspacePaused, requireApprovalAlways }) {
       createsAutomaticRenewal: false,
       futureRenewalsNeedApproval: requireApprovalAlways === true,
     },
-    approvalAuthority: "other_manager_or_admin",
+    approvalAuthority: requireApprovalAlways === true ? "other_manager_or_admin" : "none",
     warnings,
     target: {
       commonName: untrustedText(certificate.common_name),

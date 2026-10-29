@@ -1139,7 +1139,7 @@ async function claimJobs({
     const selected = await client.query(
       `SELECT id, workspace_id, operation, status, subject_type, subject_id,
               management_period_id, certificate_identity_id, requested_by_connection_id, requested_by_user_id, payload,
-              approved_payload_hash, approved_canonical_intent_hash,
+              approved_at, approved_payload_hash, approved_canonical_intent_hash,
               mode, executor_kind,
               assigned_agent_id, required_target_selector,
               required_dns_provider, required_command_profile, enrollment_id,
@@ -1318,6 +1318,7 @@ async function claimJobs({
       if (row.status === "pending" && !await require("../operator/jobAuthority").lockOperatorJobAuthority({
         client, connectionId: row.requested_by_connection_id, workspaceId: agent.workspaceId,
         requesterUserId: row.requested_by_user_id, operation: row.operation, skipLocked: true,
+        requireWriteGates: !row.approved_at,
       })) continue;
       if (!await require("./managementClaim").lockManagedJobForClaim({
         client, job: row, workspaceId: agent.workspaceId,

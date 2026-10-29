@@ -596,7 +596,7 @@ Lets an AI assistant read CertOps state and request certificate renewals through
 | `MCP_OPERATOR_INTERFACE_ENABLED` | `config.mcpOperatorInterfaceEnabled` | Enables the `/api/v1/operator` namespace, connection management and setup codes. Read tools only. | `false` |
 | `MCP_OPERATOR_WRITES_ENABLED` | `config.mcpOperatorWritesEnabled` | Allows assistant renewal requests. Has no effect unless the interface flag is also on (Helm renders it only then). | `false` |
 
-Renewal requests also need a workspace admin to switch them on for that workspace (`PUT /api/v1/workspaces/:id/operator/settings`, session only), and the connection must hold the `mcp:renew:request` scope. A request never runs on its own: it creates a renewal job that waits for approval from a workspace manager or admin other than the person whose connection made it, and it is cancelled if that approval does not arrive within 24 hours. Turning the workspace setting off cancels requests that are still waiting.
+Renewal requests also need a workspace admin to enable workspace MCP writes (`PUT /api/v1/workspaces/:id/operator/settings`, session only), and the connection needs `mcp:renew:request`. They follow CertOps **Job approval**: on requires a different workspace manager or admin within 24 hours; off queues a job immediately claimable by an eligible agent. Changing approval policy requires a fresh preview for new submissions and does not re-gate existing jobs. Disabling workspace MCP writes cancels waiting approvals and unapproved queued jobs; human-approved work remains queued. Submission never proves issuance, installation or live TLS.
 
 Revoking a connection cancels its unapproved, approved and pending jobs. A job an agent already holds is not interrupted.
 

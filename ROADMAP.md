@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-28 against main 01d23da3 (v0.18.2). Other
+Last reviewed: 2026-10-29 against main 01d23da3 (v0.18.2). Other
 certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
 
 This page is the repository milestone index: what Core takes next, what must
@@ -78,10 +78,11 @@ called stable while it is open.
 - **MCP operator interface**
   ([#502](https://github.com/tokentimerch/tokentimer-core/issues/502),
   implementation [PR #406](https://github.com/tokentimerch/tokentimer-core/pull/406)).
-  Workspace-scoped queries, secure enrollment and approval-gated renewal
+  Workspace-scoped queries, secure enrollment and renewal requests governed by
+  the workspace CertOps Job approval setting
   requests are in development, not released. The Codex development-client and
   dashboard review journeys are qualified; independent security review and
-  edition release acceptance remain open. General token CRUD and text-to-token
+  edition release acceptance remain open for the current approval-policy change. General token CRUD and text-to-token
   extraction are later follow-ons. Cloud and Enterprise adoption is separate.
 
 ---
@@ -98,8 +99,8 @@ rewrite, or internationalization.
 Per-user personal default already exists. v1.0.0 adds a separate
 **installation-default** marker. Do not conflate the two.
 
-- **Multiple workspace owners** with a transactional final-owner
-  invariant
+- **Grantable workspace admins and managers**, multiple admins and a
+  transactional final-admin invariant
   ([#239](https://github.com/tokentimerch/tokentimer-core/issues/239)).
 - **Explicit installation-default workspace marker**
   ([#240](https://github.com/tokentimerch/tokentimer-core/issues/240)).
@@ -108,8 +109,8 @@ Per-user personal default already exists. v1.0.0 adds a separate
   ([#241](https://github.com/tokentimerch/tokentimer-core/issues/241)).
 - **Align alert, usage, audit, transfer, and digest attribution**
   ([#242](https://github.com/tokentimerch/tokentimer-core/issues/242)).
-- **Publish a permission matrix** and update OpenAPI, UI terminology,
-  and auth docs together
+- **Publish a permission matrix**, restrict job approval decisions to workspace
+  admins, and update OpenAPI, UI terminology and auth docs together
   ([#243](https://github.com/tokentimerch/tokentimer-core/issues/243)).
 - **Prove fresh install and supported 0.x upgrades**, including recovery
   limits and overlay consumers

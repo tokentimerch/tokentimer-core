@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/mcp/mcp-renew-tools.schema.json",
   "title": "MCP renew request tools",
-  "description": "Input and output shapes for requesting a certificate renewal through an operator connection. A request never executes anything by itself: it creates a job that waits for approval from a different person. Inputs are closed, so there is no field for force, skip-approval or acknowledgement.",
+  "description": "Renewal requests create ordinary jobs under workspace CertOps approval policy. With approval on, a different person must approve; with approval off, an eligible agent may claim the job immediately. Submission is not proof of renewal. Inputs cannot override approval policy.",
   "definitions": {
     "uuid": {
       "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid"
@@ -39,6 +39,7 @@
     "requestState": {
       "type": "string",
       "enum": [
+        "pending",
         "pending_approval",
         "approved",
         "executing",
@@ -132,6 +133,7 @@
             "approvalAuthority": {
               "type": "string",
               "enum": [
+                "none",
                 "other_manager_or_admin"
               ]
             },

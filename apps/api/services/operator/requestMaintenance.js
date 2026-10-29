@@ -110,22 +110,22 @@ async function endOrphanedRequests(client, workspaceId = null) {
   return connectionEnded + requesterLost;
 }
 
-// An admin switched assistant writes off: requests still waiting for a person
-// are ended. Ones already approved by a person are theirs to have approved and
-// are left alone.
+// An admin switched assistant writes off: end waiting approvals and jobs queued
+// without approval. Preserve jobs a person already approved.
 function endWaitingForWorkspace(client, workspaceId) {
   return endRequests(client, {
     selectSql: `SELECT r.id AS request_id, r.job_id
                   FROM operator_action_requests r
                   JOIN certificate_jobs j ON j.id = r.job_id AND j.workspace_id = r.workspace_id
                  WHERE r.state_override IS NULL
-                   AND j.status = 'pending_approval'
+                   AND (j.status = 'pending_approval'
+                     OR (j.status = 'pending' AND j.approved_at IS NULL))
                    AND r.workspace_id = $1::uuid
                  FOR UPDATE OF r SKIP LOCKED`,
     params: [workspaceId],
     override: "cancelled",
     reason: REASONS.WRITES_OFF,
-    statuses: WAITING,
+    statuses: ["pending_approval", "pending"],
   });
 }
 

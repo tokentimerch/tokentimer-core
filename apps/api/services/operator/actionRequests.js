@@ -8,8 +8,8 @@
 //      that commits first is always seen and one that comes after must wait;
 //   2. the three write gates (instance flag, workspace setting, scope);
 //   3. only then touch certificates, plans or jobs.
-// A request becomes an ordinary CertOps job that always needs approval from a
-// different person, so the existing approval, dispatch and audit paths do the
+// A request becomes an ordinary CertOps job under workspace approval policy,
+// so the existing approval, dispatch and audit paths do the
 // rest and nothing about execution is reimplemented here.
 
 const crypto = require("node:crypto");

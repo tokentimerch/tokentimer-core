@@ -10046,15 +10046,15 @@ paths:
   /api/v1/operator/renewals/requests:
     post:
       tags: [Operator]
-      summary: Submit a previewed renewal for approval by someone else
+      summary: Submit a previewed renewal under workspace job approval policy
       operationId: submitOperatorRenewalRequest
       description: >-
-        Needs the mcp:renew:request scope and both write switches. Creates an ordinary renewal job that always starts waiting for approval, recorded against the person and the connection. It can never be approved by that same person. The body is exactly planId, planHash and requestId; there is no field for force, skip-approval or acknowledgement. An identical retry returns the original outcome (200, replayed true) even after the preview expired and even after the request finished; the same requestId with different content is a 409. The connection's row is locked during the check, so a revocation that commits first is always honored. Response shape: packages/contracts/mcp/mcp-renew-tools.schema.json definition tt_request_renew_output.
+        Needs mcp:renew:request and both write switches. Creates an ordinary renewal job attributed to the person and connection. CertOps Job approval on creates pending_approval for independent review; off creates immediately claimable pending work without recording human approval. Existing jobs retain their gate; a policy change invalidates an unsubmitted preview. The body is exactly planId, planHash and requestId and cannot override policy. An identical retry returns the original outcome (200, replayed true), even after preview expiry or completion; reused requestId with different content is a 409. Revocation is serialized with submission. Submission is not proof of renewal. Response shape: packages/contracts/mcp/mcp-renew-tools.schema.json definition tt_request_renew_output.
       security:
         - operatorConnectionAuth: []
       responses:
         "201":
-          description: Request created and waiting for approval
+          description: Request created, queued or waiting for approval according to workspace policy
           content:
             application/json:
               schema:
@@ -10159,10 +10159,10 @@ paths:
   /api/v1/operator/requests/{requestRecordId}/cancel:
     post:
       tags: [Operator]
-      summary: Withdraw my request while it waits for approval
+      summary: Withdraw my unapproved request before execution
       operationId: cancelOperatorRequest
       description: >-
-        Needs the mcp:renew:request scope but, deliberately, not the write switches or an unpaused workspace: taking a request back must not depend on new work being allowed. Authentication, scope and ownership still apply. Withdrawal and approval race on the job and exactly one wins; if approval won, this is a 409 that does not claim anything was prevented. Response shape: packages/contracts/mcp/mcp-renew-tools.schema.json definition tt_cancel_request_output.
+        Needs mcp:renew:request but not the write switches or an unpaused workspace. Authentication, scope and ownership still apply. May withdraw waiting approvals or claimable pending jobs without human approval. Withdrawal races atomically with approval and agent claim; if either wins first, return 409 without claiming execution was prevented. Response shape: packages/contracts/mcp/mcp-renew-tools.schema.json definition tt_cancel_request_output.
       security:
         - operatorConnectionAuth: []
       parameters:
@@ -10185,7 +10185,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: The request is no longer waiting for approval
+          description: The request was approved or moved beyond the queue
           content:
             application/json:
               schema:

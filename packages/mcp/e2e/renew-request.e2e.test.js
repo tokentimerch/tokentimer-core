@@ -1,8 +1,7 @@
 "use strict";
 
-// An assistant asks for a renewal and nothing happens until a different person
-// approves it. Real MCP client -> real adapter process -> real API -> real
-// database. Nothing is faked.
+// Renewals follow workspace job approval policy. Real MCP client -> real
+// adapter process -> real API -> real database. No mocked policy or responses.
 
 const { before, after, describe, it } = require("node:test");
 const assert = require("node:assert/strict");
@@ -81,7 +80,7 @@ describe("an assistant requests a renewal, a person approves it", { concurrency:
     requester = await user("requester");
     approver = await user("approver");
     workspaceId = crypto.randomUUID();
-    await pool.query("INSERT INTO workspaces (id, name, created_by, operator_writes_enabled) VALUES ($1, 'Renew E2E', $2, TRUE)", [workspaceId, approver]);
+    await pool.query("INSERT INTO workspaces (id, name, created_by, operator_writes_enabled, certops_require_approval_always) VALUES ($1, 'Renew E2E', $2, TRUE, TRUE)", [workspaceId, approver]);
     await pool.query("INSERT INTO workspace_memberships (user_id, workspace_id, role) VALUES ($1, $2, 'workspace_manager')", [requester, workspaceId]);
 
     const fingerprint = crypto.createHash("sha256").update("renew-e2e").digest("hex");
@@ -195,6 +194,26 @@ describe("an assistant requests a renewal, a person approves it", { concurrency:
       assert.equal(viewed.job.summary.operation, "renew");
       assert.equal(viewed.job.approval.state, "approved");
     });
+  });
+
+  it("reports a claimable queue, not human approval, through real stdio when policy is off", async () => {
+    await pool.query("UPDATE certificate_jobs SET status = 'cancelled' WHERE workspace_id = $1 AND status IN ('pending_approval','pending','approved')", [workspaceId]);
+    await pool.query("UPDATE workspaces SET certops_require_approval_always = FALSE WHERE id = $1", [workspaceId]);
+    try {
+      await session({ TOKENTIMER_MCP_ENABLE_WRITES: "true" }, async (client) => {
+        const plan = data(await call(client, "tt_preview_renew", { identityId }));
+        assert.equal(plan.effect.approvalAuthority, "none");
+        const queued = data(await call(client, "tt_request_renew", { planId: plan.planId, planHash: plan.planHash, requestId: crypto.randomUUID() }));
+        assert.equal(queued.state, "pending");
+        assert.equal(queued.approvalExpiresAt, null);
+        const viewed = data(await call(client, "tt_get_job", { jobId: queued.jobId }));
+        assert.equal(viewed.job.approval.state, "not_required");
+        assert.equal(data(await call(client, "tt_cancel_request", { requestRecordId: queued.requestRecordId })).state, "cancelled");
+        assert.equal(data(await call(client, "tt_get_action_request", { requestRecordId: queued.requestRecordId })).state, "cancelled");
+      });
+    } finally {
+      await pool.query("UPDATE workspaces SET certops_require_approval_always = TRUE WHERE id = $1", [workspaceId]);
+    }
   });
 
   it("lets the assistant withdraw a request, and tells it plainly when a person got there first", async () => {

@@ -73,10 +73,11 @@ describe("write tools are opt-in", () => {
 
   it("describes a request honestly: it asks, it does not renew", () => {
     const request = withWrites.find((t) => t.name === "tt_request_renew");
-    assert.match(request.description, /does not renew anything/);
+    assert.match(request.description, /Submission does not prove renewal/);
     assert.match(request.description, /different person must approve/);
-    assert.match(WRITE_INSTRUCTIONS, /does not renew anything/);
-    assert.match(WRITE_INSTRUCTIONS, /not that the certificate was renewed/);
+    assert.match(WRITE_INSTRUCTIONS, /Submission does not prove/);
+    assert.match(WRITE_INSTRUCTIONS, /Do not claim that the certificate was renewed/);
+    assert.match(WRITE_INSTRUCTIONS, /pending means queued without human approval/);
   });
 
   it("marks writes as writes, never destructive, and gives previews no false idempotency", () => {

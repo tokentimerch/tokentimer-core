@@ -475,7 +475,7 @@
     },
     {
       "name": "tt_request_renew",
-      "title": "Submit a previewed renewal for approval by someone else",
+      "title": "Submit a previewed renewal under workspace job approval policy",
       "scope": "mcp:renew:request",
       "minRole": "workspace_manager",
       "annotations": {
@@ -553,7 +553,7 @@
       "input": "mcp-renew-tools.schema.json#/definitions/tt_cancel_request_input",
       "output": "mcp-renew-tools.schema.json#/definitions/tt_cancel_request_output",
       "withdrawalException": true,
-      "title": "Withdraw my request while it still waits for approval",
+      "title": "Withdraw my unapproved request before execution",
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": false,

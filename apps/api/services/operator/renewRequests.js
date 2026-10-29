@@ -140,6 +140,7 @@ function requestView(row, job, { replayed = false } = {}) {
     state = row.state_override;
   } else if (job) {
     state = JOB_STATE[job.status] || "failed";
+    if (job.status === "pending" && !job.approved_at && !job.approvedAt) state = "pending";
     if (job.status === "pending_approval" && new Date(row.approval_expires_at) <= new Date()) {
       state = "expired";
       reason = reason || "approval_window_ended";
@@ -156,7 +157,8 @@ function requestView(row, job, { replayed = false } = {}) {
     stateReason: reason,
     jobId: job ? job.id : null,
     replayed,
-    approvalExpiresAt: row.approval_expires_at ? new Date(row.approval_expires_at).toISOString() : null,
+    approvalExpiresAt: row.approval_expires_at && (job?.status === "pending_approval" || job?.approved_at || job?.approvedAt)
+      ? new Date(row.approval_expires_at).toISOString() : null,
   };
 }
 
@@ -171,7 +173,7 @@ async function loadRequestRow(client, { connectionId, requestId }) {
 async function loadJob(client, workspaceId, jobId) {
   if (!jobId) return null;
   const found = await client.query(
-    "SELECT id, status, error_code FROM certificate_jobs WHERE workspace_id = $1 AND id = $2",
+    "SELECT id, status, error_code, approved_at FROM certificate_jobs WHERE workspace_id = $1 AND id = $2",
     [workspaceId, jobId],
   );
   return found.rows[0] || null;
@@ -229,6 +231,7 @@ async function submitRenewRequest({ client, operator, planId, planHash, requestI
   // them here, in this transaction, means the limit never depends on a
   // background sweep having run.
   await endLapsedWindows(client, operator.workspaceId);
+  const policy = await client.query("SELECT certops_paused, certops_require_approval_always FROM workspaces WHERE id = $1", [operator.workspaceId]);
   const waiting = await client.query(
     `SELECT COUNT(*)::int AS workspace_total,
             COUNT(*) FILTER (WHERE requested_by_connection_id = $2)::int AS mine
@@ -238,7 +241,8 @@ async function submitRenewRequest({ client, operator, planId, planHash, requestI
     [operator.workspaceId, operator.connectionId],
   );
   const workspaceLimit = assistantPendingLimit(resolveRenewalPerCaCap());
-  if (waiting.rows[0].mine >= MAX_PENDING_PER_CONNECTION || waiting.rows[0].workspace_total >= workspaceLimit) {
+  if (policy.rows[0]?.certops_require_approval_always === true &&
+      (waiting.rows[0].mine >= MAX_PENDING_PER_CONNECTION || waiting.rows[0].workspace_total >= workspaceLimit)) {
     throw fail(CODES.PENDING_LIMIT, "Too many assistant requests are waiting for approval");
   }
 
@@ -266,15 +270,14 @@ async function submitRenewRequest({ client, operator, planId, planHash, requestI
   } catch (_error) {
     throw fail(CODES.INTENT_STALE, "The renewal configuration changed; preview again");
   }
-  const policy = await client.query("SELECT certops_paused, certops_require_approval_always FROM workspaces WHERE id = $1", [operator.workspaceId]);
   const effect = renewEffect({ certificate, workspacePaused: policy.rows[0]?.certops_paused === true, requireApprovalAlways: policy.rows[0]?.certops_require_approval_always === true });
   if (hashRenewalIntent(currentPayload) !== plan.bound_intent_hash || hashPlan({ operation: "renew", workspaceId: operator.workspaceId, connectionId: operator.connectionId, subjectId: plan.subject_id, boundFingerprint: plan.bound_fingerprint_sha256, boundProfileId: plan.bound_profile_id, intentHash: plan.bound_intent_hash, effect }) !== plan.plan_hash) {
     throw fail(CODES.INTENT_STALE, "The renewal intent changed since the preview; preview again");
   }
 
   // 6. The job goes through the existing path, so approval, per-CA caps, the
-  // lifecycle checks and the dispatch guards all apply unchanged. It always
-  // requires approval, and the requester is the connection's person.
+  // lifecycle checks and dispatch guards all apply. The shared job creator
+  // enforces workspace approval policy; the requester is the connection's person.
   const requestRecordId = randomUUID();
   const created = await manualRenewalJobCreator({ certificateId: plan.subject_id })({
     client,
@@ -285,12 +288,14 @@ async function submitRenewRequest({ client, operator, planId, planHash, requestI
     source: "api",
     requestedByUserId: operator.userId,
     requestedByConnectionId: operator.connectionId,
-    requiresApproval: true,
+    requiresApproval: false,
     idempotencyKey: `mcp-renew:${requestRecordId}`,
     returnOutcome: true,
   });
   const job = created.job || created;
 
+  // Retain the non-null storage deadline for compatibility with existing rows.
+  // Only approval-required jobs use or expose it; queued jobs do not expire here.
   const approvalExpiresAt = new Date(now.getTime() + APPROVAL_TTL_MS);
   const inserted = await client.query(
     `INSERT INTO operator_action_requests
@@ -300,7 +305,7 @@ async function submitRenewRequest({ client, operator, planId, planHash, requestI
      RETURNING *`,
     [requestRecordId, operator.workspaceId, operator.connectionId, operator.userId, requestId, planId, planHash, plan.identity_id, plan.subject_id, job.id, approvalExpiresAt, now],
   );
-  return requestView(inserted.rows[0], { id: job.id, status: job.status, error_code: null });
+  return requestView(inserted.rows[0], job);
 }
 
 // Only a connection's own requests are visible to it. Another connection's
@@ -334,7 +339,7 @@ async function listRequests({ client, operator, limit = 25, offset = 0 }) {
   return { items, total: total.rows[0].n };
 }
 
-// Withdraw a request that is still waiting for approval (ADR-0015 section 11).
+// Withdraw a request waiting for approval, or queued without requiring approval.
 // Authentication, scope and ownership still apply, but the write gates and the
 // workspace pause do not: being able to take a request back must not depend on
 // new work being allowed. Withdrawal and approval race on the job row, and
@@ -356,14 +361,15 @@ async function cancelRequest({ client, operator, requestRecordId }) {
     `UPDATE certificate_jobs
         SET status = 'cancelled', canceled_at = NOW(), updated_at = NOW(),
             error_code = 'withdrawn_by_requester'
-      WHERE workspace_id = $1 AND id = $2 AND status = 'pending_approval'
+      WHERE workspace_id = $1 AND id = $2
+        AND (status = 'pending_approval' OR (status = 'pending' AND approved_at IS NULL))
       RETURNING id`,
     [operator.workspaceId, row.job_id],
   );
   if (!cancelled.rows[0]) {
     // Approval got there first (or the job moved on). Say so; do not claim
     // that anything was prevented.
-    throw fail(CODES.NOT_CANCELLABLE, "The request is no longer waiting for approval");
+    throw fail(CODES.NOT_CANCELLABLE, "The request was approved or has already moved beyond the queue");
   }
   const updated = await client.query(
     `UPDATE operator_action_requests

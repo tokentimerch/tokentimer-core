@@ -27,10 +27,10 @@ const READ_ONLY_INSTRUCTIONS = [
 // Said only when write tools are offered. It states what they really do, so a
 // model does not describe a request as if it were done.
 const WRITE_INSTRUCTIONS = [
-  "You can also ask for a certificate to be renewed. A request does not renew anything.",
-  "It creates a request that a different person must approve in TokenTimer, and only after that does anything run.",
+  "You can also request a certificate renewal. Submission does not prove that the certificate was renewed.",
+  "Renewals follow the workspace CertOps job approval setting. When on, a different person must approve in TokenTimer. When off, the job can run as soon as an eligible agent claims it.",
   "Preview first, show the user what the preview says, and submit only if they want it.",
-  "After submitting, tell the user the request is waiting for someone else to approve, not that the certificate was renewed.",
+  "After submitting, report the returned state: pending means queued without human approval; pending_approval means waiting for review. Do not claim that the certificate was renewed without executor and verification evidence.",
   "An unknown_effect result requires human reconciliation; do not submit a replacement request or claim the operation failed safely.",
   "Use a new random UUID as requestId for each deliberate submission, and reuse it only to retry that same submission.",
   "Requests can be refused: writes may be switched off, the plan may expire, or the certificate may have changed. Report that plainly.",

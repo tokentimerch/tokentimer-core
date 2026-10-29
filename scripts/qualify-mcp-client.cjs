@@ -43,7 +43,7 @@ async function prepare() {
     people.push({ id: row.rows[0].id, email, password });
   }
   const workspaceId = crypto.randomUUID();
-  await pool.query("INSERT INTO workspaces (id,name,created_by,operator_writes_enabled) VALUES ($1,'Disposable MCP qualification',$2,TRUE)", [workspaceId, people[0].id]);
+  await pool.query("INSERT INTO workspaces (id,name,created_by,operator_writes_enabled,certops_require_approval_always) VALUES ($1,'Disposable MCP qualification',$2,TRUE,TRUE)", [workspaceId, people[0].id]);
   for (let i = 0; i < people.length; i++) await pool.query("INSERT INTO workspace_memberships (workspace_id,user_id,role) VALUES ($1,$2,$3)", [workspaceId, people[i].id, ["admin", "workspace_manager", "viewer"][i]]);
   const renewalProfile = {
     schemaVersion: 1, profileName: "Qualification web TLS", sanPolicy: { mode: "exact", sans: ["mcp.example.test"], allowWildcards: false },

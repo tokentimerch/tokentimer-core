@@ -2,7 +2,8 @@
 
 This development adapter runs over stdio and calls the operator REST namespace.
 It supports eight read tools and optional renewal preview/request/status/cancel
-tools. A renewal request waits for approval by a different manager or admin.
+tools. Renewals follow the workspace CertOps **Job approval** setting: on requires
+a different manager or admin; off queues a job an eligible agent can claim immediately.
 The manual-renew tool does not orchestrate AD CS enrollment or consumer rollouts.
 
 The supported development setup is a source checkout with Node 24 and the
@@ -36,13 +37,14 @@ resolved effects and expiries and binds approval to that exact review. Keep
 production MCP flags off until release approval. Write
 requests additionally require `MCP_OPERATOR_WRITES_ENABLED=true`, the admin's
 workspace operator setting, `mcp:renew:request`, and local adapter opt-in
-`TOKENTIMER_MCP_ENABLE_WRITES=true`. Turning ordinary Vault approval off does
-not remove independent approval for assistant renewals.
+`TOKENTIMER_MCP_ENABLE_WRITES=true`. With Job approval off, submission is not
+proof of renewal; inspect job status and executor evidence. Policy changes
+between preview and submission require a fresh preview.
 
 After enrollment, run the adapter through the printed client configuration.
 Confirm `tt_whoami`, list certificates, inspect one, then exercise a renewal
-preview in a disposable workspace. Check both a refusal and independent
-approval before any write rollout. A lost enrollment response requires revoking
+preview in a disposable workspace. Check a refusal and both Job approval modes
+before any write rollout. A lost enrollment response requires revoking
 the connection and creating a fresh grant. Never retry by exposing a credential.
 
 An `unknown_effect` request requires human reconciliation. Do not submit a new
