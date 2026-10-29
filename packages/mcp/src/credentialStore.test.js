@@ -8,6 +8,7 @@ const path = require("node:path");
 const {
   CredentialStoreError,
   assertPrivateFile,
+  assertDirectoryControl,
   checkDestination,
   defaultCredentialPath,
   windowsAccount,
@@ -19,7 +20,9 @@ const posix = process.platform !== "win32";
 let dir;
 
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-mcp-store-"));
+  // Windows Temp/AppData can be delegated to sandbox principals. The native
+  // private-directory tests need a parent without those delegation grants.
+  dir = fs.mkdtempSync(path.join(posix ? os.tmpdir() : path.resolve(__dirname, "../../.."), ".tt-mcp-store-"));
 });
 afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
@@ -41,6 +44,41 @@ describe("credential store: location", () => {
       defaultCredentialPath({ env: { APPDATA: "C:\\Users\\a\\AppData\\Roaming" }, platform: "win32", home: "C:\\Users\\a" }),
       path.join("C:\\Users\\a\\AppData\\Roaming", "TokenTimer", "mcp", "credential"),
     );
+  });
+});
+
+describe("credential store: directory control", () => {
+  const userSid = "S-1-5-21-1-2-3-1001";
+  const directory = (rules = [], owner = userSid) => ({ owner, rules, reparse: false });
+  const allowed = (sid, rights, inheritOnly = false) => ({ sid, rights, inheritOnly, allow: true });
+  const verify = directories => assertDirectoryControl(dir, { platform: "win32", inspectWindows: () => ({ userSid, directories }) });
+
+  it("accepts private Windows parents and ignores inherit-only Creator Owner rules", () => {
+    assert.doesNotThrow(() => verify([directory([allowed(userSid, 2032127), allowed("S-1-3-0", 2032127, true)]), directory([allowed("S-1-1-0", 4)], "S-1-5-18")]));
+  });
+  it("rejects shared parent writes and ancestor delete/control grants", () => {
+    for (const rights of [2, 4, 16, 256, 64, 65536, 262144, 524288, 268435456, 1073741824]) {
+      refused(() => verify([directory([allowed("S-1-1-0", rights)])]), /private credential directory/);
+    }
+    for (const rights of [64, 65536, 262144, 524288, 268435456]) {
+      refused(() => verify([directory(), directory([allowed("S-1-1-0", rights)])]), /private credential directory/);
+    }
+    refused(() => verify([directory([], "S-1-5-21-other")]), /private credential directory/);
+  });
+  it("runs the parent check during destination preflight without writing", () => {
+    refused(() => checkDestination(path.join(dir, "new", "credential"), { directoryCheck: () => { throw new CredentialStoreError("Use a private credential directory"); } }), /private credential directory/);
+    assert.deepEqual(fs.readdirSync(dir), []);
+  });
+  // skip-reason: no-host — Native ACL grant evaluation requires Windows.
+  it("rejects a real Windows directory granting Everyone modification before writing", { skip: posix }, () => {
+    require("node:child_process").execFileSync("icacls", [dir, "/grant", "*S-1-1-0:(OI)(CI)(M)"], { stdio: "ignore", windowsHide: true });
+    refused(() => checkDestination(path.join(dir, "credential")), /private credential directory/);
+    assert.deepEqual(fs.readdirSync(dir), []);
+  });
+  // skip-reason: no-host — POSIX ownership/mode checks require POSIX.
+  it("rejects a group-writable POSIX destination directory", { skip: !posix }, () => {
+    fs.chmodSync(dir, 0o770);
+    refused(() => checkDestination(path.join(dir, "credential")), /private credential directory/);
   });
 });
 
@@ -181,6 +219,24 @@ describe("credential store: writing", () => {
 describe("credential store: the server binding and write order", () => {
   const { formatCredentialFile, parseCredentialFile } = require("./credentialStore");
   const REAL = "https://tokentimer.example.com";
+
+  it("refuses a temporary pathname replaced during Windows ACL restriction without leaking the secret", () => {
+    const file = path.join(dir, "credential");
+    const displaced = path.join(dir, "displaced");
+    refused(() => writeCredential(file, SECRET, {
+      platform: "win32",
+      env: { USERNAME: "alice" },
+      execFileSync: (_command, args) => {
+        fs.renameSync(args[0], displaced);
+        fs.writeFileSync(args[0], "ATTACKER\n");
+      },
+    }), /could not be written safely/);
+    assert.equal(fs.readFileSync(displaced, "utf8"), "", "the displaced inode must remain empty");
+    assert.equal(fs.existsSync(file), false, "the replacement must not be published");
+    for (const name of fs.readdirSync(dir)) {
+      assert.ok(!fs.readFileSync(path.join(dir, name), "utf8").includes(SECRET));
+    }
+  });
 
   it("stores the issuing server beside the secret and reads both back", () => {
     const file = path.join(dir, "credential");

@@ -23,6 +23,13 @@ Use that configuration with a local MCP client that supports stdio. Use an
 absolute path to this checkout's `packages/mcp/bin/tokentimer-mcp.js` when
 configuring the Node command. No published npm package is available yet.
 
+Use a private credential directory controlled by your operating-system user,
+including for an explicit `--credential-file` path. Enrollment refuses shared
+or replaceable parent directories before consuming the grant; Windows also
+checks ancestor ACLs using native PowerShell. If a delegated profile or temporary
+directory is refused, choose a private location. Do not weaken shared directory
+permissions to make enrollment pass.
+
 The server requires `MCP_OPERATOR_INTERFACE_ENABLED=true` and CertOps enabled
 for operational reads. The human approval surface identifies assistant origin,
 resolved effects and expiries and binds approval to that exact review. Keep

@@ -15,7 +15,7 @@ const API = "https://tokentimer.example.com";
 
 let dir;
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-mcp-enroll-"));
+  dir = fs.mkdtempSync(path.join(process.platform === "win32" ? path.resolve(__dirname, "../../..") : os.tmpdir(), ".tt-mcp-enroll-"));
 });
 afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
@@ -196,6 +196,20 @@ describe("enroll: a successful setup", () => {
 });
 
 describe("enroll: failures before the code is spent", () => {
+  it("refuses a shared credential directory before sending the enrollment grant", async () => {
+    if (process.platform === "win32") {
+      require("node:child_process").execFileSync("icacls", [dir, "/grant", "*S-1-1-0:(OI)(CI)(M)"], { stdio: "ignore", windowsHide: true });
+    } else {
+      fs.chmodSync(dir, 0o770);
+    }
+    const result = await enroll();
+    assert.equal(result.code, 2);
+    assert.match(result.stderr, /private credential directory/);
+    assert.equal(result.calls.length, 0, "the one-time grant must not be consumed");
+    assert.deepEqual(fs.readdirSync(dir), []);
+    assert.ok(!result.stderr.includes(dir));
+    noSecrets(result);
+  });
   it("refuses a plain-http address (except localhost) and never sends the code", async () => {
     const result = await enroll({ argv: ["--api-url", "http://tokentimer.example.com", "--credential-file", path.join(dir, "c")] });
     assert.equal(result.code, 2);

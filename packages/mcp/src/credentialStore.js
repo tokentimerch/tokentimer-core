@@ -52,9 +52,69 @@ function ensureDirectory(directory, platform) {
   fs.mkdirSync(directory, { recursive: true, mode: platform === "win32" ? undefined : 0o700 });
 }
 
+// A private file is insufficient when another principal can replace its
+// directory entries. Inspect existing parents before spending an enrollment
+// grant, and again before writing. Deny rules are not used to relax an unsafe
+// allow rule: a conservative refusal is preferable to leaking a credential.
+function assertDirectoryControl(directory, { platform = process.platform, inspectWindows = inspectWindowsDirectories } = {}) {
+  if (platform === "win32") {
+    const { userSid, directories } = inspectWindows(directory);
+    const trusted = new Set([userSid, "S-1-5-18", "S-1-5-32-544",
+      "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"]);
+    if (!userSid || !directories?.length) throw new CredentialStoreError("The credential directory could not be verified");
+    for (let index = 0; index < directories.length; index += 1) {
+      const item = directories[index];
+      if (item.reparse || !trusted.has(item.owner)) throw new CredentialStoreError("Use a private credential directory controlled by the current user");
+      // Write/create (nearest existing parent); delete, delete-child and ACL
+      // ownership changes (every ancestor). Inherit-only rules do not apply to
+      // the directory itself and cannot replace this existing component.
+      const dangerous = 65536 | 64 | 262144 | 524288 | 268435456 | (index === 0 ? 2 | 4 | 16 | 256 | 1073741824 : 0);
+      for (const rule of item.rules || []) {
+        if (rule.allow && !rule.inheritOnly && !trusted.has(rule.sid) && (rule.rights & dangerous)) {
+          throw new CredentialStoreError("Use a private credential directory controlled by the current user");
+        }
+      }
+    }
+    return;
+  }
+  let current = directory;
+  let nearest = true;
+  for (;;) {
+    const stat = fs.lstatSync(current);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || ![0, process.getuid()].includes(stat.uid)) {
+      throw new CredentialStoreError("Use a private credential directory controlled by the current user");
+    }
+    if ((stat.mode & 0o022) && (nearest || !(stat.mode & 0o1000))) {
+      throw new CredentialStoreError("Use a private credential directory controlled by the current user");
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+    nearest = false;
+  }
+}
+
+function inspectWindowsDirectories(directory) {
+  const script = `$ErrorActionPreference='Stop'; $items=@(); $p=$env:TT_MCP_DIRECTORY_CHECK;
+while($p){ $a=[System.IO.Directory]::GetAccessControl($p); $attributes=[System.IO.File]::GetAttributes($p);
+$rules=@($a.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier]) | ForEach-Object {
+@{sid=$_.IdentityReference.Value;rights=[long]$_.FileSystemRights;allow=($_.AccessControlType -eq 'Allow');inheritOnly=(($_.PropagationFlags -band 2) -ne 0)} });
+$items+=@{owner=$a.GetOwner([System.Security.Principal.SecurityIdentifier]).Value;rules=$rules;reparse=(($attributes -band 1024) -ne 0)};
+$parent=[System.IO.Directory]::GetParent($p); if($null -eq $parent){break}; $p=$parent.FullName }
+@{userSid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value;directories=$items}|ConvertTo-Json -Depth 8 -Compress`;
+  try {
+    return JSON.parse(childProcess.execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+      encoding: "utf8", windowsHide: true, timeout: 15000,
+      stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, TT_MCP_DIRECTORY_CHECK: directory },
+    }));
+  } catch (_error) {
+    throw new CredentialStoreError("The credential directory could not be verified");
+  }
+}
+
 // Reports whether a credential could be written here, without writing anything.
 // Setup runs this before spending a one-time code, so a path problem cannot burn it.
-function checkDestination(file, { replace = false } = {}) {
+function checkDestination(file, { replace = false, directoryCheck = assertDirectoryControl } = {}) {
   const resolved = path.resolve(file);
   let existing = null;
   try {
@@ -80,6 +140,7 @@ function checkDestination(file, { replace = false } = {}) {
       const stat = fs.statSync(directory);
       if (!stat.isDirectory()) throw new CredentialStoreError("The credential location is not a directory");
       fs.accessSync(directory, fs.constants.W_OK);
+      directoryCheck(directory);
       return resolved;
     } catch (error) {
       if (error instanceof CredentialStoreError) throw error;
@@ -135,23 +196,36 @@ function writeCredential(
 
   const temporary = `${resolved}.${process.pid}.${Date.now()}.tmp`;
   let created = false;
+  let fd = null;
   try {
     // "wx" fails if the name exists, so a pre-placed file or link is never followed.
-    fs.closeSync(fs.openSync(temporary, "wx", 0o600));
+    fd = fs.openSync(temporary, "wx", 0o600);
     created = true;
+    const original = fs.fstatSync(fd, { bigint: true });
+    const assertOriginalPath = () => {
+      const current = fs.lstatSync(temporary, { bigint: true });
+      if (!current.isFile() || current.dev !== original.dev || current.ino !== original.ino) {
+        throw new CredentialStoreError("The credential file could not be written safely");
+      }
+    };
     // Access is restricted while the file is still empty, so the secret never
     // exists under inherited permissions. (POSIX mode 0600 applied at creation.)
     if (platform === "win32") restrictToCurrentUserWindows(temporary, { env, execFileSync });
-    const fd = fs.openSync(temporary, "r+");
-    try {
-      fs.writeSync(fd, formatCredentialFile(secret, binding));
-      fs.fsyncSync(fd);
-    } finally {
-      fs.closeSync(fd);
-    }
+    // Never reopen the pathname after ACL restriction: another local user
+    // with directory rename rights could have substituted a different inode.
+    assertOriginalPath();
+    fs.writeSync(fd, formatCredentialFile(secret, binding));
+    fs.fsyncSync(fd);
+    assertOriginalPath();
+    fs.closeSync(fd);
+    fd = null;
     fs.renameSync(temporary, resolved);
     created = false;
   } catch (error) {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch (_ignored) { /* best effort */ }
+      fd = null;
+    }
     if (created) {
       try {
         fs.rmSync(temporary, { force: true });
@@ -188,6 +262,7 @@ function assertPrivateFile(file, { platform = process.platform } = {}) {
 module.exports = {
   CredentialStoreError,
   assertPrivateFile,
+  assertDirectoryControl,
   checkDestination,
   defaultCredentialPath,
   formatCredentialFile,

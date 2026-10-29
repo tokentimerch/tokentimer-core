@@ -135,7 +135,7 @@ describe("adapter configuration: the stored credential file", () => {
   let dir;
   const url = { TOKENTIMER_API_URL: "https://tokentimer.example.com" };
 
-  const mkdir = () => fsp.mkdtempSync(pathMod.join(os.tmpdir(), "tt-mcp-config-"));
+  const mkdir = () => fsp.mkdtempSync(pathMod.join(process.platform === "win32" ? pathMod.resolve(__dirname, "../../..") : os.tmpdir(), ".tt-mcp-config-"));
 
   it("falls back to the file that setup stored when nothing is given explicitly", () => {
     dir = mkdir();
@@ -226,7 +226,7 @@ describe("adapter configuration: a stored credential is bound to its issuing ser
   let dir;
 
   function withDir(fn) {
-    dir = fsp.mkdtempSync(pathMod.join(os.tmpdir(), "tt-mcp-bind-"));
+    dir = fsp.mkdtempSync(pathMod.join(process.platform === "win32" ? pathMod.resolve(__dirname, "../../..") : os.tmpdir(), ".tt-mcp-bind-"));
     try {
       return fn(pathMod.join(dir, "credential"));
     } finally {
