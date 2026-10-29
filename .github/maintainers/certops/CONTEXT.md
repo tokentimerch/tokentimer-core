@@ -526,9 +526,10 @@ the user's live membership. Approval and fresh dispatch revalidate that
 authority transactionally; background cleanup does not grant execution.
 Write admission holds the workspace lock through commit, so disabling writes
 either prevents the request or cancels its pending job after admission commits.
-Every assistant renewal still requires another manager or admin to approve,
-even where ordinary Vault workflows allow a single operator. Preview consent
-binds the resolved execution snapshot, not just its mutable profile ID.
+MCP renewals follow workspace CertOps Job approval: on requires another manager
+or admin; off queues immediately claimable work without recording human approval.
+Preview consent binds the resolved execution snapshot and approval policy;
+changing either requires a fresh preview. Existing jobs keep their gate.
 The human review shows assistant provenance, deadlines and the complete public
 renewal/publication snapshot and executor routing; approval and claim must match
 that review and live intent.
