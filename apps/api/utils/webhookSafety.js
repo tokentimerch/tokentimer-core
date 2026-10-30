@@ -48,6 +48,82 @@ async function postWebhook(url, options = {}) {
   });
 }
 
+function validateWebhookConfigurationEntry(entry) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    return {
+      ok: false,
+      code: "WEBHOOK_INVALID_URL",
+      error: "Each webhook must include an http(s) URL",
+    };
+  }
+  const url = typeof entry.url === "string" ? entry.url.trim() : "";
+  if (!url) {
+    return {
+      ok: false,
+      code: "WEBHOOK_INVALID_URL",
+      error: "Webhook URL is required",
+    };
+  }
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return {
+      ok: false,
+      code: "WEBHOOK_INVALID_URL",
+      error: "Invalid webhook URL",
+    };
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return {
+      ok: false,
+      code: "WEBHOOK_INVALID_URL",
+      error: "Webhook URL must use http or https",
+    };
+  }
+  if (parsed.username || parsed.password) {
+    return {
+      ok: false,
+      code: "WEBHOOK_INVALID_URL",
+      error: "Webhook URL must not include credentials",
+    };
+  }
+  const kind = String(entry.kind || "generic").toLowerCase();
+  if (kind !== "generic" && !webhookHostAllowed(parsed.hostname)) {
+    return {
+      ok: false,
+      code: "WEBHOOK_HOST_NOT_ALLOWED",
+      error: "Webhook host not allowed for provider",
+    };
+  }
+  if (shouldEnforcePrivateIpCheck()) {
+    const host = String(parsed.hostname || "").replace(/^\[|\]$/g, "");
+    if (host.toLowerCase() === "localhost" || isPrivateOrReservedIP(host)) {
+      return {
+        ok: false,
+        code: "WEBHOOK_PRIVATE_IP_BLOCKED",
+        error: "Webhook URL must not target a private or reserved address",
+      };
+    }
+  }
+  return { ok: true };
+}
+
+function validateWebhookConfiguration(list) {
+  if (!Array.isArray(list)) {
+    return {
+      ok: false,
+      code: "VALIDATION_ERROR",
+      error: "webhook_urls must be an array",
+    };
+  }
+  for (const entry of list) {
+    const checked = validateWebhookConfigurationEntry(entry);
+    if (!checked.ok) return checked;
+  }
+  return { ok: true };
+}
+
 module.exports = {
   isPrivateOrReservedIP,
   allowPrivateWebhookIPs,
@@ -59,4 +135,6 @@ module.exports = {
   webhookHostAllowed,
   postWebhook,
   WebhookRequestError,
+  validateWebhookConfiguration,
+  validateWebhookConfigurationEntry,
 };

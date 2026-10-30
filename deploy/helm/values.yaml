@@ -91,6 +91,8 @@ api:
 
   # Extra API env, e.g. the domain checker settings (DOMAIN_CHECKER_*,
   # SUBFINDER_BIN; see docs/CONFIGURATION.md).
+  # Recipient verification stays off until RECIPIENT_VERIFICATION_MODE=enforce
+  # or shadow. Set the same value on the worker. See docs/recipient-verification.md.
   env: {}
   # Extra envFrom entries. configMapRef.name / secretRef.name support Helm tpl
   # (e.g. '{{ .Release.Name }}-overlay-env').
@@ -166,6 +168,8 @@ worker:
 
   # Extra env/volumes for all CronJobs.
   # Precedence: workspace DB settings > env vars here > code defaults.
+  # Recipient verification stays off until RECIPIENT_VERIFICATION_MODE=enforce
+  # or shadow. Set the same value on the API.
   env: {}
   # First-class tuning for the workers that raise and email operational incidents.
   # These values take precedence over matching keys in worker.env.

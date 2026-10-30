@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import recipientVerification from "../../../packages/recipient-verification/index.js";
 import { weeklyDigestJob } from "./weekly-digest.js";
 import { logger } from "./logger.js";
 import { warnIfNodeUseEnvProxyUnsupported } from "./proxy-compat-check.js";
@@ -10,6 +11,7 @@ import {
 
 async function run() {
   warnIfNodeUseEnvProxyUnsupported();
+  logger.info("recipient verification mode", recipientVerification.describeEnforcement());
   logger.info("Starting weekly digest runner...");
   try {
     await weeklyDigestJob();

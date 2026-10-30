@@ -434,6 +434,8 @@ importers:
 
   packages/node-compat: {}
 
+  packages/recipient-verification: {}
+
   packages/webhook-safety: {}
 
 packages:

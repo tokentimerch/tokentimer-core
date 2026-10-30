@@ -3,6 +3,7 @@ const { ipKeyGenerator } = require("express-rate-limit");
 const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
+const recipientVerification = require("../../../packages/recipient-verification");
 const { requireAuth } = require("../middleware/auth");
 const { getApiLimiter } = require("../middleware/rateLimit");
 const {
@@ -10,7 +11,7 @@ const {
   requireWorkspaceMembership,
 } = require("../services/rbac");
 const { testWebhookUrl } = require("../config/constants");
-const { webhookHostAllowed, postWebhook } = require("../utils/webhookSafety");
+const { webhookHostAllowed, postWebhook, validateWebhookConfiguration } = require("../utils/webhookSafety");
 const { isValidEmail } = require("../utils/emailAddress");
 const systemSettings = require("../services/systemSettings");
 const {
@@ -356,8 +357,11 @@ router.post(
   async (req, res) => {
     try {
       const { email } = req.body || {};
-      const recipient =
-        email && isValidEmail(String(email).trim())
+      const recipientPolicy = require("../../../packages/recipient-verification");
+      const enforceRecipientVerification = recipientPolicy.resolveEnforcementMode() === "enforce";
+      const recipient = enforceRecipientVerification
+        ? req.user.email
+        : email && isValidEmail(String(email).trim())
           ? String(email).trim()
           : req.user.email;
       if (!(await isSMTPConfiguredAsync())) {
@@ -399,6 +403,16 @@ router.post(
         return res.status(400).json({
           error: "Valid phone number required (E.164 format)",
           code: "INVALID_PHONE_FORMAT",
+        });
+      }
+      const recipientPolicy = require("../../../packages/recipient-verification");
+      if (
+        recipientPolicy.resolveEnforcementMode() === "enforce" &&
+        process.env.RECIPIENT_VERIFICATION_ADMIN_PROVIDER_TEST !== "1"
+      ) {
+        return res.status(403).json({
+          error: "Arbitrary provider tests are disabled. Test a verified workspace contact, or set RECIPIENT_VERIFICATION_ADMIN_PROVIDER_TEST=1 for an operator diagnostic.",
+          code: "PROVIDER_TEST_DISABLED",
         });
       }
       const sid = await systemSettings.getSettingValue(
@@ -595,6 +609,15 @@ router.put(
         const norm = normalizeAlertThresholdsList(alert_thresholds);
         fields.push(`alert_thresholds = $${p++}`);
         params.push(JSON.stringify(norm));
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body || {}, "webhook_urls")) {
+        const checkedWebhooks = validateWebhookConfiguration(webhook_urls);
+        if (!checkedWebhooks.ok) {
+          return res.status(400).json({
+            error: checkedWebhooks.error,
+            code: checkedWebhooks.code,
+          });
+        }
       }
       if (Array.isArray(webhook_urls)) {
         fields.push(`webhook_urls = $${p++}`);
@@ -1535,12 +1558,24 @@ router.put(
         const MAX_WEBHOOKS = parseInt(process.env.MAX_WEBHOOKS || "5", 10) || 5;
         let validWebhooks = [];
         if (Array.isArray(webhook_urls)) {
+          const checkedWebhooks = validateWebhookConfiguration(webhook_urls);
+          if (!checkedWebhooks.ok) {
+            return res.status(400).json({
+              error: checkedWebhooks.error,
+              code: checkedWebhooks.code,
+            });
+          }
           validWebhooks = webhook_urls
             .filter(
               (wh) =>
                 wh && typeof wh.url === "string" && wh.url.trim().length > 0,
             )
             .slice(0, MAX_WEBHOOKS);
+        } else if (webhook_urls != null) {
+          return res.status(400).json({
+            error: "webhook_urls must be an array",
+            code: "VALIDATION_ERROR",
+          });
         }
         // Strict verification for each provided webhook (skip in tests for flexibility)
         if (process.env.NODE_ENV !== "test") {
@@ -1594,28 +1629,28 @@ router.put(
           webhooks_alerts_enabled === undefined)
       ) {
         try {
-          await pool.query(
-            `UPDATE alert_queue
-             SET 
-               channels = (
-                 SELECT (
-                   SELECT jsonb_agg(DISTINCT to_jsonb(v)) FROM (
-                     SELECT jsonb_array_elements_text(COALESCE(alert_queue.channels::jsonb, '[]'::jsonb)) AS v
-                     UNION SELECT 'webhooks'
-                   ) s
-                 )
-               )
-               , status = 'pending'
-               , next_attempt_at = NOW()
-               , updated_at = NOW()
-             WHERE user_id = $1
-               AND status = 'failed'
-               AND (
-                 error_message ILIKE '%webhooks%'
-                 OR channels::text NOT LIKE '%webhooks%'
-               )`,
+          const failedAlerts = await pool.query(
+            `SELECT id, channels
+               FROM alert_queue
+              WHERE user_id = $1
+                AND status = 'failed'
+                AND delivery_claim_id IS NULL
+                AND (
+                  COALESCE(error_message, '') ILIKE '%webhooks%'
+                  OR COALESCE(channels::text, '') NOT LIKE '%webhooks%'
+                )`,
             [req.user.id],
           );
+          for (const failedAlert of failedAlerts.rows) {
+            const nextChannels = recipientVerification.requeueWebhookChannel(failedAlert.channels);
+            if (!nextChannels) continue;
+            await pool.query(
+              `UPDATE alert_queue
+                  SET channels = $1, status = 'pending', next_attempt_at = NOW(), updated_at = NOW()
+                WHERE id = $2 AND user_id = $3 AND status = 'failed' AND delivery_claim_id IS NULL`,
+              [JSON.stringify(nextChannels), failedAlert.id, req.user.id],
+            );
+          }
         } catch (_err) {
           logger.debug("Non-critical operation failed", {
             error: _err.message,
@@ -2173,20 +2208,17 @@ router.get(
       // Expand channels into separate rows
       const expandedAlerts = [];
       for (const alert of rows.rows) {
-        let channels = [];
-        try {
-          channels = Array.isArray(alert.channels)
-            ? alert.channels
-            : JSON.parse(alert.channels);
-        } catch (_) {
-          channels = [];
-        }
+        const listedChannels = recipientVerification.publicDeliveryChannels(alert.channels);
+        const channels = listedChannels.map((row) => row.channel);
+        const channelState = new Map(listedChannels.map((row) => [row.channel, row.channel_state]));
 
         if (channels.length === 0) {
           // If no channels, still show the alert
           expandedAlerts.push({
             ...alert,
+            channels: [],
             channel: null,
+            channel_state: null,
             channel_display: "None",
             channel_error_message: null,
           });
@@ -2203,7 +2235,9 @@ router.get(
                     : null;
             expandedAlerts.push({
               ...alert,
+              channels,
               channel,
+              channel_state: channelState.get(channel) || null,
               channel_display:
                 channel === "email"
                   ? "\u{1F4E7} Email"

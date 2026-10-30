@@ -13,6 +13,7 @@ const {
   authorize,
 } = require("../services/rbac");
 const { maskPhone } = require("../utils/sanitize");
+const verification = require("../../../packages/recipient-verification");
 const crypto = require("crypto");
 const {
   replaceAssetContactGroups,
@@ -52,8 +53,6 @@ function verifyTwilioSignature(req, authToken) {
   }
 }
 
-// Test WhatsApp message with per-phone cooldown
-const whatsappTestCooldowns = new Map(); // phone -> timestamp
 router.post(
   "/api/test-whatsapp",
   getApiLimiter(),
@@ -123,38 +122,38 @@ router.post(
         });
       }
       const phoneE164 = phoneNorm.startsWith("+") ? phoneNorm : `+${phoneNorm}`;
-
-      // Check cooldown (2 minutes per phone)
-      const cooldownMs = 2 * 60 * 1000;
-      const key = phoneE164;
-      const lastSent = whatsappTestCooldowns.get(key) || 0;
-      const remaining = lastSent + cooldownMs - Date.now();
-      if (remaining > 0) {
-        const seconds = Math.ceil(remaining / 1000);
-        // Audit cooldown event
-        try {
-          await writeAudit({
-            actorUserId: req.user.id,
-            subjectUserId: req.user.id,
-            action: "WHATSAPP_TEST_RATE_LIMITED",
-            targetType: "workspace",
-            targetId: null,
-            channel: "whatsapp",
-            workspaceId: req.workspace?.id || null,
-            metadata: {
-              phone_masked: maskPhone(phoneE164),
-              retry_after_seconds: seconds,
-            },
-          });
-        } catch (_err) {
-          logger.debug("Non-critical operation failed", {
-            error: _err.message,
-          });
+      let authorizedPhone = phoneE164;
+      try {
+        const authorized = await verification.authorizeWorkspaceTest({
+          pool,
+          workspaceId: req.workspace.id,
+          contactId: req.body?.contact_id,
+          channel: "whatsapp",
+          destination: phoneE164,
+        });
+        authorizedPhone = authorized.destination;
+      } catch (authError) {
+        const status = authError.status || 500;
+        if (status === 429) {
+          try {
+            await writeAudit({
+              actorUserId: req.user.id,
+              subjectUserId: req.user.id,
+              action: "WHATSAPP_TEST_RATE_LIMITED",
+              targetType: "workspace",
+              targetId: null,
+              channel: "whatsapp",
+              workspaceId: req.workspace?.id || null,
+              metadata: { phone_masked: maskPhone(phoneE164), retry_after_seconds: authError.retryAfter || null },
+            });
+          } catch (_err) {
+            logger.debug("Non-critical operation failed", { error: _err.message });
+          }
         }
-        return res.status(429).json({
-          error: `Please wait ${seconds}s before testing this number again`,
-          code: "TEST_WHATSAPP_COOLDOWN",
-          retryAfter: seconds,
+        return res.status(status).json({
+          error: status >= 500 ? "Failed to authorize test message" : authError.message,
+          code: authError.code || "WHATSAPP_TEST_ERROR",
+          ...(authError.retryAfter ? { retryAfter: authError.retryAfter } : {}),
         });
       }
 
@@ -189,17 +188,14 @@ router.post(
         });
       }
       const result = await sendWhatsApp({
-        to: phoneE164,
+        to: authorizedPhone,
         body,
         contentSid,
         contentVariables,
-        idempotencyKey: `test:${phoneE164}:${Date.now()}`,
+        idempotencyKey: `test:${req.workspace.id}:${req.body?.contact_id}:${Date.now()}`,
       });
 
       if (result.success) {
-        whatsappTestCooldowns.set(key, Date.now());
-        // Clean up old entries after 5 minutes
-        setTimeout(() => whatsappTestCooldowns.delete(key), 5 * 60 * 1000);
         // Audit success
         try {
           await writeAudit({
@@ -232,18 +228,13 @@ router.post(
         if (!useTemplate && maybeOutsideWindow && retryTemplateSid) {
           try {
             const retry = await sendWhatsApp({
-              to: phoneE164,
+              to: authorizedPhone,
               body: null,
               contentSid: retryTemplateSid,
               contentVariables: { time: new Date().toISOString() },
-              idempotencyKey: `test:${phoneE164}:${Date.now()}:tpl`,
+              idempotencyKey: `test:${req.workspace.id}:${req.body?.contact_id}:${Date.now()}:tpl`,
             });
             if (retry.success) {
-              whatsappTestCooldowns.set(key, Date.now());
-              setTimeout(
-                () => whatsappTestCooldowns.delete(key),
-                5 * 60 * 1000,
-              );
               try {
                 await writeAudit({
                   actorUserId: req.user.id,

@@ -141,6 +141,9 @@ describe("Core distribution and lifecycle migration histories", function () {
           "certops_installed_file_distribution",
           "auto_sync_provider_stats",
           "auto_sync_run_metrics",
+          "auto_sync_metric_labels",
+          "recipient_channel_verification",
+          "weekly_digest_recipient_claim_token",
         ];
         assert.deepEqual(
           after.filter((row) => row.version >= 70).map((row) => row.name),

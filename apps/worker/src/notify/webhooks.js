@@ -71,12 +71,31 @@ function teamsSeverityEmoji(sev) {
 }
 
 export async function postJson(webhookUrl, body, kind = "generic") {
+  let url;
   try {
-    const url = new URL(webhookUrl);
+    url = new URL(webhookUrl);
+  } catch {
+    return {
+      success: false,
+      code: "WEBHOOK_INVALID_URL",
+      error: "Invalid webhook URL",
+    };
+  }
+  try {
     const schemeOk = url.protocol === "https:" || url.protocol === "http:";
-    if (!schemeOk) throw new Error("Invalid webhook URL scheme");
+    if (!schemeOk) {
+      return {
+        success: false,
+        code: "WEBHOOK_INVALID_URL",
+        error: "Invalid webhook URL scheme",
+      };
+    }
     if (process.env.NODE_ENV === "production" && url.protocol !== "https:") {
-      throw new Error("In production, only HTTPS webhook URLs are allowed");
+      return {
+        success: false,
+        code: "WEBHOOK_INVALID_URL",
+        error: "In production, only HTTPS webhook URLs are allowed",
+      };
     }
     const lowerKind = String(kind || "generic").toLowerCase();
     if (
@@ -93,7 +112,11 @@ export async function postJson(webhookUrl, body, kind = "generic") {
       try {
         cDeniedHost.labels(lowerKind, url.hostname).inc();
       } catch (_) {}
-      throw new Error("Webhook host not allowed for provider");
+      return {
+        success: false,
+        code: "WEBHOOK_HOST_NOT_ALLOWED",
+        error: "Webhook host not allowed for provider",
+      };
     }
 
     // In test mode, short-circuit network calls for deterministic outcomes
@@ -146,6 +169,7 @@ export async function postJson(webhookUrl, body, kind = "generic") {
         : {
             success: false,
             status: result.status,
+            code: "WEBHOOK_PROVIDER_REJECTED",
             error: `PagerDuty responded HTTP ${result.status}`,
           };
     }
@@ -156,14 +180,15 @@ export async function postJson(webhookUrl, body, kind = "generic") {
       ...(!success ? { error: `HTTP ${result.status}` } : {}),
     };
   } catch (e) {
-    if (e && e.code === "WEBHOOK_PRIVATE_IP_BLOCKED") {
-      return { success: false, error: e.message };
+    const code = e && e.code ? String(e.code) : "WEBHOOK_NETWORK";
+    if (code === "WEBHOOK_PRIVATE_IP_BLOCKED") {
+      return { success: false, code, error: e.message };
     }
     if (e && e.status) {
       const msg = e.message || `HTTP ${e.status}`;
-      return { success: false, error: msg };
+      return { success: false, status: e.status, code, error: msg };
     }
-    return { success: false, error: e.message };
+    return { success: false, code, error: e && e.message ? e.message : "Webhook request failed" };
   }
 }
 
