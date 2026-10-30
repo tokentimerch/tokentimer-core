@@ -120,7 +120,9 @@ describe('independent assistant request review', () => {
     value.effect.futureField = 'future-value';
     getApprovalReview.mockResolvedValue({ review: value });
     show();
-    expect(await screen.findByText('/srv/tls/cert.pem')).toBeVisible();
+    await waitFor(() =>
+      expect(screen.getByText('/srv/tls/cert.pem')).toBeVisible()
+    );
     expect(screen.getByText('/srv/other/cert.pem')).toBeVisible();
     expect(screen.getByText('agent-one')).toBeVisible();
     const details = screen

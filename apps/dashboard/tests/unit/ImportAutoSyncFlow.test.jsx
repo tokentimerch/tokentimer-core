@@ -199,99 +199,109 @@ describe.each(['gitlab', 'github'])(
       });
     });
     afterEach(cleanup);
-    it('allows an empty scan to enable a second same-URL configuration and selects the created ID', async () => {
-      await addAnother();
-      fireEvent.click(scanButton());
-      await waitFor(() => expect(enable()).toBeEnabled());
-      fireEvent.click(enable());
-      await screen.findByRole('button', {
-        name: 'Enable Auto-Sync',
-        exact: true,
-      });
-      fireEvent.click(
-        screen.getByRole('button', { name: 'Enable Auto-Sync', exact: true })
-      );
-      await waitFor(() =>
-        expect(apiClient.post).toHaveBeenCalledWith(
-          '/api/v1/workspaces/ws-1/auto-sync',
-          expect.objectContaining({
-            provider,
-            credentials: expect.objectContaining({ token: 'synthetic-one' }),
-          })
-        )
-      );
-      await waitFor(() =>
-        expect(
-          screen.getByRole('combobox', { name: 'Configuration' })
-        ).toHaveValue('created-config')
-      );
-      fireEvent.click(
-        screen.getByRole('button', { name: 'Add another', exact: true })
-      );
-      expect(enable()).toBeDisabled();
-    }, AUTO_SYNC_FLOW_TIMEOUT);
-    it('requires a fresh scan after credentials or scope change and after failed or stale scans', async () => {
-      const secret = await addAnother();
-      scan().mockResolvedValue({
-        ...result,
-        items: [{ name: 'fixture', type: 'api_key' }],
-      });
-      fireEvent.click(scanButton());
-      await waitFor(() => expect(enable()).toBeEnabled());
-      fireEvent.change(secret, { target: { value: 'synthetic-two' } });
-      expect(enable()).toBeDisabled();
-      fireEvent.click(scanButton());
-      await waitFor(() => expect(enable()).toBeEnabled());
-      const url = screen.getByPlaceholderText(
-        provider === 'gitlab' ? 'https://gitlab.com' : 'https://api.github.com'
-      );
-      const originalUrl = url.value;
-      fireEvent.change(url, { target: { value: '' } });
-      expect(enable()).toBeDisabled();
-      fireEvent.change(url, { target: { value: originalUrl } });
-      expect(enable()).toBeDisabled();
-      fireEvent.click(scanButton());
-      await waitFor(() => expect(enable()).toBeEnabled());
-      fireEvent.click(
-        screen.getByRole('checkbox', { name: /Remove previously imported/ })
-      );
-      expect(enable()).toBeDisabled();
-      fireEvent.click(scanButton());
-      await waitFor(() => expect(enable()).toBeEnabled());
-      scan().mockRejectedValueOnce(new Error('Synthetic scan failure'));
-      fireEvent.click(scanButton());
-      await screen.findAllByText(/Synthetic scan failure/);
-      expect(enable()).toBeDisabled();
-      let finish;
-      scan().mockImplementationOnce(
-        () =>
-          new Promise(resolve => {
-            finish = resolve;
-          })
-      );
-      fireEvent.click(scanButton());
-      await waitFor(() => expect(finish).toBeTypeOf('function'));
-      fireEvent.change(secret, { target: { value: 'synthetic-three' } });
-      await act(async () => {
-        finish(result);
-        await Promise.resolve();
-      });
-      await waitFor(() => expect(scanButton()).toBeEnabled());
-      expect(enable()).toBeDisabled();
-      scan().mockResolvedValue(result);
-      fireEvent.click(scanButton());
-      await waitFor(() => expect(enable()).toBeEnabled());
-      fireEvent.click(enable());
-      const confirm = await screen.findByRole('button', {
-        name: 'Enable Auto-Sync',
-        exact: true,
-      });
-      fireEvent.change(secret, {
-        target: { value: 'changed-after-confirmation-opened' },
-      });
-      fireEvent.click(confirm);
-      expect(apiClient.post).not.toHaveBeenCalled();
-    }, AUTO_SYNC_FLOW_TIMEOUT);
+    it(
+      'allows an empty scan to enable a second same-URL configuration and selects the created ID',
+      async () => {
+        await addAnother();
+        fireEvent.click(scanButton());
+        await waitFor(() => expect(enable()).toBeEnabled());
+        fireEvent.click(enable());
+        await screen.findByRole('button', {
+          name: 'Enable Auto-Sync',
+          exact: true,
+        });
+        fireEvent.click(
+          screen.getByRole('button', { name: 'Enable Auto-Sync', exact: true })
+        );
+        await waitFor(() =>
+          expect(apiClient.post).toHaveBeenCalledWith(
+            '/api/v1/workspaces/ws-1/auto-sync',
+            expect.objectContaining({
+              provider,
+              credentials: expect.objectContaining({ token: 'synthetic-one' }),
+            })
+          )
+        );
+        await waitFor(() =>
+          expect(
+            screen.getByRole('combobox', { name: 'Configuration' })
+          ).toHaveValue('created-config')
+        );
+        fireEvent.click(
+          screen.getByRole('button', { name: 'Add another', exact: true })
+        );
+        expect(enable()).toBeDisabled();
+      },
+      AUTO_SYNC_FLOW_TIMEOUT
+    );
+    it(
+      'requires a fresh scan after credentials or scope change and after failed or stale scans',
+      async () => {
+        const secret = await addAnother();
+        scan().mockResolvedValue({
+          ...result,
+          items: [{ name: 'fixture', type: 'api_key' }],
+        });
+        fireEvent.click(scanButton());
+        await waitFor(() => expect(enable()).toBeEnabled());
+        fireEvent.change(secret, { target: { value: 'synthetic-two' } });
+        expect(enable()).toBeDisabled();
+        fireEvent.click(scanButton());
+        await waitFor(() => expect(enable()).toBeEnabled());
+        const url = screen.getByPlaceholderText(
+          provider === 'gitlab'
+            ? 'https://gitlab.com'
+            : 'https://api.github.com'
+        );
+        const originalUrl = url.value;
+        fireEvent.change(url, { target: { value: '' } });
+        expect(enable()).toBeDisabled();
+        fireEvent.change(url, { target: { value: originalUrl } });
+        expect(enable()).toBeDisabled();
+        fireEvent.click(scanButton());
+        await waitFor(() => expect(enable()).toBeEnabled());
+        fireEvent.click(
+          screen.getByRole('checkbox', { name: /Remove previously imported/ })
+        );
+        expect(enable()).toBeDisabled();
+        fireEvent.click(scanButton());
+        await waitFor(() => expect(enable()).toBeEnabled());
+        scan().mockRejectedValueOnce(new Error('Synthetic scan failure'));
+        fireEvent.click(scanButton());
+        await screen.findAllByText(/Synthetic scan failure/);
+        expect(enable()).toBeDisabled();
+        let finish;
+        scan().mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              finish = resolve;
+            })
+        );
+        fireEvent.click(scanButton());
+        await waitFor(() => expect(finish).toBeTypeOf('function'));
+        fireEvent.change(secret, { target: { value: 'synthetic-three' } });
+        await act(async () => {
+          finish(result);
+          await Promise.resolve();
+        });
+        await waitFor(() => expect(scanButton()).toBeEnabled());
+        expect(enable()).toBeDisabled();
+        scan().mockResolvedValue(result);
+        fireEvent.click(scanButton());
+        await waitFor(() => expect(enable()).toBeEnabled());
+        fireEvent.click(enable());
+        const confirm = await screen.findByRole('button', {
+          name: 'Enable Auto-Sync',
+          exact: true,
+        });
+        fireEvent.change(secret, {
+          target: { value: 'changed-after-confirmation-opened' },
+        });
+        fireEvent.click(confirm);
+        expect(apiClient.post).not.toHaveBeenCalled();
+      },
+      AUTO_SYNC_FLOW_TIMEOUT
+    );
     it('persists selected metric labels without another scan and clears them for the next configuration', async () => {
       await addAnother();
       fireEvent.click(scanButton());
@@ -372,18 +382,24 @@ describe.each(['gitlab', 'github'])(
         screen.getByRole('textbox', { name: 'Monitoring group label' })
       ).toHaveValue('');
     });
-    it('allocates an unused configuration name despite deletions, whitespace and case', async () => {
-      await addAnother();
-      scan().mockResolvedValue({ ...result, items: [{ name: 'fixture' }] });
-      fireEvent.click(scanButton());
-      await waitFor(() => expect(enable()).toBeEnabled());
-      fireEvent.click(enable());
-      await screen.findByRole('button', {
-        name: 'Enable Auto-Sync',
-        exact: true,
-      });
-      const input = screen.getByRole('textbox', { name: 'Configuration name' });
-      expect(input).toHaveValue(`${provider} 4`);
-    }, AUTO_SYNC_FLOW_TIMEOUT);
+    it(
+      'allocates an unused configuration name despite deletions, whitespace and case',
+      async () => {
+        await addAnother();
+        scan().mockResolvedValue({ ...result, items: [{ name: 'fixture' }] });
+        fireEvent.click(scanButton());
+        await waitFor(() => expect(enable()).toBeEnabled());
+        fireEvent.click(enable());
+        await screen.findByRole('button', {
+          name: 'Enable Auto-Sync',
+          exact: true,
+        });
+        const input = screen.getByRole('textbox', {
+          name: 'Configuration name',
+        });
+        expect(input).toHaveValue(`${provider} 4`);
+      },
+      AUTO_SYNC_FLOW_TIMEOUT
+    );
   }
 );
