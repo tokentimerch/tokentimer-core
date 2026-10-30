@@ -145,3 +145,35 @@ test("all 73 enrollment-first preview definitions retain their immutable histori
     "c5c3d63c224fedc59fb37d8f1de99fb84b2d02dbbd86e2800ae9de7564be9099",
   );
 });
+
+test("PagerDuty's independent slot preserves applied history while companion migrations arrive later", () => {
+  const { migrations } = require("../../apps/api/migrations/migrate");
+  const applied = migrations.map(({ version, name }) => ({ version, name, executed_at: "unchanged" }));
+  const snapshot = JSON.stringify(applied);
+  const companions = [
+    [83, "certops_distribution_lifecycle"], [84, "certops_distribution_incident_delivery"],
+    [85, "certops_stable_consumer_discovery"], [86, "certops_material_cleanup"],
+    [87, "certops_consumer_verification_failures"], [88, "certops_material_providers"],
+    [89, "recipient_channel_verification"], [90, "weekly_digest_recipient_claim_token"],
+    [91, "certops_distribution_resolution_delivery"],
+  ].map(([version, name]) => ({ version, name, sql: "SELECT 1" }));
+  const integrated = [...migrations, ...companions].sort((a,b) => a.version-b.version);
+  for (let length = 0; length <= companions.length; length++) {
+    const recorded = [...applied, ...companions.slice(0,length)].sort((a,b) => a.version-b.version);
+    const plan = composeMigrations(integrated, recorded);
+    assert.equal(plan.find(entry => entry.name === "pagerduty_incident_lifecycle").version, 92);
+    assert.deepEqual(plan.map(entry => entry.version), integrated.map(entry => entry.version));
+  }
+  assert.equal(JSON.stringify(applied), snapshot);
+  // This PR's earlier 1-81 + 92 candidate must accept main's later migration82
+  // without rewriting its already applied PagerDuty identity or timestamp.
+  const previousPagerDutyCandidate = applied.filter(row => row.version !== 82);
+  const laterMainPlan = composeMigrations(migrations, previousPagerDutyCandidate);
+  assert.equal(laterMainPlan.find(row => row.name === "auto_sync_system_metrics").version, 82);
+  assert.equal(JSON.stringify(previousPagerDutyCandidate), JSON.stringify(applied.filter(row => row.version !== 82)));
+  for (const name of ["recipient_channel_verification", "certops_material_providers", "certops_distribution_lifecycle"]) {
+    const incompatible = [...applied.filter(row => row.version !== 81), { version: 81, name }];
+    assert.throws(() => composeMigrations(integrated, incompatible), /Unsupported Core migration history/);
+  }
+  assert.throws(() => composeMigrations(integrated, [{ version: 92, name: "pagerduty_incident_lifecycle" }]), /Unsupported Core migration history/);
+});

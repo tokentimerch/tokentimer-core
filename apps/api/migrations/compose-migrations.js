@@ -23,10 +23,28 @@ function composeMigrations(migrations, recorded = []) {
       throw new Error(`Missing or inconsistent pinned Core migration: ${name}`);
     }
   }
-  const tail = recorded.filter(entry => entry.version >= 70).slice().sort((a, b) => a.version - b.version);
+  if (new Set(migrations.map(entry => entry.version)).size !== migrations.length ||
+      new Set(migrations.map(entry => entry.name)).size !== migrations.length) {
+    throw new Error("Missing or inconsistent pinned Core migration registry");
+  }
+  if (new Set(recorded.map(entry => entry.version)).size !== recorded.length)
+    throw new Error("Unsupported Core migration history with duplicate versions");
+  // PagerDuty is an independent additive tail at 92, beyond the companion
+  // drafts' 82-91 slots. Keep its applied row immutable while later merges
+  // append those lower, previously unregistered migrations. Unknown histories
+  // and gaps in the ordinary Core prefix remain errors, never aliases.
+  const pagerduty = recorded.filter(entry => entry.name === "pagerduty_incident_lifecycle");
+  if (pagerduty.length && (pagerduty.length !== 1 || pagerduty[0].version !== 92 ||
+      !migrations.some(entry => entry.version === 92 && entry.name === pagerduty[0].name) ||
+      !Array.from({length:81}, (_,i) => i+1).every(version => recorded.some(entry => entry.version === version)))) {
+    throw new Error("Unsupported Core migration history for PagerDuty");
+  }
+  const tail = recorded.filter(entry => entry.version >= 70 && entry.name !== "pagerduty_incident_lifecycle").slice().sort((a, b) => a.version - b.version);
+  const suffix = migrations.filter(entry => entry.version > 76 && entry.name !== "pagerduty_incident_lifecycle").slice().sort((a,b) => a.version-b.version);
   const order = histories.find(names => tail.every((row, offset) => {
     if (offset < names.length) return row.version === 70 + offset && row.name === names[offset];
-    return row.version === 70 + offset && migrations.some(entry => entry.version === row.version && entry.name === row.name);
+    const expected = suffix[offset - names.length];
+    return expected && row.version === expected.version && row.name === expected.name;
   }));
   if (!order) throw new Error(`Unsupported Core migration history at version ${tail[0]?.version}`);
   const distributionFirst = order[0] === DISTRIBUTION;

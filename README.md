@@ -103,6 +103,8 @@ Track certificates, tokens, secrets, licenses, subscriptions, and other expiring
 
 Notify teams through email, Slack, Microsoft Teams, Discord, PagerDuty, WhatsApp, and webhooks, with configurable delivery and escalation options.
 
+[PagerDuty expiration incidents](docs/PAGERDUTY.md) correlate triggers and automatic recovery, while acknowledgment stays in PagerDuty.
+
 <p align="center">
   <img src="docs/assets/workspace-alerting.png" alt="Workspace alerting preferences: expiry thresholds, delivery window, contacts, and webhook setup guides for Slack, Discord, Teams, and PagerDuty" width="888" />
 </p>

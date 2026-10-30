@@ -4860,6 +4860,12 @@ const migrations = [
     name: "auto_sync_system_metrics",
     sql: fs.readFileSync(require("path").join(__dirname, "082-auto-sync-system-metrics.sql"), "utf8"),
   },
+  {
+    // Companion migration plans extend through 91; leave unapplied slots unregistered.
+    version: 92,
+    name: "pagerduty_incident_lifecycle",
+    sql: fs.readFileSync(require("path").join(__dirname, "092-pagerduty-incident-lifecycle.sql"), "utf8"),
+  },
 ];
 
 
@@ -4880,6 +4886,10 @@ const historicalMigrationAliases = new Map([
 ]);
 
 function validateMigrationHistory(rows) {
+  const preview = rows.find(row => [79,81].includes(row.version) && row.name === "pagerduty_incident_lifecycle");
+  if (preview) {
+    throw new Error(`PagerDuty preview migration ${preview.version} conflicts with released auto-sync history; stop and follow the explicit recovery procedure in docs/PAGERDUTY.md#migration-92-and-preview-version-compatibility`);
+  }
   const planned = resolveMigrationPlan(rows);
   for (const { version, name } of rows) {
     const current = planned.find(

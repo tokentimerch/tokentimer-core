@@ -693,6 +693,15 @@ Variables sent by TokenTimer for endpoint WhatsApp alerts:
   - `template_kind = endpoint_down` for outage alerts
   - `template_kind = endpoint_recovered` for recovery alerts
 
+## PagerDuty expiration incidents
+
+Named PagerDuty webhooks use the existing Events API v2 routing key. Expiration
+incidents now correlate retries and thresholds, then automatically resolve after
+validated recovery outside the destination's risk window. No extra credentials
+or schedules are needed. See [PagerDuty configuration and operations](PAGERDUTY.md)
+for multiple groups, credential rotation, historical incidents, retry handling
+and Event Orchestration routing.
+
 ## Legacy and compatibility
 
 | Variable            | Description                                                                 | Default value | Scope                   |

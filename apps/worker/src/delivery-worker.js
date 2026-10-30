@@ -20,6 +20,12 @@ import {
 } from "./notify/email.js";
 import { sendWhatsApp } from "./notify/whatsapp.js";
 import { postJson, formatPayload } from "./notify/webhooks.js";
+import { deliverPagerDutyExpiration, reconcilePagerDutyIncidents } from "./pagerduty-incidents.js";
+import { uniqueWebhookDestinations, webhookDestinationId } from "./shared/webhookDestinations.js";
+import alertEligibility from "@tokentimer/alert-eligibility";
+import { webhookDeliveryEvidence } from "./shared/deliveryEvidence.js";
+import { deliveryWindowAdmission, deliveryWindowDeferralMs } from "./shared/deliveryWindow.js";
+import { notificationDeliveryState, DELIVERY_CLAIM_EXCLUSION_SQL } from "./shared/notificationDeliveryState.js";
 import crypto from "node:crypto";
 import { logger } from "./logger.js";
 import emailAddress from "../../../packages/email-address/index.js";
@@ -87,21 +93,6 @@ function unionWebhookNames(groups) {
     }
   }
   return names;
-}
-
-function uniqueWebhooksByUrl(webhooks) {
-  const list = Array.isArray(webhooks) ? webhooks : [];
-  const urls = dedupeNormalizedDestinations(
-    list.map((webhook) => webhook && webhook.url),
-    "webhook",
-  );
-  const byUrl = new Map();
-  for (const webhook of list) {
-    const url = String(webhook?.url || "").trim();
-    if (!url || byUrl.has(url)) continue;
-    byUrl.set(url, webhook);
-  }
-  return urls.map((url) => byUrl.get(url)).filter(Boolean);
 }
 
 function contactGroupAuditFields(assignedIds, resolvedGroups, contactGroups) {
@@ -1462,6 +1453,8 @@ export const _test = {
 export async function deliveryWorkerJob({
   closePool = true,
   incidentEmailSender = sendEmailNotification,
+  webhookSender = postJson,
+  deliveryState = notificationDeliveryState,
 } = {}) {
   const startedAt = Date.now();
   // Owner identity for this run's claims. Every renewal and terminal write
@@ -1472,6 +1465,11 @@ export async function deliveryWorkerJob({
   let processed = 0,
     sent = 0,
     failed = 0;
+
+  // Drain durable PagerDuty recovery/retries before ordinary delivery so a
+  // large recipient batch cannot starve recovery. This also runs on an empty
+  // queue, in both the Compose runner and Helm delivery CronJob.
+  await withClient((client) => reconcilePagerDutyIncidents(client, { send: webhookSender, deliveryState }));
 
   await withClient(async (client) => {
     // In test mode, ignore next_attempt_at gating to allow repeated processing in quick succession
@@ -1561,7 +1559,7 @@ export async function deliveryWorkerJob({
            WHEN aq.token_id IS NOT NULL THEN COALESCE(token_groups.assigned_ids, ARRAY[]::text[])
            ELSE COALESCE(agent_groups.assigned_ids, ARRAY[]::text[])
          END AS assigned_ids,
-         COALESCE(t.workspace_id, ca.workspace_id) AS workspace_id,
+         COALESCE(t.workspace_id, ca.workspace_id, ${alertEligibility.resolvedTokenWorkspaceSql("t")}) AS workspace_id,
          COALESCE(w.name, wf.name, wj.name) AS workspace_name
        FROM alert_queue aq
        LEFT JOIN tokens t ON t.id = aq.token_id
@@ -1604,6 +1602,7 @@ export async function deliveryWorkerJob({
          AND aq.due_date <= CURRENT_DATE
          AND (t.id IS NOT NULL OR ca.id IS NOT NULL)
          ${gatingClause}
+         ${DELIVERY_CLAIM_EXCLUSION_SQL}
        ORDER BY aq.due_date ASC, aq.created_at ASC
        LIMIT 1000
        FOR UPDATE OF aq SKIP LOCKED`,
@@ -1780,82 +1779,43 @@ export async function deliveryWorkerJob({
 
         // Defer if outside workspace delivery window
         try {
-          let start = String(alert.delivery_window_start || "").trim();
-          let end = String(alert.delivery_window_end || "").trim();
-          const tzInput = String(alert.delivery_window_tz || "").trim();
-          if (!start && !end) {
-            start = process.env.DELIVERY_WINDOW_DEFAULT_START || "00:00";
-            end = process.env.DELIVERY_WINDOW_DEFAULT_END || "23:59";
-          }
-          if (start && end) {
-            const now = new Date();
-            let hh = "00";
-            let mm = "00";
-            try {
-              const fmt = new Intl.DateTimeFormat("en-US", {
-                timeZone: tzInput || "UTC",
-                hour12: false,
-                hour: "2-digit",
-                minute: "2-digit",
-              });
-              const parts = fmt.formatToParts(now);
-              hh = parts.find((p) => p.type === "hour")?.value || "00";
-              mm = parts.find((p) => p.type === "minute")?.value || "00";
-            } catch (_tzErr) {
-              // Invalid timezone; fall back to UTC
-              hh = String(now.getUTCHours()).padStart(2, "0");
-              mm = String(now.getUTCMinutes()).padStart(2, "0");
-              if (tzInput)
-                logger.warn(
-                  `Invalid delivery_window_tz: ${tzInput}, falling back to UTC`,
-                );
-            }
-            const cur = `${hh}:${mm}`;
-            const inWindow =
-              start <= end
-                ? cur >= start && cur <= end
-                : cur >= start || cur <= end;
-            if (!inWindow) {
-              const defMs = process.env.DELIVERY_WINDOW_DEFERRAL_MS
-                ? Number(process.env.DELIVERY_WINDOW_DEFERRAL_MS)
-                : 3 * 60 * 60 * 1000; // Default: 3 hours (reduced load for OUT_OF_WINDOW alerts)
-              const ts = new Date(
-                Date.now() + (Number.isFinite(defMs) ? defMs : 10800000),
+          const admission = deliveryWindowAdmission(alert);
+          if (admission.invalidTimezone) logger.warn("Invalid delivery window timezone; falling back to UTC");
+          if (!admission.allowed) {
+            const ts = new Date(Date.now() + deliveryWindowDeferralMs());
+            const windowDeferRes = await client.query(
+              `UPDATE alert_queue
+            SET status = 'pending', last_attempt = NOW(), error_message = 'OUT_OF_WINDOW', updated_at = NOW(), next_attempt_at = $2, delivery_claim_id = NULL
+             WHERE id = $1 AND delivery_claim_id = $3`,
+              [alert.id, ts.toISOString(), claimId],
+            );
+            if (windowDeferRes.rowCount === 0) {
+              logger.warn(
+                "Skipped out-of-window deferral: another worker took ownership",
+                { alertId: alert.id },
               );
-              const windowDeferRes = await client.query(
-                `UPDATE alert_queue 
-              SET status = 'pending', last_attempt = NOW(), error_message = 'OUT_OF_WINDOW', updated_at = NOW(), next_attempt_at = $2, delivery_claim_id = NULL
-               WHERE id = $1 AND delivery_claim_id = $3`,
-                [alert.id, ts.toISOString(), claimId],
-              );
-              if (windowDeferRes.rowCount === 0) {
-                logger.warn(
-                  "Skipped out-of-window deferral: another worker took ownership",
-                  { alertId: alert.id },
-                );
-              } else if (alert.error_message !== "OUT_OF_WINDOW") {
-                try {
-                  await writeAlertAudit(client, alert, {
-                    subjectUserId: alert.user_id,
-                    action: "ALERT_DELIVERY_DEFERRED",
-                    targetId: alert.token_id,
-                    metadata: {
-                      reason: "delivery_window",
-                      threshold: alert.threshold_days,
-                      next_attempt_at: ts.toISOString(),
-                      workspace_name: alert.workspace_name,
-                      token_name: alert.name,
-                    },
-                  });
-                } catch (_auditErr) {
-                  logger.debug("Non-critical operation failed", {
-                    error: _auditErr.message,
-                  });
-                }
+            } else if (alert.error_message !== "OUT_OF_WINDOW") {
+              try {
+                await writeAlertAudit(client, alert, {
+                  subjectUserId: alert.user_id,
+                  action: "ALERT_DELIVERY_DEFERRED",
+                  targetId: alert.token_id,
+                  metadata: {
+                    reason: "delivery_window",
+                    threshold: alert.threshold_days,
+                    next_attempt_at: ts.toISOString(),
+                    workspace_name: alert.workspace_name,
+                    token_name: alert.name,
+                  },
+                });
+              } catch (_auditErr) {
+                logger.debug("Non-critical operation failed", {
+                  error: _auditErr.message,
+                });
               }
-              // Do not count this as a failure; simply defer
-              continue;
             }
+            // Do not count this as a failure; simply defer
+            continue;
           }
         } catch (_err) {
           logger.warn("DB operation failed", { error: _err.message });
@@ -1902,6 +1862,14 @@ export async function deliveryWorkerJob({
           alert.channels,
           { isRetry: Number(alert.attempts || 0) > 0 },
         );
+        const queuedLedger = deliveryState.parse(alert.channels);
+        if (!queuedLedger || (!queuedLedger.legacy && finalChannels.length === 0)) {
+          await client.query(`UPDATE alert_queue SET status=CASE WHEN status='partial' THEN status ELSE 'blocked' END,
+            error_message=COALESCE(error_message,$3),next_attempt_at=NULL,delivery_claim_id=NULL,updated_at=NOW()
+            WHERE id=$1 AND delivery_claim_id=$2`,
+          [alert.id, claimId, queuedLedger ? "DELIVERY_LEDGER_NO_RETRY" : "UNSUPPORTED_DELIVERY_LEDGER"]);
+          continue;
+        }
 
         // If no eligible channels remain, mark failed and continue
         if (!Array.isArray(finalChannels) || finalChannels.length === 0) {
@@ -1910,7 +1878,7 @@ export async function deliveryWorkerJob({
               ? new Date(Date.now() + 1000)
               : null;
           const noContactsRes = await client.query(
-            `UPDATE alert_queue 
+            `UPDATE alert_queue
            SET status = 'failed', attempts = attempts + 1, last_attempt = NOW(), error_message = 'NO_CONTACTS_DEFINED: No email, webhook, or WhatsApp contacts are configured in the selected contact group', updated_at = NOW(), next_attempt_at = $2, delivery_claim_id = NULL
            WHERE id = $1 AND delivery_claim_id = $3`,
             [
@@ -1986,11 +1954,13 @@ export async function deliveryWorkerJob({
           let success = false;
           let errorMessage = null;
           let errorCode = null;
+          let eligibilityTerminal = false;
 
           try {
             if (channel === "email") {
               // Build recipients: group emails only; no fallback
               let recipients = [];
+              let emailContacts = [];
               const groupIdUsed = contactGroupId;
               try {
                 const emailIds = unionContactIds(
@@ -1999,9 +1969,10 @@ export async function deliveryWorkerJob({
                 );
                 if (emailIds.length > 0) {
                   const contactsRes = await client.query(
-                    `SELECT details FROM workspace_contacts WHERE workspace_id = $1 AND id = ANY($2::uuid[])`,
+                    `SELECT id, details FROM workspace_contacts WHERE workspace_id = $1 AND id = ANY($2::uuid[])`,
                     [alert.workspace_id, emailIds],
                   );
+                  emailContacts = contactsRes.rows;
                   recipients = contactsRes.rows
                     .map((r) => {
                       try {
@@ -2022,15 +1993,21 @@ export async function deliveryWorkerJob({
               // No fallback: if recipients is empty, email channel will result in no sends
 
               // Dedupe recipients
+              const gated = await deliveryState.recipients(client, alert.workspace_id, "email", emailContacts.map(row => ({
+                contactId: row.id, destination: String(row.details?.email || "").trim().toLowerCase(),
+              })).filter(row => isValidEmail(row.destination)));
+              if (gated.unavailable || gated.blocked.some(row => !row.shadow && row.code === "RECIPIENT_VERIFICATION_UNAVAILABLE")) throw new Error("RECIPIENT_VERIFICATION_UNAVAILABLE");
+              eligibilityTerminal = recipients.length > 0 && gated.allowed.length === 0 && gated.enforced;
+              const contactIdByEmail = new Map(gated.allowed.map(row => [row.destination, row.contactId]));
               const trimmed = dedupeNormalizedDestinations(
-                recipients,
+                gated.allowed.map(row => row.destination),
                 "email",
               ).filter((e) => isValidEmail(e));
 
               if (trimmed.length === 0) {
                 success = false;
-                errorMessage =
-                  "No email contacts are defined in the selected contact group";
+                errorCode = eligibilityTerminal ? gated.code || "NO_VERIFIED_RECIPIENTS" : null;
+                errorMessage = errorCode || "No email contacts are defined in the selected contact group";
               } else {
                 // Send individually and log per recipient
                 const isEndpointAlert =
@@ -2086,6 +2063,7 @@ export async function deliveryWorkerJob({
                         claimId,
                         CLAIM_MARKER_MS,
                       );
+                      await deliveryState.assertRecipient(client, alert.workspace_id, "email", { contactId: contactIdByEmail.get(rcpt), destination: rcpt });
                     },
                   });
                   await client.query(
@@ -2136,7 +2114,7 @@ export async function deliveryWorkerJob({
                   const filtered = webhooks.filter((w) =>
                     names.includes(String(w.name || "").trim()),
                   );
-                  webhooks = uniqueWebhooksByUrl(filtered);
+                  webhooks = uniqueWebhookDestinations(filtered, alert.workspace_id);
                 } else {
                   webhooks = [];
                 }
@@ -2150,36 +2128,52 @@ export async function deliveryWorkerJob({
                 errorMessage =
                   "No webhook names defined in the selected contact group";
               } else {
-                // Consider the webhooks channel successful if at least one endpoint succeeds
+                // Keep the channel retryable until every selected destination succeeds.
                 let webhookSuccess = false;
                 const errors = [];
 
                 // Load previously successful webhook url hashes for this alert_queue
                 const priorSuccessRes = await client.query(
-                  `SELECT metadata->>'urlHash' AS h
+                  `SELECT channel, status, workspace_id, metadata
                  FROM alert_delivery_log
-                 WHERE alert_queue_id = $1 AND channel = 'webhooks' AND status = 'success'`,
+                 WHERE alert_queue_id = $1 AND channel = 'webhooks' AND status = 'success'
+                   AND COALESCE(metadata->>'event_action', 'trigger') = 'trigger'`,
                   [alert.id],
                 );
-                const priorSuccess = new Set(
-                  priorSuccessRes.rows
-                    .map((r) => String(r.h || "").trim())
-                    .filter(Boolean),
-                );
+                const priorSuccess = new Set();
 
                 for (const wh of webhooks) {
                   const kind = resolveWebhookProviderKind(wh);
                   const url = String(wh?.url || "");
                   const routingKey = String(wh?.routingKey || "");
                   if (!url) continue;
+                  if (kind === "pagerduty" && !alert.workspace_id) {
+                    errors.push("pagerduty: asset_workspace_unavailable");
+                    continue;
+                  }
 
-                  // Compute a stable hash for the URL to identify unique endpoints without storing the raw URL
-                  const urlHash = crypto
-                    .createHash("sha256")
-                    .update(url)
-                    .digest("hex");
-                  if (priorSuccess.has(urlHash)) {
+                  // PagerDuty integrations share their endpoint URL: identity
+                  // includes the tenant and routing key, without exposing it.
+                  const urlHash = webhookDestinationId(alert.workspace_id, wh);
+                  const evidence = webhookDeliveryEvidence(alert.workspace_id, wh, alert.webhook_urls, priorSuccessRes.rows);
+                  if (priorSuccess.has(urlHash) || evidence === "delivered") {
                     // Already delivered successfully to this endpoint for this alert; skip re-sending
+                    webhookSuccess = true;
+                    continue;
+                  }
+                  if (evidence === "legacy_ambiguous") {
+                    errors.push("pagerduty_legacy_destination_ambiguous");
+                    continue;
+                  }
+                  if (kind === "pagerduty" && alert.alert_key?.startsWith("token_expiry:")) {
+                    await assertStillOwnsDelivery(client, alert.id, claimId, CLAIM_MARKER_MS);
+                    const result = await deliverPagerDutyExpiration(client, {
+                      alert, webhook: wh, send: webhookSender, deliveryState,
+                    });
+                    if (result.success) webhookSuccess = true;
+                    else errors.push(`pagerduty: ${result.error}`);
+                    // The lifecycle writer atomically records provider acceptance
+                    // and history; never fabricate a success log for an intent.
                     continue;
                   }
                   const name = alert.name || `Token #${alert.token_id}`;
@@ -2351,7 +2345,7 @@ export async function deliveryWorkerJob({
                   const endTimer = hLatency
                     .labels("webhooks", kind)
                     .startTimer();
-                  const res = await postJson(url, payload, kind);
+                  const res = await webhookSender(url, payload, kind);
                   try {
                     endTimer();
                   } catch (_) {
@@ -2395,6 +2389,7 @@ export async function deliveryWorkerJob({
                         kind,
                         urlDomain: new URL(url).hostname,
                         urlHash,
+                        ...(kind === "pagerduty" && { destination_id: urlHash }),
                         group_id: groupIdUsedForWebhooks,
                         payload_type: isEndpointHealthWebhook
                           ? "endpoint_health"
@@ -2413,7 +2408,7 @@ export async function deliveryWorkerJob({
                     ],
                   );
                 }
-                success = webhookSuccess;
+                success = webhookSuccess && errors.length === 0;
                 if (errors.length > 0) {
                   errorMessage = errors.join("; ");
                 } else if (!webhookSuccess) {
@@ -2477,8 +2472,12 @@ export async function deliveryWorkerJob({
                 }
 
                 // Dedupe recipients
+                const gated = await deliveryState.recipients(client, alert.workspace_id, "whatsapp", contactInfos.map(row => ({ contactId: row.id, destination: row.phone })));
+                if (gated.unavailable || gated.blocked.some(row => !row.shadow && row.code === "RECIPIENT_VERIFICATION_UNAVAILABLE")) throw new Error("RECIPIENT_VERIFICATION_UNAVAILABLE");
+                eligibilityTerminal = recipients.length > 0 && gated.allowed.length === 0 && gated.enforced;
+                const contactIdByPhone = new Map(gated.allowed.map(row => [row.destination, row.contactId]));
                 trimmed = dedupeNormalizedDestinations(
-                  recipients,
+                  gated.allowed.map(row => row.destination),
                   "phone",
                 ).filter((p) => /^\+?\d{6,15}$/.test(String(p).trim()));
                 // Build a map phone->first_name for template variables
@@ -2493,8 +2492,8 @@ export async function deliveryWorkerJob({
                   success = false;
                 } else if (trimmed.length === 0) {
                   success = false;
-                  errorMessage =
-                    "No WhatsApp contacts are defined in the selected contact group";
+                  errorCode = eligibilityTerminal ? gated.code || "NO_VERIFIED_RECIPIENTS" : null;
+                  errorMessage = errorCode || "No WhatsApp contacts are defined in the selected contact group";
                 } else {
                   const isEndpointHealthWhatsApp =
                     alert.alert_key &&
@@ -2643,6 +2642,7 @@ export async function deliveryWorkerJob({
                       const endTimerWA = hLatency
                         .labels("whatsapp", "twilio")
                         .startTimer();
+                      await deliveryState.assertRecipient(client, alert.workspace_id, "whatsapp", { contactId: contactIdByPhone.get(rcpt), destination: rcpt });
                       const perRecipientBase = contentVariablesBase
                         ? {
                             ...contentVariablesBase,
@@ -2763,6 +2763,7 @@ export async function deliveryWorkerJob({
             if (e instanceof DeliveryOwnershipLostError) throw e;
             success = false;
             errorMessage = e.message;
+            if (e.message === "RECIPIENT_VERIFICATION_UNAVAILABLE") errorCode = e.message;
             // Catch-all: if an exception occurred during WhatsApp processing, log it
             if (channel === "whatsapp") {
               try {
@@ -2822,11 +2823,13 @@ export async function deliveryWorkerJob({
             }
           }
 
-          deliveryResults.push({ channel, success, errorMessage, errorCode });
+          deliveryResults.push({ channel, success, errorMessage, errorCode, eligibilityTerminal, terminal: eligibilityTerminal });
           // If WhatsApp failed and it's not a soft throttle, consider it permanent and block the queue entry
           if (
             channel === "whatsapp" &&
             !success &&
+            !eligibilityTerminal &&
+            errorCode !== "RECIPIENT_VERIFICATION_UNAVAILABLE" &&
             errorMessage !== "ORG_RATE_LIMIT" &&
             String(errorCode || "").toUpperCase() !== "RATE_LIMIT"
           ) {
@@ -2843,8 +2846,8 @@ export async function deliveryWorkerJob({
               logger.debug("Metrics recording failed", { error: _.message });
             }
           }
-          if (!success) {
-            allSucceeded = false;
+          if (!success) allSucceeded = false;
+          if (!success && !eligibilityTerminal) {
             if (channel === "email") {
               newAttemptsEmail += 1;
               let ms = computeCooldownMs(newAttemptsEmail);
@@ -2893,21 +2896,16 @@ export async function deliveryWorkerJob({
             } catch (_) {
               logger.debug("Metrics recording failed", { error: _.message });
             }
-          } else {
+          } else if (success) {
             if (channel === "email") newAttemptsEmail = 0;
             if (channel === "webhooks") newAttemptsWebhooks = 0;
             if (channel === "whatsapp") newAttemptsWhatsApp = 0;
           }
         }
 
-        // If webhooks channel present and at least one endpoint succeeded, don't force overall failure.
-        // Only force failure if all webhook endpoints failed (webhookSuccess === false) which is already
-        // reflected in the channel result above. Here we avoid overriding a true allSucceeded due to partials.
-        // allSucceeded remains as computed from per-channel success values.
-
         // Update alert queue status
         // Determine status: "sent" only when all channels succeeded; "partial" when some succeeded and others failed/blocked; "failed" when none succeeded
-        const someSucceeded = deliveryResults.some((r) => r.success);
+        const someSucceeded = deliveryResults.some((r) => r.success) || webhookPartialErrors.length > 0;
         const someFailed = deliveryResults.some((r) => !r.success);
         const hasPartialIssues = webhookPartialErrors.length > 0;
 
@@ -2919,6 +2917,12 @@ export async function deliveryWorkerJob({
         } else {
           newStatus = "failed";
         }
+        const parsedLedger = deliveryState.parse(alert.channels);
+        const settlement = parsedLedger && (!parsedLedger.legacy || deliveryResults.some(row => row.eligibilityTerminal))
+          ? deliveryState.settle({ prior: alert.channels, attempted: deliveryResults.map(row => ({ ...row,
+            partialSuccess: row.channel === "webhooks" && webhookPartialErrors.length > 0,
+          })), liveChannels: [...new Set([...parsedLedger.required, ...parsedLedger.retry, ...liveChannels])] }) : null;
+        if (settlement) newStatus = settlement.outcome.status;
 
         const attempts = alert.attempts + 1;
         let errorMessages = deliveryResults
@@ -2938,7 +2942,7 @@ export async function deliveryWorkerJob({
             `UPDATE alert_queue 
            SET status = $1, attempts = $2, last_attempt = NOW(), error_message = $3, updated_at = NOW(),
                attempts_email = $5, attempts_webhooks = $6, attempts_whatsapp = $7, next_attempt_at = NULL,
-               delivery_claim_id = NULL
+               channels = COALESCE($9::jsonb, channels), delivery_claim_id = NULL
            WHERE id = $4 AND delivery_claim_id = $8`,
             [
               newStatus,
@@ -2949,6 +2953,7 @@ export async function deliveryWorkerJob({
               newAttemptsWebhooks,
               newAttemptsWhatsApp,
               claimId,
+              settlement ? JSON.stringify(settlement.ledger) : null,
             ],
           );
           if (sentRes.rowCount === 0) {
@@ -3029,14 +3034,17 @@ export async function deliveryWorkerJob({
               deliveryResults.filter((r) => !r.success).map((r) => r.channel),
             ),
           );
-          const channelsToStore = failedChannels;
+          const channelsToStore = settlement ? settlement.ledger : failedChannels;
+          if (settlement && reachedMaxAttempts) channelsToStore.retry = [];
 
           // Compute next_attempt_at based on failed channels
           let finalNextAttempt = nextAttemptTimestamp;
+          if (settlement && !settlement.ledger.retry.length) finalNextAttempt = null;
 
           // If WhatsApp had a permanent failure, block immediately (no further retries)
           const blockDueToWhatsApp = whatsappPermanentFailure === true;
           if (blockDueToWhatsApp) {
+            if (settlement) channelsToStore.retry = [];
             finalNextAttempt = null;
             if (errorMessages)
               errorMessages = `${errorMessages}; WHATSAPP_PERMANENT_FAILURE`;
@@ -3143,7 +3151,7 @@ export async function deliveryWorkerJob({
                 metadata: {
                   days: alert.threshold_days,
                   next_attempt_at: nextAttemptTimestamp.toISOString(),
-                  channels_to_retry: channelsToStore,
+                  channels_to_retry: settlement ? channelsToStore.retry : channelsToStore,
                   workspace_name: alert.workspace_name,
                   token_name: alert.name,
                   contact_group_id: contactGroupId,

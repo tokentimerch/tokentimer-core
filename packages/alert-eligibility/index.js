@@ -455,6 +455,8 @@ function evaluateAlertEligibility(
 }
 
 module.exports = {
+  ...require("./workspace.js"),
+  ...require("./deliveryLedger.js"),
   DEFAULT_ALERT_THRESHOLDS,
   RETIRED_CERT_LIFECYCLE_STATUSES,
   RETIRED_CERT_SUPPRESSED_ALERT_PREFIXES,

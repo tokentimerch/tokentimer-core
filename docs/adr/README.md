@@ -61,6 +61,7 @@ Architecture decisions are accepted but amendable before GA through ADRs.
 | ADR | Title | Status |
 |-----|-------|--------|
 | [0013](0013-multi-contact-groups-per-asset.md) | Multiple contact groups per asset | Accepted |
+| [0015](0015-pagerduty-expiration-incident-lifecycle.md) | PagerDuty expiration incident lifecycle | Accepted |
 
 ADR-0001 through ADR-0005 were authored as early skeletons to unblock
 parallel inventory and executor work. They remain `Proposed` until ratification moves them to

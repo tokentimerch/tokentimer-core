@@ -260,7 +260,9 @@ group tables.
 
    - email: lowercased, trimmed address
    - WhatsApp: E.164 phone
-   - webhook: the delivery URL string
+   - webhook: the delivery URL string; [ADR-0015](0015-pagerduty-expiration-incident-lifecycle.md)
+     adds the workspace and routing key to PagerDuty destination identity, so
+     independent integrations sharing an Events endpoint remain independent
 
    Two `workspace_contacts` rows that share an email therefore receive
    one email. If re-resolution yields no group whose effective list
