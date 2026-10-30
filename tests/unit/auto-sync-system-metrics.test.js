@@ -21,3 +21,35 @@ describe('independent global auto-sync overrides',()=>{
  });
 
 });
+
+describe('mixed-source metric hierarchy',()=>{
+  const savedLocal={enabled:true,labels:['kind'],monitoring_group:'local'};
+  it('uses the environment for exposure and the active system override for the group',()=>{
+    const stored={override_metrics:true,enabled:false,labels:['kind'],override_monitoring_group:true,monitoring_group:'system'};
+    const original=structuredClone({stored,savedLocal});
+    assert.deepEqual(effectiveMetricSettings(savedLocal,{AUTO_SYNC_METRICS_ENABLED:'true'},stored),{...savedLocal,monitoring_group:'system'});
+    const policy=systemMetricPolicy(stored,{AUTO_SYNC_METRICS_ENABLED:'true'});assert.equal(policy.locked,true);assert.equal(policy.monitoring_group_locked,false);
+    assert.deepEqual({stored,savedLocal},original);
+  });
+  it('uses the saved system exposure override and environment group independently',()=>{
+    const stored={override_metrics:true,enabled:false,labels:['kind'],override_monitoring_group:true,monitoring_group:'system'};
+    assert.deepEqual(effectiveMetricSettings(savedLocal,{AUTO_SYNC_METRICS_MONITORING_GROUP:'environment'},stored),{...savedLocal,enabled:false,monitoring_group:'environment'});
+    const policy=systemMetricPolicy(stored,{AUTO_SYNC_METRICS_MONITORING_GROUP:'environment'});assert.equal(policy.locked,false);assert.equal(policy.monitoring_group_locked,true);
+  });
+  it('ignores inactive saved overrides and empty environment values, preserving local choices',()=>{
+    const stored={override_metrics:false,enabled:false,labels:[],override_monitoring_group:false,monitoring_group:'system'};
+    const env={AUTO_SYNC_METRICS_ENABLED:' ',AUTO_SYNC_METRICS_MONITORING_GROUP:' '};
+    assert.deepEqual(effectiveMetricSettings(savedLocal,env,stored),savedLocal);
+    assert.equal(systemMetricPolicy(stored,env).override_metrics,false);assert.equal(systemMetricPolicy(stored,env).override_monitoring_group,false);
+  });
+});
+
+it('reports asset-label environment ownership without forcing unrelated overrides',()=>{
+  for(const raw of ['none','project']){const policy=systemMetricPolicy({override_metrics:false,override_monitoring_group:false},{AUTO_SYNC_METRICS_EXTRA_LABELS:raw});assert.equal(policy.extra_labels_locked,true);assert.equal(policy.locked,false);assert.equal(policy.override_metrics,false);assert.equal(policy.override_monitoring_group,false);}
+  assert.equal(systemMetricPolicy({},{}).extra_labels_locked,false);
+});
+it('identifies the controlling sources in managed-edit API errors',()=>{
+  const next={...local,enabled:false,monitoring_group:'new'};
+  assert.throws(()=>assertMetricSettingsEditable(local,next,{override_metrics:true,locked:true,override_monitoring_group:true,monitoring_group_locked:false}),error=>error.code==='AUTO_SYNC_METRICS_MANAGED'&&error.message.includes('environment settings (Helm/Compose)')&&error.message.includes('System Settings → Auto-sync'));
+  assert.throws(()=>assertMetricSettingsEditable(local,{...local,monitoring_group:'new'},{override_monitoring_group:true,monitoring_group_locked:true}),error=>error.code==='AUTO_SYNC_METRICS_MANAGED'&&error.message.includes('environment settings')&&!error.message.includes('System Settings'));
+});

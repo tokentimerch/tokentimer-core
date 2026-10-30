@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import {
   Accordion,
   AccordionItem,
@@ -16,7 +17,9 @@ import {
   Input,
   SimpleGrid,
   Text,
+  Tooltip,
   VStack,
+  VisuallyHidden,
   useColorModeValue,
 } from '@chakra-ui/react';
 export const DEFAULT_METRIC_SETTINGS = {
@@ -40,36 +43,72 @@ export default function AutoSyncMetricSettings({
   systemPolicy = {},
 }) {
   const muted = useColorModeValue('gray.600', 'gray.400');
+  const managementDescriptionId = useId();
 
   const settings = { ...DEFAULT_METRIC_SETTINGS, ...value };
   const managed = systemPolicy.override_metrics === true;
   const groupManaged = systemPolicy.override_monitoring_group === true;
+  const labelsRestricted = systemPolicy.extra_labels_locked === true;
+  const metricManagement = systemPolicy.locked
+    ? 'Metric exposure: AUTO_SYNC_METRICS_ENABLED (Helm/Compose); other labels: System Settings → Auto-sync.'
+    : 'Metrics: System Settings → Auto-sync.';
+  const groupManagement = systemPolicy.monitoring_group_locked
+    ? 'Monitoring group: AUTO_SYNC_METRICS_MONITORING_GROUP (Helm/Compose).'
+    : 'Monitoring group: System Settings → Auto-sync.';
+  const labelManagement =
+    'Extra asset labels: AUTO_SYNC_METRICS_EXTRA_LABELS (Helm/Compose).';
+  const managementSummary = [
+    managed && metricManagement,
+    groupManaged && groupManagement,
+    labelsRestricted && labelManagement,
+  ]
+    .filter(Boolean)
+    .join(' ');
   const enabled = managed ? systemPolicy.enabled === true : settings.enabled;
   const selected = managed ? systemPolicy.labels : settings.labels;
   const change = patch => onChange({ ...settings, ...patch });
   return (
     <Accordion allowToggle w='full'>
       <AccordionItem borderWidth='1px' borderRadius='md' overflow='hidden'>
-        <AccordionButton px={3} py={3}>
+        {managementSummary ? (
+          <VisuallyHidden id={managementDescriptionId}>
+            {managementSummary}
+          </VisuallyHidden>
+        ) : null}
+        <AccordionButton
+          px={3}
+          py={3}
+          aria-describedby={
+            managementSummary ? managementDescriptionId : undefined
+          }
+        >
           <HStack flex='1' spacing={2} textAlign='left'>
             <Text fontSize='sm' fontWeight='semibold'>
               Auto-sync metrics
             </Text>
-            {managed || groupManaged ? (
-              <Badge colorScheme='blue' fontSize='xs'>
-                Managed
-              </Badge>
+            {managementSummary ? (
+              <Tooltip hasArrow placement='top' label={managementSummary}>
+                <Box
+                  as='span'
+                  display='inline-block'
+                  data-testid='auto-sync-management-source'
+                >
+                  <Badge colorScheme='blue' fontSize='xs' cursor='help'>
+                    Managed
+                  </Badge>
+                </Box>
+              </Tooltip>
             ) : null}
           </HStack>
           <AccordionIcon />
         </AccordionButton>
         <AccordionPanel px={3} pb={4}>
           <VStack align='stretch' spacing={4} fontSize='sm'>
-            {managed ? (
-              <Text color={muted} fontSize='sm'>
-                Metric settings are managed in System Settings.
-              </Text>
-            ) : null}
+            <Text color={muted} fontSize='sm'>
+              Environment settings take priority over active global overrides in
+              System Settings → Auto-sync. Otherwise, this integration’s saved
+              choices apply.
+            </Text>
             <Checkbox
               isChecked={enabled}
               isDisabled={managed}
@@ -122,9 +161,18 @@ export default function AutoSyncMetricSettings({
                   Monitoring group label
                 </FormLabel>
                 {groupManaged ? (
-                  <Badge colorScheme='blue' fontSize='xs'>
-                    Managed
-                  </Badge>
+                  <Tooltip hasArrow placement='top' label={groupManagement}>
+                    <Box
+                      as='span'
+                      display='inline-block'
+                      tabIndex={0}
+                      data-testid='auto-sync-group-management-source'
+                    >
+                      <Badge colorScheme='blue' fontSize='xs' cursor='help'>
+                        Managed
+                      </Badge>
+                    </Box>
+                  </Tooltip>
                 ) : null}
               </HStack>
               <Input
@@ -141,7 +189,7 @@ export default function AutoSyncMetricSettings({
               />
               <FormHelperText fontSize='xs'>
                 {groupManaged
-                  ? 'Monitoring group is managed in System Settings.'
+                  ? groupManagement
                   : 'Used when the Monitoring group label is selected.'}
               </FormHelperText>
             </FormControl>

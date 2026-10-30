@@ -399,4 +399,15 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     await finish(run);
   });
 
+  it("reports environment label ownership through the integration policy without locking unrelated fields",async()=>{
+    const config=await configuration();process.env.AUTO_SYNC_METRICS_EXTRA_LABELS='none';
+    try{
+      const url='/api/v1/workspaces/'+workspaceId+'/auto-sync';const result=await request(app).get(url);assert.equal(result.status,200);
+      const policy=result.body.metric_label_policy.system;assert.equal(policy.extra_labels_locked,true);assert.equal(policy.locked,false);assert.equal(policy.override_metrics,false);assert.equal(policy.override_monitoring_group,false);
+      const update=await request(app).put(url+'/'+config.id).send({metrics_settings:{enabled:true,labels:['kind'],monitoring_group:'local'}});assert.equal(update.status,200);
+      delete process.env.AUTO_SYNC_METRICS_EXTRA_LABELS;
+      const restored=await request(app).get(url);assert.equal(restored.body.metric_label_policy.system.extra_labels_locked,false);
+    }finally{delete process.env.AUTO_SYNC_METRICS_EXTRA_LABELS;}
+  });
+
 });

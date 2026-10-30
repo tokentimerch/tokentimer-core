@@ -340,3 +340,127 @@ it('saves a group-only override on an initially unconfigured installation', asyn
     })
   );
 });
+
+describe('managed source guidance', () => {
+  it.each([
+    [
+      'system settings',
+      { override_metrics: true, override_monitoring_group: true },
+      [
+        'Metrics: System Settings → Auto-sync.',
+        'Monitoring group: System Settings → Auto-sync.',
+      ],
+      ['AUTO_SYNC_METRICS_ENABLED', 'AUTO_SYNC_METRICS_MONITORING_GROUP'],
+    ],
+    [
+      'environment metrics and saved global group',
+      { override_metrics: true, locked: true, override_monitoring_group: true },
+      [
+        'AUTO_SYNC_METRICS_ENABLED',
+        'Monitoring group: System Settings → Auto-sync.',
+      ],
+      ['AUTO_SYNC_METRICS_MONITORING_GROUP'],
+    ],
+    [
+      'saved global metrics and environment group',
+      {
+        override_metrics: true,
+        override_monitoring_group: true,
+        monitoring_group_locked: true,
+      },
+      [
+        'Metrics: System Settings → Auto-sync.',
+        'AUTO_SYNC_METRICS_MONITORING_GROUP',
+      ],
+      ['AUTO_SYNC_METRICS_ENABLED'],
+    ],
+    [
+      'environment asset-label restrictions only',
+      { extra_labels_locked: true },
+      ['Extra asset labels: AUTO_SYNC_METRICS_EXTRA_LABELS'],
+      ['AUTO_SYNC_METRICS_ENABLED', 'AUTO_SYNC_METRICS_MONITORING_GROUP'],
+    ],
+  ])(
+    'identifies %s without mixing the sources',
+    async (_name, policy, included, excluded) => {
+      render(view(policy));
+      fireEvent.pointerOver(screen.getByTestId('auto-sync-management-source'));
+      const tooltip = await screen.findByRole('tooltip');
+      for (const value of included) expect(tooltip).toHaveTextContent(value);
+      expect(
+        screen.getByRole('button', { name: /Auto-sync metrics/ })
+      ).toHaveAccessibleDescription(tooltip.textContent);
+      for (const value of excluded)
+        expect(tooltip).not.toHaveTextContent(value);
+    }
+  );
+  it('keeps local settings editable when only asset-label availability is restricted', async () => {
+    render(view({ extra_labels_locked: true }));
+    await expand();
+    expect(
+      screen.getByRole('checkbox', {
+        name: 'Expose additional auto-sync metrics',
+      })
+    ).toBeEnabled();
+    expect(
+      screen.getByRole('textbox', { name: 'Monitoring group label' })
+    ).toBeEnabled();
+    expect(
+      screen.getByRole('checkbox', { name: 'Token / asset name' })
+    ).toBeDisabled();
+  });
+  it('explains the monitoring-group badge to keyboard users and never expands the section on hover', async () => {
+    render(
+      view({
+        override_monitoring_group: true,
+        monitoring_group_locked: true,
+        monitoring_group: 'environment',
+      })
+    );
+    fireEvent.pointerOver(screen.getByTestId('auto-sync-management-source'));
+    await screen.findByRole('tooltip');
+    expect(
+      screen.getByRole('button', { name: /Auto-sync metrics/ })
+    ).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.pointerOut(screen.getByTestId('auto-sync-management-source'));
+    await expand();
+    fireEvent.focus(screen.getByTestId('auto-sync-group-management-source'));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      'AUTO_SYNC_METRICS_MONITORING_GROUP'
+    );
+    expect(
+      screen.getByRole('textbox', { name: 'Monitoring group label' })
+    ).toBeDisabled();
+  });
+  it('shows no Managed badge for an entirely local configuration', async () => {
+    render(view());
+    expect(screen.queryByText('Managed')).not.toBeInTheDocument();
+    await expand();
+    expect(
+      screen.getByText(
+        /Environment settings take priority over active global overrides/
+      )
+    ).toBeVisible();
+  });
+});
+
+it('reports Configured for an environment label restriction without implying either override is enabled', async () => {
+  const configured = vi.fn();
+  apiClient.get.mockResolvedValue({
+    data: { ...defaults, extra_labels: [], extra_labels_locked: true },
+  });
+  render(
+    <ChakraProvider>
+      <AutoSyncSystemMetricSettings onConfiguredChange={configured} />
+    </ChakraProvider>
+  );
+  const metrics = await screen.findByRole('checkbox', {
+    name: 'Override integration metrics',
+  });
+  expect(configured).toHaveBeenLastCalledWith(true);
+  expect(metrics).not.toBeChecked();
+  expect(metrics).toBeEnabled();
+  expect(
+    screen.getByRole('checkbox', { name: 'Override monitoring group' })
+  ).not.toBeChecked();
+});

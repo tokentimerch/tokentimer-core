@@ -38,7 +38,11 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
         if (active) {
           setPolicy(r.data);
           onConfiguredChange?.(
-            r.data.override_metrics || r.data.override_monitoring_group
+            Boolean(
+              r.data.override_metrics ||
+              r.data.override_monitoring_group ||
+              r.data.extra_labels_locked
+            )
           );
         }
       })
@@ -67,7 +71,11 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
       });
       setPolicy(r.data);
       onConfiguredChange?.(
-        r.data.override_metrics || r.data.override_monitoring_group
+        Boolean(
+          r.data.override_metrics ||
+          r.data.override_monitoring_group ||
+          r.data.extra_labels_locked
+        )
       );
       setSaved(true);
     } catch {

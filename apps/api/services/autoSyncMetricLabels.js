@@ -70,6 +70,7 @@ function systemMetricPolicy(stored = {}, env = process.env) {
     override_monitoring_group: Boolean(group) || stored?.override_monitoring_group === true,
     monitoring_group: group || (stored?.monitoring_group || "").trim(),
     monitoring_group_locked: Boolean(group),
+    extra_labels_locked: Boolean(String(env.AUTO_SYNC_METRICS_EXTRA_LABELS || "").trim()),
     locked: Boolean(raw), source: raw ? "env" : typeof stored?.enabled === "boolean" ? "database" : null };
 }
 async function readSystemMetricPolicy(db) {
@@ -80,9 +81,13 @@ function assertMetricSettingsEditable(current, requested, policy) {
   const before = normalizeMetricSettings(current || {});
   const next = normalizeMetricSettings(requested);
   const metricsChanged = before.enabled !== next.enabled || JSON.stringify(before.labels) !== JSON.stringify(next.labels);
-  if ((policy.override_metrics && metricsChanged) ||
-      (policy.override_monitoring_group && before.monitoring_group !== next.monitoring_group)) {
-    throw Object.assign(new Error("These auto-sync settings are managed in System Settings"), { code: "AUTO_SYNC_METRICS_MANAGED" });
+  const metricsManaged = policy.override_metrics && metricsChanged;
+  const groupManaged = policy.override_monitoring_group && before.monitoring_group !== next.monitoring_group;
+  if (metricsManaged || groupManaged) {
+    const sources = new Set();
+    if (metricsManaged) sources.add(policy.locked ? "environment settings (Helm/Compose)" : "System Settings → Auto-sync");
+    if (groupManaged) sources.add(policy.monitoring_group_locked ? "environment settings (Helm/Compose)" : "System Settings → Auto-sync");
+    throw Object.assign(new Error("These auto-sync settings are managed by " + [...sources].join(" and ")), { code: "AUTO_SYNC_METRICS_MANAGED" });
   }
   return next;
 }
