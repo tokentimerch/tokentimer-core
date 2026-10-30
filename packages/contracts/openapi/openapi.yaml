@@ -9627,6 +9627,7 @@ components:
           type: array
           items: { type: string, enum: [asset_name, project, group] }
         extra_labels_locked: { type: boolean }
+        labels_locked: { type: boolean, description: Complete label selection is controlled by AUTO_SYNC_METRICS_LABELS. }
     AutoSyncMetricSettings:
       type: object
       additionalProperties: false

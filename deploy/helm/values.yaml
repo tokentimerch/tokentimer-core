@@ -608,6 +608,10 @@ monitoring:
     enabled: false
     # Optional System Settings override; empty uses saved settings.
     autoSyncEnabled: ""
+    # Global label selection; requires autoSyncEnabled: true/false. Empty uses saved labels; [none] selects no optional labels.
+    # Options: configuration_name, monitoring_group, kind, asset_name, project, group.
+    # Labels add series to both detailed metrics; combinations can greatly increase cardinality and expose metadata.
+    autoSyncLabels: []
     # Optional global monitoring group; empty uses saved or connection settings.
     autoSyncMonitoringGroup: ""
     # Extra labels: asset_name, project, group; none disables them.

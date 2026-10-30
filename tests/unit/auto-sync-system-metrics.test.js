@@ -53,3 +53,33 @@ it('identifies the controlling sources in managed-edit API errors',()=>{
   assert.throws(()=>assertMetricSettingsEditable(local,next,{override_metrics:true,locked:true,override_monitoring_group:true,monitoring_group_locked:false}),error=>error.code==='AUTO_SYNC_METRICS_MANAGED'&&error.message.includes('environment settings (Helm/Compose)')&&error.message.includes('System Settings → Auto-sync'));
   assert.throws(()=>assertMetricSettingsEditable(local,{...local,monitoring_group:'new'},{override_monitoring_group:true,monitoring_group_locked:true}),error=>error.code==='AUTO_SYNC_METRICS_MANAGED'&&error.message.includes('environment settings')&&!error.message.includes('System Settings'));
 });
+
+describe('global deployment label selection',()=>{
+ const stored={override_metrics:false,enabled:false,labels:['kind','asset_name']};
+ const env=(labels,enabled='true')=>({AUTO_SYNC_METRICS_ENABLED:enabled,AUTO_SYNC_METRICS_LABELS:labels});
+ it('forces one explicit label selection globally without changing saved choices',()=>{
+  const original=structuredClone(stored);const selected=env(' project,kind ');
+  const policy=systemMetricPolicy(stored,selected);assert.equal(policy.labels_locked,true);assert.equal(policy.override_metrics,true);assert.deepEqual(policy.labels,['kind','project']);
+  assert.deepEqual(effectiveMetricSettings({...local,enabled:false},selected,stored),{...local,labels:['kind','project']});assert.deepEqual(stored,original);
+ });
+ it('keeps the legacy asset-label cap restrictive without adding unselected labels',()=>{
+  assert.deepEqual(systemMetricPolicy(stored,{...env('kind,project'),AUTO_SYNC_METRICS_EXTRA_LABELS:'asset_name,group'}).labels,['kind']);
+  assert.deepEqual(systemMetricPolicy(stored,{...env('kind,project'),AUTO_SYNC_METRICS_EXTRA_LABELS:'none'}).labels,['kind']);
+  assert.deepEqual(systemMetricPolicy(stored,{...env('kind,project'),AUTO_SYNC_METRICS_EXTRA_LABELS:'project'}).labels,['kind','project']);
+ });
+ it('supports no optional labels and restores database choices when unset',()=>{
+  assert.deepEqual(systemMetricPolicy(stored,env('none')).labels,[]);
+  assert.deepEqual(systemMetricPolicy(stored,env(' ')).labels,stored.labels);
+  assert.equal(systemMetricPolicy(stored,{}).labels_locked,false);
+ });
+ it('keeps global disabling ahead of explicit metadata selection',()=>{
+  const settings=effectiveMetricSettings(local,env('asset_name,project','false'),stored);assert.equal(settings.enabled,false);
+ });
+ it('rejects unknown, duplicate, empty and mixed sentinel entries',()=>{
+  for(const labels of ['secret','kind,kind','kind,','kind,,project','none,kind'])assert.throws(()=>systemMetricPolicy(stored,env(labels)),/unique supported labels/);
+ });
+ it('requires an explicit enabled or disabled global override with a label list',()=>{
+  for(const enabled of ['', 'yes'])assert.throws(()=>systemMetricPolicy(stored,env('kind',enabled)),/requires AUTO_SYNC_METRICS_ENABLED/);
+  assert.throws(()=>systemMetricPolicy(stored,{AUTO_SYNC_METRICS_LABELS:'kind'}),/requires AUTO_SYNC_METRICS_ENABLED/);
+ });
+});

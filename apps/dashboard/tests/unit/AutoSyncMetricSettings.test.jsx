@@ -464,3 +464,39 @@ it('reports Configured for an environment label restriction without implying eit
     screen.getByRole('checkbox', { name: 'Override monitoring group' })
   ).not.toBeChecked();
 });
+
+it('locks every global label checkbox when the complete selection comes from deployment', async () => {
+  apiClient.get.mockResolvedValue({
+    data: {
+      ...defaults,
+      override_metrics: true,
+      enabled: true,
+      locked: true,
+      labels_locked: true,
+      labels: ['kind', 'project'],
+    },
+  });
+  render(
+    <ChakraProvider>
+      <AutoSyncSystemMetricSettings />
+    </ChakraProvider>
+  );
+  await screen.findByRole('checkbox', { name: 'Override integration metrics' });
+  for (const name of [
+    'Configuration name',
+    'Monitoring group',
+    'Asset type',
+    'Token / asset name',
+    'Project / repository',
+    'Source group',
+  ])
+    expect(screen.getByRole('checkbox', { name })).toBeDisabled();
+  expect(screen.getByText('Labels set by environment')).toBeVisible();
+});
+it('identifies the complete deployment label source in the Managed tooltip', async () => {
+  render(view({ override_metrics: true, locked: true, labels_locked: true }));
+  fireEvent.pointerOver(screen.getByTestId('auto-sync-management-source'));
+  const tip = await screen.findByRole('tooltip');
+  expect(tip).toHaveTextContent('AUTO_SYNC_METRICS_LABELS');
+  expect(tip).not.toHaveTextContent('other labels: System Settings');
+});

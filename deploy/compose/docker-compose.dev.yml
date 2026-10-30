@@ -116,6 +116,7 @@ services:
       - ENABLE_METRICS=${ENABLE_METRICS:-false}
       # Optional System Settings override; leave empty to use saved settings.
       - AUTO_SYNC_METRICS_ENABLED=${AUTO_SYNC_METRICS_ENABLED:-}
+      - AUTO_SYNC_METRICS_LABELS=${AUTO_SYNC_METRICS_LABELS:-}
       # Optional global monitoring group; empty uses saved or connection settings.
       - AUTO_SYNC_METRICS_MONITORING_GROUP=${AUTO_SYNC_METRICS_MONITORING_GROUP:-}
       # Extra labels: asset_name, project, group; none disables them.

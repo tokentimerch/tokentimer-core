@@ -154,6 +154,7 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
                   isChecked={permitted && policy.labels.includes(key)}
                   isDisabled={
                     saving ||
+                    policy.labels_locked ||
                     !policy.override_metrics ||
                     !policy.enabled ||
                     !permitted ||
@@ -172,7 +173,7 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
               );
             })}
           </SimpleGrid>
-          {policy.extra_labels_locked ? (
+          {policy.labels_locked || policy.extra_labels_locked ? (
             <Badge alignSelf='start'>Labels set by environment</Badge>
           ) : null}
           <Text fontSize='xs' color={muted}>

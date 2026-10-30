@@ -5,15 +5,26 @@ const { createHash } = require("node:crypto");
 const OPTIONAL_LABELS = ["configuration_name", "monitoring_group", "kind", "asset_name", "project", "group"];
 const systemSettings = require("./systemSettings");
 systemSettings.registerJsonColumn("auto_sync_metrics", {
-  envMap: { enabled: "AUTO_SYNC_METRICS_ENABLED", labels: null, override_metrics: null,
+  envMap: { enabled: "AUTO_SYNC_METRICS_ENABLED", labels: "AUTO_SYNC_METRICS_LABELS", override_metrics: null,
     override_monitoring_group: null, monitoring_group: "AUTO_SYNC_METRICS_MONITORING_GROUP" },
   validate: systemMetricSettingsError,
 });
 const DEFAULT_SYSTEM_LABELS = ["configuration_name", "monitoring_group", "kind"];
 const HIGH_CARDINALITY_LABELS = ["asset_name", "project", "group"];
+function deploymentMetricLabels(env = process.env) {
+  const raw = String(env.AUTO_SYNC_METRICS_LABELS || "").trim();
+  if (!raw) return null;
+  const enabled = String(env.AUTO_SYNC_METRICS_ENABLED || "").trim().toLowerCase();
+  if (!["true", "false"].includes(enabled)) throw new Error("AUTO_SYNC_METRICS_LABELS requires AUTO_SYNC_METRICS_ENABLED=true or false");
+  const labels = raw.split(",").map(value => value.trim());
+  if (labels.length === 1 && labels[0] === "none") return [];
+  if (new Set(labels).size !== labels.length || labels.some(label => !OPTIONAL_LABELS.includes(label)))
+    throw new Error("AUTO_SYNC_METRICS_LABELS must contain unique supported labels, or none");
+  return OPTIONAL_LABELS.filter(label => labels.includes(label));
+}
 function permittedExtraLabels(env = process.env, storedPolicy) {
   const raw = String(env.AUTO_SYNC_METRICS_EXTRA_LABELS || "").trim();
-  const requested = raw ? raw.split(",").map(label => label.trim()) : (storedPolicy?.labels || []);
+  const requested = raw ? raw.split(",").map(label => label.trim()) : (deploymentMetricLabels(env) ?? storedPolicy?.labels ?? []);
   if (!Array.isArray(requested) || requested.includes("none")) return [];
   return HIGH_CARDINALITY_LABELS.filter(label => requested.includes(label));
 }
@@ -60,16 +71,18 @@ function systemMetricSettingsError(value) {
 function systemMetricPolicy(stored = {}, env = process.env) {
   const raw = typeof env.AUTO_SYNC_METRICS_ENABLED === "string" ? env.AUTO_SYNC_METRICS_ENABLED.trim() : "";
   const enabled = raw ? raw.toLowerCase() === "true" : typeof stored?.enabled === "boolean" ? stored.enabled : null;
-  const configured = Array.isArray(stored?.labels) ? OPTIONAL_LABELS.filter(label => stored.labels.includes(label)) : DEFAULT_SYSTEM_LABELS;
+  const deploymentLabels = deploymentMetricLabels(env);
+  const labelsLocked = deploymentLabels !== null;
+  const configured = deploymentLabels ?? (Array.isArray(stored?.labels) ? OPTIONAL_LABELS.filter(label => stored.labels.includes(label)) : DEFAULT_SYSTEM_LABELS);
   const permitted = permittedExtraLabels(env, stored);
-  const labels = String(env.AUTO_SYNC_METRICS_EXTRA_LABELS || "").trim()
+  const labels = !labelsLocked && String(env.AUTO_SYNC_METRICS_EXTRA_LABELS || "").trim()
     ? [...configured.filter(label => !HIGH_CARDINALITY_LABELS.includes(label)), ...permitted] : configured;
   const group = typeof env.AUTO_SYNC_METRICS_MONITORING_GROUP === "string" ? env.AUTO_SYNC_METRICS_MONITORING_GROUP.trim() : "";
   return { enabled, labels: labels.filter(label => !HIGH_CARDINALITY_LABELS.includes(label) || permitted.includes(label)),
     override_metrics: Boolean(raw) || (stored?.override_metrics ?? typeof stored?.enabled === "boolean"),
     override_monitoring_group: Boolean(group) || stored?.override_monitoring_group === true,
     monitoring_group: group || (stored?.monitoring_group || "").trim(),
-    monitoring_group_locked: Boolean(group),
+    monitoring_group_locked: Boolean(group), labels_locked: labelsLocked,
     extra_labels_locked: Boolean(String(env.AUTO_SYNC_METRICS_EXTRA_LABELS || "").trim()),
     locked: Boolean(raw), source: raw ? "env" : typeof stored?.enabled === "boolean" ? "database" : null };
 }
@@ -129,4 +142,4 @@ async function recordCreationMetrics(client, context, payload, settings, policy)
   [context.configId, dimensions.kind, dimensions.asset_name, dimensions.project, dimensions.group,
     createHash("sha256").update(JSON.stringify(dimensions)).digest("hex")]);
 }
-module.exports = { deploymentMetricLabelOptions, systemMetricPolicy, systemMetricSettingsError, assertMetricSettingsEditable, readSystemMetricPolicy, DEFAULT_SYSTEM_LABELS, permittedExtraLabels, HIGH_CARDINALITY_LABELS, effectiveMetricSettings, KNOWN_KINDS, OPTIONAL_LABELS, metricSettingsError, normalizeMetricSettings, metricSourceDimensions, creationDimensions, recordCreationMetrics };
+module.exports = { deploymentMetricLabels, deploymentMetricLabelOptions, systemMetricPolicy, systemMetricSettingsError, assertMetricSettingsEditable, readSystemMetricPolicy, DEFAULT_SYSTEM_LABELS, permittedExtraLabels, HIGH_CARDINALITY_LABELS, effectiveMetricSettings, KNOWN_KINDS, OPTIONAL_LABELS, metricSettingsError, normalizeMetricSettings, metricSourceDimensions, creationDimensions, recordCreationMetrics };

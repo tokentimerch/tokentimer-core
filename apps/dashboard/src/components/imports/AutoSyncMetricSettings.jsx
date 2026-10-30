@@ -50,7 +50,9 @@ export default function AutoSyncMetricSettings({
   const groupManaged = systemPolicy.override_monitoring_group === true;
   const labelsRestricted = systemPolicy.extra_labels_locked === true;
   const metricManagement = systemPolicy.locked
-    ? 'Metric exposure: AUTO_SYNC_METRICS_ENABLED (Helm/Compose); other labels: System Settings → Auto-sync.'
+    ? systemPolicy.labels_locked
+      ? 'Metrics and labels: AUTO_SYNC_METRICS_ENABLED and AUTO_SYNC_METRICS_LABELS (Helm/Compose).'
+      : 'Metric exposure: AUTO_SYNC_METRICS_ENABLED (Helm/Compose); other labels: System Settings → Auto-sync.'
     : 'Metrics: System Settings → Auto-sync.';
   const groupManagement = systemPolicy.monitoring_group_locked
     ? 'Monitoring group: AUTO_SYNC_METRICS_MONITORING_GROUP (Helm/Compose).'
