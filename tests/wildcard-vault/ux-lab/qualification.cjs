@@ -27,7 +27,7 @@ const PHASES = [
 ];
 const SUITE = "distribution-agent-lab";
 function createGate({ root, candidateSha, mode }) {
-  const metadata = require("../../../docs/certops/qualification-suites.json");
+  const metadata = require("../../../.github/maintainers/certops/qualification-suites.json");
   const gate = createHostGate({
     suite: SUITE,
     strict: true,
@@ -69,7 +69,7 @@ function createGate({ root, candidateSha, mode }) {
   gate.report.qualificationEnvironment.certificateMode = mode;
   gate.report.qualificationEnvironment.materialProvider = process.env.TT_UX_MATERIAL_PROVIDER || "vault-kv2";
   gate.report.fixtureSources =
-    require("../../../docs/certops/qualification-suites.json")
+    require("../../../.github/maintainers/certops/qualification-suites.json")
       .slots.find((s) => s.suite === SUITE)
       .requiredSources.map((file) => ({
         file,

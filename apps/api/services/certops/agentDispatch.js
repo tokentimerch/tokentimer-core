@@ -1055,7 +1055,8 @@ async function claimJobs({
               supported_dns_providers,
               declared_capabilities,
               capabilities_updated_at,
-              agent_kind
+              agent_kind,
+              platform
          FROM certops_agents
         WHERE id = $1
         FOR UPDATE`,
@@ -1291,6 +1292,9 @@ async function claimJobs({
 
     const eligibilityAgent = {
       ...agent,
+      // Credential metadata omits the OS. Use the locked persisted platform,
+      // never an untrusted claim-body field, for Windows capability checks.
+      platform: caps.platform,
       supportedOperations: supportedActions,
       targetSelectors,
       dnsProviders,

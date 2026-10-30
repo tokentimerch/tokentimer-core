@@ -43,7 +43,7 @@ Enterprise. Enforce it in multiple layers:
    **material-locality pointer** (which host or cluster holds the key), not a
    path to the key: recording a real key path would mean storing an assertion the
    control plane cannot verify, since it never sees the key. See ADR-0008's
-   custody implication and `docs/certops/CONTEXT.md`.
+   custody implication and `.github/maintainers/certops/CONTEXT.md`.
 5. **Evidence scrubbing**: `redactGenericSecrets` runs before evidence storage.
 
 The single private key the platform holds is the **platform operational signing

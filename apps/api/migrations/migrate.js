@@ -4850,14 +4850,19 @@ const migrations = [
     name: "auto_sync_run_metrics",
     sql: fs.readFileSync(require("path").join(__dirname, "080-auto-sync-run-metrics.sql"), "utf8"),
   },
+  {
+    version: 81,
+    name: "auto_sync_metric_labels",
+    sql: fs.readFileSync(require("path").join(__dirname, "081-auto-sync-metric-labels.sql"), "utf8"),
+  },
 ];
 
 
 
 migrations.push({
-  version: 81,
+  version: 82,
   name: "certops_material_providers",
-  sql: fs.readFileSync(require("path").join(__dirname, "081-certops-material-providers.sql"), "utf8"),
+  sql: fs.readFileSync(require("path").join(__dirname, "082-certops-material-providers.sql"), "utf8"),
 });
 
 const { composeMigrations } = require("./compose-migrations");
@@ -5152,6 +5157,7 @@ migrations.push({
 // Apply by version rather than declaration position so each dependency exists.
 migrations.sort((a, b) => a.version - b.version);
 const canonicalMigrations = migrations.slice();
+require("./migration-reservations.cjs").validateMigrationReservations(canonicalMigrations);
 
 function resolveMigrationPlan(recorded) {
   // The Enterprise adapter and upgrade tests may supply an already composed

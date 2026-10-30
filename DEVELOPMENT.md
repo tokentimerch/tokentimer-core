@@ -420,4 +420,24 @@ curl http://localhost:5173
 
 ## Auto-sync implementation and regression checks
 
-Maintainers can use [Auto-sync internals](docs/maintainers/AUTO_SYNC_INTERNALS.md) for transaction fencing, ownership, cleanup and disposable-database regression procedures. The customer setup path is [Import assets and keep them current](docs/AUTO_SYNC.md).
+Maintainers can use [Auto-sync internals](.github/maintainers/AUTO_SYNC_INTERNALS.md) for transaction fencing, ownership, cleanup and disposable-database regression procedures. The customer setup path is [Import assets and keep them current](docs/AUTO_SYNC.md).
+
+## Test, CI, and local orchestration
+
+| Variable                    | Description                               | Default value           | Scope              |
+| --------------------------- | ----------------------------------------- | ----------------------- | ------------------ |
+| `CI`                        | Standard CI marker                        | `unset`                 | CI pipelines       |
+| `CONTRACT_API_REQUIRED`     | Fail contract tests if API is unavailable | `unset`                 | Contract tests     |
+| `TEST_API_URL`              | Integration test API endpoint             | `http://localhost:4000` | Integration tests  |
+| `TEST_MODE`                 | Test behavior switch                      | `unset`                 | Tests              |
+| `NODE_V8_COVERAGE`          | V8 coverage output path                   | `unset`                 | Coverage           |
+| `TT_ALLOW_FORCE_INSTALL`    | Permit force install in test bootstrap    | `unset`                 | Tests              |
+| `TT_AUTO_INSTALL_TEST_DEPS` | Auto install missing test deps            | `unset`                 | Tests              |
+| `TT_FORCE_INSTALL`          | Force dependency install in tests         | `unset`                 | Tests              |
+| `TT_IMAGE_TAG`              | Docker image tag for tests                | `unset`                 | Test orchestration |
+| `TT_SKIP_COMPOSE_BUILD`     | Skip docker compose build step            | `unset`                 | Test orchestration |
+| `TT_TEST_API_PORT`          | API port used by test compose             | `4000`                  | Test compose       |
+| `TT_TEST_DB_PORT`           | DB port used by test compose              | `5432`                  | Test compose       |
+| `TT_TEST_MAILHOG_SMTP_PORT` | MailHog SMTP port in tests                | `1025`                  | Test compose       |
+| `TT_TEST_MAILHOG_UI_PORT`   | MailHog UI port in tests                  | `8025`                  | Test compose       |
+| `TT_TEST_SUITE`             | Select subset of test suites              | `unset`                 | Test selection     |

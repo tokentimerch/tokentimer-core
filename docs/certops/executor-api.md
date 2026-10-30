@@ -7,7 +7,7 @@ Certificate Lifecycle Management (CLM) uses the existing CertOps machine API. In
 Reference for external systems that report certificate lifecycle events and
 for the customer-side cert-manager controller. These machine transports are separate from the native
 agent protocol. See
-`docs/certops/CONTEXT.md` for domain language and ADR-0006 for where the
+`.github/maintainers/certops/CONTEXT.md` for domain language and ADR-0006 for where the
 executor jobs/evidence UI lives in the dashboard.
 
 Every request/response example in this document is exercised verbatim in

@@ -23,7 +23,7 @@ An agent with `execution.enabled: false` registers, heartbeats, and can report c
 
 ## Advanced reference
 
-- [Protocol and job contracts](agent/protocol.md).
+- [Protocol and job contracts](../../.github/maintainers/certops/agent/protocol.md).
 - [Execution and crash recovery](agent/execution.md).
 - [Security model](agent/security.md).
 - [Windows runtime](agent/windows-runtime.md): CNG, stores, IIS bindings, and retention.
@@ -49,7 +49,7 @@ See [Agent configuration reference](agent/configuration.md).
 <a id="dry-run-and-reconciliation-statuses"></a>
 <a id="7-contract-status-and-forward-compatible-fields"></a>
 
-See [Agent protocol and job contracts](agent/protocol.md).
+See [Agent protocol and job contracts](../../.github/maintainers/certops/agent/protocol.md).
 
 <a id="4-job-security-model"></a>
 <a id="ed25519-signature-verification-with-tofu-pinning"></a>

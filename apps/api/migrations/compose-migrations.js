@@ -23,15 +23,18 @@ function composeMigrations(migrations, recorded = []) {
       throw new Error(`Missing or inconsistent pinned Core migration: ${name}`);
     }
   }
-  // Released main owns 78 (installed assurance), 79 and 80 (auto-sync).
-  // Providers now append at 81. Preserve both known unreleased PR histories:
+  // Released main owns 78 (installed assurance) and 79-81 (auto-sync).
+  // Providers append at 82. Preserve the known unreleased PR histories:
   // providers at 78, then installed at 79; or installed at 78, providers at 79.
   // Only unapplied entries move, in these explicitly recognized sequences.
   const installed = "certops_installed_file_distribution", providers = "certops_material_providers";
-  const telemetry = ["auto_sync_provider_stats", "auto_sync_run_metrics"].filter(name => migrations.some(entry => entry.name === name));
+  const telemetry = ["auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels"].filter(name => migrations.some(entry => entry.name === name));
   const canonicalExtensions = [installed, ...telemetry, providers];
   const applied = recorded.filter(entry => entry.version >= 78 && entry.version < 78 + canonicalExtensions.length).slice().sort((a, b) => a.version - b.version);
-  const extensionOrder = [canonicalExtensions, [providers, installed, ...telemetry], [installed, providers, ...telemetry]]
+  const extensionOrder = [canonicalExtensions, [providers, installed, ...telemetry], [installed, providers, ...telemetry],
+    // #460 at 66f94086: installed 78, stats 79, metrics 80, providers 81.
+    [installed, ...telemetry.filter(name => name !== "auto_sync_metric_labels"), providers,
+      ...telemetry.filter(name => name === "auto_sync_metric_labels")]]
     .find(names => applied.every((row, offset) => row.version === 78 + offset && row.name === names[offset]));
   if (new Set(migrations.map(entry => entry.version)).size !== migrations.length)
     throw new Error("Duplicate Core migration version");

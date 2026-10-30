@@ -1195,6 +1195,54 @@ describe("agentDispatch.recordHeartbeat", () => {
 });
 
 describe("agentDispatch.claimJobs", () => {
+  for (const platform of ["win32", "linux"]) {
+    for (const missing of [null, "windows-material-iis-v1", "windows-cert-store-v1", "iis-binding-v1"]) {
+      it(`authenticated ${platform} claim enforces persisted Windows capabilities: ${missing || "qualified"}`, async () => {
+        const credentials = require("../../apps/api/services/certops/agentCredentials").generateAgentCredential();
+        const windows = ["windows-material-iis-v1", "windows-cert-store-v1", "iis-binding-v1"];
+        const capabilities = ["material-store-vault-kv2-v1", "deploy-from-store-v1", "evidence-claim-binding-v1",
+          ...windows.filter(value => value !== missing)];
+        const row = { id: 42, workspace_id: WORKSPACE_A, operation: "deploy-from-store",
+          subject_type: "managed_certificate", subject_id: "cert-1", payload: {},
+          assigned_agent_id: "agent-row-1", executor_kind: "agent" };
+        const dbPool = createMockPool((sql, params) => {
+          if (sql.includes("WHERE credential_prefix = $1")) {
+            assert.equal(params[0], credentials.credentialPrefix);
+            return { rows: [{ id: "agent-row-1", workspace_id: WORKSPACE_A, agent_id: "agent-01",
+              credential_hash: credentials.credentialHash, status: "active", protocol_version: "1.0.0", agent_version: "0.18.2" }] };
+          }
+          if (sql.includes("SELECT last_sequence")) return { rows: [{ last_sequence: 0 }] };
+          if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+          if (sql.includes("SELECT declared_target_selectors")) {
+            // Model a real SELECT projection: an unselected column is absent.
+            return { rows: [{ declared_capabilities: capabilities, capabilities_updated_at: new Date().toISOString(),
+              ...( /\bplatform\b/.test(sql) ? { platform } : {}) }] };
+          }
+          if (sql.includes("FOR UPDATE SKIP LOCKED")) return { rows: [row] };
+          if (sql.includes("SET status = 'claimed'")) return { rows: [{ ...row, claim_id: "claim-1", attempt_count: 1,
+            lease_expires_at: new Date(Date.now() + 900000) }] };
+          throw new Error(`unexpected query: ${sql}`);
+        });
+        const req = { headers: { authorization: `Bearer ${credentials.plaintextCredential}` } };
+        let authenticated = false;
+        await require("../../apps/api/middleware/agent-auth").createAgentCredentialAuth({ client: dbPool })(req,
+          { status() { throw new Error("authentication failed"); } }, error => {
+            if (error) throw error;
+            authenticated = true;
+          });
+        assert.equal(authenticated, true);
+        assert.equal(req.certopsAgent.platform, undefined, "credential metadata deliberately omits platform");
+        const result = await claimJobs({ dbPool, agent: req.certopsAgent,
+          body: { supportedActions: ["deploy-from-store"], platform: platform === "win32" ? "linux" : "win32" },
+          env: { CERTOPS_AGENT_LOG_STORAGE_ENABLED: "false" }, deps: CLAIM_DEPS_BASE });
+        const expected = platform !== "win32" || missing === null ? 1 : 0;
+        assert.equal(result.jobs.length, expected);
+        assert.equal(dbPool.state.queries.filter(query => query.text.includes("SET status = 'claimed'")).length, expected,
+          "rejected claims do not create a lease, increment attempts or sign a job");
+      });
+    }
+  }
+
   const CLAIM_DEPS_BASE = {
     lockWorkspaceForCertOpsSideEffect: async () => ({ locked: true }),
     signJobForDispatch: async ({ job }) => ({

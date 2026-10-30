@@ -6,6 +6,7 @@ const path = require("node:path");
 const https = require("node:https");
 const http = require("node:http");
 const crypto = require("node:crypto");
+const { providerOf, cleanupOperationOf, VAULT_SOFT_DELETE, validProviderVersion } = require("../../vendor/contracts/material-provider.cjs");
 const { assertRestrictivePermissions, applyRestrictivePermissions, assertWindowsAcl } = require("../platform");
 const { fsyncDirectorySync } = require("../platform/durability");
 const { validateCertificateForDeploy, parseDnsSans, computeCertificateFingerprint } = require("../verify");
@@ -120,7 +121,7 @@ function resolveStore(stores, intent, { fixtureLoopbackHttp = false } = {}) {
   const config = Object.hasOwn(stores || {}, intent.materialStoreRef) ? stores[intent.materialStoreRef] : null;
   const provider = config?.provider || "vault-kv2";
   if (!["vault-kv2", "openbao-kv2", "azure-key-vault"].includes(provider) ||
-    (intent.type || intent.provider || "vault-kv2") !== provider) throw failure("material_provider_mismatch");
+    providerOf(intent) !== provider) throw failure("material_provider_mismatch");
   if(provider==="openbao-kv2" && config.namespace)throw failure("material_store_config_invalid");
   const scope = config && Object.hasOwn(config.groups || {}, intent.groupId) ? config.groups[intent.groupId] : null;
   if (!scope || scope.workspaceId !== intent.workspaceId || !safePath(scope.prefix) ||
@@ -145,18 +146,19 @@ function createVaultStore(stores, intent, options = {}) {
   if (resolved.provider === "azure-key-vault") throw failure("material_provider_mismatch");
   const apiPath = `/v1/${config.mount}/data/${objectRef}`;
 
-  async function request(method, suffix = "", body = null) {
+  async function request(method, suffix = "", body = null, area = "data") {
     let token;
     let ca;
     try {
-      token = readProtectedFile(config.tokenFile, 4096).trim();
+      token = readProtectedFile(area === "data" ? config.tokenFile : scope.cleanup?.tokenFile, 4096).trim();
       if (!/^[A-Za-z0-9_.-]{8,4096}$/.test(token)) throw failure("material_auth_unavailable");
       ca = config.caFile ? fs.readFileSync(config.caFile) : undefined;
     } catch { throw failure("material_auth_unavailable"); }
     const payload = body === null ? null : Buffer.from(JSON.stringify(body));
     const transport = fixtureHttp ? http : https;
     return new Promise((resolve, reject) => {
-      const req = transport.request(new URL(apiPath + suffix, address), {
+      const endpoint = area === "data" ? apiPath : `/v1/${config.mount}/${area}/${objectRef}`;
+      const req = transport.request(new URL(endpoint + suffix, address), {
         method, ca, rejectUnauthorized: true, agent: false,
         headers: { "X-Vault-Token": token,
           ...(config.namespace ? { "X-Vault-Namespace": config.namespace } : {}),
@@ -173,10 +175,11 @@ function createVaultStore(stores, intent, options = {}) {
         response.on("end", () => {
           // Never forward Vault bodies/errors, headers, tokens or URLs.
           if (response.statusCode === 404) { resolve({ missing: true }); return; }
-          if (response.statusCode === 400 && method === "POST") { resolve({ conflict: true }); return; }
+          if (response.statusCode === 400 && method === "POST" && area === "data") { resolve({ conflict: true }); return; }
           if (response.statusCode < 200 || response.statusCode >= 300) {
             reject(failure(response.statusCode === 403 ? "material_auth_denied" : "material_store_unavailable")); return;
           }
+          if (response.statusCode === 204) { resolve({ accepted: true }); return; }
           try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); }
           catch { reject(failure("material_response_invalid")); }
         });
@@ -218,7 +221,48 @@ function createVaultStore(stores, intent, options = {}) {
       validTo: facts.validTo };
   }
 
-  return Object.freeze({ publish, fetch, recover: () => fetch(1), scope, objectRef });
+  // Shared primitive for #498's independently approved cleanup executor.
+  // It is not advertised as a production capability or wired to dispatch here.
+  async function softDeleteVersion(providerVersion, { checkLease, beforeDelete } = {}) {
+    const policy = scope.cleanup;
+    if (resolved.provider !== "vault-kv2" || cleanupOperationOf(intent) !== VAULT_SOFT_DELETE ||
+      policy?.softDelete !== true || policy.profileRevision !== intent.profileRevision ||
+      typeof checkLease !== "function" || typeof beforeDelete !== "function" ||
+      !validProviderVersion("vault-kv2", providerVersion) || providerVersion !== intent.providerVersion ||
+      !Number.isInteger(policy.minimumSeconds) || policy.minimumSeconds < 0 || policy.minimumSeconds > 315360000 ||
+      !Number.isInteger(intent.retentionPolicy?.minimumSeconds) || intent.retentionPolicy.minimumSeconds < 0 ||
+      intent.retentionPolicy.cleanupEnabled !== true || intent.retentionPolicy.reportOnly !== false ||
+      intent.retentionPolicy.requiresApproval !== true ||
+      !Number.isFinite(Date.parse(intent.expiresAt)) || Date.parse(intent.expiresAt) <= Date.now() ||
+      Date.parse(intent.expiresAt) > Date.now() + 86430000) throw failure("material_cleanup_policy_denied");
+    await checkLease();
+    const metadata = await request("GET", "", null, "metadata");
+    const version = metadata.data?.versions?.[String(providerVersion)];
+    if (metadata.missing || !version || typeof version.destroyed !== "boolean" ||
+      typeof version.deletion_time !== "string") throw failure("material_cleanup_metadata_unavailable");
+    if (version.destroyed) throw failure("material_cleanup_version_destroyed");
+    if (version.deletion_time) {
+      if (!Number.isFinite(Date.parse(version.deletion_time))) throw failure("material_cleanup_metadata_unavailable");
+      return { alreadyDeleted: true };
+    }
+    const created = Date.parse(version.created_time);
+    if (!Number.isFinite(created) || Date.now() - created < Math.max(policy.minimumSeconds, intent.retentionPolicy.minimumSeconds) * 1000)
+      throw failure("material_cleanup_retention_protected");
+    await checkLease();
+    if (Date.parse(intent.expiresAt) <= Date.now()) throw failure("material_cleanup_authorization_expired");
+    await beforeDelete();
+    // Never blindly retry an uncertain POST. The next attempt reads metadata
+    // first; only the exact pinned version may be soft deleted. No data reads,
+    // destroy, undelete, whole-object deletion, purge or redirect following.
+    await request("POST", "", { versions: [providerVersion] }, "delete");
+    const observed = await request("GET", "", null, "metadata");
+    const deleted = observed.data?.versions?.[String(providerVersion)];
+    if (deleted?.destroyed !== false || !Number.isFinite(Date.parse(deleted?.deletion_time)))
+      throw failure("material_cleanup_uncertain");
+    await checkLease();
+    return { alreadyDeleted: false };
+  }
+  return Object.freeze({ publish, fetch, recover: () => fetch(1), softDeleteVersion, scope, objectRef });
 }
 
 function createMaterialStore(stores, intent, options = {}) {

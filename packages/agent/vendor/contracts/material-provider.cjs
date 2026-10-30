@@ -6,7 +6,21 @@ const PROVIDERS = Object.freeze([
   "azure-key-vault",
 ]);
 function providerOf(intent) {
-  return intent?.type || intent?.provider || "vault-kv2";
+  // Old publication intents use type for the provider. Cleanup intents from
+  // #498 use it for an operation. Recognize only the pinned legacy operation;
+  // unknown types and contradictory explicit identities still fail closed.
+  const legacyCleanup = intent?.type === VAULT_SOFT_DELETE;
+  const operationProvider = cleanupOperationOf(intent) === VAULT_SOFT_DELETE ? "vault-kv2" : null;
+  const provider = intent?.provider ?? (legacyCleanup ? "vault-kv2" : intent?.type) ?? "vault-kv2";
+  if ((operationProvider && provider !== operationProvider) ||
+      (intent?.type && !legacyCleanup && intent.type !== provider) ||
+      (legacyCleanup && !operationProvider)) return null;
+  return provider;
+}
+const VAULT_SOFT_DELETE = "vault-kv2-soft-delete";
+function cleanupOperationOf(intent) {
+  if (intent?.operation !== undefined && intent?.type === VAULT_SOFT_DELETE && intent.operation !== intent.type) return null;
+  return intent?.operation ?? (intent?.type === VAULT_SOFT_DELETE ? intent.type : null);
 }
 function providerCapability(provider) {
   return (
@@ -33,6 +47,8 @@ function versionOf(row) {
 module.exports = {
   PROVIDERS,
   providerOf,
+  VAULT_SOFT_DELETE,
+  cleanupOperationOf,
   providerCapability,
   validProviderVersion,
   versionOf,

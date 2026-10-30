@@ -1,0 +1,158 @@
+{
+  "rule_files": [
+    "../../deploy/prometheus/auto-sync.rules.yaml"
+  ],
+  "evaluation_interval": "1m",
+  "tests": [
+    {
+      "name": "recent creation already in initial scrape baseline",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "auto_sync_last_creation_timestamp_seconds{installation=\"test\",namespace=\"tokentimer\",job=\"tokentimer-api\",provider=\"gitlab\",configuration_id=\"cfg-critical\",configuration_name=\"Critical GitLab\",monitoring_group=\"critical\",kind=\"gitlab-project-token\",asset_name=\"deployment-token\",project=\"platform/backend\",group=\"platform\",label_set=\"asset_name,configuration_name,group,kind,monitoring_group,project\"}",
+          "values": "240x25"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "5m",
+          "alertname": "AutoSyncCriticalAssetsCreated",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "installation": "test",
+                "namespace": "tokentimer",
+                "job": "tokentimer-api",
+                "provider": "gitlab",
+                "configuration_id": "cfg-critical",
+                "configuration_name": "Critical GitLab",
+                "monitoring_group": "critical",
+                "kind": "gitlab-project-token",
+                "asset_name": "deployment-token",
+                "project": "platform/backend",
+                "group": "platform",
+                "label_set": "asset_name,configuration_name,group,kind,monitoring_group,project",
+                "severity": "info"
+              },
+              "exp_annotations": {
+                "summary": "Auto-sync imported deployment-token",
+                "description": "Configuration cfg-critical imported inventory within the last 15 minutes. Type: gitlab-project-token. Project: platform/backend. Group: platform."
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "replicas expose one logical alert",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "auto_sync_last_creation_timestamp_seconds{installation=\"test\",namespace=\"tokentimer\",job=\"tokentimer-api\",provider=\"gitlab\",configuration_id=\"cfg-critical\",configuration_name=\"Critical GitLab\",monitoring_group=\"critical\",kind=\"gitlab-project-token\",asset_name=\"deployment-token\",project=\"platform/backend\",group=\"platform\",label_set=\"asset_name,configuration_name,group,kind,monitoring_group,project\",pod=\"api-a\",instance=\"10.0.0.1:4000\"}",
+          "values": "240x25"
+        },
+        {
+          "series": "auto_sync_last_creation_timestamp_seconds{installation=\"test\",namespace=\"tokentimer\",job=\"tokentimer-api\",provider=\"gitlab\",configuration_id=\"cfg-critical\",configuration_name=\"Critical GitLab\",monitoring_group=\"critical\",kind=\"gitlab-project-token\",asset_name=\"deployment-token\",project=\"platform/backend\",group=\"platform\",label_set=\"asset_name,configuration_name,group,kind,monitoring_group,project\",pod=\"api-b\",instance=\"10.0.0.2:4000\"}",
+          "values": "240x25"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "5m",
+          "alertname": "AutoSyncCriticalAssetsCreated",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "installation": "test",
+                "namespace": "tokentimer",
+                "job": "tokentimer-api",
+                "provider": "gitlab",
+                "configuration_id": "cfg-critical",
+                "configuration_name": "Critical GitLab",
+                "monitoring_group": "critical",
+                "kind": "gitlab-project-token",
+                "asset_name": "deployment-token",
+                "project": "platform/backend",
+                "group": "platform",
+                "label_set": "asset_name,configuration_name,group,kind,monitoring_group,project",
+                "severity": "info"
+              },
+              "exp_annotations": {
+                "summary": "Auto-sync imported deployment-token",
+                "description": "Configuration cfg-critical imported inventory within the last 15 minutes. Type: gitlab-project-token. Project: platform/backend. Group: platform."
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "noncritical configuration excluded",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "auto_sync_last_creation_timestamp_seconds{installation=\"test\",namespace=\"tokentimer\",job=\"tokentimer-api\",provider=\"gitlab\",configuration_id=\"cfg-critical\",configuration_name=\"Critical GitLab\",monitoring_group=\"rest\",kind=\"gitlab-project-token\",asset_name=\"deployment-token\",project=\"platform/backend\",group=\"platform\",label_set=\"asset_name,configuration_name,group,kind,monitoring_group,project\"}",
+          "values": "240x25"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "5m",
+          "alertname": "AutoSyncCriticalAssetsCreated",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "creation outside window expires",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "auto_sync_last_creation_timestamp_seconds{installation=\"test\",namespace=\"tokentimer\",job=\"tokentimer-api\",provider=\"gitlab\",configuration_id=\"cfg-critical\",configuration_name=\"Critical GitLab\",monitoring_group=\"critical\",kind=\"gitlab-project-token\",asset_name=\"deployment-token\",project=\"platform/backend\",group=\"platform\",label_set=\"asset_name,configuration_name,group,kind,monitoring_group,project\"}",
+          "values": "240x25"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "20m",
+          "alertname": "AutoSyncCriticalAssetsCreated",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "zero timestamp is not a creation",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "auto_sync_last_creation_timestamp_seconds{installation=\"test\",namespace=\"tokentimer\",job=\"tokentimer-api\",provider=\"gitlab\",configuration_id=\"cfg-critical\",configuration_name=\"Critical GitLab\",monitoring_group=\"critical\",kind=\"gitlab-project-token\",asset_name=\"deployment-token\",project=\"platform/backend\",group=\"platform\",label_set=\"asset_name,configuration_name,group,kind,monitoring_group,project\"}",
+          "values": "0x25"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "5m",
+          "alertname": "AutoSyncCriticalAssetsCreated",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "future timestamp does not fire",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "auto_sync_last_creation_timestamp_seconds{installation=\"test\",namespace=\"tokentimer\",job=\"tokentimer-api\",provider=\"gitlab\",configuration_id=\"cfg-critical\",configuration_name=\"Critical GitLab\",monitoring_group=\"critical\",kind=\"gitlab-project-token\",asset_name=\"deployment-token\",project=\"platform/backend\",group=\"platform\",label_set=\"asset_name,configuration_name,group,kind,monitoring_group,project\"}",
+          "values": "900x25"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "5m",
+          "alertname": "AutoSyncCriticalAssetsCreated",
+          "exp_alerts": []
+        }
+      ]
+    }
+  ]
+}

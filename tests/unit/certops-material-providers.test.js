@@ -9,11 +9,21 @@ const {
   providerCapability,
   versionOf,
   validProviderVersion,
+  providerOf,
 } = require("../../packages/contracts/certops/material-provider.cjs");
 const {
   evaluateAgentJobEligibility,
 } = require("../../apps/api/services/certops/agentJobEligibility");
 const id = "11111111-1111-4111-8111-111111111111";
+test("cleanup operation identity resolves independently of the pinned provider", () => {
+  assert.equal(providerOf({ type: "vault-kv2-soft-delete" }), "vault-kv2");
+  assert.equal(providerOf({ operation: "vault-kv2-soft-delete", provider: "vault-kv2" }), "vault-kv2");
+  for (const provider of ["openbao-kv2", "azure-key-vault", "unsupported"]) {
+    assert.equal(providerOf({ type: "vault-kv2-soft-delete", provider }), null);
+  }
+  assert.equal(providerOf({ type: "openbao-kv2", provider: "vault-kv2" }), null);
+  assert.equal(providerOf({ type: "not-a-provider" }), "not-a-provider");
+});
 const receipt = {
   schemaVersion: 1,
   workspaceId: id,

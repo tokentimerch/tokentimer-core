@@ -16,10 +16,22 @@ qualification claim. See [qualification](distribution-extensions-qualification.m
 for exact evidence and remaining gates.
 
 The canonical schema sequence is migration 78 for installed-file assurance,
-released auto-sync migrations 79/80, then migration 81 for immutable provider references. Upgrade API/worker and
+released auto-sync migrations 79–81, then migration 82 for immutable provider references. Upgrade API/worker and
 consumer agents together. Previously applied migration rows are retained;
 recognized early provider-first preview databases append the missing assurance
-change without renumbering their ledger.
+change without renumbering their ledger. Provider-at-81 previews retain that row
+and receive metric labels at 82. See the [cross-PR integration plan](../migrations/open-pr-numbering.md)
+before combining #461, #496 or #498; unknown or mixed ledgers fail closed.
+
+Cleanup operation identity is separate from provider identity in the shared
+`material-provider.cjs` contract: new cleanup intents use
+`operation: "vault-kv2-soft-delete", provider: "vault-kv2"`. The exact legacy
+#498 `type: "vault-kv2-soft-delete"` is also recognized as an operation and maps
+only to Vault. Contradictory identities and unsupported providers are rejected.
+The shared adapter primitive uses the separate local cleanup credential,
+retention floor, lease checks, pre-mutation journal callback and metadata-first
+retry. This does not enable cleanup jobs or its production capability; #498
+still owns independent approval, permanent reference fences and receipt admission.
 
 Linux endpoint consumers support `installed`, `served` and `trust`. Installed
 assurance reads back the certificate, key and full chain without probes or a
