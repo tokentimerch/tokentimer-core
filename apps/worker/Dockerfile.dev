@@ -23,6 +23,9 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 COPY --chown=nodejs:nodejs packages ./packages
 COPY --chown=nodejs:nodejs apps/worker ./apps/worker
 COPY --chown=nodejs:nodejs apps/api/services/certops ./apps/api/services/certops
+COPY --chown=nodejs:nodejs apps/api/services/operator ./apps/api/services/operator
+COPY --chown=nodejs:nodejs apps/api/services/credentials ./apps/api/services/credentials
+COPY --chown=nodejs:nodejs apps/api/services/rbac.js ./apps/api/services/rbac.js
 COPY --chown=nodejs:nodejs apps/api/src/shared/retiredCertificateAlerts.js ./apps/api/src/shared/retiredCertificateAlerts.js
 COPY --chown=nodejs:nodejs apps/api/src/shared/contactGroupPluralWrites.js ./apps/api/src/shared/contactGroupPluralWrites.js
 COPY --chown=nodejs:nodejs apps/api/src/shared/contactGroups.js ./apps/api/src/shared/contactGroups.js

@@ -180,15 +180,19 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
     pagination && pagination.total > 0 && offset >= pagination.total
   );
 
-  const handleDecision = async reason => {
+  const handleDecision = async (reason, reviewHash) => {
     if (!decisionTarget || !workspaceId) return;
     const { job, decision } = decisionTarget;
     const decide = decision === 'approve' ? approveJob : rejectJob;
     try {
-      await decide(workspaceId, job.id, { reason });
+      await decide(workspaceId, job.id, {
+        reason,
+        ...(reviewHash ? { reviewHash } : {}),
+      });
       showSuccess(decision === 'approve' ? 'Job approved' : 'Job rejected');
       setDecisionTarget(null);
       refreshAll();
+      return true;
     } catch (err) {
       showError(
         decision === 'approve' ? 'Approve failed' : 'Reject failed',
@@ -201,6 +205,7 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
         setDecisionTarget(null);
         refreshAll();
       }
+      return false;
     }
   };
 
@@ -275,7 +280,9 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
           <option value=''>All statuses</option>
           {CERTOPS_JOB_STATUSES.map(value => (
             <option key={value} value={value}>
-              {jobStatusLabel(value)}
+              {value === 'approved'
+                ? 'Approved (queued)'
+                : jobStatusLabel(value)}
             </option>
           ))}
         </Select>
@@ -469,6 +476,9 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
                         </Text>
                       </Tooltip>
                     ) : null}
+                    {job.requestedByConnectionId ? (
+                      <Text fontSize='xs'>Assistant request</Text>
+                    ) : null}
                     {canManage && awaitingApproval ? (
                       <HStack
                         spacing={1}
@@ -567,6 +577,7 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
       <ApprovalDecisionModal
         isOpen={Boolean(decisionTarget)}
         onClose={() => setDecisionTarget(null)}
+        workspaceId={workspaceId}
         job={decisionTarget?.job}
         decision={decisionTarget?.decision}
         onDecide={handleDecision}

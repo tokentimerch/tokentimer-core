@@ -1,0 +1,63 @@
+# TokenTimer assistant adapter
+
+This development adapter runs over stdio and calls the operator REST namespace.
+It supports eight read tools and optional renewal preview/request/status/cancel
+tools. Renewals follow the workspace CertOps **Job approval** setting: on requires
+a different manager or admin; off queues a job an eligible agent can claim immediately.
+The manual-renew tool does not orchestrate AD CS enrollment or consumer rollouts.
+
+The supported development setup is a source checkout with Node 24 and the
+repository's pinned pnpm version:
+
+```sh
+pnpm install --frozen-lockfile
+node packages/mcp/bin/tokentimer-mcp.js enroll --api-url https://your-server.example
+```
+
+A signed-in workspace member creates a short-lived enrollment grant using
+`POST /api/v1/workspaces/:id/operator/enrollments` with the desired `name`,
+`scopes`, `roleCeiling` and optional lifetime. This management request uses the
+normal session/CSRF flow. Enter the returned grant at the local enrollment
+prompt; never put it in a command argument or assistant message. The command
+stores a restricted, server-bound credential and prints client configuration.
+Use that configuration with a local MCP client that supports stdio. Use an
+absolute path to this checkout's `packages/mcp/bin/tokentimer-mcp.js` when
+configuring the Node command. No published npm package is available yet.
+
+Use a private credential directory controlled by your operating-system user,
+including for an explicit `--credential-file` path. Enrollment refuses shared
+or replaceable parent directories before consuming the grant; Windows also
+checks ancestor ACLs using native PowerShell. If a delegated profile or temporary
+directory is refused, choose a private location. Do not weaken shared directory
+permissions to make enrollment pass.
+
+The server requires `MCP_OPERATOR_INTERFACE_ENABLED=true` and CertOps enabled
+for operational reads. The human approval surface identifies assistant origin,
+resolved effects and expiries and binds approval to that exact review. Keep
+production MCP flags off until release approval. Write
+requests additionally require `MCP_OPERATOR_WRITES_ENABLED=true`, the admin's
+workspace operator setting, `mcp:renew:request`, and local adapter opt-in
+`TOKENTIMER_MCP_ENABLE_WRITES=true`. With Job approval off, submission is not
+proof of renewal; inspect job status and executor evidence. Policy changes
+between preview and submission require a fresh preview.
+
+After enrollment, run the adapter through the printed client configuration.
+Confirm `tt_whoami`, list certificates, inspect one, then exercise a renewal
+preview in a disposable workspace. Check a refusal and both Job approval modes
+before any write rollout. A lost enrollment response requires revoking
+the connection and creating a fresh grant. Never retry by exposing a credential.
+
+An `unknown_effect` request requires human reconciliation. Do not submit a new
+request merely because a previous response was lost; retry the original
+`requestId` for that same deliberate submission. Publication does not prove
+consumer installation or live TLS verification.
+
+Codex CLI `0.165.0-alpha.1.2` was qualified over stdio revision `2025-06-18`;
+keep `TOKENTIMER_MCP_LEGACY=serve` for that client. Codex uses TOML rather than
+the enrollment command's generic JSON: register its printed command, arguments
+and environment using `codex mcp add tokentimer --env NAME=VALUE -- node
+<absolute-adapter-path>`, repeating `--env` for the API URL and credential-file
+path. Its tool permission authorizes sending a request; TokenTimer applies the workspace Job approval setting to the renewal request. Other clients remain unqualified.
+
+See [configuration](../../docs/CONFIGURATION.md) and
+[ADR-0015](../../docs/adr/0015-mcp-operator-interface.md).

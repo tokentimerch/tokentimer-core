@@ -1960,49 +1960,51 @@ function App() {
     }
   };
 
-  // Determine whether the current user can create tokens in the selected workspace (admin or manager only)
-  const [_canCreateToken, setCanCreateToken] = useState(true);
-  const [isViewer, setIsViewer] = useState(false);
-  const [_workspaceMetaLoaded, setWorkspaceMetaLoaded] = useState(false);
+  // Do not render management/setup controls before this account's selected
+  // workspace role is known, or reuse the previous workspace's permissions.
+  const permissionWorkspaceId =
+    new URLSearchParams(location.search).get('workspace') || null;
+  const [workspaceAccess, setWorkspaceAccess] = useState(null);
+  const accessIsCurrent =
+    workspaceAccess?.workspaceId === permissionWorkspaceId &&
+    workspaceAccess?.accountId === session?.id;
+  const isViewer = !accessIsCurrent || !workspaceAccess.canManage;
   useEffect(() => {
-    (async () => {
+    let cancelled = false;
+    async function loadWorkspaceMeta() {
+      let canManage = false;
       try {
-        let allowed = true;
-        const urlParams = new URLSearchParams(window.location.search);
-        const selectedWorkspaceId = urlParams.get('workspace') || null;
-        if (selectedWorkspaceId) {
-          try {
-            const ws = await workspaceAPI.get(selectedWorkspaceId);
-            const role = String(ws?.role || '').toLowerCase();
-            allowed = role === 'admin' || role === 'workspace_manager';
-            setIsViewer(role === 'viewer');
-          } catch (_) {
-            allowed = true;
-            setIsViewer(false);
-          }
+        if (permissionWorkspaceId) {
+          const workspace = await workspaceAPI.get(permissionWorkspaceId);
+          const role = String(workspace?.role || '').toLowerCase();
+          canManage = role === 'admin' || role === 'workspace_manager';
         } else {
-          // No workspace in URL (e.g. first login) - check highest role across all workspaces
-          try {
-            const ws = await workspaceAPI.list(50, 0);
-            const items = ws?.items || [];
-            const roles = items.map(w => String(w.role || '').toLowerCase());
-            const hasManagerOrAdmin =
-              roles.includes('admin') || roles.includes('workspace_manager');
-            allowed = hasManagerOrAdmin;
-            setIsViewer(items.length > 0 && !hasManagerOrAdmin);
-          } catch (_) {
-            allowed = true;
-            setIsViewer(false);
-          }
+          const response = await workspaceAPI.list(50, 0);
+          canManage = (response?.items || []).some(workspace =>
+            ['admin', 'workspace_manager'].includes(
+              String(workspace.role || '').toLowerCase()
+            )
+          );
         }
-        setCanCreateToken(allowed);
       } catch (_) {
-        setCanCreateToken(true);
-        setIsViewer(false);
+        // Permission metadata is unavailable: keep management controls hidden.
       }
-      setWorkspaceMetaLoaded(true);
-    })();
-  }, [location.search, session?.id]);
+      if (!cancelled) {
+        setWorkspaceAccess({
+          workspaceId: permissionWorkspaceId,
+          accountId: session?.id,
+          canManage,
+        });
+      }
+    }
+    loadWorkspaceMeta();
+    const refresh = () => loadWorkspaceMeta();
+    window.addEventListener('tt:workspaces-updated', refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('tt:workspaces-updated', refresh);
+    };
+  }, [permissionWorkspaceId, session?.id]);
 
   /**
    * Auto-open token detail modal from URL parameter (deep linking)

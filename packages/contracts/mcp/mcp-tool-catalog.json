@@ -1,0 +1,596 @@
+{
+  "catalogVersion": 1,
+  "status": "proposed",
+  "description": "Tool catalog for the MCP operator interface proposed in ADR-0015. contractStatus: mvp = schemas finalized for the first read-only release (still subject to ADR acceptance); outline = tool named and scoped, schema not yet written; draft = schema exists but governing ADR decisions are open and it must not be treated as final. Annotations are advisory UX hints for clients and are never an authorization control. Routes live in the operator namespace (/api/v1/operator/*), which accepts only an operator connection credential and takes the workspace from the connection, never from the path. routeStatus is implemented or planned. sessionRouteMinRole records the role the existing session route requires for the same data; a tool may never be looser than it.",
+  "mcpProtocol": {
+    "version": "2026-07-28",
+    "source": "https://modelcontextprotocol.io/specification/versioning",
+    "verifiedOn": "2026-10-19",
+    "sdkPin": {
+      "status": "pinned",
+      "server": "@modelcontextprotocol/server@2.3.1",
+      "conformanceClient": "@modelcontextprotocol/client@2.3.1",
+      "checkedOn": "2026-10-19",
+      "evidence": "The v1.x line (@modelcontextprotocol/sdk 1.32.1, npm latest) implements the specification only up to 2025-11-25 and its README says 2026-07-28 support is not planned for v1.x. The v2 packages serve the modern revision over stdio and need node 20 or later, which fits this repository's node range (>=22 <25). Verified by conformance test: a client pinned to 2026-07-28 and a client using the 2025-11-25 handshake are both served when legacy is 'serve'; only the pinned client is served when legacy is 'reject'.",
+      "openQuestions": [
+        "full license audit of the transitive dependency set before release"
+      ]
+    },
+    "clientCompatibility": "unproven: established by conformance tests, not by the existence of the specification"
+  },
+  "scopes": [
+    {
+      "name": "mcp:identity:read",
+      "minRole": "viewer",
+      "stage": "read-only"
+    },
+    {
+      "name": "mcp:certs:read",
+      "minRole": "viewer",
+      "stage": "read-only"
+    },
+    {
+      "name": "mcp:agents:read",
+      "minRole": "workspace_manager",
+      "stage": "read-only"
+    },
+    {
+      "name": "mcp:jobs:read",
+      "minRole": "viewer",
+      "stage": "read-only"
+    },
+    {
+      "name": "mcp:assets:read",
+      "minRole": "viewer",
+      "stage": "read-only-extended"
+    },
+    {
+      "name": "mcp:renewals:read",
+      "minRole": "viewer",
+      "stage": "read-only-extended"
+    },
+    {
+      "name": "mcp:evidence:read",
+      "minRole": "viewer",
+      "stage": "read-only-extended"
+    },
+    {
+      "name": "mcp:logs:read",
+      "minRole": "workspace_manager",
+      "stage": "read-only-extended"
+    },
+    {
+      "name": "mcp:audit:read",
+      "minRole": "viewer",
+      "stage": "read-only-extended"
+    },
+    {
+      "name": "mcp:requests:read",
+      "minRole": "viewer",
+      "stage": "operations"
+    },
+    {
+      "name": "mcp:ops:request",
+      "minRole": "workspace_manager",
+      "stage": "operations"
+    },
+    {
+      "name": "mcp:renew:request",
+      "minRole": "workspace_manager",
+      "stage": "operations"
+    },
+    {
+      "name": "mcp:lifecycle:request",
+      "minRole": "workspace_manager",
+      "stage": "operations"
+    },
+    {
+      "name": "mcp:config:request",
+      "minRole": "admin",
+      "stage": "higher-risk"
+    },
+    {
+      "name": "mcp:ca-revoke",
+      "minRole": "admin",
+      "stage": "higher-risk"
+    }
+  ],
+  "forbiddenInputParameters": [
+    "force",
+    "skipApproval",
+    "requiresApproval",
+    "approved",
+    "acknowledgeUncertainty",
+    "acknowledge",
+    "workspaceId",
+    "workspace_id",
+    "actorUserId",
+    "requestedByUserId",
+    "dryRun"
+  ],
+  "forbiddenOutputFields": [
+    "claimId",
+    "leaseToken",
+    "nonce",
+    "signature",
+    "signedPayload",
+    "payload",
+    "keyReference",
+    "key_reference",
+    "privateKey",
+    "certificatePem",
+    "certificatePath",
+    "deploymentPath",
+    "path",
+    "notes",
+    "secret",
+    "secretValue",
+    "token",
+    "tokenHash",
+    "password",
+    "credential",
+    "bootstrapToken",
+    "apiKey"
+  ],
+  "tools": [
+    {
+      "name": "tt_whoami",
+      "title": "Show the connection, workspace and effective role",
+      "scope": "mcp:identity:read",
+      "minRole": "viewer",
+      "contractStatus": "mvp",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "input": "mcp-read-tools.schema.json#/definitions/tt_whoami_input",
+      "output": "mcp-read-tools.schema.json#/definitions/tt_whoami_output",
+      "sessionRouteMinRole": "viewer",
+      "route": "GET /api/v1/operator/whoami",
+      "routeStatus": "implemented"
+    },
+    {
+      "name": "tt_list_certificates",
+      "title": "List certificates by lifecycle, expiry or renewal-path state",
+      "scope": "mcp:certs:read",
+      "minRole": "viewer",
+      "contractStatus": "mvp",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "input": "mcp-read-tools.schema.json#/definitions/tt_list_certificates_input",
+      "output": "mcp-read-tools.schema.json#/definitions/tt_list_certificates_output",
+      "sessionRouteMinRole": "viewer",
+      "route": "GET /api/v1/operator/certificates",
+      "routeStatus": "implemented"
+    },
+    {
+      "name": "tt_get_certificate",
+      "title": "Inspect one certificate identity",
+      "scope": "mcp:certs:read",
+      "minRole": "viewer",
+      "contractStatus": "mvp",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "input": "mcp-read-tools.schema.json#/definitions/tt_get_certificate_input",
+      "output": "mcp-read-tools.schema.json#/definitions/tt_get_certificate_output",
+      "sessionRouteMinRole": "viewer",
+      "route": "GET /api/v1/operator/certificates/:identityId",
+      "routeStatus": "implemented"
+    },
+    {
+      "name": "tt_get_certificate_observations",
+      "title": "Show where a certificate was observed and its deployment status",
+      "scope": "mcp:certs:read",
+      "minRole": "viewer",
+      "contractStatus": "mvp",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "input": "mcp-read-tools.schema.json#/definitions/tt_get_certificate_observations_input",
+      "output": "mcp-read-tools.schema.json#/definitions/tt_get_certificate_observations_output",
+      "sessionRouteMinRole": "viewer",
+      "route": "GET /api/v1/operator/certificates/:identityId/observations",
+      "routeStatus": "implemented"
+    },
+    {
+      "name": "tt_get_agent_health",
+      "title": "Show agent liveness and declared operations",
+      "scope": "mcp:agents:read",
+      "minRole": "workspace_manager",
+      "contractStatus": "mvp",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "input": "mcp-read-tools.schema.json#/definitions/tt_get_agent_health_input",
+      "output": "mcp-read-tools.schema.json#/definitions/tt_get_agent_health_output",
+      "sessionRouteMinRole": "workspace_manager",
+      "route": "GET /api/v1/operator/agents",
+      "routeStatus": "implemented"
+    },
+    {
+      "name": "tt_get_job",
+      "title": "Show one job's status, approval state and pending reason",
+      "scope": "mcp:jobs:read",
+      "minRole": "viewer",
+      "contractStatus": "mvp",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "input": "mcp-read-tools.schema.json#/definitions/tt_get_job_input",
+      "output": "mcp-read-tools.schema.json#/definitions/tt_get_job_output",
+      "sessionRouteMinRole": "viewer",
+      "route": "GET /api/v1/operator/jobs/:jobId",
+      "routeStatus": "implemented"
+    },
+    {
+      "name": "tt_list_jobs",
+      "title": "List jobs by status, operation or certificate",
+      "scope": "mcp:jobs:read",
+      "minRole": "viewer",
+      "contractStatus": "mvp",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "input": "mcp-read-tools.schema.json#/definitions/tt_list_jobs_input",
+      "output": "mcp-read-tools.schema.json#/definitions/tt_list_jobs_output",
+      "sessionRouteMinRole": "viewer",
+      "route": "GET /api/v1/operator/jobs",
+      "routeStatus": "implemented"
+    },
+    {
+      "name": "tt_explain_certificate_state",
+      "title": "Explain why a certificate is in its current state",
+      "scope": "mcp:certs:read",
+      "minRole": "viewer",
+      "contractStatus": "mvp",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "input": "mcp-read-tools.schema.json#/definitions/tt_explain_certificate_state_input",
+      "output": "mcp-read-tools.schema.json#/definitions/tt_explain_certificate_state_output",
+      "sessionRouteMinRole": "viewer",
+      "route": "GET /api/v1/operator/certificates/:identityId/explain",
+      "routeStatus": "implemented"
+    },
+    {
+      "name": "tt_search_assets",
+      "scope": "mcp:assets:read",
+      "minRole": "viewer",
+      "contractStatus": "outline",
+      "releaseSet": "extended-read",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "tt_list_expiring",
+      "scope": "mcp:assets:read",
+      "minRole": "viewer",
+      "contractStatus": "outline",
+      "releaseSet": "extended-read",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "tt_list_renewals",
+      "scope": "mcp:renewals:read",
+      "minRole": "viewer",
+      "contractStatus": "outline",
+      "releaseSet": "extended-read",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "tt_get_job_evidence",
+      "scope": "mcp:evidence:read",
+      "minRole": "viewer",
+      "contractStatus": "outline",
+      "releaseSet": "extended-read",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "tt_get_job_log",
+      "scope": "mcp:logs:read",
+      "minRole": "workspace_manager",
+      "contractStatus": "outline",
+      "releaseSet": "extended-read",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "tt_list_audit_events",
+      "scope": "mcp:audit:read",
+      "minRole": "viewer",
+      "contractStatus": "outline",
+      "releaseSet": "extended-read",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "tt_explain_alert_eligibility",
+      "scope": "mcp:certs:read",
+      "minRole": "viewer",
+      "contractStatus": "outline",
+      "releaseSet": "extended-read",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "tt_get_action_request",
+      "title": "Show one of my requests and where it stands",
+      "scope": "mcp:requests:read",
+      "minRole": "viewer",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "input": "mcp-renew-tools.schema.json#/definitions/tt_get_action_request_input",
+      "output": "mcp-renew-tools.schema.json#/definitions/tt_get_action_request_output",
+      "sessionRouteMinRole": "viewer",
+      "route": "GET /api/v1/operator/requests/:requestRecordId",
+      "contractStatus": "write",
+      "routeStatus": "implemented"
+    },
+    {
+      "name": "tt_list_my_requests",
+      "title": "List my requests",
+      "scope": "mcp:requests:read",
+      "minRole": "viewer",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "input": "mcp-renew-tools.schema.json#/definitions/tt_list_my_requests_input",
+      "output": "mcp-renew-tools.schema.json#/definitions/tt_list_my_requests_output",
+      "sessionRouteMinRole": "viewer",
+      "route": "GET /api/v1/operator/requests",
+      "contractStatus": "write",
+      "routeStatus": "implemented"
+    },
+    {
+      "name": "tt_request_discovery",
+      "scope": "mcp:ops:request",
+      "minRole": "workspace_manager",
+      "contractStatus": "outline",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "tt_request_verification",
+      "scope": "mcp:ops:request",
+      "minRole": "workspace_manager",
+      "contractStatus": "outline",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "tt_preview_issue",
+      "scope": "mcp:lifecycle:request",
+      "minRole": "workspace_manager",
+      "contractStatus": "draft",
+      "output": "mcp-write-envelope.draft.schema.json#/definitions/previewResult",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "tt_request_issue",
+      "scope": "mcp:lifecycle:request",
+      "minRole": "workspace_manager",
+      "contractStatus": "draft",
+      "input": "mcp-write-envelope.draft.schema.json#/definitions/submission",
+      "output": "mcp-write-envelope.draft.schema.json#/definitions/requestRecord",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "tt_preview_renew",
+      "title": "Preview a renewal and get a plan to submit",
+      "scope": "mcp:renew:request",
+      "minRole": "workspace_manager",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "input": "mcp-renew-tools.schema.json#/definitions/tt_preview_renew_input",
+      "output": "mcp-renew-tools.schema.json#/definitions/tt_preview_renew_output",
+      "sessionRouteMinRole": "workspace_manager",
+      "route": "POST /api/v1/operator/renewals/preview",
+      "contractStatus": "write",
+      "routeStatus": "implemented"
+    },
+    {
+      "name": "tt_request_renew",
+      "title": "Submit a previewed renewal under workspace job approval policy",
+      "scope": "mcp:renew:request",
+      "minRole": "workspace_manager",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "input": "mcp-renew-tools.schema.json#/definitions/tt_request_renew_input",
+      "output": "mcp-renew-tools.schema.json#/definitions/tt_request_renew_output",
+      "sessionRouteMinRole": "workspace_manager",
+      "route": "POST /api/v1/operator/renewals/requests",
+      "contractStatus": "write",
+      "routeStatus": "implemented"
+    },
+    {
+      "name": "tt_preview_decommission",
+      "scope": "mcp:lifecycle:request",
+      "minRole": "workspace_manager",
+      "contractStatus": "draft",
+      "output": "mcp-write-envelope.draft.schema.json#/definitions/previewResult",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "tt_request_decommission",
+      "scope": "mcp:lifecycle:request",
+      "minRole": "workspace_manager",
+      "contractStatus": "draft",
+      "input": "mcp-write-envelope.draft.schema.json#/definitions/submission",
+      "output": "mcp-write-envelope.draft.schema.json#/definitions/requestRecord",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "tt_preview_mark_revoked",
+      "scope": "mcp:lifecycle:request",
+      "minRole": "workspace_manager",
+      "contractStatus": "draft",
+      "output": "mcp-write-envelope.draft.schema.json#/definitions/previewResult",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "tt_request_mark_revoked",
+      "scope": "mcp:lifecycle:request",
+      "minRole": "workspace_manager",
+      "contractStatus": "draft",
+      "input": "mcp-write-envelope.draft.schema.json#/definitions/submission",
+      "output": "mcp-write-envelope.draft.schema.json#/definitions/requestRecord",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "tt_cancel_request",
+      "scope": "mcp:renew:request",
+      "minRole": "workspace_manager",
+      "contractStatus": "write",
+      "input": "mcp-renew-tools.schema.json#/definitions/tt_cancel_request_input",
+      "output": "mcp-renew-tools.schema.json#/definitions/tt_cancel_request_output",
+      "withdrawalException": true,
+      "title": "Withdraw my unapproved request before execution",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "sessionRouteMinRole": "workspace_manager",
+      "route": "POST /api/v1/operator/requests/:requestRecordId/cancel",
+      "routeStatus": "implemented"
+    },
+    {
+      "name": "tt_request_config_change",
+      "scope": "mcp:config:request",
+      "minRole": "admin",
+      "contractStatus": "outline",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "tt_request_ca_revocation",
+      "scope": "mcp:ca-revoke",
+      "minRole": "admin",
+      "contractStatus": "outline",
+      "blockedOn": [
+        "issuer connectors and revocation jobs (issue 246)",
+        "shared outbound policy (issue 233)"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    }
+  ]
+}

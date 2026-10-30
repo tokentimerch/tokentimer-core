@@ -1,0 +1,129 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/mcp/mcp-write-envelope.draft.schema.json",
+  "title": "MCP approval-controlled write envelope (DRAFT)",
+  "description": "DRAFT. Shapes for the preview, submission, request record and withdrawal steps of the approval-controlled write path described by ADR-0015. Not final: the governing ADR decisions (issuance with standing renewal, request retention, expiry defaults, connection-expiry semantics) are still open, and no runtime implements these shapes.",
+  "$comment": "Identifier contract. planId: server-generated, names one immutable preview. requestId: client-generated, reused across retries of one deliberate submission, unique within the originating connection. requestRecordId: server-generated, names the persisted request. The JSON-RPC id is transport correlation only and is never a business idempotency key. The submission accepts exactly planId, planHash and requestId: execution parameters belong to the approved preview, so there is intentionally no way to pass force, skipApproval or acknowledgement flags.",
+  "definitions": {
+    "uuid": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+    "timestamp": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/timestamp" },
+    "planHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+
+    "resolvedEffect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "lifecycleEffect",
+        "issuerEffect",
+        "standingRenewal",
+        "approvalAuthority",
+        "warnings"
+      ],
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": ["issue", "renew", "decommission", "mark_revoked"]
+        },
+        "lifecycleEffect": {
+          "type": "string",
+          "enum": ["none", "provisions_certificate", "renews_certificate", "retires_decommissioned", "retires_revoked"]
+        },
+        "issuerEffect": {
+          "type": "string",
+          "enum": ["none", "contacts_issuer"]
+        },
+        "standingRenewal": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["createsAutomaticRenewal", "futureRenewalsNeedApproval"],
+          "properties": {
+            "createsAutomaticRenewal": { "type": "boolean" },
+            "futureRenewalsNeedApproval": { "type": "boolean" }
+          }
+        },
+        "approvalAuthority": {
+          "type": "string",
+          "enum": ["other_manager_or_admin", "other_admin"]
+        },
+        "warnings": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "type": "string", "maxLength": 300 }
+        }
+      }
+    },
+
+    "previewResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planId", "planHash", "expiresAt", "effect"],
+      "properties": {
+        "planId": { "$ref": "#/definitions/uuid" },
+        "planHash": { "$ref": "#/definitions/planHash" },
+        "expiresAt": { "$ref": "#/definitions/timestamp" },
+        "effect": { "$ref": "#/definitions/resolvedEffect" }
+      }
+    },
+
+    "submission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planId", "planHash", "requestId"],
+      "properties": {
+        "planId": { "$ref": "#/definitions/uuid" },
+        "planHash": { "$ref": "#/definitions/planHash" },
+        "requestId": { "$ref": "#/definitions/uuid" }
+      }
+    },
+
+    "requestState": {
+      "type": "string",
+      "enum": [
+        "pending_approval",
+        "approved",
+        "executing",
+        "succeeded",
+        "failed",
+        "rejected",
+        "expired",
+        "cancelled",
+        "stale",
+        "unknown_effect"
+      ]
+    },
+
+    "requestRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestRecordId", "requestId", "state", "stateReason", "jobId", "replayed", "approvalExpiresAt"],
+      "properties": {
+        "requestRecordId": { "$ref": "#/definitions/uuid" },
+        "requestId": { "$ref": "#/definitions/uuid" },
+        "state": { "$ref": "#/definitions/requestState" },
+        "stateReason": {
+          "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,63}$" }]
+        },
+        "jobId": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/uuid" }]
+        },
+        "replayed": { "type": "boolean" },
+        "approvalExpiresAt": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/timestamp" }]
+        }
+      }
+    },
+
+    "withdrawal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestRecordId"],
+      "properties": {
+        "requestRecordId": { "$ref": "#/definitions/uuid" }
+      }
+    }
+  }
+}

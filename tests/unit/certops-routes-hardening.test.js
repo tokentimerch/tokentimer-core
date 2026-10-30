@@ -176,6 +176,7 @@ describe("CertOps route hardening", () => {
       "GET /api/v1/workspaces/:id/certops/jobs",
       "GET /api/v1/workspaces/:id/certops/jobs/:jobId",
       "GET /api/v1/workspaces/:id/certops/jobs/:jobId/agent-log",
+      "GET /api/v1/workspaces/:id/certops/jobs/:jobId/approval-review",
       "GET /api/v1/workspaces/:id/certops/jobs/:jobId/evidence",
       "GET /api/v1/workspaces/:id/certops/jobs/:jobId/log",
       "GET /api/v1/workspaces/:id/certops/profiles",
@@ -221,6 +222,13 @@ describe("CertOps route hardening", () => {
 
     assert.equal(routesSource.includes("/api/v1/certops/executor"), false);
     assert.equal(routesSource.includes("/api/v1/certops/agent"), false);
+  });
+
+  it("restricts assistant approval review to human managers and documents its binding", () => {
+    const block = routeBlock("get", "/api/v1/workspaces/:id/certops/jobs/:jobId/approval-review");
+    for (const guard of ["requireCertOpsEnabled", "requireCertOpsSessionUser", "requireCertOpsWriteRole"]) assert.ok(block.includes(guard));
+    assertOpenApiRoute("/api/v1/workspaces/{id}/certops/jobs/{jobId}/approval-review", "get");
+    assert.match(openApiSource, /reviewHash:/);
   });
 
   it("gates renewal-profile reads on at least workspace_manager", () => {

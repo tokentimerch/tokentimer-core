@@ -175,6 +175,7 @@ async function openGroup() {
   await user.click(
     await screen.findByRole('button', { name: 'Create a new group' })
   );
+  await vi.dynamicImportSettled();
   await user.type(
     await screen.findByPlaceholderText(
       'Group name (e.g., On-call, Security, Legal)'

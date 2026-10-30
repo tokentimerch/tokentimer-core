@@ -127,13 +127,13 @@ export default function SetupNudge({
     onStart?.();
   };
 
-  if (!mode || suppress) return null;
+  if (!mode || isViewer || suppress) return null;
 
   if (mode === 'banner') {
     return (
       <SetupBanner
-        title='Your workspace is empty.'
-        message='Nothing is being watched, so no alerts can fire.'
+        title='Start watching an asset or site.'
+        message='Add an asset or monitor a site to receive expiry alerts.'
         actionLabel={goalChosen ? 'Continue setup' : 'Set up my environment'}
         onAction={start}
         onHide={dismiss}
@@ -163,13 +163,13 @@ export default function SetupNudge({
           <VStack spacing={3} align='center' w='full' maxW='400px' mx='auto'>
             <Icon as={FaRocket} w={8} h={8} color={modalTokens.focusBorder} />
             <DashboardModalTitle color={modalTokens.text} textAlign='center'>
-              Your workspace is empty
+              Start watching an asset or site
             </DashboardModalTitle>
             <DashboardModalDescription
               color={modalTokens.muted}
               textAlign='center'
             >
-              Nothing is being watched yet, so no alerts can fire.
+              Add an asset or monitor a site to receive expiry alerts.
             </DashboardModalDescription>
           </VStack>
         </ModalHeader>

@@ -65,14 +65,14 @@
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "f01b1871224513e10143da326dc2907d51ec7080081cb94c2fefc85845eba800"
+          "sha256": "150b3bf83723bc65498954b875c5bc42ff254b1ed048f6a6b724daa6068418c2"
         },
         {
           "id": "integration-openapi-spec",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "f01b1871224513e10143da326dc2907d51ec7080081cb94c2fefc85845eba800"
+          "sha256": "150b3bf83723bc65498954b875c5bc42ff254b1ed048f6a6b724daa6068418c2"
         },
         {
           "id": "auth-route-compat-contract",
@@ -323,6 +323,59 @@
           "kind": "schema",
           "status": "existing",
           "description": "Strict validator for public material publication, consumer bindings and deployment receipts."
+        }
+      ]
+    },
+    {
+      "name": "mcp",
+      "entries": [
+        {
+          "id": "mcp-common-schema",
+          "kind": "schema",
+          "path": "packages/contracts/mcp/mcp-common.schema.json",
+          "status": "existing",
+          "description": "Shared definitions for the proposed MCP operator interface (ADR-0015)."
+        },
+        {
+          "id": "mcp-read-tools-schema",
+          "kind": "schema",
+          "path": "packages/contracts/mcp/mcp-read-tools.schema.json",
+          "status": "existing",
+          "description": "Input and output contracts for the first read-only MCP tools (proposed with ADR-0015)."
+        },
+        {
+          "id": "mcp-renew-tools-schema",
+          "kind": "schema",
+          "path": "packages/contracts/mcp/mcp-renew-tools.schema.json",
+          "status": "existing",
+          "description": "Input and output contracts for requesting a certificate renewal through an operator connection."
+        },
+        {
+          "id": "mcp-write-envelope-draft-schema",
+          "kind": "schema",
+          "path": "packages/contracts/mcp/mcp-write-envelope.draft.schema.json",
+          "status": "existing",
+          "description": "DRAFT write-path envelope. Not final; governing ADR decisions are open."
+        },
+        {
+          "id": "mcp-tool-catalog",
+          "kind": "spec",
+          "path": "packages/contracts/mcp/mcp-tool-catalog.json",
+          "status": "existing",
+          "description": "Tool catalog with scopes, minimum roles, advisory annotations and contract status."
+        },
+        {
+          "id": "mcp-read-tools-fixtures",
+          "kind": "spec",
+          "path": "packages/contracts/mcp/fixtures/read-tools.json",
+          "status": "existing",
+          "description": "Valid and invalid examples for the read-only tool contracts."
+        },
+        {
+          "id": "mcp-tool-contracts-test",
+          "kind": "test",
+          "path": "tests/contract/mcp-tool-contracts.test.js",
+          "status": "existing"
         }
       ]
     }

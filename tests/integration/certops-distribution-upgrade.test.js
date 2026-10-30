@@ -141,6 +141,11 @@ describe("Core distribution and lifecycle migration histories", function () {
           "certops_installed_file_distribution",
           "auto_sync_provider_stats",
           "auto_sync_run_metrics",
+          "auto_sync_metric_labels",
+          "auto_sync_system_metrics",
+          "operator_connections",
+          "operator_enrollment_grants",
+          "operator_action_requests",
         ];
         assert.deepEqual(
           after.filter((row) => row.version >= 70).map((row) => row.name),
@@ -153,6 +158,7 @@ describe("Core distribution and lifecycle migration histories", function () {
               : ["canonical-core", "mainline-alert-context"].includes(history)
                 ? { ...oldJob, distribution_request_hash: null, certificate_token_id: null }
                 : { ...oldJob, certificate_token_id: null };
+          expectedJob.requested_by_connection_id = null;
           assert.deepEqual(
             (
               await db.query("SELECT * FROM certificate_jobs WHERE id=$1", [

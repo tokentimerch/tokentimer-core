@@ -4860,6 +4860,21 @@ const migrations = [
     name: "auto_sync_system_metrics",
     sql: fs.readFileSync(require("path").join(__dirname, "082-auto-sync-system-metrics.sql"), "utf8"),
   },
+  {
+    version: 83,
+    name: "operator_connections",
+    sql: fs.readFileSync(require("path").join(__dirname, "083-operator-connections.sql"), "utf8"),
+  },
+  {
+    version: 84,
+    name: "operator_enrollment_grants",
+    sql: fs.readFileSync(require("path").join(__dirname, "084-operator-enrollment-grants.sql"), "utf8"),
+  },
+  {
+    version: 85,
+    name: "operator_action_requests",
+    sql: fs.readFileSync(require("path").join(__dirname, "085-operator-action-requests.sql"), "utf8"),
+  },
 ];
 
 

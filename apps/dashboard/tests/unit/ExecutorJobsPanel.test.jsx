@@ -572,8 +572,10 @@ describe('ExecutorJobsPanel approvals', () => {
 
     renderPanel();
 
-    // Status filter also has an "Approved" option; the row chip is the extra hit.
-    expect(screen.getAllByText('Approved').length).toBeGreaterThan(1);
+    expect(
+      screen.getByRole('option', { name: 'Approved (queued)' })
+    ).toBeInTheDocument();
+    expect(screen.getByText('Approved', { exact: true })).toBeInTheDocument();
   });
 
   it('does not show the "Approved" indicator on a row with no approval attribution', () => {
@@ -581,8 +583,10 @@ describe('ExecutorJobsPanel approvals', () => {
 
     renderPanel();
 
-    // Only the status filter option should mention Approved.
-    expect(screen.getAllByText('Approved')).toHaveLength(1);
+    expect(
+      screen.getByRole('option', { name: 'Approved (queued)' })
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Approved', { exact: true })).toBeNull();
   });
 });
 

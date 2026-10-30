@@ -7,7 +7,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `no-host`: skipped because it needs real hardware/OS/IIS not available in CI
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 76
+Total skips found: 88
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -58,6 +58,18 @@ Total skips found: 76
 | `packages/agent/src/platform/platform.test.js` | 468 | enforces a real restricted ACL end to end on win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/replay/replay.test.js` | 144 | writes the store file with 0600 permissions on non-win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/trust-store/receipt.test.js` | 559 | reports {corrupt: true} for a symlink at the receipt path, never following it | dynamic (this.skip() / t.skip()) | `no-host` |
+| `packages/mcp/src/config.test.js` | 168 | refuses a stored credential that other users can read, and says how to fix it | it(..., { skip }) option-object | `no-host` |
+| `packages/mcp/src/config.test.js` | 191 | refuses a stored credential reached through a symbolic link | it(..., { skip }) option-object | `no-host` |
+| `packages/mcp/src/credentialStore.test.js` | 73 | rejects a real Windows directory granting Everyone modification before writing | it(..., { skip }) option-object | `no-host` |
+| `packages/mcp/src/credentialStore.test.js` | 79 | rejects a group-writable POSIX destination directory | it(..., { skip }) option-object | `no-host` |
+| `packages/mcp/src/credentialStore.test.js` | 94 | creates the file private to the owner (mode 0600) and the directory 0700 | it(..., { skip }) option-object | `no-host` |
+| `packages/mcp/src/credentialStore.test.js` | 111 | refuses to write through a symbolic link, even with replace | it(..., { skip }) option-object | `no-host` |
+| `packages/mcp/src/credentialStore.test.js` | 163 | really restricts the file to the current user on Windows (real icacls, not a mock) | it(..., { skip }) option-object | `no-host` |
+| `packages/mcp/src/credentialStore.test.js` | 184 | can replace a restricted file on Windows | it(..., { skip }) option-object | `no-host` |
+| `packages/mcp/src/credentialStore.test.js` | 286 | applies the same refusals as the write | it(..., { skip }) option-object | `no-host` |
+| `packages/mcp/src/credentialStore.test.js` | 303 | refuses a read-only directory | it(..., { skip }) option-object | `no-host` |
+| `packages/mcp/src/credentialStore.test.js` | 312 | accepts an owner-only file and rejects one other users can read | it(..., { skip }) option-object | `no-host` |
+| `packages/mcp/src/credentialStore.test.js` | 324 | rejects a symbolic link and a missing file | it(..., { skip }) option-object | `no-host` |
 | `tests/e2e/certops-adcs-gates-api-e2e.test.js` | 17 | unqualified AD CS onboarding and dispatch gates through real API | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-e2e.test.js` | 424 | happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-e2e.test.js` | 540 | tamper: mutating a signed field fails agent-side verification | dynamic (this.skip() / t.skip()) | `no-host` |
