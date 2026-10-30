@@ -31,6 +31,7 @@ test("rollout completion requires current authorization even for previously veri
       current_revision: 1,
       authorization_revision: 1,
       job_status: "succeeded",
+      observed_at:new Date(),observed_valid_to:new Date(Date.now()+86400000),freshness_seconds:3600,
       ...change,
     };
     const client = {

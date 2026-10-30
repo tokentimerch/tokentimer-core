@@ -44,6 +44,7 @@ const GATED_CAPABILITIES = Object.freeze([
   "material-store-vault-kv2-v1",
   "certificate-publication-v1",
   "deploy-from-store-v1",
+  "material-cleanup-vault-kv2-v1",
 ]);
 
 module.exports = { GATED_CAPABILITIES };

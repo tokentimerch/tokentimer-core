@@ -189,6 +189,7 @@ describe('CertOpsRoutes tabs', () => {
       'Jobs',
       'Certificates',
       'Renewals',
+      'Distribution',
       'Agents',
       'Settings',
     ]);

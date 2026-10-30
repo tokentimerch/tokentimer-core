@@ -45,15 +45,15 @@ Total skips found: 76
 | `packages/agent/src/discovery/windows.test.js` | 462 | unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/discovery/windows.test.js` | 515 | reports an http.sys binding with no matching IIS site as http_sys, not iis_binding | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/discovery/windows.test.js` | 603 | reports real subjectAltNames end-to-end from the certificate's raw bytes | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/index.test.js` | 4211 | refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/index.test.js` | 4219 | refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/issuers/adcs-enrollment-reconcile.test.js` | 420 | skips E_ACCESSDENIED and denied probes so a later unique match can attach | dynamic (this.skip() / t.skip()) | `no-host` |
 | `packages/agent/src/issuers/adcs-enrollment.test.js` | 170 | pins a CA cert under stateDir/adcs-ca and refuses a pin mismatch | dynamic (this.skip() / t.skip()) | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 180 | sets 0600 on the key file and 0700 on the parent dir on non-win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 209 | refuses to write through a symlink at the key path | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 499 | verifies the CSR with openssl when available | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/material-preflight.test.js` | 10 | a local material policy refusal has no uncertain side effect | test(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/material-store/material-store.test.js` | 88 | real isolated Vault KV v2: pinned publication and idempotent CAS | test(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/material-store/material-store.test.js` | 130 | real Vault ACL separates issuer, consumer, scanner and customer prefixes | test(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/material-store/material-store.test.js` | 98 | real isolated Vault KV v2: pinned publication and idempotent CAS | test(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/material-store/material-store.test.js` | 141 | real Vault ACL separates issuer, consumer, scanner and customer prefixes | test(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/platform/platform.test.js` | 454 | refuses a group/other-readable file on POSIX | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/platform/platform.test.js` | 468 | enforces a real restricted ACL end to end on win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/replay/replay.test.js` | 144 | writes the store file with 0600 permissions on non-win32 | it(..., { skip }) option-object | `no-host` |

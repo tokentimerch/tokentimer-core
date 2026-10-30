@@ -14,6 +14,21 @@ const packageRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(packageRoot, "..", "..");
 
 const VENDOR_MAP = [
+    {
+      from: path.join(repoRoot,"packages","contracts","certops","material-provider.cjs"),
+      to: path.join(packageRoot,"vendor","contracts","material-provider.cjs"),
+      raw: true,
+    },
+    {
+      from: path.join(repoRoot,"packages","contracts","certops","material-cleanup.cjs"),
+      to: path.join(packageRoot,"vendor","contracts","material-cleanup.cjs"),
+      raw: true,
+    },
+  {
+    from: path.join(repoRoot,"packages","contracts","certops","activation-calendar.cjs"),
+    to: path.join(packageRoot,"vendor","contracts","activation-calendar.cjs"),
+    raw: true,
+  },
   {
     from: path.join(repoRoot, "packages", "log-scrub", "agent-log-text.js"),
     to: path.join(packageRoot, "vendor", "log-scrub", "agent-log-text.js"),

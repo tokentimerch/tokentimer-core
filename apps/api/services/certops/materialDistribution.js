@@ -75,7 +75,7 @@ async function resolveDistributionJobDefaults({ client, workspaceId, operation, 
   } else {
     await assertDeployableVersion(client, workspaceId, intent.groupId, intent.materialVersionId);
     const binding = (await client.query(`SELECT d.*,r.generation,r.material_version_id,v.provider_version,v.fingerprint_sha256,
-      r.verification_only,s.desired_generation,b.state AS binding_state,b.authorization_revision AS current_revision,r.state AS rollout_state
+      r.verification_only,r.approval_job_id,s.desired_generation,b.state AS binding_state,b.authorization_revision AS current_revision,r.state AS rollout_state
       FROM certops_consumer_deployments d JOIN certops_distribution_rollouts r ON r.workspace_id=d.workspace_id AND r.id=d.rollout_id
       JOIN certops_material_versions v ON v.workspace_id=r.workspace_id AND v.id=r.material_version_id
       JOIN certops_consumer_current_state s ON s.workspace_id=d.workspace_id AND s.binding_id=d.binding_id
@@ -88,6 +88,13 @@ async function resolveDistributionJobDefaults({ client, workspaceId, operation, 
       binding.material_version_id !== intent.materialVersionId || binding.provider_version !== intent.providerVersion ||
       binding.fingerprint_sha256 !== intent.fingerprintSha256 || binding.deployment_profile_ref !== intent.deploymentProfileRef ||
       binding.profile_revision !== intent.profileRevision || binding.verification_policy !== intent.verificationPolicy) fail("CERTOPS_DEPLOYMENT_INTENT_MISMATCH");
+    if (binding.approval_job_id) await require("./distributionLifecycle").assertAutomaticRolloutAuthorized(client,workspaceId,group,binding.approval_job_id);
+    if(hashIntent({policy:binding.activation_policy || null})!==hashIntent({policy:intent.activationPolicy || null}))fail("CERTOPS_DEPLOYMENT_ACTIVATION_POLICY_MISMATCH");
+    if(!binding.verification_only && binding.activation_policy) {
+      const maintenance=require("./distributionMaintenance");
+      if(!maintenance.supportedActivation(binding.activation_policy,binding.verification_policy) ||
+        !maintenance.activationDecision(binding.activation_policy).allowed)fail("CERTOPS_DEPLOYMENT_OUTSIDE_MAINTENANCE");
+    }
   }
   return { autoAssignedAgentId: assignedAgentId };
 }
@@ -173,7 +180,8 @@ async function acceptPublicationReceipt({ client, workspaceId, agentId, job, rec
   await client.query(`UPDATE certops_distribution_groups SET latest_material_version_id=$3
     WHERE workspace_id=$1 AND id=$2`, [workspaceId, group.id, current.id]);
   await enqueueDistributionEvent(client, workspaceId, "material_published", current.id,
-    { groupId: group.id, materialVersionId: current.id });
+    { groupId: group.id, materialVersionId: current.id,
+      policyRevision: (await client.query(`SELECT revision FROM certops_distribution_policies WHERE workspace_id=$1 AND group_id=$2`,[workspaceId,group.id])).rows[0]?.revision || 0 });
   return { duplicate: false, materialVersionId: current.id };
 }
 
@@ -183,8 +191,9 @@ async function buildRolloutIntent({ client, workspaceId, groupId, materialVersio
   const version = (await client.query(`SELECT * FROM certops_material_versions
     WHERE workspace_id=$1 AND group_id=$2 AND id=$3 AND state='published'`, [workspaceId, groupId, materialVersionId])).rows[0];
   if (!version || new Date(version.valid_to).getTime() <= Date.now()) fail("CERTOPS_ROLLOUT_VERSION_INVALID");
-  const bindings = (await client.query(`SELECT * FROM certops_consumer_bindings WHERE workspace_id=$1
-    AND group_id=$2 AND state='active' ORDER BY id FOR SHARE`, [workspaceId, groupId])).rows;
+  const bindings = (await client.query(`SELECT b.*,c.policy AS activation_policy FROM certops_consumer_bindings b
+    LEFT JOIN certops_consumer_lifecycle c ON c.workspace_id=b.workspace_id AND c.binding_id=b.id
+    WHERE b.workspace_id=$1 AND b.group_id=$2 AND b.state='active' ORDER BY b.id FOR SHARE OF b`, [workspaceId, groupId])).rows;
   if (!bindings.length || bindings.length > 1000 || !Number.isInteger(maxParallel) || maxParallel < 1 || maxParallel > 16) fail("CERTOPS_ROLLOUT_POLICY_INVALID", 422);
   const generation = Number(group.generation) + 1;
   if (typeof verificationOnly !== "boolean") fail("CERTOPS_ROLLOUT_POLICY_INVALID",422);
@@ -194,7 +203,8 @@ async function buildRolloutIntent({ client, workspaceId, groupId, materialVersio
     providerVersion: version.provider_version, bindings: bindings.map((b) => ({
     bindingId: b.id, agentId: b.assigned_agent_id, profileRef: b.deployment_profile_ref,
     profileRevision: b.profile_revision, authorizationRevision: b.authorization_revision,
-    required: b.required, wave: b.wave, verificationPolicy: b.verification_policy, freshnessSeconds: b.freshness_seconds })) };
+    required: b.required, wave: b.wave, verificationPolicy: b.verification_policy, freshnessSeconds: b.freshness_seconds,
+    ...(b.activation_policy?{activationPolicy:b.activation_policy}:{}) })) };
   return { group, bindings, intent };
 }
 
@@ -202,6 +212,7 @@ async function assertDeployableVersion(client, workspaceId, groupId, materialVer
   const version = await client.query(`SELECT v.id FROM certops_material_versions v
     JOIN certops_certificate_identities i ON i.workspace_id=v.workspace_id AND i.id=v.certificate_identity_id
     WHERE v.workspace_id=$1 AND v.group_id=$2 AND v.id=$3 AND v.state='published'
+      AND NOT EXISTS(SELECT 1 FROM certops_material_cleanups c WHERE c.workspace_id=v.workspace_id AND c.material_version_id=v.id AND c.state IN ('fenced','soft_deleted'))
       AND v.valid_to>clock_timestamp() AND i.lifecycle_status='active' FOR SHARE OF i`,
   [workspaceId,groupId,materialVersionId]);
   if (!version.rowCount) fail("CERTOPS_ROLLOUT_VERSION_INVALID");
@@ -234,9 +245,9 @@ async function createRolloutSnapshot({ client, workspaceId, groupId, materialVer
   [rolloutId, workspaceId, groupId, materialVersionId, generation, approvedIntentHash, approvalJobId, maxParallel, verificationOnly]);
   for (const b of bindings) {
     await client.query(`INSERT INTO certops_consumer_deployments(workspace_id,group_id,rollout_id,binding_id,
-      assigned_agent_id,deployment_profile_ref,profile_revision,authorization_revision,required,wave,verification_policy,freshness_seconds)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, [workspaceId, groupId, rolloutId, b.id,
-      b.assigned_agent_id, b.deployment_profile_ref, b.profile_revision, b.authorization_revision, b.required, b.wave, b.verification_policy, b.freshness_seconds]);
+      assigned_agent_id,deployment_profile_ref,profile_revision,authorization_revision,required,wave,verification_policy,freshness_seconds,activation_policy)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, [workspaceId, groupId, rolloutId, b.id,
+      b.assigned_agent_id, b.deployment_profile_ref, b.profile_revision, b.authorization_revision, b.required, b.wave, b.verification_policy, b.freshness_seconds,b.activation_policy || null]);
     await client.query(`INSERT INTO certops_consumer_current_state(workspace_id,group_id,binding_id,desired_material_version_id,desired_generation)
       VALUES($1,$2,$3,$4,$5) ON CONFLICT(workspace_id,binding_id) DO UPDATE
       SET desired_material_version_id=EXCLUDED.desired_material_version_id, desired_generation=EXCLUDED.desired_generation`,
@@ -308,7 +319,8 @@ async function consumerMatrix({ client, workspaceId, groupId, groupIds }) {
   const ids = groupIds ? groupIds.map(normalizeDistributionId) : [normalizeDistributionId(groupId)];
   return (await client.query(`SELECT b.id AS binding_id,b.group_id,b.assigned_agent_id,b.required,b.verification_policy,
     b.state AS binding_state,b.deployment_profile_ref,b.freshness_seconds,
-    b.profile_revision,b.authorization_revision,b.wave,
+    b.profile_revision,b.authorization_revision,b.wave,c.policy AS activation_policy,
+    a.status AS agent_status,a.last_seen_at AS agent_last_seen_at,desired.fingerprint_sha256 AS desired_fingerprint_sha256,
     COALESCE(NULLIF(a.name,''),NULLIF(a.hostname,''),'Unnamed agent') AS agent_name,
     desired.provider_version AS desired_version,observed.provider_version AS observed_version,
     (s.observed_at IS NOT NULL AND s.observed_at<=clock_timestamp()-b.freshness_seconds*interval '1 second') AS stale,
@@ -332,7 +344,8 @@ async function consumerMatrix({ client, workspaceId, groupId, groupIds }) {
             OR (b.verification_policy='served' AND proof.stage IN ('served_verified','trust_validated') AND s.verification_method IN ('served','trust'))
             OR (b.verification_policy='trust' AND proof.stage='trust_validated' AND s.verification_method='trust')))
       AND s.observed_at>clock_timestamp()-b.freshness_seconds*interval '1 second') AS converged,
-    (SELECT jsonb_build_object('stage',d.stage,'failureCode',COALESCE(d.failure_code,j.error_code),'jobId',d.job_id,
+    (SELECT jsonb_build_object('stage',d.stage,'failureCode',COALESCE(d.failure_code,j.error_code),'jobId',d.job_id,'jobStatus',j.status,'attemptCount',j.attempt_count,
+      'observedFingerprint',d.observed_fingerprint_sha256,'observedValidTo',d.observed_valid_to,'observedAt',d.observed_at,
       'rolloutId',r.id,'rolloutState',r.state,'rolloutRequestJobId',r.approval_job_id)
       FROM certops_consumer_deployments d JOIN certops_distribution_rollouts r ON r.workspace_id=d.workspace_id AND r.id=d.rollout_id
       LEFT JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=d.job_id
@@ -340,6 +353,7 @@ async function consumerMatrix({ client, workspaceId, groupId, groupIds }) {
     FROM certops_consumer_bindings b LEFT JOIN certops_consumer_current_state s
     ON s.workspace_id=b.workspace_id AND s.binding_id=b.id
     LEFT JOIN certops_agents a ON a.workspace_id=b.workspace_id AND a.id=b.assigned_agent_id
+    LEFT JOIN certops_consumer_lifecycle c ON c.workspace_id=b.workspace_id AND c.binding_id=b.id
     LEFT JOIN certops_material_versions desired ON desired.workspace_id=s.workspace_id AND desired.id=s.desired_material_version_id
     LEFT JOIN certops_material_versions observed ON observed.workspace_id=s.workspace_id AND observed.id=s.observed_material_version_id
     WHERE b.workspace_id=$1 AND b.group_id=ANY($2::uuid[]) ORDER BY b.id`,

@@ -1,5 +1,7 @@
 # Certificate material distribution candidate
 
+For ongoing administration after first setup, use **Certificate Management → Distribution** or **Manage distribution** from the read-only Deployments section. See the [lifecycle workflow](distribution-lifecycle.md) and [qualification/remaining-work status](distribution-lifecycle-status.md). Publishing after renewal remains manual unless a deliberately configured policy authorizes an approval request or bounded automatic rollout.
+
 Customer issuer → existing native ACME DNS-01 → customer Vault KV v2 →
 explicitly assigned Linux consumers → installed files, optionally live TLS listeners → public receipts.
 The API, workers, inventory scanners, dashboards and queues never receive the

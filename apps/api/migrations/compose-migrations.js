@@ -24,11 +24,45 @@ function composeMigrations(migrations, recorded = []) {
     }
   }
   const tail = recorded.filter(entry => entry.version >= 70).slice().sort((a, b) => a.version - b.version);
-  const order = histories.find(names => tail.every((row, offset) => {
-    if (offset < names.length) return row.version === 70 + offset && row.name === names[offset];
-    return row.version === 70 + offset && migrations.some(entry => entry.version === row.version && entry.name === row.name);
-  }));
+  if (new Set(migrations.map(entry => entry.name)).size !== migrations.length ||
+    new Set(migrations.map(entry => entry.version)).size !== migrations.length ||
+    new Set(recorded.map(entry => entry.name)).size !== recorded.length ||
+    tail.some((row,index) => row.version !== 70 + index))
+    throw new Error("Unsupported Core migration history: duplicate or noncontiguous entries");
+  const order = histories.find(names => tail.filter(row => row.version < 77).every((row, offset) =>
+    row.name === names[offset]));
   if (!order) throw new Error(`Unsupported Core migration history at version ${tail[0]?.version}`);
+  const onboarding = tail.find(row => row.version === 77);
+  if (onboarding && !migrations.some(entry => entry.version === 77 && entry.name === onboarding.name))
+    throw new Error("Unsupported Core migration history at version 77");
+  // 78+ includes published main and independently applied PR previews. Identify
+  // those entries by their exact registered names, never by a numeric alias.
+  // Providers at 78/79, PagerDuty at 79/81, recipient/digest at 81/82 and
+  // lifecycle at 81-85 are preserved. Only missing SQL receives a new number.
+  const extensionRows = tail.filter(row => row.version >= 78);
+  const extensions = migrations.filter(entry => entry.version >= 78).sort((a,b)=>a.version-b.version);
+  const known = new Set(extensions.map(entry => entry.name));
+  if (extensionRows.some(row => !known.has(row.name)))
+    throw new Error("Unsupported Core migration history: unknown extension");
+  const dependencies = {
+    auto_sync_run_metrics: ["auto_sync_provider_stats"],
+    auto_sync_metric_labels: ["auto_sync_run_metrics"],
+    certops_distribution_lifecycle: ["certops_installed_file_distribution"],
+    certops_distribution_incident_delivery: ["certops_distribution_lifecycle"],
+    certops_material_cleanup: ["certops_distribution_lifecycle"],
+    certops_consumer_verification_failures: ["certops_material_cleanup"],
+    weekly_digest_recipient_claim_token: ["recipient_channel_verification"],
+    certops_distribution_resolution_delivery: ["certops_distribution_incident_delivery"],
+  };
+  const seen = new Set();
+  for (const row of extensionRows) {
+    if ((dependencies[row.name] || []).some(name => !seen.has(name)))
+      throw new Error(`Incomplete Core migration dependency: ${row.name}`);
+    seen.add(row.name);
+  }
+  const versions = new Map(extensionRows.map(row => [row.name,row.version]));
+  let nextVersion = Math.max(77,...extensionRows.map(row=>row.version)) + 1;
+  for (const entry of extensions) if (!versions.has(entry.name)) versions.set(entry.name,nextVersion++);
   const distributionFirst = order[0] === DISTRIBUTION;
   const replacements = new Map(order.map((name, offset) => {
     const migration = migrations.find(entry => entry.name === name);
@@ -40,7 +74,8 @@ function composeMigrations(migrations, recorded = []) {
         : migration.sql;
     return [name, {...migration, version: 70 + offset, sql}];
   }));
-  return migrations.map(entry => replacements.get(entry.name) || entry).sort((a, b) => a.version - b.version);
+  return migrations.map(entry => replacements.get(entry.name) ||
+    (versions.has(entry.name) ? {...entry,version:versions.get(entry.name)} : entry)).sort((a, b) => a.version - b.version);
 }
 
 module.exports = { composeMigrations };

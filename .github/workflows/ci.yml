@@ -489,6 +489,7 @@ jobs:
               await client.query('CREATE DATABASE wildcard_candidate_ci_test');
               await client.query('CREATE DATABASE pr329_issuance_path_reuse_ci_test');
               await client.query('CREATE DATABASE pr329_workspace_delete_ci_test');
+              await client.query('CREATE DATABASE distribution_lifecycle_c1_test');
             } finally {
               await client.end();
             }
@@ -496,6 +497,13 @@ jobs:
           main().catch(error => { console.error(error.message); process.exitCode = 1; });
           NODE
           node --test --test-force-exit tests/postgres/distribution-migration-upgrade.test.js
+      - name: Prove lifecycle policy, concurrent verification, incident and retention fences
+        env:
+          DB_NAME: distribution_lifecycle_c1_test
+          CERTOPS_ENABLED: "true"
+        run: |
+          node apps/api/migrations/migrate.js
+          node --test --test-force-exit tests/postgres/distribution-lifecycle.test.js tests/postgres/distribution-cleanup.test.js
       - name: Prove abandoned certificate-path reuse on isolated PostgreSQL
         env:
           DB_NAME: pr329_issuance_path_reuse_ci_test

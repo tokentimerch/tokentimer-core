@@ -784,15 +784,24 @@ export default function CertificateDeployments({
                 </Select>
               ) : null}
               {group ? (
-                <GroupDeployments
-                  key={`${scope}/${group.id}`}
-                  workspaceId={workspaceId}
-                  group={group}
-                  identityId={identityId}
-                  revision={revision}
-                  onLoaded={focusSection}
-                  parentError={state.error}
-                />
+                <Box>
+                  <Link
+                    as={RouterLink}
+                    color='blue.500'
+                    to={`/certops/distribution?workspace=${encodeURIComponent(workspaceId)}&group=${encodeURIComponent(group.id)}`}
+                  >
+                    Manage distribution
+                  </Link>
+                  <GroupDeployments
+                    key={`${scope}/${group.id}`}
+                    workspaceId={workspaceId}
+                    group={group}
+                    identityId={identityId}
+                    revision={revision}
+                    onLoaded={focusSection}
+                    parentError={state.error}
+                  />
+                </Box>
               ) : state.data ? (
                 <Text fontSize='sm'>
                   Select a registration to inspect its destinations and

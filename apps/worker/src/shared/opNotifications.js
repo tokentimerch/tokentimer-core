@@ -18,7 +18,7 @@ import {
 } from "../notify/email.js";
 
 const VALID_SEVERITIES = new Set(["info", "warning", "critical"]);
-const VALID_CATEGORIES = new Set(["delivery", "auto_sync"]);
+const VALID_CATEGORIES = new Set(["delivery", "auto_sync", "certops"]);
 const EMAIL_RETRY_INTERVAL_MINUTES = 15;
 const EMAIL_RETRY_BATCH_SIZE = 50;
 const DELIVERY_RECONCILE_BATCH_SIZE = 100;
@@ -366,6 +366,7 @@ export async function retryPendingOperationalIncidentEmails(
     `SELECT id, workspace_id, token_id, category, dedupe_key, title, message, metadata
        FROM operational_notifications
       WHERE severity = 'critical'
+        AND category <> 'certops'
         AND resolved_at IS NULL
         AND email_sent_at IS NULL
         AND (email_claimed_at IS NULL OR email_claimed_at < NOW() - ($1 * INTERVAL '1 minute'))

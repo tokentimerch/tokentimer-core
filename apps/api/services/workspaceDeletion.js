@@ -9,6 +9,13 @@ async function deleteWorkspaces(client, workspaceIds) {
   if (ids.length === 0) return 0;
   const scope = "workspace_id = ANY($1::uuid[])";
   for (const table of [
+    "certops_material_cleanups",
+    "certops_distribution_incidents",
+    "certops_consumer_lifecycle",
+    "certops_distribution_schedules",
+    "certops_distribution_automations",
+    "certops_distribution_policies",
+    "certops_discovered_consumers",
     "certops_consumer_current_state",
     "certops_consumer_deployments",
     "certops_distribution_rollouts",

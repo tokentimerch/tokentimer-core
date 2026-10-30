@@ -134,13 +134,24 @@ describe("Core distribution and lifecycle migration histories", function () {
           "certops_distribution_transfer",
         ];
         const mainlineOrder = history === "distribution-first" ? [canonical[4],canonical[5],canonical[6],canonical[0],canonical[1],canonical[2],canonical[3]] : history === "enrollment-first" ? [canonical[0],canonical[4],canonical[5],canonical[6],canonical[1],canonical[2],canonical[3]] : history === "previous-distribution" ? [canonical[0],canonical[1],canonical[2],canonical[4],canonical[5],canonical[6],canonical[3]] : canonical;
-        // Onboarding and installed-file delivery land after every supported history.
+        // Additive lifecycle entries follow every supported immutable history.
         const expected = [
           ...mainlineOrder,
           "onboarding_sessions",
           "certops_installed_file_distribution",
           "auto_sync_provider_stats",
           "auto_sync_run_metrics",
+          "auto_sync_metric_labels",
+          "certops_distribution_lifecycle",
+          "certops_distribution_incident_delivery",
+          "certops_stable_consumer_discovery",
+          "certops_material_cleanup",
+          "certops_consumer_verification_failures",
+          "certops_material_providers",
+          "recipient_channel_verification",
+          "weekly_digest_recipient_claim_token",
+          "pagerduty_incident_lifecycle",
+          "certops_distribution_resolution_delivery",
         ];
         assert.deepEqual(
           after.filter((row) => row.version >= 70).map((row) => row.name),
@@ -186,9 +197,14 @@ describe("Core distribution and lifecycle migration histories", function () {
           "certificate_enrollments",
           "certops_distribution_groups",
           "certops_agent_job_log",
+          "certops_distribution_policies",
+          "certops_distribution_incidents",
+          "certops_discovered_consumers",
           "auto_sync_provider_stats",
           "auto_sync_run_outcome_stats",
           "auto_sync_run_freshness",
+          "certops_material_cleanups",
+          "certops_consumer_verification_outcomes",
         ]) {
           assert.equal(
             (await db.query("SELECT to_regclass($1)::text AS name", [table]))
