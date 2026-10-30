@@ -1,4 +1,3 @@
-import React from 'react';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   render,

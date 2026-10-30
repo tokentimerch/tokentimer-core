@@ -1,4 +1,3 @@
-import React from 'react';
 import { it, expect, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';

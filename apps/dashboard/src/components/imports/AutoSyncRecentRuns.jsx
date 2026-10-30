@@ -103,9 +103,7 @@ export default function AutoSyncRecentRuns({
                             size='xs'
                             variant='link'
                             fontSize='xs'
-                            aria-label={
-                              'Details for ' + started(run.started_at)
-                            }
+                            aria-label={`Details for ${started(run.started_at)}`}
                             aria-expanded={expandedRun === run.run_id}
                             onClick={() =>
                               setExpandedRun(previous =>
