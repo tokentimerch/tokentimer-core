@@ -101,7 +101,7 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
             >
               <Switch
                 id='override-integration-metrics'
-                size='lg'
+                size='md'
                 colorScheme='blue'
                 isChecked={policy.override_metrics}
                 isDisabled={saving || policy.locked}
@@ -110,7 +110,7 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
               <FormLabel
                 htmlFor='override-integration-metrics'
                 mb={0}
-                fontSize='md'
+                fontSize='sm'
                 fontWeight='semibold'
               >
                 Override integration metrics
@@ -177,15 +177,31 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
       <Box borderWidth='1px' borderRadius='md' p={4}>
         <VStack align='stretch' spacing={3}>
           <HStack justify='space-between' flexWrap='wrap'>
-            <Checkbox
-              isChecked={policy.override_monitoring_group}
-              isDisabled={saving || policy.monitoring_group_locked}
-              onChange={e =>
-                change({ override_monitoring_group: e.target.checked })
-              }
+            <FormControl
+              display='flex'
+              alignItems='center'
+              gap={3}
+              width='auto'
             >
-              Override monitoring group
-            </Checkbox>
+              <Switch
+                id='override-monitoring-group'
+                size='md'
+                colorScheme='blue'
+                isChecked={policy.override_monitoring_group}
+                isDisabled={saving || policy.monitoring_group_locked}
+                onChange={e =>
+                  change({ override_monitoring_group: e.target.checked })
+                }
+              />
+              <FormLabel
+                htmlFor='override-monitoring-group'
+                mb={0}
+                fontSize='sm'
+                fontWeight='semibold'
+              >
+                Override monitoring group
+              </FormLabel>
+            </FormControl>
             {policy.monitoring_group_locked ? (
               <Badge>Set by environment</Badge>
             ) : null}
