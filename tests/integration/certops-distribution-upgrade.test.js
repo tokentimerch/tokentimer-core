@@ -14,7 +14,9 @@ describe("Core distribution and lifecycle migration histories", function () {
     "mainline-stats-79": ["certops_installed_file_distribution", "auto_sync_provider_stats"],
     "mainline-metrics-80": ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics"],
     "mainline-labels-81": ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels"],
+    "mainline-system-82": ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "auto_sync_system_metrics"],
     "provider-preview-81": ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "certops_material_providers"],
+    "provider-preview-82": ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "certops_material_providers"],
     "provider-preview-78": ["certops_material_providers"],
     "provider-preview-79": ["certops_installed_file_distribution", "certops_material_providers"],
     "provider-preview-78-installed-79": ["certops_material_providers", "certops_installed_file_distribution"],
@@ -32,7 +34,9 @@ describe("Core distribution and lifecycle migration histories", function () {
     "mainline-stats-79",
     "mainline-metrics-80",
     "mainline-labels-81",
+    "mainline-system-82",
     "provider-preview-81",
+    "provider-preview-82",
     "provider-preview-79",
     "provider-preview-78-installed-79",
   ]) {
@@ -223,12 +227,14 @@ describe("Core distribution and lifecycle migration histories", function () {
           ...mainlineOrder,
           "onboarding_sessions",
           ...(history.startsWith("provider-preview-78")
-            ? ["certops_material_providers", "certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels"]
+            ? ["certops_material_providers", "certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "auto_sync_system_metrics"]
             : history === "provider-preview-79"
-              ? ["certops_installed_file_distribution", "certops_material_providers", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels"]
+              ? ["certops_installed_file_distribution", "certops_material_providers", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "auto_sync_system_metrics"]
               : history === "provider-preview-81"
-                ? ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "certops_material_providers", "auto_sync_metric_labels"]
-                : ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "certops_material_providers"]),
+                ? ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "certops_material_providers", "auto_sync_metric_labels", "auto_sync_system_metrics"]
+                : history === "provider-preview-82"
+                  ? ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "certops_material_providers", "auto_sync_system_metrics"]
+                  : ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "auto_sync_system_metrics", "certops_material_providers"]),
         ];
         assert.deepEqual(
           after.filter((row) => row.version >= 70).map((row) => row.name),

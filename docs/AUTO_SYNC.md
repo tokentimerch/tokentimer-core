@@ -71,11 +71,11 @@ Both cause scrape failures, not evidence of zero activity.
 
 ### Optional configuration and asset labels
 
-- Apply migration 81 with matching API/dashboard code; existing provider counters remain unchanged.
-- Enable additional metrics per connection. Configuration IDs remain stable; monitoring group `critical` selects the example alert.
-- Token names and project/group labels are deployment-disabled by default. Allow them with `AUTO_SYNC_METRICS_EXTRA_LABELS=asset_name,project,group` or Helm `monitoring.metrics.extraLabels=[asset_name,project,group]`, then select them per connection.
-- **Warning:** extra labels multiply series/alerts and expose metadata, never secrets. Old Prometheus samples remain until retention expires.
-- Details cover future creations; overlapping configurations credit the actual creator. Timestamp alerts work on the first scrape.
+- Apply migrations 81–82 with matching API/dashboard code; aggregate counters stay unchanged.
+- System Settings → Auto-sync independently overrides metrics/labels and monitoring group, locking integration controls. Otherwise, integrations retain their choices.
+- Environment wins: `AUTO_SYNC_METRICS_ENABLED=true/false`, optional `AUTO_SYNC_METRICS_LABELS` (CSV or `none`), and independent `AUTO_SYNC_METRICS_MONITORING_GROUP`. Empty restores saved values; `AUTO_SYNC_METRICS_EXTRA_LABELS` optionally restricts asset labels.
+- Helm: `monitoring.metrics.autoSyncEnabled`, `autoSyncLabels`, `autoSyncMonitoringGroup` (under `tokentimer` in Enterprise). Available labels are listed beside these settings.
+- **Warning:** label combinations multiply detailed series and expose metadata. Names/scopes cover future creations; old samples remain until retention expires.
 
 ## Cleanup and removal
 

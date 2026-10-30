@@ -134,31 +134,31 @@ test("main 78 and provider-preview 78 retain their recorded definitions and appe
   assert.throws(() => composeMigrations([...registry, { version: 79, name: "collision", sql: "unsafe" }]), /Duplicate Core migration version/);
   assert.throws(() => composeMigrations(registry, [...prior, { version: 78, name: "unknown" }]), /Unsupported Core migration history/);
 });
-test("released 78-81 and provider previews compose uniquely without rewriting applied rows", () => {
-  const names = ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "certops_material_providers"];
+test("released 78-82 and provider previews compose uniquely without rewriting applied rows", () => {
+  const names = ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "auto_sync_system_metrics", "certops_material_providers"];
   const extensions = names.map((name, i) => ({ version: 78 + i, name, sql: `immutable-${name}` }));
   const registry = [...core, ...extensions], prior = [...ledger(canonical), { version: 77, name: "future" }];
-  for (const order of [names, [names[4], names[0], names[1], names[2], names[3]], [names[0], names[4], names[1], names[2], names[3]], [names[0], names[1], names[2], names[4], names[3]]]) {
+  for (const order of [names, ...[0, 1, 3, 4].map(index => { const order = names.filter(name => name !== "certops_material_providers"); order.splice(index, 0, "certops_material_providers"); return order; })]) {
     for (let count = order === names ? 0 : order.indexOf("certops_material_providers") + 1; count <= order.length; count++) {
       const recorded = [...prior, ...order.slice(0, count).map((name, i) => ({ version: 78 + i, name }))];
       const result = composeMigrations(registry, recorded);
       assert.equal(new Set(result.map(row => row.version)).size, result.length);
       for (const row of recorded) assert.equal(result.find(entry => entry.version === row.version).name, row.name);
-      assert.deepEqual(result.slice(-5).map(row => row.name), order);
-      for (const entry of result.slice(-5)) assert.equal(entry.sql, `immutable-${entry.name}`);
+      assert.deepEqual(result.slice(-6).map(row => row.name), order);
+      for (const entry of result.slice(-6)) assert.equal(entry.sql, `immutable-${entry.name}`);
       assert.deepEqual(composeMigrations(registry, result), result, "replay keeps the same version/name/SQL plan");
     }
   }
   const { migrations } = require("../../apps/api/migrations/migrate");
   assert.deepEqual(migrations.filter(row => row.version >= 78).map(({version, name}) => ({version, name})), extensions.map(({version, name}) => ({version, name})));
-  for (const count of [1, 2, 3, 4]) assert.deepEqual(composeMigrations(registry, [...prior, ...extensions.slice(0, count)]), registry);
-  assert.throws(() => composeMigrations(registry, [...prior, ...extensions.slice(0, 2), {version: 80, name: names[4]}]), /Unsupported Core migration history/);
+  for (const count of [1, 2, 3, 4, 5]) assert.deepEqual(composeMigrations(registry, [...prior, ...extensions.slice(0, count)]), registry);
+  assert.throws(() => composeMigrations(registry, [...prior, ...extensions.slice(0, 2), {version: 80, name: names[5]}]), /Unsupported Core migration history/);
 });
 
 test("cross-PR reservations reject collisions and compose without changing supported preview rows", () => {
   const { reservations, validateMigrationReservations } = require("../../apps/api/migrations/migration-reservations.cjs");
   const { migrations } = require("../../apps/api/migrations/migrate");
-  const future = Object.entries(reservations).filter(([version]) => Number(version) > 82)
+  const future = Object.entries(reservations).filter(([version]) => Number(version) > 83)
     .map(([version, name]) => ({ version: Number(version), name, sql: `reviewed-${name}` }));
   const registry = [...migrations, ...future];
   validateMigrationReservations(registry);

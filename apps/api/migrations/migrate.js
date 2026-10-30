@@ -4855,14 +4855,19 @@ const migrations = [
     name: "auto_sync_metric_labels",
     sql: fs.readFileSync(require("path").join(__dirname, "081-auto-sync-metric-labels.sql"), "utf8"),
   },
+  {
+    version: 82,
+    name: "auto_sync_system_metrics",
+    sql: fs.readFileSync(require("path").join(__dirname, "082-auto-sync-system-metrics.sql"), "utf8"),
+  },
 ];
 
 
 
 migrations.push({
-  version: 82,
+  version: 83,
   name: "certops_material_providers",
-  sql: fs.readFileSync(require("path").join(__dirname, "082-certops-material-providers.sql"), "utf8"),
+  sql: fs.readFileSync(require("path").join(__dirname, "083-certops-material-providers.sql"), "utf8"),
 });
 
 const { composeMigrations } = require("./compose-migrations");

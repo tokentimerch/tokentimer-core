@@ -87,6 +87,7 @@ async function assertRunFence(db, context) {
   const { rows } = await db.query(
     `SELECT c.id, c.workspace_id, c.provider, c.connection_key, c.run_generation,
             c.scan_version, c.active_run_id, c.lease_owner, c.lease_until, c.metrics_settings,
+            (SELECT auto_sync_metrics FROM system_settings WHERE id = 1) AS system_metric_policy,
             r.run_id, r.status
        FROM auto_sync_configs c
        JOIN auto_sync_runs r ON r.run_id = c.active_run_id
@@ -205,7 +206,7 @@ async function upsertImportedToken({ context, payload, workspaceId, userId, manu
       created_by: userId, imported_at: new Date() }, { client });
     if (context) await attachObservedToken(context, token.id, !existing, { client });
     if (context && !existing) {
-      await recordCreationMetrics(client, context, payload, config?.metrics_settings);
+      await recordCreationMetrics(client, context, payload, config?.metrics_settings, config?.system_metric_policy);
       // Commit the historical total with the new inventory row. Updates,
       // retries and adoption do not count; a later worker failure cannot lose
       // an already committed creation. Keep this write last to minimize the

@@ -1,6 +1,6 @@
 # Migration integration for PRs 460, 461, 496 and 498
 
-Main at `d2f7dbd498e5c257859427562db0888d7879cdff` owns migrations 78–81.
+Main at `93b29305c7b7739957152da7342d15d584605575` owns migrations 78–82.
 Do not rename, replace or reinterpret released rows. These canonical numbers
 are enforced by `apps/api/migrations/migration-reservations.cjs`; missing PRs
 are reservations, not no-op migrations. They do not install another feature.
@@ -11,15 +11,16 @@ are reservations, not no-op migrations. They do not install another feature.
 | 79 | auto_sync_provider_stats | Released main; unchanged |
 | 80 | auto_sync_run_metrics | Released main; unchanged |
 | 81 | auto_sync_metric_labels | Released main (#513); unchanged |
-| 82 | certops_material_providers | #460, moved from unapplied 81 |
-| 83 | recipient_channel_verification | #461 must move unapplied 81 |
-| 84 | weekly_digest_recipient_claim_token | #461 must move unapplied 82 |
-| 85 | pagerduty_incident_lifecycle | #496 must move unapplied 81 |
-| 86 | certops_distribution_lifecycle | #498 must move unapplied 81 |
-| 87 | certops_distribution_incident_delivery | #498 must move unapplied 82 |
-| 88 | certops_stable_consumer_discovery | #498 must move unapplied 83 |
-| 89 | certops_material_cleanup | #498 must move unapplied 84 |
-| 90 | certops_consumer_verification_failures | #498 must move unapplied 85 |
+| 82 | auto_sync_system_metrics | Released main (#516); unchanged |
+| 83 | certops_material_providers | #460, moved from unapplied 82 |
+| 84 | recipient_channel_verification | #461 must move unapplied 81 |
+| 85 | weekly_digest_recipient_claim_token | #461 must move unapplied 82 |
+| 86 | pagerduty_incident_lifecycle | #496 must move unapplied 81 |
+| 87 | certops_distribution_lifecycle | #498 must move unapplied 81 |
+| 88 | certops_distribution_incident_delivery | #498 must move unapplied 82 |
+| 89 | certops_stable_consumer_discovery | #498 must move unapplied 83 |
+| 90 | certops_material_cleanup | #498 must move unapplied 84 |
+| 91 | certops_consumer_verification_failures | #498 must move unapplied 85 |
 
 This change updates only #460. Related heads inspected: #461 `b8c50642`,
 #496 `99101c10`, #498 `e758dd0f`. Their maintainers must adopt these reservations
@@ -34,15 +35,17 @@ history-composition change; reservations must not be filled with no-op SQL.
 ## Applied history and supported previews
 
 The runner serializes concurrent migrations before reading history. Fresh
-installs and released main through 78, 79, 80 or 81 append provider schema at 82.
+installs and released main through 78, 79, 80, 81 or 82 append provider schema at 83.
 The same unmodified provider SQL is used for known #460 preview histories:
 
 - Providers at 78, then installed assurance at 79: append stats at 80,
-  run metrics at 81 and metric labels at 82.
+  run metrics at 81, metric labels at 82 and system metrics at 83.
 - Installed assurance at 78, providers at 79: append stats at 80,
-  run metrics at 81 and metric labels at 82.
+  run metrics at 81, metric labels at 82 and system metrics at 83.
 - Installed assurance at 78, stats at 79, run metrics at 80, providers at 81
-  (including #460 `66f94086`): append metric labels at 82.
+  (including #460 `66f94086`): append metric labels at 82 and system metrics at 83.
+- Installed assurance at 78, stats at 79, run metrics at 80, metric labels at 81,
+  providers at 82 (#460 `6d685f95`): append system metrics at 83.
 
 Partial recognized prefixes and the older distribution/enrollment preview
 histories remain supported. Never update recorded names, execution timestamps,
@@ -53,7 +56,7 @@ evidence, and replay concurrent/restarted runners.
 A ledger containing another PR's former 81 is not a provider alias. Unknown,
 gapped or mixed histories fail before migration DDL. Do not manually edit them.
 In particular #496's earlier PagerDuty-at-79 preview requires its explicit
-backup/check/apply recovery procedure, updated for reservation 85; this build
+backup/check/apply recovery procedure, updated for reservation 86; this build
 does not silently relabel it. Any deployed #461/#498 preview needs a separately
 reviewed history-aware recovery before integrating the associated feature.
 

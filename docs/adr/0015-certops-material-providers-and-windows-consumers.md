@@ -31,10 +31,10 @@ database column; add `provider_version_ref` for Azure and return a number or
 string, respectively, in the existing `providerVersion` wire field. Published
 rows and group/provider authority remain immutable under the existing
 triggers. Database constraints reject a provider/version-type mismatch.
-The canonical provider migration is 82, following main's unchanged migration
-78 for installed-file assurance and migrations 79–81 for auto-sync telemetry.
+The canonical provider migration is 83, following main's unchanged migration
+78 for installed-file assurance and migrations 79–82 for auto-sync telemetry/settings.
 Explicit preview-history composition retains providers already applied at 78,
-79 or 81 and appends only missing schema; no recorded row is renamed or rewritten.
+79, 81 or 82 and appends only missing schema; no recorded row is renamed or rewritten.
 The [cross-PR numbering plan](../migrations/open-pr-numbering.md) reserves distinct
 versions for recipient verification, PagerDuty and distribution lifecycle work.
 Rollout approval snapshots and signed consumer jobs bind the exact provider

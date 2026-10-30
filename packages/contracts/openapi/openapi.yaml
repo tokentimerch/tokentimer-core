@@ -2307,6 +2307,8 @@ paths:
                   metric_label_policy:
                     type: object
                     properties:
+                      system:
+                        $ref: "#/components/schemas/AutoSyncMetricPolicy"
                       extra_labels:
                         type: array
                         default: []
@@ -2382,6 +2384,58 @@ paths:
                       href:
                         type: string
                         description: System settings path when code is MULTI_CONFIG_DISABLED
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/admin/auto-sync/metrics:
+    get:
+      tags: [Workspaces]
+      summary: Read system-wide auto-sync metric defaults
+      operationId: getAutoSyncMetricDefaults
+      description: System admin only. Environment settings take precedence over database values and defaults.
+      responses:
+        "200":
+          description: Effective defaults and environment locks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoSyncMetricPolicy"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Workspaces]
+      summary: Save system-wide auto-sync metric defaults
+      operationId: saveAutoSyncMetricDefaults
+      description: Independent metric and monitoring-group overrides force all connections and lock their corresponding controls. Environment-locked choices are unchanged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled, labels]
+              additionalProperties: false
+              properties:
+                override_metrics: { type: boolean }
+                override_monitoring_group: { type: boolean }
+                monitoring_group: { type: string, maxLength: 64 }
+                enabled: { type: boolean }
+                labels:
+                  type: array
+                  uniqueItems: true
+                  items: { type: string, enum: [configuration_name, monitoring_group, kind, asset_name, project, group] }
+      responses:
+        "200":
+          description: Saved effective defaults
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoSyncMetricPolicy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/admin/auto-sync/activation:
@@ -2522,6 +2576,12 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: A configuration name conflicts or AUTO_SYNC_METRICS_MANAGED prevents changes to globally managed metric or monitoring-group settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalError"
     delete:
@@ -9550,11 +9610,33 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    AutoSyncMetricPolicy:
+      type: object
+      properties:
+        override_metrics: { type: boolean }
+        override_monitoring_group: { type: boolean }
+        monitoring_group: { type: string, maxLength: 64 }
+        monitoring_group_locked: { type: boolean }
+        enabled: { type: boolean, nullable: true }
+        labels:
+          type: array
+          items: { type: string, enum: [configuration_name, monitoring_group, kind, asset_name, project, group] }
+        locked: { type: boolean }
+        source: { type: string, nullable: true, enum: [env, database, null] }
+        extra_labels:
+          type: array
+          items: { type: string, enum: [asset_name, project, group] }
+        extra_labels_locked: { type: boolean }
+        labels_locked: { type: boolean, description: Complete label selection is controlled by AUTO_SYNC_METRICS_LABELS. }
     AutoSyncMetricSettings:
       type: object
       additionalProperties: false
-      description: Opt-in metric metadata for this connection. Configuration ID is always included; changing these settings does not restart a scan. Names and project/group labels can multiply time series and expose metadata to metrics readers. No credential values are exported. Token-name and project/group selections are inactive unless the deployment allows high-cardinality labels.
+      description: Connection metric settings, overridden independently by active system metric or monitoring-group overrides. Configuration ID is always included; changing these settings does not restart a scan. Names and project/group labels can multiply time series and expose metadata to metrics readers. No credential values are exported. Environment settings take precedence over saved system defaults. Extra labels are off by default.
       properties:
+        inherit_system:
+          type: boolean
+          deprecated: true
+          description: Retained for older clients. Active global overrides always take precedence, independent of this flag.
         enabled:
           type: boolean
           default: false

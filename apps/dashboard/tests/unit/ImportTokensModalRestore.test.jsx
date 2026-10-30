@@ -404,6 +404,61 @@ describe('ImportTokensModal restored scan params provider scoping', () => {
     expect(gitlabFormProps.some(sp => sp?.baseUrl === firstUrl)).toBe(false);
   });
 
+  it('requests five runs per cursor page and keeps only the current page visible', async () => {
+    const makeRuns = (start, length) =>
+      Array.from({ length }, (_, i) => ({
+        run_id: `run-${start + i}`,
+        status: `result-${start + i}`,
+        started_at: '2026-10-30',
+      }));
+    apiGetMock.mockImplementation(url => {
+      if (String(url).includes('/as-gitlab-1/runs?limit=5&cursor='))
+        return Promise.resolve({
+          data: { items: makeRuns(5, 2), next_cursor: null },
+        });
+      if (String(url).endsWith('/as-gitlab-1/runs?limit=5'))
+        return Promise.resolve({
+          data: { items: makeRuns(0, 5), next_cursor: 'cursor/5' },
+        });
+      if (String(url).endsWith('/auto-sync'))
+        return Promise.resolve({
+          data: {
+            items: [
+              {
+                id: 'as-gitlab-1',
+                provider: 'gitlab',
+                name: 'First',
+                scan_params: {},
+              },
+            ],
+          },
+        });
+      return Promise.resolve({ data: {} });
+    });
+    render(
+      renderModal({
+        provider: 'gitlab',
+        integrationSubTab: 'manage',
+        autoSyncConfigId: 'as-gitlab-1',
+      })
+    );
+    await screen.findByText('result-0');
+    expect(screen.getAllByRole('button', { name: /Details for/ })).toHaveLength(
+      5
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Earlier runs' }));
+    await screen.findByText('result-5');
+    expect(screen.queryByText('result-0')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /Details for/ })).toHaveLength(
+      2
+    );
+    expect(apiGetMock).toHaveBeenCalledWith(
+      '/api/v1/workspaces/ws-1/auto-sync/as-gitlab-1/runs?limit=5&cursor=cursor%2F5'
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Newer runs' }));
+    expect(screen.getByText('result-0')).toBeVisible();
+  });
+
   it('hides the previous configuration history while another configuration loads', async () => {
     let finishSecond;
     const secondHistory = new Promise(resolve => {

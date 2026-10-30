@@ -23,18 +23,22 @@ function composeMigrations(migrations, recorded = []) {
       throw new Error(`Missing or inconsistent pinned Core migration: ${name}`);
     }
   }
-  // Released main owns 78 (installed assurance) and 79-81 (auto-sync).
-  // Providers append at 82. Preserve the known unreleased PR histories:
+  // Released main owns 78 (installed assurance) and 79-82 (auto-sync).
+  // Providers append at 83. Preserve the known unreleased PR histories:
   // providers at 78, then installed at 79; or installed at 78, providers at 79.
   // Only unapplied entries move, in these explicitly recognized sequences.
   const installed = "certops_installed_file_distribution", providers = "certops_material_providers";
-  const telemetry = ["auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels"].filter(name => migrations.some(entry => entry.name === name));
+  const telemetry = ["auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "auto_sync_system_metrics"].filter(name => migrations.some(entry => entry.name === name));
   const canonicalExtensions = [installed, ...telemetry, providers];
   const applied = recorded.filter(entry => entry.version >= 78 && entry.version < 78 + canonicalExtensions.length).slice().sort((a, b) => a.version - b.version);
-  const extensionOrder = [canonicalExtensions, [providers, installed, ...telemetry], [installed, providers, ...telemetry],
-    // #460 at 66f94086: installed 78, stats 79, metrics 80, providers 81.
-    [installed, ...telemetry.filter(name => name !== "auto_sync_metric_labels"), providers,
-      ...telemetry.filter(name => name === "auto_sync_metric_labels")]]
+  // Known provider positions: 78/79, 81 (66f94086) and 82 (6d685f95).
+  // Append later telemetry after those applied prefixes, never relabel them.
+  const previewOrders = [0, 1, 3, 4].map(index => {
+    const names = [installed, ...telemetry];
+    names.splice(index, 0, providers);
+    return names;
+  });
+  const extensionOrder = [canonicalExtensions, ...previewOrders]
     .find(names => applied.every((row, offset) => row.version === 78 + offset && row.name === names[offset]));
   if (new Set(migrations.map(entry => entry.version)).size !== migrations.length)
     throw new Error("Duplicate Core migration version");
