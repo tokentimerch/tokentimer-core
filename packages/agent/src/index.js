@@ -436,8 +436,10 @@ const AGENT_CANDIDATE_CAPABILITIES = Object.freeze(
  * same gate rather than a new one being invented at that point.
  */
 const AGENT_DECLARED_CAPABILITIES = filterQualifiedCapabilities(
-  [...AGENT_CANDIDATE_CAPABILITIES, ...(process.platform === "linux" ? [
-    "material-store-vault-kv2-v1", "certificate-publication-v1", "deploy-from-store-v1",
+  [...AGENT_CANDIDATE_CAPABILITIES, ...(process.platform === "linux" ||
+    process.platform === "win32" && filterQualifiedCapabilities(["windows-material-iis-v1"]).length === 1 ? [
+    "material-store-vault-kv2-v1", "material-store-openbao-kv2-v1", "material-store-azure-key-vault-v1",
+    ...(process.platform === "linux" ? ["certificate-publication-v1", "deploy-from-store-v1"] : ["deploy-from-store-v1", "windows-material-iis-v1"]),
   ] : [])],
 );
 
@@ -2480,16 +2482,19 @@ async function executeJob({
     // that reaches this process must still stop when the release manifest has
     // not qualified material distribution.
     const requiredMaterialCapabilities = [];
+    const { providerOf, providerCapability } = require("../vendor/contracts/material-provider.cjs");
+    const materialProviderCapability = providerCapability(providerOf(job.publication || job.materialDeployment));
     if (job.publication) {
       requiredMaterialCapabilities.push(
-        "material-store-vault-kv2-v1",
+        materialProviderCapability,
         "certificate-publication-v1",
       );
     }
     if (action === "deploy-from-store") {
       requiredMaterialCapabilities.push(
-        "material-store-vault-kv2-v1",
+        materialProviderCapability,
         "deploy-from-store-v1",
+        ...(process.platform === "win32" ? ["windows-material-iis-v1", "windows-cert-store-v1", "iis-binding-v1"] : []),
       );
     }
     const missingMaterialCapability = requiredMaterialCapabilities.find(
@@ -2502,7 +2507,7 @@ async function executeJob({
       };
     }
     if (jobMode !== "dry_run" && (typeof claimId !== "string" || claimId.length === 0)) return {status:"blocked",errorMessage:"material_claim_required"};
-    if (process.platform !== "linux") return { status: "blocked", errorMessage: "material_platform_unqualified" };
+    if (process.platform !== "linux" && !(process.platform === "win32" && action === "deploy-from-store")) return { status: "blocked", errorMessage: "material_platform_unqualified" };
     if (jobMode !== "dry_run" && execution.dryRun === true) return { status: "blocked", errorMessage: "material_local_dry_run_required" };
     const stateDir = resolveAgentStateDir(executionContext);
     const checkLease = async () => {
@@ -2510,14 +2515,16 @@ async function executeJob({
       if (gate?.ok === false) { const error = new Error("material_lease_unavailable"); error.code = "material_lease_unavailable"; throw error; }
     };
     try {
+      // Dry-run and real execution share the same platform/target preflight.
+      if (job.materialDeployment) resolveBindingPolicy(job,executionContext.materialBindings,policyEngine);
       if (jobMode === "dry_run") {
         resolveStore(executionContext.materialStores, { ...(job.publication || job.materialDeployment), workspaceId: job.workspaceId });
-        if (job.materialDeployment) resolveBindingPolicy(job,executionContext.materialBindings,policyEngine);
         return { status: "dry_run_complete", keyRotated: null };
       }
       if (action === "deploy-from-store") return await executePinnedDeployment({
         job, stores: executionContext.materialStores, bindings: executionContext.materialBindings,
         stateDir, policyEngine, checkLease, recoveryOnly: executionContext.materialRecoveryOnly === true,
+        onBeforeMutation: markMutation, signal,
         reload: async (reloadService, reloadCommandRefs) => {
           if (!reloadService) return false;
           const outcome = await maybeReloadForJob({ job: { ...job, reloadService, reloadCommandRefs }, jobId,
@@ -2543,6 +2550,7 @@ async function executeJob({
       // earlier unresolved execution fence.
       if (executionContext.materialRecoveryOnly !== true && [
         "material_binding_policy_denied", "material_destination_denied",
+        "material_platform_unqualified", "material_windows_policy_denied", "material_probe_config_invalid",
         "material_intent_invalid", "material_scope_denied", "material_store_config_invalid",
       ].includes(error.code)) {
         return { status: "blocked", errorMessage: error.code };

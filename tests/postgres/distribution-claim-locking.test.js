@@ -164,6 +164,12 @@ test("claim mode preserves not-found and exact deployment-authorization checks",
       forClaim: true,
       payload: { materialDeployment: { ...job.payload.materialDeployment, authorizationRevision: 2 } },
     })), { code: "CERTOPS_DEPLOYMENT_INTENT_MISMATCH" });
+    for (const forClaim of [false, true]) {
+      await assert.rejects(resolveDistributionJobDefaults(options(client, job, {
+        forClaim,
+        payload: { materialDeployment: { ...job.payload.materialDeployment, provider: "openbao-kv2" } },
+      })), { code: "CERTOPS_MATERIAL_PROVIDER_MISMATCH" });
+    }
     assert.deepEqual(await resolveDistributionJobDefaults(options(client, job, { forClaim: true })), {
       autoAssignedAgentId: job.assigned_agent_id,
     });

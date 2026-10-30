@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const tls = require("node:tls");
-const { createVaultStore, readProtectedFile, writeProtectedFile, writeProtectedJson, protectDirectory, failure, UUID, sameSans, validateBundle } = require("./index");
+const { createMaterialStore, readProtectedFile, writeProtectedFile, writeProtectedJson, protectDirectory, failure, UUID, sameSans, validateBundle, MAX_BUNDLE_BYTES } = require("./index");
 const { applyRestrictivePermissions } = require("../platform");
 const { deployCertificateAndKey } = require("../deploy");
 const { canonicalizeJobPayload } = require("../signing");
@@ -48,7 +48,7 @@ function publicationSession({ job, stores, stateDir, keysDir, fixtureLoopbackHtt
   // Never resolve custody paths from control-plane payload fields.
   if (typeof keysDir !== "string" || !path.isAbsolute(keysDir)) throw failure("material_local_path_invalid");
   const intent = intentFromJob(job);
-  const store = createVaultStore(stores, intent, { fixtureLoopbackHttp });
+  const store = createMaterialStore(stores, intent, { fixtureLoopbackHttp });
   const scope = store.scope;
   if (scope.issuerAgentId !== job.agentId || scope.issuanceProfileRef !== intent.issuanceProfileRef ||
     scope.profileRevision !== intent.profileRevision || scope.caEndpoint !== job.caEndpoint ||
@@ -59,23 +59,28 @@ function publicationSession({ job, stores, stateDir, keysDir, fixtureLoopbackHtt
   const checkpointFile = path.join(directory, "checkpoint.json");
   protectDirectory(directory);
   let keyRotated = null;
+  let writeAttempted = false;
   if (fs.existsSync(checkpointFile)) {
     const saved = JSON.parse(readProtectedFile(checkpointFile, 16384));
     if (saved.jobId !== job.jobId || saved.materialVersionId !== intent.materialVersionId || saved.groupId !== intent.groupId) throw failure("material_staging_invalid");
     if (typeof saved.keyRotated === "boolean") keyRotated = saved.keyRotated;
+    writeAttempted = saved.writeAttempted === true;
   }
 
   function checkpoint(phase) {
     // Metadata journal and key-bearing artifacts are deliberately separate.
     writeProtectedJson(checkpointFile, { schemaVersion: 1, jobId: job.jobId,
-      groupId: intent.groupId, materialVersionId: intent.materialVersionId, phase, keyRotated });
+      groupId: intent.groupId, materialVersionId: intent.materialVersionId, phase, keyRotated, writeAttempted });
   }
   async function publish(bundle, checkLease) {
     validateBundle(bundle, intent, scope);
     writeProtectedJson(bundleFile, bundle);
     checkpoint("validated_staging");
     await checkLease();
-    const receipt = await store.publish(bundle);
+    const receipt = await store.publish(bundle, { writeAttempted, beforeWrite: () => {
+      writeAttempted = true;
+      checkpoint("publication_started");
+    }, writeRejected: () => { writeAttempted=false;checkpoint("validated_staging"); } });
     checkpoint("published");
     await checkLease();
     // Keep the issuer's local reuse key consistent after rotation and after
@@ -105,7 +110,7 @@ function publicationSession({ job, stores, stateDir, keysDir, fixtureLoopbackHtt
     // were lost. A new order is forbidden if an attempt had already started.
     await checkLease();
     try {
-      const bundle = await store.fetch(1);
+      const bundle = await store.recover();
       return publish(bundle, checkLease);
     } catch (error) {
       if (error.code !== "material_version_unavailable") throw error;
@@ -149,7 +154,7 @@ function probeListener(probe, fingerprintSha256, verificationPolicy) {
   });
 }
 
-function resolveBindingPolicy(job, bindings, policyEngine) {
+function resolveBindingPolicy(job, bindings, policyEngine, { platform = process.platform } = {}) {
   const intent = intentFromJob(job);
   const binding = Object.hasOwn(bindings || {}, intent.bindingId) ? bindings[intent.bindingId] : null;
   const filesOnly = intent.verificationPolicy === "installed";
@@ -159,11 +164,26 @@ function resolveBindingPolicy(job, bindings, policyEngine) {
     binding.agentId !== job.agentId || binding.materialStoreRef !== intent.materialStoreRef ||
     binding.deploymentProfileRef !== intent.deploymentProfileRef || binding.profileRevision !== intent.profileRevision ||
     binding.authorizationRevision !== intent.authorizationRevision || binding.verificationPolicy !== intent.verificationPolicy ||
-    binding.target?.type !== "endpoint" ||
-    (!filesOnly && (!Array.isArray(binding.probes) || binding.probes.length < 1 || binding.probes.length > 16)) ||
+    !["endpoint","windows-iis"].includes(binding.target?.type)) throw failure("material_binding_policy_denied");
+  // Platform qualification is independent of release capability advertisement.
+  // Enforce before any lock, staging, provider read, native helper or reload.
+  if (!(platform === "linux" && binding.target.type === "endpoint") &&
+    !(platform === "win32" && binding.target.type === "windows-iis")) throw failure("material_platform_unqualified");
+  // Installed-only assurance is exclusively the Linux filesystem path. IIS
+  // always proves a binding and served TLS, even when a job requests less.
+  if (filesOnly && binding.target.type === "windows-iis") throw failure("material_windows_policy_denied");
+  if ((!filesOnly && (!Array.isArray(binding.probes) || binding.probes.length < 1 || binding.probes.length > 16)) ||
     (filesOnly && (binding.probes !== undefined && (!Array.isArray(binding.probes) || binding.probes.length !== 0) ||
-      binding.reloadService !== undefined || binding.reloadCommandRefs !== undefined)) ||
-    typeof binding.target.certPath !== "string" || typeof binding.target.keyPath !== "string") throw failure("material_binding_policy_denied");
+      binding.reloadService !== undefined || binding.reloadCommandRefs !== undefined))) throw failure("material_binding_policy_denied");
+  for (const probe of binding.probes || []) {
+    if (!probe || typeof probe.dialAddress !== "string" || !probe.dialAddress || !Number.isInteger(probe.port) || probe.port < 1 || probe.port > 65535 ||
+      typeof probe.sni !== "string" || !/^[a-z0-9.-]{1,253}$/i.test(probe.sni)) throw failure("material_probe_config_invalid");
+  }
+  if (binding.target.type === "windows-iis") {
+    require("../windows-material").validateWindowsBinding(binding,policyEngine);
+    return { intent,binding };
+  }
+  if (typeof binding.target.certPath !== "string" || typeof binding.target.keyPath !== "string") throw failure("material_binding_policy_denied");
   // Destination/reload/probes all come from approved local configuration.
   for (const file of [binding.target.certPath, binding.target.keyPath, binding.target.chainPath].filter(Boolean)) {
     if (!policyEngine.checkPath(file).allowed) throw failure("material_destination_denied");
@@ -195,24 +215,28 @@ function installedPairMatches(binding, policyEngine, fingerprintSha256, bundle =
   if (!cert.checkPrivateKey(key) || crypto.createHash("sha256").update(cert.raw).digest("hex") !== fingerprintSha256) return false;
   const chainPem = binding.target.chainPath ? readPublic(binding.target.chainPath) : "";
   if (bundle) {
-    const certificates = pem => (pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) || [])
-      .map(block => crypto.createHash("sha256").update(new crypto.X509Certificate(block).raw).digest("hex"));
+    const certificates = pem => {
+      const blocks = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g);
+      if (!blocks?.length || pem.replace(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g, "").trim())
+        throw failure("material_install_readback_failed");
+      return blocks.map(block => crypto.createHash("sha256").update(new crypto.X509Certificate(block).raw).digest("hex"));
+    };
     // Compare every installed chain certificate as well as the leaf/key pair.
     if (JSON.stringify(certificates(certPem + "\n" + chainPem)) !== JSON.stringify(certificates(bundle.certificatePem))) return false;
   }
   return true;
 }
 
-async function executePinnedDeployment({ job, stores, bindings, stateDir, policyEngine, checkLease, reload, recoveryOnly = false, fixtureLoopbackHttp = false }) {
-  const { intent,binding } = resolveBindingPolicy(job,bindings,policyEngine);
-  const store = createVaultStore(stores, intent, { fixtureLoopbackHttp });
+async function executePinnedDeployment({ job, stores, bindings, stateDir, policyEngine, checkLease, reload, recoveryOnly = false, fixtureLoopbackHttp = false, onBeforeMutation = () => {}, windowsConnector, signal: jobSignal, platform = process.platform }) {
+  const { intent,binding } = resolveBindingPolicy(job,bindings,policyEngine,{platform});
+  const store = createMaterialStore(stores, intent, { fixtureLoopbackHttp });
   const locks = path.join(stateDir, "material-locks");
   const record = path.join(stateDir, "material-bindings", `${intent.bindingId}.json`);
   const hash = crypto.createHash("sha256").update(canonicalizeJobPayload(intent)).digest("hex");
   return withMaterialLock(locks, `binding:${intent.workspaceId}:${intent.bindingId}`, async () => {
     let previous = null;
     if (fs.existsSync(record)) {
-      try { previous = JSON.parse(readProtectedFile(record, 16384)); }
+      try { previous = JSON.parse(readProtectedFile(record, MAX_BUNDLE_BYTES+16384)); }
       catch { throw failure("material_binding_state_invalid"); }
       if (previous.generation > intent.generation || (previous.generation === intent.generation && previous.intentHash !== hash)) throw failure("material_stale_generation");
       if (previous.uncertain) throw failure("material_binding_uncertain");
@@ -221,6 +245,59 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
     await checkLease();
     const bundle = await store.fetch(intent.providerVersion);
     const facts = validateBundle(bundle, intent, store.scope);
+    const certificate = new crypto.X509Certificate(bundle.certificatePem);
+    if ((binding.probes || []).some(probe => !certificate.checkHost(probe.sni,{subject:"never"}))) throw failure("material_probe_identity_mismatch");
+    if (binding.target.type === "windows-iis") {
+      require("../windows-material").validateWindowsKey(certificate.publicKey);
+      const connector = windowsConnector || require("../windows-material").createWindowsConnector({binding,stateDir});
+      return connector.withLock(async lockSignal => {
+        const signal=jobSignal&&lockSignal?AbortSignal.any([jobSignal,lockSignal]):jobSignal||lockSignal;
+        signal?.throwIfAborted();
+        const receipt = { schemaVersion:1,workspaceId:intent.workspaceId,groupId:intent.groupId,bindingId:intent.bindingId,
+          materialVersionId:intent.materialVersionId,generation:intent.generation,fetched:true,installed:false,bound:false,
+          servedVerified:false,trustValidated:false,...facts,observedAt:new Date().toISOString() };
+        let mutated = false, prepared = false;
+        try {
+          await checkLease();
+          await connector.preflight(signal);
+          if (intent.verificationOnly !== true) {
+            writeProtectedJson(record,{generation:intent.generation,intentHash:hash,intent,uncertain:true,certificatePem:bundle.certificatePem});
+            prepared=true;
+            onBeforeMutation("material_windows_import");
+            // Native preflight and protected journal writes can be slow.
+            // Renew after them, immediately before starting the import.
+            await checkLease();
+            signal?.throwIfAborted();
+            mutated=true;
+            await connector.import(bundle,signal);
+            receipt.installed=true;
+            await checkLease();
+            await connector.activate(bundle,signal);
+          }
+          const installed = await connector.verify(bundle,signal);
+          receipt.installed=installed===true;
+          receipt.bound=installed===true;
+          if(!installed)throw failure("material_windows_binding_mismatch");
+          await checkLease();
+          const proofs=[];for(const probe of binding.probes)proofs.push(await probeListener(probe,facts.fingerprintSha256,binding.verificationPolicy));
+          receipt.servedVerified=proofs.every(proof=>proof.servedVerified);
+          receipt.trustValidated=proofs.every(proof=>proof.trustValidated);
+          receipt.observedAt=new Date().toISOString();
+          if(!receipt.servedVerified || binding.verificationPolicy==="trust"&&!receipt.trustValidated)throw failure("material_service_verification_failed");
+          await checkLease();
+          writeProtectedJson(record,{generation:intent.generation,intentHash:hash,intent,uncertain:false,receipt,certificatePem:bundle.certificatePem});
+          return {status:"succeeded",deploymentReceipt:receipt,errorMessage:null};
+        } catch(error) {
+          if(prepared && !mutated) {
+            if(previous)writeProtectedJson(record,previous);
+            else fs.rmSync(record,{force:true});
+          }
+          if(intent.verificationOnly===true && !mutated)writeProtectedJson(record,{generation:intent.generation,intentHash:hash,intent,uncertain:false,receipt,certificatePem:bundle.certificatePem});
+          return {status:mutated?"orphaned_unknown_effect":"failed",deploymentReceipt:receipt,
+            errorMessage:/^material_[a-z_]+$/.test(error.code||"")?error.code:"material_windows_deployment_failed"};
+        }
+      });
+    }
     if (intent.verificationOnly === true) {
       const receipt={schemaVersion:1,workspaceId:intent.workspaceId,groupId:intent.groupId,bindingId:intent.bindingId,
         materialVersionId:intent.materialVersionId,generation:intent.generation,fetched:true,installed:false,bound:false,
@@ -235,7 +312,7 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
       } catch { /* Public failure code below; never return local file errors. */ }
       await checkLease();
       receipt.observedAt=new Date().toISOString();
-      writeProtectedJson(record,{generation:intent.generation,intentHash:hash,intent,uncertain:false,receipt});
+      writeProtectedJson(record,{generation:intent.generation,intentHash:hash,intent,uncertain:false,receipt,certificatePem:bundle.certificatePem});
       const verified=binding.verificationPolicy === "installed" ? receipt.installed
         : receipt.servedVerified && (binding.verificationPolicy!=="trust" || receipt.trustValidated);
       return {status:verified?"succeeded":"failed",deploymentReceipt:receipt,errorMessage:verified?null:"material_drift_detected"};
@@ -260,7 +337,8 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
       observedAt: new Date().toISOString() };
     try {
       await checkLease();
-      writeProtectedJson(record, { generation: intent.generation, intentHash: hash, intent, uncertain: true });
+      writeProtectedJson(record, { generation: intent.generation, intentHash: hash, intent, uncertain: true, certificatePem: bundle.certificatePem });
+      onBeforeMutation("material_filesystem_install");
       mutated = true;
       const blocks = bundle.certificatePem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g);
       const deployed = await deployCertificateAndKey({ target: binding.target,
@@ -290,7 +368,7 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
       }
       receipt.observedAt = new Date().toISOString();
       await checkLease();
-      writeProtectedJson(record, { generation: intent.generation, intentHash: hash, intent, uncertain: false, receipt });
+      writeProtectedJson(record, { generation: intent.generation, intentHash: hash, intent, uncertain: false, receipt, certificatePem: bundle.certificatePem });
       return { status: "succeeded", deploymentReceipt: receipt, errorMessage: null };
     } catch (error) {
       // Do not infer compensation or device state after lease/reload/probe failure.
@@ -304,16 +382,41 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
 // current-state promotion. Prove the installed pair and, for service policies,
 // every configured TLS listener before clearing an uncertain local marker. The subsequent signed
 // retry still needs a live claim and the original approved generation.
-async function reconcilePinnedDeployment({ job,bindings,stateDir,policyEngine }) {
-  const { intent,binding }=resolveBindingPolicy(job,bindings,policyEngine);
+async function reconcilePinnedDeployment({ job,bindings,stateDir,policyEngine,windowsConnector,platform = process.platform,stores,fixtureLoopbackHttp = false }) {
+  const { intent,binding }=resolveBindingPolicy(job,bindings,policyEngine,{platform});
   return withMaterialLock(path.join(stateDir,"material-locks"),`binding:${intent.workspaceId}:${intent.bindingId}`,async()=>{
     const record=path.join(stateDir,"material-bindings",`${intent.bindingId}.json`);
-    const previous=JSON.parse(readProtectedFile(record,16384));
+    const previous=JSON.parse(readProtectedFile(record,MAX_BUNDLE_BYTES+16384));
     const intentHash=crypto.createHash("sha256").update(canonicalizeJobPayload(intent)).digest("hex");
     if(previous.generation!==intent.generation || previous.intentHash!==intentHash)throw failure("material_stale_generation");
-    if(!installedPairMatches(binding,policyEngine,intent.fingerprintSha256))throw failure("material_reconciliation_mismatch");
+    if(binding.target.type==="windows-iis") {
+      const certificatePem=previous.certificatePem;
+      let certificate;
+      try {certificate=new crypto.X509Certificate(certificatePem);}catch{throw failure("material_reconciliation_mismatch");}
+      if(crypto.createHash("sha256").update(certificate.raw).digest("hex")!==intent.fingerprintSha256 ||
+        binding.probes.some(probe=>!certificate.checkHost(probe.sni,{subject:"never"})))throw failure("material_reconciliation_mismatch");
+      const connector=windowsConnector||require("../windows-material").createWindowsConnector({binding,stateDir});
+      return connector.withLock(async signal=>{
+        if(!await connector.verify({certificatePem,fingerprintSha256:intent.fingerprintSha256},signal))throw failure("material_reconciliation_mismatch");
+        for(const probe of binding.probes){const proof=await probeListener(probe,intent.fingerprintSha256,binding.verificationPolicy);if(!proof.servedVerified||binding.verificationPolicy==="trust"&&!proof.trustValidated)throw failure("material_reconciliation_mismatch");}
+        writeProtectedJson(record,{...previous,uncertain:false,reconciledAt:new Date().toISOString()});
+        return {reconciled:true,bindingId:intent.bindingId,generation:intent.generation,fingerprintSha256:intent.fingerprintSha256};
+      });
+    }
+    // New journals retain public chain proof, never key bytes. For older
+    // journals recover that proof by an exact, read-only customer-store fetch.
+    let expected = { certificatePem: previous.certificatePem };
+    if (typeof expected.certificatePem !== "string") {
+      if (!stores) throw failure("material_reconciliation_mismatch");
+      const store = createMaterialStore(stores,intent,{fixtureLoopbackHttp});
+      expected = await store.fetch(intent.providerVersion);
+      validateBundle(expected,intent,store.scope);
+    }
+    try {
+      if(!installedPairMatches(binding,policyEngine,intent.fingerprintSha256,expected))throw failure("material_reconciliation_mismatch");
+    } catch { throw failure("material_reconciliation_mismatch"); }
     if(binding.verificationPolicy!=="installed")for(const p of binding.probes){const proof=await probeListener(p,intent.fingerprintSha256,binding.verificationPolicy);if(!proof.servedVerified || binding.verificationPolicy==="trust"&&!proof.trustValidated)throw failure("material_reconciliation_mismatch");}
-    writeProtectedJson(record,{...previous,uncertain:false,reconciledAt:new Date().toISOString()});
+    writeProtectedJson(record,{...previous,certificatePem:expected.certificatePem,uncertain:false,reconciledAt:new Date().toISOString()});
     return { reconciled:true,bindingId:intent.bindingId,generation:intent.generation,fingerprintSha256:intent.fingerprintSha256 };
   });
 }

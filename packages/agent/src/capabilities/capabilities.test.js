@@ -27,6 +27,9 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
         "material-store-vault-kv2-v1",
         "certificate-publication-v1",
         "deploy-from-store-v1",
+        "material-store-openbao-kv2-v1",
+        "material-store-azure-key-vault-v1",
+        "windows-material-iis-v1",
       ],
     );
   });
@@ -41,12 +44,14 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
     assert.deepEqual([...filterQualifiedCapabilities(candidates)].sort(), [...candidates].sort());
   });
 
-  it("ships with all seven gated capabilities qualified after real-host verification", () => {
+  it("ships only the capabilities with recorded real-host verification", () => {
     // The original three passed Windows Server, Debian/Ubuntu and
     // RHEL/AlmaLinux verification. AD CS enrollment and Vault distribution
     // were qualified by the 0.18.0 release campaigns.
     const manifest = loadQualifiedCapabilitiesManifest();
-    assert.deepEqual([...manifest.qualified].sort(), [...GATED_CAPABILITIES].sort());
+    assert.deepEqual([...manifest.qualified].sort(), [...require("./qualified-capabilities.json").qualified].sort());
+    assert.equal(manifest.qualified.includes("material-store-azure-key-vault-v1"),false);
+    assert.equal(manifest.qualified.includes("windows-material-iis-v1"),false);
   });
 
   it("advertises all three real-host-verified gated capabilities plus any ungated candidate", () => {
@@ -176,7 +181,7 @@ describe("qualified-capabilities loader startup rejection (defense in depth agai
 
     _resetQualifiedCapabilitiesCacheForTests();
     const manifest = loadQualifiedCapabilitiesManifest();
-    assert.deepEqual([...manifest.qualified].sort(), [...GATED_CAPABILITIES].sort());
+    assert.deepEqual([...manifest.qualified].sort(), [...require("./qualified-capabilities.json").qualified].sort());
   });
 });
 

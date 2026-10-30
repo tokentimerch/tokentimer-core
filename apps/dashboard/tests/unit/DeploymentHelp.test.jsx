@@ -31,7 +31,7 @@ it('supports hover and closes when the trigger loses focus', async () => {
   const button = screen.getByRole('button', { name: 'About Expected version' });
   fireEvent.pointerEnter(button, { pointerType: 'mouse' });
   expect(await screen.findByRole('tooltip')).toHaveTextContent(
-    'Vault provider'
+    'material store'
   );
   fireEvent.blur(button);
   await waitFor(() =>

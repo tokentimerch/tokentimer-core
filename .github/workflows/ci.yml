@@ -512,6 +512,8 @@ jobs:
           node --test --test-force-exit tests/postgres/workspace-delete-certops.test.js tests/postgres/retired-identity-periods.test.js tests/postgres/distribution-claim-locking.test.js
       - name: Replay all supported immutable migration histories
         run: pnpm exec mocha --no-config tests/integration/certops-distribution-upgrade.test.js --timeout 120000 --exit
+      - name: Verify material provider version pins and retained-version rollback
+        run: pnpm exec mocha --no-config tests/integration/certops-material-providers.test.js tests/integration/certops-azure-keyvault-qualification.test.js --timeout 180000 --exit
       - name: Fence pinned rollback identities and late deployment evidence
         env:
           DB_NAME: wildcard_candidate_ci_test
@@ -533,6 +535,52 @@ jobs:
         run: |
           node apps/api/migrations/migrate.js
           node --test --test-force-exit tests/wildcard-vault/transfer.test.cjs
+
+  material_store_compatibility:
+    name: Material Store Compatibility (${{ matrix.provider }} / ${{ matrix.version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: openbao-kv2
+            version: 2.3.2
+            image: openbao/openbao:2.3.2
+          - provider: openbao-kv2
+            version: 2.4.1
+            image: openbao/openbao:2.4.1
+          - provider: vault-kv2
+            version: 1.21.0
+            image: hashicorp/vault:1.21.0
+    services:
+      material:
+        image: ${{ matrix.image }}
+        env:
+          BAO_DEV_ROOT_TOKEN_ID: isolated-material-fixture-only
+          BAO_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+          VAULT_DEV_ROOT_TOKEN_ID: isolated-material-fixture-only
+          VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+        ports:
+          - 8200:8200
+        options: >-
+          --cap-add=IPC_LOCK
+          --health-cmd="wget -q -O /dev/null http://127.0.0.1:8200/v1/sys/health"
+          --health-interval=2s --health-timeout=2s --health-retries=30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: "24"
+      - name: Exercise real KV v2 publication, access control and recovery
+        env:
+          TT_REAL_KV: "1"
+          TT_REAL_KV_PROVIDER: ${{ matrix.provider }}
+          TT_REAL_KV_ADDRESS: http://127.0.0.1:8200
+          TT_REAL_KV_TOKEN: isolated-material-fixture-only
+        run: node --test tests/e2e/material-providers-real.test.js
 
   helm_chart:
     name: Helm Chart Validation
@@ -746,6 +794,71 @@ jobs:
       - name: Dry-run install-agent.ps1 --uninstall
         shell: pwsh
         run: ./packages/agent/scripts/install-agent.ps1 --uninstall --dry-run
+
+  windows_material_qualification:
+    name: Windows IIS Material (${{ matrix.os }} / ${{ matrix.store }} / ${{ matrix.key }})
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+        store: [fixture, openbao]
+        key: [rsa, ec-p256, ec-p384, ec-p521]
+    env:
+      TT_WINDOWS_MATERIAL_KEY_ALGORITHM: ${{ matrix.key }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: "24"
+      - name: Prepare native IIS on the disposable Server runner
+        shell: powershell
+        run: |
+          $result = Install-WindowsFeature Web-Server,Web-Mgmt-Tools,Web-Scripting-Tools
+          if (-not $result.Success) { throw 'IIS feature installation failed' }
+          Start-Service W3SVC
+      - name: Start checksum-verified customer-local OpenBao
+        if: matrix.store == 'openbao'
+        env:
+          TT_WINDOWS_MATERIAL_REAL: "1"
+        shell: pwsh
+        run: |
+          $directory = Join-Path $env:RUNNER_TEMP 'tt-windows-openbao'
+          New-Item -ItemType Directory -Path $directory | Out-Null
+          $archive = Join-Path $directory 'bao.zip'
+          Invoke-WebRequest 'https://github.com/openbao/openbao/releases/download/v2.4.1/bao_2.4.1_Windows_x86_64.zip' -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne '1d1422e9578101f167ffe2a0b8847afacda56a4f41201e8666d3c058f6470e84') { throw 'OpenBao checksum mismatch' }
+          Expand-Archive $archive -DestinationPath $directory
+          $process = Start-Process (Join-Path $directory 'bao.exe') -ArgumentList @('server','-dev','-dev-root-token-id=isolated-windows-openbao-only','-dev-listen-address=127.0.0.1:58208') -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $directory 'stdout.log') -RedirectStandardError (Join-Path $directory 'stderr.log')
+          $process.Id | Set-Content (Join-Path $directory 'pid.txt')
+          $ready = $false
+          for ($attempt = 0; $attempt -lt 60; $attempt++) {
+            try { $health = Invoke-RestMethod 'http://127.0.0.1:58208/v1/sys/health'; if ($health.initialized -and -not $health.sealed) { $ready = $true; break } } catch {}
+            Start-Sleep -Seconds 1
+          }
+          if (-not $ready) { throw 'Owned OpenBao fixture did not become ready' }
+          $env:TT_WINDOWS_MATERIAL_KV_ADDRESS = 'http://127.0.0.1:58208'
+          try {
+            node --test tests/e2e/windows-material-custody-real.test.js tests/e2e/windows-material-real.test.js
+            if ($LASTEXITCODE -ne 0) { throw 'Native OpenBao/IIS qualification failed' }
+          } finally { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue }
+      - name: Verify actual CNG import, ACL, IIS listeners and retained rollback
+        if: matrix.store == 'fixture'
+        env:
+          TT_WINDOWS_MATERIAL_REAL: "1"
+        run: node --test tests/e2e/windows-material-custody-real.test.js tests/e2e/windows-material-real.test.js
+      - name: Stop only the owned OpenBao process
+        if: always() && matrix.store == 'openbao'
+        shell: pwsh
+        run: |
+          $pidFile = Join-Path $env:RUNNER_TEMP 'tt-windows-openbao/pid.txt'
+          if (Test-Path $pidFile) { Stop-Process -Id ([int](Get-Content $pidFile)) -ErrorAction SilentlyContinue }
 
   docker_build_and_scan:
     name: Docker Build & Security Scan

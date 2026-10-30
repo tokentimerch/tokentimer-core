@@ -126,10 +126,28 @@ test("real PostgreSQL publication, renewal identities, approvals, frozen waves, 
   process.env.CERTOPS_SIGNING_ENCRYPTION_KEY=crypto.randomBytes(32).toString("hex");
   const signingKey=await signing.ensureActiveSigningKey();
   const consumerRow=(await pool.query("SELECT agent_id FROM certops_agents WHERE id=$1",[consumerA])).rows[0];
-  const agentInfo={id:consumerA,workspaceId,agentId:consumerRow.agent_id,status:"active",protocolVersion:"1.0.0",agentVersion:"0.17.3"};
+  const credentials=require(path.join(apiRoot,"services/certops/agentCredentials")).generateAgentCredential();
+  await pool.query("UPDATE certops_agents SET credential_prefix=$2,credential_hash=$3 WHERE id=$1",[consumerA,credentials.credentialPrefix,credentials.credentialHash]);
+  const authRequest={headers:{authorization:`Bearer ${credentials.plaintextCredential}`}};
+  await require(path.join(apiRoot,"middleware/agent-auth")).createAgentCredentialAuth({client:pool})(authRequest,
+    {status(){throw new Error("fixture credential rejected");}},error=>{if(error)throw error;});
+  const agentInfo=authRequest.certopsAgent;
+  assert.equal(agentInfo.agentId,consumerRow.agent_id);
+  assert.equal(agentInfo.platform,undefined,"exercise the real authenticated metadata projection");
   await pool.query("UPDATE certops_agents SET declared_target_selectors=$2::jsonb,declared_capabilities='[]'::jsonb,capabilities_updated_at=clock_timestamp() WHERE id=$1",[consumerA,JSON.stringify([bindingA])]);
   const poll={agent:agentInfo,body:{supportedActions:["deploy-from-store"],maxJobs:1}};
   assert.equal((await dispatch.claimJobs(poll)).jobs.length,0,"unqualified capability must not claim");
+  const baseCapabilities=["material-store-vault-kv2-v1","deploy-from-store-v1","evidence-claim-binding-v1","signed-payload-b64-v1"];
+  const windowsCapabilities=["windows-material-iis-v1","windows-cert-store-v1","iis-binding-v1"];
+  for(const missing of windowsCapabilities){
+    await pool.query("UPDATE certops_agents SET platform='win32',declared_capabilities=$2::jsonb,capabilities_updated_at=clock_timestamp() WHERE id=$1",
+      [consumerA,JSON.stringify([...baseCapabilities,...windowsCapabilities.filter(value=>value!==missing)])]);
+    assert.equal((await dispatch.claimJobs({...poll,body:{...poll.body,platform:"linux"}})).jobs.length,0,`authenticated Windows claim requires ${missing}`);
+    const pending=(await pool.query("SELECT status,claim_id,attempt_count FROM certificate_jobs WHERE id=$1",[rows[0].job_id])).rows[0];
+    assert.deepEqual(pending,{status:"pending",claim_id:null,attempt_count:0},"no lease, attempt, signed nonce or job mutation on rejection");
+    assert.equal((await pool.query("SELECT COUNT(*)::int n FROM certops_consumed_nonces WHERE job_id=$1",[rows[0].job_id])).rows[0].n,0);
+  }
+  await pool.query("UPDATE certops_agents SET platform='linux' WHERE id=$1",[consumerA]);
   await pool.query("UPDATE certops_agents SET declared_capabilities=$2::jsonb,capabilities_updated_at=clock_timestamp() WHERE id=$1",[consumerA,JSON.stringify(["material-store-vault-kv2-v1","deploy-from-store-v1","evidence-claim-binding-v1","signed-payload-b64-v1"])]);
   const claimed=await dispatch.claimJobs(poll);assert.equal(claimed.jobs.length,1);
   const signed=claimed.jobs[0];const verified=verifyJobEnvelope({claimed:signed,...signingKey,pinnedSigningKeyId:signingKey.signingKeyId});assert.equal(verified.allowed,true);
@@ -197,7 +215,7 @@ test("real PostgreSQL publication, renewal identities, approvals, frozen waves, 
   assert.equal(checkedIntent.materialDeployment.generation,2);
   await dispatch.ingestResult({agent:agentInfo,body:{jobId:checkedIntent.jobId,claimId:checkedIntent.claimId,nonce:checkedIntent.nonce,status:"failed",errorMessage:"material_drift_detected"}});
   const failedProof=(await pool.query("SELECT stage,failure_code,job_id FROM certops_consumer_deployments WHERE rollout_id=$1 AND binding_id=$2",[checkSnapshot.rolloutId,bindingA])).rows[0];
-  assert.equal(failedProof.stage,"failed");assert.equal(failedProof.failure_code,"agent_result_failed");
+  assert.equal(failedProof.stage,"failed");assert.equal(failedProof.failure_code,"material_drift_detected");
   const retry=await operations.retryDistributionJob({workspaceId,jobId:failedProof.job_id,actorUserId:actor});
   assert.equal(retry.materialVersionId,materialVersionId);
   assert.equal((await material.consumerMatrix({client:pool,workspaceId,groupId})).find(r=>r.binding_id===bindingA).converged,false);

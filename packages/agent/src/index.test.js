@@ -97,8 +97,8 @@ const {
   AGENT_PROTOCOL_ERROR_CODES,
   AgentProtocolError,
 } = require("./protocol");
-const { trustStoreCommandRefForFamily, resolveConcreteStore } = require("./trust-store");
-const { readReceipt } = require("./trust-store/receipt");
+const { trustStoreCommandRefForFamily } = require("./trust-store");
+const { readReceiptById } = require("./trust-store/receipt");
 
 function makeTempConfigDir() {
   // .native is required on Windows: os.tmpdir() can resolve through a
@@ -781,7 +781,7 @@ describe("registerIfNeeded", () => {
         : [
             ...(AGENT_TRUST_STORE_PREREQUISITES.candidate ? ["trust-anchor-deploy-v1"] : []),
             ...(process.platform === "linux"
-              ? ["material-store-vault-kv2-v1", "certificate-publication-v1", "deploy-from-store-v1"]
+              ? ["material-store-vault-kv2-v1", "material-store-openbao-kv2-v1", "certificate-publication-v1", "deploy-from-store-v1"]
               : []),
           ]),
       "agent-id-binding-v1",
@@ -4228,7 +4228,7 @@ describe("renew chain deployment", () => {
     assert.equal(publication.status, "blocked");
     assert.match(
       publication.errorMessage,
-      /has not qualified material-store-vault-kv2-v1; material distribution jobs are refused/,
+      /has not qualified (material-store-vault-kv2-v1|certificate-publication-v1); material distribution jobs are refused/,
     );
 
     const deployment = await executeJob({
@@ -4238,7 +4238,7 @@ describe("renew chain deployment", () => {
     assert.equal(deployment.status, "blocked");
     assert.match(
       deployment.errorMessage,
-      /has not qualified material-store-vault-kv2-v1; material distribution jobs are refused/,
+      /has not qualified (material-store-vault-kv2-v1|windows-material-iis-v1); material distribution jobs are refused/,
     );
     assert.equal(shared.client.calls.reportEvidence.length, 0);
   });
@@ -6388,11 +6388,11 @@ describe("executeTrustJob / executeJob dispatch wiring for distribute-trust/revo
     // The receipt this run persisted is readable from the SAME stateDir
     // executeJob itself derived from executionContext, proving the
     // dispatch path wires receiptDir consistently end to end.
-    const persisted = readReceipt(
+    const persisted = readReceiptById(
       path.join(workDir, "trust-receipts"),
-      resolveConcreteStore(family, "root"),
-      CA_FINGERPRINT,
+      outcome.trustResult.receipt.id,
     );
+    assert.ok(persisted?.row, "the result's receipt id must resolve to a persisted receipt on every platform");
     assert.equal(persisted.row.state, "installed");
   });
 

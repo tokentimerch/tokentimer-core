@@ -115,6 +115,68 @@ test("malformed pinned migration registries cannot be composed", () => {
     /inconsistent pinned Core migration/,
   );
 });
+
+test("main 78 and provider-preview 78 retain their recorded definitions and append only the missing extension", () => {
+  const installed = { version: 78, name: "certops_installed_file_distribution", sql: "installed-assurance" };
+  const providers = { version: 79, name: "certops_material_providers", sql: "immutable-providers" };
+  const registry = [...core, installed, providers];
+  const prior = [...ledger(canonical), { version: 77, name: "future" }];
+  for (const [first, second] of [[installed, providers], [{ ...providers, version: 78 }, { ...installed, version: 79 }]]) {
+    for (const completed of [[first], [first, second]]) {
+      const recorded = [...prior, ...completed.map(({ version, name }) => ({ version, name }))];
+      const planned = composeMigrations(registry, recorded);
+      assert.deepEqual(planned.slice(-2), [first, second]);
+      for (const entry of completed) assert.deepEqual(planned.find(row => row.version === entry.version), entry);
+      assert.equal(new Set(planned.map(entry => entry.version)).size, planned.length);
+    }
+  }
+  assert.deepEqual(composeMigrations(registry).slice(-2), [installed, providers]);
+  assert.throws(() => composeMigrations([...registry, { version: 79, name: "collision", sql: "unsafe" }]), /Duplicate Core migration version/);
+  assert.throws(() => composeMigrations(registry, [...prior, { version: 78, name: "unknown" }]), /Unsupported Core migration history/);
+});
+test("released 78-82 and provider previews compose uniquely without rewriting applied rows", () => {
+  const names = ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "auto_sync_system_metrics", "certops_material_providers"];
+  const extensions = names.map((name, i) => ({ version: 78 + i, name, sql: `immutable-${name}` }));
+  const registry = [...core, ...extensions], prior = [...ledger(canonical), { version: 77, name: "future" }];
+  for (const order of [names, ...[0, 1, 3, 4].map(index => { const order = names.filter(name => name !== "certops_material_providers"); order.splice(index, 0, "certops_material_providers"); return order; })]) {
+    for (let count = order === names ? 0 : order.indexOf("certops_material_providers") + 1; count <= order.length; count++) {
+      const recorded = [...prior, ...order.slice(0, count).map((name, i) => ({ version: 78 + i, name }))];
+      const result = composeMigrations(registry, recorded);
+      assert.equal(new Set(result.map(row => row.version)).size, result.length);
+      for (const row of recorded) assert.equal(result.find(entry => entry.version === row.version).name, row.name);
+      assert.deepEqual(result.slice(-6).map(row => row.name), order);
+      for (const entry of result.slice(-6)) assert.equal(entry.sql, `immutable-${entry.name}`);
+      assert.deepEqual(composeMigrations(registry, result), result, "replay keeps the same version/name/SQL plan");
+    }
+  }
+  const { migrations } = require("../../apps/api/migrations/migrate");
+  assert.deepEqual(migrations.filter(row => row.version >= 78).map(({version, name}) => ({version, name})), extensions.map(({version, name}) => ({version, name})));
+  for (const count of [1, 2, 3, 4, 5]) assert.deepEqual(composeMigrations(registry, [...prior, ...extensions.slice(0, count)]), registry);
+  assert.throws(() => composeMigrations(registry, [...prior, ...extensions.slice(0, 2), {version: 80, name: names[5]}]), /Unsupported Core migration history/);
+});
+
+test("cross-PR reservations reject collisions and compose without changing supported preview rows", () => {
+  const { reservations, validateMigrationReservations } = require("../../apps/api/migrations/migration-reservations.cjs");
+  const { migrations } = require("../../apps/api/migrations/migrate");
+  const future = Object.entries(reservations).filter(([version]) => Number(version) > 83)
+    .map(([version, name]) => ({ version: Number(version), name, sql: `reviewed-${name}` }));
+  const registry = [...migrations, ...future];
+  validateMigrationReservations(registry);
+  for (const [version, name] of [[81, "recipient_channel_verification"], [81, "pagerduty_incident_lifecycle"],
+    [81, "certops_distribution_lifecycle"], [82, "certops_material_cleanup"], [92, "pagerduty_incident_lifecycle"],
+    [91, "certops_distribution_resolution_delivery"]]) {
+    assert.throws(() => validateMigrationReservations([...migrations.filter(row => row.version !== version), { version, name }]), /Conflicting canonical Core migration/);
+  }
+  assert.throws(() => validateMigrationReservations([...migrations, migrations.at(-1)]), /Duplicate Core migration/);
+  const before = composeMigrations(migrations, [...ledger(canonical), { version: 77, name: "onboarding_sessions" },
+    ...["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "certops_material_providers"]
+      .map((name, i) => ({ version: 78 + i, name }))]);
+  const composed = composeMigrations(registry, before);
+  assert.deepEqual(composed.slice(0, before.length), before);
+  assert.deepEqual(composed.slice(before.length), future);
+  assert.deepEqual(composeMigrations(registry, composed), composed);
+});
+
 test("all 72 legacy distribution-first definitions retain their immutable historical SQL", () => {
   const coreRoot = path.resolve(__dirname, "../..");
   const { migrations } = require(

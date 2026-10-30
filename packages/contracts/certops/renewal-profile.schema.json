@@ -535,7 +535,7 @@
       ],
       "properties": {
         "type": {
-          "const": "vault-kv2"
+          "$ref": "#/definitions/materialDistribution_provider"
         },
         "groupId": {
           "$ref": "#/definitions/materialDistribution_uuid"
@@ -591,7 +591,7 @@
           "$ref": "#/definitions/materialDistribution_alias"
         },
         "providerVersion": {
-          "$ref": "#/definitions/materialDistribution_revision"
+          "$ref": "#/definitions/materialDistribution_providerVersion"
         },
         "fingerprintSha256": {
           "$ref": "#/definitions/materialDistribution_fingerprint"
@@ -618,8 +618,40 @@
         "verificationOnly": {
           "type": "boolean",
           "description": "Approved read-only verification of the pinned version; no install or reload."
+        },
+        "provider": {
+          "$ref": "#/definitions/materialDistribution_provider"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "provider"
+            ],
+            "properties": {
+              "provider": {
+                "const": "azure-key-vault"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "providerVersion": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{32}$"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "providerVersion": {
+                "$ref": "#/definitions/materialDistribution_revision"
+              }
+            }
+          }
+        }
+      ]
     },
     "materialDistribution_publicationReceipt": {
       "type": "object",
@@ -651,7 +683,7 @@
           "$ref": "#/definitions/materialDistribution_alias"
         },
         "providerVersion": {
-          "$ref": "#/definitions/materialDistribution_revision"
+          "$ref": "#/definitions/materialDistribution_providerVersion"
         },
         "fingerprintSha256": {
           "$ref": "#/definitions/materialDistribution_fingerprint"
@@ -660,8 +692,40 @@
           "type": "string",
           "format": "date-time",
           "maxLength": 40
+        },
+        "provider": {
+          "$ref": "#/definitions/materialDistribution_provider"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "provider"
+            ],
+            "properties": {
+              "provider": {
+                "const": "azure-key-vault"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "providerVersion": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{32}$"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "providerVersion": {
+                "$ref": "#/definitions/materialDistribution_revision"
+              }
+            }
+          }
+        }
+      ]
     },
     "materialDistribution_deploymentReceipt": {
       "type": "object",
@@ -744,7 +808,7 @@
       ],
       "properties": {
         "type": {
-          "const": "vault-kv2"
+          "$ref": "#/definitions/materialDistribution_provider"
         },
         "groupId": {
           "$ref": "#/definitions/materialDistribution_uuid"
@@ -813,6 +877,24 @@
           ]
         }
       }
+    },
+    "materialDistribution_provider": {
+      "enum": [
+        "vault-kv2",
+        "openbao-kv2",
+        "azure-key-vault"
+      ]
+    },
+    "materialDistribution_providerVersion": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$"
+        }
+      ]
     }
   },
   "allOf": [

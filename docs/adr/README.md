@@ -121,3 +121,9 @@ hosts.
 
 Changing a published contract or an accepted invariant is a new or updated ADR,
 not a silent code edit.
+
+[ADR-0015](0015-certops-material-providers-and-windows-consumers.md) defines
+provider identity and opaque Azure version pins, shared OpenBao/Vault execution,
+and the constrained Windows/IIS shared-material connector. Provider credentials
+and private keys remain customer-local; independent qualification gates govern
+production advertisement.

@@ -13,6 +13,7 @@ const fingerprint = "ab".repeat(32);
 
 function dbFor({ lifecycle = "active", observations = [], running = [] } = {}) {
   const statements = [];
+  const calls = [];
   const identity = {
     id: identityId,
     workspace_id: workspaceId,
@@ -20,8 +21,9 @@ function dbFor({ lifecycle = "active", observations = [], running = [] } = {}) {
     lifecycle_status: lifecycle,
   };
   const client = {
-    async query(sql) {
+    async query(sql, params) {
       statements.push(sql);
+      calls.push({ sql, params });
       if (sql.includes("FROM certops_certificate_identities") && /\bFOR (?:NO KEY )?UPDATE\b/.test(sql)) {
         return { rows: [identity], rowCount: 1 };
       }
@@ -39,7 +41,7 @@ function dbFor({ lifecycle = "active", observations = [], running = [] } = {}) {
     },
     release() {},
   };
-  return { statements, connect: async () => client };
+  return { statements, calls, connect: async () => client };
 }
 
 function decommission(db, overrides = {}) {
@@ -79,16 +81,23 @@ test("unknown visibility requires acknowledgment and a running install blocks af
     { code: "CERTOPS_MUTATION_RUNNING" });
 });
 
-test("acknowledged uncertain decommission closes current periods and preserves source history", async () => {
+test("acknowledged uncertain decommission closes only this identity's active periods and retains source history", async () => {
   const db = dbFor({ observations: [{ presence_state: "unknown", fresh: false }] });
   const result = await decommission(db, { acknowledgeUncertainty: true });
   assert.equal(result.lifecycleStatus, "decommissioned");
   assert(db.statements.includes("COMMIT"));
-  const closed = db.statements.filter((sql) => sql.includes("UPDATE certops_management_periods"));
-  assert.equal(closed.length, 1);
-  assert.match(closed[0], /ended_at = GREATEST\(NOW\(\), started_at\)/);
-  assert.match(closed[0], /automation_enabled = FALSE/);
-  assert.match(closed[0], /current_identity_id = \$2 AND ended_at IS NULL/);
+  assert.equal(db.statements.filter(sql => sql.includes("UPDATE certops_management_periods")).length, 1);
+  const closed = db.calls.find(call => call.sql.includes("UPDATE certops_management_periods"));
+  assert.ok(closed);
+  assert.match(closed.sql, /ended_at = GREATEST\(NOW\(\), started_at\)/);
+  assert.match(closed.sql, /automation_enabled = FALSE/);
+  assert.match(closed.sql, /WHERE workspace_id = \$1 AND current_identity_id = \$2 AND ended_at IS NULL/);
+  assert.deepEqual(closed.params, [workspaceId, identityId, "certificate_decommissioned"]);
+  const source = db.calls.find(call => call.sql.includes("UPDATE managed_certificates SET"));
+  assert.match(source.sql, /^UPDATE managed_certificates SET status = \$3, updated_at = NOW\(\)\s+WHERE/);
+  assert.deepEqual(source.params.slice(0, 3), [workspaceId, fingerprint, "decommissioned"]);
+  assert(!db.statements.some(sql => /DELETE FROM managed_certificates\b/.test(sql)));
+  assert(!db.statements.some(sql => /DELETE FROM certops_management_associations\b/.test(sql)));
   assert(!db.statements.some((sql) => /DELETE FROM certops_(?:management_periods|certificate_sources)/.test(sql)));
 });
 

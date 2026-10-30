@@ -5,16 +5,17 @@ import { Info } from 'lucide-react';
 export const refreshStatusHelp =
   'Reload the latest deployment status and evidence recorded by TokenTimer.';
 export const providerRevisionHelp =
-  'The revision assigned by Vault to stored certificate material.';
+  'The immutable storage version: a numeric KV v2 revision or an opaque Azure Key Vault secret version. Consumers always fetch this exact version.';
 const materialHelp =
   'The immutable TokenTimer ID for one certificate material record.';
 const generationHelp = 'A sequence number for an approved deployment decision.';
 export const deploymentFieldHelp = {
   'Expected version':
-    "The certificate version this destination is expected and authorized to use, shown as the Vault provider's storage revision.",
+    'The certificate version this destination is expected and authorized to use, shown as the material store version.',
   'Last confirmed version':
-    "The most recent certificate version confirmed by accepted deployment evidence. The service may have changed since this observation. The shown number is the Vault provider's storage revision.",
+    'The most recent certificate version confirmed by accepted deployment evidence. The service may have changed since this observation. The shown value is the material store version.',
   'Vault provider revision': providerRevisionHelp,
+  'Provider version': providerRevisionHelp,
   'Last verification':
     'When TokenTimer last accepted verification evidence from this destination.',
   'Verification freshness':

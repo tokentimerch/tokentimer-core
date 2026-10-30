@@ -161,4 +161,8 @@ any mutation, on every platform including Windows: a "renew-only" agent (no
 
 ## Related
 
+`materialStores` and `materialBindings` are protected customer-local execution
+configuration. See [distribution provider and Windows examples](../distribution-extensions.md)
+for provider selection, Azure identities, exact IIS selectors and key permissions.
+
 [Agent overview](../agent.md) · [Configuration](configuration.md) · [Operations](operations.md)

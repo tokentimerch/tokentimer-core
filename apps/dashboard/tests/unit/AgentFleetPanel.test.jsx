@@ -235,11 +235,18 @@ describe('AgentFleetPanel', () => {
     expect(menus).toHaveLength(3);
     for (let index = 0; index < menus.length; index += 1) {
       fireEvent.click(menus[index]);
-      // The lazy menu container can appear before its items are mounted.
-      const viewLogs = await screen.findByRole('menuitem', {
+      // A previous menu may still be animating closed. Resolve this button's
+      // controlled portal before waiting for its lazily mounted items.
+      const menu = await waitFor(() => {
+        const controlled = document.getElementById(
+          menus[index].getAttribute('aria-controls')
+        );
+        expect(controlled).toBeInTheDocument();
+        return controlled;
+      });
+      const viewLogs = await within(menu).findByRole('menuitem', {
         name: 'View logs',
       });
-      const menu = viewLogs.closest('[role="menu"]');
       expect(viewLogs).toBeInTheDocument();
       if (index < 2) {
         expect(

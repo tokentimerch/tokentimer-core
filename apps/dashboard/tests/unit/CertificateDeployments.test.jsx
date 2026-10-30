@@ -88,6 +88,28 @@ beforeEach(() => {
   mockData();
 });
 
+it('identifies Azure secret versions and Windows IIS consumers', async () => {
+  const id = 'a'.repeat(32);
+  mockData(
+    [
+      row({
+        agent_platform: 'win32',
+        desired_version: id,
+        observed_version: id,
+      }),
+    ],
+    [{ ...group, material_store_provider: 'azure-key-vault' }],
+    [{ ...version, provider_version: id }]
+  );
+  render(view());
+  expect(await screen.findByText('Edge proxy')).toBeInTheDocument();
+  expect(screen.getAllByText(/Azure Key Vault/).length).toBeGreaterThan(0);
+  expect(
+    screen.getAllByText(`Azure secret version ${id}`).length
+  ).toBeGreaterThan(0);
+  expect(screen.getByText(/Windows \/ IIS/)).toBeInTheDocument();
+});
+
 it('loads only when opened and shows publication separately from current deployment', async () => {
   const { rerender } = render(view({ isOpen: false }));
   expect(get).not.toHaveBeenCalled();
@@ -110,7 +132,7 @@ it('loads only when opened and shows publication separately from current deploym
   ).not.toHaveAttribute('open');
   expect(screen.getByText('Matches expected')).toBeInTheDocument();
   expect(
-    screen.getAllByText('Vault provider revision 2').length
+    screen.getAllByText('KV v2 provider revision 2').length
   ).toBeGreaterThan(0);
   expect(screen.queryByText(/bindingId/)).not.toBeInTheDocument();
   expect(screen.getByText('binding-a').closest('details')).not.toHaveAttribute(
@@ -383,10 +405,10 @@ it('organizes all publication diagnostics in one Technical information section a
   const history = screen.getByText('Publication history').closest('details');
   fireEvent.click(within(history).getByText('Publication history'));
   expect(
-    within(history).getByText('Vault provider revision 1')
+    within(history).getByText('KV v2 provider revision 1')
   ).toBeInTheDocument();
   expect(
-    within(history).queryByText('Vault provider revision 2')
+    within(history).queryByText('KV v2 provider revision 2')
   ).not.toBeInTheDocument();
   expect(
     within(history).queryByText('Advanced diagnostics')
@@ -548,10 +570,10 @@ it('keeps an uncertain latest publication visible once without hiding the previo
   );
   const history = screen.getByText('Publication history').closest('details');
   expect(
-    within(history).queryByText('Vault provider revision 3')
+    within(history).queryByText('KV v2 provider revision 3')
   ).not.toBeInTheDocument();
   expect(
-    within(history).getByText('Vault provider revision 2')
+    within(history).getByText('KV v2 provider revision 2')
   ).toBeInTheDocument();
 });
 
