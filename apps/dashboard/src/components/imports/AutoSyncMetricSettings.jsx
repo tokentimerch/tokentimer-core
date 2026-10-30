@@ -90,7 +90,15 @@ export default function AutoSyncMetricSettings({
               <Tooltip
                 hasArrow
                 placement='top'
-                maxW={{ base: 'xs', md: 'md' }}
+                bg='gray.800'
+                color='white'
+                fontSize='sm'
+                px={3}
+                py={2}
+                borderRadius='md'
+                maxW={{ base: 'xs', md: 'sm' }}
+                whiteSpace='normal'
+                wordBreak='break-word'
                 label={managementSummary}
               >
                 <Box
@@ -169,7 +177,15 @@ export default function AutoSyncMetricSettings({
                   <Tooltip
                     hasArrow
                     placement='top'
-                    maxW={{ base: 'xs', md: 'md' }}
+                    bg='gray.800'
+                    color='white'
+                    fontSize='sm'
+                    px={3}
+                    py={2}
+                    borderRadius='md'
+                    maxW={{ base: 'xs', md: 'sm' }}
+                    whiteSpace='normal'
+                    wordBreak='break-word'
                     label={groupManagement}
                   >
                     <Box
