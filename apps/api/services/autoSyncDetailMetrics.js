@@ -15,7 +15,8 @@ async function detailedSamples() {
     s.kind, s.asset_name, s.project, s.group_name, s.items_created_total,
     EXTRACT(EPOCH FROM s.last_created_at) AS last_created
     FROM auto_sync_creation_stats s JOIN auto_sync_configs c ON c.id = s.config_id
-    WHERE c.metrics_settings->>'enabled' = 'true' OR c.metrics_settings->>'inherit_system' = 'true'
+    WHERE c.metrics_settings->>'enabled' = 'true'
+       OR COALESCE(c.metrics_settings->>'inherit_system', 'true') = 'true'
     ORDER BY c.id, s.dimension_key`);
   const samples = new Map();
   for (const row of rows) {

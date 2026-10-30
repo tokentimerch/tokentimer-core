@@ -297,6 +297,17 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     }
     await pool.query('UPDATE users SET is_admin=FALSE WHERE id=$1',[userId]);
   });
+  it("exports inherited metrics for older client payloads without an inheritance field", async () => {
+    delete process.env.AUTO_SYNC_METRICS_EXTRA_LABELS;
+    await pool.query("UPDATE system_settings SET auto_sync_metrics=$1 WHERE id=1", [{enabled:true,labels:['kind']}]);
+    const config=await configuration();
+    await pool.query("UPDATE auto_sync_configs SET metrics_settings=$2 WHERE id=$1", [config.id,{enabled:false,labels:[]}]);
+    const run=await start(config); await scan(run,['legacy']);
+    await imported(run,{name:'legacy',location:'legacy',source_object_id:'legacy'});
+    const sample=(await metric('auto_sync_items_created_detailed_total')).find(s=>s.labels.configuration_id===config.id);
+    assert.equal(sample.value,1); assert.equal(sample.labels.kind,'gitlab-project-token');
+    await finish(run);
+  });
   it("enforces system-admin writes, typed values and env-locked global disable", async () => {
     const url='/api/v1/admin/auto-sync/metrics';
     assert.equal((await request(app).get(url)).status,403);
