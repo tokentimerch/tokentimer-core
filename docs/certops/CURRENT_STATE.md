@@ -4,7 +4,7 @@ Short index for operators and engineers.
 
 ## Current system behavior
 
-- Domain language and product invariants: [CONTEXT.md](CONTEXT.md).
+- Domain language and product invariants: [CONTEXT.md](../../.github/maintainers/certops/CONTEXT.md).
 - AD CS and execution-console audit actions and metadata: [audit-events.md](audit-events.md).
 - Dashboard: Certificate operations tabs are Jobs, Certificates, Renewals, Agents, and Settings. AD CS issuers, preflight, pinning, enrollment status, and AD CS renewal profiles live under **Renewals**.
 - Microsoft AD CS operator guide (states, allowlists, troubleshooting): [agent/adcs.md](agent/adcs.md).
@@ -27,4 +27,4 @@ These are runtime requirements for an AD CS renewal, not a separate product mode
 
 ## Historical records
 
-Internal planning records that are not part of this public repository may hold older acceptance evidence. Public truth for readers of this repo is this file, [CONTEXT.md](CONTEXT.md), [agent/adcs.md](agent/adcs.md), and the ADRs.
+Internal planning records that are not part of this public repository may hold older acceptance evidence. Public truth for readers of this repo is this file, [CONTEXT.md](../../.github/maintainers/certops/CONTEXT.md), [agent/adcs.md](agent/adcs.md), and the ADRs.

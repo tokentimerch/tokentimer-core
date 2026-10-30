@@ -1,7 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const suites = require("../docs/certops/qualification-suites.json");
+const suites = require("../.github/maintainers/certops/qualification-suites.json");
 const { SHARD_NAMES, createShard, phaseOf } = require("../tests/e2e/helpers/certops-adcs-shards");
 const { verifyShardReport } = require("./certops-adcs-shard-report");
 

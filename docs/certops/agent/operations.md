@@ -87,7 +87,7 @@ Common terminal states and what to look for:
   `journalctl -u tokentimer-agent -n 50 --no-pager`.
 - **A job stays `pending` and this agent never claims it**: the job is pinned
   to a different agent (normally the one that discovered the certificate) or
-  requires a target selector this agent does not declare. See [job assignment](protocol.md#which-agent-gets-a-job-exclusivity-vs-assignment); this is routing, not an agent fault.
+  requires a target selector this agent does not declare. See [job assignment](../../../.github/maintainers/certops/agent/protocol.md#which-agent-gets-a-job-exclusivity-vs-assignment); this is routing, not an agent fault.
 - **Renew job creation refused for a certificate visible in inventory**:
   `409 CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE`. The certificate was only
   observed (endpoint/domain monitor), so no agent holds its key. Install an

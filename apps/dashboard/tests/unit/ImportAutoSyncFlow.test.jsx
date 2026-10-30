@@ -366,7 +366,7 @@ describe.each(['gitlab', 'github'])(
         exact: true,
       });
       const input = screen.getByRole('textbox', { name: 'Configuration name' });
-      expect(input).toHaveValue(`${provider  } 4`);
+      expect(input).toHaveValue(`${provider} 4`);
     });
   }
 );

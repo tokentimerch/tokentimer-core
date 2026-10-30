@@ -810,7 +810,7 @@ const EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
 // it is the one operation with no renewalProfile to fall back on (only
 // renew jobs get one, via validateRenewalProfileOnPayload / dispatch-time
 // merge), and DNS-01 is the only challenge mechanism this agent supports
-// (docs/certops/CONTEXT.md), so every field the agent needs to actually run
+// (.github/maintainers/certops/CONTEXT.md), so every field the agent needs to actually run
 // the ACME order must be present on the payload at creation time. Without
 // this, validateExecutionFields only validated fields that were present,
 // so an issue request missing commandRef/caEndpoint/dnsZone/dnsProvider was
