@@ -726,3 +726,42 @@ test("success without sufficiently fresh verification evidence cannot reset a co
   assert.equal((await consumerFailureSummary(f)).get(f.bindingId).failures,1);
   assert.equal((await pool.query("SELECT 1 FROM certops_consumer_verification_outcomes WHERE workspace_id=$1 AND rollout_id=$2",[f.workspaceId,rollout.id])).rowCount,0);
 });
+
+test("quota exhaustion preserves durable recovery until quota returns, with one retryable PagerDuty resolve event",async()=>{
+  const f=await prepareVerification({alerts:true});await enableFixtureNotificationQueue(f);await verificationTick(f);
+  await finishConsumerCycle(f,{[f.bindingId]:"failed"});await startNextConsumerCycle(f);
+  await finishConsumerCycle(f,{[f.bindingId]:"failed"});await monitorConsumers(f);
+  const incident=(await pool.query("SELECT * FROM certops_distribution_incidents WHERE workspace_id=$1 AND code='verification_failed' AND resolved_at IS NULL",[f.workspaceId])).rows[0];
+  assert.ok(incident.last_notified_at);
+  await pool.query(`INSERT INTO alert_queue(user_id,certops_agent_id,alert_key,threshold_days,due_date,channels,status,metadata)
+    SELECT $1,$2,'cert_distribution:quota:' || gen_random_uuid()::text,0,CURRENT_DATE,'[]'::jsonb,'sent','{}'::jsonb
+    FROM generate_series(1,20-(SELECT count(*)::int FROM alert_queue WHERE certops_agent_id IN ($2,$3) AND alert_key LIKE 'cert_distribution:%' AND created_at>clock_timestamp()-interval '1 hour'))`,[f.actor,f.consumer,f.issuer]);
+  await startNextConsumerCycle(f);await finishConsumerCycle(f);await monitorConsumers(f);
+  let resolved=(await pool.query("SELECT * FROM certops_distribution_incidents WHERE id=$1",[incident.id])).rows[0];
+  assert.ok(resolved.resolved_at);assert.equal(resolved.resolution_delivery_pending,true);
+  const key=`cert_distribution:${incident.id}:${resolved.revision}:resolved`;
+  assert.equal((await pool.query("SELECT 1 FROM alert_queue WHERE alert_key=$1",[key])).rowCount,0);
+  await monitorConsumers(f);assert.equal((await pool.query("SELECT resolution_delivery_pending FROM certops_distribution_incidents WHERE id=$1",[incident.id])).rows[0].resolution_delivery_pending,true);
+  await pool.query("UPDATE alert_queue SET created_at=clock_timestamp()-interval '2 hours' WHERE certops_agent_id IN ($1,$2)",[f.consumer,f.issuer]);
+  const group=(await pool.query("SELECT * FROM certops_distribution_groups WHERE id=$1",[f.groupId])).rows[0];
+  const policy=(await lifecycle.loadPolicy(pool,f.workspaceId,f.groupId)).policy;
+  await assert.rejects(()=>operations.transaction(async client=>{
+    const failing={query:async(sql,params)=>{const value=await client.query(sql,params);if(sql.includes("INSERT INTO alert_queue"))throw new Error("simulated enqueue transaction failure");return value;}};
+    await monitoring.queuePendingResolutions(failing,f.workspaceId,group,policy);
+  }),/simulated enqueue transaction failure/);
+  assert.equal((await pool.query("SELECT 1 FROM alert_queue WHERE alert_key=$1",[key])).rowCount,0);
+  assert.equal((await pool.query("SELECT resolution_delivery_pending FROM certops_distribution_incidents WHERE id=$1",[incident.id])).rows[0].resolution_delivery_pending,true);
+  await Promise.all(Array.from({length:5},()=>monitorConsumers(f)));
+  const queued=(await pool.query("SELECT * FROM alert_queue WHERE alert_key=$1",[key])).rows;
+  assert.equal(queued.length,1);assert.equal(queued[0].status,"pending");
+  resolved=(await pool.query("SELECT * FROM certops_distribution_incidents WHERE id=$1",[incident.id])).rows[0];
+  assert.equal(resolved.resolution_delivery_pending,false);
+  const {loadDistributionAlertContext,buildDistributionWebhookPayload}=await import("../../apps/worker/src/shared/distributionAlerts.js");
+  const alert={...queued[0],workspace_id:f.workspaceId};assert.equal(await loadDistributionAlertContext(pool,alert),true);
+  const payload=buildDistributionWebhookPayload("pagerduty",alert,{routingKey:"synthetic-test-only"});
+  assert.equal(payload.event_action,"resolve");assert.equal(payload.dedup_key,`distribution:${incident.id}`);
+  const {postJson}=await import("../../apps/worker/src/notify/webhooks.js");
+  assert.equal((await postJson("https://events.pagerduty.com/__fail__",payload,"pagerduty")).success,false);
+  assert.equal((await postJson("https://events.pagerduty.com/__ok__",payload,"pagerduty")).success,true,"Existing test-mode provider handler accepts retry with the same correlation key");
+  await monitorConsumers(f);assert.equal((await pool.query("SELECT 1 FROM alert_queue WHERE alert_key=$1",[key])).rowCount,1);
+});

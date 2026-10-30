@@ -85,7 +85,7 @@ Terminal outcomes clear the journal entry when reporting completes.
 Supported actions: `renew`, `deploy`, `reload`, `noop`, `distribute-trust`,
 `revoke-trust`. `revoke` (managed-certificate revocation, distinct from
 `revoke-trust`) is always `blocked` (out of scope for this agent build).
-`deploy` without a `certificatePem` field is `blocked` (see [Job contracts](protocol.md)).
+`deploy` without a `certificatePem` field is `blocked` (see [Job contracts](../../../.github/maintainers/certops/agent/protocol.md)).
 
 The control plane additionally has an `issue` job operation, used for
 first-time issuance of a certificate that has no inventory row yet. It is a
@@ -222,7 +222,7 @@ jobs run step 5 only; `noop` reports a `validation.passed` evidence item and
 succeeds.
 
 Dry-run mode is driven by the signed job's immutable `mode` field (see
-"Dry-run and reconciliation statuses" in [Protocol](protocol.md)). For supported mutating actions with `mode`
+"Dry-run and reconciliation statuses" in [Protocol](../../../.github/maintainers/certops/agent/protocol.md)). For supported mutating actions with `mode`
 `dry_run`, all trust gates still run, then instead of executing the agent
 reports one `policy.checked` evidence item per step the action would run
 (with `dryRun: true` metadata) and returns `dry_run_complete` with

@@ -65,14 +65,14 @@
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "de9d63c897dbf5cce8a05cf4353af78917ba0dd0af9b97518ddc48d4717c34bc"
+          "sha256": "28a40d2da54f424ab63d504123bd1a661e096f52f9c80fe4a436992b86cdb34a"
         },
         {
           "id": "integration-openapi-spec",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "de9d63c897dbf5cce8a05cf4353af78917ba0dd0af9b97518ddc48d4717c34bc"
+          "sha256": "28a40d2da54f424ab63d504123bd1a661e096f52f9c80fe4a436992b86cdb34a"
         },
         {
           "id": "auth-route-compat-contract",
@@ -341,6 +341,20 @@
           "kind": "module",
           "path": "packages/contracts/certops/service-connectors.cjs",
           "status": "existing"
+        },
+        {
+          "id": "certops-material-cleanup-identity",
+          "kind": "module",
+          "path": "packages/contracts/certops/material-cleanup.cjs",
+          "status": "existing",
+          "sha256": "68293a7c6571c0e8068c8ed478e87988d42bbb24aa4fd5383414b611bf72c8f5"
+        },
+        {
+          "id": "certops-material-provider-module",
+          "kind": "module",
+          "path": "packages/contracts/certops/material-provider.cjs",
+          "status": "existing",
+          "sha256": "b54bbc35cf1ab5b5ed6db71bf4488eada9e0b91fab5ad045fdf94951ede7d30f"
         }
       ]
     }

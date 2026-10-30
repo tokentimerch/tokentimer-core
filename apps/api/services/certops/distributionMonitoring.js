@@ -172,6 +172,10 @@ async function queueIncident(
   await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
     `distribution-alert:${workspaceId}`,
   ]);
+  const key = `cert_distribution:${incident.id}:${incident.revision}:${transition}`;
+  // Reconciliation after a committed enqueue never consumes another quota slot.
+  if ((await client.query("SELECT 1 FROM alert_queue WHERE alert_key LIKE 'cert_distribution:%' AND alert_key=$1", [key])).rowCount)
+    return true;
   const settings =
     (
       await client.query(
@@ -205,7 +209,6 @@ async function queueIncident(
     ])
   ).rows[0]?.created_by;
   if (!owner) return false;
-  const key = `cert_distribution:${incident.id}:${incident.revision}:${transition}`;
   const data = {
     incidentId: incident.id,
     groupId: group.id,
@@ -230,6 +233,16 @@ async function queueIncident(
     [workspaceId, incident.id],
   );
   return true;
+}
+async function queuePendingResolutions(client, workspaceId, group, policy) {
+  const pending = (await client.query(`SELECT * FROM certops_distribution_incidents
+    WHERE workspace_id=$1 AND group_id=$2 AND resolution_delivery_pending
+    ORDER BY resolved_at,id LIMIT 20 FOR UPDATE`, [workspaceId, group.id])).rows;
+  for (const incident of pending) {
+    if (!await queueIncident(client, workspaceId, group, policy, incident, "resolved")) break;
+    await client.query(`UPDATE certops_distribution_incidents SET resolution_delivery_pending=false
+      WHERE workspace_id=$1 AND id=$2`, [workspaceId, incident.id]);
+  }
 }
 async function recordIncident(
   client,
@@ -345,6 +358,8 @@ async function monitorGroup({
   const policyRow = await loadPolicy(client, workspaceId, groupId);
   const policy = policyRow?.policy;
   if (!policy?.alerts.enabled) return { monitored: false };
+  // Give older recovery obligations priority over new incident notifications.
+  await queuePendingResolutions(client, workspaceId, group, policy);
   const rows = await material.consumerMatrix({ client, workspaceId, groupId });
   const version = (
     await client.query(
@@ -487,24 +502,14 @@ async function monitorGroup({
       )
     )
       continue;
-    const resolved = (
-      await client.query(
-        `UPDATE certops_distribution_incidents SET resolved_at=clock_timestamp(),updated_at=clock_timestamp(),revision=revision+1
+    await client.query(
+        `UPDATE certops_distribution_incidents SET resolved_at=clock_timestamp(),updated_at=clock_timestamp(),revision=revision+1,resolution_delivery_pending=true
       WHERE workspace_id=$1 AND id=$2 RETURNING *`,
         [workspaceId, incident.id],
-      )
-    ).rows[0];
+      );
     await client.query(
       `UPDATE operational_notifications SET resolved_at=NOW(),updated_at=NOW() WHERE workspace_id=$1 AND dedupe_key=$2 AND resolved_at IS NULL`,
       [workspaceId, incident.dedupe_key],
-    );
-    await queueIncident(
-      client,
-      workspaceId,
-      group,
-      policy,
-      resolved,
-      "resolved",
     );
     await writeAudit({
       client,
@@ -515,6 +520,7 @@ async function monitorGroup({
       metadata: { groupId, code: incident.code },
     });
   }
+  await queuePendingResolutions(client, workspaceId, group, policy);
   return { monitored: true, conditions: conditions.length };
 }
 async function runDistributionMonitoring({
@@ -561,6 +567,7 @@ module.exports = {
   verificationFailureCounts,
   consumerVerificationFailureCount,
   recordIncident,
+  queuePendingResolutions,
   monitorGroup,
   runDistributionMonitoring,
 };

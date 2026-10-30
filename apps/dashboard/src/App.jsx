@@ -171,6 +171,7 @@ const Audit = lazy(() => import('./pages/Audit'));
 const Workspaces = lazy(() => import('./pages/Workspaces.jsx'));
 const SystemSettings = lazy(() => import('./pages/SystemSettings.jsx'));
 import { useWorkspace } from './utils/WorkspaceContext.jsx';
+import { onboardingPath } from './utils/onboardingPath.js';
 import { ContactGroupWorkspaceProvider } from './utils/ContactGroupCreationContext.jsx';
 import {
   pickAccessibleWorkspace,
@@ -2945,6 +2946,8 @@ function DashboardWrapper({
   const { pageBg } = useDashboardTheme();
   const navigateToOnboarding = useNavigate();
   const { workspaceId: nudgeWorkspaceId } = useWorkspace();
+  const openOnboarding = () =>
+    navigateToOnboarding(onboardingPath({ workspaceId: nudgeWorkspaceId }));
 
   // Restore product tour after hard navigation back from /workspace-preferences
   useEffect(() => {
@@ -3064,7 +3067,7 @@ function DashboardWrapper({
                   _showProductTour ||
                   location.pathname !== '/dashboard'
                 }
-                onStart={() => navigateToOnboarding('/onboarding')}
+                onStart={openOnboarding}
               />
             }
             _session={session}
@@ -3165,7 +3168,7 @@ function DashboardWrapper({
                 try {
                   localStorage.removeItem('tt_welcome_pending');
                 } catch (_) {}
-                navigateToOnboarding('/onboarding');
+                openOnboarding();
               }
         }
         introductionVideoUrl={

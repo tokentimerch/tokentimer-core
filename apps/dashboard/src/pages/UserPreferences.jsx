@@ -36,6 +36,7 @@ import { workspaceAPI } from '../utils/apiClient';
 import { onboardingAPI } from '../utils/onboardingApi.js';
 import { showError } from '../utils/toast.js';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
+import { onboardingPath } from '../utils/onboardingPath.js';
 import { resetTourCompleted } from '../utils/tourStorage.js';
 import { SELF_HOSTED_DOCS_BASE } from '../utils/docsUrls';
 
@@ -254,11 +255,7 @@ export default function UserPreferences({
     try {
       if (workspaceId) await onboardingAPI.resetSession(workspaceId, 'mega');
       // The guide must reopen the workspace whose session was just reset.
-      navigate(
-        workspaceId
-          ? `/onboarding?workspace=${encodeURIComponent(workspaceId)}`
-          : '/onboarding'
-      );
+      navigate(onboardingPath({ workspaceId }));
     } catch (e) {
       showError(e?.message || 'Could not restart the setup guide.');
     } finally {
@@ -408,7 +405,9 @@ export default function UserPreferences({
                     >
                       <DashboardActionButton
                         leftIcon={<Icon as={FiPlay} aria-hidden />}
-                        onClick={() => navigate('/onboarding')}
+                        onClick={() =>
+                          navigate(onboardingPath({ workspaceId }))
+                        }
                         w={{ base: 'full', sm: 'auto' }}
                       >
                         Open setup guide

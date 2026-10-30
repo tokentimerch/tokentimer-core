@@ -3,11 +3,13 @@ const path=require("node:path"),crypto=require("node:crypto"),fs=require("node:f
 const {createVaultStore,writeProtectedJson,readProtectedFile,UUID,failure}=require("./index");
 const {withMaterialLock}=require("./lifecycle");
 const {canonicalizeJobPayload}=require("../../vendor/contracts/canonical-json.cjs");
+const {cleanupIdentity,cleanupStoreIntent}=require("../../vendor/contracts/material-cleanup.cjs");
 async function executeMaterialCleanup({job,stores,stateDir,checkLease,onBeforeMutation=()=>{},fixtureLoopbackHttp=false}){
   const intent=job.materialCleanup;
   if(!intent || ![job.jobId,intent.cleanupId,intent.groupId,intent.materialVersionId,intent.managementPeriodId,job.workspaceId].every(id=>UUID.test(id || "")) ||
-    intent.type!=="vault-kv2-soft-delete" || typeof checkLease!=="function")throw failure("material_cleanup_intent_invalid");
-  const store=createVaultStore(stores,{...intent,workspaceId:job.workspaceId},{fixtureLoopbackHttp});
+    typeof checkLease!=="function")throw failure("material_cleanup_intent_invalid");
+  const identity=cleanupIdentity(intent);
+  const store=createVaultStore(stores,cleanupStoreIntent(intent,job.workspaceId),{fixtureLoopbackHttp});
   if(store.scope.cleanup?.softDelete!==true)throw failure("material_cleanup_policy_denied");
   if(job.mode==="dry_run")return {status:"dry_run_complete"};
   const hash=crypto.createHash("sha256").update(canonicalizeJobPayload(intent)).digest("hex");
@@ -25,7 +27,7 @@ async function executeMaterialCleanup({job,stores,stateDir,checkLease,onBeforeMu
       }});
       await checkLease();
       const receipt={schemaVersion:1,workspaceId:job.workspaceId,cleanupId:intent.cleanupId,groupId:intent.groupId,
-        materialVersionId:intent.materialVersionId,providerVersion:intent.providerVersion,method:intent.type,softDeleted:true,observedAt:new Date().toISOString()};
+        materialVersionId:intent.materialVersionId,providerVersion:intent.providerVersion,method:identity.method,softDeleted:true,observedAt:new Date().toISOString()};
       writeProtectedJson(record,{intentHash:hash,cleanupId:intent.cleanupId,materialVersionId:intent.materialVersionId,uncertain:false,receipt});
       return {status:"succeeded",cleanupReceipt:receipt};
     }catch(error){return {status:mutated || fs.existsSync(record)?"orphaned_unknown_effect":"blocked",errorMessage:/^material_[a-z_]+$/.test(error.code || "")?error.code:"material_cleanup_failed"};}

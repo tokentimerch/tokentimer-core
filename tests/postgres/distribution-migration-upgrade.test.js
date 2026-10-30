@@ -13,7 +13,7 @@ const {
   runMigrations,
 } = require("../../apps/api/migrations/migrate");
 
-test("installations at migrations 72, 80 and 84 upgrade with preserved history and backfilled consumer streaks", async () => {
+test("installations at migrations 72, 80 and pre-summary cleanup upgrade with preserved history and backfilled consumer streaks", async () => {
   const pending = migrations.splice(
     migrations.findIndex((entry) => entry.version === 73),
   );
@@ -41,7 +41,7 @@ test("installations at migrations 72, 80 and 84 upgrade with preserved history a
     const currentMainLedger=(await pool.query("SELECT * FROM migrations ORDER BY version")).rows;
     assert.equal(currentMainLedger.at(-1).version,80);
     assert.equal(currentMainLedger.at(-1).name,"auto_sync_run_metrics");
-    migrations.push(...pending.filter(entry=>entry.version>80 && entry.version<=84));
+    migrations.push(...pending.filter(entry=>entry.version>80 && entry.version<=85));
     await runMigrations();
     const beforeVerificationLedger=(await pool.query("SELECT * FROM migrations ORDER BY version")).rows;
     const {fixture,proveConsumer}=require("../helpers/distribution-lifecycle-fixture.cjs");
@@ -65,12 +65,23 @@ test("installations at migrations 72, 80 and 84 upgrade with preserved history a
     await pool.query("UPDATE certops_consumer_deployments SET stage='pending' WHERE job_id=$1",[retrying]);
     const oldJobs=(await pool.query("SELECT * FROM certificate_jobs WHERE workspace_id=$1 ORDER BY id",[f.workspaceId])).rows;
     const oldDeployments=(await pool.query("SELECT * FROM certops_consumer_deployments WHERE workspace_id=$1 ORDER BY id",[f.workspaceId])).rows;
-    migrations.push(...pending.filter(entry=>entry.version>84));
+    const recovered=[];
+    for(const delivered of [false,true]){
+      const incident=(await pool.query("INSERT INTO certops_distribution_incidents(workspace_id,group_id,binding_id,code,dedupe_key,severity,resolved_at,revision) VALUES($1,$2,$3,'verification_failed',$4,'warning',clock_timestamp(),2) RETURNING *",[f.workspaceId,f.groupId,f.bindingId,`legacy-recovery-${delivered}`])).rows[0];
+      recovered.push({incident,delivered});
+      if(delivered)await pool.query("INSERT INTO alert_queue(user_id,certops_agent_id,alert_key,threshold_days,due_date,channels,status) VALUES($1,$2,$3,0,CURRENT_DATE,'[]'::jsonb,'sent')",[f.actor,f.consumer,`cert_distribution:${incident.id}:2:resolved`]);
+    }
+    migrations.push(...pending.filter(entry=>entry.version>85));
     await runMigrations();
-    assert.deepEqual((await pool.query("SELECT * FROM migrations WHERE version<=84 ORDER BY version")).rows,beforeVerificationLedger);
+    assert.deepEqual((await pool.query("SELECT * FROM migrations WHERE version<=85 ORDER BY version")).rows,beforeVerificationLedger);
     const backfilled=(await pool.query("SELECT verification_failure_count,verification_failure_revision FROM certops_consumer_current_state WHERE workspace_id=$1 AND binding_id=$2",[f.workspaceId,f.bindingId])).rows[0];
     assert.equal(Number(backfilled.verification_failure_count),1,"Fresh success resets the two earlier failures; the retrying failed cycle is retained from its log, not attempt_count=99");
     assert.equal(backfilled.verification_failure_revision,1);
+    for(const {incident,delivered} of recovered){
+      const after=(await pool.query("SELECT * FROM certops_distribution_incidents WHERE id=$1",[incident.id])).rows[0];
+      const {resolution_delivery_pending,...original}=after;
+      assert.deepEqual(original,incident);assert.equal(resolution_delivery_pending,!delivered,"Previously lost recovery is backfilled; existing delivery is not duplicated");
+    }
     assert.equal((await pool.query("SELECT count(*)::int AS count FROM certops_consumer_verification_outcomes WHERE workspace_id=$1",[f.workspaceId])).rows[0].count,5);
     assert.deepEqual((await pool.query("SELECT * FROM certificate_jobs WHERE workspace_id=$1 ORDER BY id",[f.workspaceId])).rows,oldJobs);
     assert.deepEqual((await pool.query("SELECT * FROM certops_consumer_deployments WHERE workspace_id=$1 ORDER BY id",[f.workspaceId])).rows,oldDeployments);
@@ -99,11 +110,17 @@ test("installations at migrations 72, 80 and 84 upgrade with preserved history a
       { version: 78, name: "certops_installed_file_distribution" },
       { version: 79, name: "auto_sync_provider_stats" },
       { version: 80, name: "auto_sync_run_metrics" },
-      { version: 81, name: "certops_distribution_lifecycle" },
-      { version: 82, name: "certops_distribution_incident_delivery" },
-      { version: 83, name: "certops_stable_consumer_discovery" },
-      { version: 84, name: "certops_material_cleanup" },
-      { version: 85, name: "certops_consumer_verification_failures" },
+      { version: 81, name: "auto_sync_metric_labels" },
+      { version: 82, name: "certops_distribution_lifecycle" },
+      { version: 83, name: "certops_distribution_incident_delivery" },
+      { version: 84, name: "certops_stable_consumer_discovery" },
+      { version: 85, name: "certops_material_cleanup" },
+      { version: 86, name: "certops_consumer_verification_failures" },
+      { version: 87, name: "certops_material_providers" },
+      { version: 88, name: "recipient_channel_verification" },
+      { version: 89, name: "weekly_digest_recipient_claim_token" },
+      { version: 90, name: "pagerduty_incident_lifecycle" },
+      { version: 91, name: "certops_distribution_resolution_delivery" },
     ]);
     const constraints =
       await pool.query(`SELECT conname, pg_get_constraintdef(oid) AS definition

@@ -24,6 +24,31 @@ async function request(f,version=f.old[2]){return cleanup.requestCleanup({...f,m
 async function jobFor(f,id){return (await pool.query("SELECT * FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",[f.workspaceId,id])).rows[0];}
 function resolve(f,job){return operations.transaction(client=>cleanup.resolveCleanupDefaults({client,workspaceId:f.workspaceId,operation:job.operation,subjectId:job.subject_id,assignedAgentId:job.assigned_agent_id,payload:job.payload,jobId:job.id}));}
 
+test("cleanup uses the PR 460 provider discriminator and preserves legacy signed retries behind an immutable fence",async t=>{
+  const f=await setup(t),requested=await request(f);let job=await jobFor(f,requested.jobId);
+  const {providerOf}=require("../../packages/contracts/certops/material-provider.cjs");
+  assert.equal(providerOf(job.payload.materialCleanup),"vault-kv2");assert.equal(job.payload.materialCleanup.operation,"soft-delete");
+  const legacy={...job.payload.materialCleanup,type:"vault-kv2-soft-delete"};delete legacy.operation;delete legacy.provider;
+  await pool.query("UPDATE certificate_jobs SET payload=jsonb_set(payload,'{materialCleanup}',$2::jsonb) WHERE id=$1",[job.id,JSON.stringify(legacy)]);
+  await approveJob({workspaceId:f.workspaceId,jobId:job.id,approverUserId:f.approver});job=await jobFor(f,job.id);
+  const signed=structuredClone(job.payload);await resolve(f,job);await resolve(f,job);
+  assert.deepEqual((await jobFor(f,job.id)).payload,signed);
+  await pool.query("UPDATE certificate_jobs SET status='failed',completed_at=clock_timestamp() WHERE id=$1",[job.id]);
+  const renewed=await cleanup.requestCleanup({...f,materialVersionId:f.old[2],expectedRevision:f.revision,actorUserId:f.actor,reauthorize:true});
+  assert.notEqual(renewed.jobId,job.id);assert.equal(renewed.status,"pending_approval");
+  await approveJob({workspaceId:f.workspaceId,jobId:renewed.jobId,approverUserId:f.approver});
+  await resolve(f,await jobFor(f,renewed.jobId));
+  assert.equal((await pool.query("SELECT state FROM certops_material_cleanups WHERE id=$1",[requested.cleanupId])).rows[0].state,"fenced");
+});
+test("provider pins stay immutable and unsupported cleanup readiness cannot create a version fence",async t=>{
+  const f=await setup(t);
+  await assert.rejects(()=>pool.query("UPDATE certops_distribution_groups SET material_store_provider='openbao-kv2' WHERE id=$1",[f.groupId]),/authority is immutable/);
+  const group=(await pool.query("SELECT * FROM certops_distribution_groups WHERE id=$1",[f.groupId])).rows[0];
+  for(const provider of ["openbao-kv2","azure-key-vault"])
+    assert.deepEqual(await cleanup.availability({client:pool,workspaceId:f.workspaceId,group:{...group,material_store_provider:provider}}),{available:false,code:"CERTOPS_MATERIAL_CLEANUP_PROVIDER_UNSUPPORTED"});
+  assert.equal((await pool.query("SELECT 1 FROM certops_material_cleanups WHERE workspace_id=$1",[f.workspaceId])).rowCount,0);
+});
+
 test("cleanup requires genuine independent approval, creates a permanent exact-version fence and preserves public history",async t=>{
   const f=await setup(t),requested=await request(f);assert.equal(requested.status,"pending_approval");
   const unapproved=await jobFor(f,requested.jobId);await assert.rejects(()=>resolve(f,unapproved),{code:"CERTOPS_MATERIAL_CLEANUP_APPROVAL_REQUIRED"});

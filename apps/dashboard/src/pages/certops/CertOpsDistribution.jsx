@@ -40,6 +40,7 @@ import {
   DashboardState,
 } from '../../components/DashboardPrimitives';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
+import { onboardingPath } from '../../utils/onboardingPath.js';
 import {
   useCertOpsCanManage,
   useCertOpsIsWorkspaceAdmin,
@@ -1411,7 +1412,7 @@ function Management({ workspaceId, groupId, canManage, canAdmin, paused }) {
                 {value.cleanup_job_id ? (
                   <Link
                     as={RouterLink}
-                    to={`/certops/jobs?job=${value.cleanup_job_id}`}
+                    to={jobsLink(workspaceId, value.cleanup_job_id)}
                     color='blue.500'
                   >
                     View cleanup job and approval
@@ -1524,7 +1525,11 @@ export default function CertOpsDistribution() {
           title='Distribution Management'
           description='Configure destinations, coordinate approved activation and monitor consumer evidence.'
         />
-        <Link as={RouterLink} to='/onboarding?area=certops' color='blue.500'>
+        <Link
+          as={RouterLink}
+          to={onboardingPath({ workspaceId, area: 'certops' })}
+          color='blue.500'
+        >
           Open first-distribution setup guide
         </Link>
         <Text fontSize='sm' mt={2}>

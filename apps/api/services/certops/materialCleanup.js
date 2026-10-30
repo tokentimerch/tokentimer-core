@@ -6,9 +6,11 @@ const lifecycle=require("./distributionLifecycle");
 const {assertDistributionPolicy}=require("./distributionPolicy");
 const {writeAudit}=require("../audit");
 const {hasFreshCapability}=require("./agentJobEligibility");
+const {cleanupIdentity}=require("../../../../packages/contracts/certops/material-cleanup.cjs");
 function fail(code,statusCode=409){const e=new Error(code);e.code=code;e.statusCode=statusCode;throw e;}
 const CAPABILITY="material-cleanup-vault-kv2-v1";
 async function availability({client,workspaceId,group,env=process.env}){
+  if((group.material_store_provider || "vault-kv2")!=="vault-kv2")return {available:false,code:"CERTOPS_MATERIAL_CLEANUP_PROVIDER_UNSUPPORTED"};
   if(env.CERTOPS_MATERIAL_CLEANUP_ENABLED!=="true")return {available:false,code:"CERTOPS_MATERIAL_CLEANUP_DISABLED"};
   const agent=(await client.query("SELECT status,last_seen_at,declared_capabilities,capabilities_updated_at,supported_operations FROM certops_agents WHERE workspace_id=$1 AND id=$2",[workspaceId,group.issuer_agent_id])).rows[0];
   const available=agent?.status==="active" && Date.now()-new Date(agent.last_seen_at).getTime()<900000 &&
@@ -37,7 +39,7 @@ async function requestCleanup({workspaceId,groupId,materialVersionId,actorUserId
     const candidate=preview.versions.find(v=>v.id===materialVersionId);
     if(!candidate || candidate.profile_revision!==group.profile_revision || !candidate.metadataEligible && existing?.state!=="fenced")fail("CERTOPS_MATERIAL_CLEANUP_PROTECTED");
     const id=existing?.id || crypto.randomUUID();
-    const intent={type:"vault-kv2-soft-delete",cleanupId:id,groupId:group.id,managementPeriodId:group.management_period_id,
+    const intent={operation:"soft-delete",provider:"vault-kv2",cleanupId:id,groupId:group.id,managementPeriodId:group.management_period_id,
       materialVersionId,materialStoreRef:group.material_store_ref,profileRevision:group.profile_revision,
       providerVersion:candidate.provider_version,policyRevision:policy.revision,scopeHash:scope.hash,
       retentionPolicy:policy.policy.retention,expiresAt:new Date(Date.now()+86400000).toISOString()};
@@ -59,10 +61,11 @@ async function requestCleanup({workspaceId,groupId,materialVersionId,actorUserId
 }
 async function resolveCleanupDefaults({client,workspaceId,operation,subjectId,payload,assignedAgentId,jobId,forClaim=false}){
   const intent=material.validateDistributionContract("materialCleanup",payload.materialCleanup);
+  const identity=cleanupIdentity(intent);
   const {group,policy,scope}=await context(client,workspaceId,intent.groupId,{forClaim});
   const request=(await client.query("SELECT * FROM certops_material_cleanups WHERE workspace_id=$1 AND id=$2 FOR UPDATE",[workspaceId,intent.cleanupId])).rows[0];
     const version=(await client.query("SELECT provider_version,profile_revision FROM certops_material_versions WHERE workspace_id=$1 AND group_id=$2 AND id=$3",[workspaceId,group.id,intent.materialVersionId])).rows[0];
-  if(operation!=="cleanup-from-store" || subjectId!==group.managed_certificate_id || assignedAgentId!==group.issuer_agent_id ||
+  if(identity.provider!==(group.material_store_provider || "vault-kv2") || operation!=="cleanup-from-store" || subjectId!==group.managed_certificate_id || assignedAgentId!==group.issuer_agent_id ||
     !request || request.group_id!==group.id || request.material_version_id!==intent.materialVersionId || request.state==="soft_deleted" ||
     (jobId?request.job_id!==jobId:request.job_id!==null) || request.scope_hash!==scope.hash || intent.scopeHash!==scope.hash ||
     intent.policyRevision!==policy.revision || request.policy_revision!==policy.revision || intent.managementPeriodId!==group.management_period_id ||

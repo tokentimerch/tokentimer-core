@@ -12,6 +12,12 @@ Defaults come from code fallbacks in `apps/*` and `packages/config/*`, then from
 
 ## Core runtime and bootstrap
 
+API error messages in the dashboard show a **Reference** when the response
+includes a valid server-generated `X-Request-Id`. Include it when contacting
+support or your operator; it matches `correlationId` in API logs. This is enabled
+by default. Network failures and older servers or proxies that omit the header
+have no reference. Queued worker jobs do not yet inherit the request ID.
+
 | Variable                  | Description                              | Default value                  | Scope                  |
 | ------------------------- | ---------------------------------------- | ------------------------------ | ---------------------- |
 | `TT_MODE`                 | Core variant mode                        | `oss`                          | App mode               |
@@ -695,22 +701,4 @@ Variables sent by TokenTimer for endpoint WhatsApp alerts:
 | `RATE_LIMIT_WINDOW` | Config package generic rate-limit window (ms)                               | `60000`       | Shared config consumers |
 | `RATE_LIMIT_MAX`    | Config package generic rate-limit max requests                              | `100`         | Shared config consumers |
 
-## Test, CI, and local orchestration
-
-| Variable                    | Description                               | Default value           | Scope              |
-| --------------------------- | ----------------------------------------- | ----------------------- | ------------------ |
-| `CI`                        | Standard CI marker                        | `unset`                 | CI pipelines       |
-| `CONTRACT_API_REQUIRED`     | Fail contract tests if API is unavailable | `unset`                 | Contract tests     |
-| `TEST_API_URL`              | Integration test API endpoint             | `http://localhost:4000` | Integration tests  |
-| `TEST_MODE`                 | Test behavior switch                      | `unset`                 | Tests              |
-| `NODE_V8_COVERAGE`          | V8 coverage output path                   | `unset`                 | Coverage           |
-| `TT_ALLOW_FORCE_INSTALL`    | Permit force install in test bootstrap    | `unset`                 | Tests              |
-| `TT_AUTO_INSTALL_TEST_DEPS` | Auto install missing test deps            | `unset`                 | Tests              |
-| `TT_FORCE_INSTALL`          | Force dependency install in tests         | `unset`                 | Tests              |
-| `TT_IMAGE_TAG`              | Docker image tag for tests                | `unset`                 | Test orchestration |
-| `TT_SKIP_COMPOSE_BUILD`     | Skip docker compose build step            | `unset`                 | Test orchestration |
-| `TT_TEST_API_PORT`          | API port used by test compose             | `4000`                  | Test compose       |
-| `TT_TEST_DB_PORT`           | DB port used by test compose              | `5432`                  | Test compose       |
-| `TT_TEST_MAILHOG_SMTP_PORT` | MailHog SMTP port in tests                | `1025`                  | Test compose       |
-| `TT_TEST_MAILHOG_UI_PORT`   | MailHog UI port in tests                  | `8025`                  | Test compose       |
-| `TT_TEST_SUITE`             | Select subset of test suites              | `unset`                 | Test selection     |
+For test and CI variables, see [Local development](../DEVELOPMENT.md#test-ci-and-local-orchestration).

@@ -33,6 +33,19 @@ Add this fragment under the existing `materialStores.<alias>.groups.<group UUID>
 
 The protected token file stays on the customer agent. It is separate from issuance/consumer credentials. The existing agent execution policy and registered target selectors must permit the exact group UUID, which is the cleanup job's endpoint reference. No public API accepts a Vault endpoint, namespace, path, token file, token value or command for cleanup.
 
+New signed intents separate `operation: "soft-delete"` from `provider: "vault-kv2"`.
+Legacy `type: "vault-kv2-soft-delete"` authorizations retain their original signed
+payload and journal hash; only an adapter copy is normalized for the shared provider
+contract. Other providers are rejected before cleanup fencing. A fenced failure
+can retry its original intent or obtain a fresh independent review without
+releasing the material reuse fence. See [integration compatibility](distribution-compatibility.md).
+
+Vault metadata proves effective deletion only when `deletion_time` is valid and
+at or before the current time. Future scheduled deletion does not bypass retention
+or count as completed deletion. Both pre-delete shortcuts and post-delete readback
+apply this rule. Missing/invalid/future post-delete evidence remains uncertain and
+cannot produce a `softDeleted: true` receipt.
+
 A narrowly scoped Vault policy can grant only:
 
 ```hcl

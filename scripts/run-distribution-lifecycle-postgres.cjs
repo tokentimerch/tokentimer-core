@@ -18,7 +18,7 @@ async function main(){let created=false;try{
   process.stdout.write(run(process.execPath,["--test","--test-force-exit","tests/postgres/distribution-lifecycle.test.js","tests/postgres/distribution-cleanup.test.js"],env,"tests.log"));
   const upgradeDatabase=`pr329_distribution_upgrade_${nonce}_test`;run("docker",["exec",container,"createdb","-U","postgres",upgradeDatabase]);
   process.stdout.write(run(process.execPath,["--test","--test-force-exit","tests/postgres/distribution-migration-upgrade.test.js"],{...env,DB_NAME:upgradeDatabase},"upgrade-tests.log"));
-  process.stdout.write(run(process.execPath,["node_modules/mocha/bin/mocha.js","--no-config","tests/integration/certops-distribution-upgrade.test.js","--timeout","120000","--exit"],env,"migration-histories.log"));
+  process.stdout.write(run(process.execPath,["node_modules/mocha/bin/mocha.js","--no-config","tests/integration/certops-distribution-upgrade.test.js","tests/integration/certops-distribution-compatibility.test.js","--timeout","120000","--exit"],env,"migration-histories.log"));
   console.log(`Real PostgreSQL lifecycle integration passed. Logs: ${output}`);
 }finally{if(created)run("docker",["rm","-f",container]);}}
 main().catch(error=>{console.error(error.message);process.exitCode=1;});

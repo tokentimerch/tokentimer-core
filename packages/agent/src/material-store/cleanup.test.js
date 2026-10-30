@@ -8,10 +8,10 @@ async function fixture(t){
   const tokenFile=path.join(dir,"cleanup-token");fs.writeFileSync(tokenFile,"isolated-cleanup-token-only",{mode:0o600});applyRestrictivePermissions(tokenFile);
   const workspaceId=crypto.randomUUID(),groupId=crypto.randomUUID(),materialVersionId=crypto.randomUUID();
   const metadata={versions:{1:{created_time:new Date(Date.now()-100*86400000).toISOString(),deletion_time:"",destroyed:false},2:{created_time:new Date().toISOString(),deletion_time:"",destroyed:false}}};
-  const requests=[],state={loseResponse:false,deletes:0};
+  const requests=[],state={loseResponse:false,deletes:0,afterDelete:undefined};
   const server=http.createServer((req,res)=>{const url=req.url;requests.push({method:req.method,url});
     if(req.method==="GET" && url===`/v1/secret/metadata/${workspaceId}/${groupId}/bundles/${materialVersionId}`){res.setHeader("content-type","application/json");res.end(JSON.stringify({data:metadata}));return;}
-    if(req.method==="POST" && url===`/v1/secret/delete/${workspaceId}/${groupId}/bundles/${materialVersionId}`){let body="";req.on("data",c=>body+=c);req.on("end",()=>{assert.deepEqual(JSON.parse(body),{versions:[1]});state.deletes++;metadata.versions[1].deletion_time=new Date().toISOString();if(state.loseResponse){state.loseResponse=false;res.destroy();}else{res.writeHead(204);res.end();}});return;}
+    if(req.method==="POST" && url===`/v1/secret/delete/${workspaceId}/${groupId}/bundles/${materialVersionId}`){let body="";req.on("data",c=>body+=c);req.on("end",()=>{assert.deepEqual(JSON.parse(body),{versions:[1]});state.deletes++;metadata.versions[1].deletion_time=state.afterDelete===undefined?new Date().toISOString():state.afterDelete;if(state.loseResponse){state.loseResponse=false;res.destroy();}else{res.writeHead(204);res.end();}});return;}
     assert.fail("Cleanup must never read data, destroy versions or delete metadata");});
   // Windows protected journal writes can exceed Node's 5-second idle limit.
   // Deliberate lost-response faults remain explicit in the fixture.
@@ -55,4 +55,41 @@ test("a changed cleanup intent and cross-workspace store scope cannot reuse an e
   const f=await fixture(t);assert.equal((await f.run()).status,"succeeded");f.intent.providerVersion=2;
   await assert.rejects(f.run,{code:"material_cleanup_intent_changed"});assert.equal(f.metadata.versions[2].deletion_time,"");
   f.options.job.workspaceId=crypto.randomUUID();await assert.rejects(f.run,{code:"material_scope_denied"});
+});
+
+test("only past/present effective deletion can shortcut cleanup, while a future scheduled deletion must still be deleted",async t=>{
+  const f=await fixture(t);
+  for(const timestamp of [new Date(Date.now()-60000).toISOString(),new Date().toISOString()]){
+    f.metadata.versions[1].deletion_time=timestamp;
+    const result=await f.run();assert.equal(result.status,"succeeded");assert.equal(result.cleanupReceipt.softDeleted,true);assert.equal(f.state.deletes,0);
+  }
+  f.metadata.versions[1].deletion_time=new Date(Date.now()+86400000).toISOString();
+  const result=await f.run();assert.equal(result.status,"succeeded");assert.equal(f.state.deletes,1,"Scheduled deletion is still readable and needs an explicit delete");
+});
+test("future, missing and invalid post-delete metadata never produce a successful cleanup receipt",async t=>{
+  const f=await fixture(t);
+  for(const timestamp of [new Date(Date.now()+86400000).toISOString(),"",null,"not-a-date"]){
+    f.metadata.versions[1].deletion_time="";f.state.afterDelete=timestamp;
+    const result=await f.run();assert.equal(result.status,"orphaned_unknown_effect");assert.equal(result.cleanupReceipt,undefined);
+  }
+  f.state.afterDelete=new Date(Date.now()-1000).toISOString();f.metadata.versions[1].deletion_time="";
+  assert.equal((await f.run()).status,"succeeded","Original-intent retry remains recoverable after ineffective deletion");
+});
+test("missing or invalid pre-delete timestamps fail closed before any mutation",async t=>{
+  const f=await fixture(t);
+  for(const timestamp of [undefined,null,"not-a-date"]){
+    f.metadata.versions[1].deletion_time=timestamp;
+    assert.equal((await f.run()).status,"blocked");assert.equal(f.state.deletes,0);
+  }
+});
+test("new provider/operation identity and previously signed legacy intents both retain the exact cleanup retry path",async t=>{
+  const f=await fixture(t);
+  const legacy=JSON.stringify(f.intent);
+  assert.equal((await f.run()).status,"succeeded");assert.equal(JSON.stringify(f.intent),legacy);
+  const modern={...f.intent,operation:"soft-delete",provider:"vault-kv2"};delete modern.type;
+  f.options.job={...f.options.job,jobId:crypto.randomUUID(),materialCleanup:modern};
+  assert.equal((await f.run()).status,"succeeded");assert.equal(f.state.deletes,1);
+  f.options.stores.customer.provider="openbao-kv2";
+  f.options.job.jobId=crypto.randomUUID();
+  await assert.rejects(f.run,{code:"material_provider_mismatch"},"Another provider cannot use a Vault-only cleanup authorization");
 });

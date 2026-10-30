@@ -116,6 +116,9 @@ function resolveStore(stores, intent, { fixtureLoopbackHttp = false } = {}) {
   if (!intent || !UUID.test(intent.workspaceId) || !UUID.test(intent.groupId) ||
     !UUID.test(intent.materialVersionId) || !ALIAS.test(intent.materialStoreRef)) throw failure("material_intent_invalid");
   const config = Object.hasOwn(stores || {}, intent.materialStoreRef) ? stores[intent.materialStoreRef] : null;
+  const provider=config?.provider || "vault-kv2";
+  if(provider!=="vault-kv2" || require("../../vendor/contracts/material-provider.cjs").providerOf(intent)!==provider)
+    throw failure("material_provider_mismatch");
   const scope = config && Object.hasOwn(config.groups || {}, intent.groupId) ? config.groups[intent.groupId] : null;
   if (!scope || scope.workspaceId !== intent.workspaceId || !safePath(scope.prefix) ||
     !["rsa", "ec"].includes(scope.keyAlgorithm) || !sameSans(scope.sans, scope.sans)) throw failure("material_scope_denied");
@@ -213,7 +216,8 @@ function createVaultStore(stores, intent, options = {}) {
 
   async function softDeleteVersion(providerVersion,{checkLease,beforeDelete}){
     const policy=scope.cleanup;
-    if(intent.type!=="vault-kv2-soft-delete" || policy?.softDelete!==true || policy.profileRevision!==intent.profileRevision ||
+    require("../../vendor/contracts/material-cleanup.cjs").cleanupIdentity(intent);
+    if((config.provider || "vault-kv2")!=="vault-kv2" || policy?.softDelete!==true || policy.profileRevision!==intent.profileRevision ||
       !Number.isInteger(policy.minimumSeconds) || policy.minimumSeconds<0 || policy.minimumSeconds>315360000 || !Number.isSafeInteger(providerVersion) || providerVersion<1 ||
       !Number.isInteger(intent.retentionPolicy?.minimumSeconds) || intent.retentionPolicy.minimumSeconds<0 ||
       intent.retentionPolicy.cleanupEnabled!==true || intent.retentionPolicy.reportOnly!==false || intent.retentionPolicy.requiresApproval!==true ||
@@ -224,7 +228,14 @@ function createVaultStore(stores, intent, options = {}) {
     // A missing object/version is not evidence that this cleanup deleted it.
     if(metadata.missing || !version || typeof version.destroyed!=="boolean" || typeof version.deletion_time!=="string")throw failure("material_cleanup_metadata_unavailable");
     if(version.destroyed===true)throw failure("material_cleanup_version_destroyed");
-    if(version.deletion_time){if(!Number.isFinite(Date.parse(version.deletion_time)))throw failure("material_cleanup_metadata_unavailable");return {alreadyDeleted:true};}
+    if(version.deletion_time){
+      const deletedAt=Date.parse(version.deletion_time);
+      if(!Number.isFinite(deletedAt))throw failure("material_cleanup_metadata_unavailable");
+      if(deletedAt<=Date.now())return {alreadyDeleted:true};
+      // Vault delete_version_after can schedule deletion while data remains
+      // readable. Only an explicit delete followed by effective metadata proves
+      // completion; a future timestamp cannot shortcut retention or mutation.
+    }
     const created=Date.parse(version.created_time);
     if(!Number.isFinite(created) || Date.now()-created<Math.max(policy.minimumSeconds,intent.retentionPolicy.minimumSeconds)*1000)throw failure("material_cleanup_retention_protected");
     await checkLease();if(Date.parse(intent.expiresAt)<=Date.now())throw failure("material_cleanup_authorization_expired");
@@ -233,7 +244,9 @@ function createVaultStore(stores, intent, options = {}) {
     // destroy versions, undelete, purge, or follow provider redirects.
     await request("POST","",{versions:[providerVersion]},"delete");
     const observed=await request("GET","",null,"metadata");
-    if(!observed.data?.versions?.[String(providerVersion)]?.deletion_time || observed.data.versions[String(providerVersion)].destroyed)throw failure("material_cleanup_uncertain");
+    const deleted=observed.data?.versions?.[String(providerVersion)];
+    const deletedAt=typeof deleted?.deletion_time==="string" && deleted.deletion_time!=="" ? Date.parse(deleted.deletion_time) : NaN;
+    if(deleted?.destroyed!==false || !Number.isFinite(deletedAt) || deletedAt>Date.now())throw failure("material_cleanup_uncertain");
     await checkLease();return {alreadyDeleted:false};
   }
   return Object.freeze({ publish, fetch, softDeleteVersion, scope, objectRef });

@@ -464,7 +464,6 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "type",
         "cleanupId",
         "groupId",
         "managementPeriodId",
@@ -477,9 +476,38 @@
         "retentionPolicy",
         "expiresAt"
       ],
+      "oneOf": [
+        {
+          "required": [
+            "type"
+          ],
+          "not": {
+            "required": [
+              "operation"
+            ]
+          }
+        },
+        {
+          "required": [
+            "operation",
+            "provider"
+          ],
+          "not": {
+            "required": [
+              "type"
+            ]
+          }
+        }
+      ],
       "properties": {
         "type": {
           "const": "vault-kv2-soft-delete"
+        },
+        "operation": {
+          "const": "soft-delete"
+        },
+        "provider": {
+          "const": "vault-kv2"
         },
         "cleanupId": {
           "$ref": "#/definitions/uuid"

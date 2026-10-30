@@ -192,7 +192,7 @@ class CollectorTests(unittest.TestCase):
         for invalid in (0, -1, 513, 1024, True, 201.0, '201', None):
             with self.assertRaises(ValueError):
                 collector.collection_limits(invalid)
-        matrix = json.loads((collector.ROOT / 'docs/certops/qualification-suites.json').read_text())
+        matrix = json.loads((collector.ROOT / '.github/maintainers/certops/qualification-suites.json').read_text())
         self.assertGreaterEqual(collector.collection_limits(len(matrix['slots']))['reports'], len(matrix['slots']))
 
     def test_growth_preserves_run_identity_and_independent_download_bounds(self):
@@ -223,7 +223,7 @@ class CollectorTests(unittest.TestCase):
 
     def test_event_names_project_committed_cases_and_keep_unrecognized_failures(self):
         scope = 'distribution-postgres-postgres'
-        manifest = next(slot for slot in json.loads((collector.ROOT / 'docs/certops/qualification-suites.json').read_text())['slots'] if slot['suite'] == scope)
+        manifest = next(slot for slot in json.loads((collector.ROOT / '.github/maintainers/certops/qualification-suites.json').read_text())['slots'] if slot['suite'] == scope)
         events = [{'scope': scope, 'name': manifest['requiredTests'][0], 'type': 'test:pass'}, {'scope': scope, 'name': 'password=sentinel', 'type': 'test:fail'}, {'scope': scope, 'name': {'secret': 'sentinel'}, 'type': 'test:pass'}]
         result = collector.sanitized_report(events, set(), {scope})
         self.assertEqual(result[0]['name'], events[0]['name'])

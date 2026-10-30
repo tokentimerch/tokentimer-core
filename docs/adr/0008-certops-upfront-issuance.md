@@ -374,7 +374,7 @@ convention rather than breaking one. The defect was in this record's prose.
 
 The field is a **material-locality pointer**: it answers which execution plane
 holds the key, not which file to open. The custody section above now says so, and
-`docs/certops/CONTEXT.md` states it once for every writer, since the convention is
+`.github/maintainers/certops/CONTEXT.md` states it once for every writer, since the convention is
 shared with discovery and cert-manager rather than being an issuance detail. No
 writer changed. The alternative, recording a real key path, was rejected because
 the control plane never sees the key: any key path it stored would be an
