@@ -138,8 +138,8 @@ function approvalFromRow(row) {
 
 /**
  * A job created through an operator connection may only be approved while the
- * connection is still good and the approval window is open (ADR-0015 sections
- * 8 and 9). The connection row is locked, so a revocation and an approval
+ * connection is still good and the approval window is open (ADR-0015).
+ * The connection row is locked, so a revocation and an approval
  * cannot both succeed: whichever commits first decides, and the other sees it.
  * Jobs with no connection are untouched.
  */

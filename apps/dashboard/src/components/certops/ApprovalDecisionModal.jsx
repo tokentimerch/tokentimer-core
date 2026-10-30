@@ -1,8 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import {
   Box,
   Button,
   Checkbox,
+  Alert,
+  AlertIcon,
+  FormControl,
+  FormLabel,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -49,14 +53,26 @@ export default function ApprovalDecisionModal({
     outlineButtonProps,
     dangerButtonProps,
     primaryButtonProps,
+    fieldProps,
+    labelProps,
   } = useDashboardModalProps();
 
+  const reasonId = useId();
+  const cancelRef = useRef(null);
+  const [reload, setReload] = useState(0);
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [reviewState, setReviewState] = useState(null);
   const [acknowledged, setAcknowledged] = useState(false);
   const [now, setNow] = useState(Date.now());
   const assistant = Boolean(job?.requestedByConnectionId);
+
+  const reviewKey = JSON.stringify([
+    workspaceId,
+    job?.id,
+    job?.requestedByConnectionId,
+    decision,
+  ]);
 
   useEffect(() => {
     setReviewState(null);
@@ -67,14 +83,17 @@ export default function ApprovalDecisionModal({
       .then(result => {
         if (!controller.signal.aborted)
           setReviewState(
-            result.review ? { review: result.review } : { error: true }
+            result.review
+              ? { key: reviewKey, review: result.review }
+              : { key: reviewKey, error: true }
           );
       })
       .catch(() => {
-        if (!controller.signal.aborted) setReviewState({ error: true });
+        if (!controller.signal.aborted)
+          setReviewState({ key: reviewKey, error: true });
       });
     return () => controller.abort();
-  }, [isOpen, assistant, workspaceId, job?.id]);
+  }, [isOpen, assistant, workspaceId, job?.id, reviewKey, reload]);
 
   useEffect(() => {
     if (!isOpen || !assistant) return;
@@ -88,15 +107,19 @@ export default function ApprovalDecisionModal({
       setReason('');
       setSubmitting(false);
     }
-  }, [isOpen]);
+  }, [isOpen, reviewKey]);
 
   const approving = decision === 'approve';
-  const review = reviewState?.review;
+  const currentState = reviewState?.key === reviewKey ? reviewState : null;
+  const review = currentState?.review;
   const reviewValid =
-    review?.canApprove !== false &&
+    review?.canApprove === true &&
+    /^[a-f0-9]{64}$/.test(review?.reviewHash || '') &&
+    review?.effect &&
+    review?.connection?.id === job?.requestedByConnectionId &&
     review?.current === true &&
     new Date(review.approvalExpiresAt).getTime() > now &&
-    new Date(review.connection.expiresAt).getTime() > now;
+    new Date(review.connection?.expiresAt).getTime() > now;
   const approvalBlocked = assistant && (!reviewValid || !acknowledged);
 
   const handleClose = () => {
@@ -113,7 +136,7 @@ export default function ApprovalDecisionModal({
         approving && assistant ? review.reviewHash : undefined
       );
       if (assistant && accepted === false) {
-        setReviewState({ error: true });
+        setReviewState({ key: reviewKey, error: true });
         setAcknowledged(false);
       }
     } finally {
@@ -122,11 +145,17 @@ export default function ApprovalDecisionModal({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} isCentered>
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      isCentered
+      scrollBehavior='inside'
+      initialFocusRef={cancelRef}
+    >
       <ModalOverlay {...overlayProps} />
       <DashboardModalFrame
         type={approving ? 'standard' : 'danger'}
-        maxW={{ base: 'calc(100vw - 24px)', md: assistant ? '720px' : '520px' }}
+        maxW={{ base: 'calc(100vw - 24px)', md: assistant ? '880px' : '520px' }}
         maxH='calc(100vh - 48px)'
       >
         <ModalHeader {...headerProps}>
@@ -142,26 +171,59 @@ export default function ApprovalDecisionModal({
         <ModalCloseButton {...closeButtonProps} isDisabled={submitting} />
         <ModalBody {...bodyProps} overflowY='auto'>
           <VStack align='stretch' spacing={3}>
-            {assistant && !reviewState ? (
+            {assistant && !currentState ? (
               <Text role='status'>Loading assistant approval review…</Text>
             ) : null}
-            {assistant && reviewState?.error ? (
-              <Text role='alert'>
-                Cannot load the assistant review. Close and reopen to retry.
-                Approval is unavailable; rejection remains available.
-              </Text>
+            {assistant && currentState?.error ? (
+              <Alert status='warning' borderRadius='md' alignItems='flex-start'>
+                <AlertIcon />
+                <Box flex='1'>
+                  <Text fontSize='sm'>
+                    The assistant review could not load. Approval is
+                    unavailable; you can still reject this job.
+                  </Text>
+                  <Button
+                    {...outlineButtonProps}
+                    mt={2}
+                    size='sm'
+                    onClick={() => setReload(value => value + 1)}
+                  >
+                    Retry review
+                  </Button>
+                </Box>
+              </Alert>
             ) : null}
-            {review ? <AssistantApprovalReview review={review} /> : null}
-            {review?.canApprove === false ? (
+            {review && !approving ? (
+              <Box as='details'>
+                <Box
+                  as='summary'
+                  cursor='pointer'
+                  fontSize='sm'
+                  fontWeight='semibold'
+                >
+                  View renewal request
+                </Box>
+                <Box mt={3}>
+                  <AssistantApprovalReview review={review} />
+                </Box>
+              </Box>
+            ) : null}
+            {review && approving ? (
+              <AssistantApprovalReview review={review} />
+            ) : null}
+            {approving && review?.canApprove === false ? (
               <Text role='alert'>
                 You requested this job. A different workspace manager or admin
                 must approve it.
               </Text>
             ) : null}
-            {review && !reviewValid && review.canApprove !== false ? (
+            {approving &&
+            review &&
+            !reviewValid &&
+            review.canApprove !== false ? (
               <Text role='alert'>
-                This request changed, ended or expired. Do not approve it;
-                request a fresh preview.
+                This request cannot be approved. It changed, ended or expired,
+                or its review is incomplete. Request a fresh preview.
               </Text>
             ) : null}
             {assistant && approving && reviewValid ? (
@@ -169,8 +231,8 @@ export default function ApprovalDecisionModal({
                 isChecked={acknowledged}
                 onChange={event => setAcknowledged(event.target.checked)}
               >
-                I reviewed the requester, connection, destinations and complete
-                renewal effect.
+                I reviewed this request and its renewal settings and
+                destinations.
               </Checkbox>
             ) : null}
             {job ? (
@@ -180,15 +242,18 @@ export default function ApprovalDecisionModal({
                   {truncateId(job.id)}
                 </Text>
                 {job.subjectId
-                  ? ` (${subjectTypeLabel(job.subjectType) || 'Subject'}: ${job.subjectId})`
+                  ? ` (${subjectTypeLabel(job.subjectType) || 'Subject'}: ${truncateId(job.subjectId)})`
                   : ''}
               </Text>
             ) : null}
-            <Box>
-              <Text fontSize='sm' mb={1}>
+            <FormControl>
+              <FormLabel {...labelProps} htmlFor={reasonId}>
                 Reason (optional)
-              </Text>
+              </FormLabel>
               <Textarea
+                {...fieldProps}
+                id={reasonId}
+                maxLength={1024}
                 size='sm'
                 rows={2}
                 value={reason}
@@ -199,12 +264,13 @@ export default function ApprovalDecisionModal({
                     : 'e.g. wrong certificate target'
                 }
               />
-            </Box>
+            </FormControl>
           </VStack>
         </ModalBody>
         <ModalFooter {...footerProps}>
           <Button
             {...outlineButtonProps}
+            ref={cancelRef}
             onClick={handleClose}
             isDisabled={submitting}
           >
@@ -212,7 +278,6 @@ export default function ApprovalDecisionModal({
           </Button>
           <Button
             {...(approving ? primaryButtonProps : dangerButtonProps)}
-            ml={3}
             onClick={handleConfirm}
             isLoading={submitting}
             isDisabled={approving && approvalBlocked}

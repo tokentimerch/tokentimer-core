@@ -1,6 +1,6 @@
 "use strict";
 
-// Read projections for the operator namespace (ADR-0015 section 4).
+// Read projections for the operator namespace (ADR-0015).
 //
 // Every function builds its result from a fixed list of named fields. Nothing
 // is produced by deleting fields from a richer record, so a field added to an

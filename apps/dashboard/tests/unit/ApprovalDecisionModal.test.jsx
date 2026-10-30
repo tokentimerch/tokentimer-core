@@ -16,6 +16,7 @@ vi.mock('../../src/components/certops/certopsJobsApi.js', () => ({
 }));
 const review = () => ({
   current: true,
+  canApprove: true,
   reviewHash: 'a'.repeat(64),
   requester: { id: '2', name: '<script>Requester</script>' },
   connection: {
@@ -37,7 +38,7 @@ const review = () => ({
 });
 function show(props = {}) {
   const onDecide = vi.fn();
-  render(
+  const view = render(
     <ChakraProvider>
       <DashboardThemeProvider>
         <ApprovalDecisionModal
@@ -56,6 +57,7 @@ function show(props = {}) {
       </DashboardThemeProvider>
     </ChakraProvider>
   );
+  onDecide.view = view;
   return onDecide;
 }
 beforeEach(() => {
@@ -66,18 +68,92 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 describe('independent assistant request review', () => {
+  it('retries a failed review without reopening the dialog', async () => {
+    getApprovalReview.mockRejectedValueOnce(new Error('offline'));
+    show();
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Retry review' })
+    );
+    expect(await screen.findByRole('checkbox')).not.toBeChecked();
+    expect(
+      screen.getByRole('button', { name: 'Approve', exact: true })
+    ).toBeDisabled();
+  });
+  it('clears the previous job review and reason when switching jobs in place', async () => {
+    const decide = show();
+    fireEvent.click(await screen.findByRole('checkbox'));
+    fireEvent.change(screen.getByLabelText('Reason (optional)'), {
+      target: { value: 'First job only' },
+    });
+    getApprovalReview.mockReturnValue(new Promise(() => {}));
+    decide.view.rerender(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <ApprovalDecisionModal
+            isOpen
+            onClose={vi.fn()}
+            workspaceId='ws'
+            job={{
+              id: 'job-2',
+              operation: 'renew',
+              requestedByConnectionId: 'connection-123',
+            }}
+            decision='approve'
+            onDecide={decide}
+          />
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('Loading');
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Reason (optional)')).toHaveValue('');
+    expect(
+      screen.getByRole('button', { name: 'Approve', exact: true })
+    ).toBeDisabled();
+    expect(decide).not.toHaveBeenCalled();
+  });
+  it('keeps distinct legacy destinations and all settings reviewable', async () => {
+    const value = review();
+    value.effect.renewalProfile.target = { certPath: '/srv/other/cert.pem' };
+    value.effect.renewalProfile.keyRotationPolicy = { rotateOnRenew: false };
+    value.effect.executionRouting = { assignedAgentId: 'agent-one' };
+    value.effect.futureField = 'future-value';
+    getApprovalReview.mockResolvedValue({ review: value });
+    show();
+    expect(await screen.findByText('/srv/tls/cert.pem')).toBeVisible();
+    expect(screen.getByText('/srv/other/cert.pem')).toBeVisible();
+    expect(screen.getByText('agent-one')).toBeVisible();
+    const details = screen
+      .getByText('Renewal settings and request details')
+      .closest('details');
+    details.open = true;
+    expect(screen.getByText('No')).toBeVisible();
+    expect(screen.getByText('future-value')).toBeVisible();
+  });
+  it('shows an identical legacy destination once', async () => {
+    const value = review();
+    value.effect.renewalProfile.target =
+      value.effect.renewalProfile.deploymentTargets[0];
+    getApprovalReview.mockResolvedValue({ review: value });
+    show();
+    await screen.findByText('/srv/tls/cert.pem');
+    expect(screen.getAllByText('/srv/tls/cert.pem')).toHaveLength(1);
+  });
+
   it('requires the complete review and acknowledgement, then submits its binding', async () => {
     const decide = show();
     expect(
       screen.getByRole('button', { name: 'Approve', exact: true })
     ).toBeDisabled();
-    await screen.findByText('Assistant-originated renewal request');
-    expect(
-      screen.getByText(/Requester: <script>Requester<\/script>/)
-    ).toBeInTheDocument();
+    await screen.findByText('Requested by');
+    expect(screen.getByText('<script>Requester</script>')).toBeInTheDocument();
     expect(document.querySelector('script')).toBeNull();
     expect(screen.getByText('/srv/tls/cert.pem')).toBeInTheDocument();
-    expect(screen.getByText('https://ca.example.test')).toBeInTheDocument();
+    expect(
+      screen
+        .getAllByText('https://ca.example.test')
+        .some(node => !node.closest('details'))
+    ).toBe(true);
     // The preview expired after submission, but the approval window is open.
     fireEvent.click(screen.getByRole('checkbox'));
     fireEvent.click(
@@ -87,29 +163,36 @@ describe('independent assistant request review', () => {
       expect(decide).toHaveBeenCalledWith(undefined, 'a'.repeat(64))
     );
   });
-  it.each(['missing', 'failed', 'expired', 'changed', 'connection expired'])(
-    'fails closed on %s review',
-    async kind => {
-      const value = review();
-      if (kind === 'expired')
-        value.approvalExpiresAt = new Date(Date.now() - 1).toISOString();
-      if (kind === 'changed') value.current = false;
-      if (kind === 'connection expired')
-        value.connection.expiresAt = new Date(Date.now() - 1).toISOString();
-      if (kind === 'failed')
-        getApprovalReview.mockRejectedValue(new Error('offline'));
-      else
-        getApprovalReview.mockResolvedValue({
-          review: kind === 'missing' ? null : value,
-        });
-      const decide = show();
-      await screen.findByRole('alert');
-      expect(
-        screen.getByRole('button', { name: 'Approve', exact: true })
-      ).toBeDisabled();
-      expect(decide).not.toHaveBeenCalled();
-    }
-  );
+  it.each([
+    'missing',
+    'failed',
+    'expired',
+    'changed',
+    'connection expired',
+    'malformed',
+    'missing permission',
+  ])('fails closed on %s review', async kind => {
+    const value = review();
+    if (kind === 'expired')
+      value.approvalExpiresAt = new Date(Date.now() - 1).toISOString();
+    if (kind === 'changed') value.current = false;
+    if (kind === 'malformed') delete value.connection;
+    if (kind === 'missing permission') delete value.canApprove;
+    if (kind === 'connection expired')
+      value.connection.expiresAt = new Date(Date.now() - 1).toISOString();
+    if (kind === 'failed')
+      getApprovalReview.mockRejectedValue(new Error('offline'));
+    else
+      getApprovalReview.mockResolvedValue({
+        review: kind === 'missing' ? null : value,
+      });
+    const decide = show();
+    await screen.findByRole('alert');
+    expect(
+      screen.getByRole('button', { name: 'Approve', exact: true })
+    ).toBeDisabled();
+    expect(decide).not.toHaveBeenCalled();
+  });
   it('still permits rejection when review cannot load', async () => {
     getApprovalReview.mockRejectedValue(new Error('offline'));
     const decide = show({ decision: 'reject' });

@@ -1,6 +1,6 @@
 "use strict";
 
-// Operator enrollment grants (ADR-0015 section 12).
+// Operator enrollment grants (ADR-0015).
 //
 // A signed-in person creates a short-lived, single-use grant that fixes the
 // user, workspace, scopes, role ceiling, connection name and connection

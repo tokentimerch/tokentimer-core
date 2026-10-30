@@ -1,6 +1,6 @@
 "use strict";
 
-// Housekeeping for operator requests (ADR-0015 sections 8, 9 and 16).
+// Housekeeping for operator requests (ADR-0015).
 //
 // A request is only as good as the authority behind it. These functions end
 // requests that can no longer be approved or run, so a request nobody acted on

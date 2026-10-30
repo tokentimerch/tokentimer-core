@@ -1,6 +1,6 @@
 "use strict";
 
-// Renew requests from an operator connection (ADR-0015 sections 6, 8, 10).
+// Renew requests from an operator connection (ADR-0015).
 //
 // Every function here runs on a caller-owned transaction client. The order of
 // checks is deliberate and is the point of the module:

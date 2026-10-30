@@ -57,8 +57,7 @@ keep `TOKENTIMER_MCP_LEGACY=serve` for that client. Codex uses TOML rather than
 the enrollment command's generic JSON: register its printed command, arguments
 and environment using `codex mcp add tokentimer --env NAME=VALUE -- node
 <absolute-adapter-path>`, repeating `--env` for the API URL and credential-file
-path. Its tool permission authorizes sending a request; a different TokenTimer
-user still approves the resolved effect. Other clients remain unqualified.
+path. Its tool permission authorizes sending a request; TokenTimer applies the workspace Job approval setting to the renewal request. Other clients remain unqualified.
 
 See [configuration](../../docs/CONFIGURATION.md) and
 [ADR-0015](../../docs/adr/0015-mcp-operator-interface.md).

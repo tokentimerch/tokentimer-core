@@ -1,6 +1,6 @@
 "use strict";
 
-// Operator-safe projections (ADR-0015 section 4). Every function here builds
+// Operator-safe projections (ADR-0015). Every function here builds
 // its result from a fixed list of named fields. Nothing is produced by
 // deleting fields from a richer record, so a field added to an internal record
 // later cannot reach a connection by accident. Outputs are validated against

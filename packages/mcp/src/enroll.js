@@ -1,7 +1,7 @@
 "use strict";
 
 // `tokentimer-mcp enroll`: redeem a one-time setup code for a connection
-// credential and store it safely (ADR-0015 section 12).
+// credential and store it safely (ADR-0015).
 //
 // Rules this command keeps:
 //  - The setup code is read from stdin or a hidden prompt, never from the

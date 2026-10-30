@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-29 against main 01d23da3 (v0.18.2). Other
+Last reviewed: 2026-10-30 against main 01d23da3 (v0.18.2). Other
 certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
 
 This page is the repository milestone index: what Core takes next, what must
@@ -80,7 +80,7 @@ called stable while it is open.
   implementation [PR #406](https://github.com/tokentimerch/tokentimer-core/pull/406)).
   Workspace-scoped queries, secure enrollment and renewal requests governed by
   the workspace CertOps Job approval setting
-  requests are in development, not released. The Codex development-client and
+  are in development, not released. The Codex development-client and
   dashboard review journeys are qualified; independent security review and
   edition release acceptance remain open for the current approval-policy change. General token CRUD and text-to-token
   extraction are later follow-ons. Cloud and Enterprise adoption is separate.

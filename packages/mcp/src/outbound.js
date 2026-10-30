@@ -1,6 +1,6 @@
 "use strict";
 
-// Last-line outbound check (ADR-0015 section 4). The API already returns only
+// Last-line outbound check (ADR-0015). The API already returns only
 // named fields, and every response is validated against its published schema
 // before it gets here. This catches what a schema cannot: a secret that
 // arrived inside an otherwise valid string field. It fails closed. A response

@@ -18,7 +18,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 // The topology switch is forced off for every connection regardless of the
 // represented user's role: key references, deployed paths and source
-// references are never returned (ADR-0015 section 4).
+// references are never returned (ADR-0015).
 const NO_TOPOLOGY = Object.freeze({ canReadTopology: false });
 
 async function loadRenewalPaths({ workspaceId, records }) {

@@ -2,892 +2,178 @@
 
 ## Status
 
-Proposed (2026-10-19), updated 2026-10-28 against the released 0.18.2
-behavior. The feature branch implements eight read tools, strict one-time
-enrollment, and five renewal preview/request/status/withdrawal tools. All
-policy is enforced by REST; the stdio adapter has no database access. Both
-interface and write flags remain off by default. The baseline supports the
-manual ACME renewal path; AD CS manual renewal is not supported by that path.
-The route catalog distinguishes implemented tools from separately scoped
-follow-ons. The development client and human approval journeys were qualified
-on 2026-10-28 with Codex CLI 0.165.0-alpha.1.2 and the real dashboard; see
-section 15 and the implementation notes below. This does not establish a
-release or independent security sign-off. Both production flags remain off.
-
-Each decision below carries one of two labels:
-
-- **Settled direction**: reached in design review and expected to survive
-  review of this ADR. Changing it later is a new or amended ADR.
-- **Open proposal**: a recommended position with its alternative. It needs an
-  explicit reviewer decision before the work it governs starts, and the
-  contracts that depend on it are marked draft until then.
-
-Verified repository behavior (what the code does today) is kept apart from the
-authorization model this ADR proposes. The reuse inventory at the end cites the
-code for each fact.
+Proposed, updated 2026-10-30 against Core 0.18.2. Implemented on the development
+branch; both production MCP flags remain off. This ADR records the current
+design and separates deferred capabilities from implemented behavior.
+[Configuration](../CONFIGURATION.md#mcp-operator-interface) contains operator
+instructions; the source adapter has its own development README.
 
 ## Context
 
-Operators want to query TokenTimer in natural language and start supported
-certificate-management workflows from an MCP client such as an AI assistant.
-Model Context Protocol (MCP) is the integration surface. The risk is that an
-assistant, or text it reads, talks the system into an action nobody approved,
-or reads data nobody meant to disclose.
-
-Today there is no operator-facing programmatic credential:
-
-- The user-facing CertOps routes are session-only (a signed-in human, CSRF for
-  cookies).
-- The bearer credentials that exist authenticate machines. Executor and
-  controller API tokens are workspace-bound and scoped to executor routes. Agent
-  bootstrap and runtime credentials authenticate a row in the agent registry.
-  None of them represents "this user, in this workspace, with at most this much
-  authority".
-
-An MCP server therefore needs a new, explicitly bounded principal. It should
-borrow the proven enrollment and credential mechanics rather than invent a
-second security subsystem, and it must not pose as an agent or an executor.
+Assistants need bounded access to certificate state and supported renewal
+workflows. A machine executor credential cannot safely represent delegated
+human authority. Policy must remain effective when a caller bypasses MCP and
+uses REST directly.
 
 ## Decision
 
-### 1. The MCP adapter is an interface, not an automation engine (settled direction)
-
-Lifecycle rules, permissions, jobs, approvals and audit stay in the REST API.
-The MCP adapter (`packages/mcp`, a later step) calls the public `/api/v1`
-surface only. It has no database access and owns no durable workflow state.
-Authoritative previews, requests, approvals and jobs live in the API; the
-adapter's local credential configuration is persisted separately.
-
-Anything that must remain true when the adapter is bypassed is enforced in the
-API. A credential that works against REST will be used against REST directly by
-someone, so the adapter cannot be the place where limits live. Cloud and
-Enterprise inherit the feature by pointing the adapter at their own API.
-
-### 2. A new principal: the operator connection (settled direction)
-
-A **connection** is the delegated principal. It represents one user in one
-workspace. A **credential** is a secret that authenticates a connection and can
-be rotated without changing the connection.
-
-- New persistence for connections (and, in the onboarding step, enrollment
-  grants). The agent, executor and bootstrap tables are not changed.
-- Distinct formats and prefixes for the enrollment grant and the runtime
-  credential, so an older API instance running against a newer schema cannot
-  accept them as an agent bootstrap or agent runtime credential. Adding a
-  `purpose` column to the existing bootstrap table is rejected for that reason.
-  Tests prove every credential family is accepted only on its own routes.
-- Rejected: using a bootstrap token as a standing API credential; registering
-  the adapter as an agent or diagnostic agent (it would appear in the fleet and
-  inherit agent protocol responsibilities); reading `api_tokens.created_by` as
-  live delegated authority; making `api_tokens` a general principal table as a
-  prerequisite for the first release.
-- A connection always represents the user who authorized it. Provisioning a
-  connection for a different user is deferred.
-- Shared mechanics (secret generation, prefix parsing, hashing, timing-safe
-  comparison, expiry validation, safe metadata projection, rate-limit identity)
-  are extracted into neutral modules. They are not copied, and `_test` exports
-  are not used. Existing agent and executor behavior must remain byte-for-byte
-  unchanged and is covered by regression tests.
-
-### 3. Authority is evaluated per request in the API (settled direction)
-
-```text
-effective authority =
-    approved connection scopes
-  AND role ceiling delegated at enrollment
-  AND current workspace role of the represented user
-  AND current operation policy
-```
-
-- Demotion and removal take effect on the next request. Promotion never widens
-  a connection beyond its scopes and ceiling.
-- A shared effective-role resolver is extracted from `loadWorkspace`. It keeps
-  the existing implicit workspace-owner behavior until the planned role-model
-  cleanup replaces it. System admin confers no workspace role.
-- The connection credential never sets `req.user`, `req.isWorkerCall`, or a
-  fabricated session. MCP-enabled routes opt in through one guard that names a
-  scope and an action. A global check rejects connection credentials on every
-  route that is not on the allowlist. A request presenting both a connection
-  credential and session cookies is rejected.
-- "Operator origin" is derived from the authenticated principal, never from a
-  header or body field. Forced approval, the allowed operation set, scope
-  checks, the write-enable flags and the workspace pause are all enforced in the
-  API, so turning the adapter off does not leave direct writes available and
-  removing a header does not enable ordinary execution.
-- A connection can never approve or reject, change settings (pause, approval
-  policy, write flags), create or revoke connections or machine tokens, or alter
-  its own scopes. A route-inventory test generated from the router fails if a
-  non-allowlisted route accepts a connection credential.
-- A workspace in the path that differs from the connection's workspace returns
-  404, matching the existing hide-existence behavior.
-- **Amended during implementation.** Operator routes cannot live under
-  `/api/v1/workspaces/:id/...`, because every route under that prefix sits behind
-  the session authentication stack. They live in their own namespace,
-  `/api/v1/operator/*`, which accepts only a connection credential and takes the
-  workspace from the connection, never from the path. A workspace in a path
-  therefore cannot be used to reach another workspace at all. Management of
-  connections stays under the workspace prefix and is session-only.
-- The early guard refuses a connection credential on every route outside the
-  namespace, and the path check allows plain segments only, so a path with dot
-  segments, percent-encoding or empty segments cannot pass as being inside it.
-  Connection credentials are CSRF-exempt only when the request carries no cookie.
-- The interface is dark by default behind `MCP_OPERATOR_INTERFACE_ENABLED`, like
-  CertOps. Scopes for operations that do not exist yet (extended reads, requests,
-  configuration and CA revocation) are rejected at creation rather than stored,
-  so a premature grant cannot become live authority later.
-
-### 4. Disclosure policy (settled direction)
-
-Authorization is the primary control. The operator projection governs what may
-be disclosed after authorization. The adapter's schemas and the outbound secret
-scrubber are additional layers, with the scrubber as the last line.
-
-- The API serves connections an operator-safe projection that omits
-  authority-bearing and location-bearing fields, even when the represented user
-  is an admin: job lease data, signed payloads and nonces, dispatch secrets,
-  key references, certificate and deployment filesystem paths, notes and other
-  free-form operator text, and certificate bodies.
-- The policy applies to search, filters, sorting, counts, pagination, errors and
-  resource reads, not only serialized fields. A caller must not be able to infer
-  an excluded field through query behavior.
-- Text that originates from certificates, assets, agents or operators is
-  returned wrapped as untrusted data. Page sizes and response bytes are bounded
-  and every list reports completeness (`truncated`, `nextCursor`, whether the
-  total is known) so "no matches" is distinguishable from "first page only".
-- No tool accepts a certificate signing request, key or key-bearing PEM, and
-  none reads secret values. Inputs still pass the existing private-key
-  rejection.
-- A connection never gets looser access than the session route it is built on.
-  Each tool records the role that route requires (`sessionRouteMinRole` in the
-  catalog) and a contract test fails if a tool's minimum role is lower. This
-  already mattered once: the agent list is manager-only today because fleet
-  metadata is treated as sensitive, so `tt_get_agent_health` requires a manager.
-- Free-text search is an allowlist. The existing certificate search matches
-  certificate bodies, lifecycle reasons, and, for managers and above, key
-  references, deployed paths and source references. The operator search matches
-  only subject, SANs, issuer and fingerprint, and the topology-reading switch is
-  forced off for every connection regardless of the represented user's role. The
-  job search is not exposed.
-- The operator projection is built from the fields named in the contracts, not by
-  deleting fields from the existing responses. Existing job detail includes the
-  job payload and result metadata, and existing identity records include key
-  references, token and certificate snapshots and location references; none of
-  those are reachable from a connection.
-
-### 5. First read-only release (settled direction)
-
-The first release is deliberately small: `tt_whoami`, `tt_list_certificates`,
-`tt_get_certificate`, `tt_get_certificate_observations`, `tt_get_agent_health`,
-`tt_get_job`, `tt_list_jobs` and `tt_explain_certificate_state`. Their input and
-output contracts are in `packages/contracts/mcp/mcp-read-tools.schema.json`,
-with scopes, minimum roles and advisory annotations in
-`mcp-tool-catalog.json`.
-
-Token and secret metadata search, expiring-asset listing, renewal profiles, job
-evidence, job logs, audit events and alert-eligibility explanation follow only
-after the security and protocol qualification gate passes. They are outlined in
-the catalog and have no schema yet.
-
-`tt_explain_certificate_state` is deterministic and server-side. It composes the
-existing reasoning (`renewalPathHealth`, `jobPendingReason`,
-`explainAgentJobEligibility`, reconciliation reasons, lifecycle) into stable
-reason codes and returns `unknown` when evidence is insufficient. The assistant
-narrates the codes and never infers them. A field-to-source inventory precedes
-the endpoint; it freezes the reason-code enumerations that the contract
-currently constrains by format only.
-
-MCP tool annotations (`readOnlyHint`, `destructiveHint`, and so on) support
-client behavior and are never an authorization control.
-
-### 6. Approval model (settled direction, with one open proposal in section 9)
-
-- **Implemented renewals follow the workspace CertOps Job approval setting.**
-  When on, approval is a session-only action by a different manager or admin.
-  When off, a submitted renewal is immediately claimable by an eligible agent.
-  This exception is limited to renewals; other planned lifecycle mutations keep
-  their separately specified approval requirements.
-- **The existing non-requester rule is preserved.** MCP-created jobs and
-  requests record the connection's user as the requester plus the connection id.
-  They are never recorded with a null requester or as anonymous machine work.
-  The user a connection represents therefore cannot approve its own request,
-  including through another connection, whenever approval is required. Turning
-  Job approval off does not record a human approval or permit self-approval.
-- **Enrollment consent is capability access, not approval** of any later
-  operation.
-- **Approval covers the full resolved effect** of an operation, including
-  derived renewal configuration and future scheduled activity. An issuance
-  request must not implicitly grant standing renewal authority.
-- **Documented exception for low-risk operational tools.**
-  `tt_request_discovery` and `tt_request_verification` may run without
-  per-request approval because they change no lifecycle state, do no key-bearing
-  or CA work, act only on registered workspace objects referenced by id (never a
-  hostname typed by the model), are idempotent, are rate limited per connection
-  and workspace, honor the workspace pause, per-CA caps and the shared outbound
-  policy, are fully audited, and remain subject to the workspace's always-require
-  approval policy. "Verification" is never arbitrary network probing. These are
-  described as low-risk operational tools, not as non-destructive: they can start
-  real work and update observations.
-- Issue and renew reuse the existing job, approval and dispatch path (canonical
-  execution intent, approval ledger, dispatch-time invalidation). There is no
-  parallel job status and no extra generic queue. Database-only lifecycle or
-  configuration changes use action requests whose approval, mutation, audit and
-  final state commit atomically. Genuinely deferred work uses a typed outbox
-  event, which must be added deliberately to the event vocabulary with an
-  allowlisted payload.
-- Previews never create a job, allocate inventory, contact an issuer or touch
-  agent state. An expiring preview record is the only persisted effect. A
-  pending issuance does create the provisioning certificate row with its job
-  (existing behavior). That is unapproved request bookkeeping that counts toward
-  quota; it is documented and bounded by a per-connection pending-request cap.
-  The ADR does not claim "no database changes before approval".
-
-### 7. Lifecycle vocabulary (settled direction)
-
-Three operations are kept distinct in tool names, responses, explanations and
-approval screens:
-
-- **Mark revoked** and **decommission** change the exact certificate
-  fingerprint's lifecycle. Neither contacts a CA. Both close open management periods still pointing to that exact fingerprint
-  and disable their automation. The final open period releases the identity's quota unit; a source that already rotated to another identity stays managed.
-  Decommission is an operator declaration, not proof of absence. Observing a
-  replacement does not resume management: explicit re-add selects its renewal
-  configuration and cannot reactivate a retired fingerprint.
-- **Stop managing** ends a selected management period. It is a separate
-  operation and is outside the initial tool set.
-- **CA-backed revocation** is an issuer-side effect through a supported
-  workflow. It has its own tool, scope and flag, is admin only, and cannot ship
-  before issuer connectors and revocation jobs exist (issue 246) and the shared
-  outbound policy is wired (issue 233).
-
-Responses to mark revoked and decommission always carry `issuerEffect: "none"`
-and `caNotified: false`. There is no `revoke` boolean on any tool.
-
-### 8. Revalidation, lineage and revocation (settled direction)
-
-Revalidate at approval and again at execution. The comparison rejects changes to
-**what was authorized**, not ordinary progress or temporary unavailability, and
-preconditions are specific to each operation, not a row timestamp or a
-whole-object hash.
-
-- Invalidate the approval and require a new preview (`stale`) when the target
-  identity, authorized names, issuer or execution configuration materially
-  changes.
-- Block or defer with a stable reason, without discarding a valid approval, when
-  an agent is temporarily offline, CA capacity is exhausted, or the workspace is
-  paused.
-- Cancel or invalidate according to connection policy when the originating
-  connection is revoked or expired, or the requester loses required authority.
-- Continue when the change is expected progress inside the approved operation,
-  such as AD CS pending issuance, polling, deferred validation or installation
-  recovery.
-- Issuance binds the approved issuer, target, requested names, key parameters
-  and renewal settings; the resulting fingerprint is bound afterwards as
-  verified evidence. Retirement keeps the exact existing fingerprint
-  precondition. Renewal keeps the frozen renewal-profile snapshot, payload hash
-  and canonical-intent hash.
-- Continuations, polling, retries and distribution rollouts keep a
-  server-controlled association with the originating request and connection. A
-  continuation must not degrade into anonymous scheduler work that no longer
-  checks the connection. Reconciliation and key cleanup use an explicit
-  system-authorized path so revocation cannot strand sensitive state; that path
-  can clean up and reconcile and cannot resume issuance or deployment.
-- Ordering guarantee: once connection revocation commits, no new execution
-  authorization may commit for that connection. Work whose authorization
-  committed earlier is in flight. This is implemented by locking the connection
-  row inside each authorization transaction and is tested on PostgreSQL. It does
-  not promise that no previously authorized network activity occurs afterwards.
-  Read routes authenticate outside any transaction and do not take the lock,
-  which is acceptable because a read has no effect to order. Any route that
-  creates a request, approves, or authorizes execution must authenticate the
-  connection inside its own transaction with the lock held. A write route that
-  reuses the read-route guard would silently lose this guarantee, so the
-  write-stage tests must include a concurrent revoke-versus-authorize case on
-  the HTTP path, not only at the service layer.
-- Revoking a connection invalidates its unapproved requests and blocks dispatch
-  of approved but undispatched jobs. Running jobs follow existing cancellation
-  and reconciliation. The revoke screen says that revocation does not reverse
-  side effects.
-- Credential rotation replaces the secret without changing the connection id,
-  owner, scopes or in-flight work, and never cancels anything.
-
-### 9. Standing renewal authority after a connection ends (open proposal)
-
-Verified behavior: after a successful issuance, derivation creates a renewal
-profile with `status = 'active'` and the scheduler then generates renewals with
-no further request (ADR-0010, which already calls the profile the unit of
-standing renewal authority). Treating that as authority an administrator
-grants, and deciding how long it lives, is the authorization model this ADR
-proposes. It is not something the code states today.
-
-Two classes of future work need an explicit governing authority:
-
-- **Continuing an already-requested operation**: AD CS polling, installation
-  recovery, retries, distribution tied to that operation.
-- **Starting a future operation under standing authority**: a scheduled renewal
-  weeks or months after issuance finished.
-
-Recommended position:
-
-> Operation continuations remain bound to the originating request and
-> connection. Future scheduled renewals run under the administrator-approved,
-> profile-bound standing authorization, subject to the workspace's current
-> approval and execution policies at the time.
-
-- The originating request and connection are kept as audit provenance. An
-  expired or revoked connection must not silently disable previously approved
-  long-term certificate management.
-- Revoking a connection therefore means "stop this connection and its
-  outstanding work", not "disable every renewal profile created through it".
-  Stopping standing renewal stays a separate authorized management action
-  (switching the profile off, manager or admin, which exists today).
-- The issuance preview and approval screen state "issuance followed by automatic
-  renewal" and the issuer, target, names, key parameters and renewal settings
-  that define the permitted recurring activity. The connection-revocation screen
-  lists the renewal profiles that originated from the connection and says they
-  keep running until separately disabled.
-- Required approval authority follows the complete resolved effect, not the tool
-  name. An issuance that creates standing renewal needs an approver with
-  authority at the level of renewal-profile management (manager or admin) in addition to
-  the non-requester rule. A request that does not create standing renewal does
-  not.
-- The first write release preserves the existing derivation behavior and
-  classifies issuance as issuance with standing renewal. Exposing a genuinely
-  one-time issuance waits until a supported one-time path exists. This ADR does
-  not assume one exists today and does not disable automatic renewal globally.
-- A regression test proves that approving an issuance cannot bypass the stronger
-  policy for automatic renewal.
-
-Alternative: bind future renewals to the connection and block them when it
-expires or is revoked. That is valid, but the approval screen, expiry warnings
-and renewal-health explanations must then communicate the dependency, and a
-lapsed connection becomes an outage path for certificate renewal.
-
-### 10. Request identity and replay (open proposal)
-
-Four identifiers are kept separate:
-
-- `planId`: server-generated, names one immutable preview.
-- `requestId`: client-generated business identifier for one deliberate
-  submission, reused across retries, unique within the originating connection.
-- `requestRecordId`: server-generated, names the persisted request.
-- JSON-RPC `id`: transport correlation only, never a business idempotency key.
-  The selected protocol revision requires a new transport request id when a
-  client retries after a broken response stream; the business `requestId` stays
-  the same for that retry.
-
-The CertOps job idempotency key is derived from the persisted `requestRecordId`.
-The API enforces uniqueness of `requestId` within its originating connection.
-Submission input is exactly `{planId, planHash, requestId}`. No execution
-parameters are accepted at submission; they belong to the approved preview.
-
-Processing order for a submission:
-
-1. Authenticate, check scope and the caller's right to inspect requests.
-2. Look up an existing request by `(connection, requestId)`. An identical
-   accepted request returns its existing outcome, whatever its state, for the
-   retention period (proposed default 30 days). Replay never re-executes work
-   and never resurrects cancelled work. The same `requestId` with different
-   content returns `409 MCP_IDEMPOTENCY_CONFLICT`.
-3. Only a new submission must satisfy the preview's submission deadline
-   (proposed 10 minutes), the plan hash and the authority checks.
-
-A successful submission therefore stays replayable after its preview expired: a
-lost response is never answered with "preview expired". A new deliberate
-operation needs a new `requestId`.
-
-- Replay is scoped to the originating connection. A conflicting operation from
-  another connection gets an authorized conflict response. It never adopts that
-  connection's request or requester identity, and the response does not reveal
-  another request's id unless the caller may inspect it.
-- Duplicate-work prevention is separate from retry identity. Conflict keys are
-  derived from existing operation semantics (for example per managed source,
-  per target, per CA cap) and enforced in the common service path, so dashboard
-  and scheduler work obeys the same rules. This ADR deliberately commits to
-  neither "one active operation per fingerprint" nor "different parameter hashes
-  always run in parallel": two management sources that share a fingerprint can
-  legitimately need different work.
-
-### 11. Withdrawal while new work is disabled (open proposal)
-
-`tt_cancel_request` is cataloged as a write tool, but workspace pause and the
-MCP write flags must not remove the ability to withdraw a request. Proposed
-narrow exception:
-
-> An authenticated and authorized connection may withdraw its own request while
-> it is still `pending_approval` or queued without human approval, even when new operational requests are
-> disabled by workspace pause or the MCP write flags, or by Cloud downgrade
-> or freeze. This containment exception does not admit any new work.
-
-- Authentication, scope, workspace and ownership checks still apply. The
-  exception does not permit cancelling another connection's request, changing
-  execution parameters, or starting work.
-- Claimable `pending` jobs may be withdrawn only while no human approved them.
-- Withdrawal, approval and agent claim race atomically. If approval or claim wins, withdrawal returns a
-  conflict and does not claim that execution was prevented.
-- A revoked or expired connection cannot authenticate through this exception.
-  The dashboard remains the human recovery path.
-
-This refines the kill-switch semantics: disable new operational work, keep
-narrowly scoped safety and recovery actions.
-
-### 12. Enrollment (settled; strict one-time delivery, decided at implementation)
-
-Onboarding ("Connect an assistant") reuses the bootstrap pattern without reusing
-the agent identity. It is a later step and is not required for the first
-read-only release, which can use a directly provisioned credential shown once.
-
-- A signed-in human creates a short-lived (proposed 10 to 15 minutes),
-  single-use enrollment grant that fixes the user, workspace, scopes, role
-  ceiling and purpose. A local setup command redeems it, receives the runtime
-  credential, stores it securely (operating-system keychain or a permissioned
-  file; the secret is entered through stdin or a prompt, never argv) and
-  discards the grant. Enrollment is not a model-callable tool.
-- Redemption cannot change the user, workspace or scopes, and re-checks that the
-  authorizing user still has access.
-- The redemption service follows the registration transaction pattern without
-  calling the agent registration function: lock the grant, validate current
-  authority, create the connection, consume the grant, audit, commit. No
-  recovery data is recorded (see the decision below).
-- **Decision: strict one-time delivery.** This reverses the earlier
-  recommendation of recoverable enrollment, after reading what recovery costs in
-  agent registration. That mechanism needs a dedicated 32-byte encryption key
-  that every deployment must provision and rotate, a sweeper job, a runbook for
-  unreadable records, and a plaintext-equivalent secret held in the database for
-  days. Agents need it because they install unattended on servers. Here a person
-  is at the terminal and a new grant is one click, so the cost is not justified.
-  If the response to a redemption is lost, nothing about the credential was
-  kept: the unused connection is revoked and a new grant is created. The setup
-  command never retries a spent code, says plainly when the outcome is unknown,
-  and explains that recovery. The credential stays hash-only in the database at
-  all times. Revisit only if real use shows lost responses are common.
-- The grant is a separate credential family (`ttopg_`), stored as a hash in its
-  own table, valid for 10 minutes by default and at most 15 (a database
-  constraint, so a manual insert cannot lengthen it). It fixes the connection's
-  name and lifetime as well as user, workspace, scopes and ceiling, so the person
-  redeeming it chooses nothing. It is accepted at exactly one route,
-  `POST /api/v1/operator/enroll/redeem`, and refused on every other route
-  including the rest of the operator namespace; a connection credential is in
-  turn refused there. A cookie or session beside it is refused.
-- Failures before the secret is proven (unknown, malformed, wrong) look
-  identical and cost the same to compute. After it is proven, the reason is
-  specific (used, expired, revoked, issuer lost access), since the caller already
-  holds the secret and needs to know what to do. Redemption is rate limited per
-  client address. A refused redemption does not consume the grant, so an issuer
-  who regains access within the grant's life can still use it.
-- The setup command reads the code from standard input or a hidden prompt and
-  refuses it anywhere on the command line, including as a flag value. It checks
-  the destination before spending the code, writes the credential to a private
-  file (mode 0600 in a 0700 directory; on Windows the inherited permissions are
-  removed and the file is deleted if that fails) and never prints either secret.
-  On Windows access is restricted while the file is still empty, so the secret
-  never exists under inherited permissions. The adapter refuses a credential file
-  other users can read. An operating-system keychain is not implemented; the file
-  is the supported store.
-- **A stored credential is bound to the server that issued it.** An independent
-  review found that the adapter would load the default credential file and send
-  it to whatever `TOKENTIMER_API_URL` named, so a hostile project-level client
-  configuration that set only the address could collect it. The file now records
-  the issuing server beside the secret (`api=<origin and path prefix>`) and the
-  adapter releases the credential only to that exact server: scheme, host, port
-  and path prefix must all match. The check applies to an explicitly named file
-  as well as the default one. A file with no binding (hand-made or mounted) is
-  accepted only when named explicitly, never picked up automatically. A
-  credential passed directly in the environment has no stored server to compare
-  and is unaffected. Residual risk: a hostile configuration that names an
-  unbound credential file explicitly still sends that file's secret wherever the
-  address points, so unbound files should not be kept in default locations.
-- Credentials are never transmitted through MCP tool arguments, results,
-  resources or logs. The local host, credential store and MCP runtime are
-  trusted components. This design does not protect against compromise of that
-  environment.
-
-### 13. Approval surface (settled direction)
-
-The dashboard renders only server-resolved facts, never assistant text: target
-certificate, exact operation, expected effect including renewal effect,
-affected locations, uncertainty warnings, whether an issuer or CA is contacted,
-requester and connection, advisory client label, and both expiries.
-
-- Mark revoked, decommission and revoke at CA appear as distinct actions with
-  plain consequences (section 7).
-- Untrusted strings are escaped, truncated and shown as quoted data, with no
-  markdown or HTML rendering.
-- Session-only approval stops a connection from approving. It does not prove a
-  human was present. Approvers enter a reason, and sensitive actions (decommission,
-  mark revoked, revocation at the CA, configuration change, issuance with
-  standing renewal) require re-authentication or a user-presence confirmation
-  within a short freshness window.
-
-### 14. Audit attribution (settled direction)
-
-Requester, approver, connection, request and job attribution stay distinct. A
-delegated request records the connection's user as actor with `via`, the
-connection id and the request id in metadata. An approval records the approver
-as actor, as the approval service already does. Denials of unauthenticated
-calls and background execution never fabricate the connection's user as actor.
-Audit metadata stores an argument hash, not the arguments. Successful reads go
-to structured logs correlated by request id, not to the audit table. Every write
-request and every denial is audited.
-
-Write tools require three gates enforced in the API: an instance flag (default
-off), a workspace setting (default off, admin, session-only) and the scope.
-Workspace pause blocks new write requests, subject to section 11.
-
-### 15. Protocol and transport (settled direction; version pin open)
-
-- The protocol revision targeted is `2026-07-28`. The official versioning page
-  lists it as the current version, and its changelog documents the removal of
-  protocol-level sessions and the session header from the Streamable HTTP
-  transport (checked against the official documentation on 2026-10-19). That
-  establishes the specification, not compatibility of any particular SDK or
-  client.
-- Pin the exact SDK version before the read-only implementation starts. Checked
-  against the npm registry on 2026-10-19: the v1.x line (`@modelcontextprotocol/sdk`
-  1.32.1, the npm `latest` tag) implements the specification only up to
-  `2025-11-25`, and its README states that `2026-07-28` support is not planned
-  for v1.x. The v2 packages (`@modelcontextprotocol/server` and
-  `@modelcontextprotocol/client`, both 2.3.1 on that date) export a modern
-  revision server with a stdio entry point and need Node 20 or later, which this
-  repository's Node range satisfies. The proposal is to pin
-  `@modelcontextprotocol/server` exactly (2.3.1 today) and use the matching
-  client package in conformance tests.
-- **Verified by test on 2026-10-19** against the pinned packages, over real
-  stdio with the real client (`packages/mcp/src/stdio.test.js`): a client pinned
-  to `2026-07-28` is served; a client using the `2025-11-25` handshake is served
-  when the adapter runs with `legacy: serve` (the default) and refused with an
-  unsupported-version error under `legacy: reject`; schema enforcement (unknown
-  fields, over-long values) is identical in both eras. The client defaults to
-  the older handshake, so a modern connection is an explicit client opt-in. The
-  package's own `LATEST_PROTOCOL_VERSION` constant still reports `2025-11-25`;
-  the modern revision is selected through the client's version-negotiation
-  option, not that constant.
-- **Real assistant compatibility (2026-10-28).** Codex CLI
-  `0.165.0-alpha.1.2` negotiated `2025-06-18` over stdio with the actual
-  adapter. Leave `TOKENTIMER_MCP_LEGACY=serve` for this client; `reject`
-  excludes it. The matching SDK client cannot pin that older revision, so
-  the automated regression sends the observed handshake over real stdio
-  rather than mislabelling an SDK default as a Codex journey. A client-side
-  tool permission to submit a renewal does not grant TokenTimer approval.
-- **Dependency review.** The server package adds only its core package and
-  `zod` 4.6.7 at runtime (Apache-2.0, Node 20 or later). The larger set (`jose`,
-  `eventsource`, `pkce-challenge`, `cross-spawn`) arrives only with the client
-  package, which is a development dependency used by the conformance tests and
-  is not shipped. The lockfile change is purely additive (81 lines, none
-  removed) and passes pnpm's supply-chain policy check. A full license audit of
-  the transitive set is still to be run before release.
-- State the compatibility policy for older clients (negotiate the pinned
-  revision plus a stated fallback, refuse the rest with a clear error). Validate
-  inputs and outputs on both sides. Conformance tests per supported transport are
-  release gates.
-- stdio and remote HTTP are separate authentication designs. Enrollment supports
-  local setup only. A hosted HTTP endpoint is not launched without standards-based
-  OAuth: tokens issued for the MCP server, no passthrough of an upstream token,
-  TLS, Origin and DNS-rebinding protection, and protected-resource metadata.
-  Permanent bearer credentials are for stdio and localhost self-hosting only.
-
-### 16. First write release, as built (renew only)
-
-The first write release is deliberately narrow: **requesting a renewal**, and
-nothing else. Building it settled several of the open proposals above, and it
-also showed that parts of the original plan rest on premises that do not hold.
-
-**What exists.** A connection holding `mcp:renew:request` can preview a
-renewal, submit the previewed plan, read and list its own requests, and withdraw
-one that still waits or is queued without approval. A submission creates an
-ordinary CertOps renewal job: `pending_approval` with Job approval on, otherwise
-claimable `pending`. It records the person and connection and reuses the shared
-capacity, lifecycle and dispatch guards. Policy changes invalidate unsubmitted
-previews in either direction; existing jobs keep their original approval gate.
-Request state `pending` means queued without human approval, with no exposed
-approval deadline; `approved` requires an actual approval timestamp. Required
-approval still rejects self-approval from the dashboard as well.
-
-**Decisions this settles.**
-
-- *Three gates, all enforced in the API.* The instance flag
-  `MCP_OPERATOR_WRITES_ENABLED`, a per-workspace setting (off by default,
-  admin only, session only, audited, never changeable by a connection) and the
-  scope. Offering the tools in the adapter is a further opt-in
-  (`TOKENTIMER_MCP_ENABLE_WRITES`) that only controls what is listed.
-- *A narrow scope.* `mcp:renew:request`, not the broad lifecycle scope, which
-  stays reserved. A later, riskier tool gets its own scope, so no existing grant
-  can silently cover it.
-- *Request identity (section 10), as decided.* `requestId` is unique within the
-  originating connection. Replay is checked first, before preview expiry, and
-  returns the original outcome in any state, including after withdrawal, without
-  re-executing. The same `requestId` with different content is
-  `OPERATOR_IDEMPOTENCY_CONFLICT`. Submissions of one `requestId` are
-  serialized on a lock keyed on it, because without it simultaneous retries both
-  passed the lookup and all but one failed on the unique constraint. The plan
-  hash is content-addressed: two previews of an unchanged certificate hash
-  identically, so "plan A with plan B's hash" is a valid replay, not a conflict.
-- *Withdrawal exception (section 11), as decided.* Withdrawal needs
-  authentication, scope and ownership but not the write switches or an unpaused
-  workspace. It races approval on the job row and exactly one wins; the loser is
-  told, and withdrawal never claims to have prevented anything.
-- *Revocation (section 8), on the HTTP path.* A write route re-reads the
-  connection's authority inside its own transaction with the row locked, so a
-  revocation that commits first is always honored and one in flight must wait
-  for it. Revoking also cancels the connection's unapproved, approved and
-  pending jobs in the same transaction; a job an agent already claimed is left to
-  existing reconciliation. Approval refuses a request whose connection has ended
-  or whose 24 hour approval window has passed.
-- *Unapproved requests must not starve everyone else.* They count against the
-  shared per-CA renewal capacity, so a connection that is never approved could
-  fill it and block people and the scheduler. Assistant requests that are still
-  waiting are therefore limited per connection and, more tightly, across the
-  workspace to half the shared cap (2 of 5 by default). This was found by the
-  tests, not planned.
-
-**What was not built, and why.**
-
-- *Discovery and verification requests (planned 5a).* They do not exist in Core
-  to be exposed. There is no route, service or job operation that triggers an
-  on-demand scan or verification of a registered object; agents discover on their
-  own schedule, and the only scan routes take integration credentials, which an
-  assistant must never handle. Exposing them would mean designing a new feature
-  across the API, the signed-job protocol and the agent. It needs its own ADR.
-- *Issue.* Still blocked on the open question in section 9: who may approve an
-  issuance that creates a standing automatic renewal.
-- *Decommission and mark revoked.* They need a new action-request table and an
-  approval flow for changes that are not jobs. The renew slice proved the
-  pattern; these are the next candidates.
-- *CA-backed revocation.* Blocked on issuer connectors and revocation jobs and on
-  the shared outbound policy, both still planned in the roadmap.
-- *Configuration change, and remote HTTP with OAuth.* Each is a separate design
-  with its own gate.
-
-**Closed after independent review.** A reviewer found four things, all fixed:
-
-- *Lapsed requests held resources forever.* A request nobody approved within 24
-  hours stayed `pending_approval`, so it kept a per-CA capacity slot, kept
-  counting against the assistant's limits and stopped the renewal scheduler from
-  renewing that certificate. Lapsed windows are now ended in two places: inside
-  every submission, so the limit never depends on a background job, and by a
-  sweep in the maintenance worker.
-- *One preview could become several orders.* A preview is now spent by its first
-  submission, enforced by a check under the plan's row lock and a unique
-  constraint, so a bug elsewhere cannot spend it twice.
-- *Changes of authority did not reach waiting requests.* Switching assistant
-  writes off now ends the waiting requests in that workspace at once, and the
-  sweep ends requests whose requester no longer holds the manager role.
-- *A connection that expired still had its approved work claimed.* The agent
-  claim query now refuses a pending job whose connection has ended, and the sweep
-  ends such work. A job an agent already holds is deliberately left alone, since
-  ending it would strand the agent mid-run; the existing reconciliation handles it.
-
-The sweeps skip rows another transaction holds rather than waiting for them, and
-take locks in the same order as withdrawal, so they cannot deadlock with an
-approval or a withdrawal.
-
-**Human review and client qualification (2026-10-28).** The session-only review
-identifies the requester, connection, advisory client label, both expiry windows
-and the complete public renewal/publication snapshot and executor routing. The reviewer acknowledges
-that effect; approval requires its exact `reviewHash`, rechecks live authority
-and source intent, and atomically refuses concurrent job changes. Assistant
-approval and claim bind the same executor-routing fields. Ordinary jobs
-retain their existing approval flow. Preview expiry limits submission only.
-
-The opt-in `scripts/qualify-mcp-client.cjs` journey used real session/CSRF
-enrollment, the enrollment CLI and a restricted credential file, actual Codex
-tool calls, duplicate submission replay, an independent dashboard approval,
-post-approval client status, and browser self-approval/viewer/expiry refusals
-and rejection. No executor, issuer, consumer rollout or live TLS was exercised.
-This is development qualification, not support for other untested clients.
-
-**Known gaps in what was built.**
-
-- Plans are never deleted. They are small and expire in ten minutes, but nothing
-  removes old rows, and a preview is rate limited only by the shared API limiter.
-
-## Consistency amendments after 0.18.2
-
-- Core migrations append at 81–83 after released onboarding, file delivery and
-  auto-sync telemetry. Never rename an applied migration. Preview databases
-  that applied the earlier draft 77–79 history require an explicit recovery
-  plan; they are not supported upgrade sources for the released history.
-- Preview binds the resolved execution intent and current workspace approval
-  policy, not merely a mutable profile ID. Submit locks the source and profile
-  while comparing that intent and creating the job; changed intent requires a
-  fresh preview. Generated publication-version IDs are bookkeeping and do not
-  change the authorized destination or profile revision.
-- Approval and fresh dispatch re-read scopes, role ceiling and current
-  requester membership while holding authority locks. Claim skips busy rows to
-  avoid reversing the revocation lock order. The sweep is cleanup, not the
-  authorization boundary; already claimed work retains reconciliation rules.
-- An unknown execution effect is `unknown_effect` with
-  `reconciliation_required`. It must not be narrated as a confirmed failure or
-  retried as a new deliberate request before human reconciliation.
-- A per-CA capacity of one admits no waiting assistant requests, preserving
-  capacity for humans and the scheduler. The ordinary default of five admits
-  two waiting requests across the workspace.
-- Current managers may configure renewal profiles and issuers. The proposed
-  future issuance approval follows that same role floor plus the non-requester
-  rule; this does not enable a reserved scope or lower the admin requirements
-  for kill switches, assistant write enablement, diagnostic credentials, trust
-  anchors or issuer-side revocation.
-- Vault renewal/publication, consumer rollout, installed-file convergence and
-  live TLS verification are separate facts. Publishing a certificate does not
-  start a rollout. File-only installation makes no live-TLS claim, and paused
-  rollout recovery requires an explicit resume. Future bounded projections may
-  expose those phases without paths, key references, Vault credentials or raw
-  shell output. Mutation of those workflows needs a separately accepted scope.
-- Safe context should distinguish stopped management, retired fingerprint,
-  observed replacement, selected renewal mechanism and explicit re-add.
-  MCP `daysUntilExpiry` currently counts complete elapsed 24-hour intervals;
-  dashboard calendar-day labels use their own timezone semantics. They are not
-  interchangeable. No additional data or mutation scope is granted by this
-  clarification.
-- General token CRUD/extraction, issuance/decommission requests, AD CS request
-  orchestration and CA-backed revoke remain follow-ons under public issue
-  [#502](https://github.com/tokentimerch/tokentimer-core/issues/502), with the
-  existing issuer/egress dependencies unchanged. Scheduled auto-sync telemetry
-  is not implicitly part of the operator read scope.
-
-## Open decisions and proposed defaults
-
-These are product-policy settings, not protocol requirements. The values are
-proposals with the rationale given in the section cited.
-
-- Standing renewal lifetime and approver authority: section 9.
-- Request identity and replay ordering: section 10. Replay retention 30 days;
-  preview submission deadline 10 minutes; pending-approval expiry 24 hours with
-  a 72 hour maximum.
-- Withdrawal exception: section 11.
-- Enrollment recovery: decided in favour of strict one-time delivery (section 12).
-- Connection lifetime: default 30 days, maximum 90. Connection expiry behaves
-  like revocation for new requests, pending approvals and undispatched jobs
-  (recommended). Credential rotation inside a live connection does not.
-- Re-authentication freshness window for sensitive approvals: 5 minutes.
-- Whether any same-user confirmation mode ever exists: deferred.
-- The backing route and projection for token and secret metadata search: decided
-  when the extended read set is scoped.
+### API authority and identity
+
+The stdio adapter calls REST and has no database access or durable workflow
+state. An operator connection represents one user in one workspace. Its
+effective authority is the intersection of granted scopes, its role ceiling,
+the user's current workspace role and current operation policy. Promotion
+never expands the grant; demotion or removal takes effect on subsequent
+authorization. System admin status supplies no workspace role.
+
+Connection credentials and one-time enrollment grants use distinct credential
+families. Neither is an agent, executor token or session. Operator credentials
+work only under `/api/v1/operator/*`; the workspace comes from the connection.
+Management remains session-only under the workspace namespace. Mixed session
+cookies and operator credentials are refused. Connections cannot approve jobs,
+change settings, administer credentials or expand their own authority.
+
+### Disclosure
+
+Responses are constructed from allowlisted contract fields. They exclude
+private keys, certificate bodies, credential values, execution leases, signed
+payloads, key references, filesystem paths and free-form operator notes.
+Search, filters and counts obey the same disclosure boundary. Certificate
+names and client labels remain untrusted data. Bounded pagination reports
+completeness; lack of evidence is represented as unknown.
+
+API authorization is the primary control. Input validation, private-key
+rejection and outbound secret scrubbing provide additional protection.
+Tool annotations describe behavior and never grant permission.
+
+### Implemented scope and deployment
+
+The catalog contains eight read tools and five renewal preview, request,
+status, list and withdrawal tools. The supported mutation is manual ACME
+renewal of an existing managed certificate. It does not orchestrate AD CS
+enrollment, issuance, consumer rollout, CA-backed revocation or general token
+writes. Reserved scopes cannot be enrolled before their tools exist.
+
+The API requires `MCP_OPERATOR_INTERFACE_ENABLED`; operational reads also
+require CertOps. New renewal work additionally requires
+`MCP_OPERATOR_WRITES_ENABLED`, workspace admin enablement, the connection's
+`mcp:renew:request` scope and current delegated authority. The adapter lists
+write tools only with `TOKENTIMER_MCP_ENABLE_WRITES=true`. All server MCP
+deployment defaults are false. Cloud retains hosted plan/freeze/tenant/quota
+admission; Enterprise retains licensing and session/SSO isolation.
+
+### Renewal previews and approval
+
+A preview records the resolved renewal/publication effect, executor routing and
+workspace Job approval policy. It creates no job, contacts no issuer and
+expires after ten minutes. Submission accepts only
+`{planId, planHash, requestId}`; it locks the relevant source/profile and rejects
+changed intent or policy. An accepted preview is spent once.
+
+MCP renewals follow workspace CertOps **Job approval**. On creates
+`pending_approval`, requiring a different workspace manager or admin within
+24 hours. Off creates claimable `pending` work without recording approval or
+exposing an approval deadline. Existing jobs retain their original gate when
+the setting changes. V1 admin-only decisions and grantable admin/manager roles
+remain separately scoped in public issues #239 and #243.
+
+For required approval, the dashboard shows requester and connection provenance,
+deadlines, destinations, routing and the complete public renewal/publication
+snapshot. Secondary settings can be expanded. The reviewer acknowledges that
+effect; the API requires its exact `reviewHash`, rechecks authority and source
+intent, and atomically refuses concurrent changes. Self-approval is refused.
+Ordinary jobs retain their existing approval flow. Preview expiry limits
+submission and does not shorten an accepted request's approval window.
+
+### Replay, capacity and containment
+
+`planId` identifies a preview; connection-scoped client `requestId` identifies
+one deliberate submission; `requestRecordId` identifies its persisted result.
+JSON-RPC ids are transport correlation only. Identical replay returns the
+original outcome before checking preview expiry and never re-executes work.
+Different content for the same request id returns
+`OPERATOR_IDEMPOTENCY_CONFLICT`. A lost response must not become a new order.
+
+Requests use ordinary CertOps jobs, shared per-CA capacity, lifecycle and
+dispatch guards. Waiting assistant requests are bounded per connection and
+across the workspace to preserve human/scheduler capacity. Expired approvals
+are ended during admission and by the maintenance sweep; cleanup never grants
+execution authority.
+
+An authenticated connection may withdraw its own waiting approval or queued
+job without human approval even while new writes are disabled, paused, frozen
+or downgraded. Authentication, scope and ownership still apply. Withdrawal
+races approval/claim atomically and cannot undo work already authorized.
+
+Revocation cancels outstanding unclaimed jobs, including human-approved queued
+work. Expiry and loss of delegated authority prevent fresh execution.
+Disabling workspace MCP writes cancels waiting approvals and unapproved queued
+jobs; human-approved work retains its gate. Unapproved jobs also require live
+instance/workspace write flags at claim. Authority locks order revocation
+against approval and dispatch; claim skips busy rows rather than reversing
+that order. Already claimed work uses existing reconciliation. Credential
+rotation changes the secret without cancelling work.
+
+Unknown execution effects return `unknown_effect` and
+`reconciliation_required`. Publication, consumer installation and live TLS
+verification are separate outcomes; one must not be presented as proof of
+another. File-only delivery makes no live-TLS claim.
+
+### Enrollment, audit and transport
+
+Enrollment uses normal session/CSRF consent and a short-lived, single-use grant.
+Only its hash is stored. Redemption returns the runtime credential once; a lost
+response requires revocation and a new enrollment. Credential files and their
+ancestor directories must be private to the operating-system user. Windows
+enforces this with native ACL checks before consuming the grant.
+
+Audit attributes requests to the represented user and connection and decisions
+to the independent approver. Free-form labels remain advisory.
+
+The adapter pins the MCP SDK and validates input/output schemas. Modern and
+legacy stdio handshakes have conformance coverage. Codex CLI
+`0.165.0-alpha.1.2` was qualified with revision `2025-06-18` and
+`TOKENTIMER_MCP_LEGACY=serve`; other clients remain unqualified. Client tool
+permission authorizes sending a request, not TokenTimer approval.
+A future hosted HTTP transport needs a separate OAuth design: server-audience
+tokens, protected-resource metadata, TLS and Origin/DNS-rebinding protection.
+Local enrollment is not that design.
+
+## Deferred decisions
+
+- **Issuance and standing renewal:** issuance may derive an active renewal
+  profile. Before exposing it, define and display the complete recurring
+  authority, its lifetime and approver role. Proposed direction: operation
+  continuations remain connection-bound; separately approved profile authority
+  governs future scheduled renewals. Revoking a connection must clearly explain
+  any standing management that survives it. One-time issuance requires a
+  supported one-time path.
+- **Other mutations:** discovery/verification requests need a registered-object
+  workflow; retirement needs an atomic action-request approval path. CA-backed
+  revocation depends on issuer connectors and shared outbound policy. None is
+  implied by renewal permission.
+- **Retention and stronger consent:** expired preview/request retention,
+  sensitive-action reauthentication and any same-user confirmation mode need
+  separate decisions. The current preview store has no purge policy.
 
 ## Alternatives considered
 
-- **Use bootstrap tokens as a standing API credential.** They are enrollment
-  credentials with a consume-once lifecycle, not an ongoing delegated grant.
-- **Register the adapter as an agent or diagnostic agent.** Wrong identity: it
-  would appear in the fleet and inherit agent protocol duties, and declared
-  capabilities describe what an executor can do, not what a human delegated.
-- **Extend `api_tokens` with a principal kind.** Possible, but every creator,
-  validator, list route and revocation route would have to honor the
-  discriminator, and machine-token administration could gain authority over user
-  delegation. Not a prerequisite for the first release.
-- **Enforce policy in the adapter.** Rejected: a REST-capable credential bypasses
-  the adapter.
-- **Let the connection's user approve their own request.** Rejected for the first
-  write release; it would change the non-requester rule.
-- **Remote HTTP with permanent bearer keys.** Rejected for a hosted endpoint in
-  favor of OAuth.
-- **Give the adapter database access or its own workflow state.** Rejected: it
-  would duplicate approvals, jobs and audit.
+Reusing bootstrap/executor credentials would conflate machines with delegated
+users. Enforcing policy in the adapter would leave REST unprotected. Allowing
+connections to approve themselves would defeat independent review. Binding all
+future scheduled renewals to a short-lived connection would create an outage
+dependency and remains an alternative for the deferred issuance design.
 
-## Consequences
+## Consequences and validation
 
-- A new credential family and principal type to secure, test and operate, with
-  strict mutual-rejection tests against the existing families.
-- The API gains an operator-safe projection and disclosure policy that other
-  consumers could later reuse.
-- Asking an assistant to start issuance means a second person (an admin when it
-  creates automatic renewal) must approve it. Single-operator installs must add a
-  second member until a same-user mode is decided separately.
-- Standing renewal authority is made visible and reviewable rather than implied.
-- Cloud and Enterprise inherit the feature only after their principal handling,
-  plan gates, hide-existence behavior and projections are verified there; this is
-  an adoption task, not an API URL change.
-- Contracts under `packages/contracts/mcp/` are change-controlled once accepted.
-  Draft contracts are explicitly not final.
+Core owns the contracts, authority and lifecycle implementation; Cloud and
+Enterprise compose it with edition admission. Additive migrations preserve
+released history. A new tool requires an explicit scope, projection, route
+allowlist entry and tests; an existing grant never inherits reserved powers.
 
-## Delivery sequence
-
-1. This ADR, the read-only tool contracts and fixtures, the draft write envelope,
-   and the public roadmap entry (this change).
-2. Shared credential primitives, connection persistence, REST authorization,
-   operator projection, connection management and audit. Gate: route-inventory
-   deny test, credential-family isolation and scope-matrix tests green on Core,
-   Cloud and Enterprise.
-3. Read-only stdio adapter with a directly provisioned credential.
-4. Qualification gate: tenant isolation, role checks, query-level disclosure,
-   secret exposure, prompt-injection fixtures, protocol conformance per transport
-   and an independent security review. The extended read set is enabled only after
-   it.
-5. Bootstrap-assisted onboarding.
-6. Approval-controlled operations: low-risk discovery and verification, then
-   issue, renew, decommission, mark revoked and withdrawal. Every restriction is
-   enforced against direct REST calls. Flags default off in every edition.
-7. Remote HTTP with OAuth and higher-risk actions (configuration change,
-   CA-backed revocation), each under its own release gate.
-
-## Appendix: reuse inventory (verified 2026-10-19)
-
-Each entry states what the code does, whether this design reuses it, and what
-must not be inferred from it.
-
-- **Bootstrap tokens** (`apps/api/services/certops/agentCredentials.js`):
-  prefixes `ttboot_` and `ttagent_`, SHA-256 storage, timing-safe comparison,
-  workspace binding, creator attribution, required expiry with a 30 day maximum,
-  and separate validate and consume steps (registration consumes inside its
-  transaction). Reused: the primitives and the validate-then-consume transaction
-  pattern. Not reused: the tables and the registration operation, which create
-  agent state. A runtime agent credential deliberately still authenticates a
-  retired agent so the route can answer with the retirement response; that is
-  wrong for a revoked operator connection.
-- **Registration replay** (`agentDispatch.js`, `registrationCredentialCrypto.js`):
-  an encrypted replay record (AES-256-GCM, dedicated key) lets an authenticated
-  retry with the same registration id recover the original credential; the
-  default window is 15 minutes (`CERTOPS_REGISTRATION_REPLAY_TTL_MS`) and the
-  consumed token is accepted only on register (`allowUsed`). Not reused: the
-  replay record, because enrollment uses strict one-time delivery (section 12).
-  Agents need it for unattended installs; a person at a terminal does not. The
-  long-term connection credential therefore stays hash-only at all times.
-- **Diagnostic bootstrap** (`diagnosticBootstrap.js`): a session-authorized,
-  user-attributed bootstrap transaction that refuses replay of a consumed
-  request (`diagnostic_bootstrap_already_consumed`). Reused: precedent for the
-  strict one-time delivery that enrollment now follows. Not reused: its restricted agent identity.
-- **Executor and controller API tokens**
-  (`services/certops/apiTokens.js`, `middleware/api-token-auth.js`): `ttx_`
-  credentials, workspace-bound, scopes limited to executor and controller
-  routes, creator recorded as provenance, last-used updates, and a middleware
-  that rejects session identity. Reused: mechanics. Not reused as a principal:
-  `created_by` is not live delegated authority and validation never checks the
-  creator's current role.
-- **Workspace authorization** (`services/rbac.js`): `actionPolicy` and `can`,
-  `loadWorkspace` deriving the role from a session user or trusted worker, and
-  the implicit workspace-owner rule. Reused: the role query and policy table.
-  A shared resolver is extracted so the credential family stays explicit.
-- **Route guards** (`routes/certops.js`): session-only guards, manager write
-  guard, and role-based redaction of the job lease id below admin. Reused:
-  the redaction principle, applied by the operator projection to every
-  connection regardless of the represented user's role.
-- **Approvals** (`services/certops/jobApprovals.js`): the non-requester rule,
-  jobs requested through an API token carrying a null requester, a canonical
-  execution intent, payload hash binding, an append-only ledger, dispatch-time
-  invalidation, and audit that records the approver as actor. Reused in full.
-  `certificate_jobs.requested_by_api_token_id` already exists; operator
-  connections add their own column rather than reusing it.
-- **Jobs and idempotency** (`services/certops/jobs.js`): job statuses and
-  operations used by the contracts, fingerprinted manual-job idempotency,
-  upfront issuance creating a provisioning certificate with the job.
-- **Renewal profiles** (`renewalProfileDerivation.js`, `renewalProfileAdmin.js`,
-  ADR-0010): derivation inserts an active profile; profile status can be set to
-  `active` or `disabled`; profile management is a manager-or-admin action
-  (`certops.renewal_profile.manage`).
-- **Explanations** (`renewalPathHealth.js`, `jobPendingReason.js`,
-  `agentJobEligibility.js`): `explainAgentJobEligibility` is already shared by
-  the renewal-path and pending-reason logic; renewal path states are `healthy`,
-  `degraded`, `unavailable` and `unknown`. The explain endpoint composes these
-  and does not duplicate them.
-- **Durable side effects** (`certops_outbox`, ADR-0009): a typed event
-  vocabulary with allowlisted payloads. Reusing it requires adding and handling
-  a new event type deliberately.
-- **Zero custody** (ADR-0001, `reject-key-material.js`, `packages/log-scrub`):
-  private-key rejection and secret-material detection reused for MCP inputs and
-  as the last-line outbound scan.
-- **Hide-existence behavior** (`middleware/workspace-access-policy.js`): reused
-  for cross-workspace paths.
-- **Lifecycle semantics** (`docs/certops/CONTEXT.md`, ADR-0007): retirement is
-  fingerprint lifecycle, separate from management periods; recording revocation
-  does not contact the CA; provisioning rows count toward quota.
-- **Issuer-side revocation**: not available. Issuer connectors and revocation
-  jobs are open work (issue 246), and the shared outbound policy is issue 233.
+Regression coverage includes credential-family isolation, session/CSRF guards,
+tenant boundaries, projection secrecy, real stdio negotiation, replay,
+PostgreSQL approval/claim/revocation races and both Job approval modes. Local
+browser qualification covers independent decisions and refusals. These checks
+do not establish native CA/installation, external SSO/payment, production
+deployment or release acceptance. PR test plans record actual validation.

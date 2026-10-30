@@ -341,7 +341,7 @@ async function listConnections({ client, workspaceId, userId = null }) {
   return result.rows.map((row) => connectionFromRow(row));
 }
 
-// Work a revoked connection asked for must not start (ADR-0015 section 9).
+// Work a revoked connection asked for must not start (ADR-0015).
 // Only jobs nothing has picked up are touched: an unapproved, approved or
 // pending job is cancelled, and a job an agent already claimed is left to the
 // existing cancellation and reconciliation paths. The status guard is also the
@@ -362,7 +362,7 @@ async function cancelUndispatchedJobs(db, { workspaceId, connectionId }) {
 
 // Revocation is idempotent. The row lock taken here is the same lock that
 // authentication takes before authorizing a request, so once this commits no
-// later request can authenticate (ADR-0015 section 8).
+// later request can authenticate (ADR-0015).
 async function revokeConnection({ client, workspaceId, connectionId, revokedBy = null }) {
   const db = client || pool;
   const result = await db.query(

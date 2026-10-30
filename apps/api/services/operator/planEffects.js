@@ -1,6 +1,6 @@
 "use strict";
 
-// What a renew request would do, as plain facts (ADR-0015 section 6).
+// What a renew request would do, as plain facts (ADR-0015).
 //
 // The effect is computed from the certificate and its stored renewal profile
 // by the same materializer the dashboard's renew button uses, so a preview can
