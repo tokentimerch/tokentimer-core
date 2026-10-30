@@ -251,4 +251,31 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     assert.equal(hidden.reduce((total, sample) => total + sample.value, 0), 2);
   });
 
+  it("serves valid Prometheus text with escaped metadata and suppresses details when disabled", async () => {
+    const config = await configuration(); await settings(config);
+    const run = await start(config); await scan(run, ["42"]);
+    const name = 'Credential "blue"\\lane\nrotated';
+    await imported(run, { name });
+    const { Registry } = require("../../apps/api/node_modules/prom-client");
+    const { registerAutoSyncMetrics } = require("../../apps/api/services/autoSyncMetrics");
+    const registry = new Registry(); registerAutoSyncMetrics(registry);
+    app.get("/test-metrics", async (_req, res, next) => {
+      try { res.type(registry.contentType).send(await registry.metrics()); } catch (error) { next(error); }
+    });
+    const response = await request(app).get("/test-metrics");
+    assert.equal(response.status, 200);
+    assert.match(response.headers["content-type"], /text\/plain/);
+    const samples = response.text.split("\n").filter(line => line.includes('configuration_id="' + config.id + '"'));
+    assert.equal(samples.length, 2, "one creation counter and one last-creation timestamp");
+    const escaped = name.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("\n", "\\n");
+    assert.ok(samples.every(line => line.includes('asset_name="' + escaped + '"')));
+    assert.ok(samples.some(line => line.startsWith("auto_sync_items_created_detailed_total{") && line.endsWith(" 1")));
+    assert.ok(samples.some(line => line.startsWith("auto_sync_last_creation_timestamp_seconds{")));
+    await pool.query("UPDATE auto_sync_configs SET metrics_settings=$2 WHERE id=$1", [config.id, { enabled: false, labels: [] }]);
+    const disabled = await request(app).get("/test-metrics");
+    assert.equal(disabled.status, 200);
+    assert.ok(!disabled.text.includes('configuration_id="' + config.id + '"'));
+    assert.ok(disabled.text.includes("auto_sync_items_created_total{"), "existing provider counters remain exposed");
+  });
+
 });
