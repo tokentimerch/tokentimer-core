@@ -11,6 +11,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Auto-sync alerts can target individual connections and asset types.** Opt-in label controls expose configuration names, monitoring groups and selected asset/project/group metadata, with a warning about series growth. Token-name and project/group labels also require a deployment-level opt-in, off by default. A persisted last-creation timestamp supports first-scrape alerts; existing aggregate counters remain unchanged. **Operator action:** apply migration 81 with matching API/dashboard code. Detailed names and scope labels cover new creations while selected; existing activity is not backfilled.
+
 - **API request correlation.** Responses include a generated `X-Request-Id` that matches `correlationId` in request-scoped API logs and completion records. Use it when reporting API failures; incoming request IDs are replaced to prevent forged or sensitive values from entering logs. Dashboard API errors display the matching request reference when available. Worker propagation remains follow-up work.
 
 ## [0.18.2] - 2026-10-27
