@@ -2576,6 +2576,12 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: A configuration name conflicts or AUTO_SYNC_METRICS_MANAGED prevents changes to globally managed metric or monitoring-group settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalError"
     delete:
