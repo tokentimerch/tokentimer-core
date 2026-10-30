@@ -74,6 +74,9 @@ function Section({ title, value }) {
 
 export default function AssistantApprovalReview({ review }) {
   const effect = review.effect || {};
+  const approvalEnd = Date.parse(review.approvalExpiresAt);
+  const connectionEnd = Date.parse(review.connection?.expiresAt);
+  const cutoff = Math.min(approvalEnd, connectionEnd);
   const profile = effect.renewalProfile || {};
   const { deploymentTargets, target, ...settings } = profile;
   const targets = Array.isArray(deploymentTargets) ? deploymentTargets : [];
@@ -83,7 +86,7 @@ export default function AssistantApprovalReview({ review }) {
       ? [...targets, target]
       : targets;
   const {
-    renewalProfile,
+    renewalProfile: _renewalProfile,
     publication,
     executionRouting,
     standingRenewal,
@@ -102,7 +105,14 @@ export default function AssistantApprovalReview({ review }) {
             label: 'Client label (advisory)',
             value: review.connection?.label || 'Unnamed client',
           },
-          { label: 'Approve before', value: date(review.approvalExpiresAt) },
+          {
+            label: 'Approve before',
+            value: date(cutoff),
+            help:
+              connectionEnd < approvalEnd
+                ? 'Connection expires first'
+                : 'Approval window',
+          },
         ]}
       />
       <Section
@@ -178,6 +188,7 @@ export default function AssistantApprovalReview({ review }) {
             'Requester ID': review.requester?.id,
             'Connection ID': review.connection?.id,
             'Connection expires': date(review.connection?.expiresAt),
+            'Approval window ends': date(review.approvalExpiresAt),
             'Request record ID': review.requestRecordId,
             'Preview submission deadline': date(review.previewExpiresAt),
           }}

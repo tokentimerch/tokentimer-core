@@ -68,6 +68,18 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 describe('independent assistant request review', () => {
+  it('shows the effective cutoff when the connection expires before the approval window', async () => {
+    const value = review();
+    value.connection.expiresAt = new Date(Date.now() + 10000).toISOString();
+    getApprovalReview.mockResolvedValue({ review: value });
+    show();
+    await screen.findByText('Connection expires first');
+    expect(screen.getByLabelText('Important summary')).toHaveTextContent(
+      new Date(value.connection.expiresAt).toLocaleString()
+    );
+    expect(screen.getByText('Approval window ends :')).toBeInTheDocument();
+  });
+
   it('retries a failed review without reopening the dialog', async () => {
     getApprovalReview.mockRejectedValueOnce(new Error('offline'));
     show();
