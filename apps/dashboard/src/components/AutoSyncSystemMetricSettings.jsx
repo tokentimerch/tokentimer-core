@@ -11,10 +11,14 @@ import {
   HStack,
   Input,
   SimpleGrid,
+  Switch,
+  Tooltip,
+  IconButton,
   Text,
   VStack,
   useColorModeValue,
 } from '@chakra-ui/react';
+import { InfoOutlineIcon } from '@chakra-ui/icons';
 import apiClient from '../utils/apiClient';
 import { DashboardActionButton } from './DashboardPrimitives';
 import { METRIC_LABEL_CHOICES } from './imports/AutoSyncMetricSettings.jsx';
@@ -89,13 +93,41 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
       <Box borderWidth='1px' borderRadius='md' p={4}>
         <VStack align='stretch' spacing={3}>
           <HStack justify='space-between' flexWrap='wrap'>
-            <Checkbox
-              isChecked={policy.override_metrics}
-              isDisabled={saving || policy.locked}
-              onChange={e => change({ override_metrics: e.target.checked })}
+            <FormControl
+              display='flex'
+              alignItems='center'
+              gap={3}
+              width='auto'
             >
-              Override integration metrics
-            </Checkbox>
+              <Switch
+                id='override-integration-metrics'
+                size='lg'
+                colorScheme='blue'
+                role='switch'
+                isChecked={policy.override_metrics}
+                isDisabled={saving || policy.locked}
+                onChange={e => change({ override_metrics: e.target.checked })}
+              />
+              <FormLabel
+                htmlFor='override-integration-metrics'
+                mb={0}
+                fontSize='md'
+                fontWeight='semibold'
+              >
+                Override integration metrics
+              </FormLabel>
+              <Tooltip
+                hasArrow
+                label='When saved, applies the additional metrics switch and selected labels below to every integration and locks their metric controls. Turn this off and save to restore each integration’s saved choices. Monitoring group is overridden separately; environment restrictions always take priority.'
+              >
+                <IconButton
+                  size='xs'
+                  variant='ghost'
+                  aria-label='About overriding integration metrics'
+                  icon={<InfoOutlineIcon />}
+                />
+              </Tooltip>
+            </FormControl>
             {policy.locked ? <Badge>Set by environment</Badge> : null}
           </HStack>
           <Checkbox

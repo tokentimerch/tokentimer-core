@@ -3,6 +3,7 @@ import {
   Badge,
   Box,
   Button,
+  HStack,
   Table,
   TableContainer,
   Tbody,
@@ -43,6 +44,28 @@ export default function AutoSyncRecentRuns({
 }) {
   const muted = useColorModeValue('gray.600', 'gray.400');
   const [expandedRun, setExpandedRun] = useState(null);
+  const [page, setPage] = useState(0);
+  const [pageError, setPageError] = useState('');
+  const [paging, setPaging] = useState(false);
+  const pageSize = 5;
+  const pageRuns = runs.slice(page * pageSize, (page + 1) * pageSize);
+  const hasCachedEarlier = runs.length > (page + 1) * pageSize;
+  async function earlier() {
+    setPageError('');
+    setExpandedRun(null);
+    if (hasCachedEarlier) {
+      setPage(value => value + 1);
+      return;
+    }
+    setPaging(true);
+    try {
+      if (await onLoadEarlier?.()) setPage(value => value + 1);
+    } catch {
+      setPageError('Unable to load earlier runs. Please try again.');
+    } finally {
+      setPaging(false);
+    }
+  }
 
   return (
     <Box>
@@ -74,7 +97,7 @@ export default function AutoSyncRecentRuns({
               </Tr>
             </Thead>
             <Tbody>
-              {runs.map(run => {
+              {pageRuns.map(run => {
                 const [label, color] = states[run.status] || [
                   run.status || 'Unknown',
                   'gray',
@@ -97,26 +120,24 @@ export default function AutoSyncRecentRuns({
                         <Badge colorScheme={color} textTransform='none'>
                           {label}
                         </Badge>
-                        {run.error ? (
-                          <Button
-                            display='block'
-                            size='xs'
-                            variant='link'
-                            fontSize='xs'
-                            aria-label={`Details for ${started(run.started_at)}`}
-                            aria-expanded={expandedRun === run.run_id}
-                            onClick={() =>
-                              setExpandedRun(previous =>
-                                previous === run.run_id ? null : run.run_id
-                              )
-                            }
-                            mt={2}
-                          >
-                            {expandedRun === run.run_id
-                              ? 'Hide details'
-                              : 'Details'}
-                          </Button>
-                        ) : null}
+                        <Button
+                          display='block'
+                          size='xs'
+                          variant='link'
+                          fontSize='xs'
+                          aria-label={`Details for ${started(run.started_at)}`}
+                          aria-expanded={expandedRun === run.run_id}
+                          onClick={() =>
+                            setExpandedRun(previous =>
+                              previous === run.run_id ? null : run.run_id
+                            )
+                          }
+                          mt={2}
+                        >
+                          {expandedRun === run.run_id
+                            ? 'Hide details'
+                            : 'View details'}
+                        </Button>
                       </Td>
                       {[
                         'created_count',
@@ -130,11 +151,49 @@ export default function AutoSyncRecentRuns({
                         </Td>
                       ))}
                     </Tr>
-                    {run.error && expandedRun === run.run_id ? (
+                    {expandedRun === run.run_id ? (
                       <Tr>
                         <Td colSpan={7} py={3} whiteSpace='normal'>
-                          <Text fontSize='sm' color={muted}>
-                            {run.error}
+                          <Text fontSize='sm' fontWeight='semibold'>
+                            Run details
+                          </Text>
+                          <Text fontSize='sm' mt={2}>
+                            Run ID: {run.run_id}
+                          </Text>
+                          <Text fontSize='sm'>
+                            Finished:{' '}
+                            {run.finished_at
+                              ? started(run.finished_at)
+                              : 'Not recorded'}
+                          </Text>
+                          <Text fontSize='sm'>
+                            Generation: {count(run.generation)} · Scan version:{' '}
+                            {count(run.scan_version)}
+                          </Text>
+                          {run.error ? (
+                            <Text fontSize='sm' color={muted} mt={2}>
+                              {run.error}
+                            </Text>
+                          ) : null}
+                          {run.settings_snapshot ? (
+                            <>
+                              <Text fontSize='sm' fontWeight='semibold' mt={3}>
+                                Settings at run start
+                              </Text>
+                              <Box
+                                as='pre'
+                                fontSize='xs'
+                                whiteSpace='pre-wrap'
+                                overflowWrap='anywhere'
+                                mt={2}
+                              >
+                                {JSON.stringify(run.settings_snapshot, null, 2)}
+                              </Box>
+                            </>
+                          ) : null}
+                          <Text fontSize='xs' color={muted} mt={2}>
+                            This saved summary does not contain an item-by-item
+                            change log.
                           </Text>
                         </Td>
                       </Tr>
@@ -146,16 +205,38 @@ export default function AutoSyncRecentRuns({
           </Table>
         </TableContainer>
       )}
-      {!loading && hasEarlier ? (
-        <Button
-          size='sm'
-          variant='outline'
-          mt={3}
-          isLoading={loadingEarlier}
-          onClick={onLoadEarlier}
-        >
-          Earlier runs
-        </Button>
+      {!loading && runs.length > 0 ? (
+        <HStack mt={3} justify='space-between'>
+          <Button
+            size='sm'
+            variant='outline'
+            isDisabled={page === 0 || paging || loadingEarlier}
+            onClick={() => {
+              setPage(value => value - 1);
+              setExpandedRun(null);
+              setPageError('');
+            }}
+          >
+            Newer runs
+          </Button>
+          <Text fontSize='xs' color={muted}>
+            Page {page + 1} · Up to 5 runs
+          </Text>
+          <Button
+            size='sm'
+            variant='outline'
+            isDisabled={!hasCachedEarlier && !hasEarlier}
+            isLoading={paging || loadingEarlier}
+            onClick={earlier}
+          >
+            Earlier runs
+          </Button>
+        </HStack>
+      ) : null}
+      {pageError ? (
+        <Text role='alert' fontSize='sm' mt={2}>
+          {pageError}
+        </Text>
       ) : null}
     </Box>
   );

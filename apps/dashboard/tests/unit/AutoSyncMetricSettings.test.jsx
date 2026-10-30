@@ -176,12 +176,12 @@ describe('global overrides', () => {
         <AutoSyncSystemMetricSettings onConfiguredChange={configured} />
       </ChakraProvider>
     );
-    await screen.findByRole('checkbox', {
+    await screen.findByRole('switch', {
       name: 'Override integration metrics',
     });
     expect(configured).toHaveBeenLastCalledWith(false);
     fireEvent.click(
-      screen.getByRole('checkbox', { name: 'Override integration metrics' })
+      screen.getByRole('switch', { name: 'Override integration metrics' })
     );
     fireEvent.click(
       screen.getByRole('checkbox', {
@@ -237,7 +237,7 @@ describe('global overrides', () => {
       screen.getByRole('textbox', { name: 'Monitoring group label' })
     ).toBeDisabled();
     expect(
-      screen.getByRole('checkbox', { name: 'Override integration metrics' })
+      screen.getByRole('switch', { name: 'Override integration metrics' })
     ).toBeEnabled();
     expect(configured).toHaveBeenLastCalledWith(true);
   });
@@ -253,7 +253,7 @@ describe('global overrides', () => {
       </ChakraProvider>
     );
     fireEvent.click(
-      await screen.findByRole('checkbox', {
+      await screen.findByRole('switch', {
         name: 'Override integration metrics',
       })
     );
@@ -265,4 +265,25 @@ describe('global overrides', () => {
     );
     expect(configured).toHaveBeenLastCalledWith(true);
   });
+});
+
+it('explains the prominent override switch through its keyboard-accessible tooltip', async () => {
+  apiClient.get.mockResolvedValue({ data: defaults });
+  render(
+    <ChakraProvider>
+      <AutoSyncSystemMetricSettings />
+    </ChakraProvider>
+  );
+  expect(
+    await screen.findByRole('switch', { name: 'Override integration metrics' })
+  ).toBeEnabled();
+  fireEvent.focus(
+    screen.getByRole('button', { name: 'About overriding integration metrics' })
+  );
+  expect(await screen.findByRole('tooltip')).toHaveTextContent(
+    'locks their metric controls'
+  );
+  expect(screen.getByRole('tooltip')).toHaveTextContent(
+    'restore each integration’s saved choices'
+  );
 });

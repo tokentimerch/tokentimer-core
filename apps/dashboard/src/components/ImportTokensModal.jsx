@@ -1470,7 +1470,7 @@ function ImportTokensModalContent({
     setAutoSyncRunsCursor(null);
     apiClient
       .get(
-        `/api/v1/workspaces/${workspaceId}/auto-sync/${autoSyncConfig.id}/runs?limit=10`
+        `/api/v1/workspaces/${workspaceId}/auto-sync/${autoSyncConfig.id}/runs?limit=5`
       )
       .then(res => {
         if (!cancelled) {
@@ -1496,17 +1496,19 @@ function ImportTokensModalContent({
   ]);
 
   const loadEarlierAutoSyncRuns = async () => {
-    if (!autoSyncRunsCursor || !autoSyncConfig?.id) return;
+    if (!autoSyncRunsCursor || !autoSyncConfig?.id) return false;
     const configId = autoSyncConfig.id;
     setLoadingAutoSyncRuns(true);
     try {
       const res = await apiClient.get(
-        `/api/v1/workspaces/${workspaceId}/auto-sync/${configId}/runs?limit=10&cursor=${encodeURIComponent(autoSyncRunsCursor)}`
+        `/api/v1/workspaces/${workspaceId}/auto-sync/${configId}/runs?limit=5&cursor=${encodeURIComponent(autoSyncRunsCursor)}`
       );
       if (autoSyncHistoryConfigRef.current === configId) {
         setAutoSyncRuns(previous => [...previous, ...(res.data?.items || [])]);
         setAutoSyncRunsCursor(res.data?.next_cursor || null);
+        return (res.data?.items || []).length > 0;
       }
+      return false;
     } finally {
       setLoadingAutoSyncRuns(false);
     }
@@ -3180,13 +3182,12 @@ function ImportTokensModalContent({
                       defaultGroupId={defaultContactGroupId}
                     />
                     <AutoSyncRecentRuns
+                      key={`${autoSyncHistoryKey}/${autoSyncConfig?.last_sync_at || ''}`}
                       runs={visibleAutoSyncRuns}
                       loading={autoSyncRunsFor !== autoSyncHistoryKey}
                       hasEarlier={Boolean(autoSyncRunsCursor)}
                       loadingEarlier={loadingAutoSyncRuns}
-                      onLoadEarlier={() => {
-                        void loadEarlierAutoSyncRuns().catch(() => {});
-                      }}
+                      onLoadEarlier={loadEarlierAutoSyncRuns}
                     />
                     <Divider />
                     <Box>
