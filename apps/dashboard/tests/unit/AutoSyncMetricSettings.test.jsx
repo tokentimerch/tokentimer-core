@@ -176,12 +176,12 @@ describe('global overrides', () => {
         <AutoSyncSystemMetricSettings onConfiguredChange={configured} />
       </ChakraProvider>
     );
-    await screen.findByRole('switch', {
+    await screen.findByRole('checkbox', {
       name: 'Override integration metrics',
     });
     expect(configured).toHaveBeenLastCalledWith(false);
     fireEvent.click(
-      screen.getByRole('switch', { name: 'Override integration metrics' })
+      screen.getByRole('checkbox', { name: 'Override integration metrics' })
     );
     fireEvent.click(
       screen.getByRole('checkbox', {
@@ -237,7 +237,7 @@ describe('global overrides', () => {
       screen.getByRole('textbox', { name: 'Monitoring group label' })
     ).toBeDisabled();
     expect(
-      screen.getByRole('switch', { name: 'Override integration metrics' })
+      screen.getByRole('checkbox', { name: 'Override integration metrics' })
     ).toBeEnabled();
     expect(configured).toHaveBeenLastCalledWith(true);
   });
@@ -253,7 +253,7 @@ describe('global overrides', () => {
       </ChakraProvider>
     );
     fireEvent.click(
-      await screen.findByRole('switch', {
+      await screen.findByRole('checkbox', {
         name: 'Override integration metrics',
       })
     );
@@ -275,7 +275,7 @@ it('explains the prominent override switch through its keyboard-accessible toolt
     </ChakraProvider>
   );
   expect(
-    await screen.findByRole('switch', { name: 'Override integration metrics' })
+    await screen.findByRole('checkbox', { name: 'Override integration metrics' })
   ).toBeEnabled();
   fireEvent.focus(
     screen.getByRole('button', { name: 'About overriding integration metrics' })

@@ -103,7 +103,6 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
                 id='override-integration-metrics'
                 size='lg'
                 colorScheme='blue'
-                role='switch'
                 isChecked={policy.override_metrics}
                 isDisabled={saving || policy.locked}
                 onChange={e => change({ override_metrics: e.target.checked })}
