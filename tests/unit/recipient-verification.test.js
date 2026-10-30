@@ -1878,4 +1878,77 @@ describe("recipient verification", () => {
     assert.equal(invitation.withholdDelivery, true);
     assert.equal(invitation.token, null);
   });
+
+  it("retries a verification timeout and does not let one recipient or another channel settle the rest", async () => {
+    process.env.TT_DEPLOYMENT = "self-hosted";
+    process.env.RECIPIENT_VERIFICATION_MODE = "enforce";
+    const timeout = new Error("canceling statement due to statement timeout");
+    timeout.code = "57014";
+    assert.equal(verification.isTemporaryVerificationFailure(timeout), true);
+    const gated = await verification.filterDeliveryRecipients({
+      client: { query: async () => { throw timeout; } },
+      workspaceId: "ws-1",
+      channel: "email",
+      recipients: [
+        { contactId: "c1", destination: "a@example.com" },
+        { contactId: "c2", destination: "b@example.com" },
+      ],
+    });
+    assert.equal(gated.unavailable, true);
+    assert.equal(gated.code, "RECIPIENT_VERIFICATION_UNAVAILABLE");
+    assert.equal(gated.allowed.length, 0);
+    const pending = verification.mergeDeliveryAttempt({
+      prior: ["email", "webhooks"],
+      attempted: [{
+        channel: "email",
+        success: false,
+        recipients: {
+          "a@example.com": { state: "unavailable", code: "RECIPIENT_VERIFICATION_UNAVAILABLE" },
+          "b@example.com": { state: "unavailable", code: "RECIPIENT_VERIFICATION_UNAVAILABLE" },
+        },
+      }],
+      liveChannels: ["email", "webhooks"],
+    });
+    assert.equal(pending.outcome.retry, true);
+    assert.equal(pending.ledger.outcomes.email.state, "failed");
+    assert.equal(pending.ledger.outcomes.email.code, "RECIPIENT_VERIFICATION_UNAVAILABLE");
+    assert.equal(verification.planManualRetry(pending.ledger, "email").ok, true);
+    const mixed = verification.mergeDeliveryAttempt({
+      prior: pending.ledger,
+      logRows: [
+        { channel: "email", status: "success", metadata: { recipient: "a@example.com" } },
+        { channel: "email", status: "failed", error_message: "smtp down", metadata: { recipient: "b@example.com" } },
+        { channel: "email", status: "blocked", error_message: "RECIPIENT_NOT_VERIFIED", metadata: { recipient: "c@example.com" } },
+      ],
+      attempted: [{ channel: "webhooks", success: true }],
+      liveChannels: ["email", "webhooks"],
+    });
+    assert.equal(mixed.ledger.outcomes.email.state, "failed");
+    assert.equal(mixed.ledger.outcomes.webhooks.state, "sent");
+    assert.deepEqual(mixed.ledger.retry, ["email"]);
+    assert.equal(mixed.outcome.status, "partial");
+    assert.deepEqual(verification.channelNamesForSettlement(mixed.ledger), ["email", "webhooks"]);
+    assert.deepEqual(verification.channelNamesForSettlement(["email", "whatsapp"]), ["email", "whatsapp"]);
+    assert.equal(verification.channelNamesForSettlement(["email", "pagerduty"]), null);
+    const recovered = verification.requiredRecipientDelivery({
+      channel: "email",
+      recipients: ["a@example.com", "b@example.com", "c@example.com"],
+      history: [
+        { channel: "email", status: "success", metadata: { recipient: "a@example.com" } },
+        { channel: "email", status: "success", metadata: { recipient: "b@example.com" } },
+      ],
+      eligibility: { "c@example.com": { code: "RECIPIENT_NOT_VERIFIED" } },
+    });
+    assert.equal(recovered.complete, true);
+    assert.equal(recovered.delivered, true);
+    assert.deepEqual(recovered.eligible, ["a@example.com", "b@example.com"]);
+    const unresolved = verification.requiredRecipientDelivery({
+      channel: "email",
+      recipients: ["a@example.com", "b@example.com"],
+      history: [{ channel: "email", status: "success", metadata: { recipient: "a@example.com" } }],
+      eligibility: { "b@example.com": { code: "RECIPIENT_VERIFICATION_UNAVAILABLE" } },
+    });
+    assert.equal(unresolved.complete, false);
+    assert.equal(unresolved.unavailable, true);
+  });
 });

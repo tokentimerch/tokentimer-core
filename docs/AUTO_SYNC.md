@@ -69,6 +69,14 @@ freshness/grace periods for your longest schedule. Alertmanager controls deliver
 Collector errors can return HTTP 500; connection failures may terminate the API.
 Both cause scrape failures, not evidence of zero activity.
 
+### Optional configuration and asset labels
+
+- Apply migration 81 with matching API/dashboard code; existing provider counters remain unchanged.
+- Enable additional metrics per connection. Configuration IDs remain stable; monitoring group `critical` selects the example alert.
+- Token names and project/group labels are deployment-disabled by default. Allow them with `AUTO_SYNC_METRICS_EXTRA_LABELS=asset_name,project,group` or Helm `monitoring.metrics.extraLabels=[asset_name,project,group]`, then select them per connection.
+- **Warning:** extra labels multiply series/alerts and expose metadata, never secrets. Old Prometheus samples remain until retention expires.
+- Details cover future creations; overlapping configurations credit the actual creator. Timestamp alerts work on the first scrape.
+
 ## Cleanup and removal
 
 Enable destructive cleanup only when it matches your retention policy. Partial, truncated, rate-limited or inaccessible scans must not be treated as proof that an asset disappeared. Complete scans reconcile only the scope actually covered.

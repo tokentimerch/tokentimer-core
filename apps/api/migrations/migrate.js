@@ -4850,6 +4850,11 @@ const migrations = [
     name: "auto_sync_run_metrics",
     sql: fs.readFileSync(require("path").join(__dirname, "080-auto-sync-run-metrics.sql"), "utf8"),
   },
+  {
+    version: 81,
+    name: "auto_sync_metric_labels",
+    sql: fs.readFileSync(require("path").join(__dirname, "081-auto-sync-metric-labels.sql"), "utf8"),
+  },
 ];
 
 
@@ -5142,8 +5147,12 @@ migrations.push({
   `,
 });
 
+// Main owns 81 auto_sync_metric_labels. Versions 84+ stay free for the
+// open CertOps distribution and PagerDuty branches (#460, #496, #498).
+// A database that already applied this preview as 81/82 keeps those rows.
+// compose-migrations applies metric labels as 83 on that ledger only.
 migrations.push({
-  version: 81,
+  version: 82,
   name: "recipient_channel_verification",
   sql: fs.readFileSync(
     require("path").join(__dirname, "../../../packages/recipient-verification/migration.sql"),
@@ -5152,7 +5161,7 @@ migrations.push({
 });
 
 migrations.push({
-  version: 82,
+  version: 83,
   name: "weekly_digest_recipient_claim_token",
   sql: `
     ALTER TABLE weekly_digest_recipient_log

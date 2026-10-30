@@ -2098,6 +2098,7 @@ export async function deliveryWorkerJob({
           let errorCode = null;
           let eligibilityTerminal = false;
           let channelTerminal = false;
+          let channelRecipients = null;
           let partialSuccess = false;
           let deliveryEndpoints = null;
 
@@ -2159,18 +2160,29 @@ export async function deliveryWorkerJob({
               const contactIdByEmail = selected.contactIdByDestination;
 
               if (recipients.length > 0 && trimmed.length === 0 && gated.enforced) {
+                const infrastructure = gated.code === "RECIPIENT_VERIFICATION_UNAVAILABLE";
                 success = false;
-                eligibilityTerminal = true;
-                errorCode = gated.code || "NO_VERIFIED_RECIPIENTS";
+                eligibilityTerminal = !infrastructure;
+                errorCode = infrastructure
+                  ? "RECIPIENT_VERIFICATION_UNAVAILABLE"
+                  : (gated.code || "NO_VERIFIED_RECIPIENTS");
                 errorMessage = errorCode;
+                channelRecipients = {};
+                for (const row of gated.blocked) {
+                  if (!row || !row.destination || row.shadow) continue;
+                  channelRecipients[String(row.destination).trim().toLowerCase()] = infrastructure || row.code === "RECIPIENT_VERIFICATION_UNAVAILABLE"
+                    ? { state: "unavailable", code: "RECIPIENT_VERIFICATION_UNAVAILABLE" }
+                    : { state: "excluded", code: row.code || errorCode };
+                }
                 await client.query(
                   `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
-                   VALUES ($1,$2,$3,$4,'email','blocked',$5,$6)`,
+                   VALUES ($1,$2,$3,$4,'email',$5,$6,$7)`,
                   [
                     alert.id,
                     alert.owner_user_id,
                     alert.token_id,
                     alert.workspace_id,
+                    infrastructure ? "failed" : "blocked",
                     errorCode,
                     JSON.stringify({ group_id: groupIdUsed, code: errorCode }),
                   ],
@@ -2217,6 +2229,8 @@ export async function deliveryWorkerJob({
                 let allOk = true;
                 let emailSends = 0;
                 let emailEligibilitySkips = 0;
+                let verificationDeferred = false;
+                channelRecipients = channelRecipients || {};
                 const priorEmailSuccess = new Set(
                   priorDeliveryRows
                     .filter((row) => row.channel === "email" && row.status === "success")
@@ -2236,9 +2250,31 @@ export async function deliveryWorkerJob({
                     "email",
                     { contactId: contactIdByEmail.get(rcpt), destination: rcpt },
                   );
+                  const recipientKey = String(rcpt).trim().toLowerCase();
                   if (verificationMode() === "enforce" && !liveRecipient.allowed) {
+                    const liveCode = liveRecipient.code || "RECIPIENT_NOT_VERIFIED";
+                    errorCode = liveCode;
+                    if (liveCode === "RECIPIENT_VERIFICATION_UNAVAILABLE") {
+                      verificationDeferred = true;
+                      channelRecipients[recipientKey] = { state: "unavailable", code: liveCode };
+                      await client.query(
+                        `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+                        [
+                          alert.id,
+                          alert.owner_user_id,
+                          alert.token_id,
+                          alert.workspace_id,
+                          "email",
+                          "failed",
+                          liveCode,
+                          JSON.stringify({ group_id: groupIdUsed, code: liveCode, recipient: rcpt }),
+                        ],
+                      );
+                      continue;
+                    }
                     emailEligibilitySkips += 1;
-                    errorCode = liveRecipient.code || "RECIPIENT_NOT_VERIFIED";
+                    channelRecipients[recipientKey] = { state: "excluded", code: liveCode };
                     await client.query(
                       `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
                      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
@@ -2250,13 +2286,14 @@ export async function deliveryWorkerJob({
                         "email",
                         "blocked",
                         errorCode,
-                        JSON.stringify({ group_id: groupIdUsed, code: errorCode }),
+                        JSON.stringify({ group_id: groupIdUsed, code: errorCode, recipient: rcpt }),
                       ],
                     );
                     continue;
                   }
-                  if (priorEmailSuccess.has(String(rcpt).trim().toLowerCase())) {
+                  if (priorEmailSuccess.has(recipientKey)) {
                     emailSends += 1;
+                    channelRecipients[recipientKey] = { state: "sent" };
                     continue;
                   }
                   emailSends += 1;
@@ -2305,9 +2342,17 @@ export async function deliveryWorkerJob({
                       error: _.message,
                     });
                   }
+                  channelRecipients[recipientKey] = res.success
+                    ? { state: "sent" }
+                    : { state: "failed", code: res.error || "PARTIAL_FAILURE" };
                   if (!res.success) allOk = false;
                 }
-                if (emailSends === 0 && emailEligibilitySkips > 0) {
+                if (verificationDeferred) {
+                  success = false;
+                  eligibilityTerminal = false;
+                  errorCode = "RECIPIENT_VERIFICATION_UNAVAILABLE";
+                  errorMessage = errorCode;
+                } else if (emailSends === 0 && emailEligibilitySkips > 0) {
                   success = false;
                   eligibilityTerminal = true;
                   errorCode = errorCode || "NO_VERIFIED_RECIPIENTS";
@@ -2759,18 +2804,29 @@ export async function deliveryWorkerJob({
                   // Skip sending due to throttle; log for visibility
                   success = false;
                 } else if (phoneRows.length > 0 && trimmed.length === 0 && gatedPhones.enforced) {
+                  const infrastructure = gatedPhones.code === "RECIPIENT_VERIFICATION_UNAVAILABLE";
                   success = false;
-                  eligibilityTerminal = true;
-                  errorCode = gatedPhones.code || "NO_VERIFIED_RECIPIENTS";
+                  eligibilityTerminal = !infrastructure;
+                  errorCode = infrastructure
+                    ? "RECIPIENT_VERIFICATION_UNAVAILABLE"
+                    : (gatedPhones.code || "NO_VERIFIED_RECIPIENTS");
                   errorMessage = errorCode;
+                  channelRecipients = {};
+                  for (const row of gatedPhones.blocked) {
+                    if (!row || !row.destination || row.shadow) continue;
+                    channelRecipients[String(row.destination).trim()] = infrastructure || row.code === "RECIPIENT_VERIFICATION_UNAVAILABLE"
+                      ? { state: "unavailable", code: "RECIPIENT_VERIFICATION_UNAVAILABLE" }
+                      : { state: "excluded", code: row.code || errorCode };
+                  }
                   await client.query(
                     `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
-                     VALUES ($1,$2,$3,$4,'whatsapp','blocked',$5,$6)`,
+                     VALUES ($1,$2,$3,$4,'whatsapp',$5,$6,$7)`,
                     [
                       alert.id,
                       alert.owner_user_id,
                       alert.token_id,
                       alert.workspace_id,
+                      infrastructure ? "failed" : "blocked",
                       errorCode,
                       JSON.stringify({ group_id: groupIdUsed, code: errorCode }),
                     ],
@@ -2919,6 +2975,8 @@ export async function deliveryWorkerJob({
                     let allOk = true;
                     let whatsAppSends = 0;
                     let whatsAppEligibilitySkips = 0;
+                    let verificationDeferred = false;
+                    channelRecipients = channelRecipients || {};
                     for (const rcpt of trimmed) {
                       await assertStillOwnsDelivery(
                         client,
@@ -2949,8 +3007,27 @@ export async function deliveryWorkerJob({
                         { contactId: contactIdByPhone.get(rcpt), destination: rcpt },
                       );
                       if (verificationMode() === "enforce" && !liveWhatsApp.allowed) {
+                        const liveCode = liveWhatsApp.code || "RECIPIENT_NOT_VERIFIED";
+                        errorCode = liveCode;
+                        if (liveCode === "RECIPIENT_VERIFICATION_UNAVAILABLE") {
+                          verificationDeferred = true;
+                          channelRecipients[String(rcpt).trim()] = { state: "unavailable", code: liveCode };
+                          await client.query(
+                            `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
+                             VALUES ($1,$2,$3,$4,'whatsapp','failed',$5,$6)`,
+                            [
+                              alert.id,
+                              alert.owner_user_id,
+                              alert.token_id,
+                              alert.workspace_id,
+                              liveCode,
+                              JSON.stringify({ group_id: groupIdUsed, code: liveCode, recipient: rcpt }),
+                            ],
+                          );
+                          continue;
+                        }
                         whatsAppEligibilitySkips += 1;
-                        errorCode = liveWhatsApp.code || "RECIPIENT_NOT_VERIFIED";
+                        channelRecipients[String(rcpt).trim()] = { state: "excluded", code: liveCode };
                         continue;
                       }
                       const priorWhatsAppSuccess = priorDeliveryRows.some((row) => (
@@ -2960,6 +3037,7 @@ export async function deliveryWorkerJob({
                       ));
                       if (priorWhatsAppSuccess) {
                         whatsAppSends += 1;
+                        channelRecipients[String(rcpt).trim()] = { state: "sent" };
                         continue;
                       }
                       whatsAppSends += 1;
@@ -3019,9 +3097,17 @@ export async function deliveryWorkerJob({
                           }),
                         ],
                       );
+                      channelRecipients[String(rcpt).trim()] = res.success
+                        ? { state: "sent" }
+                        : { state: "failed", code: res.error || "PARTIAL_FAILURE" };
                       if (!res.success) allOk = false;
                     }
-                    if (whatsAppSends === 0 && whatsAppEligibilitySkips > 0) {
+                    if (verificationDeferred) {
+                      success = false;
+                      eligibilityTerminal = false;
+                      errorCode = "RECIPIENT_VERIFICATION_UNAVAILABLE";
+                      errorMessage = errorCode;
+                    } else if (whatsAppSends === 0 && whatsAppEligibilitySkips > 0) {
                       success = false;
                       eligibilityTerminal = true;
                       errorCode = errorCode || "NO_VERIFIED_RECIPIENTS";
@@ -3146,12 +3232,16 @@ export async function deliveryWorkerJob({
             terminal: channelTerminal || eligibilityTerminal,
             partialSuccess,
             endpoints: deliveryEndpoints,
+            recipients: channelRecipients,
           });
           // If WhatsApp failed and it's not a soft throttle, consider it permanent and block the queue entry
+          const verificationUnavailable = String(errorCode || "") === "RECIPIENT_VERIFICATION_UNAVAILABLE"
+            || (channelRecipients && Object.values(channelRecipients).some((row) => row && row.state === "unavailable"));
           if (
             channel === "whatsapp" &&
             !success &&
             !eligibilityTerminal &&
+            !verificationUnavailable &&
             errorMessage !== "ORG_RATE_LIMIT" &&
             String(errorCode || "").toUpperCase() !== "RATE_LIMIT"
           ) {

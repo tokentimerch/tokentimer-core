@@ -92,3 +92,15 @@ groups:
         annotations:
           summary: "TokenTimer API metrics scrape is failing"
           description: "The API metrics target cannot be scraped. Check API availability, database connectivity and migrations; missing telemetry must not be interpreted as zero activity."
+
+      - alert: AutoSyncCriticalAssetsCreated
+        expr: |
+          (max by (installation, namespace, job, provider, configuration_id, configuration_name, monitoring_group, kind, asset_name, project, group, label_set) (auto_sync_last_creation_timestamp_seconds{monitoring_group="critical"} > 0) > time() - 900)
+          and
+          (max by (installation, namespace, job, provider, configuration_id, configuration_name, monitoring_group, kind, asset_name, project, group, label_set) (auto_sync_last_creation_timestamp_seconds{monitoring_group="critical"}) <= time())
+        for: 0m
+        labels:
+          severity: info
+        annotations:
+          summary: 'Auto-sync imported {{ if $labels.asset_name }}{{ $labels.asset_name }}{{ else }}inventory{{ end }}'
+          description: 'Configuration {{ $labels.configuration_id }} imported inventory within the last 15 minutes.{{ with $labels.kind }} Type: {{ . }}.{{ end }}{{ with $labels.project }} Project: {{ . }}.{{ end }}{{ with $labels.group }} Group: {{ . }}.{{ end }}'

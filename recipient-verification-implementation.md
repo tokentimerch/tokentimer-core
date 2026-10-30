@@ -43,7 +43,7 @@ Delivery uses `filterDeliveryRecipients` before send and `canDeliverToRecipient`
 - `packages/recipient-verification/` policy, migration SQL, and a local copy of the email syntax check
 - `apps/api/routes/recipientVerification.js`
 - `apps/api/routes/contacts.js`, `whatsapp.js`, `alerts.js`, `apps/api/index.js`
-- `apps/api/migrations/migrate.js` version 81
+- `apps/api/migrations/migrate.js` version 82
 - `apps/worker/src/delivery-worker.js`, `weekly-digest.js`, `shared/recipientDeliveryGate.js`
 - `apps/dashboard/src/pages/AlertPreferences.jsx` and the small verification controls beside it
 - `tests/unit/recipient-verification.test.js`
@@ -52,7 +52,7 @@ Delivery uses `filterDeliveryRecipients` before send and `canDeliverToRecipient`
 
 ## 5. Database
 
-Migration name `recipient_channel_verification`, version 81. Tables:
+Migration name `recipient_channel_verification`, version 82. Tables:
 
 - `contact_channel_verifications`
 - `contact_verification_challenges`
@@ -97,7 +97,7 @@ The unit suite uses an in-memory query double. It does not open SMTP or Twilio. 
 
 ## 10. Deployment and rollback
 
-1. Deploy the API and worker together. The standard migration runner applies migration 81 and then migration 82. Migration 78 remains CertOps installed-file distribution. Migrations 79 and 80 are auto-sync metrics. Migration 81 is the recipient verification schema. Migration 82 is weekly-digest ownership, in-flight delivery state, and provider-acceptance tracking. Self-hosted `off` is an enforcement setting, not a reason to skip migration 81.
+1. Deploy the API and worker together. The standard migration runner applies migration 81 (`auto_sync_metric_labels`), then migration 82 and migration 83. Migration 78 remains CertOps installed-file distribution. Migrations 79 and 80 are auto-sync metrics. Migration 82 is the recipient verification schema. Migration 83 is weekly-digest ownership, in-flight delivery state, and provider-acceptance tracking. Versions 84 and later stay available for the open CertOps distribution and PagerDuty incident migrations. Self-hosted `off` is an enforcement setting, not a reason to skip migration 82. A recipient preview ledger that already applied those schemas as 81 and 82 keeps those rows, and metric labels are applied as 83 on that ledger only.
 2. Set `RECIPIENT_FINGERPRINT_SECRET` and `PUBLIC_BASE_URL` or `API_URL`.
 3. Configure the Twilio inbound webhook.
 4. Leave self-hosted on `off` until managers are ready to collect confirmation. `shadow` records eligibility without blocking delivery.

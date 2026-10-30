@@ -115,6 +115,60 @@ test("malformed pinned migration registries cannot be composed", () => {
     /inconsistent pinned Core migration/,
   );
 });
+test("recipient preview ledgers keep applied rows and leave room for the other open migrations", () => {
+  const names = [
+    ...canonical,
+    "onboarding_sessions",
+    "certops_installed_file_distribution",
+    "auto_sync_provider_stats",
+    "auto_sync_run_metrics",
+    "auto_sync_metric_labels",
+    "recipient_channel_verification",
+    "weekly_digest_recipient_claim_token",
+  ];
+  const migrations = [
+    { version: 69, name: "prior", sql: "prior" },
+    ...names.map((name, index) => ({ version: 70 + index, name, sql: name })),
+  ];
+  const fresh = composeMigrations(migrations, names.slice(0, 12).map((name, index) => ({ version: 70 + index, name })));
+  assert.equal(fresh.find((entry) => entry.version === 81).name, "auto_sync_metric_labels");
+  assert.equal(fresh.find((entry) => entry.version === 82).name, "recipient_channel_verification");
+  assert.equal(fresh.find((entry) => entry.version === 83).name, "weekly_digest_recipient_claim_token");
+  const previewNames = names.slice(0, 11).concat([
+    "recipient_channel_verification",
+    "weekly_digest_recipient_claim_token",
+  ]);
+  const preview = composeMigrations(
+    migrations,
+    previewNames.map((name, index) => ({ version: 70 + index, name })),
+  );
+  assert.equal(preview.find((entry) => entry.version === 81).name, "recipient_channel_verification");
+  assert.equal(preview.find((entry) => entry.version === 82).name, "weekly_digest_recipient_claim_token");
+  assert.equal(preview.find((entry) => entry.version === 83).name, "auto_sync_metric_labels");
+  assert.equal(preview.filter((entry) => entry.version === 83).length, 1);
+  assert.throws(
+    () => composeMigrations(migrations, [
+      ...names.slice(0, 11).map((name, index) => ({ version: 70 + index, name })),
+      { version: 81, name: "pagerduty_incident_lifecycle" },
+    ]),
+    /pagerduty_incident_lifecycle/,
+  );
+  assert.throws(
+    () => composeMigrations(migrations, [
+      ...names.slice(0, 11).map((name, index) => ({ version: 70 + index, name })),
+      { version: 81, name: "certops_material_providers" },
+    ]),
+    /certops_material_providers/,
+  );
+  assert.throws(
+    () => composeMigrations(migrations, [
+      ...names.slice(0, 11).map((name, index) => ({ version: 70 + index, name })),
+      { version: 81, name: "certops_distribution_lifecycle" },
+    ]),
+    /certops_distribution_lifecycle/,
+  );
+});
+
 test("all 72 legacy distribution-first definitions retain their immutable historical SQL", () => {
   const coreRoot = path.resolve(__dirname, "../..");
   const { migrations } = require(

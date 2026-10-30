@@ -15,6 +15,23 @@ const ELIGIBILITY_CODES = new Set([
   "RECIPIENT_REVOKED",
   "RECIPIENT_SUPPRESSED",
 ]);
+const TEMPORARY_VERIFICATION_CODE = "RECIPIENT_VERIFICATION_UNAVAILABLE";
+const TEMPORARY_SQLSTATES = new Set([
+  "57014",
+  "55P03",
+  "40001",
+  "40P01",
+  "53300",
+  "08000",
+  "08001",
+  "08003",
+  "08004",
+  "08006",
+  "08007",
+  "57P01",
+  "57P02",
+  "57P03",
+]);
 
 const DELIVERY_POLICIES = Object.freeze({
   account_verification: "platform_transactional",
@@ -395,13 +412,78 @@ async function filterDeliveryRecipients({ client, workspaceId, channel, recipien
     }
   }
   const enforcedBlocked = blocked.filter((row) => !row.shadow);
+  const unavailable = enforcedBlocked.filter((row) => row.code === TEMPORARY_VERIFICATION_CODE);
   let code = null;
-  if (allowed.length === 0 && enforcedBlocked.length > 0) {
+  if (unavailable.length > 0) code = TEMPORARY_VERIFICATION_CODE;
+  else if (allowed.length === 0 && enforcedBlocked.length > 0) {
     code = enforcedBlocked.every((row) => row.code === "RECIPIENT_OPTED_OUT")
       ? "RECIPIENT_OPTED_OUT"
       : "NO_VERIFIED_RECIPIENTS";
   }
-  return { allowed, blocked, enforced: mode === "enforce", mode, code };
+  return {
+    allowed,
+    blocked,
+    enforced: mode === "enforce",
+    mode,
+    code,
+    unavailable: unavailable.length > 0,
+  };
+}
+
+function isTemporaryVerificationFailure(error) {
+  if (!error) return false;
+  if (error.code === TEMPORARY_VERIFICATION_CODE) return true;
+  if (TEMPORARY_SQLSTATES.has(String(error.code || ""))) return true;
+  return isMissingSchema(error);
+}
+
+function recipientIdentity(channel, value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return channel === "email" ? text.toLowerCase() : text;
+}
+
+function recipientChannelOutcome(recipients) {
+  const entries = Object.entries(recipients || {}).filter(([, value]) => value && value.state);
+  const required = entries.filter(([, value]) => value.state !== "excluded");
+  const outcome = { recipients: Object.fromEntries(entries) };
+  if (required.some(([, value]) => value.state === "unavailable")) {
+    outcome.state = "failed";
+    outcome.terminal = false;
+    outcome.reason = "verification";
+    outcome.code = TEMPORARY_VERIFICATION_CODE;
+    return outcome;
+  }
+  if (required.some(([, value]) => value.state === "failed")) {
+    outcome.state = "failed";
+    outcome.terminal = false;
+    outcome.reason = null;
+    outcome.code = required.find(([, value]) => value.state === "failed")?.[1].code || null;
+    return outcome;
+  }
+  if (required.length === 0) {
+    const codes = entries.map(([, value]) => value.code).filter(Boolean);
+    outcome.state = "blocked";
+    outcome.terminal = true;
+    outcome.reason = "eligibility";
+    outcome.code = codes.length && codes.every((code) => code === "RECIPIENT_OPTED_OUT")
+      ? "RECIPIENT_OPTED_OUT"
+      : "NO_VERIFIED_RECIPIENTS";
+    return outcome;
+  }
+  if (required.every(([, value]) => value.state === "sent")) {
+    outcome.state = "sent";
+    outcome.terminal = true;
+    outcome.reason = null;
+    outcome.code = null;
+    return outcome;
+  }
+  const sent = required.some(([, value]) => value.state === "sent");
+  outcome.state = sent ? "partial" : "blocked";
+  outcome.terminal = true;
+  outcome.reason = "provider";
+  outcome.code = required.find(([, value]) => value.code)?.[1].code || "PERMANENT_DELIVERY_FAILURE";
+  return outcome;
 }
 
 function deliveryDisposition(results) {
@@ -523,6 +605,22 @@ function foldDeliveryLog(rows) {
         current.terminal = true;
       }
       current.reason = "provider";
+    } else if (channel === "email" || channel === "whatsapp") {
+      const key = recipientIdentity(channel, meta.recipient || meta.destination)
+        || `__channel_${row.status || "unknown"}`;
+      const code = row.error_message || meta.code || null;
+      current.recipients = current.recipients || {};
+      if (row.status === "success") current.recipients[key] = { state: "sent" };
+      else if (code === TEMPORARY_VERIFICATION_CODE) {
+        current.recipients[key] = { state: "unavailable", code };
+      } else if (ELIGIBILITY_CODES.has(code)) {
+        current.recipients[key] = { state: "excluded", code };
+      } else if (row.status === "blocked") {
+        current.recipients[key] = { state: "blocked", code, terminal: true };
+      } else {
+        current.recipients[key] = { state: "failed", code };
+      }
+      Object.assign(current, recipientChannelOutcome(current.recipients));
     } else if (row.status === "success") {
       current.state = "sent";
       current.terminal = true;
@@ -545,6 +643,7 @@ function foldDeliveryLog(rows) {
 
 function isEligibilityOutcome(outcome) {
   if (!outcome || typeof outcome !== "object") return false;
+  if (outcome.reason === "verification" || outcome.code === TEMPORARY_VERIFICATION_CODE) return false;
   if (outcome.reason === "provider") return false;
   if (outcome.reason === "eligibility") return true;
   if (ELIGIBILITY_CODES.has(outcome.code)) return true;
@@ -701,6 +800,63 @@ function planManualRetry(stored, requestedChannel) {
   };
 }
 
+function channelNamesForSettlement(stored) {
+  const allowed = new Set(["email", "webhooks", "whatsapp"]);
+  let parsed = stored;
+  if (typeof stored === "string") {
+    try {
+      parsed = JSON.parse(stored);
+    } catch {
+      return null;
+    }
+  }
+  if (Array.isArray(parsed)) {
+    const names = parsed.map(String);
+    if (names.some((channel) => !allowed.has(channel))) return null;
+    return names;
+  }
+  const ledger = parseDeliveryLedger(parsed);
+  if (!(parsed && typeof parsed === "object" && Number(parsed.version) === 1)) return null;
+  const source = ledger.required.length ? ledger.required : Object.keys(ledger.outcomes || {});
+  return source.map(String).filter((channel) => allowed.has(channel));
+}
+
+function requiredRecipientDelivery({ channel, recipients, history, eligibility = {} }) {
+  const normalize = (value) => recipientIdentity(channel, value);
+  const delivered = new Set(
+    (Array.isArray(history) ? history : [])
+      .filter((row) => row && row.channel === channel && row.status === "success")
+      .map((row) => normalize(metadataObject(row.metadata).recipient))
+      .filter(Boolean),
+  );
+  const eligible = [];
+  let unavailable = false;
+  let excluded = 0;
+  for (const recipient of Array.isArray(recipients) ? recipients : []) {
+    const key = normalize(recipient);
+    if (!key) continue;
+    const decision = eligibility[key] || eligibility[recipient] || null;
+    const code = decision && decision.code;
+    if (code === TEMPORARY_VERIFICATION_CODE) {
+      unavailable = true;
+      continue;
+    }
+    if (ELIGIBILITY_CODES.has(code)) {
+      excluded += 1;
+      continue;
+    }
+    eligible.push(key);
+  }
+  const missing = eligible.filter((key) => !delivered.has(key));
+  return {
+    complete: !unavailable && missing.length === 0,
+    delivered: eligible.length > 0 && missing.length === 0 && !unavailable,
+    eligible,
+    excluded,
+    unavailable,
+  };
+}
+
 function publicDeliveryChannels(stored) {
   const ledger = parseDeliveryLedger(stored);
   if (ledger.legacy) return ledger.retry.map((channel) => ({ channel, channel_state: null }));
@@ -777,6 +933,9 @@ function requeueWebhookChannel(stored) {
 }
 
 function outcomeFromAttempt(row) {
+  if (row && row.recipients && (row.channel === "email" || row.channel === "whatsapp")) {
+    return recipientChannelOutcome(row.recipients);
+  }
   const eligibility = row.eligibilityTerminal === true;
   const provider = Boolean(row.terminal) && !eligibility;
   if (row.success === true) {
@@ -807,7 +966,25 @@ function mergeDeliveryAttempt({ prior, logRows, attempted, liveChannels } = {}) 
   const outcomes = { ...ledger.outcomes, ...foldDeliveryLog(logRows) };
   for (const row of Array.isArray(attempted) ? attempted : []) {
     if (!row || !row.channel) continue;
-    outcomes[String(row.channel)] = outcomeFromAttempt(row);
+    const channel = String(row.channel);
+    const fromAttempt = outcomeFromAttempt(row);
+    const previous = outcomes[channel];
+    if (fromAttempt.recipients) {
+      outcomes[channel] = recipientChannelOutcome({
+        ...(previous && previous.recipients ? previous.recipients : {}),
+        ...fromAttempt.recipients,
+      });
+    } else if (previous && previous.recipients && row.success === true && (channel === "email" || channel === "whatsapp")) {
+      const recipients = { ...previous.recipients };
+      for (const [key, value] of Object.entries(recipients)) {
+        if (value.state === "failed" || value.state === "unavailable") recipients[key] = { state: "sent" };
+      }
+      outcomes[channel] = recipientChannelOutcome(recipients);
+    } else if (previous && previous.recipients && channel !== "webhooks" && row.success !== true && !row.eligibilityTerminal && row.errorCode !== TEMPORARY_VERIFICATION_CODE) {
+      outcomes[channel] = recipientChannelOutcome(previous.recipients);
+    } else {
+      outcomes[channel] = fromAttempt;
+    }
   }
   const webhookGeneration = webhookRetryGeneration(ledger.outcomes?.webhooks);
   if (webhookGeneration && outcomes.webhooks) {
@@ -1975,6 +2152,10 @@ module.exports = {
   canDeliverToRecipient,
   canDeliverToDestination,
   filterDeliveryRecipients,
+  isTemporaryVerificationFailure,
+  recipientChannelOutcome,
+  channelNamesForSettlement,
+  requiredRecipientDelivery,
   deliveryDisposition,
   queueDeliveryOutcome,
   mergeDeliveryAttempt,
