@@ -1998,8 +1998,11 @@ function App() {
       }
     }
     loadWorkspaceMeta();
+    const refresh = () => loadWorkspaceMeta();
+    window.addEventListener('tt:workspaces-updated', refresh);
     return () => {
       cancelled = true;
+      window.removeEventListener('tt:workspaces-updated', refresh);
     };
   }, [permissionWorkspaceId, session?.id]);
 
