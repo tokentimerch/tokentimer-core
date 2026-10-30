@@ -60,7 +60,7 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
     try {
       const r = await apiClient.put('/api/v1/admin/auto-sync/metrics', {
         override_metrics: policy.override_metrics,
-        enabled: policy.enabled,
+        enabled: policy.enabled === true,
         labels: policy.labels,
         override_monitoring_group: policy.override_monitoring_group,
         monitoring_group: policy.monitoring_group,
@@ -130,7 +130,7 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
             {policy.locked ? <Badge>Set by environment</Badge> : null}
           </HStack>
           <Checkbox
-            isChecked={policy.enabled}
+            isChecked={policy.enabled === true}
             isDisabled={saving || !policy.override_metrics || policy.locked}
             onChange={e => change({ enabled: e.target.checked })}
           >
@@ -201,6 +201,17 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
               >
                 Override monitoring group
               </FormLabel>
+              <Tooltip
+                hasArrow
+                label='When saved, applies this monitoring group to every integration and locks their group controls. An empty value clears the group. Turn this off and save to restore each integration’s saved group. The group appears in metrics only when its label is selected; environment settings take priority.'
+              >
+                <IconButton
+                  size='xs'
+                  variant='ghost'
+                  aria-label='About overriding monitoring group'
+                  icon={<InfoOutlineIcon />}
+                />
+              </Tooltip>
             </FormControl>
             {policy.monitoring_group_locked ? (
               <Badge>Set by environment</Badge>

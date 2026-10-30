@@ -275,7 +275,9 @@ it('explains the prominent override switch through its keyboard-accessible toolt
     </ChakraProvider>
   );
   expect(
-    await screen.findByRole('checkbox', { name: 'Override integration metrics' })
+    await screen.findByRole('checkbox', {
+      name: 'Override integration metrics',
+    })
   ).toBeEnabled();
   fireEvent.focus(
     screen.getByRole('button', { name: 'About overriding integration metrics' })
@@ -285,5 +287,56 @@ it('explains the prominent override switch through its keyboard-accessible toolt
   );
   expect(screen.getByRole('tooltip')).toHaveTextContent(
     'restore each integration’s saved choices'
+  );
+});
+
+it('explains independent monitoring-group overrides through a keyboard-accessible tooltip', async () => {
+  apiClient.get.mockResolvedValue({ data: defaults });
+  render(
+    <ChakraProvider>
+      <AutoSyncSystemMetricSettings />
+    </ChakraProvider>
+  );
+  await screen.findByRole('checkbox', { name: 'Override monitoring group' });
+  fireEvent.focus(
+    screen.getByRole('button', { name: 'About overriding monitoring group' })
+  );
+  expect(await screen.findByRole('tooltip')).toHaveTextContent(
+    'An empty value clears the group'
+  );
+  expect(screen.getByRole('tooltip')).toHaveTextContent(
+    'only when its label is selected'
+  );
+});
+
+it('saves a group-only override on an initially unconfigured installation', async () => {
+  apiClient.get.mockResolvedValue({ data: { ...defaults, enabled: null } });
+  apiClient.put.mockImplementation((_url, body) =>
+    Promise.resolve({ data: { ...defaults, ...body } })
+  );
+  render(
+    <ChakraProvider>
+      <AutoSyncSystemMetricSettings />
+    </ChakraProvider>
+  );
+  fireEvent.click(
+    await screen.findByRole('checkbox', { name: 'Override monitoring group' })
+  );
+  fireEvent.change(
+    screen.getByRole('textbox', { name: 'Monitoring group label' }),
+    { target: { value: 'critical' } }
+  );
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Save auto-sync settings' })
+  );
+  await screen.findByRole('status');
+  expect(apiClient.put).toHaveBeenCalledWith(
+    '/api/v1/admin/auto-sync/metrics',
+    expect.objectContaining({
+      override_metrics: false,
+      enabled: false,
+      override_monitoring_group: true,
+      monitoring_group: 'critical',
+    })
   );
 });
