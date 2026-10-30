@@ -1,4 +1,4 @@
-const { normalizeMetricSettings, permittedExtraLabels, deploymentMetricLabelOptions, readSystemMetricPolicy, metricSettingsError, HIGH_CARDINALITY_LABELS } = require("../services/autoSyncMetricLabels");
+const { normalizeMetricSettings, deploymentMetricLabelOptions, readSystemMetricPolicy, metricSettingsError, HIGH_CARDINALITY_LABELS } = require("../services/autoSyncMetricLabels");
 const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
@@ -359,7 +359,8 @@ router.get(
          FROM auto_sync_configs WHERE workspace_id = $1 ORDER BY provider, LOWER(connection_key), id`,
         [req.workspace.id],
       );
-      res.json({ metric_label_policy: { extra_labels: permittedExtraLabels(), system: await readSystemMetricPolicy(pool) }, items: result.rows.map((row) => ({
+      const metricPolicy = await readSystemMetricPolicy(pool);
+      res.json({ metric_label_policy: { extra_labels: metricPolicy.labels.filter(label => HIGH_CARDINALITY_LABELS.includes(label)), system: metricPolicy }, items: result.rows.map((row) => ({
         ...row, last_sync_error: sanitizePublicAutoSyncError(row.last_sync_error),
       })) });
     } catch (e) {
