@@ -87,7 +87,12 @@ export default function AutoSyncMetricSettings({
               Auto-sync metrics
             </Text>
             {managementSummary ? (
-              <Tooltip hasArrow placement='top' label={managementSummary}>
+              <Tooltip
+                hasArrow
+                placement='top'
+                maxW={{ base: 'xs', md: 'md' }}
+                label={managementSummary}
+              >
                 <Box
                   as='span'
                   display='inline-block'
@@ -161,7 +166,12 @@ export default function AutoSyncMetricSettings({
                   Monitoring group label
                 </FormLabel>
                 {groupManaged ? (
-                  <Tooltip hasArrow placement='top' label={groupManagement}>
+                  <Tooltip
+                    hasArrow
+                    placement='top'
+                    maxW={{ base: 'xs', md: 'md' }}
+                    label={groupManagement}
+                  >
                     <Box
                       as='span'
                       display='inline-block'
