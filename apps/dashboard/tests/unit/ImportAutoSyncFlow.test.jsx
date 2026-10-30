@@ -11,10 +11,7 @@ import {
 import { ChakraProvider } from '@chakra-ui/react';
 
 import ImportTokensModal from '../../src/components/ImportTokensModal.jsx';
-import apiClient, {
-  gitlabAPI,
-  githubAPI,
-} from '../../src/utils/apiClient';
+import apiClient, { gitlabAPI, githubAPI } from '../../src/utils/apiClient';
 
 const { apiGetMock, apiDeleteMock, gitlabFormProps, githubFormProps, wsCtx } =
   vi.hoisted(() => ({
@@ -296,7 +293,12 @@ describe.each(['gitlab', 'github'])(
       await addAnother();
       fireEvent.click(scanButton());
       await waitFor(() => expect(enable()).toBeEnabled());
-      fireEvent.click(enable());
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Auto-sync metrics', exact: true })
+      );
+      fireEvent.click(
+        await screen.findByRole('checkbox', { name: 'Use system settings' })
+      );
       fireEvent.click(
         await screen.findByRole('checkbox', {
           name: 'Expose additional auto-sync metrics',
@@ -309,14 +311,19 @@ describe.each(['gitlab', 'github'])(
       fireEvent.click(
         screen.getByRole('checkbox', { name: 'Token / asset name' })
       );
+      fireEvent.click(enable());
       fireEvent.click(
-        screen.getByRole('button', { name: 'Enable Auto-Sync', exact: true })
+        await screen.findByRole('button', {
+          name: 'Enable Auto-Sync',
+          exact: true,
+        })
       );
       await waitFor(() =>
         expect(apiClient.post).toHaveBeenCalledWith(
           '/api/v1/workspaces/ws-1/auto-sync',
           expect.objectContaining({
             metrics_settings: {
+              inherit_system: false,
               enabled: true,
               labels: [
                 'configuration_name',
@@ -334,6 +341,9 @@ describe.each(['gitlab', 'github'])(
           screen.getByRole('combobox', { name: 'Configuration' })
         ).toHaveValue('created-config')
       );
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Auto-sync metrics', exact: true })
+      );
       await waitFor(() =>
         expect(
           screen.getAllByRole('textbox', { name: 'Monitoring group label' })
@@ -348,12 +358,18 @@ describe.each(['gitlab', 'github'])(
       );
       fireEvent.click(scanButton());
       await waitFor(() => expect(enable()).toBeEnabled());
-      fireEvent.click(enable());
       expect(
-        await screen.findByRole('checkbox', {
-          name: 'Expose additional auto-sync metrics',
-        })
-      ).not.toBeChecked();
+        screen.getByRole('button', { name: 'Auto-sync metrics', exact: true })
+      ).toHaveAttribute('aria-expanded', 'false');
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Auto-sync metrics', exact: true })
+      );
+      expect(
+        await screen.findByRole('checkbox', { name: 'Use system settings' })
+      ).toBeChecked();
+      expect(
+        screen.getByRole('textbox', { name: 'Monitoring group label' })
+      ).toHaveValue('');
     });
     it('allocates an unused configuration name despite deletions, whitespace and case', async () => {
       await addAnother();

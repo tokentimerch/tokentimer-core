@@ -1,4 +1,4 @@
-const { normalizeMetricSettings, permittedExtraLabels } = require("../services/autoSyncMetricLabels");
+const { normalizeMetricSettings, permittedExtraLabels, deploymentMetricLabelOptions, readSystemMetricPolicy, metricSettingsError, HIGH_CARDINALITY_LABELS } = require("../services/autoSyncMetricLabels");
 const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
@@ -280,6 +280,35 @@ function resolveCleanupObsoleteFlag(cleanup_obsolete, scan_params) {
   );
 }
 
+// System-wide defaults use the same environment > database > default settings resolver.
+router.get("/api/v1/admin/auto-sync/metrics", getApiLimiter(), requireAuth, async (req, res) => {
+  try {
+    const admin = await pool.query("SELECT is_admin FROM users WHERE id = $1", [req.user.id]);
+    if (!admin.rows[0]?.is_admin) return res.status(403).json({ error: "System admin required" });
+    const policy = await readSystemMetricPolicy(pool);
+    res.json({ ...policy, enabled: policy.enabled === true, ...deploymentMetricLabelOptions() });
+  } catch (_error) { res.status(500).json({ error: "Failed to load auto-sync metric settings" }); }
+});
+router.put("/api/v1/admin/auto-sync/metrics", getApiLimiter(), requireAuth, async (req, res) => {
+  try {
+    const admin = await pool.query("SELECT is_admin FROM users WHERE id = $1", [req.user.id]);
+    if (!admin.rows[0]?.is_admin) return res.status(403).json({ error: "System admin required" });
+    const body = req.body || {};
+    if (Object.keys(body).some(key => !["enabled", "labels"].includes(key)) || typeof body.enabled !== "boolean" || !Array.isArray(body.labels) || metricSettingsError(body))
+      return res.status(400).json({ error: "Invalid auto-sync metric defaults" });
+    const options = deploymentMetricLabelOptions();
+    const payload = { ...body };
+    if (options.extra_labels_locked) {
+      const previous = await systemSettings.getJsonSetting(pool, "auto_sync_metrics", "labels");
+      payload.labels = [...body.labels.filter(label => !HIGH_CARDINALITY_LABELS.includes(label)),
+        ...(Array.isArray(previous.value) ? previous.value.filter(label => HIGH_CARDINALITY_LABELS.includes(label)) : [])];
+    }
+    await systemSettings.saveJsonColumn(pool, "auto_sync_metrics", payload, req.user.id, { strictKeys: true });
+    const policy = await readSystemMetricPolicy(pool);
+    res.json({ ...policy, enabled: policy.enabled === true, ...options });
+  } catch (_error) { res.status(500).json({ error: "Failed to save auto-sync metric settings" }); }
+});
+
 // Activation is an operator action after draining old workers and verifying
 // the fenced worker image. It cannot be reversed while multiple configs exist.
 router.get("/api/v1/admin/auto-sync/activation", getApiLimiter(), requireAuth,
@@ -330,7 +359,7 @@ router.get(
          FROM auto_sync_configs WHERE workspace_id = $1 ORDER BY provider, LOWER(connection_key), id`,
         [req.workspace.id],
       );
-      res.json({ metric_label_policy: { extra_labels: permittedExtraLabels() }, items: result.rows.map((row) => ({
+      res.json({ metric_label_policy: { extra_labels: permittedExtraLabels(), system: await readSystemMetricPolicy(pool) }, items: result.rows.map((row) => ({
         ...row, last_sync_error: sanitizePublicAutoSyncError(row.last_sync_error),
       })) });
     } catch (e) {

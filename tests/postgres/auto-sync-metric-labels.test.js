@@ -106,6 +106,10 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     app.use(require("../../apps/api/routes/integrations"));
   });
   beforeEach(async () => {
+    await pool.query('UPDATE users SET is_admin=FALSE WHERE id=$1',[userId]);
+    delete process.env.AUTO_SYNC_METRICS_ENABLED;
+    await pool.query("UPDATE system_settings SET auto_sync_metrics = '{}'::jsonb WHERE id=1");
+    require("../../apps/api/services/systemSettings").invalidateCache();
     process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "asset_name,project,group";
     if (workspaceId) await pool.query("DELETE FROM workspaces WHERE id = $1", [workspaceId]);
     workspaceId = crypto.randomUUID();
@@ -276,6 +280,68 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     assert.equal(disabled.status, 200);
     assert.ok(!disabled.text.includes('configuration_id="' + config.id + '"'));
     assert.ok(disabled.text.includes("auto_sync_items_created_total{"), "existing provider counters remain exposed");
+  });
+
+  it("applies system defaults to existing and new connections, including the critical group", async () => {
+    delete process.env.AUTO_SYNC_METRICS_EXTRA_LABELS;
+    const existing=await configuration();
+    await pool.query("UPDATE users SET is_admin=TRUE WHERE id=$1",[userId]);
+    const update=await request(app).put('/api/v1/admin/auto-sync/metrics').send({enabled:true,labels:['configuration_name','monitoring_group','kind']});
+    assert.equal(update.status,200,JSON.stringify(update.body));
+    for (const [config,objectId] of [[existing,'existing'],[await configuration(),'new']]) {
+      const saved=await request(app).put(`/api/v1/workspaces/${workspaceId}/auto-sync/${config.id}`).send({metrics_settings:{inherit_system:true,monitoring_group:'critical'}});
+      assert.equal(saved.status,200,JSON.stringify(saved.body));
+      const run=await start(config);await scan(run,[objectId]);await imported(run,{name:objectId,location:objectId,source_object_id:objectId});
+      const row=(await metric('auto_sync_items_created_detailed_total')).find(s=>s.labels.configuration_id===config.id);
+      assert.equal(row.value,1);assert.equal(row.labels.monitoring_group,'critical');assert.equal(row.labels.asset_name,'');await finish(run);
+    }
+    await pool.query('UPDATE users SET is_admin=FALSE WHERE id=$1',[userId]);
+  });
+  it("enforces system-admin writes, typed values and env-locked global disable", async () => {
+    const url='/api/v1/admin/auto-sync/metrics';
+    assert.equal((await request(app).get(url)).status,403);
+    assert.equal((await request(app).put(url).send({enabled:true,labels:['kind']})).status,403);
+    await pool.query('UPDATE users SET is_admin=TRUE WHERE id=$1',[userId]);
+    assert.equal((await request(app).put(url).send({enabled:'true',labels:['kind']})).status,400);
+    assert.equal((await request(app).put(url).send({enabled:true,labels:['secret']})).status,400);
+    process.env.AUTO_SYNC_METRICS_ENABLED='false';
+    const saved=await request(app).put(url).send({enabled:true,labels:['kind']});
+    assert.equal(saved.status,200);assert.equal(saved.body.enabled,false);assert.equal(saved.body.locked,true);assert.equal(saved.body.source,'env');
+    assert.notEqual((await pool.query('SELECT auto_sync_metrics FROM system_settings WHERE id=1')).rows[0].auto_sync_metrics.enabled,true);
+    await pool.query('UPDATE users SET is_admin=FALSE WHERE id=$1',[userId]);delete process.env.AUTO_SYNC_METRICS_ENABLED;
+  });
+  it("globally hides existing details and stops capturing new high-cardinality values",async()=>{
+    const config=await configuration();await settings(config);const run=await start(config);await scan(run,['42','43']);await imported(run);
+    assert.ok((await metric('auto_sync_items_created_detailed_total')).length);
+    await pool.query("UPDATE system_settings SET auto_sync_metrics=$1 WHERE id=1",[{enabled:false,labels:['kind','asset_name','project','group']}]);
+    assert.deepEqual(await metric('auto_sync_items_created_detailed_total'),[]);
+    await imported(run,{name:'Globally disabled',location:'globally-disabled',source_object_id:'43'});
+    const rows=(await pool.query('SELECT asset_name,project,group_name,items_created_total FROM auto_sync_creation_stats WHERE config_id=$1',[config.id])).rows;
+    assert.ok(rows.some(row=>row.asset_name===''&&row.project===''&&row.group_name===''));
+    assert.equal(rows.reduce((n,row)=>n+Number(row.items_created_total),0),2);
+  });
+
+  it("migration preserves explicit opt-ins and moves other connections onto inheritance",async()=>{
+    const a=await configuration(),b=await configuration(),c=await configuration();
+    await pool.query('UPDATE auto_sync_configs SET metrics_settings=$2 WHERE id=$1',[a.id,{enabled:true,labels:['kind']}]);
+    await pool.query('UPDATE auto_sync_configs SET metrics_settings=$2 WHERE id=$1',[b.id,{enabled:false,labels:[]}]);
+    await pool.query('UPDATE auto_sync_configs SET metrics_settings=$2 WHERE id=$1',[c.id,{enabled:false,inherit_system:false,labels:[]}]);
+    await pool.query(require('node:fs').readFileSync(require('node:path').join(__dirname,'../../apps/api/migrations/082-auto-sync-system-metrics.sql'),'utf8'));
+    const rows=(await pool.query('SELECT id,metrics_settings FROM auto_sync_configs WHERE workspace_id=$1',[workspaceId])).rows;
+    assert.equal(rows.find(r=>r.id===a.id).metrics_settings.inherit_system,false);
+    assert.equal(rows.find(r=>r.id===b.id).metrics_settings.inherit_system,true);
+    assert.equal(rows.find(r=>r.id===c.id).metrics_settings.inherit_system,false);
+  });
+  it("UI-saved labels apply when env is unset and a deployment list takes precedence",async()=>{
+    delete process.env.AUTO_SYNC_METRICS_EXTRA_LABELS;
+    await pool.query('UPDATE users SET is_admin=TRUE WHERE id=$1',[userId]);
+    const url='/api/v1/admin/auto-sync/metrics';
+    const saved=await request(app).put(url).send({enabled:true,labels:['kind','asset_name']});assert.equal(saved.status,200);assert.ok(saved.body.labels.includes('asset_name'));assert.equal(saved.body.extra_labels_locked,false);
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS='project';
+    const locked=await request(app).get(url);assert.equal(locked.body.extra_labels_locked,true);assert.ok(locked.body.labels.includes('project'));assert.ok(!locked.body.labels.includes('asset_name'));
+    await request(app).put(url).send({enabled:true,labels:['kind','project']});
+    delete process.env.AUTO_SYNC_METRICS_EXTRA_LABELS;
+    const restored=await request(app).get(url);assert.ok(restored.body.labels.includes('asset_name'));assert.ok(!restored.body.labels.includes('project'));
   });
 
 });
