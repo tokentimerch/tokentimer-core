@@ -55,6 +55,7 @@ const JSON_RESPONSE_KEYS = {};
 // plugins can plug in their own license/entitlement check without core
 // having to know about it.
 const JSON_FEATURE_GATES = {};
+const JSON_VALIDATORS = {};
 
 /**
  * Register a JSONB column on `system_settings`. Idempotent: re-registering
@@ -74,6 +75,7 @@ function registerJsonColumn(columnName, options = {}) {
   if (!columnName || typeof columnName !== "string") {
     throw new Error("registerJsonColumn: columnName must be a non-empty string");
   }
+  if (typeof options.validate === "function") JSON_VALIDATORS[columnName] = options.validate;
   const envMap = options.envMap || {};
   const secretFields = Array.isArray(options.secretFields)
     ? options.secretFields
@@ -460,6 +462,8 @@ async function saveJsonColumn(pool, column, payload, userId, options = {}) {
     );
   }
   if (!payload || typeof payload !== "object") return;
+  const validationError = JSON_VALIDATORS[column]?.(payload);
+  if (validationError) throw Object.assign(new Error(validationError), { code: "JSON_COLUMN_INVALID_VALUE", column });
   const envMap = JSON_ENV_MAP[column] || {};
   const secrets = JSON_SECRET_FIELDS[column] || [];
 

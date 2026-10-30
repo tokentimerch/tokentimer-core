@@ -26,7 +26,7 @@ them. Expiration writes originate in multiple APIs and workers.
    permits at most one pending/open episode per workspace/asset/destination.
    Resolve-pending episodes may coexist with a newer active episode, using
    distinct keys. No legacy incident is inferred or backfilled.
-   Released auto-sync migrations retain slots 79-81; unmerged companions already
+   Released auto-sync migrations retain slots 79-82; unmerged companions already
    define migration plans through 91. No placeholder history is written for them.
    PagerDuty's independent v92 row remains immutable when lower pending
    companion migrations arrive. Old PagerDuty v79/v81 previews require explicit

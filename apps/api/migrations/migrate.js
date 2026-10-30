@@ -4856,8 +4856,12 @@ const migrations = [
     sql: fs.readFileSync(require("path").join(__dirname, "081-auto-sync-metric-labels.sql"), "utf8"),
   },
   {
-    // Migration plans through 91 are claimed by the reviewed companion PRs. No fake
-    // placeholder rows are recorded for their still-unmerged migrations.
+    version: 82,
+    name: "auto_sync_system_metrics",
+    sql: fs.readFileSync(require("path").join(__dirname, "082-auto-sync-system-metrics.sql"), "utf8"),
+  },
+  {
+    // Companion migration plans extend through 91; leave unapplied slots unregistered.
     version: 92,
     name: "pagerduty_incident_lifecycle",
     sql: fs.readFileSync(require("path").join(__dirname, "092-pagerduty-incident-lifecycle.sql"), "utf8"),

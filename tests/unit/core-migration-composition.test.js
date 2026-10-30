@@ -151,10 +151,10 @@ test("PagerDuty's independent slot preserves applied history while companion mig
   const applied = migrations.map(({ version, name }) => ({ version, name, executed_at: "unchanged" }));
   const snapshot = JSON.stringify(applied);
   const companions = [
-    [82, "certops_distribution_lifecycle"], [83, "certops_distribution_incident_delivery"],
-    [84, "certops_stable_consumer_discovery"], [85, "certops_material_cleanup"],
-    [86, "certops_consumer_verification_failures"], [87, "certops_material_providers"],
-    [88, "recipient_channel_verification"], [89, "weekly_digest_recipient_claim_token"],
+    [83, "certops_distribution_lifecycle"], [84, "certops_distribution_incident_delivery"],
+    [85, "certops_stable_consumer_discovery"], [86, "certops_material_cleanup"],
+    [87, "certops_consumer_verification_failures"], [88, "certops_material_providers"],
+    [89, "recipient_channel_verification"], [90, "weekly_digest_recipient_claim_token"],
     [91, "certops_distribution_resolution_delivery"],
   ].map(([version, name]) => ({ version, name, sql: "SELECT 1" }));
   const integrated = [...migrations, ...companions].sort((a,b) => a.version-b.version);
@@ -165,6 +165,12 @@ test("PagerDuty's independent slot preserves applied history while companion mig
     assert.deepEqual(plan.map(entry => entry.version), integrated.map(entry => entry.version));
   }
   assert.equal(JSON.stringify(applied), snapshot);
+  // This PR's earlier 1-81 + 92 candidate must accept main's later migration82
+  // without rewriting its already applied PagerDuty identity or timestamp.
+  const previousPagerDutyCandidate = applied.filter(row => row.version !== 82);
+  const laterMainPlan = composeMigrations(migrations, previousPagerDutyCandidate);
+  assert.equal(laterMainPlan.find(row => row.name === "auto_sync_system_metrics").version, 82);
+  assert.equal(JSON.stringify(previousPagerDutyCandidate), JSON.stringify(applied.filter(row => row.version !== 82)));
   for (const name of ["recipient_channel_verification", "certops_material_providers", "certops_distribution_lifecycle"]) {
     const incompatible = [...applied.filter(row => row.version !== 81), { version: 81, name }];
     assert.throws(() => composeMigrations(integrated, incompatible), /Unsupported Core migration history/);

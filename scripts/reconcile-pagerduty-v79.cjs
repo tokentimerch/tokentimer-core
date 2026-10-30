@@ -174,11 +174,11 @@ async function reconcilePagerDutyV79(client, { apply = false } = {}) {
     );
     assert.equal(pagerduty.version, 92);
     const telemetry = migrations.filter(
-      (entry) => entry.version >= from && entry.version <= 81,
+      (entry) => entry.version >= from && entry.version <= 82,
     );
     assert.deepEqual(
       telemetry.map((entry) => entry.name),
-      from === 79 ? ["auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels"] : ["auto_sync_metric_labels"],
+      from === 79 ? ["auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "auto_sync_system_metrics"] : ["auto_sync_metric_labels", "auto_sync_system_metrics"],
     );
     const artifacts = await client.query(`SELECT name FROM unnest(ARRAY[
       'public.auto_sync_provider_stats','public.auto_sync_run_outcome_stats','public.auto_sync_run_freshness'
@@ -186,7 +186,9 @@ async function reconcilePagerDutyV79(client, { apply = false } = {}) {
     UNION ALL SELECT 'record_auto_sync_run_metrics' WHERE $1=79 AND to_regprocedure('public.record_auto_sync_run_metrics()') IS NOT NULL
     UNION ALL SELECT name FROM unnest(ARRAY['public.auto_sync_kind_stats','public.auto_sync_creation_stats']) name WHERE to_regclass(name) IS NOT NULL
     UNION ALL SELECT 'metrics_settings' FROM information_schema.columns
-      WHERE table_schema='public' AND table_name='auto_sync_configs' AND column_name='metrics_settings'`, [from]);
+      WHERE table_schema='public' AND table_name='auto_sync_configs' AND column_name='metrics_settings'
+    UNION ALL SELECT 'auto_sync_metrics' FROM information_schema.columns
+      WHERE table_schema='public' AND table_name='system_settings' AND column_name='auto_sync_metrics'`, [from]);
     assert.equal(
       artifacts.rowCount,
       0,

@@ -22,7 +22,9 @@ const previewVersion = legacy ? Number(upgradeFrom.slice(6)) : null;
 after(() => pool.end());
 
 it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, async () => {
-  assert.ok(["78", "80", "81", "legacy79", "legacy81"].includes(upgradeFrom));
+  assert.ok(
+    ["78", "80", "81", "82", "legacy79", "legacy81"].includes(upgradeFrom),
+  );
   assert.match(
     process.env.DB_NAME || "",
     /_migration_issue364_test$/,
@@ -191,6 +193,9 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
         /Unrecorded telemetry schema/,
       );
       await client.query("DROP TABLE auto_sync_kind_stats");
+      await client.query("ALTER TABLE system_settings ADD COLUMN auto_sync_metrics JSONB NOT NULL DEFAULT '{}'::jsonb");
+      await assert.rejects(reconcilePagerDutyV79(client, { apply: true }), /Unrecorded telemetry schema/);
+      await client.query("ALTER TABLE system_settings DROP COLUMN auto_sync_metrics");
       await client.query(
         "INSERT INTO migrations(version,name) VALUES($1,'unexpected_history')",
         [previewVersion + 1],
@@ -287,6 +292,7 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
     { version: 79, name: "auto_sync_provider_stats" },
     { version: 80, name: "auto_sync_run_metrics" },
     { version: 81, name: "auto_sync_metric_labels" },
+    { version: 82, name: "auto_sync_system_metrics" },
     { version: 92, name: "pagerduty_incident_lifecycle" },
   ]);
   assert.equal(
@@ -300,7 +306,7 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
   assert.equal(
     (
       await pool.query(
-        "SELECT 1 FROM migrations WHERE version BETWEEN 82 AND 85",
+        "SELECT 1 FROM migrations WHERE version BETWEEN 83 AND 91",
       )
     ).rowCount,
     0,
@@ -392,7 +398,7 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
     ).rows;
     const original = migrations.slice();
     const pending = {
-      version: 82,
+      version: 83,
       name: "recipient_channel_verification",
       sql: fs.readFileSync(
         path.join(
@@ -412,13 +418,13 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
       assert.deepEqual(
         (
           await pool.query(
-            "SELECT * FROM migrations WHERE version<>82 ORDER BY version",
+            "SELECT * FROM migrations WHERE version<>83 ORDER BY version",
           )
         ).rows,
         recorded,
       );
       assert.equal(
-        (await pool.query("SELECT name FROM migrations WHERE version=82"))
+        (await pool.query("SELECT name FROM migrations WHERE version=83"))
           .rows[0].name,
         pending.name,
       );
@@ -438,7 +444,7 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
       assert.deepEqual(
         (
           await pool.query(
-            "SELECT * FROM migrations WHERE version<>82 ORDER BY version",
+            "SELECT * FROM migrations WHERE version<>83 ORDER BY version",
           )
         ).rows,
         recorded,

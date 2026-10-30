@@ -259,13 +259,14 @@ automatically update independently pinned edition repositories.
 
 PagerDuty uses `apps/api/migrations/092-pagerduty-incident-lifecycle.sql`.
 Released migration 79 is `auto_sync_provider_stats`; migration 80 is
-`auto_sync_run_metrics`; released migration 81 is `auto_sync_metric_labels`.
+`auto_sync_run_metrics`; released migration 81 is `auto_sync_metric_labels`; migration 82 is
+`auto_sync_system_metrics`.
 Their names, versions and SQL are unchanged. PagerDuty's SQL is unchanged from
 its unpublished v79/v81 previews; only its slot and filename moved to 92.
 PRs #460, #461 and #498 already claim migration plans through 91. This branch leaves
-82-91 unregistered: there are no placeholder ledger entries or pretend executions.
-Fresh and canonical v78/v80/v81 installations run normal migrations and apply
-the 82 registered definitions (1-81 and 92).
+83-91 unregistered: there are no placeholder ledger entries or pretend executions.
+Fresh and canonical v78/v80/v81/v82 installations run normal migrations and apply
+the 83 registered definitions (1-82 and 92).
 
 PagerDuty's independent additive tail may already be applied when lower pending
 companion migrations are later integrated. The history planner retains that v92
@@ -310,7 +311,7 @@ auto-sync SQL executed. Use this explicit procedure only for that exact preview:
    operation locks migration history and repeats validation. In one transaction
    it relocates only the proven PagerDuty entry to v92, retaining its name and
    original execution timestamp, and executes/registers the released auto-sync
-   migrations missing from its released v79-v81 prefix. Existing released
+   migrations missing from its released v79-v82 prefix. Existing released
    counters/history remain unchanged. Strict history validation runs before commit.
    Database errors roll back both ledger edits and telemetry DDL. If the connection
    is lost during commit, inspect the final history before retrying; a completed
@@ -326,8 +327,9 @@ SELECT version, name, executed_at FROM migrations WHERE version >= 79 ORDER BY v
 -- 79 auto_sync_provider_stats
 -- 80 auto_sync_run_metrics
 -- 81 auto_sync_metric_labels
+-- 82 auto_sync_system_metrics
 -- 92 pagerduty_incident_lifecycle (original preview timestamp if reconciled)
--- No unmerged companion placeholders at 82-91
+-- No unmerged companion placeholders at 83-91
 SELECT id, destination_id, dedup_key, state, trigger_accepted_at,
        trigger_attempts, resolve_attempts, claim_id FROM pagerduty_incidents;
 ```
