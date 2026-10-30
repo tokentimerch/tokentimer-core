@@ -163,7 +163,8 @@ test("cross-PR reservations reject collisions and compose without changing suppo
   const registry = [...migrations, ...future];
   validateMigrationReservations(registry);
   for (const [version, name] of [[81, "recipient_channel_verification"], [81, "pagerduty_incident_lifecycle"],
-    [81, "certops_distribution_lifecycle"], [82, "certops_material_cleanup"]]) {
+    [81, "certops_distribution_lifecycle"], [82, "certops_material_cleanup"], [92, "pagerduty_incident_lifecycle"],
+    [91, "certops_distribution_resolution_delivery"]]) {
     assert.throws(() => validateMigrationReservations([...migrations.filter(row => row.version !== version), { version, name }]), /Conflicting canonical Core migration/);
   }
   assert.throws(() => validateMigrationReservations([...migrations, migrations.at(-1)]), /Duplicate Core migration/);

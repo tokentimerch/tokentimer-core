@@ -15,15 +15,21 @@ are reservations, not no-op migrations. They do not install another feature.
 | 83 | certops_material_providers | #460, moved from unapplied 82 |
 | 84 | recipient_channel_verification | #461 must move unapplied 81 |
 | 85 | weekly_digest_recipient_claim_token | #461 must move unapplied 82 |
-| 86 | pagerduty_incident_lifecycle | #496 must move unapplied 81 |
+| 86 | pagerduty_incident_lifecycle | #496 must move unapplied 92 |
 | 87 | certops_distribution_lifecycle | #498 must move unapplied 81 |
 | 88 | certops_distribution_incident_delivery | #498 must move unapplied 82 |
 | 89 | certops_stable_consumer_discovery | #498 must move unapplied 83 |
 | 90 | certops_material_cleanup | #498 must move unapplied 84 |
 | 91 | certops_consumer_verification_failures | #498 must move unapplied 85 |
+| 92 | certops_distribution_resolution_delivery | #498 must move unapplied 91 |
 
-This change updates only #460. Related heads inspected: #461 `b8c50642`,
-#496 `99101c10`, #498 `e758dd0f`. Their maintainers must adopt these reservations
+This change updates only #460. Latest related heads inspected: #461 `a53fd10b`,
+#496 `ad786a11`, #498 `eac124c7`. The last two heads advanced during validation:
+#496 now registers PagerDuty at 92; #498 still owns lifecycle at 81–85, copies
+provider/recipient/PagerDuty definitions at 87–90 and adds resolution delivery
+at 91. Those blocks collide with released main and this plan. Remove duplicate
+feature definitions when integrating their owning branches, preserve their SQL,
+and use the reservations above for missing definitions. Their maintainers must adopt these reservations
 in SQL filenames/registries, fixtures, recovery tooling and documentation before
 integration. Do not merge their old 81 registrations or reuse reserved numbers.
 No dependency on those unmerged features is introduced into #460.
@@ -65,7 +71,11 @@ reviewed history-aware recovery before integrating the associated feature.
 Use separate `operation` and `provider` identities from the shared
 `packages/contracts/certops/material-provider.cjs`. Legacy cleanup `type` is
 accepted only for the exact Vault soft-delete operation and cannot override
-provider identity. #498 must preserve its independent approval, exact-version
+provider identity. Canonical `operation: "soft-delete"` is supported alongside
+the earlier explicit `operation: "vault-kv2-soft-delete"`; normalization never
+rewrites a signed intent. A future Vault `deletion_time` is a readable scheduled
+version, not completed deletion; retention and metadata readback still apply.
+#498 must preserve its independent approval, exact-version
 reference fence, local cleanup credential/retention checks and claim-bound
 receipt admission when consuming the shared adapter. Its contract schemas and
 intent producer must accept the explicit operation/provider shape together;

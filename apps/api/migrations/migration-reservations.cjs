@@ -14,6 +14,7 @@ const reservations = Object.freeze({
   89: "certops_stable_consumer_discovery", // #498
   90: "certops_material_cleanup", // #498
   91: "certops_consumer_verification_failures", // #498
+  92: "certops_distribution_resolution_delivery", // #498
 });
 
 function validateMigrationReservations(migrations) {

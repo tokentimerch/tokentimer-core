@@ -244,8 +244,11 @@ function createVaultStore(stores, intent, options = {}) {
       typeof version.deletion_time !== "string") throw failure("material_cleanup_metadata_unavailable");
     if (version.destroyed) throw failure("material_cleanup_version_destroyed");
     if (version.deletion_time) {
-      if (!Number.isFinite(Date.parse(version.deletion_time))) throw failure("material_cleanup_metadata_unavailable");
-      return { alreadyDeleted: true };
+      const deletedAt = Date.parse(version.deletion_time);
+      if (!Number.isFinite(deletedAt)) throw failure("material_cleanup_metadata_unavailable");
+      // Vault delete_version_after may schedule deletion while data is readable.
+      // A future schedule must still pass retention and an explicit soft delete.
+      if (deletedAt <= Date.now()) return { alreadyDeleted: true };
     }
     const created = Date.parse(version.created_time);
     if (!Number.isFinite(created) || Date.now() - created < Math.max(policy.minimumSeconds, intent.retentionPolicy.minimumSeconds) * 1000)
@@ -259,7 +262,8 @@ function createVaultStore(stores, intent, options = {}) {
     await request("POST", "", { versions: [providerVersion] }, "delete");
     const observed = await request("GET", "", null, "metadata");
     const deleted = observed.data?.versions?.[String(providerVersion)];
-    if (deleted?.destroyed !== false || !Number.isFinite(Date.parse(deleted?.deletion_time)))
+    const deletedAt = typeof deleted?.deletion_time === "string" && deleted.deletion_time !== "" ? Date.parse(deleted.deletion_time) : NaN;
+    if (deleted?.destroyed !== false || !Number.isFinite(deletedAt) || deletedAt > Date.now())
       throw failure("material_cleanup_uncertain");
     await checkLease();
     return { alreadyDeleted: false };

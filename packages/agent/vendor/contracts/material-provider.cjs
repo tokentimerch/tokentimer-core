@@ -19,8 +19,12 @@ function providerOf(intent) {
 }
 const VAULT_SOFT_DELETE = "vault-kv2-soft-delete";
 function cleanupOperationOf(intent) {
-  if (intent?.operation !== undefined && intent?.type === VAULT_SOFT_DELETE && intent.operation !== intent.type) return null;
-  return intent?.operation ?? (intent?.type === VAULT_SOFT_DELETE ? intent.type : null);
+  const operation = intent?.operation;
+  // Canonical operation identity is provider-independent. Preserve the earlier
+  // explicit method spelling and legacy signed type without rewriting either.
+  if (operation !== undefined && operation !== "soft-delete" && operation !== VAULT_SOFT_DELETE) return null;
+  if (intent?.type === VAULT_SOFT_DELETE || operation === "soft-delete" || operation === VAULT_SOFT_DELETE) return VAULT_SOFT_DELETE;
+  return null;
 }
 function providerCapability(provider) {
   return (

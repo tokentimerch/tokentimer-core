@@ -36,9 +36,9 @@ function fixture(t, address) {
   return { intent, scope, stores, directory };
 }
 
-for (const legacy of [true, false])
+for (const shape of ["legacy", "explicit", "canonical"])
   for (const lostResponse of [true, false]) {
-    test(`Vault cleanup separates provider/operation, retries metadata first (${legacy ? "legacy" : "explicit"}, lost=${lostResponse})`, async (t) => {
+    test(`Vault cleanup separates provider/operation, retries metadata first (${shape}, lost=${lostResponse})`, async (t) => {
       let f,
         deleted = false,
         posts = 0,
@@ -101,9 +101,13 @@ for (const legacy of [true, false])
       };
       const intent = {
         ...f.intent,
-        ...(legacy
+        ...(shape === "legacy"
           ? { type: "vault-kv2-soft-delete" }
-          : { operation: "vault-kv2-soft-delete", provider: "vault-kv2" }),
+          : {
+              operation:
+                shape === "canonical" ? "soft-delete" : "vault-kv2-soft-delete",
+              provider: "vault-kv2",
+            }),
         profileRevision: 1,
         providerVersion: 3,
         expiresAt: new Date(Date.now() + 60000).toISOString(),
@@ -145,6 +149,82 @@ for (const legacy of [true, false])
       );
     });
   }
+
+for (const scenario of ["scheduled", "retained-schedule", "retention"])
+  test(`scheduled Vault deletion is not effective deletion (${scenario})`, async (t) => {
+    let posts = 0,
+      journals = 0;
+    const future = new Date(Date.now() + 86400000).toISOString();
+    const server = http.createServer((req, res) => {
+      if (req.method === "POST") {
+        posts++;
+        req.resume();
+        res.writeHead(204).end();
+      } else {
+        res.end(
+          JSON.stringify({
+            data: {
+              versions: {
+                3: {
+                  created_time:
+                    scenario === "retention"
+                      ? new Date().toISOString()
+                      : "2020-01-01T00:00:00Z",
+                  destroyed: false,
+                  deletion_time:
+                    posts && scenario === "scheduled"
+                      ? new Date(Date.now() - 1000).toISOString()
+                      : future,
+                },
+              },
+            },
+          }),
+        );
+      }
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    t.after(() => new Promise((resolve) => server.close(resolve)));
+    const f = fixture(t, `http://127.0.0.1:${server.address().port}`);
+    f.scope.cleanup = {
+      softDelete: true,
+      tokenFile: f.stores.customer.tokenFile,
+      profileRevision: 1,
+      minimumSeconds: 3600,
+    };
+    const intent = {
+      ...f.intent,
+      type: "vault-kv2-soft-delete",
+      profileRevision: 1,
+      providerVersion: 3,
+      expiresAt: new Date(Date.now() + 60000).toISOString(),
+      retentionPolicy: {
+        minimumSeconds: 3600,
+        cleanupEnabled: true,
+        reportOnly: false,
+        requiresApproval: true,
+      },
+    };
+    const run = () =>
+      createVaultStore(f.stores, intent, {
+        fixtureLoopbackHttp: true,
+      }).softDeleteVersion(3, {
+        checkLease: async () => {},
+        beforeDelete: async () => {
+          journals++;
+        },
+      });
+    if (scenario === "scheduled")
+      assert.deepEqual(await run(), { alreadyDeleted: false });
+    else
+      await assert.rejects(run(), {
+        code:
+          scenario === "retention"
+            ? "material_cleanup_retention_protected"
+            : "material_cleanup_uncertain",
+      });
+    assert.equal(posts, scenario === "retention" ? 0 : 1);
+    assert.equal(journals, posts);
+  });
 
 test("cleanup provider confusion and policy failures cannot delete or invoke the mutation journal", async (t) => {
   let requests = 0,
