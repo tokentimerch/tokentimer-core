@@ -255,6 +255,29 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
       assert.equal(cancelled.body.state, "cancelled");
     });
 
+    it("lists the approved queue after approval changes execution status to pending", async () => {
+      const approved = await mustFile();
+      await approveReviewed({ workspaceId, jobId: approved.jobId, approverUserId: approver, reason: "reviewed" });
+      const waiting = await mustFile();
+      await policy(false);
+      const unreviewed = await mustFile();
+      const legacy = (await pool.query(
+        `INSERT INTO certificate_jobs (workspace_id, operation, status, source, payload, subject_type, subject_id)
+         VALUES ($1, 'noop', 'approved', 'api', '{}'::jsonb, 'managed_certificate', $2) RETURNING id`,
+        [workspaceId, String(certA.managedId)],
+      )).rows[0];
+      const jobs = require("../../apps/api/services/certops/jobs");
+      const filtered = await jobs.listCertificateJobs({ workspaceId, status: "approved", limit: 1 });
+      assert.equal(filtered.pagination.total, 2, "count uses the same approved-queue predicate as the page");
+      const second = await jobs.listCertificateJobs({ workspaceId, status: "approved", limit: 1, offset: 1 });
+      assert.deepEqual(new Set([...filtered.items, ...second.items].map(j => j.id)), new Set([approved.jobId, legacy.id]));
+      assert.ok(![...filtered.items, ...second.items].some(j => [waiting.jobId, unreviewed.jobId].includes(j.id)));
+      await pool.query("UPDATE certificate_jobs SET status = 'running' WHERE id = $1", [approved.jobId]);
+      const remaining = await jobs.listCertificateJobs({ workspaceId, status: "approved" });
+      assert.deepEqual(remaining.items.map(j => j.id), [legacy.id], "already executing work is not queued");
+      assert.equal((await jobs.listCertificateJobs({ workspaceId: otherWorkspaceId, status: "approved" })).items.length, 0);
+    });
+
     it("requires a fresh preview after either direction of approval-policy change", async () => {
       for (const enabled of [false, true]) {
         await policy(enabled);

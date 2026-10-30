@@ -280,7 +280,9 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
           <option value=''>All statuses</option>
           {CERTOPS_JOB_STATUSES.map(value => (
             <option key={value} value={value}>
-              {jobStatusLabel(value)}
+              {value === 'approved'
+                ? 'Approved (queued)'
+                : jobStatusLabel(value)}
             </option>
           ))}
         </Select>

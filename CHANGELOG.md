@@ -15,6 +15,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **API request correlation.** Responses include a generated `X-Request-Id` that matches `correlationId` in request-scoped API logs and completion records. Use it when reporting API failures; incoming request IDs are replaced to prevent forged or sensitive values from entering logs. Dashboard API errors display the matching request reference when available. Worker propagation remains follow-up work.
 
+### Fixed
+
+- **Approved jobs remain discoverable while queued.** The Jobs filter **Approved (queued)** includes human-approved jobs waiting for an agent, with matching pagination totals.
+- **Setup invitations respect workspace access.** Viewer and unresolved-role sessions keep management controls hidden. Setup copy describes the asset/site alert inventory rather than declaring the whole workspace empty.
+
 ## [0.18.2] - 2026-10-27
 
 ### Added

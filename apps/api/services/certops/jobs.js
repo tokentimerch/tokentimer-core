@@ -2458,8 +2458,15 @@ async function listCertificateJobs(options) {
       CERTOPS_JOB_STATUS_INVALID,
       "status",
     );
-    params.push(status);
-    conditions.push(`status = $${params.length}`);
+    if (status === "approved") {
+      // Approval immediately moves a job to claimable pending. Keep the
+      // approved queue filter useful without treating unreviewed pending work
+      // or already-running/terminal work as part of that queue.
+      conditions.push("(status = 'approved' OR (status = 'pending' AND approved_at IS NOT NULL))");
+    } else {
+      params.push(status);
+      conditions.push(`status = $${params.length}`);
+    }
   }
 
   if (options.operation !== undefined && options.operation !== null && options.operation !== "") {
