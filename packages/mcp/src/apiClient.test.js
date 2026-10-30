@@ -146,6 +146,24 @@ describe("API client", () => {
     }
   });
 
+  it("reports hosted policy and monthly quota refusals without encouraging immediate retries", async () => {
+    const client = createApiClient(config());
+    for (const [status, upstreamCode, code, reason] of [
+      [402, "PLAN_FEATURE_REQUIRED", "MCP_SCOPE_DENIED", "plan_required"],
+      [403, "WORKSPACE_FROZEN", "MCP_SCOPE_DENIED", "workspace_frozen"],
+      [429, "CERTOPS_RENEWAL_QUOTA_EXCEEDED", "MCP_CONFLICT", "renewal_quota"],
+    ]) {
+      respond = json(status, { code: upstreamCode, error: SENTINEL });
+      await assert.rejects(client.post("/api/v1/operator/renewals/requests", {}), error => {
+        assert.equal(error.code, code);
+        assert.equal(error.reason, reason);
+        assert.equal(error.retryable, false);
+        assert.equal(JSON.stringify(error.toJSON()).includes(SENTINEL), false);
+        return true;
+      });
+    }
+  });
+
   it("marks only transient failures as retryable", async () => {
     const client = createApiClient(config());
     const retryable = async (status) => {

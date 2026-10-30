@@ -2,7 +2,7 @@
 
 // The only code that sends the connection credential anywhere.
 //
-//  - GET only, and only below /api/v1/operator/.
+//  - Confined reads and explicit writes below /api/v1/operator/ only.
 //  - Redirects are refused, so the credential cannot be forwarded elsewhere.
 //  - A timeout and a hard response-size cap bound every call.
 //  - Errors map to fixed codes and fixed wording. The upstream body, headers
@@ -39,6 +39,9 @@ class ToolError extends Error {
 // table is ever acted on; the wording is ours, never the server's, so nothing
 // the API writes in a body can reach the model.
 const CODE_ERRORS = Object.freeze({
+  PLAN_FEATURE_REQUIRED: ["MCP_SCOPE_DENIED", "This workspace's plan does not include assistant certificate operations.", false, "plan_required"],
+  WORKSPACE_FROZEN: ["MCP_SCOPE_DENIED", "This workspace is frozen. New renewal requests are unavailable.", false, "workspace_frozen"],
+  CERTOPS_RENEWAL_QUOTA_EXCEEDED: ["MCP_CONFLICT", "The monthly renewal-job limit is reached. Wait for the quota reset or ask a workspace administrator to review the plan.", false, "renewal_quota"],
   OPERATOR_WRITES_DISABLED: ["MCP_WRITES_DISABLED", "Assistant write requests are not enabled for this workspace.", false, null],
   OPERATOR_PLAN_EXPIRED: ["MCP_PLAN_EXPIRED", "The preview expired. Preview again.", false, null],
   OPERATOR_PLAN_USED: ["MCP_CONFLICT", "This preview was already submitted. Preview again.", false, "plan_used"],
@@ -117,7 +120,7 @@ async function readCapped(response, maxBytes, correlationId) {
 // Pulls the machine code (and a snake_case reason, if present) out of a
 // refusal body, and nothing else. Anything unreadable is simply no code.
 async function refusalCode(response, maxBytes, correlationId) {
-  if (![403, 409, 410, 429].includes(response.status)) {
+  if (![402, 403, 409, 410, 429].includes(response.status)) {
     await response.body?.cancel().catch(() => {});
     return null;
   }
