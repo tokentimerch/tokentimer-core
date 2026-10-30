@@ -1221,11 +1221,24 @@ function ImportTokensModalContent({
   const [autoSyncName, setAutoSyncName] = React.useState('');
   const [allowedExtraMetricLabels, setAllowedExtraMetricLabels] =
     React.useState([]);
+  const [systemMetricPolicy, setSystemMetricPolicy] = React.useState({
+    enabled: null,
+    labels: ['configuration_name', 'monitoring_group', 'kind'],
+  });
   const [autoSyncMetricSettings, setAutoSyncMetricSettings] = React.useState(
     DEFAULT_METRIC_SETTINGS
   );
   const [autoSyncRuns, setAutoSyncRuns] = React.useState([]);
   const [autoSyncRunsFor, setAutoSyncRunsFor] = React.useState(null);
+  const renderAutoSyncMetrics = () => (
+    <AutoSyncMetricSettings
+      key={source + '/' + (autoSyncConfig?.id || 'new')}
+      value={autoSyncMetricSettings}
+      allowedExtraLabels={allowedExtraMetricLabels}
+      systemPolicy={systemMetricPolicy}
+      onChange={setAutoSyncMetricSettings}
+    />
+  );
   const autoSyncHistoryKey = `${workspaceId}/${autoSyncConfig?.id}`;
   const visibleAutoSyncRuns =
     autoSyncRunsFor === autoSyncHistoryKey ? autoSyncRuns : [];
@@ -1314,6 +1327,12 @@ function ImportTokensModalContent({
         );
         setAutoSyncMetricSettings(
           existing?.metrics_settings || DEFAULT_METRIC_SETTINGS
+        );
+        setSystemMetricPolicy(
+          res.data?.metric_label_policy?.system || {
+            enabled: null,
+            labels: ['configuration_name', 'monitoring_group', 'kind'],
+          }
         );
         setAutoSyncName(
           existing?.name || (creating ? requestedAutoSyncConfig.name : source)
@@ -3089,11 +3108,6 @@ function ImportTokensModalContent({
                         maxLength={255}
                       />
                     </FormControl>
-                    <AutoSyncMetricSettings
-                      value={autoSyncMetricSettings}
-                      allowedExtraLabels={allowedExtraMetricLabels}
-                      onChange={setAutoSyncMetricSettings}
-                    />
                     {autoSyncConfig.last_sync_status === 'failed' ||
                     autoSyncConfig.last_sync_status === 'partial' ? (
                       <Alert
@@ -3369,6 +3383,9 @@ function ImportTokensModalContent({
 
               {source === 'gitlab' ? (
                 <ImportGitLabForm
+                  afterFilterRules={
+                    isAutoSyncAllowed ? renderAutoSyncMetrics() : null
+                  }
                   hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={gitlabFormRef}
@@ -3415,6 +3432,9 @@ function ImportTokensModalContent({
 
               {source === 'github' ? (
                 <ImportGitHubForm
+                  afterFilterRules={
+                    isAutoSyncAllowed ? renderAutoSyncMetrics() : null
+                  }
                   hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={githubFormRef}
@@ -4132,11 +4152,6 @@ function ImportTokensModalContent({
                   maxLength={255}
                 />
               </FormControl>
-              <AutoSyncMetricSettings
-                value={autoSyncMetricSettings}
-                allowedExtraLabels={allowedExtraMetricLabels}
-                onChange={setAutoSyncMetricSettings}
-              />
               <AutoSyncGroupLine
                 groupIds={autoSyncGroupIds}
                 onChange={setAutoSyncGroupIds}

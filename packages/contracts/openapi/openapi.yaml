@@ -2307,6 +2307,8 @@ paths:
                   metric_label_policy:
                     type: object
                     properties:
+                      system:
+                        $ref: "#/components/schemas/AutoSyncMetricPolicy"
                       extra_labels:
                         type: array
                         default: []
@@ -2382,6 +2384,55 @@ paths:
                       href:
                         type: string
                         description: System settings path when code is MULTI_CONFIG_DISABLED
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/admin/auto-sync/metrics:
+    get:
+      tags: [Workspaces]
+      summary: Read system-wide auto-sync metric defaults
+      operationId: getAutoSyncMetricDefaults
+      description: System admin only. Environment settings take precedence over database values and defaults.
+      responses:
+        "200":
+          description: Effective defaults and environment locks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoSyncMetricPolicy"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Workspaces]
+      summary: Save system-wide auto-sync metric defaults
+      operationId: saveAutoSyncMetricDefaults
+      description: Applies to existing and new inherited configurations; environment-locked choices are unchanged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled, labels]
+              additionalProperties: false
+              properties:
+                enabled: { type: boolean }
+                labels:
+                  type: array
+                  uniqueItems: true
+                  items: { type: string, enum: [configuration_name, monitoring_group, kind, asset_name, project, group] }
+      responses:
+        "200":
+          description: Saved effective defaults
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoSyncMetricPolicy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/admin/auto-sync/activation:
@@ -9550,11 +9601,27 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    AutoSyncMetricPolicy:
+      type: object
+      properties:
+        enabled: { type: boolean, nullable: true }
+        labels:
+          type: array
+          items: { type: string, enum: [configuration_name, monitoring_group, kind, asset_name, project, group] }
+        locked: { type: boolean }
+        source: { type: string, nullable: true, enum: [env, database, null] }
+        extra_labels:
+          type: array
+          items: { type: string, enum: [asset_name, project, group] }
+        extra_labels_locked: { type: boolean }
     AutoSyncMetricSettings:
       type: object
       additionalProperties: false
-      description: Opt-in metric metadata for this connection. Configuration ID is always included; changing these settings does not restart a scan. Names and project/group labels can multiply time series and expose metadata to metrics readers. No credential values are exported. Token-name and project/group selections are inactive unless the deployment allows high-cardinality labels.
+      description: Inherited system metric defaults or an explicit connection override. Configuration ID is always included; changing these settings does not restart a scan. Names and project/group labels can multiply time series and expose metadata to metrics readers. No credential values are exported. Environment settings take precedence over saved system defaults. Extra labels are off by default.
       properties:
+        inherit_system:
+          type: boolean
+          description: New connections inherit system defaults; an explicit false enables a local override.
         enabled:
           type: boolean
           default: false

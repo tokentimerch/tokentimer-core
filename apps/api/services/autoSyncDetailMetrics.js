@@ -11,14 +11,16 @@ function counter(value) {
 async function detailedSamples() {
   const { rows } = await pool.query(`SELECT c.id AS configuration_id, c.provider,
     c.connection_key AS configuration_name, c.metrics_settings,
+    (SELECT auto_sync_metrics FROM system_settings WHERE id = 1) AS system_metric_policy,
     s.kind, s.asset_name, s.project, s.group_name, s.items_created_total,
     EXTRACT(EPOCH FROM s.last_created_at) AS last_created
     FROM auto_sync_creation_stats s JOIN auto_sync_configs c ON c.id = s.config_id
     WHERE c.metrics_settings->>'enabled' = 'true'
+       OR COALESCE(c.metrics_settings->>'inherit_system', 'true') = 'true'
     ORDER BY c.id, s.dimension_key`);
   const samples = new Map();
   for (const row of rows) {
-    const settings = effectiveMetricSettings(row.metrics_settings);
+    const settings = effectiveMetricSettings(row.metrics_settings, process.env, row.system_metric_policy);
     if (!settings.enabled) continue;
     // A new selection gets a distinct series, even when optional values are blank.
     // Configuration identity is mandatory so deletion cannot subtract from another config's counter.

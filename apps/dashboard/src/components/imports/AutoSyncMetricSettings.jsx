@@ -1,4 +1,9 @@
 import {
+  Accordion,
+  AccordionItem,
+  AccordionButton,
+  AccordionPanel,
+  AccordionIcon,
   Alert,
   AlertIcon,
   Box,
@@ -10,13 +15,13 @@ import {
   Text,
   VStack,
 } from '@chakra-ui/react';
-
 export const DEFAULT_METRIC_SETTINGS = {
   enabled: false,
   labels: [],
   monitoring_group: '',
+  inherit_system: true,
 };
-const CHOICES = [
+export const METRIC_LABEL_CHOICES = [
   ['configuration_name', 'Configuration name'],
   ['monitoring_group', 'Monitoring group'],
   ['kind', 'Asset type'],
@@ -24,57 +29,98 @@ const CHOICES = [
   ['project', 'Project / repository'],
   ['group', 'Source group'],
 ];
+const EXTRA = ['asset_name', 'project', 'group'];
 export default function AutoSyncMetricSettings({
   value = DEFAULT_METRIC_SETTINGS,
   onChange,
   allowedExtraLabels = [],
+  systemPolicy = {
+    enabled: null,
+    labels: ['configuration_name', 'monitoring_group', 'kind'],
+  },
 }) {
   const settings = { ...DEFAULT_METRIC_SETTINGS, ...value };
-  const selected = settings.labels || [];
-  const detailed = selected.some(label => allowedExtraLabels.includes(label));
+  const inherits = value.inherit_system ?? !value.enabled;
+  const enabled =
+    systemPolicy.enabled === false
+      ? false
+      : inherits
+        ? systemPolicy.enabled === true
+        : settings.enabled;
+  const available = METRIC_LABEL_CHOICES.map(([key]) => key).filter(
+    key =>
+      (!EXTRA.includes(key) || allowedExtraLabels.includes(key)) &&
+      (systemPolicy.enabled === null || systemPolicy.labels.includes(key))
+  );
+  const selected = inherits ? systemPolicy.labels : settings.labels;
+  const change = patch => onChange({ ...settings, ...patch });
   return (
-    <Box borderWidth='1px' borderRadius='md' p={3}>
-      <VStack align='stretch' spacing={3}>
-        <Checkbox
-          isChecked={settings.enabled}
-          onChange={event =>
-            onChange({
-              ...settings,
-              enabled: event.target.checked,
-              labels:
-                event.target.checked && selected.length === 0
-                  ? ['configuration_name', 'monitoring_group', 'kind']
-                  : selected,
-            })
-          }
-        >
-          Expose additional auto-sync metrics
-        </Checkbox>
-        {settings.enabled ? (
-          <>
+    <Accordion allowToggle w='full'>
+      <AccordionItem borderWidth='1px' borderRadius='md'>
+        <AccordionButton>
+          <Box flex='1' textAlign='left' fontWeight='medium'>
+            Auto-sync metrics
+          </Box>
+          <AccordionIcon />
+        </AccordionButton>
+        <AccordionPanel>
+          <VStack align='stretch' spacing={3}>
+            <Checkbox
+              isChecked={inherits}
+              onChange={e =>
+                change({
+                  inherit_system: e.target.checked,
+                  ...(e.target.checked
+                    ? {}
+                    : {
+                        enabled,
+                        labels: selected.filter(key => available.includes(key)),
+                      }),
+                })
+              }
+            >
+              Use system settings
+            </Checkbox>
+            <Text fontSize='sm'>
+              System Settings controls metric availability. This configuration{' '}
+              {inherits ? 'inherits the selected labels' : 'uses an override'}.
+            </Text>
+            <Checkbox
+              isChecked={enabled}
+              isDisabled={inherits || systemPolicy.enabled === false}
+              onChange={e =>
+                change({
+                  enabled: e.target.checked,
+                  labels: settings.labels.length
+                    ? settings.labels
+                    : available.filter(key => !EXTRA.includes(key)),
+                })
+              }
+            >
+              Expose additional auto-sync metrics
+            </Checkbox>
+            {systemPolicy.enabled === false || (inherits && !enabled) ? (
+              <Text fontSize='sm'>
+                Additional metrics are disabled in System Settings.
+              </Text>
+            ) : null}
             <Text fontSize='sm'>
               Configuration ID is always included. Select the additional labels
               to expose:
             </Text>
             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={2}>
-              {CHOICES.map(([label, title]) => (
+              {METRIC_LABEL_CHOICES.map(([key, title]) => (
                 <Checkbox
-                  key={label}
+                  key={key}
                   isChecked={
-                    (allowedExtraLabels.includes(label) ||
-                      !['asset_name', 'project', 'group'].includes(label)) &&
-                    selected.includes(label)
+                    enabled && available.includes(key) && selected.includes(key)
                   }
-                  isDisabled={
-                    !allowedExtraLabels.includes(label) &&
-                    ['asset_name', 'project', 'group'].includes(label)
-                  }
-                  onChange={event =>
-                    onChange({
-                      ...settings,
-                      labels: event.target.checked
-                        ? [...selected, label]
-                        : selected.filter(item => item !== label),
+                  isDisabled={inherits || !enabled || !available.includes(key)}
+                  onChange={e =>
+                    change({
+                      labels: e.target.checked
+                        ? [...settings.labels, key]
+                        : settings.labels.filter(label => label !== key),
                     })
                   }
                 >
@@ -82,12 +128,6 @@ export default function AutoSyncMetricSettings({
                 </Checkbox>
               ))}
             </SimpleGrid>
-            {allowedExtraLabels.length === 0 ? (
-              <Text fontSize='sm'>
-                Token names and project/group labels are disabled by deployment
-                settings.
-              </Text>
-            ) : null}
             {selected.includes('monitoring_group') ? (
               <FormControl>
                 <FormLabel fontSize='sm'>Monitoring group label</FormLabel>
@@ -96,36 +136,34 @@ export default function AutoSyncMetricSettings({
                   placeholder='e.g. critical'
                   maxLength={64}
                   value={settings.monitoring_group}
-                  onChange={event =>
-                    onChange({
-                      ...settings,
-                      monitoring_group: event.target.value,
-                    })
-                  }
+                  onChange={e => change({ monitoring_group: e.target.value })}
                 />
               </FormControl>
             ) : null}
             <Alert
-              status={detailed ? 'warning' : 'info'}
+              status={
+                selected.some(
+                  key => EXTRA.includes(key) && available.includes(key)
+                )
+                  ? 'warning'
+                  : 'info'
+              }
               fontSize='sm'
               borderRadius='md'
             >
               <AlertIcon />
               Each different label combination creates a time series for each
-              scraped replica. Token names and project/group labels can
-              significantly increase the number of series and alerts.
+              scraped replica and can multiply alerts. Selected metadata is
+              visible to metrics readers; token secrets are never included.
             </Alert>
             <Text fontSize='xs'>
-              Selected metadata is visible to readers of the metrics endpoint;
-              token secrets are never included. Asset names and project/group
-              details are captured for future creations only. Changing labels,
-              configuration names or monitoring groups can start new series.
-              Disabling exposure hides the additional metrics; previous samples
-              remain until Prometheus retention expires.
+              Asset names and project/group details cover future creations only.
+              Changing labels can start new series; previous samples remain
+              until Prometheus retention expires.
             </Text>
-          </>
-        ) : null}
-      </VStack>
-    </Box>
+          </VStack>
+        </AccordionPanel>
+      </AccordionItem>
+    </Accordion>
   );
 }
