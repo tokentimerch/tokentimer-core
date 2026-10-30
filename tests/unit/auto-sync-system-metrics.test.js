@@ -13,4 +13,11 @@ describe('independent global auto-sync overrides',()=>{
  it('rejects changes to managed fields while allowing unrelated integration preferences',()=>{const policy={override_metrics:true,override_monitoring_group:false};assert.throws(()=>assertMetricSettingsEditable(local,{...local,enabled:false},policy),{code:'AUTO_SYNC_METRICS_MANAGED'});assert.equal(assertMetricSettingsEditable(local,{...local,monitoring_group:'other'},policy).monitoring_group,'other');assert.throws(()=>assertMetricSettingsEditable(local,{...local,monitoring_group:'other'},{override_monitoring_group:true}),{code:'AUTO_SYNC_METRICS_MANAGED'});assert.deepEqual(assertMetricSettingsEditable(local,local,{override_metrics:true,override_monitoring_group:true}),local);});
  it('validates typed independent flags and the global group',()=>{assert.ok(systemMetricSettingsError({override_metrics:'yes'}));assert.ok(systemMetricSettingsError({override_monitoring_group:1}));assert.ok(systemMetricSettingsError({monitoring_group:'x'.repeat(65)}));assert.ok(systemMetricSettingsError({monitoring_group:'bad\nvalue'}));assert.equal(systemMetricSettingsError({enabled:false,labels:[],override_metrics:true,override_monitoring_group:true,monitoring_group:''}),null);});
  it('rejects malformed global values through the shared save path',async()=>{const service=require('../../apps/api/services/systemSettings');await assert.rejects(service.saveJsonColumn({query(){throw Error('must not query');}},'auto_sync_metrics',{enabled:'true'},1,{strictKeys:true}),{code:'JSON_COLUMN_INVALID_VALUE'});});
+ it('does not expose previously saved asset labels without an operator selection',()=>{
+  const settings={enabled:true,labels:['asset_name','project']};
+  assert.deepEqual(effectiveMetricSettings(settings,{},{}).labels,[]);
+  assert.deepEqual(effectiveMetricSettings(settings,{}, {override_metrics:false,labels:['asset_name']}).labels,['asset_name']);
+  assert.deepEqual(effectiveMetricSettings(settings,{AUTO_SYNC_METRICS_EXTRA_LABELS:'none'},{override_metrics:false,labels:['asset_name']}).labels,[]);
+ });
+
 });

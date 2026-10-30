@@ -352,7 +352,7 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     const url='/api/v1/admin/auto-sync/metrics';
     const saved=await request(app).put(url).send({enabled:true,labels:['kind','asset_name']});assert.equal(saved.status,200);assert.ok(saved.body.labels.includes('asset_name'));assert.equal(saved.body.extra_labels_locked,false);
     const connections=await request(app).get(`/api/v1/workspaces/${workspaceId}/auto-sync`);
-    assert.deepEqual(connections.body.metric_label_policy.extra_labels,['asset_name','project','group']);
+    assert.deepEqual(connections.body.metric_label_policy.extra_labels,['asset_name']);
     assert.equal(connections.body.metric_label_policy.system.enabled,true);
     process.env.AUTO_SYNC_METRICS_EXTRA_LABELS='project';
     const locked=await request(app).get(url);assert.equal(locked.body.extra_labels_locked,true);assert.ok(locked.body.labels.includes('project'));assert.ok(!locked.body.labels.includes('asset_name'));

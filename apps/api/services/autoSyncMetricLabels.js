@@ -94,7 +94,7 @@ function effectiveMetricSettings(value, env = process.env, storedPolicy) {
     settings.labels = policy.labels;
   }
   if (policy.override_monitoring_group) settings.monitoring_group = policy.monitoring_group;
-  const permitted = permittedExtraLabels(env, { labels: settings.labels });
+  const permitted = permittedExtraLabels(env, storedPolicy);
   settings.labels = settings.labels.filter(label => !HIGH_CARDINALITY_LABELS.includes(label) || permitted.includes(label));
   return settings;
 }

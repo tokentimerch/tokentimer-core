@@ -363,7 +363,7 @@ router.get(
         [req.workspace.id],
       );
       const metricPolicy = await readSystemMetricPolicy(pool);
-      res.json({ metric_label_policy: { extra_labels: deploymentMetricLabelOptions().extra_labels, system: metricPolicy }, items: result.rows.map((row) => ({
+      res.json({ metric_label_policy: { extra_labels: metricPolicy.labels.filter(label => HIGH_CARDINALITY_LABELS.includes(label)), system: metricPolicy }, items: result.rows.map((row) => ({
         ...row, last_sync_error: sanitizePublicAutoSyncError(row.last_sync_error),
       })) });
     } catch (e) {
