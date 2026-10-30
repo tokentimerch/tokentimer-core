@@ -33,7 +33,7 @@ tags:
   - name: CertOps Agent
     description: Machine surface for the CertOps executor and outbound-only agent. Scoped-token authenticated.
   - name: Operator
-    description: Operator interface for MCP clients. Connections are managed by a signed-in user; the operator namespace accepts only an operator connection credential.
+    description: Operator interface for MCP clients. Connections are managed by a signed-in user; the operator namespace accepts only an operator connection credential. Cloud additionally requires a Pro/Team plan (402 PLAN_FEATURE_REQUIRED), refuses new writes while frozen (403 WORKSPACE_FROZEN), and applies monthly renewal quota admission (429 CERTOPS_RENEWAL_QUOTA_EXCEEDED).
 security:
   - cookieAuth: []
 paths:
@@ -10011,8 +10011,14 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "402":
+          description: Cloud workspace plan does not include certificate operations (PLAN_FEATURE_REQUIRED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: The connection lacks the scope, or assistant writes are not enabled for this workspace
+          description: The connection lacks scope, assistant writes are disabled, or the Cloud workspace is frozen (WORKSPACE_FROZEN)
           content:
             application/json:
               schema:
@@ -10053,6 +10059,12 @@ paths:
       security:
         - operatorConnectionAuth: []
       responses:
+        "200":
+          description: Original request returned for an identical retry (replayed true); no new job or quota charge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorReadResponse"
         "201":
           description: Request created, queued or waiting for approval according to workspace policy
           content:
@@ -10063,8 +10075,14 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "402":
+          description: Cloud workspace plan does not include certificate operations (PLAN_FEATURE_REQUIRED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: The connection lacks the scope, or assistant writes are not enabled for this workspace
+          description: The connection lacks scope, assistant writes are disabled, or the Cloud workspace is frozen (WORKSPACE_FROZEN)
           content:
             application/json:
               schema:
@@ -10086,7 +10104,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "429":
-          description: Too many assistant requests are already waiting for approval
+          description: Too many assistant requests await approval, or Cloud monthly renewal quota is exhausted (CERTOPS_RENEWAL_QUOTA_EXCEEDED)
           content:
             application/json:
               schema:
