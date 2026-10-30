@@ -1,32 +1,16 @@
-const {describe,it}=require('node:test');const assert=require('node:assert/strict');const {systemMetricPolicy,effectiveMetricSettings,creationDimensions}=require('../../apps/api/services/autoSyncMetricLabels');const low=['configuration_name','monitoring_group','kind'];
-describe('system auto-sync metric precedence',()=>{
- it('uses environment before database, then disabled defaults for inherited connections',()=>{
-  const config={inherit_system:true,enabled:false,labels:[],monitoring_group:'critical'};
-  assert.equal(effectiveMetricSettings(config,{},{}).enabled,false);
-  assert.equal(effectiveMetricSettings(config,{}, {enabled:true,labels:low}).enabled,true);
-  assert.equal(effectiveMetricSettings(config,{AUTO_SYNC_METRICS_ENABLED:'false'},{enabled:true,labels:low}).enabled,false);
-  assert.equal(effectiveMetricSettings(config,{AUTO_SYNC_METRICS_ENABLED:'true'},{enabled:false,labels:low}).enabled,true);
-  assert.equal(systemMetricPolicy({enabled:true},{AUTO_SYNC_METRICS_ENABLED:'false'}).locked,true);
- });
- it('preserves existing explicit choices until a system policy is configured',()=>{
-  const config={enabled:true,labels:['kind'],monitoring_group:'critical',inherit_system:false};
-  assert.equal(effectiveMetricSettings(config,{},{}).enabled,true);
-  assert.equal(effectiveMetricSettings(config,{}, {enabled:false}).enabled,false);
- });
- it('allows a local opt-out but cannot enable labels disabled by system or environment',()=>{
-  const local={enabled:true,inherit_system:false,labels:['kind','asset_name','project'],monitoring_group:'critical'};
-  assert.deepEqual(effectiveMetricSettings(local,{AUTO_SYNC_METRICS_EXTRA_LABELS:'project'},{enabled:true,labels:['kind','asset_name']}).labels,['kind','project']);
-  assert.equal(effectiveMetricSettings({...local,enabled:false},{},{enabled:true,labels:low}).enabled,false);
-  assert.deepEqual(creationDimensions({name:'private',source_kind:'gitlab-pat',source_dimensions:{project:'private'}},local,{AUTO_SYNC_METRICS_EXTRA_LABELS:'project'},{enabled:false,labels:['project']}),{kind:'gitlab-pat',asset_name:'',project:'',group:''});
- });
-});
-
-it('uses saved high-label choices when env is unset, and an explicit none overrides them',()=>{
- const setting={enabled:true,inherit_system:true};const stored={enabled:true,labels:['kind','asset_name']};
- assert.ok(effectiveMetricSettings(setting,{},stored).labels.includes('asset_name'));
- assert.deepEqual(effectiveMetricSettings(setting,{AUTO_SYNC_METRICS_EXTRA_LABELS:'none'},stored).labels,['kind']);
-});
-it('rejects malformed global values through the shared JSON save path',async()=>{
- const settings=require('../../apps/api/services/systemSettings');
- await assert.rejects(settings.saveJsonColumn({query(){throw Error('must not query')}},'auto_sync_metrics',{enabled:'true'},1,{strictKeys:true}),{code:'JSON_COLUMN_INVALID_VALUE'});
+const {describe,it}=require('node:test');
+const assert=require('node:assert/strict');
+const {systemMetricPolicy,effectiveMetricSettings,assertMetricSettingsEditable,systemMetricSettingsError}=require('../../apps/api/services/autoSyncMetricLabels');
+const low=['configuration_name','monitoring_group','kind'];
+const local={enabled:true,labels:['kind'],monitoring_group:'local'};
+describe('independent global auto-sync overrides',()=>{
+ it('leaves integration choices intact until an override is configured',()=>{assert.equal(systemMetricPolicy({},{}).override_metrics,false);assert.deepEqual(effectiveMetricSettings(local,{},{}),local);assert.deepEqual(effectiveMetricSettings(local,{}, {override_metrics:false,enabled:false,labels:low}),local);});
+ it('forces metrics on every connection, including explicit local opt-outs',()=>{const forced=effectiveMetricSettings({...local,enabled:false,inherit_system:false},{},{override_metrics:true,enabled:true,labels:low});assert.equal(forced.enabled,true);assert.deepEqual(forced.labels,low);assert.equal(forced.monitoring_group,'local');});
+ it('forces the group independently and allows an explicit empty global group',()=>{assert.deepEqual(effectiveMetricSettings(local,{}, {override_monitoring_group:true,monitoring_group:'critical'}),{...local,monitoring_group:'critical'});assert.equal(effectiveMetricSettings(local,{}, {override_monitoring_group:true,monitoring_group:''}).monitoring_group,'');});
+ it('restores both local settings when the corresponding override is released',()=>{const stored={override_metrics:false,enabled:false,labels:low,override_monitoring_group:false,monitoring_group:'global'};assert.deepEqual(effectiveMetricSettings(local,{},stored),local);});
+ it('preserves previously saved global policy as an active override',()=>{assert.equal(systemMetricPolicy({enabled:false},{}).override_metrics,true);assert.equal(effectiveMetricSettings(local,{}, {enabled:false}).enabled,false);});
+ it('keeps environment priority for both overrides and high-cardinality restrictions',()=>{const env={AUTO_SYNC_METRICS_ENABLED:'false',AUTO_SYNC_METRICS_MONITORING_GROUP:' production ',AUTO_SYNC_METRICS_EXTRA_LABELS:'none'};const policy=systemMetricPolicy({override_metrics:false,override_monitoring_group:false},env);assert.equal(policy.override_metrics,true);assert.equal(policy.monitoring_group_locked,true);const forced=effectiveMetricSettings({...local,labels:['asset_name','kind']},env,{});assert.equal(forced.enabled,false);assert.equal(forced.monitoring_group,'production');assert.ok(!forced.labels.includes('asset_name'));});
+ it('rejects changes to managed fields while allowing unrelated integration preferences',()=>{const policy={override_metrics:true,override_monitoring_group:false};assert.throws(()=>assertMetricSettingsEditable(local,{...local,enabled:false},policy),{code:'AUTO_SYNC_METRICS_MANAGED'});assert.equal(assertMetricSettingsEditable(local,{...local,monitoring_group:'other'},policy).monitoring_group,'other');assert.throws(()=>assertMetricSettingsEditable(local,{...local,monitoring_group:'other'},{override_monitoring_group:true}),{code:'AUTO_SYNC_METRICS_MANAGED'});assert.deepEqual(assertMetricSettingsEditable(local,local,{override_metrics:true,override_monitoring_group:true}),local);});
+ it('validates typed independent flags and the global group',()=>{assert.ok(systemMetricSettingsError({override_metrics:'yes'}));assert.ok(systemMetricSettingsError({override_monitoring_group:1}));assert.ok(systemMetricSettingsError({monitoring_group:'x'.repeat(65)}));assert.ok(systemMetricSettingsError({monitoring_group:'bad\nvalue'}));assert.equal(systemMetricSettingsError({enabled:false,labels:[],override_metrics:true,override_monitoring_group:true,monitoring_group:''}),null);});
+ it('rejects malformed global values through the shared save path',async()=>{const service=require('../../apps/api/services/systemSettings');await assert.rejects(service.saveJsonColumn({query(){throw Error('must not query');}},'auto_sync_metrics',{enabled:'true'},1,{strictKeys:true}),{code:'JSON_COLUMN_INVALID_VALUE'});});
 });

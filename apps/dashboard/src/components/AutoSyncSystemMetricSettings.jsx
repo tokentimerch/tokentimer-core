@@ -3,7 +3,13 @@ import {
   Alert,
   AlertIcon,
   Badge,
+  Box,
   Checkbox,
+  FormControl,
+  FormHelperText,
+  FormLabel,
+  HStack,
+  Input,
   SimpleGrid,
   Text,
   VStack,
@@ -12,7 +18,7 @@ import apiClient from '../utils/apiClient';
 import { DashboardActionButton } from './DashboardPrimitives';
 import { METRIC_LABEL_CHOICES } from './imports/AutoSyncMetricSettings.jsx';
 const EXTRA = ['asset_name', 'project', 'group'];
-export default function AutoSyncSystemMetricSettings() {
+export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
   const [policy, setPolicy] = useState(null),
     [error, setError] = useState(''),
     [saving, setSaving] = useState(false),
@@ -22,89 +28,155 @@ export default function AutoSyncSystemMetricSettings() {
     apiClient
       .get('/api/v1/admin/auto-sync/metrics')
       .then(r => {
-        if (active) setPolicy(r.data);
+        if (active) {
+          setPolicy(r.data);
+          onConfiguredChange?.(
+            r.data.override_metrics || r.data.override_monitoring_group
+          );
+        }
       })
       .catch(() => {
-        if (active) setError('Unable to load auto-sync metric settings.');
+        if (active) setError('Unable to load auto-sync settings.');
       });
     return () => {
       active = false;
     };
-  }, []);
+  }, [onConfiguredChange]);
+  const change = patch => {
+    setPolicy({ ...policy, ...patch });
+    setSaved(false);
+  };
   async function save() {
     setSaving(true);
     setError('');
     setSaved(false);
     try {
       const r = await apiClient.put('/api/v1/admin/auto-sync/metrics', {
+        override_metrics: policy.override_metrics,
         enabled: policy.enabled,
         labels: policy.labels,
+        override_monitoring_group: policy.override_monitoring_group,
+        monitoring_group: policy.monitoring_group,
       });
       setPolicy(r.data);
+      onConfiguredChange?.(
+        r.data.override_metrics || r.data.override_monitoring_group
+      );
       setSaved(true);
     } catch {
-      setError('Unable to save auto-sync metric settings.');
+      setError('Unable to save auto-sync settings.');
     } finally {
       setSaving(false);
     }
   }
   if (!policy)
-    return <Text>{error || 'Loading auto-sync metric settings…'}</Text>;
+    return <Text fontSize='sm'>{error || 'Loading auto-sync settings…'}</Text>;
   return (
-    <VStack align='stretch' spacing={3}>
-      <Checkbox
-        isChecked={policy.enabled}
-        isDisabled={saving || policy.locked}
-        onChange={e => {
-          setPolicy({ ...policy, enabled: e.target.checked });
-          setSaved(false);
-        }}
-      >
-        Enable additional auto-sync metrics
-      </Checkbox>
-      {policy.locked ? (
-        <Badge alignSelf='start'>Set by environment</Badge>
-      ) : null}
+    <VStack
+      align='stretch'
+      spacing={4}
+      fontSize='sm'
+      sx={{ '& .chakra-checkbox__label': { fontSize: 'sm' } }}
+    >
       <Text fontSize='sm'>
-        Applies to existing and new configurations using system settings.
-        Configuration overrides can disable exposure or use fewer labels.
+        Global overrides apply to every integration and lock the corresponding
+        connection controls. Turn an override off to restore each integration’s
+        saved settings.
       </Text>
-      <SimpleGrid columns={{ base: 1, md: 2 }} spacing={2}>
-        {METRIC_LABEL_CHOICES.map(([key, title]) => {
-          const permitted =
-            !EXTRA.includes(key) || policy.extra_labels.includes(key);
-          return (
+      <Box borderWidth='1px' borderRadius='md' p={4}>
+        <VStack align='stretch' spacing={3}>
+          <HStack justify='space-between' flexWrap='wrap'>
             <Checkbox
-              key={key}
-              isChecked={permitted && policy.labels.includes(key)}
+              isChecked={policy.override_metrics}
+              isDisabled={saving || policy.locked}
+              onChange={e => change({ override_metrics: e.target.checked })}
+            >
+              Override integration metrics
+            </Checkbox>
+            {policy.locked ? <Badge>Set by environment</Badge> : null}
+          </HStack>
+          <Checkbox
+            isChecked={policy.enabled}
+            isDisabled={saving || !policy.override_metrics || policy.locked}
+            onChange={e => change({ enabled: e.target.checked })}
+          >
+            Enable additional auto-sync metrics
+          </Checkbox>
+          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={2}>
+            {METRIC_LABEL_CHOICES.map(([key, title]) => {
+              const permitted =
+                !EXTRA.includes(key) || policy.extra_labels.includes(key);
+              return (
+                <Checkbox
+                  key={key}
+                  isChecked={permitted && policy.labels.includes(key)}
+                  isDisabled={
+                    saving ||
+                    !policy.override_metrics ||
+                    !policy.enabled ||
+                    !permitted ||
+                    (EXTRA.includes(key) && policy.extra_labels_locked)
+                  }
+                  onChange={e =>
+                    change({
+                      labels: e.target.checked
+                        ? [...policy.labels, key]
+                        : policy.labels.filter(label => label !== key),
+                    })
+                  }
+                >
+                  {title}
+                </Checkbox>
+              );
+            })}
+          </SimpleGrid>
+          {policy.extra_labels_locked ? (
+            <Badge alignSelf='start'>Labels set by environment</Badge>
+          ) : null}
+          <Text fontSize='xs' color='gray.500'>
+            Combining labels increases time series and alerts and exposes
+            metadata. Asset labels are off by default; environment restrictions
+            take priority.
+          </Text>
+        </VStack>
+      </Box>
+      <Box borderWidth='1px' borderRadius='md' p={4}>
+        <VStack align='stretch' spacing={3}>
+          <HStack justify='space-between' flexWrap='wrap'>
+            <Checkbox
+              isChecked={policy.override_monitoring_group}
+              isDisabled={saving || policy.monitoring_group_locked}
+              onChange={e =>
+                change({ override_monitoring_group: e.target.checked })
+              }
+            >
+              Override monitoring group
+            </Checkbox>
+            {policy.monitoring_group_locked ? (
+              <Badge>Set by environment</Badge>
+            ) : null}
+          </HStack>
+          <FormControl>
+            <FormLabel fontSize='sm'>Monitoring group label</FormLabel>
+            <Input
+              size='sm'
+              placeholder='e.g. critical'
+              maxLength={64}
+              value={policy.monitoring_group}
               isDisabled={
                 saving ||
-                !policy.enabled ||
-                !permitted ||
-                (EXTRA.includes(key) && policy.extra_labels_locked)
+                !policy.override_monitoring_group ||
+                policy.monitoring_group_locked
               }
-              onChange={e => {
-                setPolicy({
-                  ...policy,
-                  labels: e.target.checked
-                    ? [...policy.labels, key]
-                    : policy.labels.filter(label => label !== key),
-                });
-                setSaved(false);
-              }}
-            >
-              {title}
-            </Checkbox>
-          );
-        })}
-      </SimpleGrid>
-      {policy.extra_labels_locked ? (
-        <Badge alignSelf='start'>Labels set by environment</Badge>
-      ) : null}
-      <Text fontSize='sm'>
-        Environment settings take precedence over saved choices. Combining
-        labels increases series and alert cardinality and exposes metadata.
-      </Text>
+              onChange={e => change({ monitoring_group: e.target.value })}
+            />
+            <FormHelperText fontSize='xs'>
+              Use the same group for every integration. An empty value clears
+              the group while this override is active.
+            </FormHelperText>
+          </FormControl>
+        </VStack>
+      </Box>
       {error ? (
         <Alert status='error'>
           <AlertIcon />
@@ -112,14 +184,16 @@ export default function AutoSyncSystemMetricSettings() {
         </Alert>
       ) : null}
       {saved ? (
-        <Text role='status'>Auto-sync metric settings saved.</Text>
+        <Text role='status' fontSize='sm'>
+          Auto-sync settings saved.
+        </Text>
       ) : null}
       <DashboardActionButton
         alignSelf='start'
-        onClick={save}
         isLoading={saving}
+        onClick={save}
       >
-        Save auto-sync metrics
+        Save auto-sync settings
       </DashboardActionButton>
     </VStack>
   );

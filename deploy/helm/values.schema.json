@@ -230,6 +230,7 @@
           "type": "object",
           "properties": {
             "enabled": { "type": "boolean" },
+            "autoSyncMonitoringGroup": { "type": "string", "maxLength": 64, "default": "" },
             "autoSyncEnabled": { "type": ["string", "boolean"], "enum": ["", true, false], "default": "" },
             "extraLabels": { "type": "array", "default": [], "uniqueItems": true, "oneOf": [{ "maxItems": 3, "items": { "type": "string", "enum": ["asset_name", "project", "group"] } }, { "const": ["none"] }], "description": "Extra labels permitted per connection. Combining labels can increase cardinality and expose metadata." }
           }

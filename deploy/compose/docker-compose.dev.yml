@@ -116,9 +116,11 @@ services:
       - ENABLE_METRICS=${ENABLE_METRICS:-false}
       # Optional System Settings override; leave empty to use saved settings.
       - AUTO_SYNC_METRICS_ENABLED=${AUTO_SYNC_METRICS_ENABLED:-}
+      # Optional global monitoring group; empty uses saved or connection settings.
+      - AUTO_SYNC_METRICS_MONITORING_GROUP=${AUTO_SYNC_METRICS_MONITORING_GROUP:-}
       # Extra labels: asset_name, project, group; none disables them.
-      # Empty uses System Settings (off by default); a list overrides and locks those choices.
-      # Inherited selections appear on auto_sync_items_created_detailed_total and
+      # Empty uses saved UI choices (off by default); a list restricts the available asset labels.
+      # Selected labels appear on auto_sync_items_created_detailed_total and
       # auto_sync_last_creation_timestamp_seconds; aggregate counters stay unchanged.
       # Each distinct label combination creates a series in both metrics; combining labels can greatly increase cardinality and expose asset metadata.
       - AUTO_SYNC_METRICS_EXTRA_LABELS=${AUTO_SYNC_METRICS_EXTRA_LABELS:-}

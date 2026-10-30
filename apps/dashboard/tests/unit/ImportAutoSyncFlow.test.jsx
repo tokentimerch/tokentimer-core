@@ -297,9 +297,6 @@ describe.each(['gitlab', 'github'])(
         screen.getByRole('button', { name: 'Auto-sync metrics', exact: true })
       );
       fireEvent.click(
-        await screen.findByRole('checkbox', { name: 'Use system settings' })
-      );
-      fireEvent.click(
         await screen.findByRole('checkbox', {
           name: 'Expose additional auto-sync metrics',
         })
@@ -323,7 +320,6 @@ describe.each(['gitlab', 'github'])(
           '/api/v1/workspaces/ws-1/auto-sync',
           expect.objectContaining({
             metrics_settings: {
-              inherit_system: false,
               enabled: true,
               labels: [
                 'configuration_name',
@@ -365,8 +361,10 @@ describe.each(['gitlab', 'github'])(
         screen.getByRole('button', { name: 'Auto-sync metrics', exact: true })
       );
       expect(
-        await screen.findByRole('checkbox', { name: 'Use system settings' })
-      ).toBeChecked();
+        await screen.findByRole('checkbox', {
+          name: 'Expose additional auto-sync metrics',
+        })
+      ).not.toBeChecked();
       expect(
         screen.getByRole('textbox', { name: 'Monitoring group label' })
       ).toHaveValue('');

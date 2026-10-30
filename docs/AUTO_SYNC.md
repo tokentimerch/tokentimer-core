@@ -71,11 +71,11 @@ Both cause scrape failures, not evidence of zero activity.
 
 ### Optional configuration and asset labels
 
-- Apply migrations 81–82 with matching API/dashboard code; existing provider counters remain unchanged.
-- System Settings → Auto-sync enables inherited metrics for existing and new connections. Existing explicit overrides are preserved until system defaults are saved.
-- The collapsed Auto-sync metrics form below filters sets connection overrides and the monitoring group; `critical` selects the example alert.
-- Environment overrides win over saved settings: `AUTO_SYNC_METRICS_ENABLED` and `AUTO_SYNC_METRICS_EXTRA_LABELS`. Empty uses System Settings; `none` blocks extra asset labels. High-cardinality labels default off.
-- **Warning:** label combinations multiply series/alerts and expose metadata, never secrets. Names/scopes cover future creations; old Prometheus samples remain until retention expires.
+- Apply migrations 81–82 with matching API/dashboard code; provider counters stay unchanged.
+- System Settings → Auto-sync has independent overrides for metrics/labels and the monitoring group. Each forces all integrations and locks its connection controls; active overrides show **Configured**.
+- Without an override, each connection keeps its saved choices in the collapsed form below filters.
+- Environment values take priority: `AUTO_SYNC_METRICS_ENABLED`, `AUTO_SYNC_METRICS_EXTRA_LABELS` and `AUTO_SYNC_METRICS_MONITORING_GROUP`. Empty uses saved settings; `none` blocks extra asset labels.
+- **Warning:** labels multiply series/alerts and expose metadata, never secrets. Names/scopes cover future creations; old samples remain until retention expires.
 
 ## Cleanup and removal
 

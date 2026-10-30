@@ -6,10 +6,13 @@ import {
   AccordionIcon,
   Alert,
   AlertIcon,
+  Badge,
   Box,
   Checkbox,
   FormControl,
+  FormHelperText,
   FormLabel,
+  HStack,
   Input,
   SimpleGrid,
   Text,
@@ -19,7 +22,6 @@ export const DEFAULT_METRIC_SETTINGS = {
   enabled: false,
   labels: [],
   monitoring_group: '',
-  inherit_system: true,
 };
 export const METRIC_LABEL_CHOICES = [
   ['configuration_name', 'Configuration name'],
@@ -34,132 +36,130 @@ export default function AutoSyncMetricSettings({
   value = DEFAULT_METRIC_SETTINGS,
   onChange,
   allowedExtraLabels = [],
-  systemPolicy = {
-    enabled: null,
-    labels: ['configuration_name', 'monitoring_group', 'kind'],
-  },
+  systemPolicy = {},
 }) {
   const settings = { ...DEFAULT_METRIC_SETTINGS, ...value };
-  const inherits = value.inherit_system ?? !value.enabled;
-  const enabled =
-    systemPolicy.enabled === false
-      ? false
-      : inherits
-        ? systemPolicy.enabled === true
-        : settings.enabled;
-  const available = METRIC_LABEL_CHOICES.map(([key]) => key).filter(
-    key =>
-      (!EXTRA.includes(key) || allowedExtraLabels.includes(key)) &&
-      (systemPolicy.enabled === null || systemPolicy.labels.includes(key))
-  );
-  const selected = inherits ? systemPolicy.labels : settings.labels;
+  const managed = systemPolicy.override_metrics === true;
+  const groupManaged = systemPolicy.override_monitoring_group === true;
+  const enabled = managed ? systemPolicy.enabled === true : settings.enabled;
+  const selected = managed ? systemPolicy.labels : settings.labels;
   const change = patch => onChange({ ...settings, ...patch });
   return (
     <Accordion allowToggle w='full'>
-      <AccordionItem borderWidth='1px' borderRadius='md'>
-        <AccordionButton>
-          <Box flex='1' textAlign='left' fontWeight='medium'>
-            Auto-sync metrics
-          </Box>
+      <AccordionItem borderWidth='1px' borderRadius='md' overflow='hidden'>
+        <AccordionButton px={3} py={3}>
+          <HStack flex='1' spacing={2} textAlign='left'>
+            <Text fontSize='sm' fontWeight='semibold'>
+              Auto-sync metrics
+            </Text>
+            {managed || groupManaged ? (
+              <Badge colorScheme='blue' fontSize='xs'>
+                Managed
+              </Badge>
+            ) : null}
+          </HStack>
           <AccordionIcon />
         </AccordionButton>
-        <AccordionPanel>
-          <VStack align='stretch' spacing={3}>
-            <Checkbox
-              isChecked={inherits}
-              onChange={e =>
-                change({
-                  inherit_system: e.target.checked,
-                  ...(e.target.checked
-                    ? {}
-                    : {
-                        enabled,
-                        labels: selected.filter(key => available.includes(key)),
-                      }),
-                })
-              }
-            >
-              Use system settings
-            </Checkbox>
-            <Text fontSize='sm'>
-              System Settings controls metric availability. This configuration{' '}
-              {inherits ? 'inherits the selected labels' : 'uses an override'}.
-            </Text>
+        <AccordionPanel px={3} pb={4}>
+          <VStack align='stretch' spacing={4} fontSize='sm'>
+            {managed ? (
+              <Text color='gray.500' fontSize='sm'>
+                Metric settings are managed in System Settings.
+              </Text>
+            ) : null}
             <Checkbox
               isChecked={enabled}
-              isDisabled={inherits || systemPolicy.enabled === false}
+              isDisabled={managed}
               onChange={e =>
                 change({
                   enabled: e.target.checked,
                   labels: settings.labels.length
                     ? settings.labels
-                    : available.filter(key => !EXTRA.includes(key)),
+                    : METRIC_LABEL_CHOICES.map(([key]) => key).filter(
+                        key => !EXTRA.includes(key)
+                      ),
                 })
               }
             >
               Expose additional auto-sync metrics
             </Checkbox>
-            {systemPolicy.enabled === false || (inherits && !enabled) ? (
-              <Text fontSize='sm'>
-                Additional metrics are disabled in System Settings.
+            <Box>
+              <Text fontSize='sm' mb={2}>
+                Additional labels
               </Text>
-            ) : null}
-            <Text fontSize='sm'>
-              Configuration ID is always included. Select the additional labels
-              to expose:
-            </Text>
-            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={2}>
-              {METRIC_LABEL_CHOICES.map(([key, title]) => (
-                <Checkbox
-                  key={key}
-                  isChecked={
-                    enabled && available.includes(key) && selected.includes(key)
-                  }
-                  isDisabled={inherits || !enabled || !available.includes(key)}
-                  onChange={e =>
-                    change({
-                      labels: e.target.checked
-                        ? [...settings.labels, key]
-                        : settings.labels.filter(label => label !== key),
-                    })
-                  }
-                >
-                  {title}
-                </Checkbox>
-              ))}
-            </SimpleGrid>
-            {selected.includes('monitoring_group') ? (
-              <FormControl>
-                <FormLabel fontSize='sm'>Monitoring group label</FormLabel>
-                <Input
-                  size='sm'
-                  placeholder='e.g. critical'
-                  maxLength={64}
-                  value={settings.monitoring_group}
-                  onChange={e => change({ monitoring_group: e.target.value })}
-                />
-              </FormControl>
-            ) : null}
+              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={2}>
+                {METRIC_LABEL_CHOICES.map(([key, title]) => {
+                  const permitted =
+                    !EXTRA.includes(key) || allowedExtraLabels.includes(key);
+                  return (
+                    <Checkbox
+                      key={key}
+                      isChecked={enabled && permitted && selected.includes(key)}
+                      isDisabled={managed || !enabled || !permitted}
+                      onChange={e =>
+                        change({
+                          labels: e.target.checked
+                            ? [...settings.labels, key]
+                            : settings.labels.filter(label => label !== key),
+                        })
+                      }
+                    >
+                      {title}
+                    </Checkbox>
+                  );
+                })}
+              </SimpleGrid>
+              <Text fontSize='xs' color='gray.500' mt={2}>
+                Configuration ID is always included.
+              </Text>
+            </Box>
+            <FormControl>
+              <HStack mb={2}>
+                <FormLabel fontSize='sm' mb={0}>
+                  Monitoring group label
+                </FormLabel>
+                {groupManaged ? (
+                  <Badge colorScheme='blue' fontSize='xs'>
+                    Managed
+                  </Badge>
+                ) : null}
+              </HStack>
+              <Input
+                size='sm'
+                placeholder='e.g. critical'
+                maxLength={64}
+                isDisabled={groupManaged}
+                value={
+                  groupManaged
+                    ? systemPolicy.monitoring_group
+                    : settings.monitoring_group
+                }
+                onChange={e => change({ monitoring_group: e.target.value })}
+              />
+              <FormHelperText fontSize='xs'>
+                {groupManaged
+                  ? 'Monitoring group is managed in System Settings.'
+                  : 'Used when the Monitoring group label is selected.'}
+              </FormHelperText>
+            </FormControl>
             <Alert
               status={
-                selected.some(
-                  key => EXTRA.includes(key) && available.includes(key)
-                )
-                  ? 'warning'
-                  : 'info'
+                selected.some(key => EXTRA.includes(key)) ? 'warning' : 'info'
               }
               fontSize='sm'
               borderRadius='md'
+              alignItems='start'
             >
-              <AlertIcon />
-              Each different label combination creates a time series for each
-              scraped replica and can multiply alerts. Selected metadata is
-              visible to metrics readers; token secrets are never included.
+              <AlertIcon mt={0.5} />
+              <Text fontSize='sm'>
+                Combining labels increases time series and alerts. Selected
+                metadata is visible to metrics readers; token secrets are never
+                included.
+              </Text>
             </Alert>
-            <Text fontSize='xs'>
+            <Text fontSize='xs' color='gray.500'>
               Asset names and project/group details cover future creations only.
-              Changing labels can start new series; previous samples remain
-              until Prometheus retention expires.
+              Previous samples remain until Prometheus retention expires.
             </Text>
           </VStack>
         </AccordionPanel>
