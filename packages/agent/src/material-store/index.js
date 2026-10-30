@@ -179,7 +179,9 @@ function createVaultStore(stores, intent, options = {}) {
           if (response.statusCode < 200 || response.statusCode >= 300) {
             reject(failure(response.statusCode === 403 ? "material_auth_denied" : "material_store_unavailable")); return;
           }
-          if (response.statusCode === 204) { resolve({ accepted: true }); return; }
+          // KV v2 publication requires JSON. An empty data response is an
+          // uncertain write and must follow publish's exact-version recovery.
+          if (response.statusCode === 204 && area !== "data") { resolve({ accepted: true }); return; }
           try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); }
           catch { reject(failure("material_response_invalid")); }
         });
