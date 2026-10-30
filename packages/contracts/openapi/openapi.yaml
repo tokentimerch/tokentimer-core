@@ -2407,7 +2407,7 @@ paths:
       tags: [Workspaces]
       summary: Save system-wide auto-sync metric defaults
       operationId: saveAutoSyncMetricDefaults
-      description: Applies to existing and new inherited configurations; environment-locked choices are unchanged.
+      description: Independent metric and monitoring-group overrides force all connections and lock their corresponding controls. Environment-locked choices are unchanged.
       requestBody:
         required: true
         content:
@@ -2417,6 +2417,9 @@ paths:
               required: [enabled, labels]
               additionalProperties: false
               properties:
+                override_metrics: { type: boolean }
+                override_monitoring_group: { type: boolean }
+                monitoring_group: { type: string, maxLength: 64 }
                 enabled: { type: boolean }
                 labels:
                   type: array
@@ -2573,6 +2576,12 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: A configuration name conflicts or AUTO_SYNC_METRICS_MANAGED prevents changes to globally managed metric or monitoring-group settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalError"
     delete:
@@ -9604,6 +9613,10 @@ components:
     AutoSyncMetricPolicy:
       type: object
       properties:
+        override_metrics: { type: boolean }
+        override_monitoring_group: { type: boolean }
+        monitoring_group: { type: string, maxLength: 64 }
+        monitoring_group_locked: { type: boolean }
         enabled: { type: boolean, nullable: true }
         labels:
           type: array
@@ -9617,11 +9630,12 @@ components:
     AutoSyncMetricSettings:
       type: object
       additionalProperties: false
-      description: Inherited system metric defaults or an explicit connection override. Configuration ID is always included; changing these settings does not restart a scan. Names and project/group labels can multiply time series and expose metadata to metrics readers. No credential values are exported. Environment settings take precedence over saved system defaults. Extra labels are off by default.
+      description: Connection metric settings, overridden independently by active system metric or monitoring-group overrides. Configuration ID is always included; changing these settings does not restart a scan. Names and project/group labels can multiply time series and expose metadata to metrics readers. No credential values are exported. Environment settings take precedence over saved system defaults. Extra labels are off by default.
       properties:
         inherit_system:
           type: boolean
-          description: New connections inherit system defaults; an explicit false enables a local override.
+          deprecated: true
+          description: Retained for older clients. Active global overrides always take precedence, independent of this flag.
         enabled:
           type: boolean
           default: false

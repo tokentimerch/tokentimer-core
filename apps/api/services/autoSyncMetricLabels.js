@@ -4,7 +4,11 @@ const { createHash } = require("node:crypto");
 
 const OPTIONAL_LABELS = ["configuration_name", "monitoring_group", "kind", "asset_name", "project", "group"];
 const systemSettings = require("./systemSettings");
-systemSettings.registerJsonColumn("auto_sync_metrics", { envMap: { enabled: "AUTO_SYNC_METRICS_ENABLED", labels: null }, validate: metricSettingsError });
+systemSettings.registerJsonColumn("auto_sync_metrics", {
+  envMap: { enabled: "AUTO_SYNC_METRICS_ENABLED", labels: null, override_metrics: null,
+    override_monitoring_group: null, monitoring_group: "AUTO_SYNC_METRICS_MONITORING_GROUP" },
+  validate: systemMetricSettingsError,
+});
 const DEFAULT_SYSTEM_LABELS = ["configuration_name", "monitoring_group", "kind"];
 const HIGH_CARDINALITY_LABELS = ["asset_name", "project", "group"];
 function permittedExtraLabels(env = process.env, storedPolicy) {
@@ -44,6 +48,15 @@ function normalizeMetricSettings(value = {}) {
     monitoring_group: (value.monitoring_group || "").trim(),
     ...(value.inherit_system !== undefined ? { inherit_system: value.inherit_system } : {}) };
 }
+function systemMetricSettingsError(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "Invalid system metric settings";
+  if (Object.keys(value).some(key => !["enabled", "labels", "override_metrics", "override_monitoring_group", "monitoring_group"].includes(key))) return "Unknown system metric setting";
+  for (const key of ["override_metrics", "override_monitoring_group"]) {
+    if (value[key] !== undefined && typeof value[key] !== "boolean") return "Invalid global override flag";
+  }
+  const { override_metrics: _metrics, override_monitoring_group: _group, ...settings } = value;
+  return metricSettingsError(settings);
+}
 function systemMetricPolicy(stored = {}, env = process.env) {
   const raw = typeof env.AUTO_SYNC_METRICS_ENABLED === "string" ? env.AUTO_SYNC_METRICS_ENABLED.trim() : "";
   const enabled = raw ? raw.toLowerCase() === "true" : typeof stored?.enabled === "boolean" ? stored.enabled : null;
@@ -51,20 +64,36 @@ function systemMetricPolicy(stored = {}, env = process.env) {
   const permitted = permittedExtraLabels(env, stored);
   const labels = String(env.AUTO_SYNC_METRICS_EXTRA_LABELS || "").trim()
     ? [...configured.filter(label => !HIGH_CARDINALITY_LABELS.includes(label)), ...permitted] : configured;
+  const group = typeof env.AUTO_SYNC_METRICS_MONITORING_GROUP === "string" ? env.AUTO_SYNC_METRICS_MONITORING_GROUP.trim() : "";
   return { enabled, labels: labels.filter(label => !HIGH_CARDINALITY_LABELS.includes(label) || permitted.includes(label)),
+    override_metrics: Boolean(raw) || (stored?.override_metrics ?? typeof stored?.enabled === "boolean"),
+    override_monitoring_group: Boolean(group) || stored?.override_monitoring_group === true,
+    monitoring_group: group || (stored?.monitoring_group || "").trim(),
+    monitoring_group_locked: Boolean(group),
     locked: Boolean(raw), source: raw ? "env" : typeof stored?.enabled === "boolean" ? "database" : null };
 }
 async function readSystemMetricPolicy(db) {
   const { rows } = await db.query("SELECT auto_sync_metrics FROM system_settings WHERE id = 1");
   return systemMetricPolicy(rows[0]?.auto_sync_metrics);
 }
+function assertMetricSettingsEditable(current, requested, policy) {
+  const before = normalizeMetricSettings(current || {});
+  const next = normalizeMetricSettings(requested);
+  const metricsChanged = before.enabled !== next.enabled || JSON.stringify(before.labels) !== JSON.stringify(next.labels);
+  if ((policy.override_metrics && metricsChanged) ||
+      (policy.override_monitoring_group && before.monitoring_group !== next.monitoring_group)) {
+    throw Object.assign(new Error("These auto-sync settings are managed in System Settings"), { code: "AUTO_SYNC_METRICS_MANAGED" });
+  }
+  return next;
+}
 function effectiveMetricSettings(value, env = process.env, storedPolicy) {
   const settings = normalizeMetricSettings(value);
   const policy = systemMetricPolicy(storedPolicy, env);
-  const inherits = settings.inherit_system === true || (settings.inherit_system !== false && !settings.enabled);
-  settings.enabled = policy.enabled === false ? false : inherits ? policy.enabled === true : settings.enabled;
-  if (inherits) settings.labels = policy.labels;
-  else if (policy.enabled !== null) settings.labels = settings.labels.filter(label => policy.labels.includes(label));
+  if (policy.override_metrics) {
+    settings.enabled = policy.enabled === true;
+    settings.labels = policy.labels;
+  }
+  if (policy.override_monitoring_group) settings.monitoring_group = policy.monitoring_group;
   const permitted = permittedExtraLabels(env, storedPolicy);
   settings.labels = settings.labels.filter(label => !HIGH_CARDINALITY_LABELS.includes(label) || permitted.includes(label));
   return settings;
@@ -95,4 +124,4 @@ async function recordCreationMetrics(client, context, payload, settings, policy)
   [context.configId, dimensions.kind, dimensions.asset_name, dimensions.project, dimensions.group,
     createHash("sha256").update(JSON.stringify(dimensions)).digest("hex")]);
 }
-module.exports = { deploymentMetricLabelOptions, systemMetricPolicy, readSystemMetricPolicy, DEFAULT_SYSTEM_LABELS, permittedExtraLabels, HIGH_CARDINALITY_LABELS, effectiveMetricSettings, KNOWN_KINDS, OPTIONAL_LABELS, metricSettingsError, normalizeMetricSettings, metricSourceDimensions, creationDimensions, recordCreationMetrics };
+module.exports = { deploymentMetricLabelOptions, systemMetricPolicy, systemMetricSettingsError, assertMetricSettingsEditable, readSystemMetricPolicy, DEFAULT_SYSTEM_LABELS, permittedExtraLabels, HIGH_CARDINALITY_LABELS, effectiveMetricSettings, KNOWN_KINDS, OPTIONAL_LABELS, metricSettingsError, normalizeMetricSettings, metricSourceDimensions, creationDimensions, recordCreationMetrics };

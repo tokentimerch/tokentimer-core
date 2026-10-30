@@ -63,6 +63,8 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
   const [showSmtpPass, setShowSmtpPass] = useState(false);
   const [showAuthToken, setShowAuthToken] = useState(false);
   const [openIntegration, setOpenIntegration] = useState('smtp');
+  const [autoSyncMetricsConfigured, setAutoSyncMetricsConfigured] =
+    useState(false);
   const [autoSyncMultiConfigEnabled, setAutoSyncMultiConfigEnabled] =
     useState(null);
   const location = useLocation();
@@ -402,10 +404,9 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
           <Box id='auto-sync'>
             <SettingsIntegrationCard
               title='Auto-sync'
-              description='Configure additional metrics and scheduled connections.'
-              hideStatus
+              description='Override metric exposure and monitoring groups across integrations.'
               icon={<Icon as={FiRepeat} boxSize={6} color='blue.500' />}
-              configured={false}
+              configured={autoSyncMetricsConfigured}
               isOpen={openIntegration === 'auto-sync'}
               onToggle={() =>
                 setOpenIntegration(prev =>
@@ -413,7 +414,9 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
                 )
               }
             >
-              <AutoSyncSystemMetricSettings />
+              <AutoSyncSystemMetricSettings
+                onConfiguredChange={setAutoSyncMetricsConfigured}
+              />
               {autoSyncMultiConfigEnabled === false ? (
                 <AutoSyncMultiConfigPanel
                   onEnabledChange={setAutoSyncMultiConfigEnabled}

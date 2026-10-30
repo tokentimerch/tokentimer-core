@@ -289,6 +289,7 @@ NODE_OPTIONS: "--disable-warning=UNDICI-EHPA"
 ENABLE_METRICS: "true"
 {{- end }}
 AUTO_SYNC_METRICS_ENABLED: {{ .Values.monitoring.metrics.autoSyncEnabled | toString | quote }}
+AUTO_SYNC_METRICS_MONITORING_GROUP: {{ .Values.monitoring.metrics.autoSyncMonitoringGroup | quote }}
 AUTO_SYNC_METRICS_EXTRA_LABELS: {{ .Values.monitoring.metrics.extraLabels | default (list) | join "," | quote }}
 {{- if .Values.monitoring.metrics.pushgatewayUrl }}
 PUSHGATEWAY_URL: {{ .Values.monitoring.metrics.pushgatewayUrl | quote }}

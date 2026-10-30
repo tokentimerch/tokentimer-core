@@ -1,4 +1,4 @@
-const { normalizeMetricSettings, deploymentMetricLabelOptions, readSystemMetricPolicy, metricSettingsError, HIGH_CARDINALITY_LABELS } = require("../services/autoSyncMetricLabels");
+const { normalizeMetricSettings, deploymentMetricLabelOptions, readSystemMetricPolicy, systemMetricSettingsError, assertMetricSettingsEditable, HIGH_CARDINALITY_LABELS } = require("../services/autoSyncMetricLabels");
 const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
@@ -294,10 +294,13 @@ router.put("/api/v1/admin/auto-sync/metrics", getApiLimiter(), requireAuth, asyn
     const admin = await pool.query("SELECT is_admin FROM users WHERE id = $1", [req.user.id]);
     if (!admin.rows[0]?.is_admin) return res.status(403).json({ error: "System admin required" });
     const body = req.body || {};
-    if (Object.keys(body).some(key => !["enabled", "labels"].includes(key)) || typeof body.enabled !== "boolean" || !Array.isArray(body.labels) || metricSettingsError(body))
+    if (typeof body.enabled !== "boolean" || !Array.isArray(body.labels) || systemMetricSettingsError(body))
       return res.status(400).json({ error: "Invalid auto-sync metric defaults" });
     const options = deploymentMetricLabelOptions();
     const payload = { ...body };
+    const currentPolicy = await readSystemMetricPolicy(pool);
+    if (currentPolicy.locked) delete payload.override_metrics;
+    if (currentPolicy.monitoring_group_locked) delete payload.override_monitoring_group;
     if (options.extra_labels_locked) {
       const previous = await systemSettings.getJsonSetting(pool, "auto_sync_metrics", "labels");
       payload.labels = [...body.labels.filter(label => !HIGH_CARDINALITY_LABELS.includes(label)),
@@ -550,7 +553,7 @@ router.put(
       if (settingsError) return res.status(400).json({ error: settingsError });
       const result = await withDbTransaction(async (client) => {
         const existing = await client.query(
-          `SELECT provider, scan_params, enabled, cleanup_obsolete, frequency, schedule_time, schedule_tz, active_run_id FROM auto_sync_configs WHERE id = $1 AND workspace_id = $2 FOR UPDATE`,
+          `SELECT provider, scan_params, enabled, cleanup_obsolete, frequency, schedule_time, schedule_tz, active_run_id, metrics_settings FROM auto_sync_configs WHERE id = $1 AND workspace_id = $2 FOR UPDATE`,
           [req.params.configId, req.workspace.id],
         );
         if (existing.rows.length === 0) {
@@ -642,7 +645,8 @@ router.put(
         }
         if (req.body.metrics_settings !== undefined) {
           updates.push(`metrics_settings = $${idx++}`);
-          values.push(normalizeMetricSettings(req.body.metrics_settings));
+          const policy = await readSystemMetricPolicy(client);
+          values.push(assertMetricSettingsEditable(existing.rows[0].metrics_settings, req.body.metrics_settings, policy));
         }
         if (scanAffecting) {
           updates.push("scan_version = scan_version + 1");
@@ -716,6 +720,7 @@ router.put(
       }
       res.json(result.rows[0]);
     } catch (e) {
+      if (e.code === "AUTO_SYNC_METRICS_MANAGED") return res.status(409).json({ error: e.message, code: e.code });
       if (e.code === "23505" || e.code === "23514") {
         return res.status(409).json({ error: "Configuration name is already in use or invalid" });
       }
