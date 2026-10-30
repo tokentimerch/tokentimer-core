@@ -19,16 +19,19 @@ them. Expiration writes originate in multiple APIs and workers.
    PagerDuty destination identity is SHA-256 over a versioned tuple of workspace,
    endpoint and routing key. Other webhook kinds still dedupe by URL. Raw keys
    and URLs are not copied into the lifecycle table or delivery evidence.
-2. Migration 81 adds `pagerduty_incidents`, a minimal ledger and durable outbox.
+2. Migration 92 adds `pagerduty_incidents`, a minimal ledger and durable outbox.
    It holds an episode UUID, workspace/asset identity, destination digest, opaque
    `dedup_key`, original expiration/authority, risk-window boundary, delivery
    evidence, retries, timestamps and leased claims. One partial unique index
    permits at most one pending/open episode per workspace/asset/destination.
    Resolve-pending episodes may coexist with a newer active episode, using
    distinct keys. No legacy incident is inferred or backfilled.
-   Released auto-sync migrations retain slots 79/80. An old preview with
-   PagerDuty recorded at v79 requires explicit validated maintenance to move
-   that entry to v81 and apply 79/80 atomically, without replaying PagerDuty DDL.
+   Released auto-sync migrations retain slots 79-81; unmerged companions already
+   define migration plans through 91. No placeholder history is written for them.
+   PagerDuty's independent v92 row remains immutable when lower pending
+   companion migrations arrive. Old PagerDuty v79/v81 previews require explicit
+   validated maintenance to move only that entry to v92 and apply missing
+   released telemetry SQL atomically, without replaying PagerDuty DDL.
    The normal migration runner continues to reject the conflicting history.
 3. Enqueue intent before sending. Persist explicit provider acceptance together
    with its delivery evidence in a short transaction after HTTP. Session advisory
@@ -68,6 +71,12 @@ them. Expiration writes originate in multiple APIs and workers.
     configuration guards. Preserve unrelated failures and clear their operational
     notification only when all delivery requirements have recovered. Retry
     skipped repairs on open-incident sweeps without another send or history row.
+    Preserve #461's versioned ledger and recipient eligibility through shared
+    parsing/settlement, without losing unrelated outcomes or retry generations.
+12. Admit every unaccepted trigger/retry through the ordinary workspace delivery
+    window rule. Defer quiet-hour work without spending its attempt budget.
+    Validated resolves for accepted incidents bypass quiet hours to clear stale
+    risk; this never establishes unknown acceptance or weakens recovery proof.
 
 ## Alternatives considered
 

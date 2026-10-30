@@ -4852,8 +4852,15 @@ const migrations = [
   },
   {
     version: 81,
+    name: "auto_sync_metric_labels",
+    sql: fs.readFileSync(require("path").join(__dirname, "081-auto-sync-metric-labels.sql"), "utf8"),
+  },
+  {
+    // Migration plans through 91 are claimed by the reviewed companion PRs. No fake
+    // placeholder rows are recorded for their still-unmerged migrations.
+    version: 92,
     name: "pagerduty_incident_lifecycle",
-    sql: fs.readFileSync(require("path").join(__dirname, "081-pagerduty-incident-lifecycle.sql"), "utf8"),
+    sql: fs.readFileSync(require("path").join(__dirname, "092-pagerduty-incident-lifecycle.sql"), "utf8"),
   },
 ];
 
@@ -4875,8 +4882,9 @@ const historicalMigrationAliases = new Map([
 ]);
 
 function validateMigrationHistory(rows) {
-  if (rows.some(row => row.version === 79 && row.name === "pagerduty_incident_lifecycle")) {
-    throw new Error("PagerDuty preview migration 79 conflicts with released auto-sync history; stop and follow the explicit recovery procedure in docs/PAGERDUTY.md#migration-81-and-preview-version-compatibility");
+  const preview = rows.find(row => [79,81].includes(row.version) && row.name === "pagerduty_incident_lifecycle");
+  if (preview) {
+    throw new Error(`PagerDuty preview migration ${preview.version} conflicts with released auto-sync history; stop and follow the explicit recovery procedure in docs/PAGERDUTY.md#migration-92-and-preview-version-compatibility`);
   }
   const planned = resolveMigrationPlan(rows);
   for (const { version, name } of rows) {

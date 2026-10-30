@@ -328,9 +328,8 @@ describe('Dashboard page smoke tests', () => {
     const actionBadge = screen.getAllByText(longAction)[0];
     expect(actionBadge).toHaveAttribute('title', longAction);
     expect(actionBadge).toHaveStyle({
-      overflow: 'hidden',
-      textOverflow: 'ellipsis',
-      whiteSpace: 'nowrap',
+      whiteSpace: 'normal',
+      overflowWrap: 'anywhere',
     });
   });
 

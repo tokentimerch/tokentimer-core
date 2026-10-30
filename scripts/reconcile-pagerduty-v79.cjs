@@ -1,6 +1,6 @@
 "use strict";
 
-// Explicit maintenance tool for the unpublished PagerDuty v79 preview only.
+// Explicit maintenance tool for the unpublished PagerDuty v79/v81 previews.
 // Normal migration execution never rewrites history or aliases this collision.
 const assert = require("node:assert/strict");
 const {
@@ -149,38 +149,44 @@ async function reconcilePagerDutyV79(client, { apply = false } = {}) {
   try {
     await client.query("SET LOCAL search_path TO public, pg_temp");
     await client.query("SET LOCAL lock_timeout = '5s'");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('tokentimer-core:migrations',0))");
     await client.query("LOCK TABLE public.migrations IN ACCESS EXCLUSIVE MODE");
     const recorded = (
       await client.query(
         "SELECT version,name,executed_at FROM public.migrations ORDER BY version",
       )
     ).rows;
+    const from = recorded.at(-1)?.version;
+    assert.ok([79,81].includes(from), "Expected exactly a PagerDuty v79/v81 preview history; manual review required");
     assert.deepEqual(
       recorded.map((row) => row.version),
-      Array.from({ length: 79 }, (_, i) => i + 1),
-      "Expected exactly migrations 1-78 plus the PagerDuty v79 preview; manual review required",
+      Array.from({ length: from }, (_, i) => i + 1),
+      "Expected exactly a complete prefix plus the PagerDuty preview; manual review required",
     );
     assert.equal(
       recorded.at(-1).name,
       "pagerduty_incident_lifecycle",
-      "Not a legacy PagerDuty v79 installation",
+      "Not a legacy PagerDuty preview installation",
     );
     validateMigrationHistory(recorded.slice(0, -1));
     const pagerduty = migrations.find(
       (entry) => entry.name === "pagerduty_incident_lifecycle",
     );
-    assert.equal(pagerduty.version, 81);
+    assert.equal(pagerduty.version, 92);
     const telemetry = migrations.filter(
-      (entry) => entry.version === 79 || entry.version === 80,
+      (entry) => entry.version >= from && entry.version <= 81,
     );
     assert.deepEqual(
       telemetry.map((entry) => entry.name),
-      ["auto_sync_provider_stats", "auto_sync_run_metrics"],
+      from === 79 ? ["auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels"] : ["auto_sync_metric_labels"],
     );
     const artifacts = await client.query(`SELECT name FROM unnest(ARRAY[
       'public.auto_sync_provider_stats','public.auto_sync_run_outcome_stats','public.auto_sync_run_freshness'
-    ]) name WHERE to_regclass(name) IS NOT NULL
-    UNION ALL SELECT 'record_auto_sync_run_metrics' WHERE to_regprocedure('public.record_auto_sync_run_metrics()') IS NOT NULL`);
+    ]) name WHERE $1=79 AND to_regclass(name) IS NOT NULL
+    UNION ALL SELECT 'record_auto_sync_run_metrics' WHERE $1=79 AND to_regprocedure('public.record_auto_sync_run_metrics()') IS NOT NULL
+    UNION ALL SELECT name FROM unnest(ARRAY['public.auto_sync_kind_stats','public.auto_sync_creation_stats']) name WHERE to_regclass(name) IS NOT NULL
+    UNION ALL SELECT 'metrics_settings' FROM information_schema.columns
+      WHERE table_schema='public' AND table_name='auto_sync_configs' AND column_name='metrics_settings'`, [from]);
     assert.equal(
       artifacts.rowCount,
       0,
@@ -189,13 +195,13 @@ async function reconcilePagerDutyV79(client, { apply = false } = {}) {
     await verifyPagerDutySchema(client, pagerduty.sql);
     if (!apply) {
       await client.query("ROLLBACK");
-      return { status: "validated", from: 79, to: 81 };
+      return { status: "validated", from, to: 92 };
     }
     // Move only the proven preview entry, retaining its name and executed_at.
-    // Fill both released telemetry slots in the same transaction so the strict
-    // history composer never sees an intermediate 78 -> 81 gap.
-    const moved = await client.query(`UPDATE public.migrations SET version=81
-      WHERE version=79 AND name='pagerduty_incident_lifecycle' RETURNING version`);
+    // Apply the missing released telemetry slots in the same transaction. The
+    // independent v92 row never occupies a companion's applied migration slot.
+    const moved = await client.query(`UPDATE public.migrations SET version=92
+      WHERE version=$1 AND name='pagerduty_incident_lifecycle' RETURNING version`, [from]);
     assert.equal(moved.rowCount, 1);
     for (const migration of telemetry) {
       await applyMigrationSql(client, migration);
@@ -212,7 +218,7 @@ async function reconcilePagerDutyV79(client, { apply = false } = {}) {
       ).rows,
     );
     await client.query("COMMIT");
-    return { status: "reconciled", from: 79, to: 81 };
+    return { status: "reconciled", from, to: 92 };
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

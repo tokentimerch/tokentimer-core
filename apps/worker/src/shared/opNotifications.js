@@ -153,8 +153,8 @@ async function resolveIncidentRecipients(client, { workspaceId, tokenId }) {
         `SELECT u.email FROM tokens t
            JOIN users u ON u.id = t.user_id
            JOIN workspace_memberships wm
-             ON wm.workspace_id = t.workspace_id AND wm.user_id = t.user_id
-          WHERE t.id = $1 AND t.workspace_id = $2 AND u.email IS NOT NULL`,
+             ON wm.workspace_id = $2 AND wm.user_id = t.user_id
+          WHERE t.id = $1 AND ${alertEligibility.resolvedTokenWorkspaceSql("t")} = $2 AND u.email IS NOT NULL`,
         [tokenId, workspaceId],
       );
       for (const row of ownerRes.rows) {
@@ -394,15 +394,22 @@ export async function retryPendingOperationalIncidentEmails(
               `SELECT aq.status FROM alert_queue aq
                LEFT JOIN tokens t ON t.id = aq.token_id
                LEFT JOIN certops_agents ca ON ca.id = aq.certops_agent_id
-              WHERE aq.id = $1 AND COALESCE(t.workspace_id, ca.workspace_id) = $2`,
+              WHERE aq.id = $1 AND COALESCE(t.workspace_id, ca.workspace_id, ${alertEligibility.resolvedTokenWorkspaceSql("t")}) = $2`,
               [alertId, row.workspace_id],
             )
           : { rows: [] };
+      // Missing/ambiguous ownership is not evidence of delivery recovery.
+      // The companion stale-incident sweep owns deleted/moved-source cleanup.
+      if (!queue.rows[0]) continue;
       if (!["blocked", "failed", "partial"].includes(queue.rows[0]?.status)) {
-        await resolveOperationalNotification(
-          client,
-          row.workspace_id,
-          row.dedupe_key,
+        // Recheck in the write: a queue recovery read must not resolve an
+        // incident after another worker has made the source alert blocked.
+        await client.query(
+          `UPDATE operational_notifications SET resolved_at=NOW(), updated_at=NOW()
+           WHERE id=$1 AND workspace_id=$2 AND resolved_at IS NULL
+             AND NOT EXISTS (SELECT 1 FROM alert_queue aq
+               WHERE aq.id=$3 AND aq.status IN ('blocked','failed','partial','limit_exceeded'))`,
+          [row.id, row.workspace_id, Number.isSafeInteger(alertId) && alertId > 0 ? alertId : null],
         );
         continue;
       }
@@ -441,7 +448,9 @@ export async function reconcileStaleDeliveryIncidents(client) {
         WHERE n.category = 'delivery' AND n.resolved_at IS NULL
           AND n.metadata ? 'alert_queue_id'
           AND (aq.id IS NULL
-            OR COALESCE(t.workspace_id, ca.workspace_id, ${alertEligibility.resolvedTokenWorkspaceSql("t")}) IS DISTINCT FROM n.workspace_id
+            OR (t.id IS NULL AND ca.id IS NULL)
+            OR (COALESCE(t.workspace_id, ca.workspace_id, ${alertEligibility.resolvedTokenWorkspaceSql("t")}) IS NOT NULL
+              AND COALESCE(t.workspace_id, ca.workspace_id, ${alertEligibility.resolvedTokenWorkspaceSql("t")}) IS DISTINCT FROM n.workspace_id)
             OR aq.status NOT IN ('blocked', 'failed', 'partial', 'limit_exceeded'))
         ORDER BY n.updated_at, n.id
         LIMIT $1

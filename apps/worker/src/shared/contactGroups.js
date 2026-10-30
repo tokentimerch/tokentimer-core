@@ -208,14 +208,7 @@ function deliveryChannelsFromEligibleGroups(
 }
 
 function parseQueuedChannels(value) {
-  if (Array.isArray(value)) return value.map(String);
-  if (typeof value !== "string" || value.trim() === "") return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.map(String) : [];
-  } catch {
-    return [];
-  }
+  return alertEligibility.parseDeliveryLedger(value)?.retry || [];
 }
 
 function channelsForDeliveryAttempt(

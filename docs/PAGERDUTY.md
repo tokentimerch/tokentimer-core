@@ -134,6 +134,19 @@ or grant workspace access. Modern assets retain their direct workspace scope.
 
 ## Retries and operations
 
+Both foreground delivery and the independent outbox use the same workspace
+delivery-window admission helper, including IANA timezones, overnight windows,
+UTC fallback and configured defaults. Every unaccepted trigger attempt is
+checked again; a failed trigger cannot retry through quiet hours. Deferred rows
+retain their episode/key, uncertainty, attempt counts and retry budget, release
+their claim, and recheck on the normal five-minute lifecycle cadence with
+`pagerduty_out_of_window`. Committed window-setting changes fence stale dispatch.
+
+Validated **resolve events bypass quiet hours** for already accepted incidents.
+They clear obsolete risk instead of opening a new incident. Recovery still needs
+the original destination, accepted trigger and verified expiry evidence; unknown
+acceptance never gets a speculative resolve. ACK remains in PagerDuty.
+
 The existing delivery schedule drains at most 100 due lifecycle records per
 pass. Active rows have an indexed next-attempt timestamp and a five-minute
 recheck interval. Expiry writes wake affected records. Compose's runner and
@@ -156,6 +169,37 @@ become sent and their delivery failure notifications clear. No synthetic success
 logs are added. Active queue claims, locked rows, archived expiration cycles and
 changed configuration fence this repair; open-incident sweeps retry skipped
 repairs. A deleted source row does not prevent independent incident processing.
+
+Parent settlement supports both legacy channel arrays and #461's versioned
+delivery ledger. Shared parsing/settlement retains required channels, existing
+outcomes, endpoint evidence and retry generations; background acceptance removes
+only completed retries and never reopens unrelated work. Terminal partial rows
+are not repeatedly claimed as missing-contact failures. Unsupported formats stay
+blocked for review instead of being interpreted as empty successful delivery.
+
+When #461's `packages/recipient-verification` is installed, the adapter calls its
+actual settlement and recipient-eligibility helpers. Unverified/revoked/opted-out
+recipients are excluded in enforce mode; shadow mode keeps its existing meaning.
+Completion still requires success for every eligible recipient. If no recipient
+is eligible, that channel remains visibly withheld/terminal, not falsely sent.
+Missing verification dependencies/schema cannot establish completion when
+enforcement is required. The standalone self-hosted `off` path preserves legacy
+behavior. This PR does not install or enable #461's API/UI or verification schema.
+
+For the cross-PR PostgreSQL cases, set `PAGERDUTY_COMPANION_ROOT` to an extracted
+or existing #461 source root containing `packages/recipient-verification`.
+Run `pnpm test:pagerduty:postgres` against a migrated disposable database whose
+name ends in `_issue364_test`, using the normal `DB_*` test environment. The
+suite installs the real companion schema as a fixture and injects its actual
+helpers; provider sends remain injected. Without that source root the companion
+cases are explicitly skipped. Upgrade tests use separate empty databases ending
+in `_migration_issue364_test` and `PAGERDUTY_UPGRADE_FROM` set to `78`, `80`, `81`,
+`legacy79` or `legacy81`. The `81` case also rehearses adding the real companion
+schema after PagerDuty is applied, preserving existing migration timestamps.
+
+Escalation retries use the same authorized legacy workspace resolution as the
+stale-incident reconciler. Unknown ownership does not resolve a still-blocked
+alert, and the recovery write rechecks source status before closing its warning.
 
 The API's existing authorized alert-requeue operation also retries exhausted
 PagerDuty actions in its scope, preserving keys and cumulative attempt/history
@@ -204,24 +248,39 @@ recovery even when Events API accepts the request. See
 
 This implementation is Core agnostic and adds no plan conditionals or schema
 changes to webhook configuration. Cloud/Enterprise rebases must carry migration
-81, the new worker modules, delivery-worker's lifecycle dispatch/drain hooks,
+92, the new worker modules, delivery-worker's lifecycle dispatch/drain hooks,
 the shared legacy-workspace and delivery-evidence helpers, operational notification
 reconciliation, and alertQueue's scoped retry CTEs into any overridden counterparts.
 Apply API migrations before upgraded workers start. Preserve edition-owned entitlement,
 freeze and dispatch guards when composing overrides; this change does not
 automatically update independently pinned edition repositories.
 
-## Migration 81 and preview-version compatibility
+## Migration 92 and preview-version compatibility
 
-PagerDuty uses `apps/api/migrations/081-pagerduty-incident-lifecycle.sql`.
+PagerDuty uses `apps/api/migrations/092-pagerduty-incident-lifecycle.sql`.
 Released migration 79 is `auto_sync_provider_stats`; migration 80 is
-`auto_sync_run_metrics`. Their names, versions and SQL are unchanged. The
-PagerDuty SQL is unchanged from its unpublished v79 preview; only its registry
-slot and filename moved. Fresh installations and databases at v78 or canonical
-v80 run the normal migration command and reach v81 without special handling.
+`auto_sync_run_metrics`; released migration 81 is `auto_sync_metric_labels`.
+Their names, versions and SQL are unchanged. PagerDuty's SQL is unchanged from
+its unpublished v79/v81 previews; only its slot and filename moved to 92.
+PRs #460, #461 and #498 already claim migration plans through 91. This branch leaves
+82-91 unregistered: there are no placeholder ledger entries or pretend executions.
+Fresh and canonical v78/v80/v81 installations run normal migrations and apply
+the 82 registered definitions (1-81 and 92).
 
-The PR's earlier v79 migration was executable, so preview/dev/staging databases
-may already have recorded `79 / pagerduty_incident_lifecycle`. Its use outside
+PagerDuty's independent additive tail may already be applied when lower pending
+companion migrations are later integrated. The history planner retains that v92
+row and validates the remaining Core prefix against exact registered names;
+only unapplied definitions are added. Duplicate/unknown histories still fail.
+The related PRs remain unmerged and define different standalone composition
+plans. Their eventual merge must carry this gap-aware tail validation and merge
+PagerDuty by its exact migration identity, rather than registering its SQL again
+at #498's compatibility slot 90. Their feature code is not merged here. Applied
+foreign preview histories require the corresponding reviewed composition plan;
+this branch does not reinterpret unknown rows or provide their missing SQL.
+
+The PR's earlier previews were executable, so preview/dev/staging databases
+may already record `79 / pagerduty_incident_lifecycle` or
+`81 / pagerduty_incident_lifecycle`. Their use outside
 the disposable validation databases is not known. Inspect each deployment's
 history before upgrading; never infer its state from the application version:
 
@@ -229,9 +288,9 @@ history before upgrading; never infer its state from the application version:
 SELECT version, name, executed_at FROM migrations ORDER BY version;
 ```
 
-The normal runner deliberately rejects the colliding preview history. It does
+The normal runner deliberately rejects either colliding preview history. It does
 not treat PagerDuty as an alias of the released auto-sync migration, overwrite
-the ledger, or replay PagerDuty SQL. Do not delete the v79 row or manually mark
+the ledger, or replay PagerDuty SQL. Do not delete the preview row or manually mark
 auto-sync SQL executed. Use this explicit procedure only for that exact preview:
 
 1. Stop all API/worker nodes and migration runners. Take and verify a restorable
@@ -240,17 +299,19 @@ auto-sync SQL executed. Use this explicit procedure only for that exact preview:
 2. Use the merged Core checkout and the same database/TLS environment as normal
    migrations. The tool requires the standard `public` Core schema and sufficient
    migration privileges. Run `node scripts/reconcile-pagerduty-v79.cjs --check`.
-   It requires a complete validated v1-v78 prefix plus exactly PagerDuty v79,
-   no v80/v81/future history, and no unrecorded auto-sync telemetry schema.
+   It requires exactly a complete validated v1-v78 prefix plus PagerDuty v79,
+   or v1-v80 plus PagerDuty v81, with no higher history and no unrecorded
+   schema effects for the released telemetry migrations it would apply.
    It compares the full PagerDuty ledger columns, defaults, constraints and
    indexes, expiration snapshot column, function bodies/attributes and both
    enabled triggers with temporary reference DDL. Persistent state is unchanged.
 3. After successful preflight, run
    `node scripts/reconcile-pagerduty-v79.cjs --apply`. This explicit maintenance
    operation locks migration history and repeats validation. In one transaction
-   it relocates only the proven PagerDuty entry to v81, retaining its name and
+   it relocates only the proven PagerDuty entry to v92, retaining its name and
    original execution timestamp, and executes/registers the released auto-sync
-   migrations at v79 and v80. Strict history validation runs before commit.
+   migrations missing from its released v79-v81 prefix. Existing released
+   counters/history remain unchanged. Strict history validation runs before commit.
    Database errors roll back both ledger edits and telemetry DDL. If the connection
    is lost during commit, inspect the final history before retrying; a completed
    recovery rejects repeat application. PagerDuty data,
@@ -264,7 +325,9 @@ auto-sync SQL executed. Use this explicit procedure only for that exact preview:
 SELECT version, name, executed_at FROM migrations WHERE version >= 79 ORDER BY version;
 -- 79 auto_sync_provider_stats
 -- 80 auto_sync_run_metrics
--- 81 pagerduty_incident_lifecycle (original preview timestamp if reconciled)
+-- 81 auto_sync_metric_labels
+-- 92 pagerduty_incident_lifecycle (original preview timestamp if reconciled)
+-- No unmerged companion placeholders at 82-91
 SELECT id, destination_id, dedup_key, state, trigger_accepted_at,
        trigger_attempts, resolve_attempts, claim_id FROM pagerduty_incidents;
 ```

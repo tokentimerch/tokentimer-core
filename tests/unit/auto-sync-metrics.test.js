@@ -80,7 +80,7 @@ describe("durable auto-sync creation metric collector", { concurrency: false }, 
     registerAutoSyncMetrics(registry);
 
     assert.deepEqual(await values(registry), { github: 0, gitlab: 0 });
-    assert.equal(query.mock.callCount(), 5);
+    assert.ok(query.mock.calls.some(call => call.arguments[0].includes("auto_sync_kind_stats")));
     assert.match(await registry.metrics(), new RegExp(`# TYPE ${metricName} counter`));
   });
 

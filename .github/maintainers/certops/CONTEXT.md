@@ -1,8 +1,7 @@
 # Certificate Lifecycle Management (CLM) domain context
 
 Domain language for Certificate Lifecycle Management (CLM), implemented by the existing CertOps architecture and `certops` technical namespace. Public CLM features therefore use the same API paths, configuration, and agent protocols described in the CertOps technical references. This file lives
-under `docs/certops/` so the whole CertOps doc bundle can be removed or folded
-into core-wide docs when the program graduates. Decisions that shape the code
+under `.github/maintainers/certops/` as an engineering reference. Decisions that shape the code
 live in `docs/adr/`. When a term here and the code disagree, that is a bug in
 one of them.
 
@@ -501,8 +500,8 @@ flows use this path when `certops.enabled` is on.
 ## Where things live
 
 - Current-state index (behavior, architecture, enrollment prerequisites):
-  [CURRENT_STATE.md](CURRENT_STATE.md).
-- Program docs: `docs/certops/` (this file; purgeable when CertOps graduates).
+  [CURRENT_STATE.md](../../../docs/certops/CURRENT_STATE.md).
+- Operator guides: `docs/certops/`; engineering references: `.github/maintainers/certops/`.
 - ADRs: `docs/adr/` (CertOps ADRs 0001-0014 today; see `docs/adr/README.md` for
   the index and which records carry amendments).
 - API: `apps/api/` (core), `apps/saas/` (cloud), `src/api/` (enterprise).
@@ -510,6 +509,6 @@ flows use this path when `certops.enabled` is on.
 
 For the user-facing distinction between observed locations and management
 registrations, including stopping, restarting, and history visibility, see
-[Certificate details](certificate-details.md).
+[Certificate details](../../../docs/certops/certificate-details.md).
 
 Existing open management periods may rotate to a different fingerprint even when other sources retain the old certificate and quota usage temporarily exceeds the limit. New period enrollment still requires admission; joining an already managed fingerprint adds no unit. Core migration 64 (Cloud migration 82) repairs the earlier admission function without rewriting historical migrations or management history.

@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const path = require("node:path");
+const fs = require("node:fs");
 const { pool } = require("../../apps/api/db/database");
 const {
   migrations,
@@ -15,12 +16,13 @@ const {
   reconcilePagerDutyV79,
 } = require("../../scripts/reconcile-pagerduty-v79.cjs");
 const upgradeFrom = process.env.PAGERDUTY_UPGRADE_FROM || "78";
-const legacy = upgradeFrom === "legacy79";
+const legacy = upgradeFrom.startsWith("legacy");
+const previewVersion = legacy ? Number(upgradeFrom.slice(6)) : null;
 
 after(() => pool.end());
 
 it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, async () => {
-  assert.ok(["78", "80", "legacy79"].includes(upgradeFrom));
+  assert.ok(["78", "80", "81", "legacy79", "legacy81"].includes(upgradeFrom));
   assert.match(
     process.env.DB_NAME || "",
     /_migration_issue364_test$/,
@@ -34,10 +36,11 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
   const pagerduty = migrations.find(
     (entry) => entry.name === "pagerduty_incident_lifecycle",
   );
-  assert.equal(pagerduty.version, 81);
+  assert.equal(pagerduty.version, 92);
   const pending = migrations.splice(
     migrations.findIndex(
-      (entry) => entry.version > (legacy ? 78 : Number(upgradeFrom)),
+      (entry) =>
+        entry.version > (legacy ? previewVersion - 1 : Number(upgradeFrom)),
     ),
   );
   try {
@@ -48,6 +51,12 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
   const priorLedger = (
     await pool.query("SELECT * FROM migrations ORDER BY version")
   ).rows;
+  const existingTelemetry =
+    (legacy ? previewVersion - 1 : Number(upgradeFrom)) >= 79;
+  if (existingTelemetry)
+    await pool.query(
+      "UPDATE auto_sync_provider_stats SET items_created_total=17 WHERE provider='github'",
+    );
   const userId = (
     await pool.query(`INSERT INTO users(email,display_name,password_hash)
     VALUES('migration-issue364@example.test','Migration test','test-only') RETURNING id`)
@@ -88,7 +97,8 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
       await client.query("BEGIN");
       await client.query(pagerduty.sql);
       await client.query(
-        "INSERT INTO migrations(version,name,executed_at) VALUES(79,'pagerduty_incident_lifecycle','2026-10-27 10:00:00')",
+        "INSERT INTO migrations(version,name,executed_at) VALUES($1,'pagerduty_incident_lifecycle','2026-10-27 10:00:00')",
+        [previewVersion],
       );
       await client.query("COMMIT");
       const id = crypto.randomUUID();
@@ -119,7 +129,7 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
       legacyExecutedAt = ledger.at(-1).executed_at;
       assert.throws(
         () => validateMigrationHistory(ledger),
-        /PagerDuty preview migration 79 conflicts/,
+        /PagerDuty preview migration (79|81) conflicts/,
       );
       const rejected = spawnSync(
         process.execPath,
@@ -137,8 +147,8 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
       );
       assert.deepEqual(await reconcilePagerDutyV79(client), {
         status: "validated",
-        from: 79,
-        to: 81,
+        from: previewVersion,
+        to: 92,
       });
       assert.deepEqual(
         (await client.query("SELECT * FROM migrations ORDER BY version")).rows,
@@ -175,27 +185,27 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
       await client.query(
         "ALTER FUNCTION snapshot_expiry_alert_date() SECURITY INVOKER",
       );
-      await client.query(
-        "CREATE TABLE auto_sync_provider_stats(dummy INTEGER)",
-      );
+      await client.query("CREATE TABLE auto_sync_kind_stats(dummy INTEGER)");
       await assert.rejects(
         reconcilePagerDutyV79(client, { apply: true }),
         /Unrecorded telemetry schema/,
       );
-      await client.query("DROP TABLE auto_sync_provider_stats");
+      await client.query("DROP TABLE auto_sync_kind_stats");
       await client.query(
-        "INSERT INTO migrations(version,name) VALUES(80,'unexpected_history')",
+        "INSERT INTO migrations(version,name) VALUES($1,'unexpected_history')",
+        [previewVersion + 1],
       );
       await assert.rejects(
         reconcilePagerDutyV79(client, { apply: true }),
-        /Expected exactly migrations/,
+        /Expected exactly/,
       );
       await client.query(
-        "DELETE FROM migrations WHERE version=80 AND name='unexpected_history'",
+        "DELETE FROM migrations WHERE version=$1 AND name='unexpected_history'",
+        [previewVersion + 1],
       );
       // A late failure must roll back both the history move and telemetry DDL.
       await client.query(`CREATE FUNCTION reject_pd_history_commit() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-        BEGIN IF NEW.version=80 THEN RAISE EXCEPTION 'forced compatibility commit failure'; END IF; RETURN NEW; END; $$;
+        BEGIN IF NEW.version=81 THEN RAISE EXCEPTION 'forced compatibility commit failure'; END IF; RETURN NEW; END; $$;
         CREATE CONSTRAINT TRIGGER reject_pd_history_commit AFTER INSERT ON migrations
           DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_pd_history_commit()`);
       await assert.rejects(
@@ -209,7 +219,7 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
       assert.equal(
         (
           await client.query(
-            "SELECT to_regclass('public.auto_sync_provider_stats') AS relation",
+            "SELECT to_regclass('public.auto_sync_kind_stats') AS relation",
           )
         ).rows[0].relation,
         null,
@@ -239,7 +249,7 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
       assert.match(apply.stdout, /"status":"reconciled"/);
       await assert.rejects(
         reconcilePagerDutyV79(client, { apply: true }),
-        /Expected exactly migrations/,
+        /Expected exactly/,
       );
     } finally {
       client.release();
@@ -249,7 +259,7 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
   assert.equal(
     (
       await pool.query(
-        "SELECT 1 FROM migrations WHERE version=81 AND name='pagerduty_incident_lifecycle'",
+        "SELECT 1 FROM migrations WHERE version=92 AND name='pagerduty_incident_lifecycle'",
       )
     ).rowCount,
     1,
@@ -263,7 +273,7 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
     (
       await pool.query(
         "SELECT * FROM migrations WHERE version<=$1 ORDER BY version",
-        [legacy ? 78 : Number(upgradeFrom)],
+        [legacy ? previewVersion - 1 : Number(upgradeFrom)],
       )
     ).rows,
     priorLedger,
@@ -276,8 +286,26 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
   assert.deepEqual(tail, [
     { version: 79, name: "auto_sync_provider_stats" },
     { version: 80, name: "auto_sync_run_metrics" },
-    { version: 81, name: "pagerduty_incident_lifecycle" },
+    { version: 81, name: "auto_sync_metric_labels" },
+    { version: 92, name: "pagerduty_incident_lifecycle" },
   ]);
+  assert.equal(
+    (
+      await pool.query(
+        "SELECT items_created_total::int AS count FROM auto_sync_provider_stats WHERE provider='github'",
+      )
+    ).rows[0].count,
+    existingTelemetry ? 17 : 0,
+  );
+  assert.equal(
+    (
+      await pool.query(
+        "SELECT 1 FROM migrations WHERE version BETWEEN 82 AND 85",
+      )
+    ).rowCount,
+    0,
+    "Unmerged companions must not receive placeholder history",
+  );
   if (legacy) {
     assert.deepEqual(
       (
@@ -289,7 +317,7 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
     );
     assert.equal(
       (
-        await pool.query("SELECT executed_at FROM migrations WHERE version=81")
+        await pool.query("SELECT executed_at FROM migrations WHERE version=92")
       ).rows[0].executed_at.getTime(),
       legacyExecutedAt.getTime(),
     );
@@ -347,7 +375,76 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
   // alone, rather than replaying CREATE TRIGGER on a committed migration.
   await runMigrations();
   assert.equal(
-    (await pool.query("SELECT 1 FROM migrations WHERE version=81")).rowCount,
+    (await pool.query("SELECT 1 FROM migrations WHERE version=92")).rowCount,
     1,
   );
+  if (upgradeFrom === "81" && process.env.PAGERDUTY_COMPANION_ROOT) {
+    // Rehearse the later merge of an unapplied #461 schema definition into a
+    // free lower slot. Existing main/PagerDuty rows must never be renumbered.
+    const {
+      composeMigrations,
+    } = require("../../apps/api/migrations/compose-migrations");
+    const recorded = (
+      await pool.query("SELECT * FROM migrations ORDER BY version")
+    ).rows;
+    const incidents = (
+      await pool.query("SELECT * FROM pagerduty_incidents ORDER BY id")
+    ).rows;
+    const original = migrations.slice();
+    const pending = {
+      version: 82,
+      name: "recipient_channel_verification",
+      sql: fs.readFileSync(
+        path.join(
+          process.env.PAGERDUTY_COMPANION_ROOT,
+          "packages/recipient-verification/migration.sql",
+        ),
+        "utf8",
+      ),
+    };
+    const plan = composeMigrations(
+      [...original, pending].sort((a, b) => a.version - b.version),
+      recorded,
+    );
+    migrations.splice(0, migrations.length, ...plan);
+    try {
+      await runMigrations();
+      assert.deepEqual(
+        (
+          await pool.query(
+            "SELECT * FROM migrations WHERE version<>82 ORDER BY version",
+          )
+        ).rows,
+        recorded,
+      );
+      assert.equal(
+        (await pool.query("SELECT name FROM migrations WHERE version=82"))
+          .rows[0].name,
+        pending.name,
+      );
+      assert.ok(
+        (
+          await pool.query(
+            "SELECT to_regclass('public.contact_channel_verifications') AS name",
+          )
+        ).rows[0].name,
+      );
+      assert.deepEqual(
+        (await pool.query("SELECT * FROM pagerduty_incidents ORDER BY id"))
+          .rows,
+        incidents,
+      );
+      await runMigrations();
+      assert.deepEqual(
+        (
+          await pool.query(
+            "SELECT * FROM migrations WHERE version<>82 ORDER BY version",
+          )
+        ).rows,
+        recorded,
+      );
+    } finally {
+      migrations.splice(0, migrations.length, ...original);
+    }
+  }
 });

@@ -112,7 +112,9 @@ describe('Preferences setup reset workspace continuity', () => {
     expect(screen.getByTestId('active-workspace')).toHaveTextContent(
       CHOSEN_WORKSPACE
     );
-    expect(readLastWorkspaceId(ACCOUNT_ID)).toBeNull();
+    // URL deep links now become the remembered workspace so a later bare
+    // /onboarding navigation cannot snap back to another workspace.
+    expect(readLastWorkspaceId(ACCOUNT_ID)).toBe(CHOSEN_WORKSPACE);
 
     fireEvent.click(screen.getByRole('button', { name: 'Start over' }));
     expect(resetSessionMock).toHaveBeenCalledExactlyOnceWith(

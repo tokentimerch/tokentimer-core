@@ -11,12 +11,14 @@ import {
   unionContactIds,
   deliveryChannelsFromEligibleGroups,
 } from "./shared/contactGroups.js";
-import { uniqueWebhookDestinations } from "./shared/webhookDestinations.js";
 import {
-  webhookDeliveryEvidence,
-  recipientDeliveryComplete,
-} from "./shared/deliveryEvidence.js";
+  uniqueWebhookDestinations,
+  webhookDestinationId,
+} from "./shared/webhookDestinations.js";
+import { webhookDeliveryEvidence } from "./shared/deliveryEvidence.js";
 import emailAddress from "../../../packages/email-address/index.js";
+import { deliveryWindowAdmission } from "./shared/deliveryWindow.js";
+import { notificationDeliveryState } from "./shared/notificationDeliveryState.js";
 import {
   pagerDutyDestinationId,
   pagerDutyDedupKey,
@@ -134,6 +136,7 @@ async function loadContext(client, workspaceId, tokenId) {
             t.cert_lifecycle_status, t.source_provider, t.source_observed_at::text, t.auto_sync_managed,
             ws.webhook_urls, ws.contact_groups, ws.default_contact_group_id, ws.alert_thresholds,
             ws.email_alerts_enabled,
+            ws.delivery_window_start, ws.delivery_window_end, ws.delivery_window_tz,
             COALESCE(groups.ids, ARRAY[]::text[]) AS assigned_ids,
             EXISTS (SELECT 1 FROM managed_certificates mc
               WHERE mc.workspace_id = w.id AND mc.token_id = t.id) AS managed_backed,
@@ -179,6 +182,9 @@ function snapshotCondition(start) {
       AND live.cert_lifecycle_status IS NOT DISTINCT FROM ${p(8)}::text
       AND settings.default_contact_group_id IS NOT DISTINCT FROM ${p(9)}::text
       AND settings.email_alerts_enabled IS NOT DISTINCT FROM ${p(10)}::boolean
+      AND settings.delivery_window_start IS NOT DISTINCT FROM ${p(11)}::text
+      AND settings.delivery_window_end IS NOT DISTINCT FROM ${p(12)}::text
+      AND settings.delivery_window_tz IS NOT DISTINCT FROM ${p(13)}::text
     FOR SHARE OF live SKIP LOCKED
   )`;
 }
@@ -200,6 +206,9 @@ function snapshotValues(incident, context) {
     context.cert_lifecycle_status,
     context.default_contact_group_id,
     context.email_alerts_enabled,
+    context.delivery_window_start,
+    context.delivery_window_end,
+    context.delivery_window_tz,
   ];
 }
 
@@ -353,7 +362,11 @@ class PagerDutyEnqueueError extends Error {
 // Repair aggregate queue state from accepted delivery evidence, without another
 // send or synthetic success log. A live normal-worker claim, archived cycle,
 // changed routing snapshot or unrelated failure must remain authoritative.
-export async function reconcilePagerDutyParentAlert(client, incident) {
+export async function reconcilePagerDutyParentAlert(
+  client,
+  incident,
+  { deliveryState = notificationDeliveryState } = {},
+) {
   await client.query("BEGIN");
   try {
     const parent = (
@@ -395,14 +408,8 @@ export async function reconcilePagerDutyParentAlert(client, incident) {
       emailAlertsEnabled: context.email_alerts_enabled,
       alertKey: parent.alert_key,
     });
-    let storedChannels;
-    try {
-      storedChannels = Array.isArray(parent.channels)
-        ? parent.channels
-        : JSON.parse(parent.channels);
-    } catch {
-      storedChannels = null;
-    }
+    const parsed = deliveryState.parse(parent.channels);
+    const storedChannels = deliveryState.channels(parent.channels);
     if (
       !Array.isArray(storedChannels) ||
       storedChannels.some(
@@ -439,6 +446,13 @@ export async function reconcilePagerDutyParentAlert(client, incident) {
     const complete = {
       webhooks: webhookEvidence.length > 0 && webhookEvidence.every(Boolean),
     };
+    const endpointOutcomes = Object.fromEntries(
+      webhooks.map((webhook, index) => [
+        webhookDestinationId(incident.workspace_id, webhook),
+        webhookEvidence[index] ? "sent" : "failed",
+      ]),
+    );
+    const eligibility = {};
     for (const channel of ["email", "whatsapp"].filter((channel) =>
       channels.includes(channel),
     )) {
@@ -449,28 +463,62 @@ export async function reconcilePagerDutyParentAlert(client, incident) {
       const contacts = ids.length
         ? (
             await client.query(
-              "SELECT details, phone_e164 FROM workspace_contacts WHERE workspace_id=$1 AND id=ANY($2::uuid[]) FOR SHARE NOWAIT",
+              "SELECT id, details, phone_e164 FROM workspace_contacts WHERE workspace_id=$1 AND id=ANY($2::uuid[]) FOR SHARE NOWAIT",
               [incident.workspace_id, ids],
             )
           ).rows
         : [];
-      const recipients =
-        channel === "email"
-          ? contacts
-              .map((contact) =>
-                String(contact.details?.email || "")
+      const recipients = contacts
+        .map((contact) => ({
+          contactId: contact.id,
+          destination:
+            channel === "email"
+              ? String(contact.details?.email || "")
                   .trim()
-                  .toLowerCase(),
-              )
-              .filter(emailAddress.isValidEmail)
-          : contacts
-              .map((contact) => String(contact.phone_e164 || "").trim())
-              .filter(Boolean);
-      complete[channel] = recipientDeliveryComplete(
+                  .toLowerCase()
+              : String(contact.phone_e164 || "").trim(),
+        }))
+        .filter((row) =>
+          channel === "email"
+            ? emailAddress.isValidEmail(row.destination)
+            : Boolean(row.destination),
+        );
+      const gated = await deliveryState.recipients(
+        client,
+        incident.workspace_id,
         channel,
         recipients,
-        history,
       );
+      if (
+        gated.unavailable ||
+        gated.blocked.some(
+          (row) =>
+            !row.shadow && row.code === "RECIPIENT_VERIFICATION_UNAVAILABLE",
+        )
+      ) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+      complete[channel] =
+        parsed.outcomes[channel]?.state === "sent" ||
+        deliveryState.recipientComplete(
+          channel,
+          gated.allowed.map((row) => row.destination),
+          history,
+        );
+      if (
+        !complete[channel] &&
+        recipients.length &&
+        !gated.allowed.length &&
+        gated.enforced
+      )
+        eligibility[channel] = {
+          channel,
+          success: false,
+          terminal: true,
+          eligibilityTerminal: true,
+          errorCode: gated.code || "NO_VERIFIED_RECIPIENTS",
+        };
     }
     // Never add a new channel/recipient to a retry or claim it was delivered.
     if (
@@ -482,32 +530,73 @@ export async function reconcilePagerDutyParentAlert(client, incident) {
       await client.query("COMMIT");
       return false;
     }
+    const attempted = channels.flatMap((channel) => {
+      if (complete[channel])
+        return [
+          {
+            channel,
+            success: true,
+            ...(channel === "webhooks" ? { endpoints: endpointOutcomes } : {}),
+          },
+        ];
+      if (eligibility[channel]) return [eligibility[channel]];
+      if (channel === "webhooks")
+        return [
+          {
+            channel,
+            success: false,
+            partialSuccess: true,
+            terminal: parsed.outcomes[channel]?.terminal === true,
+            endpoints: endpointOutcomes,
+          },
+        ];
+      return parsed.outcomes[channel] ? [] : [{ channel, success: false }];
+    });
+    const settlement = deliveryState.settle({
+      prior: parent.channels,
+      attempted,
+      liveChannels: channels,
+    });
+    // Background acceptance may settle an existing requirement, never reopen a
+    // channel the foreground ledger removed from its durable retry set.
+    settlement.ledger.retry = settlement.ledger.retry.filter((channel) =>
+      parsed.retry.includes(channel),
+    );
     const remaining = channels.filter((channel) => !complete[channel]);
-    const status = remaining.length
-      ? parent.status === "blocked"
+    const status =
+      remaining.length &&
+      parent.status === "blocked" &&
+      settlement.outcome.retry
         ? "blocked"
-        : "partial"
-      : "sent";
+        : remaining.length
+          ? settlement.outcome.status
+          : "sent";
+    const stored = parsed.legacy
+      ? remaining.length
+        ? remaining
+        : storedChannels
+      : settlement.ledger;
     const changed = await client.query(
       `UPDATE alert_queue SET status=$2::varchar(20), channels=$3::jsonb,
          attempts_webhooks=CASE WHEN $6 THEN 0 ELSE attempts_webhooks END,
          attempts_email=CASE WHEN $4 THEN 0 ELSE attempts_email END,
          attempts_whatsapp=CASE WHEN $5 THEN 0 ELSE attempts_whatsapp END,
          error_message=CASE WHEN $2 = 'sent' THEN NULL ELSE error_message END,
-         next_attempt_at=CASE WHEN $2 IN ('sent','blocked') THEN NULL ELSE next_attempt_at END,
+         next_attempt_at=CASE WHEN $2 IN ('sent','blocked') OR $23 THEN NULL ELSE next_attempt_at END,
          updated_at=NOW()
        WHERE id=$1 AND delivery_claim_id IS NULL AND status=$7 AND alert_key=$8
          AND ${snapshotCondition(9)} RETURNING id`,
       [
         parent.id,
         status,
-        JSON.stringify(remaining.length ? remaining : storedChannels),
+        JSON.stringify(stored),
         complete.email === true,
         complete.whatsapp === true,
         complete.webhooks,
         parent.status,
         parent.alert_key,
         ...snapshotValues(incident, context),
+        !parsed.legacy && settlement.ledger.retry.length === 0,
       ],
     );
     if (changed.rowCount && status === "sent") {
@@ -530,9 +619,9 @@ export async function reconcilePagerDutyParentAlert(client, incident) {
   }
 }
 
-async function repairParent(client, incident) {
+async function repairParent(client, incident, deliveryState) {
   try {
-    await reconcilePagerDutyParentAlert(client, incident);
+    await reconcilePagerDutyParentAlert(client, incident, { deliveryState });
   } catch (error) {
     logger.warn("PagerDuty parent reconciliation deferred", {
       incidentId: incident.id,
@@ -609,7 +698,7 @@ function triggerPayload(incident, context, webhook) {
 export async function processPagerDutyIncident(
   client,
   incidentId,
-  { send = postJson } = {},
+  { send = postJson, now = new Date(), deliveryState } = {},
 ) {
   const lock = await client.query(
     "SELECT pg_try_advisory_lock(hashtextextended('pagerduty:' || $1::text, 0)) AS owned",
@@ -647,7 +736,8 @@ export async function processPagerDutyIncident(
     );
     if (!context?.token_id)
       return await postpone(client, incident, claimId, "asset_unavailable");
-    if (incident.trigger_accepted_at) await repairParent(client, incident);
+    if (incident.trigger_accepted_at)
+      await repairParent(client, incident, deliveryState);
     const threshold = destinationThreshold(
       context,
       incident.workspace_id,
@@ -777,6 +867,15 @@ export async function processPagerDutyIncident(
         { exhausted: true },
       );
     const resolving = incident.state === "resolve_pending";
+    // Quiet hours gate every unaccepted trigger attempt. A validated resolve
+    // for an already accepted incident bypasses quiet hours to clear stale risk.
+    if (!resolving && !deliveryWindowAdmission(context, now).allowed)
+      return await postpone(
+        client,
+        incident,
+        claimId,
+        "pagerduty_out_of_window",
+      );
     // Resolve intents are immutable once decided: a later risk episode uses a
     // different key, so this delayed resolution cannot close its replacement.
     const payload = resolving
@@ -910,7 +1009,7 @@ export async function processPagerDutyIncident(
         error: outcome.error,
         exhausted,
       });
-    if (outcome.success) await repairParent(client, incident);
+    if (outcome.success) await repairParent(client, incident, deliveryState);
     return { success: outcome.success, error: outcome.error };
   } finally {
     await client.query(
@@ -922,7 +1021,7 @@ export async function processPagerDutyIncident(
 
 export async function deliverPagerDutyExpiration(
   client,
-  { alert, webhook, send = postJson },
+  { alert, webhook, send = postJson, deliveryState },
 ) {
   let incident;
   try {
@@ -932,12 +1031,12 @@ export async function deliverPagerDutyExpiration(
     throw error;
   }
   if (!incident) return { success: true, skipped: true };
-  return processPagerDutyIncident(client, incident.id, { send });
+  return processPagerDutyIncident(client, incident.id, { send, deliveryState });
 }
 
 export async function reconcilePagerDutyIncidents(
   client,
-  { send = postJson, batchSize = 100 } = {},
+  { send = postJson, batchSize = 100, deliveryState, now } = {},
 ) {
   const limit = Math.max(
     1,
@@ -951,6 +1050,6 @@ export async function reconcilePagerDutyIncidents(
     [limit],
   );
   for (const { id } of due.rows)
-    await processPagerDutyIncident(client, id, { send });
+    await processPagerDutyIncident(client, id, { send, deliveryState, now });
   return due.rowCount;
 }

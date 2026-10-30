@@ -83,7 +83,7 @@ describe('CertopsSetupBanner', () => {
     show(makeApi());
     fireEvent.click(await screen.findByText('Start the setup guide'));
     expect(screen.getByTestId('where').textContent).toBe(
-      '/onboarding?area=certops'
+      '/onboarding?workspace=ws-1&area=certops'
     );
   });
 

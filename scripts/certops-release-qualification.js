@@ -11,8 +11,8 @@ const crypto = require("node:crypto");
 const { verifyReport } = require("./certops-qualification-report");
 const { verify: verifyStack } = require("./certops-stack-report");
 const { verify: verifyDatabase } = require("./certops-integration-report");
-const matrix = require("../docs/certops/qualification-suites.json");
-const catalog = require("../docs/certops/qualification-suites.json");
+const matrix = require("../.github/maintainers/certops/qualification-suites.json");
+const catalog = require("../.github/maintainers/certops/qualification-suites.json");
 // These registrations describe local contracts, with no native qualifying
 // producer. A passed outer envelope must never upgrade their simulated proofs.
 // A future native implementation must deliberately replace this eligibility gate.
@@ -53,11 +53,11 @@ function validateMatrix(specification = matrix) {
     }
     const identity = JSON.stringify([slot.kind, slot.suite, Object.entries(slot.environment || {}).sort()]);
     if (identities.has(identity)) errors.push(`${slot.id}: duplicate suite/environment specification`); identities.add(identity);
-    if (slot.kind === "host" && !require("../docs/certops/qualification-suites.json").suites[slot.suite]) errors.push(`${slot.id}: unknown mandatory suite`);
+    if (slot.kind === "host" && !require("../.github/maintainers/certops/qualification-suites.json").suites[slot.suite]) errors.push(`${slot.id}: unknown mandatory suite`);
     if (slot.kind === "stack" && !slot.requiredInventory && !slot.requiredTests?.length) errors.push(`${slot.id}: mandatory tests are missing`);
     if (slot.kind === "database" && !require("../tests/integration/certops-qualification-groups.json")[slot.requiredGroup]) errors.push(`${slot.id}: unknown mandatory database group`);
   }
-  for (const suite of Object.keys(require("../docs/certops/qualification-suites.json").suites)) if (!specification.slots.some((slot) => slot.kind === "host" && slot.suite === suite) && !(specification.deferredSlots || []).some(slot => slot.suite === suite)) errors.push(`Mandatory suite has no release environment: ${suite}`);
+  for (const suite of Object.keys(require("../.github/maintainers/certops/qualification-suites.json").suites)) if (!specification.slots.some((slot) => slot.kind === "host" && slot.suite === suite) && !(specification.deferredSlots || []).some(slot => slot.suite === suite)) errors.push(`Mandatory suite has no release environment: ${suite}`);
   for (const group of Object.keys(require("../tests/integration/certops-qualification-groups.json"))) if (!specification.slots.some((slot) => slot.kind === "database" && slot.requiredGroup === group)) errors.push(`Mandatory database group has no release environment: ${group}`);
   return errors;
 }
@@ -159,7 +159,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
             workspaces.add(cohort.workspaceId); agents.add(cohort.agentId);
           }
           const mutations = artifact.report.nativeTemplateMutations;
-          const mutationCases = require("../docs/certops/qualification-suites.json").suites[slot.suite].filter(id => id.startsWith("adcs-real-mutated-template-")).map(id => id.slice("adcs-real-mutated-template-".length, -"-native-refused".length));
+          const mutationCases = require("../.github/maintainers/certops/qualification-suites.json").suites[slot.suite].filter(id => id.startsWith("adcs-real-mutated-template-")).map(id => id.slice("adcs-real-mutated-template-".length, -"-native-refused".length));
           if (!Array.isArray(mutations) || mutations.length !== mutationCases.length) throw new Error("Native template mutation evidence incomplete");
           for (const caseId of mutationCases) {
             const rows = mutations.filter(item => item?.caseId === caseId);

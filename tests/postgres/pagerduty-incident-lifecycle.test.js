@@ -5,6 +5,8 @@
 const { before, beforeEach, after, describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const request = require("supertest");
 const express = require("../../apps/api/node_modules/express");
@@ -28,6 +30,7 @@ let lifecycle,
   tokenId,
   app;
 let sequence = 0;
+let companionVerification, companionState;
 let events = [];
 const keyA = "A".repeat(32),
   keyB = "B".repeat(32);
@@ -202,6 +205,27 @@ async function openFailureNotifications(alert) {
   ).rowCount;
 }
 
+async function verifiedContact(email, status = "verified") {
+  const id = crypto.randomUUID();
+  await pool.query(
+    "INSERT INTO workspace_contacts(id,workspace_id,first_name,last_name,details) VALUES($1,$2,'Cross','PR',$3::jsonb)",
+    [id, workspaceId, JSON.stringify({ email })],
+  );
+  await pool.query(
+    `INSERT INTO contact_channel_verifications
+    (workspace_id,contact_id,channel,destination_normalized,destination_fingerprint,status,consent_at)
+    VALUES($1,$2,'email',$3,$4,$5,CASE WHEN $5='verified' THEN NOW() END)`,
+    [
+      workspaceId,
+      id,
+      email,
+      companionVerification.destinationFingerprint("email", email),
+      status,
+    ],
+  );
+  return id;
+}
+
 describe(
   "PostgreSQL PagerDuty expiration incident lifecycle",
   { concurrency: false },
@@ -215,6 +239,22 @@ describe(
       process.env.NODE_ENV = "test";
       process.env.ENABLE_METRICS = "false";
       process.env.ALERT_MAX_ATTEMPTS = "20";
+      process.env.RECIPIENT_FINGERPRINT_SECRET = "pagerduty-cross-pr-test-only";
+      if (process.env.PAGERDUTY_COMPANION_ROOT) {
+        const root = path.resolve(process.env.PAGERDUTY_COMPANION_ROOT);
+        companionVerification = require(
+          path.join(root, "packages/recipient-verification"),
+        );
+        await pool.query(
+          fs.readFileSync(
+            path.join(root, "packages/recipient-verification/migration.sql"),
+            "utf8",
+          ),
+        );
+        const { createNotificationDeliveryState } =
+          await import("../../apps/worker/src/shared/notificationDeliveryState.js");
+        companionState = createNotificationDeliveryState(companionVerification);
+      }
       lifecycle = await import("../../apps/worker/src/pagerduty-incidents.js");
       worker = await import("../../apps/worker/src/delivery-worker.js");
       discovery = await import("../../apps/worker/src/queue-manager.js");
@@ -223,7 +263,7 @@ describe(
       assert.equal(
         (
           await pool.query(
-            "SELECT 1 FROM migrations WHERE version=81 AND name='pagerduty_incident_lifecycle'",
+            "SELECT 1 FROM migrations WHERE version=92 AND name='pagerduty_incident_lifecycle'",
           )
         ).rowCount,
         1,
@@ -250,6 +290,8 @@ describe(
       app.use(require("../../apps/api/routes/tokens"));
     });
     beforeEach(async () => {
+      process.env.TT_DEPLOYMENT = "self-hosted";
+      process.env.RECIPIENT_VERIFICATION_MODE = "off";
       await pool.query(
         "DELETE FROM tokens WHERE user_id=$1 AND workspace_id IS NULL",
         [userId],
@@ -295,6 +337,557 @@ describe(
       client?.release();
       await workerPool?.end();
       await pool.end();
+    });
+
+    it("defers unaccepted triggers and retries across quiet-hour boundaries without spending attempts", async () => {
+      await pool.query(
+        "UPDATE workspace_settings SET delivery_window_start='09:00',delivery_window_end='17:00',delivery_window_tz='UTC' WHERE workspace_id=$1",
+        [workspaceId],
+      );
+      const alert = await queue();
+      const intent = await lifecycle.enqueuePagerDutyIncident(client, {
+        alert,
+        webhook: pd,
+      });
+      const at = (time) => new Date(`${day(0)}T${time}:00Z`);
+      const first = await lifecycle.processPagerDutyIncident(
+        client,
+        intent.id,
+        { send, now: at("08:59") },
+      );
+      assert.equal(first.error, "pagerduty_out_of_window");
+      assert.equal((await incidentRows())[0].trigger_attempts, 0);
+      assert.equal(events.length, 0);
+      await due();
+      await lifecycle.processPagerDutyIncident(client, intent.id, {
+        now: at("09:00"),
+        send: async (url, body) => {
+          events.push({ url, body });
+          return { success: false, status: 503 };
+        },
+      });
+      assert.equal((await incidentRows())[0].trigger_attempts, 1);
+      await due();
+      const deferred = await lifecycle.processPagerDutyIncident(
+        client,
+        intent.id,
+        { send, now: at("17:01") },
+      );
+      assert.equal(deferred.error, "pagerduty_out_of_window");
+      const parked = (await incidentRows())[0];
+      assert.equal(parked.trigger_attempts, 1);
+      assert.equal(parked.action_attempts, 1);
+      assert.equal(parked.retry_exhausted, false);
+      assert.equal(parked.claim_id, null);
+      assert.equal(events.length, 1);
+      await due();
+      await lifecycle.processPagerDutyIncident(client, intent.id, {
+        send,
+        now: at("09:00"),
+      });
+      const accepted = (await incidentRows())[0];
+      assert.equal(accepted.state, "open");
+      assert.equal(accepted.trigger_attempts, 2);
+      assert.equal(accepted.dedup_key, intent.dedup_key);
+      assert.equal(events[0].body.dedup_key, events[1].body.dedup_key);
+    });
+
+    it("resolves validated recovery outside quiet hours for an already accepted incident", async () => {
+      const { incident } = await trigger();
+      await pool.query(
+        "UPDATE workspace_settings SET delivery_window_start='09:00',delivery_window_end='17:00',delivery_window_tz='UTC' WHERE workspace_id=$1",
+        [workspaceId],
+      );
+      await Token.update(tokenId, { expiration: day(180) });
+      await lifecycle.processPagerDutyIncident(client, incident.id, {
+        send,
+        now: new Date(`${day(0)}T22:00:00Z`),
+      });
+      assert.equal((await incidentRows())[0].state, "resolved");
+      assert.deepEqual(
+        events.map((row) => row.body.event_action),
+        ["trigger", "resolve"],
+      );
+      assert.equal(events[0].body.dedup_key, events[1].body.dedup_key);
+    });
+
+    it("invalidates dispatch when its committed delivery-window settings change", async () => {
+      const intent = await lifecycle.enqueuePagerDutyIncident(client, {
+        alert: await queue(),
+        webhook: pd,
+      });
+      let changed = false;
+      const concurrent = {
+        query: async (sql, parameters) => {
+          if (
+            !changed &&
+            sql.includes("SET trigger_attempts = trigger_attempts + 1")
+          ) {
+            changed = true;
+            await pool.query(
+              "UPDATE workspace_settings SET delivery_window_start='22:00',delivery_window_end='23:00' WHERE workspace_id=$1",
+              [workspaceId],
+            );
+          }
+          return client.query(sql, parameters);
+        },
+      };
+      const outcome = await lifecycle.processPagerDutyIncident(
+        concurrent,
+        intent.id,
+        { send, now: new Date(`${day(0)}T09:00:00Z`) },
+      );
+      assert.equal(outcome.error, "dispatch_snapshot_changed");
+      assert.equal(events.length, 0);
+      assert.equal((await incidentRows())[0].action_attempts, 0);
+      await due();
+      const deferred = await lifecycle.processPagerDutyIncident(
+        client,
+        intent.id,
+        { send, now: new Date(`${day(0)}T09:00:00Z`) },
+      );
+      assert.equal(deferred.error, "pagerduty_out_of_window");
+    });
+
+    it("keeps a legacy blocked alert's unsent escalation email open and retries its delivery", async () => {
+      await legacyAsset();
+      const alert = await queue();
+      await blockParent(alert);
+      const { retryPendingOperationalIncidentEmails } =
+        await import("../../apps/worker/src/shared/opNotifications.js");
+      let emails = 0;
+      await retryPendingOperationalIncidentEmails(client, async () => {
+        emails++;
+        return { success: true };
+      });
+      assert.equal(emails, 1);
+      assert.equal((await parentRow(alert)).status, "blocked");
+      assert.equal(await openFailureNotifications(alert), 1);
+      const row = (
+        await pool.query(
+          "SELECT email_sent_at,resolved_at FROM operational_notifications WHERE workspace_id=$1 AND dedupe_key=$2",
+          [workspaceId, `delivery_blocked:${alert.id}`],
+        )
+      ).rows[0];
+      assert.ok(row.email_sent_at);
+      assert.equal(row.resolved_at, null);
+    });
+
+    it("retains blocked legacy escalation when ownership is ambiguous without sending across workspaces", async () => {
+      await legacyAsset();
+      const alert = await queue();
+      await blockParent(alert);
+      const other = crypto.randomUUID();
+      await pool.query(
+        "INSERT INTO workspaces(id,name,created_by) VALUES($1,'Other owner workspace',$2)",
+        [other, userId],
+      );
+      try {
+        const {
+          retryPendingOperationalIncidentEmails,
+          reconcileStaleDeliveryIncidents,
+        } = await import("../../apps/worker/src/shared/opNotifications.js");
+        let sent = 0;
+        await retryPendingOperationalIncidentEmails(client, async () => {
+          sent++;
+          return { success: true };
+        });
+        await reconcileStaleDeliveryIncidents(client);
+        assert.equal(sent, 0);
+        assert.equal((await parentRow(alert)).status, "blocked");
+        assert.equal(await openFailureNotifications(alert), 1);
+      } finally {
+        await pool.query("DELETE FROM workspaces WHERE id=$1", [other]);
+      }
+    });
+
+    it("does not clear an escalation if its source becomes blocked before the resolution write", async () => {
+      const alert = await queue();
+      await blockParent(alert);
+      await pool.query("UPDATE alert_queue SET status='sent' WHERE id=$1", [
+        alert.id,
+      ]);
+      const { retryPendingOperationalIncidentEmails } =
+        await import("../../apps/worker/src/shared/opNotifications.js");
+      let changed = false;
+      const concurrent = {
+        query: async (sql, values) => {
+          if (
+            !changed &&
+            sql.includes(
+              "UPDATE operational_notifications SET resolved_at=NOW()",
+            )
+          ) {
+            changed = true;
+            await pool.query(
+              "UPDATE alert_queue SET status='blocked' WHERE id=$1",
+              [alert.id],
+            );
+          }
+          return client.query(sql, values);
+        },
+      };
+      await retryPendingOperationalIncidentEmails(concurrent, async () => {
+        throw new Error("No stale escalation send");
+      });
+      assert.equal(changed, true);
+      assert.equal(await openFailureNotifications(alert), 1);
+    });
+
+    it(
+      "reconciles the actual #461 ledger using verified recipients and retains evidence extensions",
+      { skip: !process.env.PAGERDUTY_COMPANION_ROOT },
+      async () => {
+        process.env.RECIPIENT_VERIFICATION_MODE = "enforce";
+        const first = await verifiedContact("alice@example.test"),
+          second = await verifiedContact("bob@example.test", "pending");
+        await settings(
+          [pd],
+          [{ ...group, email_contact_ids: [first, second] }],
+        );
+        await pool.query(
+          "UPDATE workspace_settings SET email_alerts_enabled=TRUE WHERE workspace_id=$1",
+          [workspaceId],
+        );
+        const alert = await queue();
+        const intent = await lifecycle.enqueuePagerDutyIncident(client, {
+          alert,
+          webhook: pd,
+        });
+        const ledger = companionVerification.mergeDeliveryAttempt({
+          prior: ["email", "webhooks"],
+          liveChannels: ["email", "webhooks"],
+          attempted: [
+            { channel: "email", success: false },
+            { channel: "webhooks", success: false },
+          ],
+        }).ledger;
+        ledger.outcomes.email.receiptRevision = "keep";
+        ledger.outcomes.webhooks.retryGeneration = 3;
+        await history(alert, "email", "success", {
+          recipient: "alice@example.test",
+        });
+        await blockParent(alert, ledger);
+        await lifecycle.processPagerDutyIncident(client, intent.id, {
+          send,
+          deliveryState: companionState,
+        });
+        const parent = await parentRow(alert);
+        assert.equal(parent.status, "sent");
+        assert.equal(parent.channels.version, 1);
+        assert.deepEqual(parent.channels.retry, []);
+        assert.deepEqual(parent.channels.required, ["email", "webhooks"]);
+        assert.equal(parent.channels.outcomes.email.state, "sent");
+        assert.equal(parent.channels.outcomes.email.receiptRevision, "keep");
+        assert.equal(parent.channels.outcomes.webhooks.retryGeneration, 3);
+        assert.equal(await openFailureNotifications(alert), 0);
+        assert.equal(events.length, 1);
+        assert.equal(
+          (
+            await pool.query(
+              "SELECT 1 FROM alert_delivery_log WHERE alert_queue_id=$1 AND channel='email'",
+              [alert.id],
+            )
+          ).rowCount,
+          1,
+        );
+      },
+    );
+
+    it(
+      "retains a versioned ledger's unrelated failure and retry state until all eligible recipients have evidence",
+      { skip: !process.env.PAGERDUTY_COMPANION_ROOT },
+      async () => {
+        process.env.RECIPIENT_VERIFICATION_MODE = "enforce";
+        const first = await verifiedContact("alice@example.test"),
+          second = await verifiedContact("bob@example.test");
+        await settings(
+          [pd],
+          [{ ...group, email_contact_ids: [first, second] }],
+        );
+        await pool.query(
+          "UPDATE workspace_settings SET email_alerts_enabled=TRUE WHERE workspace_id=$1",
+          [workspaceId],
+        );
+        const alert = await queue();
+        const intent = await lifecycle.enqueuePagerDutyIncident(client, {
+          alert,
+          webhook: pd,
+        });
+        const failed = {
+          state: "failed",
+          terminal: false,
+          code: "mail_retry",
+          receiptRevision: "keep",
+        };
+        const ledger = {
+          version: 1,
+          required: ["email", "webhooks"],
+          retry: ["email", "webhooks"],
+          outcomes: {
+            email: failed,
+            webhooks: { state: "failed", terminal: false, retryGeneration: 2 },
+          },
+        };
+        await blockParent(alert, ledger);
+        await history(alert, "email", "success", {
+          recipient: "alice@example.test",
+        });
+        await lifecycle.processPagerDutyIncident(client, intent.id, {
+          send,
+          deliveryState: companionState,
+        });
+        let parent = await parentRow(alert);
+        assert.equal(parent.status, "blocked");
+        assert.deepEqual(parent.channels.retry, ["email"]);
+        assert.deepEqual(parent.channels.outcomes.email, failed);
+        assert.equal(await openFailureNotifications(alert), 1);
+        await history(alert, "email", "success", {
+          recipient: "bob@example.test",
+        });
+        await due();
+        await lifecycle.processPagerDutyIncident(client, intent.id, {
+          send,
+          deliveryState: companionState,
+        });
+        parent = await parentRow(alert);
+        assert.equal(parent.status, "sent");
+        assert.equal(await openFailureNotifications(alert), 0);
+        assert.equal(events.length, 1);
+      },
+    );
+
+    it(
+      "keeps #461 verification lookup outages retryable and reconciles after consent lookup recovers",
+      { skip: !process.env.PAGERDUTY_COMPANION_ROOT },
+      async () => {
+        process.env.RECIPIENT_VERIFICATION_MODE = "enforce";
+        const id = await verifiedContact("verified@example.test");
+        await settings([pd], [{ ...group, email_contact_ids: [id] }]);
+        await pool.query(
+          "UPDATE workspace_settings SET email_alerts_enabled=TRUE WHERE workspace_id=$1",
+          [workspaceId],
+        );
+        const { createNotificationDeliveryState } =
+          await import("../../apps/worker/src/shared/notificationDeliveryState.js");
+        let lookups = 0;
+        const failingState = createNotificationDeliveryState({
+          ...companionVerification,
+          filterDeliveryRecipients: (args) =>
+            companionVerification.filterDeliveryRecipients({
+              ...args,
+              client: {
+                query(sql, values) {
+                  if (sql.includes("RV_DELIVERY_LOOKUP")) {
+                    lookups++;
+                    return Promise.reject(
+                      Object.assign(new Error("fixture timeout"), {
+                        code: "57014",
+                      }),
+                    );
+                  }
+                  return args.client.query(sql, values);
+                },
+              },
+            }),
+        });
+        const alert = await queue();
+        await pool.query(
+          "UPDATE alert_queue SET channels=$2::jsonb WHERE id=$1",
+          [
+            alert.id,
+            JSON.stringify(
+              companionVerification.mergeDeliveryAttempt({
+                prior: ["email", "webhooks"],
+                attempted: [],
+                liveChannels: ["email", "webhooks"],
+              }).ledger,
+            ),
+          ],
+        );
+        await worker.deliveryWorkerJob({
+          closePool: false,
+          webhookSender: send,
+          incidentEmailSender: async () => ({ success: true }),
+          deliveryState: failingState,
+        });
+        assert.ok(lookups > 0);
+        let parent = await parentRow(alert);
+        assert.equal(parent.status, "partial");
+        assert.equal(
+          parent.channels.outcomes.email.code,
+          "RECIPIENT_VERIFICATION_UNAVAILABLE",
+        );
+        assert.equal(parent.channels.outcomes.email.terminal, false);
+        assert.deepEqual(parent.channels.retry, ["email"]);
+        const incident = (await incidentRows())[0];
+        const snapshot = JSON.stringify(parent.channels);
+        assert.equal(
+          await lifecycle.reconcilePagerDutyParentAlert(client, incident, {
+            deliveryState: failingState,
+          }),
+          false,
+        );
+        assert.equal(
+          JSON.stringify((await parentRow(alert)).channels),
+          snapshot,
+        );
+        await history(alert, "email", "success", {
+          recipient: "verified@example.test",
+        });
+        assert.equal(
+          await lifecycle.reconcilePagerDutyParentAlert(client, incident, {
+            deliveryState: companionState,
+          }),
+          true,
+        );
+        parent = await parentRow(alert);
+        assert.equal(parent.status, "sent");
+        assert.deepEqual(parent.channels.retry, []);
+        assert.equal(await openFailureNotifications(alert), 0);
+        assert.equal(events.length, 1);
+      },
+    );
+
+    it(
+      "uses #461 recipient admission in foreground delivery without sending to unverified contacts",
+      { skip: !process.env.PAGERDUTY_COMPANION_ROOT },
+      async () => {
+        process.env.RECIPIENT_VERIFICATION_MODE = "enforce";
+        const id = await verifiedContact("unverified@example.test", "pending");
+        await settings([pd], [{ ...group, email_contact_ids: [id] }]);
+        await pool.query(
+          "UPDATE workspace_settings SET email_alerts_enabled=TRUE WHERE workspace_id=$1",
+          [workspaceId],
+        );
+        const alert = await queue();
+        await worker.deliveryWorkerJob({
+          closePool: false,
+          webhookSender: send,
+          incidentEmailSender: async () => ({ success: true }),
+          deliveryState: companionState,
+        });
+        const parent = await parentRow(alert);
+        assert.equal(parent.status, "partial");
+        assert.equal(parent.channels.version, 1);
+        assert.deepEqual(parent.channels.retry, []);
+        assert.equal(parent.channels.outcomes.email.reason, "eligibility");
+        assert.equal(parent.attempts_email, 0);
+        assert.equal(events.length, 1);
+        assert.equal(
+          (
+            await pool.query(
+              "SELECT 1 FROM alert_delivery_log WHERE alert_queue_id=$1 AND channel='email' AND status='success'",
+              [alert.id],
+            )
+          ).rowCount,
+          0,
+        );
+      },
+    );
+
+    it(
+      "matches #461 terminal eligibility when every email recipient is unverified",
+      { skip: !process.env.PAGERDUTY_COMPANION_ROOT },
+      async () => {
+        process.env.RECIPIENT_VERIFICATION_MODE = "enforce";
+        const id = await verifiedContact("pending@example.test", "pending");
+        await settings([pd], [{ ...group, email_contact_ids: [id] }]);
+        await pool.query(
+          "UPDATE workspace_settings SET email_alerts_enabled=TRUE WHERE workspace_id=$1",
+          [workspaceId],
+        );
+        const alert = await queue();
+        const intent = await lifecycle.enqueuePagerDutyIncident(client, {
+          alert,
+          webhook: pd,
+        });
+        await blockParent(alert, {
+          version: 1,
+          required: ["email", "webhooks"],
+          retry: [],
+          outcomes: {
+            email: {
+              state: "blocked",
+              terminal: true,
+              reason: "eligibility",
+              code: "NO_VERIFIED_RECIPIENTS",
+            },
+          },
+        });
+        await lifecycle.processPagerDutyIncident(client, intent.id, {
+          send,
+          deliveryState: companionState,
+        });
+        const parent = await parentRow(alert);
+        assert.equal(parent.status, "partial");
+        assert.deepEqual(parent.channels.retry, []);
+        assert.equal(parent.channels.outcomes.email.reason, "eligibility");
+        assert.equal(parent.channels.outcomes.email.state, "blocked");
+        assert.equal(await openFailureNotifications(alert), 1);
+      },
+    );
+
+    it("preserves versioned foreground settlement and does not reclaim terminal partial delivery", async () => {
+      const alert = await queue();
+      const { webhookDestinationId } =
+        await import("../../apps/worker/src/shared/webhookDestinations.js");
+      await history(alert, "webhooks", "success", {
+        kind: "pagerduty",
+        event_action: "trigger",
+        destination_id: webhookDestinationId(workspaceId, pd),
+      });
+      const ledger = {
+        version: 1,
+        retry: ["webhooks"],
+        required: ["email", "webhooks"],
+        outcomes: {
+          email: {
+            state: "blocked",
+            terminal: true,
+            reason: "provider",
+            code: "mail_permanent",
+            receiptRevision: "keep",
+          },
+          webhooks: { state: "failed", terminal: false, retryGeneration: 4 },
+        },
+      };
+      await pool.query(
+        "UPDATE alert_queue SET channels=$2::jsonb,attempts=1 WHERE id=$1",
+        [alert.id, JSON.stringify(ledger)],
+      );
+      await runWorker();
+      const parent = await parentRow(alert);
+      assert.equal(parent.status, "partial");
+      assert.equal(parent.channels.version, 1);
+      assert.deepEqual(parent.channels.retry, []);
+      assert.equal(parent.channels.outcomes.email.receiptRevision, "keep");
+      assert.equal(parent.channels.outcomes.webhooks.state, "sent");
+      assert.equal(parent.channels.outcomes.webhooks.retryGeneration, 4);
+      assert.equal(parent.next_attempt_at, null);
+      await runWorker();
+      assert.equal((await parentRow(alert)).attempts, parent.attempts);
+      assert.equal(events.length, 0);
+      assert.equal((await incidentRows()).length, 0);
+    });
+
+    it("preserves unknown ledger formats without pretending parent delivery completed", async () => {
+      const alert = await queue();
+      const intent = await lifecycle.enqueuePagerDutyIncident(client, {
+        alert,
+        webhook: pd,
+      });
+      const unknown = {
+        version: 2,
+        required: ["webhooks"],
+        retry: ["webhooks"],
+        outcomes: {},
+      };
+      await blockParent(alert, unknown);
+      await lifecycle.processPagerDutyIncident(client, intent.id, { send });
+      assert.equal((await parentRow(alert)).status, "blocked");
+      assert.deepEqual((await parentRow(alert)).channels, unknown);
+      assert.equal(await openFailureNotifications(alert), 1);
     });
 
     it("delivers and resolves an authorized legacy asset without changing its ownership", async () => {

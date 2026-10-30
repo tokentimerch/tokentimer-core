@@ -1,0 +1,335 @@
+{
+  "schemaVersion": 1,
+  "reviewedAt": "2026-10-28",
+  "repository": "tokentimerch/tokentimer-core",
+  "outcomes": [
+    {
+      "id": "destinations",
+      "title": "Shared certificate destinations",
+      "issue": 248,
+      "edition": "core",
+      "horizon": "pre-v1",
+      "inRoadmap": true,
+      "feedback": [
+        {
+          "slug": "certops-features",
+          "status": "In Progress",
+          "scope": "Active distribution increments; issuer/service extensions remain separately scoped",
+          "implementationPrs": [
+            498,
+            460
+          ]
+        }
+      ],
+      "implementationPrs": [
+        498,
+        460
+      ],
+      "planningStatus": "In Progress"
+    },
+    {
+      "id": "outbound",
+      "title": "Shared outbound policy",
+      "issue": 233,
+      "edition": "core",
+      "horizon": "pre-v1",
+      "inRoadmap": true
+    },
+    {
+      "id": "issuers",
+      "title": "Issuer connectors and CA-backed revocation",
+      "issue": 246,
+      "edition": "core",
+      "horizon": "pre-v1",
+      "inRoadmap": true
+    },
+    {
+      "id": "diagnostics",
+      "title": "Operational diagnostics",
+      "issue": 232,
+      "edition": "core",
+      "horizon": "pre-v1",
+      "inRoadmap": true
+    },
+    {
+      "id": "owners",
+      "title": "Multiple workspace owners",
+      "issue": 239,
+      "edition": "core",
+      "horizon": "v1",
+      "inRoadmap": true,
+      "feedback": [
+        {
+          "slug": "allow-multiple-admins-per-workspace",
+          "status": "Planned"
+        }
+      ]
+    },
+    {
+      "id": "installation-default",
+      "title": "Installation-default workspace",
+      "issue": 240,
+      "edition": "core",
+      "horizon": "v1",
+      "inRoadmap": true
+    },
+    {
+      "id": "creator-fallback",
+      "title": "Explicit membership authorization",
+      "issue": 241,
+      "edition": "core",
+      "horizon": "v1",
+      "inRoadmap": true
+    },
+    {
+      "id": "attribution",
+      "title": "Consistent attribution",
+      "issue": 242,
+      "edition": "core",
+      "horizon": "v1",
+      "inRoadmap": true
+    },
+    {
+      "id": "permission-matrix",
+      "title": "Published permission matrix",
+      "issue": 243,
+      "edition": "core",
+      "horizon": "v1",
+      "inRoadmap": true
+    },
+    {
+      "id": "upgrade-proof",
+      "title": "Install and upgrade proof",
+      "issue": 244,
+      "edition": "core",
+      "horizon": "v1",
+      "inRoadmap": true
+    },
+    {
+      "id": "mcp",
+      "title": "MCP operator interface",
+      "issue": 502,
+      "edition": "core",
+      "horizon": "alongside-0.x",
+      "inRoadmap": true,
+      "implementationPr": 406,
+      "planningStatus": "In Progress",
+      "feedback": [
+        {
+          "slug": "mcp-server-to-interact-with-tokentimer",
+          "status": "In Progress",
+          "implementationPrs": [
+            406
+          ]
+        }
+      ]
+    },
+    {
+      "id": "incident",
+      "title": "Incident response and escalation",
+      "issue": 503,
+      "edition": "core",
+      "horizon": "later",
+      "inRoadmap": true,
+      "feedback": [
+        {
+          "slug": "incident-response-workflows",
+          "status": "In Progress",
+          "implementationPrs": [
+            496,
+            498
+          ]
+        }
+      ],
+      "implementationPrs": [
+        496,
+        498
+      ],
+      "relatedIssues": [
+        364,
+        378,
+        387
+      ]
+    },
+    {
+      "id": "windows",
+      "title": "Windows services beyond IIS",
+      "issue": 504,
+      "edition": "core",
+      "horizon": "later",
+      "inRoadmap": true,
+      "implementationPrs": [
+        498,
+        460
+      ],
+      "relatedIssues": [
+        369,
+        366,
+        368,
+        367,
+        372,
+        375,
+        374,
+        373,
+        371,
+        376,
+        379,
+        377
+      ]
+    },
+    {
+      "id": "readiness",
+      "title": "Workspace and contributor readiness",
+      "issue": 505,
+      "edition": "core",
+      "horizon": "later",
+      "inRoadmap": true
+    },
+    {
+      "id": "discovery",
+      "title": "Provider expansion",
+      "issue": 506,
+      "edition": "core",
+      "horizon": "later",
+      "inRoadmap": true,
+      "feedback": [
+        {
+          "slug": "bitbucket-integration",
+          "status": "Planned"
+        },
+        {
+          "slug": "integration-with-vaults-secrets-manager",
+          "status": "Planned"
+        }
+      ],
+      "relatedIssues": [
+        353
+      ]
+    },
+    {
+      "id": "telegram",
+      "title": "Telegram notifications",
+      "issue": 507,
+      "edition": "core",
+      "horizon": "later",
+      "inRoadmap": true,
+      "feedback": [
+        {
+          "slug": "telegram-webhook-integration",
+          "status": "Planned"
+        }
+      ]
+    },
+    {
+      "id": "token-renewal",
+      "title": "API-triggered token renewal",
+      "issue": 508,
+      "edition": "core",
+      "horizon": "later",
+      "inRoadmap": true,
+      "feedback": [
+        {
+          "slug": "auto-renewal",
+          "status": "Planned"
+        }
+      ]
+    },
+    {
+      "id": "pipeline",
+      "title": "CI/CD renewal templates",
+      "issue": 308,
+      "edition": "core",
+      "horizon": "later",
+      "inRoadmap": true,
+      "feedback": [
+        {
+          "slug": "create-playbooks-and-cicd-templates-to-ease-lifecycle-management",
+          "status": "Planned"
+        }
+      ]
+    },
+    {
+      "id": "followup-360",
+      "title": "Certificate-native alerts",
+      "issue": 360,
+      "edition": "core",
+      "horizon": "later",
+      "inRoadmap": true,
+      "implementationPrs": [
+        498
+      ]
+    },
+    {
+      "id": "followup-344",
+      "title": "Job cancellation",
+      "issue": 344,
+      "edition": "core",
+      "horizon": "later",
+      "inRoadmap": true
+    },
+    {
+      "id": "followup-341",
+      "title": "Manual job evidence",
+      "issue": 341,
+      "edition": "core",
+      "horizon": "later",
+      "inRoadmap": true
+    },
+    {
+      "id": "followup-410",
+      "title": "Restore decommissioned certificate identities",
+      "issue": 410,
+      "edition": "core",
+      "horizon": "later",
+      "inRoadmap": true
+    },
+    {
+      "id": "followup-354",
+      "title": "Host qualification expansion",
+      "issue": 354,
+      "edition": "core",
+      "horizon": "later",
+      "inRoadmap": true
+    },
+    {
+      "id": "followup-300",
+      "title": "Release provenance",
+      "issue": 300,
+      "edition": "core",
+      "horizon": "later",
+      "inRoadmap": true
+    },
+    {
+      "id": "followup-235",
+      "title": "Performance budgets",
+      "issue": 235,
+      "edition": "core",
+      "horizon": "later",
+      "inRoadmap": true
+    },
+    {
+      "id": "followup-238",
+      "title": "Dashboard and test maintainability",
+      "issue": 238,
+      "edition": "core",
+      "horizon": "later",
+      "inRoadmap": true
+    },
+    {
+      "id": "adcs-baseline",
+      "title": "Released AD CS Windows/IIS baseline",
+      "issue": 321,
+      "edition": "core",
+      "horizon": "shipped",
+      "inRoadmap": false,
+      "release": "v0.18.0",
+      "planningStatus": "Done",
+      "feedback": [
+        {
+          "slug": "certificate-lifecycle-management-baseline-core-018x",
+          "status": "Completed"
+        }
+      ]
+    }
+  ]
+}
