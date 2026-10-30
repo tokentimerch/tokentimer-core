@@ -13,12 +13,15 @@ import {
   SimpleGrid,
   Text,
   VStack,
+  useColorModeValue,
 } from '@chakra-ui/react';
 import apiClient from '../utils/apiClient';
 import { DashboardActionButton } from './DashboardPrimitives';
 import { METRIC_LABEL_CHOICES } from './imports/AutoSyncMetricSettings.jsx';
 const EXTRA = ['asset_name', 'project', 'group'];
 export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
+  const muted = useColorModeValue('gray.600', 'gray.400');
+
   const [policy, setPolicy] = useState(null),
     [error, setError] = useState(''),
     [saving, setSaving] = useState(false),
@@ -133,7 +136,7 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
           {policy.extra_labels_locked ? (
             <Badge alignSelf='start'>Labels set by environment</Badge>
           ) : null}
-          <Text fontSize='xs' color='gray.500'>
+          <Text fontSize='xs' color={muted}>
             Combining labels increases time series and alerts and exposes
             metadata. Asset labels are off by default; environment restrictions
             take priority.
@@ -171,8 +174,8 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
               onChange={e => change({ monitoring_group: e.target.value })}
             />
             <FormHelperText fontSize='xs'>
-              Use the same group for every integration. An empty value clears
-              the group while this override is active.
+              The group is exposed when its metric label is selected. An empty
+              override clears the group.
             </FormHelperText>
           </FormControl>
         </VStack>

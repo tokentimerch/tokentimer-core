@@ -298,6 +298,9 @@ router.put("/api/v1/admin/auto-sync/metrics", getApiLimiter(), requireAuth, asyn
       return res.status(400).json({ error: "Invalid auto-sync metric defaults" });
     const options = deploymentMetricLabelOptions();
     const payload = { ...body };
+    const currentPolicy = await readSystemMetricPolicy(pool);
+    if (currentPolicy.locked) delete payload.override_metrics;
+    if (currentPolicy.monitoring_group_locked) delete payload.override_monitoring_group;
     if (options.extra_labels_locked) {
       const previous = await systemSettings.getJsonSetting(pool, "auto_sync_metrics", "labels");
       payload.labels = [...body.labels.filter(label => !HIGH_CARDINALITY_LABELS.includes(label)),

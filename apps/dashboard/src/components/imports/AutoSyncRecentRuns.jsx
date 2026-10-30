@@ -1,3 +1,4 @@
+import { Fragment, useState } from 'react';
 import {
   Badge,
   Box,
@@ -10,6 +11,7 @@ import {
   Th,
   Thead,
   Tr,
+  useColorModeValue,
 } from '@chakra-ui/react';
 const states = {
   success: ['Succeeded', 'green'],
@@ -39,17 +41,20 @@ export default function AutoSyncRecentRuns({
   loadingEarlier = false,
   onLoadEarlier,
 }) {
+  const muted = useColorModeValue('gray.600', 'gray.400');
+  const [expandedRun, setExpandedRun] = useState(null);
+
   return (
     <Box>
       <Text fontSize='sm' fontWeight='semibold' mb={3}>
         Recent runs
       </Text>
       {loading ? (
-        <Text fontSize='sm' color='gray.500'>
+        <Text fontSize='sm' color={muted}>
           Loading run history…
         </Text>
       ) : runs.length === 0 ? (
-        <Text fontSize='sm' color='gray.500'>
+        <Text fontSize='sm' color={muted}>
           No runs yet
         </Text>
       ) : (
@@ -75,46 +80,68 @@ export default function AutoSyncRecentRuns({
                   'gray',
                 ];
                 return (
-                  <Tr key={run.run_id}>
-                    <Td py={3} verticalAlign='top'>
-                      <Text fontSize='sm'>{started(run.started_at)}</Text>
-                      <Text fontSize='xs' color='gray.500' mt={1}>
-                        {run.trigger === 'manual'
-                          ? 'Manual'
-                          : run.trigger === 'scheduled'
-                            ? 'Scheduled'
-                            : run.trigger || 'Unknown trigger'}{' '}
-                        · {count(run.discovered_count)} found
-                      </Text>
-                    </Td>
-                    <Td py={3} verticalAlign='top'>
-                      <Badge colorScheme={color} textTransform='none'>
-                        {label}
-                      </Badge>
-                      {run.error ? (
-                        <Text
-                          fontSize='xs'
-                          color='red.500'
-                          whiteSpace='normal'
-                          maxW='xs'
-                          mt={2}
-                        >
-                          {run.error}
+                  <Fragment key={run.run_id}>
+                    <Tr>
+                      <Td py={3} verticalAlign='top'>
+                        <Text fontSize='sm'>{started(run.started_at)}</Text>
+                        <Text fontSize='xs' color={muted} mt={1}>
+                          {run.trigger === 'manual'
+                            ? 'Manual'
+                            : run.trigger === 'scheduled'
+                              ? 'Scheduled'
+                              : run.trigger || 'Unknown trigger'}{' '}
+                          · {count(run.discovered_count)} found
                         </Text>
-                      ) : null}
-                    </Td>
-                    {[
-                      'created_count',
-                      'updated_count',
-                      'detached_count',
-                      'deleted_count',
-                      'error_count',
-                    ].map(key => (
-                      <Td key={key} py={3} isNumeric verticalAlign='top'>
-                        {count(run[key])}
                       </Td>
-                    ))}
-                  </Tr>
+                      <Td py={3} verticalAlign='top'>
+                        <Badge colorScheme={color} textTransform='none'>
+                          {label}
+                        </Badge>
+                        {run.error ? (
+                          <Button
+                            display='block'
+                            size='xs'
+                            variant='link'
+                            fontSize='xs'
+                            aria-label={
+                              'Details for ' + started(run.started_at)
+                            }
+                            aria-expanded={expandedRun === run.run_id}
+                            onClick={() =>
+                              setExpandedRun(previous =>
+                                previous === run.run_id ? null : run.run_id
+                              )
+                            }
+                            mt={2}
+                          >
+                            {expandedRun === run.run_id
+                              ? 'Hide details'
+                              : 'Details'}
+                          </Button>
+                        ) : null}
+                      </Td>
+                      {[
+                        'created_count',
+                        'updated_count',
+                        'detached_count',
+                        'deleted_count',
+                        'error_count',
+                      ].map(key => (
+                        <Td key={key} py={3} isNumeric verticalAlign='top'>
+                          {count(run[key])}
+                        </Td>
+                      ))}
+                    </Tr>
+                    {run.error && expandedRun === run.run_id ? (
+                      <Tr>
+                        <Td colSpan={7} py={3} whiteSpace='normal'>
+                          <Text fontSize='sm' color={muted}>
+                            {run.error}
+                          </Text>
+                        </Td>
+                      </Tr>
+                    ) : null}
+                  </Fragment>
                 );
               })}
             </Tbody>

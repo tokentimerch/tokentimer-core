@@ -317,10 +317,12 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     assert.equal((await request(app).put(url).send({enabled:'true',labels:['kind']})).status,400);
     assert.equal((await request(app).put(url).send({enabled:true,labels:['secret']})).status,400);
     process.env.AUTO_SYNC_METRICS_ENABLED='false';
-    const saved=await request(app).put(url).send({enabled:true,labels:['kind']});
+    const saved=await request(app).put(url).send({override_metrics:true,enabled:true,labels:['kind']});
     assert.equal(saved.status,200);assert.equal(saved.body.enabled,false);assert.equal(saved.body.locked,true);assert.equal(saved.body.source,'env');
     assert.notEqual((await pool.query('SELECT auto_sync_metrics FROM system_settings WHERE id=1')).rows[0].auto_sync_metrics.enabled,true);
-    await pool.query('UPDATE users SET is_admin=FALSE WHERE id=$1',[userId]);delete process.env.AUTO_SYNC_METRICS_ENABLED;
+    delete process.env.AUTO_SYNC_METRICS_ENABLED;
+    assert.equal((await request(app).get(url)).body.override_metrics,false);
+    await pool.query('UPDATE users SET is_admin=FALSE WHERE id=$1',[userId]);
   });
   it("globally hides existing details and stops capturing new high-cardinality values",async()=>{
     const config=await configuration();await settings(config);const run=await start(config);await scan(run,['42','43']);await imported(run);
@@ -387,7 +389,7 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     process.env.AUTO_SYNC_METRICS_MONITORING_GROUP='environment';
     await pool.query('UPDATE users SET is_admin=TRUE WHERE id=$1',[userId]);
     const global='/api/v1/admin/auto-sync/metrics';
-    const saved=await request(app).put(global).send({override_metrics:false,enabled:true,labels:['kind'],override_monitoring_group:false,monitoring_group:'database'});
+    const saved=await request(app).put(global).send({override_metrics:false,enabled:true,labels:['kind'],override_monitoring_group:true,monitoring_group:'database'});
     assert.equal(saved.status,200);assert.equal(saved.body.monitoring_group,'environment');assert.equal(saved.body.monitoring_group_locked,true);
     const local=(await pool.query('SELECT metrics_settings FROM auto_sync_configs WHERE id=$1',[config.id])).rows[0].metrics_settings;
     assert.equal((await request(app).put('/api/v1/workspaces/'+workspaceId+'/auto-sync/'+config.id).send({metrics_settings:{...local,monitoring_group:'bypass'}})).status,409);

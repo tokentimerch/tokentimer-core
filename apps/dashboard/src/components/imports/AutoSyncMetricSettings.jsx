@@ -17,6 +17,7 @@ import {
   SimpleGrid,
   Text,
   VStack,
+  useColorModeValue,
 } from '@chakra-ui/react';
 export const DEFAULT_METRIC_SETTINGS = {
   enabled: false,
@@ -38,6 +39,8 @@ export default function AutoSyncMetricSettings({
   allowedExtraLabels = [],
   systemPolicy = {},
 }) {
+  const muted = useColorModeValue('gray.600', 'gray.400');
+
   const settings = { ...DEFAULT_METRIC_SETTINGS, ...value };
   const managed = systemPolicy.override_metrics === true;
   const groupManaged = systemPolicy.override_monitoring_group === true;
@@ -63,7 +66,7 @@ export default function AutoSyncMetricSettings({
         <AccordionPanel px={3} pb={4}>
           <VStack align='stretch' spacing={4} fontSize='sm'>
             {managed ? (
-              <Text color='gray.500' fontSize='sm'>
+              <Text color={muted} fontSize='sm'>
                 Metric settings are managed in System Settings.
               </Text>
             ) : null}
@@ -109,7 +112,7 @@ export default function AutoSyncMetricSettings({
                   );
                 })}
               </SimpleGrid>
-              <Text fontSize='xs' color='gray.500' mt={2}>
+              <Text fontSize='xs' color={muted} mt={2}>
                 Configuration ID is always included.
               </Text>
             </Box>
@@ -157,7 +160,7 @@ export default function AutoSyncMetricSettings({
                 included.
               </Text>
             </Alert>
-            <Text fontSize='xs' color='gray.500'>
+            <Text fontSize='xs' color={muted}>
               Asset names and project/group details cover future creations only.
               Previous samples remain until Prometheus retention expires.
             </Text>

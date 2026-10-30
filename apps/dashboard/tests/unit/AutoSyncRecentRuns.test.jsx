@@ -29,6 +29,10 @@ it('shows structured history with separate outcomes and inventory columns', () =
   expect(screen.getByRole('columnheader', { name: 'Detached' })).toBeVisible();
   expect(screen.getByText('Partial')).toBeVisible();
   expect(screen.getByText('Scheduled · 12 found')).toBeVisible();
+  expect(
+    screen.queryByText('One project was inaccessible')
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /Details for/ }));
   expect(screen.getByText('One project was inaccessible')).toBeVisible();
 });
 it('hides previous history while the selected configuration is loading', () => {
