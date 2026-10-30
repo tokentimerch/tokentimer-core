@@ -726,7 +726,8 @@ describe('CertificateDetailsModal', () => {
     expect(screen.queryByText('Auto-renewal')).not.toBeInTheDocument();
     expect(screen.queryByText('Key locality')).not.toBeInTheDocument();
     expect(screen.queryByText('Section')).not.toBeInTheDocument();
-    expect(screen.queryByText('Contact groups')).not.toBeInTheDocument();
+    expect(screen.getByText('Contact groups')).toBeInTheDocument();
+    expect(screen.getByText('Use workspace default')).toBeInTheDocument();
     expect(
       screen.queryByRole('heading', { name: 'Certificate details' })
     ).not.toBeInTheDocument();
@@ -779,5 +780,20 @@ describe('CertificateDetailsModal', () => {
     expect(
       screen.queryByRole('heading', { name: 'Certificate operations' })
     ).not.toBeInTheDocument();
+  });
+  it('distinguishes unrecorded historical routing from workspace-default routing', () => {
+    renderModal({
+      token: {
+        name: 'Historical certificate',
+        category: 'cert',
+        type: 'ssl_cert',
+      },
+      isViewer: true,
+    });
+    expect(screen.getByText('Contact groups')).toBeInTheDocument();
+    expect(
+      screen.getByText('Not recorded for this certificate')
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Use workspace default')).not.toBeInTheDocument();
   });
 });

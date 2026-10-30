@@ -345,11 +345,41 @@ async function listCertificateIdentities({
   // row. The snapshot is also the fallback if a live token rotates or disappears.
   if (identityId && rows.length) {
     const history = await client.query(
-      `SELECT token_details, certificate_details FROM certops_identity_detail_history
-       WHERE workspace_id = $1 AND identity_id = $2`,
-      [workspaceId, identityId],
+      `SELECT h.token_details, h.certificate_details,
+         CASE WHEN token.id IS NOT NULL THEN COALESCE((
+           SELECT jsonb_agg(membership.contact_group_id ORDER BY membership.contact_group_id COLLATE "C")
+           FROM token_contact_groups membership
+           WHERE membership.workspace_id = h.workspace_id AND membership.token_id = token.id
+         ), '[]'::jsonb) END AS contact_group_ids
+       FROM certops_identity_detail_history h
+       LEFT JOIN tokens token ON token.workspace_id = h.workspace_id
+         AND token.id = h.token_id AND token.id = $3
+         AND certops_token_matches_details(token, h.certificate_details)
+         AND EXISTS (SELECT 1 FROM managed_certificates current_source
+           JOIN certops_certificate_identities identity ON identity.workspace_id = current_source.workspace_id
+             AND identity.fingerprint_sha256 = certops_normalize_fingerprint(current_source.fingerprint_sha256)
+           WHERE current_source.workspace_id = h.workspace_id AND current_source.token_id = token.id
+             AND identity.id = h.identity_id)
+         AND NOT EXISTS (SELECT 1 FROM managed_certificates other
+           JOIN certops_certificate_identities identity ON identity.id = h.identity_id AND identity.workspace_id = h.workspace_id
+           WHERE other.workspace_id = h.workspace_id AND other.token_id = token.id
+             AND certops_normalize_fingerprint(other.fingerprint_sha256) IS DISTINCT FROM identity.fingerprint_sha256)
+       WHERE h.workspace_id = $1 AND h.identity_id = $2`,
+      [workspaceId, identityId, rows[0].token_id || null],
     );
     rows[0].token_snapshot = history.rows[0]?.token_details || null;
+    // Routing belongs to this verified live asset, not to every token sharing a
+    // fingerprint. Do not attach current groups to a retained historical snapshot.
+    const groupIds = history.rows[0]?.contact_group_ids;
+    // The token may have rotated or moved since the inventory page query.
+    if (!Array.isArray(groupIds)) rows[0].token_id = null;
+    if (rows[0].token_snapshot && Array.isArray(groupIds)) {
+      rows[0].token_snapshot = {
+        ...rows[0].token_snapshot,
+        contact_group_ids: groupIds,
+        contact_group_id: groupIds[0] || null,
+      };
+    }
     rows[0].certificate_snapshot = history.rows[0]?.certificate_details || null;
     // A stopped registration can observe a replacement without having ever
     // managed that fingerprint. Offer a new period without inventing history.
