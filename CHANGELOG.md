@@ -11,6 +11,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Development assistant interface.** Local MCP clients can read bounded CertOps state and request manual ACME renewals with workspace-scoped credentials. Renewals follow **Job approval**: on requires another manager/admin to review the resolved effect; off queues claimable work without recording approval. The dashboard uses the standard detail layout for review and rejection. **Operator guidance:** both MCP flags default off; keep production disabled pending release acceptance. See [configuration](docs/CONFIGURATION.md#mcp-operator-interface). Submission or publication does not prove installation or live TLS.
+
 - **Global auto-sync overrides.** System Settings can force metric exposure/labels and the monitoring group independently across all integrations. Managed controls prevent local changes; a Configured badge identifies active overrides. Otherwise, connections keep their saved choices. Import forms use consistent typography and structured run history. Environment values retain priority; extra asset labels default off and increase series/alert cardinality. Names/scopes cover future creations; existing provider counters stay unchanged. **Operator action:** apply migrations 81–82 with matching API/dashboard code.
 
 - **API request correlation.** Responses include a generated `X-Request-Id` that matches `correlationId` in request-scoped API logs and completion records. Use it when reporting API failures; incoming request IDs are replaced to prevent forged or sensitive values from entering logs. Dashboard API errors display the matching request reference when available. Worker propagation remains follow-up work.
