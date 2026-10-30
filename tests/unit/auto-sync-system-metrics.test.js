@@ -21,3 +21,65 @@ describe('independent global auto-sync overrides',()=>{
  });
 
 });
+
+describe('mixed-source metric hierarchy',()=>{
+  const savedLocal={enabled:true,labels:['kind'],monitoring_group:'local'};
+  it('uses the environment for exposure and the active system override for the group',()=>{
+    const stored={override_metrics:true,enabled:false,labels:['kind'],override_monitoring_group:true,monitoring_group:'system'};
+    const original=structuredClone({stored,savedLocal});
+    assert.deepEqual(effectiveMetricSettings(savedLocal,{AUTO_SYNC_METRICS_ENABLED:'true'},stored),{...savedLocal,monitoring_group:'system'});
+    const policy=systemMetricPolicy(stored,{AUTO_SYNC_METRICS_ENABLED:'true'});assert.equal(policy.locked,true);assert.equal(policy.monitoring_group_locked,false);
+    assert.deepEqual({stored,savedLocal},original);
+  });
+  it('uses the saved system exposure override and environment group independently',()=>{
+    const stored={override_metrics:true,enabled:false,labels:['kind'],override_monitoring_group:true,monitoring_group:'system'};
+    assert.deepEqual(effectiveMetricSettings(savedLocal,{AUTO_SYNC_METRICS_MONITORING_GROUP:'environment'},stored),{...savedLocal,enabled:false,monitoring_group:'environment'});
+    const policy=systemMetricPolicy(stored,{AUTO_SYNC_METRICS_MONITORING_GROUP:'environment'});assert.equal(policy.locked,false);assert.equal(policy.monitoring_group_locked,true);
+  });
+  it('ignores inactive saved overrides and empty environment values, preserving local choices',()=>{
+    const stored={override_metrics:false,enabled:false,labels:[],override_monitoring_group:false,monitoring_group:'system'};
+    const env={AUTO_SYNC_METRICS_ENABLED:' ',AUTO_SYNC_METRICS_MONITORING_GROUP:' '};
+    assert.deepEqual(effectiveMetricSettings(savedLocal,env,stored),savedLocal);
+    assert.equal(systemMetricPolicy(stored,env).override_metrics,false);assert.equal(systemMetricPolicy(stored,env).override_monitoring_group,false);
+  });
+});
+
+it('reports asset-label environment ownership without forcing unrelated overrides',()=>{
+  for(const raw of ['none','project']){const policy=systemMetricPolicy({override_metrics:false,override_monitoring_group:false},{AUTO_SYNC_METRICS_EXTRA_LABELS:raw});assert.equal(policy.extra_labels_locked,true);assert.equal(policy.locked,false);assert.equal(policy.override_metrics,false);assert.equal(policy.override_monitoring_group,false);}
+  assert.equal(systemMetricPolicy({},{}).extra_labels_locked,false);
+});
+it('identifies the controlling sources in managed-edit API errors',()=>{
+  const next={...local,enabled:false,monitoring_group:'new'};
+  assert.throws(()=>assertMetricSettingsEditable(local,next,{override_metrics:true,locked:true,override_monitoring_group:true,monitoring_group_locked:false}),error=>error.code==='AUTO_SYNC_METRICS_MANAGED'&&error.message.includes('environment settings (Helm/Compose)')&&error.message.includes('System Settings → Auto-sync'));
+  assert.throws(()=>assertMetricSettingsEditable(local,{...local,monitoring_group:'new'},{override_monitoring_group:true,monitoring_group_locked:true}),error=>error.code==='AUTO_SYNC_METRICS_MANAGED'&&error.message.includes('environment settings')&&!error.message.includes('System Settings'));
+});
+
+describe('global deployment label selection',()=>{
+ const stored={override_metrics:false,enabled:false,labels:['kind','asset_name']};
+ const env=(labels,enabled='true')=>({AUTO_SYNC_METRICS_ENABLED:enabled,AUTO_SYNC_METRICS_LABELS:labels});
+ it('forces one explicit label selection globally without changing saved choices',()=>{
+  const original=structuredClone(stored);const selected=env(' project,kind ');
+  const policy=systemMetricPolicy(stored,selected);assert.equal(policy.labels_locked,true);assert.equal(policy.override_metrics,true);assert.deepEqual(policy.labels,['kind','project']);
+  assert.deepEqual(effectiveMetricSettings({...local,enabled:false},selected,stored),{...local,labels:['kind','project']});assert.deepEqual(stored,original);
+ });
+ it('keeps the legacy asset-label cap restrictive without adding unselected labels',()=>{
+  assert.deepEqual(systemMetricPolicy(stored,{...env('kind,project'),AUTO_SYNC_METRICS_EXTRA_LABELS:'asset_name,group'}).labels,['kind']);
+  assert.deepEqual(systemMetricPolicy(stored,{...env('kind,project'),AUTO_SYNC_METRICS_EXTRA_LABELS:'none'}).labels,['kind']);
+  assert.deepEqual(systemMetricPolicy(stored,{...env('kind,project'),AUTO_SYNC_METRICS_EXTRA_LABELS:'project'}).labels,['kind','project']);
+ });
+ it('supports no optional labels and restores database choices when unset',()=>{
+  assert.deepEqual(systemMetricPolicy(stored,env('none')).labels,[]);
+  assert.deepEqual(systemMetricPolicy(stored,env(' ')).labels,stored.labels);
+  assert.equal(systemMetricPolicy(stored,{}).labels_locked,false);
+ });
+ it('keeps global disabling ahead of explicit metadata selection',()=>{
+  const settings=effectiveMetricSettings(local,env('asset_name,project','false'),stored);assert.equal(settings.enabled,false);
+ });
+ it('rejects unknown, duplicate, empty and mixed sentinel entries',()=>{
+  for(const labels of ['secret','kind,kind','kind,','kind,,project','none,kind'])assert.throws(()=>systemMetricPolicy(stored,env(labels)),/unique supported labels/);
+ });
+ it('requires an explicit enabled or disabled global override with a label list',()=>{
+  for(const enabled of ['', 'yes'])assert.throws(()=>systemMetricPolicy(stored,env('kind',enabled)),/requires AUTO_SYNC_METRICS_ENABLED/);
+  assert.throws(()=>systemMetricPolicy(stored,{AUTO_SYNC_METRICS_LABELS:'kind'}),/requires AUTO_SYNC_METRICS_ENABLED/);
+ });
+});

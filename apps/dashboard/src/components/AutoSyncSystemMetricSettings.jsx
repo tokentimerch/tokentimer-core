@@ -38,7 +38,11 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
         if (active) {
           setPolicy(r.data);
           onConfiguredChange?.(
-            r.data.override_metrics || r.data.override_monitoring_group
+            Boolean(
+              r.data.override_metrics ||
+              r.data.override_monitoring_group ||
+              r.data.extra_labels_locked
+            )
           );
         }
       })
@@ -67,7 +71,11 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
       });
       setPolicy(r.data);
       onConfiguredChange?.(
-        r.data.override_metrics || r.data.override_monitoring_group
+        Boolean(
+          r.data.override_metrics ||
+          r.data.override_monitoring_group ||
+          r.data.extra_labels_locked
+        )
       );
       setSaved(true);
     } catch {
@@ -146,6 +154,7 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
                   isChecked={permitted && policy.labels.includes(key)}
                   isDisabled={
                     saving ||
+                    policy.labels_locked ||
                     !policy.override_metrics ||
                     !policy.enabled ||
                     !permitted ||
@@ -164,7 +173,7 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
               );
             })}
           </SimpleGrid>
-          {policy.extra_labels_locked ? (
+          {policy.labels_locked || policy.extra_labels_locked ? (
             <Badge alignSelf='start'>Labels set by environment</Badge>
           ) : null}
           <Text fontSize='xs' color={muted}>

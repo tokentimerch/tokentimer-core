@@ -108,6 +108,7 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
   beforeEach(async () => {
     await pool.query('UPDATE users SET is_admin=FALSE WHERE id=$1',[userId]);
     delete process.env.AUTO_SYNC_METRICS_ENABLED;
+    delete process.env.AUTO_SYNC_METRICS_LABELS;
     delete process.env.AUTO_SYNC_METRICS_MONITORING_GROUP;
     await pool.query("UPDATE system_settings SET auto_sync_metrics = '{}'::jsonb WHERE id=1");
     require("../../apps/api/services/systemSettings").invalidateCache();
@@ -397,6 +398,37 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     delete process.env.AUTO_SYNC_METRICS_MONITORING_GROUP;
     assert.equal((await metric('auto_sync_items_created_detailed_total'))[0].labels.monitoring_group,'critical');
     await finish(run);
+  });
+
+  it("reports environment label ownership through the integration policy without locking unrelated fields",async()=>{
+    const config=await configuration();process.env.AUTO_SYNC_METRICS_EXTRA_LABELS='none';
+    try{
+      const url='/api/v1/workspaces/'+workspaceId+'/auto-sync';const result=await request(app).get(url);assert.equal(result.status,200);
+      const policy=result.body.metric_label_policy.system;assert.equal(policy.extra_labels_locked,true);assert.equal(policy.locked,false);assert.equal(policy.override_metrics,false);assert.equal(policy.override_monitoring_group,false);
+      const update=await request(app).put(url+'/'+config.id).send({metrics_settings:{enabled:true,labels:['kind'],monitoring_group:'local'}});assert.equal(update.status,200);
+      delete process.env.AUTO_SYNC_METRICS_EXTRA_LABELS;
+      const restored=await request(app).get(url);assert.equal(restored.body.metric_label_policy.system.extra_labels_locked,false);
+    }finally{delete process.env.AUTO_SYNC_METRICS_EXTRA_LABELS;}
+  });
+
+  it("preserves database labels during env-controlled UI saves and restores them when released",async()=>{
+    delete process.env.AUTO_SYNC_METRICS_EXTRA_LABELS;
+    await pool.query('UPDATE users SET is_admin=TRUE WHERE id=$1',[userId]);
+    const stored={override_metrics:false,enabled:false,labels:['kind','asset_name']};
+    await pool.query('UPDATE system_settings SET auto_sync_metrics=$1 WHERE id=1',[stored]);
+    const config=await configuration();await settings(config,['kind']);
+    process.env.AUTO_SYNC_METRICS_ENABLED='true';process.env.AUTO_SYNC_METRICS_LABELS='kind,project';
+    try{
+      const url='/api/v1/admin/auto-sync/metrics';const get=await request(app).get(url);assert.equal(get.status,200);assert.deepEqual(get.body.labels,['kind','project']);assert.equal(get.body.labels_locked,true);
+      const save=await request(app).put(url).send({override_metrics:true,enabled:true,labels:['kind','project']});assert.equal(save.status,200);
+      assert.deepEqual((await pool.query('SELECT auto_sync_metrics FROM system_settings WHERE id=1')).rows[0].auto_sync_metrics,stored);
+      const connections=await request(app).get('/api/v1/workspaces/'+workspaceId+'/auto-sync');assert.equal(connections.body.metric_label_policy.system.labels_locked,true);
+      const run=await start(config);await scan(run,['42']);await imported(run);
+      let sample=(await metric('auto_sync_items_created_detailed_total'))[0];assert.equal(sample.labels.project,'platform/backend');assert.equal(sample.labels.asset_name,'');assert.equal(sample.labels.kind,'gitlab-project-token');
+      delete process.env.AUTO_SYNC_METRICS_ENABLED;delete process.env.AUTO_SYNC_METRICS_LABELS;
+      const restored=await request(app).get(url);assert.deepEqual(restored.body.labels,stored.labels);assert.equal(restored.body.labels_locked,false);assert.equal(restored.body.override_metrics,false);
+      sample=(await metric('auto_sync_items_created_detailed_total'))[0];assert.equal(sample.labels.project,'');await finish(run);
+    }finally{delete process.env.AUTO_SYNC_METRICS_ENABLED;delete process.env.AUTO_SYNC_METRICS_LABELS;}
   });
 
 });

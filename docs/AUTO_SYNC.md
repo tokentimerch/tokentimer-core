@@ -71,11 +71,11 @@ Both cause scrape failures, not evidence of zero activity.
 
 ### Optional configuration and asset labels
 
-- Apply migrations 81–82 with matching API/dashboard code; provider counters stay unchanged.
-- System Settings → Auto-sync has independent overrides for metrics/labels and the monitoring group. Each forces all integrations and locks its connection controls; active overrides show **Configured**.
-- Without an override, each connection keeps its saved choices in the collapsed form below filters.
-- Environment values take priority: `AUTO_SYNC_METRICS_ENABLED`, `AUTO_SYNC_METRICS_EXTRA_LABELS` and `AUTO_SYNC_METRICS_MONITORING_GROUP`. Empty uses saved settings; `none` blocks extra asset labels.
-- **Warning:** labels multiply series/alerts and expose metadata, never secrets. Names/scopes cover future creations; old samples remain until retention expires.
+- Apply migrations 81–82 with matching API/dashboard code; aggregate counters stay unchanged.
+- System Settings → Auto-sync independently overrides metrics/labels and monitoring group, locking integration controls. Otherwise, integrations retain their choices.
+- Environment wins: `AUTO_SYNC_METRICS_ENABLED=true/false`, optional `AUTO_SYNC_METRICS_LABELS` (CSV or `none`), and independent `AUTO_SYNC_METRICS_MONITORING_GROUP`. Empty restores saved values; `AUTO_SYNC_METRICS_EXTRA_LABELS` optionally restricts asset labels.
+- Helm: `monitoring.metrics.autoSyncEnabled`, `autoSyncLabels`, `autoSyncMonitoringGroup` (under `tokentimer` in Enterprise). Available labels are listed beside these settings.
+- **Warning:** label combinations multiply detailed series and expose metadata. Names/scopes cover future creations; old samples remain until retention expires.
 
 ## Cleanup and removal
 
