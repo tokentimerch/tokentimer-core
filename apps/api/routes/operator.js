@@ -726,6 +726,11 @@ const WRITE_STATUS = Object.freeze({
   [actionCodes.NOT_CANCELLABLE]: 409,
   CERTOPS_WORKSPACE_PAUSED: 409,
   CERTOPS_DISABLED: 404,
+  // Hosted editions retain their normal admission refusals when composing
+  // this router; never turn a policy or quota refusal into a server error.
+  PLAN_FEATURE_REQUIRED: 402,
+  WORKSPACE_FROZEN: 403,
+  CERTOPS_RENEWAL_QUOTA_EXCEEDED: 429,
   // Raised by the shared job-creation path when a certificate authority has
   // too many renewals in flight. Waiting, or approving/clearing others, resolves it.
   CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED: 409,
@@ -737,6 +742,9 @@ const WRITE_STATUS = Object.freeze({
 // Messages from the shared path can name internal detail, so these refusals
 // are re-worded here. The code is the stable part a client acts on.
 const REFUSAL_WORDING = Object.freeze({
+  PLAN_FEATURE_REQUIRED: "Certificate operations require an eligible workspace plan.",
+  WORKSPACE_FROZEN: "This workspace is frozen. Certificate operations cannot be requested.",
+  CERTOPS_RENEWAL_QUOTA_EXCEEDED: "This workspace has reached its monthly renewal-job limit.",
   CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED: "The certificate authority has too many renewals in progress right now. Try again later.",
   CERTOPS_WORKSPACE_PAUSED: "Certificate operations are paused for this workspace.",
   CERTOPS_CERTIFICATE_RETIRED: "The certificate is retired, so it cannot be renewed.",

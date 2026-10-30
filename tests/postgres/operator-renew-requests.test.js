@@ -1480,5 +1480,20 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
     });
   });
 
-  // Tests are appended below.
+  it("keeps hosted admission refusals actionable without exposing internal error details", async () => {
+    const service = require("../../apps/api/services/operator/renewRequests");
+    const original = service.createRenewPlan;
+    const who = (await newConnection(owner)).credential;
+    try {
+      for (const [code, status] of [
+        ["PLAN_FEATURE_REQUIRED", 402], ["WORKSPACE_FROZEN", 403], ["CERTOPS_RENEWAL_QUOTA_EXCEEDED", 429],
+      ]) {
+        service.createRenewPlan = async () => { throw Object.assign(new Error("SENTINEL_INTERNAL_DETAIL"), { code }); };
+        const response = await preview(certA.identityId, who);
+        assert.equal(response.status, status);
+        assert.equal(response.body.code, code);
+        assert.equal(JSON.stringify(response.body).includes("SENTINEL_INTERNAL_DETAIL"), false);
+      }
+    } finally { service.createRenewPlan = original; }
+  });
 });

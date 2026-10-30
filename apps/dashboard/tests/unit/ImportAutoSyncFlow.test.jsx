@@ -381,7 +381,7 @@ describe.each(['gitlab', 'github'])(
       expect(
         screen.getByRole('textbox', { name: 'Monitoring group label' })
       ).toHaveValue('');
-    });
+    }, AUTO_SYNC_FLOW_TIMEOUT);
     it(
       'allocates an unused configuration name despite deletions, whitespace and case',
       async () => {
