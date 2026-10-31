@@ -290,7 +290,39 @@ const create = async (tokenData, { client: transactionClient = null } = {}) => {
   }
 };
 
-const update = async (id, tokenData, { client: transactionClient = null } = {}) => {
+const update = async (id, tokenData, { client: transactionClient = null, manualExpirationSnapshot } = {}) => {
+  if (manualExpirationSnapshot !== undefined && tokenData.expiration !== undefined) {
+    const metadata = { ...tokenData };
+    // An unchanged form field is not an expiry write. In particular, it must
+    // not replace an observation committed after the route read its snapshot.
+    if (metadata.expiration === manualExpirationSnapshot) {
+      delete metadata.expiration;
+      return update(id, metadata, { client: transactionClient });
+    }
+    const guardedUpdate = async (client) => {
+      // Recheck current ownership under the same row lock as the write. A
+      // source attached after the HTTP read must also fence manual expiry.
+      const current = (await client.query(
+        "SELECT * FROM tokens WHERE id=$1 FOR UPDATE", [id],
+      )).rows[0];
+      if (!current) throw new Error("Token not found or update failed");
+      const certificate = String(current.category || "").toLowerCase() === "cert" ||
+        ["ssl_cert", "tls_cert", "code_signing", "client_cert"].includes(String(current.type || "").toLowerCase());
+      const observed = current.workspace_id && (await client.query(
+        `SELECT 1 FROM managed_certificates WHERE workspace_id=$1 AND token_id=$2
+         UNION ALL SELECT 1 FROM domain_monitors WHERE workspace_id=$1 AND token_id=$2 LIMIT 1`,
+        [current.workspace_id, current.id],
+      )).rowCount > 0;
+      if (certificate && current.source_provider || observed) {
+        const error = new Error("Certificate expiration is owned by its provider or verified certificate observation");
+        error.code = "VERIFIED_CERTIFICATE_EXPIRY_REQUIRED";
+        error.statusCode = 409;
+        throw error;
+      }
+      return update(id, metadata, { client });
+    };
+    return transactionClient ? guardedUpdate(transactionClient) : withTokenClient(guardedUpdate);
+  }
   const {
     name,
     expiration,

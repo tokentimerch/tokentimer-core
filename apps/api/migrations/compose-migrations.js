@@ -8,7 +8,15 @@ const ALERT = "certops_job_alert_context";
 const DISTRIBUTION = "certops_material_distribution";
 const REVIEW = "certops_distribution_review";
 const TRANSFER = "certops_distribution_transfer";
-const canonical = [ENROLLMENT, EVIDENCE, ISSUER, ALERT, DISTRIBUTION, REVIEW, TRANSFER];
+const canonical = [
+  ENROLLMENT,
+  EVIDENCE,
+  ISSUER,
+  ALERT,
+  DISTRIBUTION,
+  REVIEW,
+  TRANSFER,
+];
 const histories = [
   canonical,
   [ENROLLMENT, EVIDENCE, ISSUER, DISTRIBUTION, REVIEW, TRANSFER, ALERT],
@@ -18,47 +26,205 @@ const histories = [
 
 function composeMigrations(migrations, recorded = []) {
   for (const [offset, name] of canonical.entries()) {
-    const matches = migrations.filter(entry => entry.name === name);
-    if (matches.length !== 1 || matches[0].version !== 70 + offset) {
-      throw new Error(`Missing or inconsistent pinned Core migration: ${name}`);
-    }
+    const matches = migrations.filter((entry) => entry.name === name);
+    if (matches.length !== 1 || matches[0].version !== 70 + offset)
+      throw new Error("Missing or inconsistent pinned Core migration: " + name);
   }
-  if (new Set(migrations.map(entry => entry.version)).size !== migrations.length ||
-      new Set(migrations.map(entry => entry.name)).size !== migrations.length) {
-    throw new Error("Missing or inconsistent pinned Core migration registry");
+  if (
+    new Set(migrations.map((entry) => entry.name)).size !== migrations.length ||
+    new Set(migrations.map((entry) => entry.version)).size !== migrations.length
+  )
+    throw new Error(
+      "Missing or inconsistent pinned Core migration registry: Duplicate Core migration version or name",
+    );
+  if (
+    new Set(recorded.map((entry) => entry.name)).size !== recorded.length ||
+    new Set(recorded.map((entry) => entry.version)).size !== recorded.length
+  )
+    throw new Error("Unsupported Core migration history: duplicate entries");
+  const tail = recorded
+    .filter((entry) => entry.version >= 70)
+    .slice()
+    .sort((a, b) => a.version - b.version);
+  const prefix = tail.filter((row) => row.version < 78);
+  const order = histories.find((names) =>
+    prefix.every(
+      (row, index) =>
+        row.version === 70 + index &&
+        (index < names.length
+          ? row.name === names[index]
+          : migrations.some(
+              (entry) => entry.version === 77 && entry.name === row.name,
+            )),
+    ),
+  );
+  if (!order)
+    throw new Error(
+      "Unsupported Core migration history at version " + tail[0]?.version,
+    );
+  const rows = tail.filter((row) => row.version >= 78);
+  if (rows.length && prefix.length !== 8)
+    throw new Error("Unsupported Core migration history: incomplete prefix");
+  const extensions = migrations
+    .filter((entry) => entry.version >= 78)
+    .slice()
+    .sort((a, b) => a.version - b.version);
+  const byName = new Map(extensions.map((entry) => [entry.name, entry]));
+  const unknown = rows.find((row) => !byName.has(row.name));
+  if (unknown)
+    throw new Error(
+      "Unsupported Core migration history: unknown extension " + unknown.name,
+    );
+  // Old contiguous previews retain their actual identities. New independent
+  // feature tails may leave only registered reservations absent; arbitrary gaps
+  // or numeric aliases are never accepted.
+  if (
+    rows.some(
+      (row) => row.name === "certops_material_providers" && row.version === 80,
+    )
+  )
+    throw new Error(
+      "Unsupported Core migration history: unrecognized provider preview",
+    );
+  const contiguous = rows.every((row, index) => row.version === 78 + index);
+  if (!contiguous) {
+    const base = [
+      "certops_installed_file_distribution",
+      "auto_sync_provider_stats",
+      "auto_sync_run_metrics",
+      "auto_sync_metric_labels",
+    ];
+    if (
+      !base.every((name, index) =>
+        rows.some((row) => row.version === 78 + index && row.name === name),
+      ) ||
+      rows.some((row) => row.version !== byName.get(row.name).version)
+    )
+      throw new Error("Unsupported Core migration history: noncanonical gap");
   }
-  if (new Set(recorded.map(entry => entry.version)).size !== recorded.length)
-    throw new Error("Unsupported Core migration history with duplicate versions");
-  // PagerDuty is an independent additive tail at 92, beyond the companion
-  // drafts' 82-91 slots. Keep its applied row immutable while later merges
-  // append those lower, previously unregistered migrations. Unknown histories
-  // and gaps in the ordinary Core prefix remain errors, never aliases.
-  const pagerduty = recorded.filter(entry => entry.name === "pagerduty_incident_lifecycle");
-  if (pagerduty.length && (pagerduty.length !== 1 || pagerduty[0].version !== 92 ||
-      !migrations.some(entry => entry.version === 92 && entry.name === pagerduty[0].name) ||
-      !Array.from({length:81}, (_,i) => i+1).every(version => recorded.some(entry => entry.version === version)))) {
-    throw new Error("Unsupported Core migration history for PagerDuty");
-  }
-  const tail = recorded.filter(entry => entry.version >= 70 && entry.name !== "pagerduty_incident_lifecycle").slice().sort((a, b) => a.version - b.version);
-  const suffix = migrations.filter(entry => entry.version > 76 && entry.name !== "pagerduty_incident_lifecycle").slice().sort((a,b) => a.version-b.version);
-  const order = histories.find(names => tail.every((row, offset) => {
-    if (offset < names.length) return row.version === 70 + offset && row.name === names[offset];
-    const expected = suffix[offset - names.length];
-    return expected && row.version === expected.version && row.name === expected.name;
-  }));
-  if (!order) throw new Error(`Unsupported Core migration history at version ${tail[0]?.version}`);
-  const distributionFirst = order[0] === DISTRIBUTION;
-  const replacements = new Map(order.map((name, offset) => {
-    const migration = migrations.find(entry => entry.name === name);
-    // Preserve the SQL previously applied by the Enterprise preview adapter.
-    const sql = distributionFirst && name === ENROLLMENT
-      ? migration.sql.replace("'continue-enrollment', 'adcs-preflight'", "'continue-enrollment', 'adcs-preflight', 'deploy-from-store'")
-      : distributionFirst && name === DISTRIBUTION
-        ? migration.sql.replace("'continue-enrollment','adcs-preflight'", "'continue-enrollment'")
-        : migration.sql;
-    return [name, {...migration, version: 70 + offset, sql}];
-  }));
-  return migrations.map(entry => replacements.get(entry.name) || entry).sort((a, b) => a.version - b.version);
-}
 
+  if (contiguous && rows.length) {
+    const I = "certops_installed_file_distribution",
+      S = "auto_sync_provider_stats",
+      R = "auto_sync_run_metrics",
+      L = "auto_sync_metric_labels";
+    const P = "certops_material_providers",
+      C = "recipient_channel_verification",
+      D = "weekly_digest_recipient_claim_token",
+      PD = "pagerduty_incident_lifecycle";
+    const lifecycle = [
+      "certops_distribution_lifecycle",
+      "certops_distribution_incident_delivery",
+      "certops_stable_consumer_discovery",
+      "certops_material_cleanup",
+      "certops_consumer_verification_failures",
+    ];
+    const Z = "certops_distribution_resolution_delivery";
+    const seeds = [
+      [],
+      [P],
+      [I, P],
+      [I, S, R, P],
+      [I, S, R, L, P],
+      [I, S, R, C, D],
+      [I, S, R, L, C, D],
+      [I, PD],
+      [I, S, R, PD],
+      [I, S, R, ...lifecycle],
+      [I, S, R, L, ...lifecycle],
+      [I, S, R, P, C, D, PD, ...lifecycle],
+      [I, S, R, L, ...lifecycle, P, C, D, PD, Z],
+    ];
+    const recognized = seeds.some((seed) => {
+      const names = [
+        ...seed.filter((name) => byName.has(name)),
+        ...extensions
+          .map((entry) => entry.name)
+          .filter((name) => !seed.includes(name)),
+      ];
+      return rows.every((row, index) => row.name === names[index]);
+    });
+    if (!recognized)
+      throw new Error(
+        "Unsupported Core migration history: unrecognized preview order",
+      );
+  }
+  const dependencies = {
+    auto_sync_run_metrics: ["auto_sync_provider_stats"],
+    auto_sync_metric_labels: ["auto_sync_run_metrics"],
+    auto_sync_system_metrics: ["auto_sync_metric_labels"],
+    certops_distribution_lifecycle: ["certops_installed_file_distribution"],
+    certops_distribution_incident_delivery: ["certops_distribution_lifecycle"],
+    certops_material_cleanup: ["certops_distribution_lifecycle"],
+    certops_consumer_verification_failures: ["certops_material_cleanup"],
+    weekly_digest_recipient_claim_token: ["recipient_channel_verification"],
+    certops_distribution_resolution_delivery: [
+      "certops_distribution_incident_delivery",
+    ],
+  };
+  const seen = new Set();
+  for (const row of rows) {
+    if ((dependencies[row.name] || []).some((name) => !seen.has(name)))
+      throw new Error(
+        "Unsupported Core migration history: incomplete dependency " + row.name,
+      );
+    seen.add(row.name);
+  }
+  const assigned = new Map(rows.map((row) => [row.name, row.version]));
+  const used = new Set(rows.map((row) => row.version));
+  const preview = rows.some(
+    (row) => row.version !== byName.get(row.name).version,
+  );
+  let next =
+    (preview
+      ? Math.max(77, ...rows.map((row) => row.version))
+      : Math.max(
+          77,
+          ...extensions.map((entry) => entry.version),
+          ...rows.map((row) => row.version),
+        )) + 1;
+  for (const entry of extensions) {
+    if (assigned.has(entry.name)) continue;
+    const dependencyFloor = Math.max(
+      77,
+      ...(dependencies[entry.name] || []).map(
+        (name) => assigned.get(name) || 77,
+      ),
+    );
+    const version =
+      preview || used.has(entry.version) || entry.version <= dependencyFloor
+        ? ((next = Math.max(next, dependencyFloor + 1)), next++)
+        : entry.version;
+    assigned.set(entry.name, version);
+    used.add(version);
+  }
+  const distributionFirst = order[0] === DISTRIBUTION;
+  const replacements = new Map(
+    order.map((name, offset) => {
+      const migration = migrations.find((entry) => entry.name === name);
+      const sql =
+        distributionFirst && name === ENROLLMENT
+          ? migration.sql.replace(
+              "'continue-enrollment', 'adcs-preflight'",
+              "'continue-enrollment', 'adcs-preflight', 'deploy-from-store'",
+            )
+          : distributionFirst && name === DISTRIBUTION
+            ? migration.sql.replace(
+                "'continue-enrollment','adcs-preflight'",
+                "'continue-enrollment'",
+              )
+            : migration.sql;
+      return [name, { ...migration, version: 70 + offset, sql }];
+    }),
+  );
+  return migrations
+    .map(
+      (entry) =>
+        replacements.get(entry.name) ||
+        (assigned.has(entry.name)
+          ? { ...entry, version: assigned.get(entry.name) }
+          : entry),
+    )
+    .sort((a, b) => a.version - b.version);
+}
 module.exports = { composeMigrations };

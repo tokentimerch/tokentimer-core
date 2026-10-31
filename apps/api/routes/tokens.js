@@ -188,16 +188,6 @@ async function isManagedBackedCertificateToken(token) {
   return result.rowCount > 0;
 }
 
-async function hasVerifiedExpiryOwner(token) {
-  if (isCertificateToken(token) && token.source_provider) return true;
-  if (await isManagedBackedCertificateToken(token)) return true;
-  if (!token?.workspace_id) return false;
-  return (await pool.query(
-    "SELECT 1 FROM domain_monitors WHERE workspace_id=$1 AND token_id=$2 LIMIT 1",
-    [token.workspace_id, token.id],
-  )).rowCount > 0;
-}
-
 async function canReadToken(token, userId) {
   if (token.workspace_id) {
     const membership = await pool.query(
@@ -774,19 +764,13 @@ router.post(
           throw err;
         }
         applyMembershipToTokenData(tokenData, updateMembership);
-        if (expiration !== existingToken.expiresAt && await hasVerifiedExpiryOwner(existingToken)) {
-          return res.status(409).json({
-            error: "Certificate expiration is owned by its provider or verified certificate observation",
-            code: "VERIFIED_CERTIFICATE_EXPIRY_REQUIRED",
-          });
-        }
         // A confirmed manual import adopts inventory from auto-sync management.
+        if (expiration === existingToken.expiresAt) delete tokenData.expiration;
         const updatedToken = await Token.update(existingToken.id, {
           ...tokenData,
           auto_sync_managed: false,
-          expiration,
           created_at: tokenData.created_at, // Allow updating to null if not found in latest import
-        });
+        }, { manualExpirationSnapshot: existingToken.expiresAt });
         await attachContactGroupIdsToTokens(updatedToken);
         // Audit: token updated via creation endpoint
         try {
@@ -900,6 +884,9 @@ router.post(
       await attachContactGroupIdsToTokens(token);
       res.status(201).json(await enrichTokenWithAlertStateBestEffort(token));
     } catch (error) {
+      if (error?.code === "VERIFIED_CERTIFICATE_EXPIRY_REQUIRED") {
+        return res.status(409).json({ error: error.message, code: error.code });
+      }
       if (error?.code === "VALIDATION_ERROR") {
         return invalidContactGroupResponse(res);
       }
@@ -1301,14 +1288,6 @@ router.put(
         }
       }
 
-      if (expirationProvided && expirationDate !== existingToken.expiresAt &&
-          await hasVerifiedExpiryOwner(existingToken)) {
-        return res.status(409).json({
-          error: "Certificate expiration is owned by its provider or verified certificate observation",
-          code: "VERIFIED_CERTIFICATE_EXPIRY_REQUIRED",
-        });
-      }
-
       // Validate conditional fields based on existing or new type
       const tokenType = type || existingToken.type;
       if (
@@ -1483,7 +1462,10 @@ router.put(
         applyMembershipToTokenData(updateData, updateMembership);
       }
 
-      const updatedToken = await Token.update(id, updateData);
+      if (updateData.expiration === existingToken.expiresAt) delete updateData.expiration;
+      const updatedToken = await Token.update(id, updateData, {
+        manualExpirationSnapshot: existingToken.expiresAt,
+      });
       // Audit: token updated (include before/after for key date fields)
       try {
         const changedFields = Object.keys(updateData);
@@ -1520,6 +1502,9 @@ router.put(
     } catch (error) {
       if (error?.code === "VALIDATION_ERROR") {
         return invalidContactGroupResponse(res);
+      }
+      if (error?.code === "VERIFIED_CERTIFICATE_EXPIRY_REQUIRED") {
+        return res.status(409).json({ error: error.message, code: error.code });
       }
       logger.error("Error updating token:", {
         error: error.message,
