@@ -70,3 +70,37 @@ test("distribution channel payloads contain stable incident correlation and expl
   const email=module.buildDistributionEmailContent(alert);assert.match(email.subject,/resolved/);assert.match(email.text,/certops\/distribution/);
   assert.deepEqual(Object.keys(module.distributionWhatsAppVariables(alert,"Sam")),["recipient_name","incident","evidence_url"]);
 });
+
+test("recovery context retains current routing, tenant lookup and explicit policy cancellation",async()=>{
+  const {loadDistributionAlertContext}=await import("../../apps/worker/src/shared/distributionAlerts.js");
+  const workspaceId="11111111-1111-4111-8111-111111111111",incidentId="22222222-2222-4222-8222-222222222222";
+  const incident={id:incidentId,group_id:"33333333-3333-4333-8333-333333333333",resolved_at:new Date(),code:"verification_failed",evidence:{},
+    policy:{alerts:{enabled:true,contactGroupIds:["current-group"]}}};
+  let stored=incident;
+  const client={async query(sql,params){assert.deepEqual(params.slice(0,2),[workspaceId,incidentId]);return {rows:stored?[stored]:[]};}};
+  const alert=()=>({workspace_id:workspaceId,assigned_ids:["stale-group"],metadata:{incidentId,transition:"resolved"}});
+  const current=alert();assert.equal(await loadDistributionAlertContext(client,current),true);assert.deepEqual(current.assigned_ids,["current-group"]);
+  stored={...incident,policy:{alerts:{...incident.policy.alerts,enabled:false}}};assert.equal(await loadDistributionAlertContext(client,alert()),false);
+  stored={...incident,resolved_at:null};assert.equal(await loadDistributionAlertContext(client,alert()),false,"No unproved resolution can be delivered");
+  stored=null;assert.equal(await loadDistributionAlertContext(client,alert()),false,"Missing or cross-workspace incident is ineligible");
+});
+
+test("ended management drains committed recovery without evaluating new health conditions",async()=>{
+  const workspaceId="11111111-1111-4111-8111-111111111111",groupId="33333333-3333-4333-8333-333333333333";
+  const incident={id:"22222222-2222-4222-8222-222222222222",revision:2,resolved_at:new Date(),evidence:{}};
+  let cleared=false;
+  const client={async query(sql,params){
+    if(sql.includes("SELECT id FROM workspaces"))return {rows:[{id:workspaceId}]};
+    if(sql.includes("SELECT g.*, p.ended_at"))return {rows:[{id:groupId,state:"active",ended_at:new Date()}]};
+    if(sql.includes("SELECT * FROM certops_distribution_policies"))return {rows:[{policy:{alerts:{enabled:true}}}]};
+    if(sql.includes("SELECT * FROM certops_distribution_incidents"))return {rows:[incident]};
+    if(sql.includes("pg_advisory_xact_lock"))return {rows:[]};
+    if(sql.includes("SELECT 1 FROM alert_queue"))return {rows:[{exists:1}],rowCount:1};
+    if(sql.includes("SET resolution_delivery_pending=false")){assert.deepEqual(params,[workspaceId,incident.id]);cleared=true;return {rowCount:1};}
+    if(sql.includes("UPDATE certops_distribution_policies SET next_monitor_at"))return {rowCount:1};
+    throw new Error(`Closed management must not read or mutate new health evidence: ${sql}`);
+  }};
+  const {monitorGroup}=require("../../apps/api/services/certops/distributionMonitoring");
+  assert.equal((await monitorGroup({client,workspaceId,groupId})).monitored,false);
+  assert.equal(cleared,true,"An already committed recovery queue event clears its durable obligation");
+});

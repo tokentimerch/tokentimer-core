@@ -765,3 +765,84 @@ test("quota exhaustion preserves durable recovery until quota returns, with one 
   assert.equal((await postJson("https://events.pagerduty.com/__ok__",payload,"pagerduty")).success,true,"Existing test-mode provider handler accepts retry with the same correlation key");
   await monitorConsumers(f);assert.equal((await pool.query("SELECT 1 FROM alert_queue WHERE alert_key=$1",[key])).rowCount,1);
 });
+
+async function resolvedRecoveryFixture({quotaBlocked=false}={}){
+  const f=await prepareVerification({alerts:true});await enableFixtureNotificationQueue(f);
+  // Link the synthetic publication identity to its real managed source so the
+  // ordinary retirement API closes this distribution's management period.
+  await pool.query("UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=clock_timestamp() WHERE workspace_id=$1 AND id=$3",
+    [f.workspaceId,f.fingerprint,f.certificateId]);
+  await verificationTick(f);
+  await finishConsumerCycle(f,{[f.bindingId]:"failed"});await startNextConsumerCycle(f);
+  await finishConsumerCycle(f,{[f.bindingId]:"failed"});await monitorConsumers(f);
+  const incident=(await pool.query("SELECT * FROM certops_distribution_incidents WHERE workspace_id=$1 AND code='verification_failed' AND resolved_at IS NULL",[f.workspaceId])).rows[0];
+  assert.ok(incident.last_notified_at,"The recovery follows an actual queued incident");
+  if(quotaBlocked)await pool.query(`INSERT INTO alert_queue(user_id,certops_agent_id,alert_key,threshold_days,due_date,channels,status,metadata)
+    SELECT $1,$2,'cert_distribution:quota:' || gen_random_uuid()::text,0,CURRENT_DATE,'[]'::jsonb,'sent','{}'::jsonb
+    FROM generate_series(1,20-(SELECT count(*)::int FROM alert_queue WHERE certops_agent_id IN ($2,$3) AND alert_key LIKE 'cert_distribution:%' AND created_at>clock_timestamp()-interval '1 hour'))`,[f.actor,f.consumer,f.issuer]);
+  await startNextConsumerCycle(f);await finishConsumerCycle(f);await monitorConsumers(f);
+  const resolved=(await pool.query("SELECT * FROM certops_distribution_incidents WHERE id=$1",[incident.id])).rows[0];
+  assert.ok(resolved.resolved_at);assert.equal(resolved.resolution_delivery_pending,quotaBlocked);
+  return {...f,incident:resolved,recoveryKey:`cert_distribution:${incident.id}:${resolved.revision}:resolved`};
+}
+async function closeRecoverySource(f,action){
+  const identity=require("../../apps/api/services/certops/certificateIdentity");
+  if(action==="retire")await identity.retireCertificateIdentity({workspaceId:f.workspaceId,identityId:f.identity,
+    expectedFingerprintSha256:f.fingerprint,status:"revoked",reason:"Isolated recovery delivery regression",actorUserId:f.actor});
+  else {
+    const period=(await pool.query("SELECT management_period_id FROM certops_distribution_groups WHERE workspace_id=$1 AND id=$2",[f.workspaceId,f.groupId])).rows[0];
+    await identity.stopManagingSource({workspaceId:f.workspaceId,periodId:period.management_period_id,actorUserId:f.actor});
+  }
+  assert.ok((await pool.query("SELECT p.ended_at FROM certops_distribution_groups g JOIN certops_management_periods p ON p.workspace_id=g.workspace_id AND p.id=g.management_period_id WHERE g.workspace_id=$1 AND g.id=$2",[f.workspaceId,f.groupId])).rows[0].ended_at);
+}
+for(const action of ["stop","retire"]){
+  test(`${action} after proved recovery cannot strand a quota-delayed resolution`,async()=>{
+    const f=await resolvedRecoveryFixture({quotaBlocked:true});await closeRecoverySource(f,action);
+    await pool.query("UPDATE alert_queue SET created_at=clock_timestamp()-interval '2 hours' WHERE certops_agent_id IN ($1,$2)",[f.consumer,f.issuer]);
+    await pool.query("UPDATE certops_distribution_policies SET next_monitor_at='2000-01-01' WHERE workspace_id=$1 AND group_id=$2",[f.workspaceId,f.groupId]);
+    await monitoring.runDistributionMonitoring({dbPool:pool,batchSize:100});
+    const queued=(await pool.query("SELECT * FROM alert_queue WHERE alert_key=$1",[f.recoveryKey])).rows;
+    assert.equal(queued.length,1,"The normal sweep must drain recovery after management ends");
+    assert.equal((await pool.query("SELECT resolution_delivery_pending FROM certops_distribution_incidents WHERE id=$1",[f.incident.id])).rows[0].resolution_delivery_pending,false);
+    await Promise.all(Array.from({length:3},()=>monitorConsumers(f)));
+    assert.equal((await pool.query("SELECT 1 FROM alert_queue WHERE alert_key=$1",[f.recoveryKey])).rowCount,1);
+    assert.equal((await pool.query("SELECT 1 FROM certops_distribution_incidents WHERE workspace_id=$1",[f.workspaceId])).rowCount,1,"Closed management cannot create a new health incident");
+  });
+  test(`${action} after recovery enqueue preserves worker eligibility and PagerDuty correlation`,async()=>{
+    const f=await resolvedRecoveryFixture();
+    const queued=(await pool.query("SELECT * FROM alert_queue WHERE alert_key=$1",[f.recoveryKey])).rows[0];assert.ok(queued);
+    await closeRecoverySource(f,action);
+    const {loadDistributionAlertContext,buildDistributionWebhookPayload}=await import("../../apps/worker/src/shared/distributionAlerts.js");
+    const alert={...queued,workspace_id:f.workspaceId};
+    assert.equal(await loadDistributionAlertContext(pool,alert),true,"Already proved recovery remains eligible after management ends");
+    const payload=buildDistributionWebhookPayload("pagerduty",alert,{routingKey:"synthetic-test-only"});
+    assert.equal(payload.event_action,"resolve");assert.equal(payload.dedup_key,`distribution:${f.incident.id}`);
+    const {postJson}=await import("../../apps/worker/src/notify/webhooks.js");
+    assert.equal((await postJson("https://events.pagerduty.com/__fail__",payload,"pagerduty")).success,false);
+    assert.equal((await postJson("https://events.pagerduty.com/__ok__",payload,"pagerduty")).success,true,"The existing test-mode transport retries the same recovery after retirement");
+    assert.equal(await loadDistributionAlertContext(pool,{...queued,workspace_id:require("node:crypto").randomUUID()}),false,"A different workspace cannot deliver the recovery");
+    const opened=(await pool.query("SELECT * FROM alert_queue WHERE metadata->>'incidentId'=$1 AND metadata->>'transition'='opened'",[f.incident.id])).rows[0];
+    assert.ok(opened);assert.equal(await loadDistributionAlertContext(pool,{...opened,workspace_id:f.workspaceId}),false,"Retirement does not replay the old trigger");
+  });
+}
+test("workspace pause preserves committed recovery without authorizing new execution",async()=>{
+  const f=await resolvedRecoveryFixture({quotaBlocked:true});
+  await pool.query("UPDATE workspaces SET certops_paused=true WHERE id=$1",[f.workspaceId]);
+  const jobs=(await pool.query("SELECT count(*)::int AS n FROM certificate_jobs WHERE workspace_id=$1",[f.workspaceId])).rows[0].n;
+  await pool.query("UPDATE alert_queue SET created_at=clock_timestamp()-interval '2 hours' WHERE certops_agent_id IN ($1,$2)",[f.consumer,f.issuer]);
+  await monitorConsumers(f);
+  const queued=(await pool.query("SELECT * FROM alert_queue WHERE alert_key=$1",[f.recoveryKey])).rows[0];assert.ok(queued);
+  const {loadDistributionAlertContext}=await import("../../apps/worker/src/shared/distributionAlerts.js");
+  assert.equal(await loadDistributionAlertContext(pool,{...queued,workspace_id:f.workspaceId}),true);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM certificate_jobs WHERE workspace_id=$1",[f.workspaceId])).rows[0].n,jobs);
+});
+test("disabling incident alerts cancels recovery delivery even after management ends",async()=>{
+  const f=await resolvedRecoveryFixture({quotaBlocked:true});
+  const saved=await lifecycle.loadPolicy(pool,f.workspaceId,f.groupId),policy=structuredClone(saved.policy);policy.alerts.enabled=false;
+  await lifecycle.putPolicy({...f,policy,expectedRevision:saved.revision,actorUserId:f.actor});await closeRecoverySource(f,"stop");
+  await pool.query("UPDATE alert_queue SET created_at=clock_timestamp()-interval '2 hours' WHERE certops_agent_id IN ($1,$2)",[f.consumer,f.issuer]);
+  await monitorConsumers(f);
+  assert.equal((await pool.query("SELECT 1 FROM alert_queue WHERE alert_key=$1",[f.recoveryKey])).rowCount,0);
+  const {loadDistributionAlertContext}=await import("../../apps/worker/src/shared/distributionAlerts.js");
+  assert.equal(await loadDistributionAlertContext(pool,{workspace_id:f.workspaceId,metadata:{incidentId:f.incident.id,transition:"resolved"}}),false);
+});

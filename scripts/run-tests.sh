@@ -32,6 +32,14 @@ DOCKER_LOG_PID=""
 
 # ---- cleanup on exit ----------------------------------------
 cleanup() {
+  local original_exit=$?
+  if [ "$original_exit" -ne 0 ]; then TEST_EXIT_CODE=$original_exit; fi
+  # Inspect one-shot jobs before removal so suite success cannot hide a crash.
+  if node "$SCRIPT_DIR/lib/compose-worker-status.js" "$COMPOSE_FILE"; then
+    :
+  elif [ "$TEST_EXIT_CODE" -eq 0 ]; then
+    TEST_EXIT_CODE=1
+  fi
   echo ""
   if [ -n "${DOCKER_LOG_PID}" ]; then
     kill "${DOCKER_LOG_PID}" 2>/dev/null || true
@@ -54,6 +62,7 @@ cleanup() {
   echo "==> Test output : ${LOG_FILE}"
   echo "==> Docker logs : ${DOCKER_LOG_FILE}"
   echo "==> Combined    : ${COMBINED_LOG_FILE}"
+  exit "$TEST_EXIT_CODE"
 }
 trap cleanup EXIT
 

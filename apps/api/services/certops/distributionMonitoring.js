@@ -354,12 +354,21 @@ async function monitorGroup({
   // Monitoring continues while paused, using the same lock order as policy
   // changes, retirement and transactional incident writes.
   await client.query("SELECT id FROM workspaces WHERE id=$1 FOR SHARE",[workspaceId]);
-  const group = await material.lockGroup(client, workspaceId, groupId);
+  const group = await material.lockGroup(client, workspaceId, groupId, { allowInactive: true });
   const policyRow = await loadPolicy(client, workspaceId, groupId);
   const policy = policyRow?.policy;
   if (!policy?.alerts.enabled) return { monitored: false };
   // Give older recovery obligations priority over new incident notifications.
   await queuePendingResolutions(client, workspaceId, group, policy);
+  if (group.state !== "active" || group.ended_at) {
+    // Retirement stops health evaluation, not delivery of an already proved
+    // recovery. Keep quota/routing retries bounded by the normal sweep cadence.
+    await client.query(
+      `UPDATE certops_distribution_policies SET next_monitor_at=clock_timestamp()+interval '1 minute' WHERE workspace_id=$1 AND group_id=$2`,
+      [workspaceId, groupId],
+    );
+    return { monitored: false };
+  }
   const rows = await material.consumerMatrix({ client, workspaceId, groupId });
   const version = (
     await client.query(
@@ -532,7 +541,11 @@ async function runDistributionMonitoring({
       `SELECT p.workspace_id,p.group_id FROM certops_distribution_policies p
     JOIN certops_distribution_groups g ON g.workspace_id=p.workspace_id AND g.id=p.group_id
     JOIN certops_management_periods m ON m.workspace_id=g.workspace_id AND m.id=g.management_period_id
-    WHERE p.policy->'alerts'->>'enabled'='true' AND p.next_monitor_at<=clock_timestamp() AND g.state='active' AND m.ended_at IS NULL
+    WHERE p.policy->'alerts'->>'enabled'='true' AND p.next_monitor_at<=clock_timestamp()
+      AND ((g.state='active' AND m.ended_at IS NULL) OR EXISTS (
+        SELECT 1 FROM certops_distribution_incidents i
+        WHERE i.workspace_id=p.workspace_id AND i.group_id=p.group_id
+          AND i.resolution_delivery_pending AND i.resolved_at IS NOT NULL))
     ORDER BY p.next_monitor_at,p.workspace_id LIMIT $1`,
       [Math.max(1, Math.min(100, batchSize))],
     )

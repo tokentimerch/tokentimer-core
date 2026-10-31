@@ -8,17 +8,19 @@ export const isDistributionAlert = (alert) =>
 export async function loadDistributionAlertContext(client, alert) {
   const id = alert.metadata?.incidentId;
   if (!UUID.test(id || "")) return false;
+  const transition = alert.metadata?.transition;
   const row = (
     await client.query(
       `SELECT i.*,p.policy FROM certops_distribution_incidents i
     JOIN certops_distribution_policies p ON p.workspace_id=i.workspace_id AND p.group_id=i.group_id
     JOIN certops_distribution_groups g ON g.workspace_id=i.workspace_id AND g.id=i.group_id
     JOIN certops_management_periods m ON m.workspace_id=g.workspace_id AND m.id=g.management_period_id
-    WHERE i.workspace_id=$1 AND i.id=$2 AND g.state='active' AND m.ended_at IS NULL`,
-      [alert.workspace_id, id],
+    WHERE i.workspace_id=$1 AND i.id=$2
+      AND ((g.state='active' AND m.ended_at IS NULL)
+        OR ($3='resolved' AND i.resolved_at IS NOT NULL))`,
+      [alert.workspace_id, id, transition],
     )
   ).rows[0];
-  const transition = alert.metadata?.transition;
   if (
     !row ||
     !row.policy.alerts.enabled ||

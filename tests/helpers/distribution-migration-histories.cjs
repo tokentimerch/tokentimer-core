@@ -3,7 +3,12 @@
 // as historical SQL in PostgreSQL; tests never fabricate applied ledger rows.
 const base=["certops_installed_file_distribution","auto_sync_provider_stats","auto_sync_run_metrics"];
 const lifecycle=["certops_distribution_lifecycle","certops_distribution_incident_delivery","certops_stable_consumer_discovery","certops_material_cleanup","certops_consumer_verification_failures"];
+const released=[...base,"auto_sync_metric_labels","auto_sync_system_metrics"];
 module.exports={
+  "main-82":released,
+  "providers-83":[...released,"certops_material_providers"],
+  "recipient-84-digest-85":[...released.map((name,index)=>[78+index,name]),[84,"recipient_channel_verification"],[85,"weekly_digest_recipient_claim_token"]],
+  "pagerduty-92":[...released.map((name,index)=>[78+index,name]),[92,"pagerduty_incident_lifecycle"]],
   "main-81":[...base,"auto_sync_metric_labels"],
   "lifecycle-81-85":[...base,...lifecycle],
   "providers-78":["certops_material_providers",base[0],...base.slice(1)],

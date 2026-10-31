@@ -16,37 +16,23 @@ the shared registry by migration name instead of registering duplicate numbers.
 ## Migration ordering
 
 Use the normal migration runner. SQL filenames from earlier previews are retained;
-the composed plan determines numbers. On a fresh install, main owns 79–81:
-
-| Fresh version | Identity |
-| --- | --- |
-| 79 | `auto_sync_provider_stats` |
-| 80 | `auto_sync_run_metrics` |
-| 81 | `auto_sync_metric_labels` |
-| 82–86 | Lifecycle, incident delivery, discovery, cleanup, consumer verification outcomes |
-| 87 | `certops_material_providers` |
-| 88 | `recipient_channel_verification` |
-| 89 | `weekly_digest_recipient_claim_token` |
-| 90 | `pagerduty_incident_lifecycle` |
-| 91 | `certops_distribution_resolution_delivery` |
-
-Applied `(version,name,executed_at)` rows are never changed. Their SQL is not
-replayed. Only missing identities append after the applied extension tail. For
-example, #498's applied 81–85 stay at 81–85 and missing main metric labels append
-at 86; a main installation with metric labels already at 81 uses fresh 82–91.
-The provider previews at 78/79/81, recipient/digest at 81/82 and PagerDuty at 79/81
-are recognized, as are combinations produced by this composer. Do not run an old
-standalone preview renumbering tool against this integrated registry.
+the composed plan determines numbers. Fresh installations preserve main 79–82,
+then use provider 83, recipient/digest 84–85, lifecycle 86–90, recovery delivery 91
+and PagerDuty 92. Independent registered tails may leave reservations absent;
+never fill them with no-op SQL. Applied version/name/timestamp rows and their SQL
+remain unchanged. Recognized previews retain their original assignments, while
+missing definitions are placed without collisions. Use the normal runner and
+preserve a restorable backup; do not run an old standalone renumbering tool.
 
 The existing four historical 70–76 orders and immutable SQL are retained.
-Unknown names, duplicate names/versions, gaps and incomplete known dependencies
+Unknown names, duplicate names/versions, noncanonical gaps and incomplete known dependencies
 fail before SQL executes. Unrecognized or manually altered schemas require manual
 review; never invent ledger records to bypass validation. Migration execution is
 serialized with a database advisory lock, including initial table creation and
 history validation. Deploy matching API/workers only after migration completion.
 
 The isolated PostgreSQL runner executes the historical SQL, preserves original
-ledger timestamps and counters, upgrades all nine extension layouts, tests two
+ledger timestamps and counters, upgrades released, independent and historical extension layouts, tests two
 concurrent runners and repeats migration execution. It also replays the existing
 six histories and tests verification/recovery backfills. Compatibility DDL alone
 does not enable recipient enforcement or PagerDuty expiration reconciliation.

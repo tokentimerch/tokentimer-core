@@ -4,7 +4,7 @@ const {migrations,validateMigrationHistory}=require("../../apps/api/migrations/m
 const {composeMigrations}=require("../../apps/api/migrations/compose-migrations");
 const histories=require("../helpers/distribution-migration-histories.cjs");
 for(const [history,names] of Object.entries(histories))test(`preserves ${history} identities and moves only unapplied migrations`,()=>{
-  const rows=[...migrations.filter(m=>m.version<=77).map(({version,name})=>({version,name})),...names.map((name,index)=>({version:78+index,name}))];
+  const rows=[...migrations.filter(m=>m.version<=77).map(({version,name})=>({version,name})),...names.map((entry,index)=>Array.isArray(entry)?{version:entry[0],name:entry[1]}:{version:78+index,name:entry})];
   const snapshot=structuredClone(rows),plan=composeMigrations(migrations,rows);
   validateMigrationHistory(rows);
   assert.deepEqual(rows,snapshot);assert.equal(plan.length,migrations.length);

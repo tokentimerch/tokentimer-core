@@ -41,7 +41,7 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
     const currentMainLedger=(await pool.query("SELECT * FROM migrations ORDER BY version")).rows;
     assert.equal(currentMainLedger.at(-1).version,80);
     assert.equal(currentMainLedger.at(-1).name,"auto_sync_run_metrics");
-    migrations.push(...pending.filter(entry=>entry.version>80 && entry.version<=85));
+    migrations.push(...pending.filter(entry=>entry.version>80 && entry.version<=89));
     await runMigrations();
     const beforeVerificationLedger=(await pool.query("SELECT * FROM migrations ORDER BY version")).rows;
     const {fixture,proveConsumer}=require("../helpers/distribution-lifecycle-fixture.cjs");
@@ -71,9 +71,9 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
       recovered.push({incident,delivered});
       if(delivered)await pool.query("INSERT INTO alert_queue(user_id,certops_agent_id,alert_key,threshold_days,due_date,channels,status) VALUES($1,$2,$3,0,CURRENT_DATE,'[]'::jsonb,'sent')",[f.actor,f.consumer,`cert_distribution:${incident.id}:2:resolved`]);
     }
-    migrations.push(...pending.filter(entry=>entry.version>85));
+    migrations.push(...pending.filter(entry=>entry.version>89));
     await runMigrations();
-    assert.deepEqual((await pool.query("SELECT * FROM migrations WHERE version<=85 ORDER BY version")).rows,beforeVerificationLedger);
+    assert.deepEqual((await pool.query("SELECT * FROM migrations WHERE version<=89 ORDER BY version")).rows,beforeVerificationLedger);
     const backfilled=(await pool.query("SELECT verification_failure_count,verification_failure_revision FROM certops_consumer_current_state WHERE workspace_id=$1 AND binding_id=$2",[f.workspaceId,f.bindingId])).rows[0];
     assert.equal(Number(backfilled.verification_failure_count),1,"Fresh success resets the two earlier failures; the retrying failed cycle is retained from its log, not attempt_count=99");
     assert.equal(backfilled.verification_failure_revision,1);
@@ -94,34 +94,107 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
       "SELECT version, name FROM migrations WHERE version>=68 ORDER BY version",
     );
     assert.deepEqual(after.rows, [
-      {
-        version: 68,
-        name: "certops_adcs_awaiting_issuer_and_continue_enrollment",
-      },
-      { version: 69, name: "certops_agent_job_logs" },
-      { version: 70, name: "certops_certificate_enrollments" },
-      { version: 71, name: "certops_adcs_evidence_types" },
-      { version: 72, name: "certops_profile_issuer" },
-      { version: 73, name: "certops_job_alert_context" },
-      { version: 74, name: "certops_material_distribution" },
-      { version: 75, name: "certops_distribution_review" },
-      { version: 76, name: "certops_distribution_transfer" },
-      { version: 77, name: "onboarding_sessions" },
-      { version: 78, name: "certops_installed_file_distribution" },
-      { version: 79, name: "auto_sync_provider_stats" },
-      { version: 80, name: "auto_sync_run_metrics" },
-      { version: 81, name: "auto_sync_metric_labels" },
-      { version: 82, name: "certops_distribution_lifecycle" },
-      { version: 83, name: "certops_distribution_incident_delivery" },
-      { version: 84, name: "certops_stable_consumer_discovery" },
-      { version: 85, name: "certops_material_cleanup" },
-      { version: 86, name: "certops_consumer_verification_failures" },
-      { version: 87, name: "certops_material_providers" },
-      { version: 88, name: "recipient_channel_verification" },
-      { version: 89, name: "weekly_digest_recipient_claim_token" },
-      { version: 90, name: "pagerduty_incident_lifecycle" },
-      { version: 91, name: "certops_distribution_resolution_delivery" },
-    ]);
+  {
+    "version": 68,
+    "name": "certops_adcs_awaiting_issuer_and_continue_enrollment"
+  },
+  {
+    "version": 69,
+    "name": "certops_agent_job_logs"
+  },
+  {
+    "version": 70,
+    "name": "certops_certificate_enrollments"
+  },
+  {
+    "version": 71,
+    "name": "certops_adcs_evidence_types"
+  },
+  {
+    "version": 72,
+    "name": "certops_profile_issuer"
+  },
+  {
+    "version": 73,
+    "name": "certops_job_alert_context"
+  },
+  {
+    "version": 74,
+    "name": "certops_material_distribution"
+  },
+  {
+    "version": 75,
+    "name": "certops_distribution_review"
+  },
+  {
+    "version": 76,
+    "name": "certops_distribution_transfer"
+  },
+  {
+    "version": 77,
+    "name": "onboarding_sessions"
+  },
+  {
+    "version": 78,
+    "name": "certops_installed_file_distribution"
+  },
+  {
+    "version": 79,
+    "name": "auto_sync_provider_stats"
+  },
+  {
+    "version": 80,
+    "name": "auto_sync_run_metrics"
+  },
+  {
+    "version": 81,
+    "name": "auto_sync_metric_labels"
+  },
+  {
+    "version": 82,
+    "name": "auto_sync_system_metrics"
+  },
+  {
+    "version": 83,
+    "name": "certops_material_providers"
+  },
+  {
+    "version": 84,
+    "name": "recipient_channel_verification"
+  },
+  {
+    "version": 85,
+    "name": "weekly_digest_recipient_claim_token"
+  },
+  {
+    "version": 86,
+    "name": "certops_distribution_lifecycle"
+  },
+  {
+    "version": 87,
+    "name": "certops_distribution_incident_delivery"
+  },
+  {
+    "version": 88,
+    "name": "certops_stable_consumer_discovery"
+  },
+  {
+    "version": 89,
+    "name": "certops_material_cleanup"
+  },
+  {
+    "version": 90,
+    "name": "certops_consumer_verification_failures"
+  },
+  {
+    "version": 91,
+    "name": "certops_distribution_resolution_delivery"
+  },
+  {
+    "version": 92,
+    "name": "pagerduty_incident_lifecycle"
+  }
+]);
     const constraints =
       await pool.query(`SELECT conname, pg_get_constraintdef(oid) AS definition
       FROM pg_constraint WHERE conrelid='certificate_jobs'::regclass

@@ -4857,28 +4857,33 @@ const migrations = [
   },
   {
     version: 82,
+    name: "auto_sync_system_metrics",
+    sql: fs.readFileSync(require("path").join(__dirname, "082-auto-sync-system-metrics.sql"), "utf8"),
+  },
+  {
+    version: 86,
     name: "certops_distribution_lifecycle",
     sql: fs.readFileSync(require("path").join(__dirname, "081-certops-distribution-lifecycle.sql"), "utf8"),
   },
   {
-    version: 83,
+    version: 87,
     name: "certops_distribution_incident_delivery",
     sql: fs.readFileSync(require("path").join(__dirname,"082-certops-distribution-incident-delivery.sql"),"utf8"),
   },
   {
-    version:84,
+    version: 88,
     name:"certops_stable_consumer_discovery",
     sql:fs.readFileSync(require("path").join(__dirname,"083-certops-stable-consumer-discovery.sql"),"utf8"),
   },
-  {version:85,name:"certops_material_cleanup",sql:fs.readFileSync(require("path").join(__dirname,"084-certops-material-cleanup.sql"),"utf8")},
-  {version:86,name:"certops_consumer_verification_failures",sql:fs.readFileSync(require("path").join(__dirname,"085-certops-consumer-verification-failures.sql"),"utf8")},
+  {version: 89,name:"certops_material_cleanup",sql:fs.readFileSync(require("path").join(__dirname,"084-certops-material-cleanup.sql"),"utf8")},
+  {version: 90,name:"certops_consumer_verification_failures",sql:fs.readFileSync(require("path").join(__dirname,"085-certops-consumer-verification-failures.sql"),"utf8")},
   // Schema compatibility only: related PR runtime features remain independently
   // reviewed and gated. Applied previews keep their original version and name.
-  {version:87,name:"certops_material_providers",sql:fs.readFileSync(require("path").join(__dirname,"087-certops-material-providers.sql"),"utf8")},
-  {version:88,name:"recipient_channel_verification",sql:fs.readFileSync(require("path").join(__dirname,"088-recipient-channel-verification.sql"),"utf8")},
-  {version:89,name:"weekly_digest_recipient_claim_token",sql:fs.readFileSync(require("path").join(__dirname,"089-weekly-digest-recipient-claim-token.sql"),"utf8")},
-  {version:90,name:"pagerduty_incident_lifecycle",sql:fs.readFileSync(require("path").join(__dirname,"090-pagerduty-incident-lifecycle.sql"),"utf8")},
-  {version:91,name:"certops_distribution_resolution_delivery",sql:fs.readFileSync(require("path").join(__dirname,"091-certops-distribution-resolution-delivery.sql"),"utf8")},
+  {version: 83,name:"certops_material_providers",sql:fs.readFileSync(require("path").join(__dirname,"087-certops-material-providers.sql"),"utf8")},
+  {version: 84,name:"recipient_channel_verification",sql:fs.readFileSync(require("path").join(__dirname,"088-recipient-channel-verification.sql"),"utf8")},
+  {version: 85,name:"weekly_digest_recipient_claim_token",sql:fs.readFileSync(require("path").join(__dirname,"089-weekly-digest-recipient-claim-token.sql"),"utf8")},
+  {version: 92,name:"pagerduty_incident_lifecycle",sql:fs.readFileSync(require("path").join(__dirname,"090-pagerduty-incident-lifecycle.sql"),"utf8")},
+  {version: 91,name:"certops_distribution_resolution_delivery",sql:fs.readFileSync(require("path").join(__dirname,"091-certops-distribution-resolution-delivery.sql"),"utf8")},
 ];
 
 

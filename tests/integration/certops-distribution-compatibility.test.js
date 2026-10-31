@@ -16,7 +16,7 @@ describe("Independent PR migration and preview compatibility",function(){
         const r=spawnSync(process.execPath,["-e",script],{cwd,env,encoding:"utf8",windowsHide:true,timeout:60000,maxBuffer:8*1024*1024});
         assert.equal(r.status,0,`${r.error || ""}\n${r.stderr}\n${r.stdout.slice(-2500)}`);
       };
-      execute(`const c=require('./migrations/migrate');const names=${JSON.stringify(names)};const list=[...c.migrations.filter(m=>m.version<=77),...names.map((name,i)=>({...c.migrations.find(m=>m.name===name),version:78+i}))];c.migrations.splice(0,c.migrations.length,...list);c.runMigrations().then(()=>process.exit(0));`);
+      execute(`const c=require('./migrations/migrate');const names=${JSON.stringify(names)};const list=[...c.migrations.filter(m=>m.version<=77),...names.map((entry,i)=>{const [version,name]=Array.isArray(entry)?entry:[78+i,entry];return {...c.migrations.find(m=>m.name===name),version};})];c.migrations.splice(0,c.migrations.length,...list);c.runMigrations().then(()=>process.exit(0));`);
       const before=(await client.query("SELECT * FROM migrations ORDER BY version")).rows;
       const labelsExist=(await client.query("SELECT to_regclass('auto_sync_kind_stats') AS name")).rows[0].name;
       if(labelsExist)await client.query("INSERT INTO auto_sync_kind_stats(provider,kind,items_created_total) VALUES('compat_fixture','certificate',7)");
@@ -29,7 +29,7 @@ describe("Independent PR migration and preview compatibility",function(){
         })));
       }else execute(upgrade);
       const after=(await client.query("SELECT * FROM migrations ORDER BY version")).rows;
-      assert.deepEqual(after.slice(0,before.length),before);assert.equal(after.length,91);
+      assert.deepEqual(after.filter(row=>before.some(original=>original.version===row.version)),before);assert.equal(after.length,92);
       for(const table of ["certops_material_cleanups","certops_consumer_verification_outcomes","contact_channel_verifications","pagerduty_incidents"])
         assert.equal((await client.query("SELECT to_regclass($1)::text AS name",[table])).rows[0].name,table);
       assert.equal((await client.query("SELECT resolution_delivery_pending FROM certops_distribution_incidents LIMIT 0")).rowCount,0);
