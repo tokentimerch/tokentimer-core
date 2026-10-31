@@ -243,20 +243,25 @@ export function useCertOpsIsWorkspaceAdmin() {
 export function useCertOpsManagementState() {
   const { workspaceId } = useWorkspace();
   const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState({ status: 'loading', canManage: false });
+  const [state, setState] = useState({
+    workspaceId: null,
+    status: 'loading',
+    canManage: false,
+  });
 
   useEffect(() => {
     if (!workspaceId) {
-      setState({ status: 'ready', canManage: false });
+      setState({ workspaceId, status: 'ready', canManage: false });
       return undefined;
     }
     let cancelled = false;
-    setState(current => ({ status: 'loading', canManage: current.canManage }));
+    setState({ workspaceId, status: 'loading', canManage: false });
     resolveWorkspaceRole(workspaceId).then(role => {
       if (cancelled) return;
-      if (!role) setState({ status: 'error', canManage: false });
+      if (!role) setState({ workspaceId, status: 'error', canManage: false });
       else
         setState({
+          workspaceId,
           status: 'ready',
           canManage: role === 'admin' || role === 'workspace_manager',
         });
@@ -266,10 +271,11 @@ export function useCertOpsManagementState() {
     };
   }, [workspaceId, attempt]);
 
-  return {
-    ...state,
-    retry: () => setAttempt(value => value + 1),
-  };
+  const retry = () => setAttempt(value => value + 1);
+  if (!workspaceId) return { status: 'ready', canManage: false, retry };
+  if (state.workspaceId !== workspaceId)
+    return { status: 'loading', canManage: false, retry };
+  return { status: state.status, canManage: state.canManage, retry };
 }
 
 /**

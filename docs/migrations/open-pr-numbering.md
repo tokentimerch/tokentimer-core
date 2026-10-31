@@ -15,28 +15,21 @@ are reservations, not no-op migrations. They do not install another feature.
 | 83 | certops_material_providers | #460, moved from unapplied 82 |
 | 84 | recipient_channel_verification | #461 must move unapplied 81 |
 | 85 | weekly_digest_recipient_claim_token | #461 must move unapplied 82 |
-| 86 | pagerduty_incident_lifecycle | #496 must move unapplied 92 |
-| 87 | certops_distribution_lifecycle | #498 must move unapplied 81 |
-| 88 | certops_distribution_incident_delivery | #498 must move unapplied 82 |
-| 89 | certops_stable_consumer_discovery | #498 must move unapplied 83 |
-| 90 | certops_material_cleanup | #498 must move unapplied 84 |
-| 91 | certops_consumer_verification_failures | #498 must move unapplied 85 |
-| 92 | certops_distribution_resolution_delivery | #498 must move unapplied 91 |
+| 86 | certops_distribution_lifecycle | Unapplied lifecycle schema |
+| 87 | certops_distribution_incident_delivery | Unapplied incident delivery |
+| 88 | certops_stable_consumer_discovery | Unapplied consumer discovery |
+| 89 | certops_material_cleanup | Unapplied retention cleanup |
+| 90 | certops_consumer_verification_failures | Unapplied verification outcomes |
+| 91 | certops_distribution_resolution_delivery | Unapplied recovery delivery |
+| 92 | pagerduty_incident_lifecycle | Independent PagerDuty tail |
 
-This change updates only #460. Latest related heads inspected: #461 `a53fd10b`,
-#496 `ad786a11`, #498 `eac124c7`. The last two heads advanced during validation:
-#496 now registers PagerDuty at 92; #498 still owns lifecycle at 81–85, copies
-provider/recipient/PagerDuty definitions at 87–90 and adds resolution delivery
-at 91. Those blocks collide with released main and this plan. Remove duplicate
-feature definitions when integrating their owning branches, preserve their SQL,
-and use the reservations above for missing definitions. Their maintainers must adopt these reservations
-in SQL filenames/registries, fixtures, recovery tooling and documentation before
-integration. Do not merge their old 81 registrations or reuse reserved numbers.
-No dependency on those unmerged features is introduced into #460.
-With the current contiguous-history runner, integrate the canonical blocks in
-order: #460, #461, #496, then #498. Do not ship a gapped ledger by merging a
-later block first. A different merge order requires a separately reviewed
-history-composition change; reservations must not be filled with no-op SQL.
+Use the normal runner with these canonical identities. Independent feature tails
+may leave unapplied reservations absent; never install no-op SQL to fill them.
+Recognized applied previews retain their names, numbers, SQL and timestamps.
+Only missing definitions are assigned; duplicate feature definitions must be
+removed when composing branches. Unknown, conflicting or unrecognized histories
+fail before DDL and require reviewed recovery. Database compatibility does not
+qualify the corresponding runtime feature or production artifact.
 
 ## Applied history and supported previews
 
@@ -59,10 +52,9 @@ SQL or customer records to make the ledger look canonical. The upgrade tests
 run historical SQL through the executor, preserve retained material and counter
 evidence, and replay concurrent/restarted runners.
 
-A ledger containing another PR's former 81 is not a provider alias. Unknown,
-gapped or mixed histories fail before migration DDL. Do not manually edit them.
+A ledger containing another PR's former 81 is not a provider alias. Unknown or conflicting histories fail before migration DDL. Do not manually edit them.
 In particular #496's earlier PagerDuty-at-79 preview requires its explicit
-backup/check/apply recovery procedure, updated for reservation 86; this build
+backup/check/apply recovery procedure, using its independent reservation 92; this build
 does not silently relabel it. Any deployed #461/#498 preview needs a separately
 reviewed history-aware recovery before integrating the associated feature.
 

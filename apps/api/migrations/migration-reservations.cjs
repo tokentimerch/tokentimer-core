@@ -3,18 +3,18 @@
 // Canonical, unapplied numbering for integration of the concurrently open PRs.
 // Reservations never install another PR's schema or alias an applied ledger.
 const reservations = Object.freeze({
-  81: "auto_sync_metric_labels", // released main (#513)
-  82: "auto_sync_system_metrics", // released main (#516)
-  83: "certops_material_providers", // #460
-  84: "recipient_channel_verification", // #461
-  85: "weekly_digest_recipient_claim_token", // #461
-  86: "pagerduty_incident_lifecycle", // #496
-  87: "certops_distribution_lifecycle", // #498
-  88: "certops_distribution_incident_delivery", // #498
-  89: "certops_stable_consumer_discovery", // #498
-  90: "certops_material_cleanup", // #498
-  91: "certops_consumer_verification_failures", // #498
-  92: "certops_distribution_resolution_delivery", // #498
+  81: "auto_sync_metric_labels",
+  82: "auto_sync_system_metrics",
+  83: "certops_material_providers",
+  84: "recipient_channel_verification",
+  85: "weekly_digest_recipient_claim_token",
+  86: "certops_distribution_lifecycle",
+  87: "certops_distribution_incident_delivery",
+  88: "certops_stable_consumer_discovery",
+  89: "certops_material_cleanup",
+  90: "certops_consumer_verification_failures",
+  91: "certops_distribution_resolution_delivery",
+  92: "pagerduty_incident_lifecycle",
 });
 
 function validateMigrationReservations(migrations) {

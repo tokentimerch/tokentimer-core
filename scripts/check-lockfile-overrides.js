@@ -18,7 +18,7 @@ const pkgPath = path.join(repoRoot, "package.json");
 const REQUIRED_PINS = {
   tar: { "*": "7.5.7" },
   "fast-xml-parser": { "*": "5.7.3" },
-  minimatch: { "*": "10.2.5" },
+  minimatch: { "*": "11.0.1" },
   "brace-expansion": { "*": "5.0.12" },
   "path-to-regexp": { "*": "8.4.0" },
   yaml: { "*": "1.10.3" },
@@ -37,7 +37,7 @@ const REQUIRED_PINS = {
   picomatch: { 2: "2.3.2", 4: "4.0.4" },
   ajv: { 6: "6.15.0" },
   lodash: { "*": "4.18.1" },
-  "follow-redirects": { "*": "1.16.1" },
+  "follow-redirects": { "*": "1.16.2" },
   postcss: { "*": "8.5.26" },
   nanoid: { "*": "3.3.18" },
   "@babel/core": { "*": "7.29.6" },
