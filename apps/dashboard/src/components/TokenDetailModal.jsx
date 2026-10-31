@@ -261,7 +261,6 @@ function TokenDetailModal({
 
   const renderContactGroupsField = () => {
     const assignedIds = hydrateContactGroupIds(token);
-    if (!isEditing && assignedIds.length === 0) return null;
 
     return (
       <DashboardModalDetailRow label='Contact groups' tokens={modalTokens}>

@@ -64,6 +64,53 @@ describe("Certificate details survive management and token history changes", fun
   async function updateToken(tid) {
     await db.query(`UPDATE tokens SET name='Certificate B',serial_number='BB',expiration='2028-01-01',notes='Notes for B' WHERE id=$1`, [tid]);
   }
+  it("shows the canonical asset groups without merging another asset on the same fingerprint", async () => {
+    const { ws, tid } = await fixture();
+    await db.query(`INSERT INTO token_contact_groups(workspace_id,token_id,contact_group_id)
+      VALUES($1,$2,'platform'),($1,$2,'release')`, [ws, tid]);
+    const other = (await db.query(`INSERT INTO tokens(workspace_id,user_id,name,type,expiration,serial_number)
+      VALUES($1,$2,'Another asset for A','ssl_cert','2027-01-01','AA') RETURNING id`, [ws, userId])).rows[0].id;
+    await db.query(`INSERT INTO token_contact_groups(workspace_id,token_id,contact_group_id)
+      VALUES($1,$2,'security')`, [ws, other]);
+    await db.query(`INSERT INTO managed_certificates(workspace_id,source,source_ref,fingerprint_sha256,
+      name,token_id,serial_number,not_after,identity_observed_at)
+      VALUES($1,'manual',$2,$3,'Same certificate, different asset',$4,'AA','2027-01-01',NOW())`,
+    [ws, randomUUID(), A, other]);
+    const result = await detail(ws, A);
+    assert.equal(result.tokenId, tid);
+    assert.deepEqual(result.tokenSnapshot.contact_group_ids, ['platform', 'release']);
+    assert.equal(result.tokenSnapshot.contact_group_id, 'platform');
+    await db.query("DELETE FROM token_contact_groups WHERE workspace_id=$1 AND token_id=$2", [ws, tid]);
+    assert.deepEqual((await detail(ws, A)).tokenSnapshot.contact_group_ids, []);
+  });
+  it("does not copy live groups into an old fingerprint after the linked token rotates", async () => {
+    const { ws, tid, mc } = await fixture();
+    await db.query(`INSERT INTO token_contact_groups(workspace_id,token_id,contact_group_id)
+      VALUES($1,$2,'platform')`, [ws, tid]);
+    assert.deepEqual((await detail(ws, A)).tokenSnapshot.contact_group_ids, ['platform']);
+    await updateToken(tid);
+    await updateSource(mc);
+    assert.equal((await detail(ws, A)).tokenSnapshot.contact_group_ids, undefined);
+    assert.deepEqual((await detail(ws, B)).tokenSnapshot.contact_group_ids, ['platform']);
+  });
+  it("drops the editable link if rotation happens between the inventory and detail reads", async () => {
+    const { ws, tid } = await fixture();
+    const id = (await detail(ws, A)).identityId;
+    let rotated = false;
+    const racingClient = { query: async (sql, params) => {
+      const result = await db.query(sql, params);
+      if (!rotated && sql.includes("WITH representatives AS")) {
+        rotated = true;
+        await updateToken(tid);
+      }
+      return result;
+    } };
+    const result = (await listCertificateIdentities({ workspaceId: ws, identityId: id, client: racingClient })).items[0];
+    assert(rotated);
+    assert.equal(result.tokenId, null);
+    assert.equal(result.tokenSnapshot.contact_group_ids, undefined);
+    assert.equal(result.tokenSnapshot.name, "Certificate A");
+  });
   it("keeps full token and X.509 details after closing the final management period", async () => {
     const { ws, tid, mc } = await fixture();
     const p = (await db.query("SELECT id FROM certops_management_periods WHERE managed_certificate_id=$1 AND ended_at IS NULL", [mc.id])).rows[0];
