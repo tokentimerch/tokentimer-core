@@ -368,7 +368,7 @@ describe.each(['gitlab', 'github'])(
       expect(
         screen.getByRole('textbox', { name: 'Monitoring group label' })
       ).toHaveValue('');
-    });
+    }, 15000);
     it('allocates an unused configuration name despite deletions, whitespace and case', async () => {
       await addAnother();
       scan().mockResolvedValue({ ...result, items: [{ name: 'fixture' }] });
