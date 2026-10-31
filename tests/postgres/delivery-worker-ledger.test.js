@@ -601,6 +601,70 @@ test("delivery worker records ledger outcomes and notifications on a migrated da
   });
 });
 
+for (const channel of ["email", "whatsapp"]) {
+  for (const allUnavailable of [false, true]) {
+    test(`${channel} worker retries ${allUnavailable ? "all" : "mixed"} verification outages and settles recovered delivery`, async () => {
+      migrate();
+      const fixture = await createWorkspace(`outage-${channel}-${allUnavailable}`, {
+        contact: { email: "first@example.com", phone: "+14155550101" },
+        group: {}, webhooks: [],
+      });
+      const secondId = crypto.randomUUID();
+      await pool.query(`INSERT INTO workspace_contacts (id, workspace_id, first_name, last_name, phone_e164, details)
+        VALUES ($1,$2,'Grace','Hopper','+14155550102','{"email":"second@example.com"}'::jsonb)`,
+      [secondId, fixture.workspaceId]);
+      const destinations = channel === "email"
+        ? ["first@example.com", "second@example.com"] : ["+14155550101", "+14155550102"];
+      for (const [index, contactId] of [fixture.contactId, secondId].entries()) {
+        await pool.query(`INSERT INTO contact_channel_verifications
+          (workspace_id,contact_id,channel,destination_normalized,destination_fingerprint,status,verified_at,consent_at)
+          VALUES ($1,$2,$3,$4,$5,'verified',NOW(),NOW())`,
+        [fixture.workspaceId, contactId, channel, destinations[index], verification.destinationFingerprint(channel, destinations[index])]);
+      }
+      await pool.query("UPDATE workspace_settings SET contact_groups=$2::jsonb WHERE workspace_id=$1", [fixture.workspaceId,
+        JSON.stringify([{ id: "default", name: "Default",
+          [channel === "email" ? "email_contact_ids" : "whatsapp_contact_ids"]: [fixture.contactId, secondId] }])]);
+      const alertId = await enqueue(fixture, [channel]);
+      const workerDb = await import("../../apps/worker/src/db.js");
+      const { deliveryWorkerJob } = await import("../../apps/worker/src/delivery-worker.js");
+      const originals = new Map();
+      const injectTimeout = (client) => {
+        if (originals.has(client)) return;
+        const original = client.query;
+        originals.set(client, original);
+        client.query = function(sql, params, ...rest) {
+          if (String(sql).includes("RV_DELIVERY_LOOKUP") && params?.[0] === fixture.workspaceId
+              && (allUnavailable || params[1] === secondId)) {
+            return Promise.reject(Object.assign(new Error("statement timeout"), { code: "57014" }));
+          }
+          return original.call(this, sql, params, ...rest);
+        };
+      };
+      workerDb.pool.on("acquire", injectTimeout);
+      try {
+        await deliveryWorkerJob({ closePool: false, incidentEmailSender: async () => ({ success: true }) });
+      } finally {
+        workerDb.pool.off("acquire", injectTimeout);
+        for (const [client, original] of originals) client.query = original;
+      }
+      const pending = await loadAlert(alertId);
+      assert.notEqual(pending.status, "sent", "another recipient's success cannot complete this delivery");
+      assert.equal(pending.channels.outcomes[channel].recipients[destinations[1]].state, "unavailable");
+      assert.deepEqual(pending.channels.retry, [channel]);
+      await pool.query("UPDATE alert_queue SET next_attempt_at=NULL WHERE id=$1", [alertId]);
+      await deliveryWorkerJob({ closePool: false, incidentEmailSender: async () => ({ success: true }) });
+      const recovered = await loadAlert(alertId);
+      assert.equal(recovered.status, "sent");
+      assert.deepEqual(recovered.channels.retry, []);
+      assert.deepEqual(Object.keys(recovered.channels.outcomes[channel].recipients).sort(), destinations.slice().sort());
+      const deliveries = await pool.query(`SELECT metadata->>'recipient' AS recipient, COUNT(*)::int AS n
+        FROM alert_delivery_log WHERE alert_queue_id=$1 AND channel=$2 AND status='success'
+        GROUP BY metadata->>'recipient' ORDER BY recipient`, [alertId, channel]);
+      assert.deepEqual(deliveries.rows, destinations.slice().sort().map(recipient => ({ recipient, n: 1 })));
+    });
+  }
+}
+
 test.after(async () => {
   if (hookServer) {
     await new Promise((resolve) => hookServer.close(() => resolve()));

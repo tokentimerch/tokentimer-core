@@ -44,14 +44,14 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 79).name, "auto_sync_provider_stats");
     assert.equal(migrations.find((entry) => entry.version === 80).name, "auto_sync_run_metrics");
     assert.equal(migrations.find((entry) => entry.version === 81).name, "auto_sync_metric_labels");
-    assert.equal(migrations.find((entry) => entry.version === 82).name, "recipient_channel_verification");
-    assert.equal(migrations.at(-1).version, 83);
+    assert.equal(migrations.find((entry) => entry.version === 84).name, "recipient_channel_verification");
+    assert.equal(migrations.at(-1).version, 85);
     assert.equal(migrations.at(-1).name, "weekly_digest_recipient_claim_token");
     assert.equal(migrations.find(entry => entry.version === 71).name, "certops_adcs_evidence_types");
     assert.match(migrations.find(entry => entry.version === 72).sql, /fk_certificate_profiles_issuer/);
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      Array.from({ length: 83 }, (_, index) => index + 1),
+      [...Array.from({ length: 82 }, (_, index) => index + 1), 84, 85],
     );
     assert.equal(migrations.find(entry => entry.version === 73).name, "certops_job_alert_context");
     assert.match(migrations.find(entry => entry.version === 72).sql, /ON DELETE SET NULL \(issuer_id\)/);
@@ -428,7 +428,7 @@ describe("CertOps inventory migration", () => {
     const expectedTailVersions = Array.from(
       { length: Math.max(...tailVersions) - 10 },
       (_, index) => 11 + index,
-    ).filter((version) => notificationCount === 4 || !notificationVersions.includes(version));
+    ).filter((version) => version !== 83 && (notificationCount === 4 || !notificationVersions.includes(version)));
     assert.deepEqual(
       tailVersions,
       expectedTailVersions,
@@ -1886,10 +1886,10 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     const notificationVersions = [56, 57, 58, 59];
     const notificationCount = notificationVersions.filter((version) => sorted.includes(version)).length;
     assert.ok(notificationCount === 0 || notificationCount === 4);
-    const expected = Array.from({ length: sorted[sorted.length - 1] }, (_, index) => index + 1)
+    const expected = Array.from({ length: sorted[sorted.length - 1] }, (_, index) => index + 1).filter(version => version !== 83)
       .filter((version) => notificationCount === 4 || !notificationVersions.includes(version));
     assert.deepEqual(sorted, expected);
-    assert.equal(sorted[sorted.length - 1], 83);
+    assert.equal(sorted[sorted.length - 1], 85);
   });
 });
 

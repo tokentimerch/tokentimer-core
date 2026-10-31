@@ -479,6 +479,54 @@ describe('useCertOpsManagementState', () => {
     expect(result.current.canManage).toBe(false);
   });
 
+  it('drops the previous workspace permission before the next role resolves', async () => {
+    let resolveViewer;
+    workspaceAPIGetMock
+      .mockResolvedValueOnce({ role: 'workspace_manager' })
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolveViewer = resolve;
+          })
+      );
+    const observations = [];
+    const { result, rerender } = renderHook(() => {
+      const state = useCertOpsManagementState();
+      observations.push({ status: state.status, canManage: state.canManage });
+      return state;
+    });
+    await waitFor(() => expect(result.current.canManage).toBe(true));
+    observations.length = 0;
+    useWorkspaceMock.mockReturnValue({ workspaceId: 'ws-viewer' });
+    rerender();
+    expect(
+      observations.every(
+        state => state.status === 'loading' && !state.canManage
+      )
+    ).toBe(true);
+    await act(async () => resolveViewer({ role: 'viewer' }));
+    expect(result.current.status).toBe('ready');
+    expect(result.current.canManage).toBe(false);
+  });
+
+  it('ignores a previous workspace role that arrives after switching', async () => {
+    let resolvePrevious;
+    workspaceAPIGetMock
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolvePrevious = resolve;
+          })
+      )
+      .mockResolvedValueOnce({ role: 'viewer' });
+    const { result, rerender } = renderHook(() => useCertOpsManagementState());
+    useWorkspaceMock.mockReturnValue({ workspaceId: 'ws-viewer' });
+    rerender();
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    await act(async () => resolvePrevious({ role: 'admin' }));
+    expect(result.current.canManage).toBe(false);
+  });
+
   it('keeps a failed role lookup closed and permits retry', async () => {
     workspaceAPIGetMock
       .mockRejectedValueOnce(new Error('offline'))

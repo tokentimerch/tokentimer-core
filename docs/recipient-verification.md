@@ -17,7 +17,7 @@ Each channel is independent:
 
 Changing the email address invalidates email verification only. Changing the phone number invalidates WhatsApp verification only. A confirmation in one workspace does not authorize another workspace. Deleting and recreating a contact does not clear a decline for that destination in the same workspace.
 
-A decline stays in force until the recipient accepts a new confirmation sent to that mailbox. An administrator cannot receive or open that link. The recipient requests it from `/verify/recipient/resubscribe`. Expired, used, revoked, and superseded links do not restore consent.
+An email decline stays in force until the recipient accepts a new confirmation sent to that mailbox. An administrator cannot receive or open that link. The recipient requests it from `/verify/recipient/resubscribe`. Expired, used, revoked, and superseded links do not restore consent.
 
 Historical `contact_opt_ins` rows recorded when a contact was created are not treated as consent. New contacts do not write that row.
 
@@ -28,6 +28,8 @@ A workspace admin or manager sends a verification invitation. TokenTimer emails 
 ## WhatsApp
 
 TokenTimer does not send an unsolicited verification message to a new number. The admin copies a confirmation link and sends it through a channel they already trust. The recipient opens the page and sends the prefilled `CONFIRM` message from their own WhatsApp to the official TokenTimer number. The inbound Twilio webhook must present a valid signature for the external URL. The sender address must match the saved E.164 number and the unexpired challenge. Delivery success is not consent.
+
+WhatsApp re-subscription is not currently available after a decline, and managers cannot create a new confirmation link. The public re-subscribe page supports email only.
 
 Configure Twilio's incoming message webhook as `POST {PUBLIC_BASE_URL}/webhooks/twilio/whatsapp/inbound`.
 
@@ -63,7 +65,7 @@ RECIPIENT_VERIFICATION_MODE=enforce
 
 `shadow` is the self-hosted observation mode. It logs eligibility and still delivers. Cloud verification is mandatory. Set `TT_DEPLOYMENT=cloud` and `RECIPIENT_VERIFICATION_MODE=enforce` on the API and every notification worker.
 
-1. Run the standard migration runner. It applies pending migrations in version order. Migration 78 is CertOps installed-file distribution. Migrations 79 and 80 are auto-sync metrics. Migration 81 is auto-sync metric labels. Migration 82 is the recipient verification schema and does not mark existing contacts verified. Migration 83 adds weekly-digest claim ownership, in-flight delivery state, and provider-acceptance tracking. Versions 84 and later stay available for the open CertOps distribution and PagerDuty incident migrations. Leaving verification off does not mean skipping migration 82. Schema installation, `RECIPIENT_VERIFICATION_MODE`, and enforcement are separate. Do not hand-apply migration 83 while skipping 82. A database that already recorded the recipient preview as migrations 81 and 82 keeps those applied rows.
+1. Run the standard migration runner. Main retains migrations 78–82; version 83 is reserved for material providers. Recipient verification uses migration 84 and does not mark existing contacts verified. Migration 85 adds weekly-digest claim ownership and provider-acceptance tracking. Leaving verification off does not skip migration 84. Do not hand-apply 85 while skipping 84. The runner preserves previously applied preview rows and their timestamps, assigning only pending definitions to free versions; do not rename those rows manually.
 2. Set `RECIPIENT_FINGERPRINT_SECRET` and `PUBLIC_BASE_URL` or `API_URL` before sending invitations.
 3. Ask workspace managers to send invitations. Existing alert groups keep their contacts.
 4. Switch self-hosted from `off` or `shadow` to `enforce` after recipients confirm.

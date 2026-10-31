@@ -949,7 +949,8 @@ export default function AlertPreferences({
   const [groupWeeklyDigestWebhooks, setGroupWeeklyDigestWebhooks] =
     useState(false);
   const [contacts, setContacts] = useState([]);
-  const [recipientVerificationMode, setRecipientVerificationMode] = useState(null);
+  const [recipientVerificationMode, setRecipientVerificationMode] =
+    useState(null);
   const [contactSortConfig, setContactSortConfig] = useState({
     key: 'name',
     direction: 'asc',
@@ -2695,7 +2696,9 @@ export default function AlertPreferences({
     if (code === 'RECIPIENT_VERIFICATION_UNAVAILABLE') {
       return 'Verification is not available until the server address is configured.';
     }
-    return error?.response?.data?.error || error?.message || 'Verification failed';
+    return (
+      error?.response?.data?.error || error?.message || 'Verification failed'
+    );
   }
 
   async function handleInviteEmail(contact) {
@@ -2705,7 +2708,10 @@ export default function AlertPreferences({
       const response = await apiClient.post(
         `/api/v1/workspaces/${workspaceId}/contacts/${contact.id}/verifications/email`
       );
-      if (response?.data?.code === 'RECIPIENT_OPTED_OUT' || response?.data?.status === 'opted_out') {
+      if (
+        response?.data?.code === 'RECIPIENT_OPTED_OUT' ||
+        response?.data?.status === 'opted_out'
+      ) {
         showError(
           'This person declined email. TokenTimer did not email them and did not create a confirmation link. They can request a new link from the public re-subscribe page, and only that mailbox can accept it.'
         );
@@ -2729,9 +2735,12 @@ export default function AlertPreferences({
       const response = await apiClient.post(
         `/api/v1/workspaces/${workspaceId}/contacts/${contact.id}/verifications/whatsapp`
       );
-      if (response?.data?.code === 'RECIPIENT_OPTED_OUT' || response?.data?.status === 'opted_out') {
+      if (
+        response?.data?.code === 'RECIPIENT_OPTED_OUT' ||
+        response?.data?.status === 'opted_out'
+      ) {
         showError(
-          'This person declined WhatsApp. TokenTimer did not create a confirmation link. Only a message from their own WhatsApp number can subscribe again.'
+          'This person declined WhatsApp. TokenTimer did not create a confirmation link. WhatsApp re-subscription is not currently available after a decline.'
         );
         await refreshContacts();
         return;
@@ -3820,7 +3829,8 @@ export default function AlertPreferences({
                   mb={2}
                   lineHeight='1.5'
                 >
-                  Select per-contact which channels to use. {groupChannelHint(recipientVerificationMode)}
+                  Select per-contact which channels to use.{' '}
+                  {groupChannelHint(recipientVerificationMode)}
                   {whatsappAvailable
                     ? ' Each person can have both email and WhatsApp.'
                     : ''}
@@ -4365,7 +4375,8 @@ export default function AlertPreferences({
               Add contact
             </DashboardModalTitle>
             <DashboardModalDescription>
-              Add someone who can receive workspace alert notifications. Saving does not confirm email or WhatsApp.
+              Add someone who can receive workspace alert notifications. Saving
+              does not confirm email or WhatsApp.
             </DashboardModalDescription>
           </ModalHeader>
           <ModalCloseButton {...closeButtonProps} isDisabled={addingContact} />

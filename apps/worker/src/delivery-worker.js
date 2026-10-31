@@ -2158,6 +2158,13 @@ export async function deliveryWorkerJob({
               const selected = selectDeliverableDestinations(gated.allowed);
               const trimmed = selected.destinations.filter((email) => isValidEmail(email));
               const contactIdByEmail = selected.contactIdByDestination;
+              channelRecipients = {};
+              for (const row of gated.blocked) {
+                if (!row?.destination || row.shadow || trimmed.includes(row.destination)) continue;
+                channelRecipients[String(row.destination).trim().toLowerCase()] = row.code === "RECIPIENT_VERIFICATION_UNAVAILABLE"
+                  ? { state: "unavailable", code: row.code }
+                  : { state: "excluded", code: row.code || "RECIPIENT_NOT_VERIFIED" };
+              }
 
               if (recipients.length > 0 && trimmed.length === 0 && gated.enforced) {
                 const infrastructure = gated.code === "RECIPIENT_VERIFICATION_UNAVAILABLE";
@@ -2167,13 +2174,6 @@ export async function deliveryWorkerJob({
                   ? "RECIPIENT_VERIFICATION_UNAVAILABLE"
                   : (gated.code || "NO_VERIFIED_RECIPIENTS");
                 errorMessage = errorCode;
-                channelRecipients = {};
-                for (const row of gated.blocked) {
-                  if (!row || !row.destination || row.shadow) continue;
-                  channelRecipients[String(row.destination).trim().toLowerCase()] = infrastructure || row.code === "RECIPIENT_VERIFICATION_UNAVAILABLE"
-                    ? { state: "unavailable", code: "RECIPIENT_VERIFICATION_UNAVAILABLE" }
-                    : { state: "excluded", code: row.code || errorCode };
-                }
                 await client.query(
                   `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
                    VALUES ($1,$2,$3,$4,'email',$5,$6,$7)`,
@@ -2229,7 +2229,7 @@ export async function deliveryWorkerJob({
                 let allOk = true;
                 let emailSends = 0;
                 let emailEligibilitySkips = 0;
-                let verificationDeferred = false;
+                let verificationDeferred = Object.values(channelRecipients).some(row => row.state === "unavailable");
                 channelRecipients = channelRecipients || {};
                 const priorEmailSuccess = new Set(
                   priorDeliveryRows
@@ -2794,6 +2794,13 @@ export async function deliveryWorkerJob({
                 const selectedPhones = selectDeliverableDestinations(gatedPhones.allowed);
                 trimmed = selectedPhones.destinations;
                 const contactIdByPhone = selectedPhones.contactIdByDestination;
+                channelRecipients = {};
+                for (const row of gatedPhones.blocked) {
+                  if (!row?.destination || row.shadow || trimmed.includes(row.destination)) continue;
+                  channelRecipients[String(row.destination).trim()] = row.code === "RECIPIENT_VERIFICATION_UNAVAILABLE"
+                    ? { state: "unavailable", code: row.code }
+                    : { state: "excluded", code: row.code || "RECIPIENT_NOT_VERIFIED" };
+                }
                 const firstNameByPhone = new Map();
                 for (const destination of trimmed) {
                   const info = contactInfos.find((item) => item.id === contactIdByPhone.get(destination));
@@ -2811,13 +2818,6 @@ export async function deliveryWorkerJob({
                     ? "RECIPIENT_VERIFICATION_UNAVAILABLE"
                     : (gatedPhones.code || "NO_VERIFIED_RECIPIENTS");
                   errorMessage = errorCode;
-                  channelRecipients = {};
-                  for (const row of gatedPhones.blocked) {
-                    if (!row || !row.destination || row.shadow) continue;
-                    channelRecipients[String(row.destination).trim()] = infrastructure || row.code === "RECIPIENT_VERIFICATION_UNAVAILABLE"
-                      ? { state: "unavailable", code: "RECIPIENT_VERIFICATION_UNAVAILABLE" }
-                      : { state: "excluded", code: row.code || errorCode };
-                  }
                   await client.query(
                     `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
                      VALUES ($1,$2,$3,$4,'whatsapp',$5,$6,$7)`,
@@ -2975,7 +2975,7 @@ export async function deliveryWorkerJob({
                     let allOk = true;
                     let whatsAppSends = 0;
                     let whatsAppEligibilitySkips = 0;
-                    let verificationDeferred = false;
+                    let verificationDeferred = Object.values(channelRecipients).some(row => row.state === "unavailable");
                     channelRecipients = channelRecipients || {};
                     for (const rcpt of trimmed) {
                       await assertStillOwnsDelivery(

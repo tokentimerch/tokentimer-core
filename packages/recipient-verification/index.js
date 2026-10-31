@@ -606,9 +606,18 @@ function foldDeliveryLog(rows) {
       }
       current.reason = "provider";
     } else if (channel === "email" || channel === "whatsapp") {
-      const key = recipientIdentity(channel, meta.recipient || meta.destination)
-        || `__channel_${row.status || "unknown"}`;
+      // Channel diagnostics do not identify another required recipient. The
+      // durable ledger already retains the actual recipients awaiting retry.
+      const key = recipientIdentity(channel, meta.recipient || meta.destination);
       const code = row.error_message || meta.code || null;
+      if (!key) {
+        // Retain legacy terminal eligibility diagnostics without inventing a
+        // recipient that a later successful delivery could never clear.
+        if (ELIGIBILITY_CODES.has(code) && !current.recipients) {
+          outcomes[channel] = { state: "blocked", terminal: true, reason: "eligibility", code };
+        }
+        continue;
+      }
       current.recipients = current.recipients || {};
       if (row.status === "success") current.recipients[key] = { state: "sent" };
       else if (code === TEMPORARY_VERIFICATION_CODE) {
@@ -963,7 +972,12 @@ function outcomeFromAttempt(row) {
 
 function mergeDeliveryAttempt({ prior, logRows, attempted, liveChannels } = {}) {
   const ledger = parseDeliveryLedger(prior);
-  const outcomes = { ...ledger.outcomes, ...foldDeliveryLog(logRows) };
+  const outcomes = { ...ledger.outcomes };
+  for (const [channel, logged] of Object.entries(foldDeliveryLog(logRows))) {
+    outcomes[channel] = logged.recipients
+      ? recipientChannelOutcome({ ...outcomes[channel]?.recipients, ...logged.recipients })
+      : logged;
+  }
   for (const row of Array.isArray(attempted) ? attempted : []) {
     if (!row || !row.channel) continue;
     const channel = String(row.channel);
@@ -1088,27 +1102,29 @@ async function assertInvitationBudget(client, {
       throw error;
     }
   }
-  const week = await takeBucket(client, {
-    key: `dest:${channel}:${fingerprint}:7d`,
-    limit: weekLimit,
-    windowSeconds: 7 * 24 * 60 * 60,
-    workspaceId,
-  });
-  if (!week.ok) {
-    const distinct = await client.query(
-      `-- RV_DISTINCT_WORKSPACES
-       SELECT COUNT(DISTINCT workspace_id)::int AS n
-         FROM recipient_verification_events
-        WHERE bucket_key = $1 AND created_at > NOW() - INTERVAL '7 days'`,
-      [`dest:${channel}:${fingerprint}:7d`],
-    );
-    const limited = coded(429, "RECIPIENT_VERIFICATION_RATE_LIMITED", "Verification invitation limit reached for this destination", {
-      retryAfter: week.retryAfter,
+  if (!recoverDestination) {
+    const week = await takeBucket(client, {
+      key: `dest:${channel}:${fingerprint}:7d`,
+      limit: weekLimit,
+      windowSeconds: 7 * 24 * 60 * 60,
+      workspaceId,
     });
-    if ((distinct.rows[0]?.n || 0) >= 3) {
-      limited.recordAbuse = { channel, fingerprint };
+    if (!week.ok) {
+      const distinct = await client.query(
+        `-- RV_DISTINCT_WORKSPACES
+         SELECT COUNT(DISTINCT workspace_id)::int AS n
+           FROM recipient_verification_events
+          WHERE bucket_key = $1 AND created_at > NOW() - INTERVAL '7 days'`,
+        [`dest:${channel}:${fingerprint}:7d`],
+      );
+      const limited = coded(429, "RECIPIENT_VERIFICATION_RATE_LIMITED", "Verification invitation limit reached for this destination", {
+        retryAfter: week.retryAfter,
+      });
+      if ((distinct.rows[0]?.n || 0) >= 3) {
+        limited.recordAbuse = { channel, fingerprint };
+      }
+      throw limited;
     }
-    throw limited;
   }
   const workspace = await takeBucket(client, {
     key: `ws:${workspaceId}:24h`,

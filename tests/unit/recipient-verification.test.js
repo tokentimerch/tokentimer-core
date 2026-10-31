@@ -1625,7 +1625,7 @@ describe("recipient verification", () => {
 
   it("retries a failed verification email without using another destination allowance", async () => {
     process.env.RECIPIENT_VERIFY_EMAIL_DEST_PER_DAY = "1";
-    process.env.RECIPIENT_VERIFY_EMAIL_DEST_PER_WEEK = "3";
+    process.env.RECIPIENT_VERIFY_EMAIL_DEST_PER_WEEK = "1";
     const store = createStore();
     seedContact(store);
     const first = await verification.createInvitation({
@@ -1661,6 +1661,10 @@ describe("recipient verification", () => {
       actorUserId: 7,
     });
     assert.notEqual(retried.token, first.token);
+    for (const suffix of ["24h", "7d"]) {
+      const bucket = `dest:email:${verification.destinationFingerprint("email", "person@example.com")}:${suffix}`;
+      assert.equal(store.state.events.filter(event => event.bucket_key === bucket).length, 1);
+    }
     assert.equal(store.state.challenges.filter((row) => row.status === "pending").length, 1);
     await verification.noteInvitationDispatch({
       pool: store.pool,

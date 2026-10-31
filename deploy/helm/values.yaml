@@ -364,6 +364,12 @@ ingress:
         - path: /metrics
           pathType: Prefix
           service: api
+        - path: /verify/recipient
+          pathType: Prefix
+          service: api
+        - path: /webhooks/twilio/whatsapp/inbound
+          pathType: Exact
+          service: api
         - path: /
           pathType: Prefix
           service: dashboard

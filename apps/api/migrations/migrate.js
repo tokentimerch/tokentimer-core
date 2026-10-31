@@ -4855,6 +4855,11 @@ const migrations = [
     name: "auto_sync_metric_labels",
     sql: fs.readFileSync(require("path").join(__dirname, "081-auto-sync-metric-labels.sql"), "utf8"),
   },
+  {
+    version: 82,
+    name: "auto_sync_system_metrics",
+    sql: fs.readFileSync(require("path").join(__dirname, "082-auto-sync-system-metrics.sql"), "utf8"),
+  },
 ];
 
 
@@ -5152,7 +5157,7 @@ migrations.push({
 // A database that already applied this preview as 81/82 keeps those rows.
 // compose-migrations applies metric labels as 83 on that ledger only.
 migrations.push({
-  version: 82,
+  version: 84,
   name: "recipient_channel_verification",
   sql: fs.readFileSync(
     require("path").join(__dirname, "../../../packages/recipient-verification/migration.sql"),
@@ -5161,7 +5166,7 @@ migrations.push({
 });
 
 migrations.push({
-  version: 83,
+  version: 85,
   name: "weekly_digest_recipient_claim_token",
   sql: `
     ALTER TABLE weekly_digest_recipient_log
