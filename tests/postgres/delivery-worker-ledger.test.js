@@ -665,6 +665,36 @@ for (const channel of ["email", "whatsapp"]) {
   }
 }
 
+
+test("a successful webhook cannot erase a stored terminal email failure", async () => {
+  migrate();
+  const hook = await startWebhookServer();
+  hook.route("/valid-terminal", [200]);
+  try {
+    const fixture = await createWorkspace("stored-terminal", {
+      contact: { email: "unused@example.test" },
+      group: { webhook_names: ["Valid"] },
+      webhooks: [{ name: "Valid", url: `http://127.0.0.1:${hook.port}/valid-terminal`, kind: "generic" }],
+    });
+    const prior = { version: 1, required: ["email", "webhooks"], retry: ["webhooks"],
+      outcomes: { email: { state: "failed", terminal: true, reason: "provider", code: "PERMANENT_DELIVERY_FAILURE" } } };
+    const id = await enqueue(fixture, prior);
+    const { deliveryWorkerJob } = await import("../../apps/worker/src/delivery-worker.js");
+    await deliveryWorkerJob({ closePool: false, incidentEmailSender: async () => ({ success: true }) });
+    const result = await loadAlert(id);
+    assert.equal(result.status, "partial");
+    assert.deepEqual(result.channels.outcomes.email, prior.outcomes.email);
+    assert.equal(result.channels.outcomes.webhooks.state, "sent");
+    assert.deepEqual(result.channels.retry, []);
+    assert.equal(result.next_attempt_at, null);
+    assert.equal(hook.hits.length, 1);
+    await deliveryWorkerJob({ closePool: false, incidentEmailSender: async () => ({ success: true }) });
+    assert.equal(hook.hits.length, 1, "a terminal partial must not be sent again");
+  } finally {
+    await new Promise(resolve => hook.server.close(resolve));
+  }
+});
+
 test.after(async () => {
   if (hookServer) {
     await new Promise((resolve) => hookServer.close(() => resolve()));

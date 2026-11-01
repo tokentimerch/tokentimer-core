@@ -51,7 +51,6 @@ import {
   reconcileStaleDeliveryIncidents,
 } from "./shared/opNotifications.js";
 import {
-  gateDestinations,
   recheckDestination,
   describeEnforcement,
   verificationMode,
@@ -62,6 +61,8 @@ import {
   webhookPermanentHashes,
   DELIVERY_CLAIM_EXCLUSION_SQL,
 } from "./shared/recipientDeliveryGate.js";
+
+import { notificationDeliveryState } from "./shared/notificationDeliveryState.js";
 
 const OPERATIONAL_EMAIL_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
 let lastOperationalEmailSweepAt = 0;
@@ -1531,6 +1532,7 @@ export const _test = {
 export async function deliveryWorkerJob({
   closePool = true,
   incidentEmailSender = sendEmailNotification,
+  deliveryState = notificationDeliveryState,
 } = {}) {
   const startedAt = Date.now();
   // Owner identity for this run's claims. Every renewal and terminal write
@@ -2139,7 +2141,7 @@ export async function deliveryWorkerJob({
               }
               // No fallback: if recipients is empty, email channel will result in no sends
 
-              const gated = await gateDestinations(
+              const gated = await deliveryState.recipients(
                 client,
                 alert.workspace_id,
                 "email",
@@ -2775,7 +2777,7 @@ export async function deliveryWorkerJob({
                     contactId: item.id,
                     destination: String(item.phone).trim(),
                   }));
-                const gatedPhones = await gateDestinations(
+                const gatedPhones = await deliveryState.recipients(
                   client,
                   alert.workspace_id,
                   "whatsapp",
@@ -3328,11 +3330,15 @@ export async function deliveryWorkerJob({
           (newAttemptsEmail >= MAX_ATTEMPTS_PER_CHANNEL ||
             newAttemptsWebhooks >= MAX_ATTEMPTS_PER_CHANNEL ||
             newAttemptsWhatsApp >= MAX_ATTEMPTS_PER_CHANNEL);
+        const priorLedger = deliveryState.parse(alert.channels);
+        const settlementChannels = priorLedger && !priorLedger.legacy
+          ? [...new Set([...(deliveryState.channels(alert.channels) || []), ...liveChannels])]
+          : liveChannels;
         const settlement = mergeDeliveryAttempt({
           prior: alert.channels,
           logRows: priorDeliveryRows,
           attempted: deliveryResults,
-          liveChannels,
+          liveChannels: settlementChannels,
         });
         const deliveryOutcome = queueDeliveryOutcome(settlement.results, {
           hasPartialIssues: false,
@@ -3455,14 +3461,6 @@ export async function deliveryWorkerJob({
               : "PERMANENT_DELIVERY_FAILURE";
           }
           let finalNextAttempt = deliveryOutcome.retry ? nextAttemptTimestamp : null;
-          if (
-            !finalNextAttempt
-            && deliveryOutcome.status === "partial"
-            && !deliveryOutcome.notifyUnverified
-            && process.env.NODE_ENV === "test"
-          ) {
-            finalNextAttempt = new Date(Date.now() + 1000);
-          }
           if (blockDueToWhatsApp) {
             finalNextAttempt = null;
             if (errorMessages)

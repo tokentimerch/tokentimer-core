@@ -994,7 +994,8 @@ describe("recipient verification", () => {
 
     const worker = fs.readFileSync(path.join(ROOT, "apps/worker/src/delivery-worker.js"), "utf8");
     const digest = fs.readFileSync(path.join(ROOT, "apps/worker/src/weekly-digest.js"), "utf8");
-    assert.equal(worker.includes("gateDestinations"), true);
+    assert.equal(worker.includes("deliveryState.recipients("), true);
+    assert.match(fs.readFileSync(path.join(ROOT, "apps/worker/src/shared/notificationDeliveryState.js"), "utf8"), /verification.filterDeliveryRecipients/);
     assert.equal(worker.includes("eligibilityTerminal"), true);
     assert.equal(worker.includes("queueDeliveryOutcome"), true);
     assert.equal(worker.includes("selectDeliverableDestinations"), true);
