@@ -5,7 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const Module = require("node:module");
-const express = require("express");
+const express = require("../../apps/api/node_modules/express");
 const request = require("supertest");
 
 const api = path.resolve(__dirname, "../../apps/api");
