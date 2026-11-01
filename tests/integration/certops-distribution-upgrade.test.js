@@ -9,6 +9,15 @@ const { Client } = require("pg");
 
 describe("Core distribution and lifecycle migration histories", function () {
   this.timeout(120000);
+  const companionNames = [
+    'recipient_channel_verification', 'weekly_digest_recipient_claim_token',
+    'certops_distribution_lifecycle', 'certops_distribution_incident_delivery',
+    'certops_stable_consumer_discovery', 'certops_material_cleanup',
+    'certops_consumer_verification_failures', 'certops_distribution_resolution_delivery',
+    'pagerduty_incident_lifecycle',
+  ];
+  const migrations = require('../../apps/api/migrations/migrate').migrations;
+  const companions = companionNames.filter(name => migrations.some(m => m.name === name));
   const extensionHistories = {
     "mainline-installed-78": ["certops_installed_file_distribution"],
     "mainline-stats-79": ["certops_installed_file_distribution", "auto_sync_provider_stats"],
@@ -200,7 +209,16 @@ describe("Core distribution and lifecycle migration histories", function () {
             "SELECT version,name,executed_at FROM migrations ORDER BY version",
           )
         ).rows;
-        if (retained) assert.deepEqual(await retained.read(), retained.before, "upgrade preserves published pins, installed/served assurance and accepted evidence");
+        if (retained) {
+          const expected = structuredClone(retained.before);
+          if (companions.includes('certops_consumer_verification_failures')) {
+            Object.assign(expected.state, {
+              verification_failure_count: '0', verification_failure_revision: null,
+              verification_outcome_generation: '0',
+            });
+          }
+          assert.deepEqual(await retained.read(), expected, "upgrade preserves published pins, installed/served assurance and accepted evidence");
+        }
         if (retained?.telemetry) assert.deepEqual((await db.query("SELECT * FROM auto_sync_provider_stats ORDER BY provider")).rows, retained.telemetry);
         if (retained?.metrics) assert.deepEqual((await db.query("SELECT * FROM auto_sync_run_outcome_stats ORDER BY provider,status")).rows, retained.metrics);
         const combined = (await db.query(`SELECT
@@ -235,6 +253,7 @@ describe("Core distribution and lifecycle migration histories", function () {
                 : history === "provider-preview-82"
                   ? ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "certops_material_providers", "auto_sync_system_metrics"]
                   : ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "auto_sync_system_metrics", "certops_material_providers"]),
+          ...companions,
         ];
         assert.deepEqual(
           after.filter((row) => row.version >= 70).map((row) => row.name),
