@@ -37,13 +37,15 @@ function composeMigrations(migrations, recorded = []) {
     throw new Error(
       "Missing or inconsistent pinned Core migration registry: Duplicate Core migration version or name",
     );
+  // The executor validates pre-70 aliases by their original versions.
+  // Released histories can legitimately repeat one of those old names.
+  const featureHistory = recorded.filter((entry) => entry.version >= 70);
   if (
-    new Set(recorded.map((entry) => entry.name)).size !== recorded.length ||
+    new Set(featureHistory.map((entry) => entry.name)).size !== featureHistory.length ||
     new Set(recorded.map((entry) => entry.version)).size !== recorded.length
   )
     throw new Error("Unsupported Core migration history: duplicate entries");
-  const tail = recorded
-    .filter((entry) => entry.version >= 70)
+  const tail = featureHistory
     .slice()
     .sort((a, b) => a.version - b.version);
   const prefix = tail.filter((row) => row.version < 78);
