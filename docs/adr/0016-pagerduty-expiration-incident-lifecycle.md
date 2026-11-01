@@ -1,4 +1,4 @@
-# ADR-0015: PagerDuty expiration incident lifecycle
+# ADR-0016: PagerDuty expiration incident lifecycle
 
 ## Status
 

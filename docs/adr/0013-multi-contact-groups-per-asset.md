@@ -260,7 +260,7 @@ group tables.
 
    - email: lowercased, trimmed address
    - WhatsApp: E.164 phone
-   - webhook: the delivery URL string; [ADR-0015](0015-pagerduty-expiration-incident-lifecycle.md)
+   - webhook: the delivery URL string; [ADR-0016](0016-pagerduty-expiration-incident-lifecycle.md)
      adds the workspace and routing key to PagerDuty destination identity, so
      independent integrations sharing an Events endpoint remain independent
 

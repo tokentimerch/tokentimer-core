@@ -30,7 +30,7 @@ the workspace, endpoint and routing key digest; retry/resolve events use one
 episode key. Other webhooks retain URL deduplication. Partial webhook failures
 keep the channel retryable, and successfully delivered destinations are skipped.
 See [PagerDuty operations](../../docs/PAGERDUTY.md) and
-[ADR-0015](../../docs/adr/0015-pagerduty-expiration-incident-lifecycle.md).
+[ADR-0016](../../docs/adr/0016-pagerduty-expiration-incident-lifecycle.md).
 
 All expiration writers archive prior threshold keys and revoke stale claims
 through the token-expiry database hook, extending the existing CertOps archival
