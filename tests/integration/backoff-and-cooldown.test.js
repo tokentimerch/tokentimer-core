@@ -77,7 +77,7 @@ describe("Backoff and Cooldown", function () {
           {
             name: "DiscordFail",
             kind: "discord",
-            url: "http://192.0.2.1/webhook/bad", // non-routable TEST-NET IP, fails fast
+            url: "https://discord.com/api/webhooks/backoff/__fail__", // deterministic transient provider failure
           },
         ]),
         JSON.stringify([

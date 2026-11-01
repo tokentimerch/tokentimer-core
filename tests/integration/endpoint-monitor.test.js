@@ -10,6 +10,7 @@
 
 const { expect, request, TestEnvironment, TestUtils } = require("./setup");
 const { logger } = require("./logger");
+const { startLocalHttpsServer } = require("./helpers/local-https-server");
 
 const BASE = process.env.TEST_API_URL || "http://localhost:4000";
 
@@ -23,6 +24,7 @@ describe("Endpoint Monitor CRUD", function () {
   let session;
   let workspaceId;
   let domainId;
+  let endpoint;
 
   before(async () => {
     await TestEnvironment.setup();
@@ -32,10 +34,18 @@ describe("Endpoint Monitor CRUD", function () {
       .get("/api/v1/workspaces?limit=50&offset=0")
       .set("Cookie", session.cookie);
     workspaceId = wsList?.body?.items?.[0]?.id;
+    endpoint = await startLocalHttpsServer({
+      listenHost: process.env.TT_TEST_HTTPS_BIND_HOST || "127.0.0.1",
+      advertisedHost: process.env.TT_TEST_HTTPS_HOST || "127.0.0.1",
+    });
   });
 
   after(async () => {
-    await TestUtils.cleanupTestUser(testUser.email, session.cookie);
+    try {
+      await TestUtils.cleanupTestUser(testUser.email, session.cookie);
+    } finally {
+      if (endpoint) await endpoint.close();
+    }
   });
 
   // --- POST create ---
@@ -44,12 +54,12 @@ describe("Endpoint Monitor CRUD", function () {
     const res = await request(BASE)
       .post(`/api/v1/workspaces/${workspaceId}/domains`)
       .set("Cookie", session.cookie)
-      .send({ url: "https://example.com" })
+      .send({ url: endpoint.url })
       .expect(201);
 
     expect(res.body).to.have.property("id");
     expect(res.body).to.have.property("url");
-    expect(res.body.url).to.include("example.com");
+    expect(res.body.url).to.equal(endpoint.url);
     expect(res.body).to.have.property("health_check_enabled");
     expect(res.body).to.have.property("check_interval");
 
@@ -117,10 +127,44 @@ describe("Endpoint Monitor CRUD", function () {
     expect(res.body).to.have.property("status");
     expect(res.body).to.have.property("statusCode");
     expect(res.body).to.have.property("responseMs");
-    // example.com should be reachable
     expect(res.body.status).to.equal("healthy");
-    expect(res.body.statusCode).to.be.a("number");
+    expect(res.body.statusCode).to.equal(200);
     expect(res.body.responseMs).to.be.a("number");
+    const stored = await TestUtils.execQuery(
+      "SELECT last_health_status, last_health_status_code FROM domain_monitors WHERE id = $1",
+      [domainId],
+    );
+    expect(stored.rows[0]).to.include({
+      last_health_status: "healthy",
+      last_health_status_code: 200,
+    });
+  });
+
+  it("POST /domains/:domainId/check - should persist an unhealthy HTTP response", async () => {
+    endpoint.server.removeAllListeners("request");
+    endpoint.server.on("request", (_req, res) => {
+      res.writeHead(503);
+      res.end("unavailable");
+    });
+    const res = await request(BASE)
+      .post(`/api/v1/workspaces/${workspaceId}/domains/${domainId}/check`)
+      .set("Cookie", session.cookie)
+      .expect(200);
+
+    expect(res.body).to.include({
+      status: "unhealthy",
+      statusCode: 503,
+      error: "HTTP 503",
+    });
+    const stored = await TestUtils.execQuery(
+      "SELECT last_health_status, last_health_status_code, last_health_error FROM domain_monitors WHERE id = $1",
+      [domainId],
+    );
+    expect(stored.rows[0]).to.include({
+      last_health_status: "unhealthy",
+      last_health_status_code: 503,
+      last_health_error: "HTTP 503",
+    });
   });
 
   // --- DELETE ---
