@@ -107,6 +107,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
     extractQuotaFromError,
     contactGroups,
     onSelectionChange,
+    afterFilterRules = null,
     autoSyncManageMode = false,
     initialScanParams = null,
     initialFilterRules = null,
@@ -497,6 +498,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
         borderColor={borderColor}
         helpTextColor={helpTextColor}
       />
+      {afterFilterRules}
       {!autoSyncManageMode && filterSummary ? (
         <HStack spacing={2}>
           <Badge colorScheme='green'>

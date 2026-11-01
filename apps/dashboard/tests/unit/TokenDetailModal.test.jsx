@@ -452,7 +452,8 @@ describe('TokenDetailModal', () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText('General details')).not.toBeInTheDocument();
     expect(screen.queryByText('Section')).not.toBeInTheDocument();
-    expect(screen.queryByText('Contact groups')).not.toBeInTheDocument();
+    expect(screen.getByText('Contact groups :')).toBeInTheDocument();
+    expect(screen.getByText('Use workspace default')).toBeInTheDocument();
     expect(screen.queryByText('Asset expiration')).not.toBeInTheDocument();
     expect(
       screen.queryByRole('heading', { name: 'Notes' })

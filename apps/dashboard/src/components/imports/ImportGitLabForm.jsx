@@ -102,6 +102,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
     extractQuotaFromError,
     contactGroups,
     onSelectionChange,
+    afterFilterRules = null,
     autoSyncManageMode = false,
     initialScanParams = null,
     initialFilterRules = null,
@@ -589,6 +590,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
         borderColor={borderColor}
         helpTextColor={helpTextColor}
       />
+      {afterFilterRules}
       {!autoSyncManageMode && filterSummary ? (
         <HStack spacing={2}>
           <Badge colorScheme='green'>

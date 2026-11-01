@@ -11,7 +11,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Auto-sync alerts can target individual connections and asset types.** Opt-in label controls expose configuration names, monitoring groups and selected asset/project/group metadata, with a warning about series growth. Token-name and project/group labels also require a deployment-level opt-in, off by default. A persisted last-creation timestamp supports first-scrape alerts; existing aggregate counters remain unchanged. **Operator action:** apply migration 81 with matching API/dashboard code. Detailed names and scope labels cover new creations while selected; existing activity is not backfilled.
+- **Global auto-sync overrides.** System Settings can force metric exposure/labels and the monitoring group independently across all integrations. Managed controls prevent local changes; a Configured badge identifies active overrides. Otherwise, connections keep their saved choices. Import forms use consistent typography and structured run history. Environment values retain priority; extra asset labels default off and increase series/alert cardinality. Names/scopes cover future creations; existing provider counters stay unchanged. **Operator action:** apply migrations 81–82 with matching API/dashboard code.
 
 - **API request correlation.** Responses include a generated `X-Request-Id` that matches `correlationId` in request-scoped API logs and completion records. Use it when reporting API failures; incoming request IDs are replaced to prevent forged or sensitive values from entering logs. Dashboard API errors display the matching request reference when available. Worker propagation remains follow-up work.
 

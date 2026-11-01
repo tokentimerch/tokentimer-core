@@ -24,6 +24,7 @@ import {
 import { FiEye, FiEyeOff, FiMail, FiRepeat } from 'react-icons/fi';
 import { FaWhatsapp } from 'react-icons/fa';
 import TestWhatsappButton from '../components/TestWhatsappButton.jsx';
+import AutoSyncSystemMetricSettings from '../components/AutoSyncSystemMetricSettings.jsx';
 import AutoSyncMultiConfigPanel from '../components/AutoSyncMultiConfigPanel.jsx';
 import { AUTO_SYNC_MULTI_CONFIG_HASH } from '../utils/autoSyncActivation.jsx';
 import apiClient from '../utils/apiClient';
@@ -62,6 +63,8 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
   const [showSmtpPass, setShowSmtpPass] = useState(false);
   const [showAuthToken, setShowAuthToken] = useState(false);
   const [openIntegration, setOpenIntegration] = useState('smtp');
+  const [autoSyncMetricsConfigured, setAutoSyncMetricsConfigured] =
+    useState(false);
   const [autoSyncMultiConfigEnabled, setAutoSyncMultiConfigEnabled] =
     useState(null);
   const location = useLocation();
@@ -92,11 +95,16 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
   }, []);
 
   useEffect(() => {
-    if (location.hash !== `#${AUTO_SYNC_MULTI_CONFIG_HASH}`) return;
-    if (autoSyncMultiConfigEnabled !== false) return;
+    if (
+      location.hash !== `#${AUTO_SYNC_MULTI_CONFIG_HASH}` &&
+      location.hash !== '#auto-sync'
+    )
+      return;
+    if (location.hash !== '#auto-sync' && autoSyncMultiConfigEnabled !== false)
+      return;
     setOpenIntegration('auto-sync');
     requestAnimationFrame(() => {
-      document.getElementById(AUTO_SYNC_MULTI_CONFIG_HASH)?.scrollIntoView({
+      document.getElementById('auto-sync')?.scrollIntoView({
         behavior: 'smooth',
         block: 'start',
       });
@@ -393,26 +401,29 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
         contentProps={{ overflowX: 'hidden', w: 'full', maxW: '100%' }}
       >
         <VStack align='stretch' spacing={SETTINGS_SECTION_GAP} w='full'>
-          {autoSyncMultiConfigEnabled === false ? (
-            <Box id={AUTO_SYNC_MULTI_CONFIG_HASH}>
-              <SettingsIntegrationCard
-                title='Auto-sync configurations'
-                description='Allow more than one scheduled connection per provider after confirming no worker prior to 0.17.0 is still running.'
-                icon={<Icon as={FiRepeat} boxSize={6} color='blue.500' />}
-                configured={false}
-                isOpen={openIntegration === 'auto-sync'}
-                onToggle={() =>
-                  setOpenIntegration(prev =>
-                    prev === 'auto-sync' ? null : 'auto-sync'
-                  )
-                }
-              >
+          <Box id='auto-sync'>
+            <SettingsIntegrationCard
+              title='Auto-sync'
+              description='Override metric exposure and monitoring groups across integrations.'
+              icon={<Icon as={FiRepeat} boxSize={6} color='blue.500' />}
+              configured={autoSyncMetricsConfigured}
+              isOpen={openIntegration === 'auto-sync'}
+              onToggle={() =>
+                setOpenIntegration(prev =>
+                  prev === 'auto-sync' ? null : 'auto-sync'
+                )
+              }
+            >
+              <AutoSyncSystemMetricSettings
+                onConfiguredChange={setAutoSyncMetricsConfigured}
+              />
+              {autoSyncMultiConfigEnabled === false ? (
                 <AutoSyncMultiConfigPanel
                   onEnabledChange={setAutoSyncMultiConfigEnabled}
                 />
-              </SettingsIntegrationCard>
-            </Box>
-          ) : null}
+              ) : null}
+            </SettingsIntegrationCard>
+          </Box>
 
           <SettingsIntegrationCard
             title='Email (SMTP)'

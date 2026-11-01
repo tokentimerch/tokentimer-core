@@ -1,3 +1,4 @@
+import AutoSyncRecentRuns from './imports/AutoSyncRecentRuns.jsx';
 import AutoSyncMetricSettings, {
   DEFAULT_METRIC_SETTINGS,
 } from './imports/AutoSyncMetricSettings.jsx';
@@ -1221,11 +1222,24 @@ function ImportTokensModalContent({
   const [autoSyncName, setAutoSyncName] = React.useState('');
   const [allowedExtraMetricLabels, setAllowedExtraMetricLabels] =
     React.useState([]);
+  const [systemMetricPolicy, setSystemMetricPolicy] = React.useState({
+    enabled: null,
+    labels: ['configuration_name', 'monitoring_group', 'kind'],
+  });
   const [autoSyncMetricSettings, setAutoSyncMetricSettings] = React.useState(
     DEFAULT_METRIC_SETTINGS
   );
   const [autoSyncRuns, setAutoSyncRuns] = React.useState([]);
   const [autoSyncRunsFor, setAutoSyncRunsFor] = React.useState(null);
+  const renderAutoSyncMetrics = () => (
+    <AutoSyncMetricSettings
+      key={source + '/' + (autoSyncConfig?.id || 'new')}
+      value={autoSyncMetricSettings}
+      allowedExtraLabels={allowedExtraMetricLabels}
+      systemPolicy={systemMetricPolicy}
+      onChange={setAutoSyncMetricSettings}
+    />
+  );
   const autoSyncHistoryKey = `${workspaceId}/${autoSyncConfig?.id}`;
   const visibleAutoSyncRuns =
     autoSyncRunsFor === autoSyncHistoryKey ? autoSyncRuns : [];
@@ -1314,6 +1328,12 @@ function ImportTokensModalContent({
         );
         setAutoSyncMetricSettings(
           existing?.metrics_settings || DEFAULT_METRIC_SETTINGS
+        );
+        setSystemMetricPolicy(
+          res.data?.metric_label_policy?.system || {
+            enabled: null,
+            labels: ['configuration_name', 'monitoring_group', 'kind'],
+          }
         );
         setAutoSyncName(
           existing?.name || (creating ? requestedAutoSyncConfig.name : source)
@@ -1450,7 +1470,7 @@ function ImportTokensModalContent({
     setAutoSyncRunsCursor(null);
     apiClient
       .get(
-        `/api/v1/workspaces/${workspaceId}/auto-sync/${autoSyncConfig.id}/runs?limit=10`
+        `/api/v1/workspaces/${workspaceId}/auto-sync/${autoSyncConfig.id}/runs?limit=5`
       )
       .then(res => {
         if (!cancelled) {
@@ -1476,17 +1496,19 @@ function ImportTokensModalContent({
   ]);
 
   const loadEarlierAutoSyncRuns = async () => {
-    if (!autoSyncRunsCursor || !autoSyncConfig?.id) return;
+    if (!autoSyncRunsCursor || !autoSyncConfig?.id) return false;
     const configId = autoSyncConfig.id;
     setLoadingAutoSyncRuns(true);
     try {
       const res = await apiClient.get(
-        `/api/v1/workspaces/${workspaceId}/auto-sync/${configId}/runs?limit=10&cursor=${encodeURIComponent(autoSyncRunsCursor)}`
+        `/api/v1/workspaces/${workspaceId}/auto-sync/${configId}/runs?limit=5&cursor=${encodeURIComponent(autoSyncRunsCursor)}`
       );
       if (autoSyncHistoryConfigRef.current === configId) {
         setAutoSyncRuns(previous => [...previous, ...(res.data?.items || [])]);
         setAutoSyncRunsCursor(res.data?.next_cursor || null);
+        return (res.data?.items || []).length > 0;
       }
+      return false;
     } finally {
       setLoadingAutoSyncRuns(false);
     }
@@ -2773,7 +2795,18 @@ function ImportTokensModalContent({
             </DashboardModalDescription>
           </ModalHeader>
           <ModalCloseButton {...closeButtonProps} />
-          <ModalBody {...bodyProps}>
+          <ModalBody
+            {...bodyProps}
+            fontSize='sm'
+            sx={{
+              '& .chakra-form__label, & .chakra-checkbox__label, & .chakra-radio__label':
+                { fontSize: 'sm', fontWeight: 'medium' },
+              '& .chakra-input, & .chakra-select, & .chakra-textarea': {
+                fontSize: 'sm',
+              },
+              '& .chakra-form__helper-text': { fontSize: 'xs' },
+            }}
+          >
             <VStack align='stretch' spacing={4}>
               {/* Source selector */}
               <Box>
@@ -3089,11 +3122,6 @@ function ImportTokensModalContent({
                         maxLength={255}
                       />
                     </FormControl>
-                    <AutoSyncMetricSettings
-                      value={autoSyncMetricSettings}
-                      allowedExtraLabels={allowedExtraMetricLabels}
-                      onChange={setAutoSyncMetricSettings}
-                    />
                     {autoSyncConfig.last_sync_status === 'failed' ||
                     autoSyncConfig.last_sync_status === 'partial' ? (
                       <Alert
@@ -3153,45 +3181,14 @@ function ImportTokensModalContent({
                       contactGroups={contactGroups}
                       defaultGroupId={defaultContactGroupId}
                     />
-                    <Box>
-                      <Text fontSize='sm' fontWeight='semibold' mb={2}>
-                        Recent runs
-                      </Text>
-                      {autoSyncRunsFor !== autoSyncHistoryKey ? (
-                        <Text fontSize='sm' color={muted}>
-                          Loading run history…
-                        </Text>
-                      ) : visibleAutoSyncRuns.length === 0 ? (
-                        <Text fontSize='sm' color={muted}>
-                          No runs yet
-                        </Text>
-                      ) : (
-                        visibleAutoSyncRuns.map(run => (
-                          <Text key={run.run_id} fontSize='xs'>
-                            {new Date(run.started_at).toLocaleString()} ·{' '}
-                            {run.trigger} · {run.status}
-                            {' · '}found {run.discovered_count}, created{' '}
-                            {run.created_count}, updated {run.updated_count},
-                            detached {run.detached_count}, deleted{' '}
-                            {run.deleted_count}, errors {run.error_count}
-                            {run.error ? ` · ${run.error}` : ''}
-                          </Text>
-                        ))
-                      )}
-                      {autoSyncRunsFor === autoSyncHistoryKey &&
-                      autoSyncRunsCursor ? (
-                        <Button
-                          size='xs'
-                          mt={2}
-                          isLoading={loadingAutoSyncRuns}
-                          onClick={() => {
-                            void loadEarlierAutoSyncRuns().catch(() => {});
-                          }}
-                        >
-                          Earlier runs
-                        </Button>
-                      ) : null}
-                    </Box>
+                    <AutoSyncRecentRuns
+                      key={`${autoSyncHistoryKey}/${autoSyncConfig?.last_sync_at || ''}`}
+                      runs={visibleAutoSyncRuns}
+                      loading={autoSyncRunsFor !== autoSyncHistoryKey}
+                      hasEarlier={Boolean(autoSyncRunsCursor)}
+                      loadingEarlier={loadingAutoSyncRuns}
+                      onLoadEarlier={loadEarlierAutoSyncRuns}
+                    />
                     <Divider />
                     <Box>
                       <Text fontSize='sm' fontWeight='semibold' mb={3}>
@@ -3369,6 +3366,9 @@ function ImportTokensModalContent({
 
               {source === 'gitlab' ? (
                 <ImportGitLabForm
+                  afterFilterRules={
+                    isAutoSyncAllowed ? renderAutoSyncMetrics() : null
+                  }
                   hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={gitlabFormRef}
@@ -3415,6 +3415,9 @@ function ImportTokensModalContent({
 
               {source === 'github' ? (
                 <ImportGitHubForm
+                  afterFilterRules={
+                    isAutoSyncAllowed ? renderAutoSyncMetrics() : null
+                  }
                   hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={githubFormRef}
@@ -4132,11 +4135,6 @@ function ImportTokensModalContent({
                   maxLength={255}
                 />
               </FormControl>
-              <AutoSyncMetricSettings
-                value={autoSyncMetricSettings}
-                allowedExtraLabels={allowedExtraMetricLabels}
-                onChange={setAutoSyncMetricSettings}
-              />
               <AutoSyncGroupLine
                 groupIds={autoSyncGroupIds}
                 onChange={setAutoSyncGroupIds}

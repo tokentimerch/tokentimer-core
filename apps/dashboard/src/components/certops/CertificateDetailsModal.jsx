@@ -388,7 +388,11 @@ export default function CertificateDetailsModal({
       formatContactGroupNames(
         hydrateContactGroupIds(token),
         contactGroups,
-        'Use workspace default'
+        token.id == null &&
+          token.contact_group_ids === undefined &&
+          token.contact_group_id === undefined
+          ? 'Not recorded for this certificate'
+          : 'Use workspace default'
       ),
     [contactGroups, token]
   );
@@ -636,27 +640,22 @@ export default function CertificateDetailsModal({
                   )}
                 </DetailRow>
               ) : null}
-              {isEditing || hasValue(hydrateContactGroupIds(token)) ? (
-                <DetailRow
-                  label='Contact groups'
-                  valueTitle={contactGroupLabel}
-                >
-                  {isEditing ? (
-                    <ContactGroupCheckboxGroup
-                      contactGroups={contactGroups}
-                      value={editData.contact_group_ids}
-                      onChange={ids =>
-                        setEditData(current => ({
-                          ...current,
-                          contact_group_ids: ids,
-                        }))
-                      }
-                    />
-                  ) : (
-                    <Text fontSize='sm'>{contactGroupLabel}</Text>
-                  )}
-                </DetailRow>
-              ) : null}
+              <DetailRow label='Contact groups' valueTitle={contactGroupLabel}>
+                {isEditing ? (
+                  <ContactGroupCheckboxGroup
+                    contactGroups={contactGroups}
+                    value={editData.contact_group_ids}
+                    onChange={ids =>
+                      setEditData(current => ({
+                        ...current,
+                        contact_group_ids: ids,
+                      }))
+                    }
+                  />
+                ) : (
+                  <Text fontSize='sm'>{contactGroupLabel}</Text>
+                )}
+              </DetailRow>
               {isEditing ? (
                 <DetailRow label='Asset expiration'>
                   {isEditing ? (
