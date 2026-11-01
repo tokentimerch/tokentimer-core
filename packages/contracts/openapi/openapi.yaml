@@ -11348,7 +11348,12 @@ components:
       properties:
         state:
           type: string
-          enum: [none, waiting, configured, skipped, failed]
+          enum:
+            - none
+            - waiting
+            - configured
+            - skipped
+            - failed
         jobId:
           type: string
           format: uuid
@@ -11363,7 +11368,27 @@ components:
           description: |
             Machine-readable skip or failure reason, never raw error text.
             Set for `skipped` and `failed`, null otherwise.
-          enum: [already_linked, detached, dry_run, job_never_terminated, job_not_found, certificate_not_found, no_claim_bound_verify_evidence, missing_certificate_id, missing_job_id, profile_operator_owned, certificate_link_conflict, job_failed, job_rejected, job_cancelled, job_blocked, orphaned_unknown_effect, renewal_profile_incomplete, renewal_profile_invalid, derivation_failed, unknown]
+          enum:
+            - already_linked
+            - detached
+            - dry_run
+            - job_never_terminated
+            - job_not_found
+            - certificate_not_found
+            - no_claim_bound_verify_evidence
+            - missing_certificate_id
+            - missing_job_id
+            - profile_operator_owned
+            - certificate_link_conflict
+            - job_failed
+            - job_rejected
+            - job_cancelled
+            - job_blocked
+            - orphaned_unknown_effect
+            - renewal_profile_incomplete
+            - renewal_profile_invalid
+            - derivation_failed
+            - unknown
         message:
           type: string
           nullable: true
@@ -11616,17 +11641,59 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, deploy-from-store, cleanup-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
+          enum:
+            - renew
+            - deploy
+            - deploy-from-store
+            - cleanup-from-store
+            - reload
+            - revoke
+            - noop
+            - issue
+            - distribute-trust
+            - revoke-trust
+            - continue-enrollment
+            - adcs-preflight
         status:
           type: string
-          enum: [pending_approval, approved, rejected, pending, claimed, running, succeeded, failed, blocked, cancelled, dry_run_complete, orphaned_unknown_effect, awaiting_issuer]
+          enum:
+            - pending_approval
+            - approved
+            - rejected
+            - pending
+            - claimed
+            - running
+            - succeeded
+            - failed
+            - blocked
+            - cancelled
+            - dry_run_complete
+            - orphaned_unknown_effect
+            - awaiting_issuer
         source:
           type: string
-          enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external, controller_provisioning]
+          enum:
+            - api
+            - executor
+            - system
+            - automation
+            - domain-monitor
+            - endpoint-monitor
+            - control-plane
+            - external
+            - controller_provisioning
         subjectType:
           type: string
           nullable: true
-          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external, trust_anchor]
+          enum:
+            - managed_certificate
+            - certificate_instance
+            - certificate_target
+            - token
+            - domain
+            - endpoint
+            - external
+            - trust_anchor
         subjectId:
           type: string
           maxLength: 128
@@ -12414,7 +12481,13 @@ components:
             failed: { type: string, format: date-time }
     CertOpsApiTokenScope:
       type: string
-      enum: [certops:read, certops:events:write, certops:jobs:read, certops:evidence:write, certops:observations:write, certops:provision:execute]
+      enum:
+        - certops:read
+        - certops:events:write
+        - certops:jobs:read
+        - certops:evidence:write
+        - certops:observations:write
+        - certops:provision:execute
       description: Canonical CertOps API-token scope. Either controller scope requires a controller cluster binding; job-claim and signed-agent scopes remain reserved for signed agent dispatch.
     CertOpsApiToken:
       type: object
@@ -12756,7 +12829,8 @@ components:
       properties:
         schemaVersion:
           type: integer
-          enum: [1]
+          enum:
+            - 1
         eventId:
           type: string
           minLength: 1
@@ -12783,10 +12857,25 @@ components:
           nullable: true
         status:
           type: string
-          enum: [accepted, claimed, running, succeeded, failed, rejected, blocked, cancelled]
+          enum:
+            - accepted
+            - claimed
+            - running
+            - succeeded
+            - failed
+            - rejected
+            - blocked
+            - cancelled
         eventType:
           type: string
-          enum: [job.accepted, job.started, job.progress, job.completed, job.failed, job.rejected, evidence.attached]
+          enum:
+            - job.accepted
+            - job.started
+            - job.progress
+            - job.completed
+            - job.failed
+            - job.rejected
+            - evidence.attached
         occurredAt:
           type: string
           format: date-time
@@ -12809,11 +12898,18 @@ components:
       oneOf:
         - properties:
             eventType:
-              enum: [job.accepted, job.started, job.progress, job.completed, job.failed, job.rejected]
+              enum:
+                - job.accepted
+                - job.started
+                - job.progress
+                - job.completed
+                - job.failed
+                - job.rejected
         - required: [evidence]
           properties:
             eventType:
-              enum: [evidence.attached]
+              enum:
+                - evidence.attached
             evidence:
               minItems: 1
     CertOpsPerJobExecutorEventRequest:
