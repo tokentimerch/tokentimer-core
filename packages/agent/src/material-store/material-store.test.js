@@ -45,7 +45,13 @@ test("publication uses CAS=0, reconciles lost response, and fetch pins version",
         posts++;
         const parsed = JSON.parse(body);
         assert.equal(parsed.options.cas, 0);
-        if (stored) { res.writeHead(400).end("secret response must never escape"); return; }
+        if (stored) {
+          // A reverse proxy can lose the KV v2 response body after commit.
+          // Keep the CAS-conflict case, then exercise empty-response recovery.
+          if (posts === 3) res.writeHead(204).end();
+          else res.writeHead(400).end("secret response must never escape");
+          return;
+        }
         stored = parsed.data;
         // Simulate successful Vault commit followed by a lost response.
         req.socket.destroy();
@@ -64,10 +70,11 @@ test("publication uses CAS=0, reconciles lost response, and fetch pins version",
   assert.equal(receipt.providerVersion, 1);
   assert.equal(JSON.stringify(receipt).includes("PRIVATE KEY"), false);
   assert.deepEqual(await client.publish(f.bundle), receipt);
+  assert.deepEqual(await client.publish(f.bundle), receipt, "empty publication responses recover the exact committed bundle");
   assert.equal((await client.fetch(1)).fingerprintSha256, f.bundle.fingerprintSha256);
   await assert.rejects(client.fetch(undefined), { code: "material_provider_version_invalid" });
-  assert.equal(posts, 2);
-  assert.equal(gets, 3);
+  assert.equal(posts, 3);
+  assert.equal(gets, 4);
 });
 
 test("local authority rejects cross-customer, arbitrary aliases and HTTP", (t) => {

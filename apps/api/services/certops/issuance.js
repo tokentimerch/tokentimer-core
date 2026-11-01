@@ -255,7 +255,8 @@ function normalizeIssuanceRequest(options) {
   if (payload.publicationDestination) {
     const destination = payload.publicationDestination;
     if (targetType !== "domain" || !options.assignedAgentId || !isPlainObject(destination) ||
-      Object.keys(destination).some((key) => !["materialStoreRef", "issuanceProfileRef", "profileRevision"].includes(key)) ||
+      Object.keys(destination).some((key) => !["type", "materialStoreRef", "issuanceProfileRef", "profileRevision"].includes(key)) ||
+      !require("../../../../packages/contracts/certops/material-provider.cjs").PROVIDERS.includes(destination.type || "vault-kv2") ||
       !/^[A-Za-z0-9_-]{1,64}$/.test(destination.materialStoreRef || "") ||
       !/^[A-Za-z0-9_-]{1,64}$/.test(destination.issuanceProfileRef || "") ||
       !Number.isInteger(destination.profileRevision) || destination.profileRevision < 1 ||

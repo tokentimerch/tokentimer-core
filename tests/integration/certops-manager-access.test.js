@@ -188,7 +188,7 @@ describe("CertOps workspace-manager access (real API and database)", function ()
       `${api}/certificates/${crypto.randomUUID()}/renewal-profile/repair`,
       {},
     );
-    expect(result.status).to.equal(404);
+    expect(result.status, JSON.stringify(result.body)).to.equal(404);
     expect(result.body.code).to.match(/^CERTOPS_/);
   });
 

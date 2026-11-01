@@ -17,7 +17,12 @@ function validateWorkflow(workflow,name="workflow"){
     if(name==="certops-adcs-lab-janitor.yml"&&job.environment!=="certops-adcs-cleanup")fail(`${id} independent expiry cleanup requires its dedicated unattended environment`);
     const scopedApi = name === "certops-qualification.yml" && id === "integration" && job.if === "github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.lane != 'tooling'";
     const scopedAggregate = name === "certops-distribution-qualification.yml" && id === "functional-summary" && JSON.stringify(job.needs) === JSON.stringify(["postgres", "agent-lab"]) && job.if === "${{ always() && github.ref == 'refs/heads/main' }}";
-    if(job.if!=="github.ref == 'refs/heads/main'"&&!scopedApi&&!scopedAggregate&&!require("./certops-azure-scope-policy").allowedCondition(name,job.if))fail(`${id} must enforce the exact trusted main reference`);
+    // The reviewed, credential-free Key Vault preflight deliberately fails on
+    // wrong refs/absent opt-in instead of producing an all-skipped green run.
+    // Its first-step gate and lack of Azure privileges are checked above by the
+    // Azure scope policy; every protected job still requires the exact main if.
+    const scopedKeyVaultPreflight = name === "certops-azure-keyvault-qualification.yml" && id === "preflight" && job.if === undefined;
+    if(job.if!=="github.ref == 'refs/heads/main'"&&!scopedApi&&!scopedAggregate&&!scopedKeyVaultPreflight&&!require("./certops-azure-scope-policy").allowedCondition(name,job.if))fail(`${id} must enforce the exact trusted main reference`);
     if(!Number.isInteger(job["timeout-minutes"])||job["timeout-minutes"]<1||job["timeout-minutes"]>(name==="certops-enterprise-adcs-qualification.yml"&&id==="lab"?300:180))fail(`${id} requires a bounded timeout`);
     if(job.permissions)for(const [key,value] of Object.entries(job.permissions))if(!(["contents","actions"].includes(key)&&value==="read")&&!(key==="id-token"&&value==="write"))fail(`${id} expands token permissions`);
     if((permissions["id-token"]==="write"||job.permissions?.["id-token"]==="write")&&!job.environment)fail(`${id} OIDC requires a protected qualification environment`);
@@ -26,7 +31,10 @@ function validateWorkflow(workflow,name="workflow"){
       if(step.uses&&!/^[-A-Za-z0-9_./]+@[a-f0-9]{40}$/.test(step.uses))fail(`${id} action must use an immutable commit`);
       if(step.uses?.startsWith("actions/checkout@")&&step.with?.["persist-credentials"]!==false)fail(`${id} checkout must not persist credentials`);
       if(step.uses?.startsWith("actions/upload-artifact@")){
-        if(step.if!=="always()")fail(`${id} must preserve diagnostic reports after failure`);
+        // Azure diagnostics must pass the closed-schema check even on failure;
+        // an unconditional upload could expose a malformed sensitive report.
+        const sanitizedKeyVaultUpload = name === "certops-azure-keyvault-qualification.yml" && step.if === "always() && steps.evidence-check.outcome == 'success'";
+        if(step.if!=="always()"&&!sanitizedKeyVaultUpload)fail(`${id} must preserve diagnostic reports after failure`);
         const artifact=String(step.with?.path||"");if(!artifact||artifact.split(/\r?\n/).some(line=>line&&(!/^((candidate\/)?qualification-results\/)/.test(line)||line.replace(/\\/g,"/").split("/").includes(".."))))fail(`${id} artifacts must stay in the sanitized report directory`);
       }
       if(typeof step.run==="string"&&/\$\{\{\s*(inputs\.|github\.event\.inputs\.)/.test(step.run))fail(`${id} manual inputs must be passed through environment or typed arguments, not interpolated into shell code`);

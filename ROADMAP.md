@@ -50,6 +50,9 @@ called stable while they are open.
   for Windows/IIS shared material and provider extensions. Functional
   implementation is separate from remaining fleet/protected qualification;
   neither PR completes every #248 requirement.
+  Provider extensions cover OpenBao KV v2 and Azure Key Vault Secrets exact
+  versions. Azure and Windows/IIS remain subject to independent production
+  qualification; see [implementation and evidence](docs/certops/distribution-extensions-qualification.md).
 - **Shared outbound policy**
   ([#233](https://github.com/tokentimerch/tokentimer-core/issues/233)).
   Wire offline mode and outbound allowlists into API and worker egress.

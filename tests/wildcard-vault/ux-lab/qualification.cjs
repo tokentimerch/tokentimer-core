@@ -67,6 +67,7 @@ function createGate({ root, candidateSha, mode }) {
     allFeaturesQualified: false,
   });
   gate.report.qualificationEnvironment.certificateMode = mode;
+  gate.report.qualificationEnvironment.materialProvider = process.env.TT_UX_MATERIAL_PROVIDER || "vault-kv2";
   gate.report.fixtureSources =
     require("../../../.github/maintainers/certops/qualification-suites.json")
       .slots.find((s) => s.suite === SUITE)
@@ -375,9 +376,9 @@ async function extend(c) {
   assert.equal((await job(rollback.id)).status, "pending_approval");
   await approve(rollback.id);
   await terminal(rollback.id);
-  // An explicitly approved retained version remains eligible while its
-  // fingerprint is active, even after the source rotates. Require both the
-  // accepted generation/version and fresh convergence evidence for the rollback.
+  // An explicitly approved retained version in the same active management
+  // period remains eligible while its fingerprint is active. Require both
+  // exact accepted generation/version and fresh convergence after rollback.
   await wait("consumers accept and observe the rolled-back version", async () => {
     const rows = await matrix();
     return state.bindings.every((b) => {
@@ -393,6 +394,13 @@ async function extend(c) {
       : false;
   });
   await converge();
+  const rollbackRows = await matrix();
+  assert.ok(
+    state.bindings.every((binding) => rollbackRows.find((row) => row.binding_id === binding.id)?.converged === true),
+    "an approved retained-version rollback must converge",
+  );
+  const removedRows = rollbackRows.filter((row) => !state.bindings.some((binding) => binding.id === row.binding_id));
+  assert.ok(removedRows.length > 0 && removedRows.every((row) => row.binding_state === "removed" && row.converged === false), "removed consumers must stay outside convergence");
   await externalProof(initial);
   assert.deepEqual(
     immutable((await versions()).find((v) => v.id === initial.id)),
