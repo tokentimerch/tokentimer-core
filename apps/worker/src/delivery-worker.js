@@ -2114,7 +2114,7 @@ export async function deliveryWorkerJob({
                   const filtered = webhooks.filter((w) =>
                     names.includes(String(w.name || "").trim()),
                   );
-                  webhooks = uniqueWebhookDestinations(filtered, alert.workspace_id);
+                  webhooks = uniqueWebhookDestinations(filtered, alert.workspace_id, { preserveInvalid: true });
                 } else {
                   webhooks = [];
                 }

@@ -50,10 +50,10 @@ export function webhookDestinationId(workspaceId, webhook) {
   );
 }
 
-export function uniqueWebhookDestinations(webhooks, workspaceId) {
+export function uniqueWebhookDestinations(webhooks, workspaceId, { preserveInvalid = false } = {}) {
   const seen = new Set();
   return (Array.isArray(webhooks) ? webhooks : []).filter((webhook) => {
-    if (!String(webhook?.url || "").trim()) return false;
+    if (!String(webhook?.url || "").trim()) return preserveInvalid;
     const id = webhookDestinationId(workspaceId, webhook);
     if (seen.has(id)) return false;
     seen.add(id);

@@ -233,3 +233,9 @@ describe("recipient aggregate acceptance", () => {
     );
   });
 });
+
+it("retains invalid webhook configuration for delivery failure reporting without changing default filtering", () => {
+  const invalid = [{ name: "blank", url: "" }, { name: "missing" }];
+  assert.deepEqual(identity.uniqueWebhookDestinations([...invalid, pd, { ...pd }], workspaceId), [pd]);
+  assert.deepEqual(identity.uniqueWebhookDestinations([...invalid, pd, { ...pd }], workspaceId, { preserveInvalid: true }), [...invalid, pd]);
+});
