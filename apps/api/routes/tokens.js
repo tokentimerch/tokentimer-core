@@ -765,12 +765,12 @@ router.post(
         }
         applyMembershipToTokenData(tokenData, updateMembership);
         // A confirmed manual import adopts inventory from auto-sync management.
+        if (expiration === existingToken.expiresAt) delete tokenData.expiration;
         const updatedToken = await Token.update(existingToken.id, {
           ...tokenData,
           auto_sync_managed: false,
-          expiration,
           created_at: tokenData.created_at, // Allow updating to null if not found in latest import
-        });
+        }, { manualExpirationSnapshot: existingToken.expiresAt });
         await attachContactGroupIdsToTokens(updatedToken);
         // Audit: token updated via creation endpoint
         try {
@@ -884,6 +884,9 @@ router.post(
       await attachContactGroupIdsToTokens(token);
       res.status(201).json(await enrichTokenWithAlertStateBestEffort(token));
     } catch (error) {
+      if (error?.code === "VERIFIED_CERTIFICATE_EXPIRY_REQUIRED") {
+        return res.status(409).json({ error: error.message, code: error.code });
+      }
       if (error?.code === "VALIDATION_ERROR") {
         return invalidContactGroupResponse(res);
       }
@@ -1459,7 +1462,10 @@ router.put(
         applyMembershipToTokenData(updateData, updateMembership);
       }
 
-      const updatedToken = await Token.update(id, updateData);
+      if (updateData.expiration === existingToken.expiresAt) delete updateData.expiration;
+      const updatedToken = await Token.update(id, updateData, {
+        manualExpirationSnapshot: existingToken.expiresAt,
+      });
       // Audit: token updated (include before/after for key date fields)
       try {
         const changedFields = Object.keys(updateData);
@@ -1496,6 +1502,9 @@ router.put(
     } catch (error) {
       if (error?.code === "VALIDATION_ERROR") {
         return invalidContactGroupResponse(res);
+      }
+      if (error?.code === "VERIFIED_CERTIFICATE_EXPIRY_REQUIRED") {
+        return res.status(409).json({ error: error.message, code: error.code });
       }
       logger.error("Error updating token:", {
         error: error.message,

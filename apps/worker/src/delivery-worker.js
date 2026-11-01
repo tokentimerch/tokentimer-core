@@ -20,6 +20,11 @@ import {
 } from "./notify/email.js";
 import { sendWhatsApp } from "./notify/whatsapp.js";
 import { postJson, formatPayload } from "./notify/webhooks.js";
+import { deliverPagerDutyExpiration, reconcilePagerDutyIncidents } from "./pagerduty-incidents.js";
+import { uniqueWebhookDestinations, webhookDestinationId } from "./shared/webhookDestinations.js";
+import alertEligibility from "@tokentimer/alert-eligibility";
+import { webhookDeliveryEvidence } from "./shared/deliveryEvidence.js";
+import { deliveryWindowAdmission, deliveryWindowDeferralMs } from "./shared/deliveryWindow.js";
 import crypto from "node:crypto";
 import { logger } from "./logger.js";
 import emailAddress from "../../../packages/email-address/index.js";
@@ -99,23 +104,6 @@ function unionWebhookNames(groups) {
     }
   }
   return names;
-}
-
-function uniqueWebhooksByUrl(webhooks) {
-  const list = Array.isArray(webhooks) ? webhooks : [];
-  const seen = new Set();
-  const kept = [];
-  for (const webhook of list) {
-    const url = String(webhook?.url || "").trim();
-    if (!url) {
-      kept.push(webhook);
-      continue;
-    }
-    if (seen.has(url)) continue;
-    seen.add(url);
-    kept.push(webhook);
-  }
-  return kept;
 }
 
 function contactGroupAuditFields(assignedIds, resolvedGroups, contactGroups) {
@@ -1532,6 +1520,7 @@ export const _test = {
 export async function deliveryWorkerJob({
   closePool = true,
   incidentEmailSender = sendEmailNotification,
+  webhookSender = postJson,
   deliveryState = notificationDeliveryState,
 } = {}) {
   const startedAt = Date.now();
@@ -1543,6 +1532,11 @@ export async function deliveryWorkerJob({
   let processed = 0,
     sent = 0,
     failed = 0;
+
+  // Drain durable PagerDuty recovery/retries before ordinary delivery so a
+  // large recipient batch cannot starve recovery. This also runs on an empty
+  // queue, in both the Compose runner and Helm delivery CronJob.
+  await withClient((client) => reconcilePagerDutyIncidents(client, { send: webhookSender, deliveryState }));
 
   await withClient(async (client) => {
     // In test mode, ignore next_attempt_at gating to allow repeated processing in quick succession
@@ -1632,7 +1626,7 @@ export async function deliveryWorkerJob({
            WHEN aq.token_id IS NOT NULL THEN COALESCE(token_groups.assigned_ids, ARRAY[]::text[])
            ELSE COALESCE(agent_groups.assigned_ids, ARRAY[]::text[])
          END AS assigned_ids,
-         COALESCE(t.workspace_id, ca.workspace_id) AS workspace_id,
+         COALESCE(t.workspace_id, ca.workspace_id, ${alertEligibility.resolvedTokenWorkspaceSql("t")}) AS workspace_id,
          COALESCE(w.name, wf.name, wj.name) AS workspace_name
        FROM alert_queue aq
        LEFT JOIN tokens t ON t.id = aq.token_id
@@ -1852,82 +1846,43 @@ export async function deliveryWorkerJob({
 
         // Defer if outside workspace delivery window
         try {
-          let start = String(alert.delivery_window_start || "").trim();
-          let end = String(alert.delivery_window_end || "").trim();
-          const tzInput = String(alert.delivery_window_tz || "").trim();
-          if (!start && !end) {
-            start = process.env.DELIVERY_WINDOW_DEFAULT_START || "00:00";
-            end = process.env.DELIVERY_WINDOW_DEFAULT_END || "23:59";
-          }
-          if (start && end) {
-            const now = new Date();
-            let hh = "00";
-            let mm = "00";
-            try {
-              const fmt = new Intl.DateTimeFormat("en-US", {
-                timeZone: tzInput || "UTC",
-                hour12: false,
-                hour: "2-digit",
-                minute: "2-digit",
-              });
-              const parts = fmt.formatToParts(now);
-              hh = parts.find((p) => p.type === "hour")?.value || "00";
-              mm = parts.find((p) => p.type === "minute")?.value || "00";
-            } catch (_tzErr) {
-              // Invalid timezone; fall back to UTC
-              hh = String(now.getUTCHours()).padStart(2, "0");
-              mm = String(now.getUTCMinutes()).padStart(2, "0");
-              if (tzInput)
-                logger.warn(
-                  `Invalid delivery_window_tz: ${tzInput}, falling back to UTC`,
-                );
-            }
-            const cur = `${hh}:${mm}`;
-            const inWindow =
-              start <= end
-                ? cur >= start && cur <= end
-                : cur >= start || cur <= end;
-            if (!inWindow) {
-              const defMs = process.env.DELIVERY_WINDOW_DEFERRAL_MS
-                ? Number(process.env.DELIVERY_WINDOW_DEFERRAL_MS)
-                : 3 * 60 * 60 * 1000; // Default: 3 hours (reduced load for OUT_OF_WINDOW alerts)
-              const ts = new Date(
-                Date.now() + (Number.isFinite(defMs) ? defMs : 10800000),
+          const admission = deliveryWindowAdmission(alert);
+          if (admission.invalidTimezone) logger.warn("Invalid delivery window timezone; falling back to UTC");
+          if (!admission.allowed) {
+            const ts = new Date(Date.now() + deliveryWindowDeferralMs());
+            const windowDeferRes = await client.query(
+              `UPDATE alert_queue
+            SET status = 'pending', last_attempt = NOW(), error_message = 'OUT_OF_WINDOW', updated_at = NOW(), next_attempt_at = $2, delivery_claim_id = NULL
+             WHERE id = $1 AND delivery_claim_id = $3`,
+              [alert.id, ts.toISOString(), claimId],
+            );
+            if (windowDeferRes.rowCount === 0) {
+              logger.warn(
+                "Skipped out-of-window deferral: another worker took ownership",
+                { alertId: alert.id },
               );
-              const windowDeferRes = await client.query(
-                `UPDATE alert_queue 
-              SET status = 'pending', last_attempt = NOW(), error_message = 'OUT_OF_WINDOW', updated_at = NOW(), next_attempt_at = $2, delivery_claim_id = NULL
-               WHERE id = $1 AND delivery_claim_id = $3`,
-                [alert.id, ts.toISOString(), claimId],
-              );
-              if (windowDeferRes.rowCount === 0) {
-                logger.warn(
-                  "Skipped out-of-window deferral: another worker took ownership",
-                  { alertId: alert.id },
-                );
-              } else if (alert.error_message !== "OUT_OF_WINDOW") {
-                try {
-                  await writeAlertAudit(client, alert, {
-                    subjectUserId: alert.user_id,
-                    action: "ALERT_DELIVERY_DEFERRED",
-                    targetId: alert.token_id,
-                    metadata: {
-                      reason: "delivery_window",
-                      threshold: alert.threshold_days,
-                      next_attempt_at: ts.toISOString(),
-                      workspace_name: alert.workspace_name,
-                      token_name: alert.name,
-                    },
-                  });
-                } catch (_auditErr) {
-                  logger.debug("Non-critical operation failed", {
-                    error: _auditErr.message,
-                  });
-                }
+            } else if (alert.error_message !== "OUT_OF_WINDOW") {
+              try {
+                await writeAlertAudit(client, alert, {
+                  subjectUserId: alert.user_id,
+                  action: "ALERT_DELIVERY_DEFERRED",
+                  targetId: alert.token_id,
+                  metadata: {
+                    reason: "delivery_window",
+                    threshold: alert.threshold_days,
+                    next_attempt_at: ts.toISOString(),
+                    workspace_name: alert.workspace_name,
+                    token_name: alert.name,
+                  },
+                });
+              } catch (_auditErr) {
+                logger.debug("Non-critical operation failed", {
+                  error: _auditErr.message,
+                });
               }
-              // Do not count this as a failure; simply defer
-              continue;
             }
+            // Do not count this as a failure; simply defer
+            continue;
           }
         } catch (_err) {
           logger.warn("DB operation failed", { error: _err.message });
@@ -1986,6 +1941,14 @@ export async function deliveryWorkerJob({
         } catch (priorErr) {
           logger.debug("Non-critical operation failed", { error: priorErr.message });
         }
+        const queuedLedger = deliveryState.parse(alert.channels);
+        if (!queuedLedger || (!queuedLedger.legacy && finalChannels.length === 0)) {
+          await client.query(`UPDATE alert_queue SET status=CASE WHEN status='partial' THEN status ELSE 'blocked' END,
+            error_message=COALESCE(error_message,$3),next_attempt_at=NULL,delivery_claim_id=NULL,updated_at=NOW()
+            WHERE id=$1 AND delivery_claim_id=$2`,
+          [alert.id, claimId, queuedLedger ? "DELIVERY_LEDGER_NO_RETRY" : "UNSUPPORTED_DELIVERY_LEDGER"]);
+          continue;
+        }
 
         // An empty retry set is terminal. Do not relabel a previous partial
         // delivery as a missing contact group.
@@ -2003,7 +1966,7 @@ export async function deliveryWorkerJob({
               ? new Date(Date.now() + 1000)
               : null;
           const noContactsRes = await client.query(
-            `UPDATE alert_queue 
+            `UPDATE alert_queue
            SET status = 'failed', attempts = attempts + 1, last_attempt = NOW(), error_message = 'NO_CONTACTS_DEFINED: No email, webhook, or WhatsApp contacts are configured in the selected contact group', updated_at = NOW(), next_attempt_at = $2, delivery_claim_id = NULL
            WHERE id = $1 AND delivery_claim_id = $3`,
             [
@@ -2108,6 +2071,7 @@ export async function deliveryWorkerJob({
             if (channel === "email") {
               // Build recipients: group emails only; no fallback
               let recipients = [];
+              let emailContacts = [];
               const groupIdUsed = contactGroupId;
               try {
                 const emailIds = unionContactIds(
@@ -2119,6 +2083,7 @@ export async function deliveryWorkerJob({
                     `SELECT id, details FROM workspace_contacts WHERE workspace_id = $1 AND id = ANY($2::uuid[])`,
                     [alert.workspace_id, emailIds],
                   );
+                  emailContacts = contactsRes.rows;
                   recipients = contactsRes.rows
                     .map((r) => {
                       try {
@@ -2191,8 +2156,8 @@ export async function deliveryWorkerJob({
                 );
               } else if (trimmed.length === 0) {
                 success = false;
-                errorMessage =
-                  "No email contacts are defined in the selected contact group";
+                errorCode = eligibilityTerminal ? gated.code || "NO_VERIFIED_RECIPIENTS" : null;
+                errorMessage = errorCode || "No email contacts are defined in the selected contact group";
               } else {
                 // Send individually and log per recipient
                 const isEndpointAlert =
@@ -2311,6 +2276,7 @@ export async function deliveryWorkerJob({
                         claimId,
                         CLAIM_MARKER_MS,
                       );
+                      await deliveryState.assertRecipient(client, alert.workspace_id, "email", { contactId: contactIdByEmail.get(rcpt), destination: rcpt });
                     },
                   });
                   await client.query(
@@ -2376,7 +2342,7 @@ export async function deliveryWorkerJob({
                   const filtered = webhooks.filter((w) =>
                     names.includes(String(w.name || "").trim()),
                   );
-                  webhooks = uniqueWebhooksByUrl(filtered);
+                  webhooks = uniqueWebhookDestinations(filtered, alert.workspace_id, { preserveInvalid: true });
                 } else {
                   webhooks = [];
                 }
@@ -2399,9 +2365,10 @@ export async function deliveryWorkerJob({
 
                 // Load previously successful webhook url hashes for this alert_queue
                 const priorSuccessRes = await client.query(
-                  `SELECT metadata->>'urlHash' AS h
+                  `SELECT channel, status, workspace_id, metadata
                  FROM alert_delivery_log
-                 WHERE alert_queue_id = $1 AND channel = 'webhooks' AND status = 'success'`,
+                 WHERE alert_queue_id = $1 AND channel = 'webhooks' AND status = 'success'
+                   AND COALESCE(metadata->>'event_action', 'trigger') = 'trigger'`,
                   [alert.id],
                 );
                 const priorSuccess = new Set(
@@ -2451,11 +2418,14 @@ export async function deliveryWorkerJob({
                   consideredEndpoints += 1;
 
                   // Compute a stable hash for the URL to identify unique endpoints without storing the raw URL
-                  const urlHash = crypto
-                    .createHash("sha256")
-                    .update(url)
-                    .digest("hex");
-                  if (priorSuccess.has(urlHash)) {
+                  if (kind === "pagerduty" && !alert.workspace_id) {
+                    transientEndpoints += 1;
+                    errors.push("pagerduty: asset_workspace_unavailable");
+                    continue;
+                  }
+                  const urlHash = webhookDestinationId(alert.workspace_id, wh);
+                  const evidence = webhookDeliveryEvidence(alert.workspace_id, wh, alert.webhook_urls, priorSuccessRes.rows);
+                  if (priorSuccess.has(urlHash) || evidence === "delivered") {
                     succeededEndpoints += 1;
                     webhookEndpoints[urlHash] = "sent";
                     continue;
@@ -2463,6 +2433,25 @@ export async function deliveryWorkerJob({
                   if (priorPermanent.has(urlHash)) {
                     permanentEndpoints += 1;
                     webhookEndpoints[urlHash] = "permanent";
+                    continue;
+                  }
+                  if (evidence === "legacy_ambiguous") {
+                    transientEndpoints += 1;
+                    webhookEndpoints[urlHash] = "pending";
+                    errors.push("pagerduty_legacy_destination_ambiguous");
+                    continue;
+                  }
+                  if (kind === "pagerduty" && alert.alert_key?.startsWith("token_expiry:")) {
+                    await assertStillOwnsDelivery(client, alert.id, claimId, CLAIM_MARKER_MS);
+                    const result = await deliverPagerDutyExpiration(client, { alert, webhook: wh, send: webhookSender, deliveryState });
+                    if (result.success) {
+                      succeededEndpoints += 1;
+                      webhookEndpoints[urlHash] = "sent";
+                    } else {
+                      transientEndpoints += 1;
+                      webhookEndpoints[urlHash] = "pending";
+                      errors.push(`pagerduty: ${result.error}`);
+                    }
                     continue;
                   }
                   const name = alert.name || `Token #${alert.token_id}`;
@@ -2634,7 +2623,7 @@ export async function deliveryWorkerJob({
                   const endTimer = hLatency
                     .labels("webhooks", kind)
                     .startTimer();
-                  const res = await postJson(url, payload, kind);
+                  const res = await webhookSender(url, payload, kind);
                   try {
                     endTimer();
                   } catch (_) {
@@ -2686,6 +2675,7 @@ export async function deliveryWorkerJob({
                         kind,
                         urlDomain: webhookLogDomain(url),
                         urlHash,
+                        ...(kind === "pagerduty" && { destination_id: urlHash }),
                         group_id: groupIdUsedForWebhooks,
                         payload_type: isEndpointHealthWebhook
                           ? "endpoint_health"
@@ -2835,8 +2825,8 @@ export async function deliveryWorkerJob({
                   );
                 } else if (trimmed.length === 0) {
                   success = false;
-                  errorMessage =
-                    "No WhatsApp contacts are defined in the selected contact group";
+                  errorCode = eligibilityTerminal ? gated.code || "NO_VERIFIED_RECIPIENTS" : null;
+                  errorMessage = errorCode || "No WhatsApp contacts are defined in the selected contact group";
                 } else {
                   const isEndpointHealthWhatsApp =
                     alert.alert_key &&
@@ -2989,6 +2979,7 @@ export async function deliveryWorkerJob({
                       const endTimerWA = hLatency
                         .labels("whatsapp", "twilio")
                         .startTimer();
+                      await deliveryState.assertRecipient(client, alert.workspace_id, "whatsapp", { contactId: contactIdByPhone.get(rcpt), destination: rcpt });
                       const perRecipientBase = contentVariablesBase
                         ? {
                             ...contentVariablesBase,
@@ -3166,6 +3157,7 @@ export async function deliveryWorkerJob({
             if (e instanceof DeliveryOwnershipLostError) throw e;
             success = false;
             errorMessage = e.message;
+            if (e.message === "RECIPIENT_VERIFICATION_UNAVAILABLE") errorCode = e.message;
             // Catch-all: if an exception occurred during WhatsApp processing, log it
             if (channel === "whatsapp") {
               try {
@@ -3462,6 +3454,7 @@ export async function deliveryWorkerJob({
           }
           let finalNextAttempt = deliveryOutcome.retry ? nextAttemptTimestamp : null;
           if (blockDueToWhatsApp) {
+            if (settlement) channelsToStore.retry = [];
             finalNextAttempt = null;
             if (errorMessages)
               errorMessages = `${errorMessages}; WHATSAPP_PERMANENT_FAILURE`;
