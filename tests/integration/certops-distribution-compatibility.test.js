@@ -21,6 +21,14 @@ describe("Independent PR migration and preview compatibility",function(){
       const labelsExist=(await client.query("SELECT to_regclass('auto_sync_kind_stats') AS name")).rows[0].name;
       if(labelsExist)await client.query("INSERT INTO auto_sync_kind_stats(provider,kind,items_created_total) VALUES('compat_fixture','certificate',7)");
       const upgrade="require('./migrations/migrate').runMigrations().then(()=>process.exit(0))";
+      let preserved = before;
+      if (history === "pagerduty-81" || history === "pagerduty-preview-79") {
+        const rejected = spawnSync(process.execPath,["-e",upgrade],{cwd,env,encoding:"utf8",windowsHide:true,timeout:60000});
+        assert.equal(rejected.status,1,"A colliding preview must stop before automatic upgrade");
+        assert.deepEqual((await client.query("SELECT * FROM migrations ORDER BY version")).rows,before);
+        execute("const {pool}=require('./db/database');const {reconcilePagerDutyV79}=require('../../scripts/reconcile-pagerduty-v79.cjs');(async()=>{const c=await pool.connect();try{await reconcilePagerDutyV79(c,{apply:true})}finally{c.release();await pool.end()}})().catch(()=>process.exit(1));");
+        preserved=(await client.query("SELECT * FROM migrations ORDER BY version")).rows;
+      }
       if(history==="main-81"){
         await Promise.all([1,2].map(()=>new Promise((resolve,reject)=>{
           const child=spawn(process.execPath,["-e",upgrade],{cwd,env,windowsHide:true});let output="";
@@ -29,7 +37,7 @@ describe("Independent PR migration and preview compatibility",function(){
         })));
       }else execute(upgrade);
       const after=(await client.query("SELECT * FROM migrations ORDER BY version")).rows;
-      assert.deepEqual(after.filter(row=>before.some(original=>original.version===row.version)),before);assert.equal(after.length,92);
+      assert.deepEqual(after.filter(row=>preserved.some(original=>original.version===row.version)),preserved);assert.equal(after.length,92);
       for(const table of ["certops_material_cleanups","certops_consumer_verification_outcomes","contact_channel_verifications","pagerduty_incidents"])
         assert.equal((await client.query("SELECT to_regclass($1)::text AS name",[table])).rows[0].name,table);
       assert.equal((await client.query("SELECT resolution_delivery_pending FROM certops_distribution_incidents LIMIT 0")).rowCount,0);

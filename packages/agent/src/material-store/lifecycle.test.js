@@ -321,3 +321,24 @@ test("only deploy failures that provably wrote nothing are treated as clean", ()
   assert.equal(deployWroteNothing({ deployed: false }), false);
   assert.equal(deployWroteNothing(undefined), false);
 });
+
+test("read-only preflight uses the provider-neutral material-store entry point", async t => {
+  const storePath = require.resolve("./index");
+  const lifecyclePath = require.resolve("./lifecycle");
+  const original = require.cache[storePath].exports;
+  let factories = 0;
+  try {
+    require.cache[storePath].exports = { ...original,
+      createVaultStore: () => assert.fail("preflight bypassed provider dispatch"),
+      createMaterialStore: (...args) => { factories++; return original.createVaultStore(...args); },
+    };
+    delete require.cache[lifecyclePath];
+    const f = await fixture(t);
+    const result = await require("./lifecycle").preflightPinnedDeployment(f.options());
+    assert.equal(factories, 1);
+    assert.ok(result.diagnostics.some(row => row.code === "material_exact_version_authorized" && row.status === "passed"));
+  } finally {
+    require.cache[storePath].exports = original;
+    delete require.cache[lifecyclePath];
+  }
+});

@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const tls = require("node:tls");
-const { createVaultStore, readProtectedFile, writeProtectedFile, writeProtectedJson, protectDirectory, failure, UUID, sameSans, validateBundle } = require("./index");
+const { createMaterialStore, readProtectedFile, writeProtectedFile, writeProtectedJson, protectDirectory, failure, UUID, sameSans, validateBundle } = require("./index");
 const { applyRestrictivePermissions } = require("../platform");
 const { deployCertificateAndKey } = require("../deploy");
 const { canonicalizeJobPayload } = require("../signing");
@@ -49,7 +49,7 @@ function publicationSession({ job, stores, stateDir, keysDir, fixtureLoopbackHtt
   // Never resolve custody paths from control-plane payload fields.
   if (typeof keysDir !== "string" || !path.isAbsolute(keysDir)) throw failure("material_local_path_invalid");
   const intent = intentFromJob(job);
-  const store = createVaultStore(stores, intent, { fixtureLoopbackHttp });
+  const store = createMaterialStore(stores, intent, { fixtureLoopbackHttp });
   const scope = store.scope;
   if (scope.issuerAgentId !== job.agentId || scope.issuanceProfileRef !== intent.issuanceProfileRef ||
     scope.profileRevision !== intent.profileRevision || scope.caEndpoint !== job.caEndpoint ||
@@ -212,7 +212,7 @@ function installedPairMatches(binding, policyEngine, fingerprintSha256, bundle =
 
 async function executePinnedDeployment({ job, stores, bindings, stateDir, policyEngine, checkLease, reload, recoveryOnly = false, fixtureLoopbackHttp = false }) {
   const { intent,binding } = resolveBindingPolicy(job,bindings,policyEngine);
-  const store = createVaultStore(stores, intent, { fixtureLoopbackHttp });
+  const store = createMaterialStore(stores, intent, { fixtureLoopbackHttp });
   const locks = path.join(stateDir, "material-locks");
   const record = path.join(stateDir, "material-bindings", `${intent.bindingId}.json`);
   const hash = crypto.createHash("sha256").update(canonicalizeJobPayload(intent)).digest("hex");
@@ -329,13 +329,13 @@ async function reconcilePinnedDeployment({ job,bindings,stateDir,policyEngine })
 
 // Read-only customer-side checks: no writes, lock claims, marker updates,
 // install, command execution or service reload.
-async function preflightPinnedDeployment({job,stores,bindings,stateDir,policyEngine,checkLease=async()=>{},fixtureLoopbackHttp=false}){
+async function preflightPinnedDeployment({job,stores,bindings,stateDir,policyEngine,checkLease=async()=>{},fixtureLoopbackHttp=false,platform=process.platform}){
   const diagnostics=[];
   const check=(code,status)=>diagnostics.push({code,status});
   let intent,binding,store;
   try{
-    ({intent,binding}=resolveBindingPolicy(job,bindings,policyEngine));
-    store=createVaultStore(stores,intent,{fixtureLoopbackHttp});
+    ({intent,binding}=resolveBindingPolicy(job,bindings,policyEngine,{platform}));
+    store=createMaterialStore(stores,intent,{fixtureLoopbackHttp});
     check("material_local_policy_current","passed");
   }catch(error){return {readOnly:true,ready:false,diagnostics:[{code:/^material_[a-z_]+$/.test(error.code || "")?error.code:"material_preflight_policy_invalid",status:"blocked"}]};}
   const lock=path.join(stateDir,"material-locks",`${crypto.createHash("sha256").update(`binding:${intent.workspaceId}:${intent.bindingId}`).digest("hex")}.lock`);

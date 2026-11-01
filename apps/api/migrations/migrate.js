@@ -4904,6 +4904,10 @@ const historicalMigrationAliases = new Map([
 ]);
 
 function validateMigrationHistory(rows) {
+  const preview = rows.find(row => [79,81].includes(row.version) && row.name === "pagerduty_incident_lifecycle");
+  if (preview) {
+    throw new Error(`PagerDuty preview migration ${preview.version} conflicts with released auto-sync history; stop and follow the explicit recovery procedure in docs/PAGERDUTY.md#migration-92-and-preview-version-compatibility`);
+  }
   const planned = resolveMigrationPlan(rows);
   for (const { version, name } of rows) {
     const current = planned.find(
@@ -5226,8 +5230,10 @@ async function runMigrations() {
   }
 
   const client = await migrationPool.connect();
+  let migrationLockHeld = false;
   try {
-    await client.query("SELECT pg_advisory_lock(hashtextextended('tokentimer-core-migrations',0))");
+    await client.query("SELECT pg_advisory_lock(hashtextextended('tokentimer-core:migrations',0))");
+    migrationLockHeld = true;
     logger.info("Creating migrations table if it doesn't exist...");
 
     await client.query(`
@@ -5354,8 +5360,13 @@ async function runMigrations() {
     logger.error("Migration process failed:", error);
     process.exit(1);
   } finally {
-    await client.query("SELECT pg_advisory_unlock(hashtextextended('tokentimer-core-migrations',0))");
-    client.release();
+    let discard = false;
+    if (migrationLockHeld) {
+      try { await client.query("SELECT pg_advisory_unlock(hashtextextended('tokentimer-core:migrations',0))"); }
+      catch { discard = true; }
+    }
+    // Never return a session that might still hold the migration fence.
+    client.release(discard);
   }
 }
 

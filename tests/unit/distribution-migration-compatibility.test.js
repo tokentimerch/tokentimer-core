@@ -6,6 +6,11 @@ const histories=require("../helpers/distribution-migration-histories.cjs");
 for(const [history,names] of Object.entries(histories))test(`preserves ${history} identities and moves only unapplied migrations`,()=>{
   const rows=[...migrations.filter(m=>m.version<=77).map(({version,name})=>({version,name})),...names.map((entry,index)=>Array.isArray(entry)?{version:entry[0],name:entry[1]}:{version:78+index,name:entry})];
   const snapshot=structuredClone(rows),plan=composeMigrations(migrations,rows);
+  if (history === "pagerduty-81" || history === "pagerduty-preview-79") {
+    assert.throws(() => validateMigrationHistory(rows), /explicit recovery procedure/);
+    assert.deepEqual(rows, snapshot);
+    return;
+  }
   validateMigrationHistory(rows);
   assert.deepEqual(rows,snapshot);assert.equal(plan.length,migrations.length);
   assert.equal(new Set(plan.map(m=>m.version)).size,plan.length);

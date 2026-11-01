@@ -252,4 +252,4 @@ function createVaultStore(stores, intent, options = {}) {
   return Object.freeze({ publish, fetch, softDeleteVersion, scope, objectRef });
 }
 
-module.exports = { createVaultStore, resolveStore, validateBundle, readProtectedFile, writeProtectedFile, writeProtectedJson, protectDirectory, sameSans, failure, UUID, ALIAS, MAX_BUNDLE_BYTES };
+module.exports = { createMaterialStore: createVaultStore, createVaultStore, resolveStore, validateBundle, readProtectedFile, writeProtectedFile, writeProtectedJson, protectDirectory, sameSans, failure, UUID, ALIAS, MAX_BUNDLE_BYTES };
