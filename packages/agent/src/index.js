@@ -367,6 +367,7 @@ const EXECUTABLE_JOB_ACTIONS = Object.freeze([
   "continue-enrollment",
   "deploy",
   "deploy-from-store",
+  "cleanup-from-store",
   "reload",
   "distribute-trust",
   "revoke-trust",
@@ -440,6 +441,7 @@ const AGENT_DECLARED_CAPABILITIES = filterQualifiedCapabilities(
     process.platform === "win32" && filterQualifiedCapabilities(["windows-material-iis-v1"]).length === 1 ? [
     "material-store-vault-kv2-v1", "material-store-openbao-kv2-v1", "material-store-azure-key-vault-v1",
     ...(process.platform === "linux" ? ["certificate-publication-v1", "deploy-from-store-v1"] : ["deploy-from-store-v1", "windows-material-iis-v1"]),
+    ...(process.platform === "linux" ? ["maintenance-calendar-v1", "material-cleanup-vault-kv2-v1"] : []),
   ] : [])],
 );
 
@@ -2197,6 +2199,7 @@ async function handleSignedJob({
         ...(outcome.publicationReceipt ? { publicationReceipt: outcome.publicationReceipt,
           publicationCertificatePem: outcome.publicationCertificatePem } : {}),
         ...(outcome.deploymentReceipt ? { deploymentReceipt: outcome.deploymentReceipt } : {}),
+        ...(outcome.cleanupReceipt?{cleanupReceipt:outcome.cleanupReceipt}:{}),
         // ADR-0014: awaiting_issuer (and other AD CS outcomes) carry enrollment
         // state; required by agent-protocol when status is awaiting_issuer.
         ...(outcome.enrollmentResult
@@ -2477,7 +2480,7 @@ async function executeJob({
     });
   }
 
-  if (job.publication || action === "deploy-from-store") {
+  if (job.publication || action === "deploy-from-store" || action==="cleanup-from-store") {
     // Same rule as AD CS: advertisement filtering is not enough. A signed job
     // that reaches this process must still stop when the release manifest has
     // not qualified material distribution.
@@ -2497,6 +2500,7 @@ async function executeJob({
         ...(process.platform === "win32" ? ["windows-material-iis-v1", "windows-cert-store-v1", "iis-binding-v1"] : []),
       );
     }
+    if(action==="cleanup-from-store")requiredMaterialCapabilities.push("material-store-vault-kv2-v1","material-cleanup-vault-kv2-v1");
     const missingMaterialCapability = requiredMaterialCapabilities.find(
       (capability) => !AGENT_DECLARED_CAPABILITIES.includes(capability),
     );
@@ -2518,9 +2522,11 @@ async function executeJob({
       // Dry-run and real execution share the same platform/target preflight.
       if (job.materialDeployment) resolveBindingPolicy(job,executionContext.materialBindings,policyEngine);
       if (jobMode === "dry_run") {
-        resolveStore(executionContext.materialStores, { ...(job.publication || job.materialDeployment), workspaceId: job.workspaceId });
+        resolveStore(executionContext.materialStores, { ...(job.publication || job.materialDeployment || job.materialCleanup), workspaceId: job.workspaceId });
+        if (job.materialDeployment) resolveBindingPolicy(job,executionContext.materialBindings,policyEngine);
         return { status: "dry_run_complete", keyRotated: null };
       }
+      if(action==="cleanup-from-store")return await require("./material-store/cleanup").executeMaterialCleanup({job,stores:executionContext.materialStores,stateDir,checkLease,onBeforeMutation:markMutation});
       if (action === "deploy-from-store") return await executePinnedDeployment({
         job, stores: executionContext.materialStores, bindings: executionContext.materialBindings,
         stateDir, policyEngine, checkLease, recoveryOnly: executionContext.materialRecoveryOnly === true,
@@ -2552,6 +2558,7 @@ async function executeJob({
         "material_binding_policy_denied", "material_destination_denied",
         "material_platform_unqualified", "material_windows_policy_denied", "material_probe_config_invalid",
         "material_intent_invalid", "material_scope_denied", "material_store_config_invalid",
+        "material_activation_policy_denied", "material_maintenance_window_closed",
       ].includes(error.code)) {
         return { status: "blocked", errorMessage: error.code };
       }

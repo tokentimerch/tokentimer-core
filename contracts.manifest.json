@@ -65,14 +65,14 @@
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "ec5f6c9585e78d52b2a229763643880bbbfe23be3abd8704363f7a4459b331fe"
+          "sha256": "ac7300c7aab47b8f7f2ef2d2768a26ba559403d594d8f953193b3ea76164587e"
         },
         {
           "id": "integration-openapi-spec",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "ec5f6c9585e78d52b2a229763643880bbbfe23be3abd8704363f7a4459b331fe"
+          "sha256": "ac7300c7aab47b8f7f2ef2d2768a26ba559403d594d8f953193b3ea76164587e"
         },
         {
           "id": "auth-route-compat-contract",
@@ -279,7 +279,8 @@
           "id": "certops-material-provider-module",
           "kind": "module",
           "path": "packages/contracts/certops/material-provider.cjs",
-          "status": "existing"
+          "status": "existing",
+          "sha256": "c5d4f251e54991858c2c3b7658707251ec2bc7beb79dd2da733243146a7491ad"
         },
         {
           "id": "certops-enrollment-snapshot-schema",
@@ -329,6 +330,31 @@
           "kind": "schema",
           "status": "existing",
           "description": "Strict validator for public material publication, consumer bindings and deployment receipts."
+        },
+        {
+          "id": "certops-distribution-lifecycle-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/distribution-lifecycle.schema.json",
+          "status": "existing"
+        },
+        {
+          "id": "certops-activation-calendar-module",
+          "kind": "module",
+          "path": "packages/contracts/certops/activation-calendar.cjs",
+          "status": "existing"
+        },
+        {
+          "id": "certops-service-connectors-module",
+          "kind": "module",
+          "path": "packages/contracts/certops/service-connectors.cjs",
+          "status": "existing"
+        },
+        {
+          "id": "certops-material-cleanup-identity",
+          "kind": "module",
+          "path": "packages/contracts/certops/material-cleanup.cjs",
+          "status": "existing",
+          "sha256": "68293a7c6571c0e8068c8ed478e87988d42bbb24aa4fd5383414b611bf72c8f5"
         }
       ]
     }

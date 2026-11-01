@@ -10,7 +10,14 @@ const tls = require("node:tls");
 const { readProtectedFile, writeProtectedJson } = require("./index");
 const { applyRestrictivePermissions } = require("../platform");
 const { computeCertificateFingerprint, parseDnsSans } = require("../verify");
-const { executePinnedDeployment, reconcilePinnedDeployment, deployWroteNothing } = require("./lifecycle");
+const { executePinnedDeployment, reconcilePinnedDeployment, preflightPinnedDeployment, deployWroteNothing } = require("./lifecycle");
+
+test("calendar enforcement refuses a delayed deployment before material fetch or service writes", async t=>{
+  const f=await fixture(t),options=f.options();
+  options.job.materialDeployment.activationPolicy={method:"reload",disruptive:true,requiresApproval:true,timezone:"UTC",windows:[],blackouts:[],validUntil:null,emergency:null};
+  await assert.rejects(()=>executePinnedDeployment(options),{code:"material_maintenance_window_closed"});
+  assert.equal(fs.existsSync(f.record),false);
+});
 
 async function fixture(t, platform = "linux") {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tt-binding-test-"));
@@ -149,6 +156,42 @@ function fullChain(f) {
   f.bundle.fingerprintSha256 = computeCertificateFingerprint(f.bundle.certificatePem);
   f.bundle.sans.splice(0, f.bundle.sans.length, ...parseDnsSans(new crypto.X509Certificate(f.bundle.certificatePem).subjectAltName));
 }
+test("customer-local preflight reads the exact version without creating files, acquiring locks or reloading",async t=>{
+  const f=await fixture(t);filesOnly(f);
+  const options=f.options();let checks=0;options.checkLease=async()=>{checks++;};
+  options.reload=()=>assert.fail("Preflight must never reload");
+  const result=await preflightPinnedDeployment(options);
+  assert.equal(result.readOnly,true);assert.equal(result.ready,true);assert.equal(checks,2);
+  assert.equal(fs.existsSync(options.stateDir),false);
+  assert.equal(fs.existsSync(f.target.certPath),false);
+  assert.ok(result.diagnostics.some(item=>item.code==="material_exact_version_authorized"));
+  assert.ok(!JSON.stringify(result).includes("PRIVATE KEY"));
+});
+test("preflight before the first deployment accepts only a public intent bound to the configured consumer",async t=>{
+  const f=await fixture(t);filesOnly(f);const options=f.options(),{readPublicPreflightIntent}=require("../../bin/preflight-material-binding");
+  const file=path.join(f.deployDir,"public-intent.json"),intent={...options.job.materialDeployment};delete intent.workspaceId;writeProtectedJson(file,intent);
+  options.job.materialDeployment=readPublicPreflightIntent(file,intent.bindingId);
+  assert.equal((await preflightPinnedDeployment(options)).ready,true);assert.equal(fs.existsSync(options.stateDir),false);
+  writeProtectedJson(file,{...intent,tokenFile:"not-a-public-field"});assert.throws(()=>readPublicPreflightIntent(file,intent.bindingId),{code:"material_preflight_intent_invalid"});
+  writeProtectedJson(file,intent);assert.throws(()=>readPublicPreflightIntent(file,crypto.randomUUID()),{code:"material_preflight_intent_invalid"});
+});
+
+test("preflight reports service existence as unknown rather than inferring it from configured command references",async t=>{
+  const f=await fixture(t),options=f.options();f.binding.reloadCommandRefs={validate:"fixture.validate",reload:"fixture.reload"};
+  options.policyEngine.checkCommandRef=()=>({allowed:true});
+  const result=await preflightPinnedDeployment(options);
+  assert.equal(result.ready,false);assert.ok(result.diagnostics.some(item=>item.code==="material_reload_allowlist" && item.status==="passed"));
+  assert.ok(result.diagnostics.some(item=>item.code==="material_service_target_unverified" && item.status==="unknown"));
+  assert.equal(fs.existsSync(f.target.certPath),false);assert.equal(fs.existsSync(options.stateDir),false);
+});
+test("read-only preflight can establish local TLS listener presence without claiming deployment or running a command",async t=>{
+  const f=await fixture(t),options=f.options();f.binding.reloadCommandRefs={validate:"fixture.validate",reload:"fixture.reload"};options.policyEngine.checkCommandRef=()=>({allowed:true});
+  const server=require("node:tls").createServer({cert:fs.readFileSync(path.join(__dirname,"../verify/fixtures/leaf.crt.pem")),key:fs.readFileSync(path.join(__dirname,"../verify/fixtures/leaf.key.pem"))},socket=>socket.end());
+  await new Promise(resolve=>server.listen(0,"127.0.0.1",resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  f.binding.probes=[{dialAddress:"127.0.0.1",port:server.address().port,sni:"example.com"}];
+  const result=await preflightPinnedDeployment(options);assert.equal(result.ready,true);assert.ok(result.diagnostics.some(item=>item.code==="material_service_listener_present" && item.status==="passed"));
+  assert.equal(result.deploymentReceipt,undefined);assert.equal(fs.existsSync(f.target.certPath),false);assert.equal(fs.existsSync(options.stateDir),false);
+});
 
 test("files-only delivery writes and reads back the actual pair without reload or TLS", async (t) => {
   const f = await fixture(t);
@@ -191,6 +234,17 @@ test("legacy file-only journals use the exact provider pin to recover public cha
   assert.equal((await reconcilePinnedDeployment(f.options())).reconciled, true);
   assert.equal(readRecord(f.record).uncertain, false);
   assert.equal((await f.deploy({ recoveryOnly: true })).status, "succeeded");
+});
+test("manual activation permits read-only verification but never authorizes destination mutation",async t=>{
+  const f=await fixture(t);filesOnly(f);assert.equal((await f.deploy()).status,"succeeded");
+  const before=fs.readFileSync(f.target.certPath);
+  f.binding.activationMethod="manual";
+  const options=f.options({generation:2,verificationOnly:true,reload:()=>assert.fail("Manual verification must never reload")});
+  options.job.materialDeployment.activationPolicy={method:"manual",disruptive:true,requiresApproval:true,timezone:"UTC",windows:[],blackouts:[],validUntil:null,emergency:null};
+  assert.equal((await executePinnedDeployment(options)).status,"succeeded");
+  assert.deepEqual(fs.readFileSync(f.target.certPath),before);
+  const mutating=f.options({generation:3});mutating.job.materialDeployment.activationPolicy=options.job.materialDeployment.activationPolicy;
+  await assert.rejects(()=>executePinnedDeployment(mutating),{code:"material_activation_policy_denied"});
 });
 
 test("files-only rejects mismatched local policy, service hooks, and stale generations before writing", async (t) => {
@@ -468,4 +522,38 @@ test("Windows rejects wrong authorization, wrong hostname, broad ACLs and lease 
   }});
   assert.equal(expired.status,"failed");assert.equal(expired.errorMessage,"material_lease_unavailable");
   assert.equal(f.imports,0);assert.equal(fs.existsSync(f.record),false,"a revoked lease after native preflight still causes no import");
+});
+
+for (const platform of ["win32", "darwin"]) {
+  test(`read-only preflight refuses an unqualified ${platform} endpoint before provider access`, async t => {
+    const f = await fixture(t), options = f.options({ platform });
+    let leases = 0;
+    options.checkLease = async () => { leases++; };
+    const result = await preflightPinnedDeployment(options);
+    assert.equal(result.ready, false);
+    assert.ok(result.diagnostics.some(row => row.code === "material_platform_unqualified" && row.status === "blocked"));
+    assert.equal(leases, 0);
+    assert.equal(fs.existsSync(options.stateDir), false);
+  });
+}
+
+test("read-only preflight uses the provider-neutral material-store entry point", async t => {
+  const storePath = require.resolve("./index");
+  const lifecyclePath = require.resolve("./lifecycle");
+  const original = require.cache[storePath].exports;
+  let factories = 0;
+  try {
+    require.cache[storePath].exports = { ...original,
+      createVaultStore: () => assert.fail("preflight bypassed provider dispatch"),
+      createMaterialStore: (...args) => { factories++; return original.createVaultStore(...args); },
+    };
+    delete require.cache[lifecyclePath];
+    const f = await fixture(t);
+    const result = await require("./lifecycle").preflightPinnedDeployment(f.options());
+    assert.equal(factories, 1);
+    assert.ok(result.diagnostics.some(row => row.code === "material_exact_version_authorized" && row.status === "passed"));
+  } finally {
+    require.cache[storePath].exports = original;
+    delete require.cache[lifecyclePath];
+  }
 });

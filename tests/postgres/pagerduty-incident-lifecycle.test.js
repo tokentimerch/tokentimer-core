@@ -19,6 +19,7 @@ const {
   updateCertificateTokenFacts,
 } = require("../../apps/api/services/certops/inventory");
 const { requeueAlertsCore } = require("../../apps/api/services/alertQueue");
+const { parseDeliveryLedger } = require("../../packages/alert-eligibility");
 
 let lifecycle,
   worker,
@@ -1766,7 +1767,7 @@ describe(
         await pool.query("SELECT * FROM alert_queue WHERE id=$1", [alert.id])
       ).rows[0];
       assert.equal(failed.status, "partial");
-      assert.deepEqual(failed.channels, ["webhooks"]);
+      assert.deepEqual(parseDeliveryLedger(failed.channels).retry, ["webhooks"]);
       assert.equal(failed.attempts_webhooks, 1);
       await due();
       await runWorker();

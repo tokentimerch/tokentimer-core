@@ -19,6 +19,7 @@ const CERTOPS_TABS = [
   { to: '/certops/jobs', label: 'Jobs' },
   { to: '/certops/certificates', label: 'Certificates' },
   { to: '/certops/renewals', label: 'Renewals' },
+  { to: '/certops/distribution', label: 'Distribution' },
   { to: '/certops/agents', label: 'Agents' },
   { to: '/certops/settings', label: 'Settings' },
 ];

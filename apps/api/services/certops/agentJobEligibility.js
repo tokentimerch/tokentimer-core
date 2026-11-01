@@ -143,6 +143,8 @@ function evaluateAgentJobEligibility({
     ? [materialProviderCapability, "certificate-publication-v1", EVIDENCE_CLAIM_BINDING_CAPABILITY]
     : job.operation === "deploy-from-store" ? [materialProviderCapability, "deploy-from-store-v1", EVIDENCE_CLAIM_BINDING_CAPABILITY,
       ...(agent.platform === "win32" ? ["windows-material-iis-v1", "windows-cert-store-v1", "iis-binding-v1"] : [])] : [];
+  if(job.operation==="cleanup-from-store")materialCapabilities.push("material-store-vault-kv2-v1","material-cleanup-vault-kv2-v1",EVIDENCE_CLAIM_BINDING_CAPABILITY);
+  if(job.payload?.materialDeployment?.activationPolicy)materialCapabilities.push("maintenance-calendar-v1");
   if (materialCapabilities.length && (!routing.assignedAgentId || materialCapabilities.some((capability) =>
     !hasFreshCapability({ declaredCapabilities: agent.declaredCapabilities, capabilitiesUpdatedAt: agent.capabilitiesUpdatedAt, capability, env, now })))) {
     return result(false, "material_capability_unavailable");

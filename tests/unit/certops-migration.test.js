@@ -37,12 +37,6 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 74).name, "certops_material_distribution");
     assert.equal(migrations.find((entry) => entry.version === 75).name, "certops_distribution_review");
     assert.equal(migrations.find((entry) => entry.version === 76).name, "certops_distribution_transfer");
-    assert.equal(migrations.at(-1).version, 92);
-    assert.equal(migrations.find(entry => entry.version === 78).name, "certops_installed_file_distribution");
-    assert.equal(migrations.find(entry => entry.version === 79).name, "auto_sync_provider_stats");
-    assert.equal(migrations.find(entry => entry.version === 80).name, "auto_sync_run_metrics");
-    assert.equal(migrations.find(entry => entry.version === 81).name, "auto_sync_metric_labels");
-    assert.equal(migrations.find(entry => entry.version === 82).name, "auto_sync_system_metrics");
     assert.equal(
       migrations.find((entry) => entry.version === 78).name,
       "certops_installed_file_distribution",
@@ -51,16 +45,13 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 80).name, "auto_sync_run_metrics");
     assert.equal(migrations.find((entry) => entry.version === 81).name, "auto_sync_metric_labels");
     assert.equal(migrations.find((entry) => entry.version === 84).name, "recipient_channel_verification");
+    assert.equal(migrations.at(-1).version, 92);
     assert.equal(migrations.at(-1).name, "pagerduty_incident_lifecycle");
-    assert.throws(() => validateMigrationHistory([
-      ...migrations.filter(entry => entry.version <= 78).map(({version, name}) => ({version, name})),
-      { version: 79, name: "pagerduty_incident_lifecycle" },
-    ]), /PagerDuty preview migration 79 conflicts/);
     assert.equal(migrations.find(entry => entry.version === 71).name, "certops_adcs_evidence_types");
     assert.match(migrations.find(entry => entry.version === 72).sql, /fk_certificate_profiles_issuer/);
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      [...Array.from({ length: 85 }, (_, index) => index + 1), 92],
+      Array.from({ length: 92 }, (_, index) => index + 1),
     );
     assert.equal(migrations.find(entry => entry.version === 73).name, "certops_job_alert_context");
     assert.match(migrations.find(entry => entry.version === 72).sql, /ON DELETE SET NULL \(issuer_id\)/);
@@ -437,11 +428,11 @@ describe("CertOps inventory migration", () => {
     const expectedTailVersions = Array.from(
       { length: Math.max(...tailVersions) - 10 },
       (_, index) => 11 + index,
-    ).filter((version) => (version <= 85 || version === 92) && (notificationCount === 4 || !notificationVersions.includes(version)));
+    ).filter((version) => (notificationCount === 4 || !notificationVersions.includes(version)));
     assert.deepEqual(
       tailVersions,
       expectedTailVersions,
-      "migration versions retain main's prefix and omit unapplied companion slots 83-91",
+      "migration versions from 11 onward may omit only PR #140's reserved 56-59",
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -1492,7 +1483,7 @@ describe("migration 68 AD CS awaiting_issuer and continue-enrollment", () => {
     const operationValues = operationDeclared[1]
       .split(",")
       .map((entry) => entry.trim().replace(/^'|'$/g, ""));
-    assert.deepEqual([...operationValues].sort(), JOB_OPERATIONS.filter(operation => operation !== "deploy-from-store" && operation !== "adcs-preflight").sort());
+    assert.deepEqual([...operationValues].sort(), JOB_OPERATIONS.filter(operation => operation !== "deploy-from-store" && operation !== "cleanup-from-store" && operation !== "adcs-preflight").sort());
   });
 });
 
@@ -1502,7 +1493,16 @@ describe("migration 74 distribution operation compatibility", () => {
     const declared = migration.sql.match(/operation IN\s*\(([^)]+)\)/);
     assert.ok(declared);
     const values = declared[1].split(",").map(value => value.trim().replace(/^'|'$/g, ""));
-    assert.deepEqual(values.sort(), [...JOB_OPERATIONS].sort());
+    assert.deepEqual(values.sort(), JOB_OPERATIONS.filter(operation=>operation!=="cleanup-from-store").sort());
+  });
+});
+describe("exact-version cleanup migration compatibility",()=>{
+  it("adds cleanup without changing historical operation constraints or permitting fence release",()=>{
+    const migration=migrations.find(entry=>entry.name==="certops_material_cleanup"),declared=migration.sql.match(/operation IN\s*\(([^)]+)\)/);
+    const values=declared[1].split(",").map(value=>value.trim().replace(/^'|'$/g,""));
+    assert.deepEqual(values.sort(),[...JOB_OPERATIONS].sort());
+    assert.match(migration.sql,/material cleanup fence is immutable/);assert.match(migration.sql,/trg_certops_cleanup_consumer_reference/);
+    assert.match(migration.sql,/FOR UPDATE/);
   });
 });
 
@@ -1619,7 +1619,7 @@ describe("migration 44 trust-anchor job operation and subject type", () => {
     const operationValues = operationDeclared[1]
       .split(",")
       .map((entry) => entry.trim().replace(/^'|'$/g, ""));
-    assert.deepEqual([...operationValues].sort(), [...JOB_OPERATIONS].filter((operation)=>operation!=="deploy-from-store" && operation!=="adcs-preflight" && operation!=="continue-enrollment").sort());
+    assert.deepEqual([...operationValues].sort(), [...JOB_OPERATIONS].filter((operation)=>operation!=="deploy-from-store" && operation!=="cleanup-from-store" && operation!=="adcs-preflight" && operation!=="continue-enrollment").sort());
 
     const subjectTypeDeclared = migration.sql.match(
       /subject_type IS NULL OR subject_type IN \(([^)]+)\)/,
@@ -1895,7 +1895,7 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     const notificationVersions = [56, 57, 58, 59];
     const notificationCount = notificationVersions.filter((version) => sorted.includes(version)).length;
     assert.ok(notificationCount === 0 || notificationCount === 4);
-    const expected = [...Array.from({ length: 85 }, (_, index) => index + 1), 92]
+    const expected = Array.from({ length: sorted[sorted.length - 1] }, (_, index) => index + 1)
       .filter((version) => notificationCount === 4 || !notificationVersions.includes(version));
     assert.deepEqual(sorted, expected);
     assert.equal(sorted[sorted.length - 1], 92);

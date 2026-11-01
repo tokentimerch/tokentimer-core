@@ -4,6 +4,7 @@ For explicit OpenBao compatibility, Azure Key Vault Secrets and Windows/IIS
 shared import, see [distribution extensions](distribution-extensions.md) and
 their [qualification status](distribution-extensions-qualification.md). Existing
 Vault and Linux instructions below retain their original defaults.
+For ongoing administration after first setup, use **Certificate Management → Distribution** or **Manage distribution** from the read-only Deployments section. See the [lifecycle workflow](distribution-lifecycle.md) and [qualification/remaining-work status](distribution-lifecycle-status.md). Publishing after renewal remains manual unless a deliberately configured policy authorizes an approval request or bounded automatic rollout.
 
 Customer issuer → existing native ACME DNS-01 → customer Vault KV v2 →
 explicitly assigned Linux consumers → installed files, optionally live TLS listeners → public receipts.

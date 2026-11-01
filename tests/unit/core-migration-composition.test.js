@@ -152,7 +152,7 @@ test("released 78-82 and provider previews compose uniquely without rewriting ap
     }
   }
   const { migrations } = require("../../apps/api/migrations/migrate");
-  assert.deepEqual(migrations.filter(row => row.version >= 78).map(({version, name}) => ({version, name})), extensions.map(({version, name}) => ({version, name})));
+  assert.deepEqual(migrations.filter(row => row.version >= 78 && row.version <= 83).map(({version, name}) => ({version, name})), extensions.map(({version, name}) => ({version, name})));
   for (const count of [1, 2, 3, 4, 5]) assert.deepEqual(composeMigrations(registry, [...prior, ...extensions.slice(0, count)]), registry);
   assert.throws(() => composeMigrations(registry, [...prior, ...extensions.slice(0, 2), {version: 80, name: names[5]}]), /Unsupported Core migration history/);
 });
@@ -161,13 +161,14 @@ test("cross-PR reservations reject collisions and compose without changing suppo
   const { reservations, validateMigrationReservations } = require("../../apps/api/migrations/migration-reservations.cjs");
   const { migrations } = require("../../apps/api/migrations/migrate");
   const future = Object.entries(reservations).filter(([version]) => Number(version) > 83)
-    .map(([version, name]) => ({ version: Number(version), name, sql: `reviewed-${name}` }));
+    .map(([version, name]) => ({ version: Number(version), name, sql: `reviewed-${name}` }))
+    .filter(entry => !migrations.some(row => row.version === entry.version || row.name === entry.name));
   const registry = [...migrations, ...future];
   validateMigrationReservations(registry);
   for (const [version, name] of [[81, "recipient_channel_verification"], [81, "pagerduty_incident_lifecycle"],
     [81, "certops_distribution_lifecycle"], [82, "certops_material_cleanup"], [86, "pagerduty_incident_lifecycle"],
     [92, "certops_distribution_resolution_delivery"]]) {
-    assert.throws(() => validateMigrationReservations([...migrations.filter(row => row.version !== version), { version, name }]), /Conflicting canonical Core migration/);
+    assert.throws(() => validateMigrationReservations([...migrations.filter(row => row.version !== version && row.name !== name), { version, name }]), /Conflicting canonical Core migration/);
   }
   assert.throws(() => validateMigrationReservations([...migrations, migrations.at(-1)]), /Duplicate Core migration/);
   const before = composeMigrations(migrations, [...ledger(canonical), { version: 77, name: "onboarding_sessions" },
@@ -565,16 +566,17 @@ test("all 73 enrollment-first preview definitions retain their immutable histori
 });
 
 test("PagerDuty's independent slot preserves applied history while companion migrations arrive later", () => {
-  const { migrations } = require("../../apps/api/migrations/migrate");
+  const registered = require("../../apps/api/migrations/migrate").migrations;
+  const migrations = registered.filter(row => row.version <= 82 || row.name === "pagerduty_incident_lifecycle");
   const applied = migrations.map(({ version, name }) => ({ version, name, executed_at: "unchanged" }));
   const snapshot = JSON.stringify(applied);
   const companions = [
-    [83, "certops_distribution_lifecycle"], [84, "certops_distribution_incident_delivery"],
-    [85, "certops_stable_consumer_discovery"], [86, "certops_material_cleanup"],
-    [87, "certops_consumer_verification_failures"], [88, "certops_material_providers"],
-    [89, "recipient_channel_verification"], [90, "weekly_digest_recipient_claim_token"],
+    [83, "certops_material_providers"], [84, "recipient_channel_verification"],
+    [85, "weekly_digest_recipient_claim_token"], [86, "certops_distribution_lifecycle"],
+    [87, "certops_distribution_incident_delivery"], [88, "certops_stable_consumer_discovery"],
+    [89, "certops_material_cleanup"], [90, "certops_consumer_verification_failures"],
     [91, "certops_distribution_resolution_delivery"],
-  ].map(([version, name]) => ({ version, name, sql: "SELECT 1" }));
+  ].map(([version, name]) => registered.find(row => row.name === name) || ({ version, name, sql: "SELECT 1" }));
   const integrated = [...migrations, ...companions].sort((a,b) => a.version-b.version);
   for (let length = 0; length <= companions.length; length++) {
     const recorded = [...applied, ...companions.slice(0,length)].sort((a,b) => a.version-b.version);

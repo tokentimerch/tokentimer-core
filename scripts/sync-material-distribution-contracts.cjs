@@ -17,12 +17,15 @@ for (const file of ["job-payload.schema.json", "agent-protocol.schema.json", "re
   const schema = JSON.parse(fs.readFileSync(target));
   schema.definitions = { ...schema.definitions, ...definitions };
   if (file === "job-payload.schema.json") {
-    for (const field of ["publication", "materialDeployment"]) schema.properties[field] = { $ref: `#/definitions/materialDistribution_${field}` };
+    for (const field of ["publication", "materialDeployment","materialCleanup"]) schema.properties[field] = { $ref: `#/definitions/materialDistribution_${field}` };
     if (!schema.properties.action.enum.includes("deploy-from-store")) schema.properties.action.enum.push("deploy-from-store");
+    if(!schema.properties.action.enum.includes("cleanup-from-store"))schema.properties.action.enum.push("cleanup-from-store");
+    if(!schema.allOf.some(clause=>clause.if?.properties?.action?.const==="cleanup-from-store"))schema.allOf.push({if:{properties:{action:{const:"cleanup-from-store"}}},then:{required:["materialCleanup"],properties:{keyMode:{const:"vault-managed"}},not:{anyOf:[{required:["publication"]},{required:["materialDeployment"]}]}},else:{not:{required:["materialCleanup"]}}});
   } else if (file === "agent-protocol.schema.json") {
     const actions = schema.definitions.claimBody.properties.supportedActions.items.enum;
     if (!actions.includes("deploy-from-store")) actions.push("deploy-from-store");
-    for (const field of ["publicationReceipt", "deploymentReceipt"]) schema.definitions.resultBody.properties[field] = { $ref: `#/definitions/materialDistribution_${field}` };
+    if(!actions.includes("cleanup-from-store"))actions.push("cleanup-from-store");
+    for (const field of ["publicationReceipt", "deploymentReceipt","cleanupReceipt"]) schema.definitions.resultBody.properties[field] = { $ref: `#/definitions/materialDistribution_${field}` };
     schema.definitions.resultBody.properties.publicationCertificatePem = {
       type: "string", minLength: 1, maxLength: 262144,
       description: "Vetted public leaf/chain only; accepted solely with a claim-bound publication receipt. Never persisted in generic job/outbox JSON."

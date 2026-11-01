@@ -782,6 +782,7 @@ async function upsertInventoryForObservation(client, observation) {
     });
   }
 
+  await require("./consumerDiscovery").recordConsumerObservation(client,observation,managedCertificate);
   return { managedCertificate, target, instance };
 }
 

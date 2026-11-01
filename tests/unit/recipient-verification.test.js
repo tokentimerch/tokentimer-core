@@ -1334,7 +1334,7 @@ describe("recipient verification", () => {
     assert.deepEqual(
       groups.channelsForDeliveryAttempt(
         ["email", "webhooks", "whatsapp"],
-        { version: 1, retry: ["webhooks"] },
+        { version: 1, retry: ["webhooks"], required: ["webhooks"], outcomes: {} },
         { isRetry: true },
       ),
       ["webhooks"],
