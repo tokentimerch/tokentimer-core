@@ -227,6 +227,8 @@ describe.each(['gitlab', 'github'])(
       );
       expect(enable()).toBeDisabled();
     });
+    // These multi-step provider flows include several asynchronous renders;
+    // allow coverage instrumentation without relaxing any per-step assertion.
     it('requires a fresh scan after credentials or scope change and after failed or stale scans', async () => {
       const secret = await addAnother();
       scan().mockResolvedValue({
@@ -288,7 +290,7 @@ describe.each(['gitlab', 'github'])(
       });
       fireEvent.click(confirm);
       expect(apiClient.post).not.toHaveBeenCalled();
-    });
+    }, 15_000);
     it('persists selected metric labels without another scan and clears them for the next configuration', async () => {
       await addAnother();
       fireEvent.click(scanButton());
@@ -368,7 +370,7 @@ describe.each(['gitlab', 'github'])(
       expect(
         screen.getByRole('textbox', { name: 'Monitoring group label' })
       ).toHaveValue('');
-    });
+    }, 15_000);
     it('allocates an unused configuration name despite deletions, whitespace and case', async () => {
       await addAnother();
       scan().mockResolvedValue({ ...result, items: [{ name: 'fixture' }] });
