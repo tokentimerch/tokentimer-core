@@ -2388,7 +2388,8 @@ paths:
           $ref: "#/components/responses/InternalError"
   /api/v1/admin/auto-sync/metrics:
     get:
-      tags: [Workspaces]
+      tags:
+        - Workspaces
       summary: Read system-wide auto-sync metric defaults
       operationId: getAutoSyncMetricDefaults
       description: System admin only. Environment settings take precedence over database values and defaults.
@@ -2399,12 +2400,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AutoSyncMetricPolicy"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/InternalError"
+      security:
+        - cookieAuth: []
     put:
-      tags: [Workspaces]
+      tags:
+        - Workspaces
       summary: Save system-wide auto-sync metric defaults
       operationId: saveAutoSyncMetricDefaults
       description: Independent metric and monitoring-group overrides force all connections and lock their corresponding controls. Environment-locked choices are unchanged.
@@ -2414,17 +2420,34 @@ paths:
           application/json:
             schema:
               type: object
-              required: [enabled, labels]
+              required:
+                - enabled
+                - labels
               additionalProperties: false
               properties:
-                override_metrics: { type: boolean }
-                override_monitoring_group: { type: boolean }
-                monitoring_group: { type: string, maxLength: 64 }
-                enabled: { type: boolean }
+                override_metrics:
+                  type: boolean
+                override_monitoring_group:
+                  type: boolean
+                monitoring_group:
+                  type: string
+                  maxLength: 64
+                  pattern: ^[^\x00-\x1f\x7f]*$
+                enabled:
+                  type: boolean
                 labels:
                   type: array
                   uniqueItems: true
-                  items: { type: string, enum: [configuration_name, monitoring_group, kind, asset_name, project, group] }
+                  items:
+                    type: string
+                    enum:
+                      - configuration_name
+                      - monitoring_group
+                      - kind
+                      - asset_name
+                      - project
+                      - group
+                  maxItems: 6
       responses:
         "200":
           description: Saved effective defaults
@@ -2434,10 +2457,16 @@ paths:
                 $ref: "#/components/schemas/AutoSyncMetricPolicy"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/InternalError"
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CsrfTokenHeader"
   /api/v1/admin/auto-sync/activation:
     get:
       tags: [Workspaces]
