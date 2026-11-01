@@ -142,6 +142,7 @@ describe("Core distribution and lifecycle migration histories", function () {
           "auto_sync_provider_stats",
           "auto_sync_run_metrics",
           "auto_sync_metric_labels",
+          "auto_sync_system_metrics",
           "recipient_channel_verification",
           "weekly_digest_recipient_claim_token",
         ];
