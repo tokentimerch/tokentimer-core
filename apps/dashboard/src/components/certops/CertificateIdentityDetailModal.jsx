@@ -166,6 +166,32 @@ export default function CertificateIdentityDetailModal({
     };
   }, [workspaceId, certificate, isOpen, canManage]);
 
+  useEffect(() => {
+    setContactGroups([]);
+    setWorkspaceContacts([]);
+    if (!isOpen || !workspaceId) return undefined;
+    let active = true;
+    // Workspace routing definitions also describe retained, verified assets
+    // after their last certificate-management registration has stopped.
+    Promise.all([
+      workspaceAPI.getAlertSettings(workspaceId).catch(() => null),
+      apiClient
+        .get(`/api/v1/workspaces/${workspaceId}/contacts`)
+        .catch(() => null),
+    ]).then(([settings, contacts]) => {
+      if (!active) return;
+      setContactGroups(
+        Array.isArray(settings?.contact_groups) ? settings.contact_groups : []
+      );
+      setWorkspaceContacts(
+        Array.isArray(contacts?.data?.items) ? contacts.data.items : []
+      );
+    });
+    return () => {
+      active = false;
+    };
+  }, [isOpen, workspaceId]);
+
   const tokenId = detail?.tokenId;
   useEffect(() => {
     if (isOpen && detail?.identityId) {
@@ -236,14 +262,8 @@ export default function CertificateIdentityDetailModal({
       if (!tokenId || !detail.tokenSnapshot || detail.managed === false)
         return undefined;
       let active = true;
-      Promise.all([
-        getManagedCertificatesForToken(workspaceId, tokenId),
-        workspaceAPI.getAlertSettings(workspaceId).catch(() => null),
-        apiClient
-          .get(`/api/v1/workspaces/${workspaceId}/contacts`)
-          .catch(() => null),
-      ])
-        .then(([certificates, settings, contacts]) => {
+      getManagedCertificatesForToken(workspaceId, tokenId)
+        .then(certificates => {
           if (!active) return;
           const normalize = value =>
             String(value || '')
@@ -265,14 +285,6 @@ export default function CertificateIdentityDetailModal({
                 }
               : detail.certificateSnapshot || null
           );
-          setContactGroups(
-            Array.isArray(settings?.contact_groups)
-              ? settings.contact_groups
-              : []
-          );
-          setWorkspaceContacts(
-            Array.isArray(contacts?.data?.items) ? contacts.data.items : []
-          );
         })
         .catch(() => {
           // Retained public fields remain usable when live enrichment is unavailable.
@@ -292,13 +304,9 @@ export default function CertificateIdentityDetailModal({
     setTokenError('');
     Promise.all([
       tokenAPI.getToken(tokenId),
-      workspaceAPI.getAlertSettings(workspaceId).catch(() => null),
-      apiClient
-        .get(`/api/v1/workspaces/${workspaceId}/contacts`)
-        .catch(() => null),
       getManagedCertificatesForToken(workspaceId, tokenId),
     ])
-      .then(([tokenData, settings, contacts, certificates]) => {
+      .then(([tokenData, certificates]) => {
         if (!active) return;
         setToken(tokenData || null);
         // Reuse the token modal's enrichment, scoped to this immutable
@@ -316,12 +324,6 @@ export default function CertificateIdentityDetailModal({
         );
         setCertificateFields(
           matching.find(item => item.id === selectedManagedId) || null
-        );
-        setContactGroups(
-          Array.isArray(settings?.contact_groups) ? settings.contact_groups : []
-        );
-        setWorkspaceContacts(
-          Array.isArray(contacts?.data?.items) ? contacts.data.items : []
         );
       })
       .catch(err => {
