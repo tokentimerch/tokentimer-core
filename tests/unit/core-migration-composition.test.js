@@ -150,7 +150,7 @@ test("released 78-82 and provider previews compose uniquely without rewriting ap
     }
   }
   const { migrations } = require("../../apps/api/migrations/migrate");
-  assert.deepEqual(migrations.filter(row => row.version >= 78).map(({version, name}) => ({version, name})), extensions.map(({version, name}) => ({version, name})));
+  assert.deepEqual(migrations.filter(row => row.version >= 78 && row.version <= 83).map(({version, name}) => ({version, name})), extensions.map(({version, name}) => ({version, name})));
   for (const count of [1, 2, 3, 4, 5]) assert.deepEqual(composeMigrations(registry, [...prior, ...extensions.slice(0, count)]), registry);
   assert.throws(() => composeMigrations(registry, [...prior, ...extensions.slice(0, 2), {version: 80, name: names[5]}]), /Unsupported Core migration history/);
 });
@@ -159,13 +159,14 @@ test("cross-PR reservations reject collisions and compose without changing suppo
   const { reservations, validateMigrationReservations } = require("../../apps/api/migrations/migration-reservations.cjs");
   const { migrations } = require("../../apps/api/migrations/migrate");
   const future = Object.entries(reservations).filter(([version]) => Number(version) > 83)
-    .map(([version, name]) => ({ version: Number(version), name, sql: `reviewed-${name}` }));
+    .map(([version, name]) => ({ version: Number(version), name, sql: `reviewed-${name}` }))
+    .filter(entry => !migrations.some(row => row.version === entry.version || row.name === entry.name));
   const registry = [...migrations, ...future];
   validateMigrationReservations(registry);
   for (const [version, name] of [[81, "recipient_channel_verification"], [81, "pagerduty_incident_lifecycle"],
     [81, "certops_distribution_lifecycle"], [82, "certops_material_cleanup"], [86, "pagerduty_incident_lifecycle"],
     [92, "certops_distribution_resolution_delivery"]]) {
-    assert.throws(() => validateMigrationReservations([...migrations.filter(row => row.version !== version), { version, name }]), /Conflicting canonical Core migration/);
+    assert.throws(() => validateMigrationReservations([...migrations.filter(row => row.version !== version && row.name !== name), { version, name }]), /Conflicting canonical Core migration/);
   }
   assert.throws(() => validateMigrationReservations([...migrations, migrations.at(-1)]), /Duplicate Core migration/);
   const before = composeMigrations(migrations, [...ledger(canonical), { version: 77, name: "onboarding_sessions" },
