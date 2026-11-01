@@ -147,16 +147,17 @@ test("all 73 enrollment-first preview definitions retain their immutable histori
 });
 
 test("PagerDuty's independent slot preserves applied history while companion migrations arrive later", () => {
-  const { migrations } = require("../../apps/api/migrations/migrate");
+  const registered = require("../../apps/api/migrations/migrate").migrations;
+  const migrations = registered.filter(row => row.version <= 82 || row.name === "pagerduty_incident_lifecycle");
   const applied = migrations.map(({ version, name }) => ({ version, name, executed_at: "unchanged" }));
   const snapshot = JSON.stringify(applied);
   const companions = [
-    [83, "certops_distribution_lifecycle"], [84, "certops_distribution_incident_delivery"],
-    [85, "certops_stable_consumer_discovery"], [86, "certops_material_cleanup"],
-    [87, "certops_consumer_verification_failures"], [88, "certops_material_providers"],
-    [89, "recipient_channel_verification"], [90, "weekly_digest_recipient_claim_token"],
+    [83, "certops_material_providers"], [84, "recipient_channel_verification"],
+    [85, "weekly_digest_recipient_claim_token"], [86, "certops_distribution_lifecycle"],
+    [87, "certops_distribution_incident_delivery"], [88, "certops_stable_consumer_discovery"],
+    [89, "certops_material_cleanup"], [90, "certops_consumer_verification_failures"],
     [91, "certops_distribution_resolution_delivery"],
-  ].map(([version, name]) => ({ version, name, sql: "SELECT 1" }));
+  ].map(([version, name]) => registered.find(row => row.name === name) || ({ version, name, sql: "SELECT 1" }));
   const integrated = [...migrations, ...companions].sort((a,b) => a.version-b.version);
   for (let length = 0; length <= companions.length; length++) {
     const recorded = [...applied, ...companions.slice(0,length)].sort((a,b) => a.version-b.version);
