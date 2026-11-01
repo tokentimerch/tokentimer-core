@@ -240,8 +240,8 @@ describe(
       process.env.ENABLE_METRICS = "false";
       process.env.ALERT_MAX_ATTEMPTS = "20";
       process.env.RECIPIENT_FINGERPRINT_SECRET = "pagerduty-cross-pr-test-only";
-      if (process.env.PAGERDUTY_COMPANION_ROOT) {
-        const root = path.resolve(process.env.PAGERDUTY_COMPANION_ROOT);
+      {
+        const root = path.resolve(process.env.PAGERDUTY_COMPANION_ROOT || path.join(__dirname, "../.."));
         companionVerification = require(
           path.join(root, "packages/recipient-verification"),
         );
@@ -536,7 +536,6 @@ describe(
 
     it(
       "reconciles the actual #461 ledger using verified recipients and retains evidence extensions",
-      { skip: !process.env.PAGERDUTY_COMPANION_ROOT },
       async () => {
         process.env.RECIPIENT_VERIFICATION_MODE = "enforce";
         const first = await verifiedContact("alice@example.test"),
@@ -596,7 +595,6 @@ describe(
 
     it(
       "retains a versioned ledger's unrelated failure and retry state until all eligible recipients have evidence",
-      { skip: !process.env.PAGERDUTY_COMPANION_ROOT },
       async () => {
         process.env.RECIPIENT_VERIFICATION_MODE = "enforce";
         const first = await verifiedContact("alice@example.test"),
@@ -659,7 +657,6 @@ describe(
 
     it(
       "keeps #461 verification lookup outages retryable and reconciles after consent lookup recovers",
-      { skip: !process.env.PAGERDUTY_COMPANION_ROOT },
       async () => {
         process.env.RECIPIENT_VERIFICATION_MODE = "enforce";
         const id = await verifiedContact("verified@example.test");
@@ -751,7 +748,6 @@ describe(
 
     it(
       "uses #461 recipient admission in foreground delivery without sending to unverified contacts",
-      { skip: !process.env.PAGERDUTY_COMPANION_ROOT },
       async () => {
         process.env.RECIPIENT_VERIFICATION_MODE = "enforce";
         const id = await verifiedContact("unverified@example.test", "pending");
@@ -788,7 +784,6 @@ describe(
 
     it(
       "matches #461 terminal eligibility when every email recipient is unverified",
-      { skip: !process.env.PAGERDUTY_COMPANION_ROOT },
       async () => {
         process.env.RECIPIENT_VERIFICATION_MODE = "enforce";
         const id = await verifiedContact("pending@example.test", "pending");

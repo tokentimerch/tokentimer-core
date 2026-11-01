@@ -186,16 +186,15 @@ Missing verification dependencies/schema cannot establish completion when
 enforcement is required. The standalone self-hosted `off` path preserves legacy
 behavior. This PR does not install or enable #461's API/UI or verification schema.
 
-For the cross-PR PostgreSQL cases, set `PAGERDUTY_COMPANION_ROOT` to an extracted
-or existing #461 source root containing `packages/recipient-verification`.
-Run `pnpm test:pagerduty:postgres` against a migrated disposable database whose
-name ends in `_issue364_test`, using the normal `DB_*` test environment. The
-suite installs the real companion schema as a fixture and injects its actual
-helpers; provider sends remain injected. Without that source root the companion
-cases are explicitly skipped. Upgrade tests use separate empty databases ending
-in `_migration_issue364_test` and `PAGERDUTY_UPGRADE_FROM` set to `78`, `80`, `81`,
-`legacy79` or `legacy81`. The `81` case also rehearses adding the real companion
-schema after PagerDuty is applied, preserving existing migration timestamps.
+For PostgreSQL tests, set `PAGERDUTY_COMPANION_ROOT` to a #461 source checkout
+containing `packages/recipient-verification` when it is absent locally. Run
+`pnpm test:pagerduty:postgres` against a migrated disposable database ending in
+`_issue364_test`, using the normal `DB_*` environment. All companion cases are
+required; missing source fails the suite. It installs the real verification
+schema as a fixture and injects provider sends. CI uses a pinned companion
+checkout. Upgrade tests require separate empty databases ending in
+`_migration_issue364_test`, with `PAGERDUTY_UPGRADE_FROM` set to `78`, `80`, `81`,
+`82`, `legacy79` or `legacy81`.
 
 Escalation retries use the same authorized legacy workspace resolution as the
 stale-incident reconciler. Unknown ownership does not resolve a still-blocked

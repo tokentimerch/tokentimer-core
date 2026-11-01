@@ -465,6 +465,13 @@ jobs:
           NODE
       - name: Migrate dedicated empty test database
         run: node apps/api/migrations/migrate.js
+      - name: Check out the tested recipient runtime for cross-feature delivery regressions
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: tokentimerch/tokentimer-core
+          ref: b7eea693a4703e98f90d206838c0351599b8d6ad
+          path: .test-deps/recipient-companion
+          persist-credentials: false
       - name: Exercise manual and fenced auto-sync cleanup through HTTP routes
         run: node --test tests/postgres/vault-material-cleanup.test.js
       - name: Preserve provider-owned expiration under concurrent manual edits
@@ -513,6 +520,10 @@ jobs:
               await client.query('CREATE DATABASE wildcard_candidate_ci_test');
               await client.query('CREATE DATABASE pr329_issuance_path_reuse_ci_test');
               await client.query('CREATE DATABASE pr329_workspace_delete_ci_test');
+              await client.query('CREATE DATABASE pagerduty_ci_issue364_test');
+              for (const history of ['78','80','81','82','legacy79','legacy81']) {
+                await client.query(`CREATE DATABASE pd_${history}_migration_issue364_test`);
+              }
             } finally {
               await client.end();
             }
@@ -520,6 +531,21 @@ jobs:
           main().catch(error => { console.error(error.message); process.exitCode = 1; });
           NODE
           node --test --test-force-exit tests/postgres/distribution-migration-upgrade.test.js
+      - name: Exercise PagerDuty lifecycle and actual recipient-runtime interoperability
+        env:
+          DB_NAME: pagerduty_ci_issue364_test
+          PAGERDUTY_COMPANION_ROOT: ${{ github.workspace }}/.test-deps/recipient-companion
+        run: |
+          node apps/api/migrations/migrate.js
+          node --test --test-force-exit tests/postgres/pagerduty-incident-lifecycle.test.js
+      - name: Verify PagerDuty upgrades and explicit preview recovery
+        env:
+          PAGERDUTY_COMPANION_ROOT: ${{ github.workspace }}/.test-deps/recipient-companion
+        run: |
+          for history in 78 80 81 82 legacy79 legacy81; do
+            DB_NAME="pd_${history}_migration_issue364_test" PAGERDUTY_UPGRADE_FROM="$history" \
+              node --test --test-force-exit tests/postgres/pagerduty-migration.test.js
+          done
       - name: Prove abandoned certificate-path reuse on isolated PostgreSQL
         env:
           DB_NAME: pr329_issuance_path_reuse_ci_test
