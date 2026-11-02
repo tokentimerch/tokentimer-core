@@ -7,8 +7,9 @@ const test = require("node:test"),
   { EventEmitter } = require("node:events");
 const helper = require("../tests/e2e/helpers/certops-windows-rename-guard");
 function fixture(kind) {
-  const base = path.resolve(__dirname, "../.build"),
-    root = fs.mkdtempSync(path.join(base, "rename-guard-"));
+  const base = path.resolve(__dirname, "../.build");
+  fs.mkdirSync(base, { recursive: true });
+  const root = fs.mkdtempSync(path.join(base, "rename-guard-"));
   return {
     root,
     kind,

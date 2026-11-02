@@ -33,7 +33,11 @@ function createGuard(workDir, kind) {
     bytes = Buffer.from(
       JSON.stringify({ kind, nonce: crypto.randomUUID() }) + "\n",
     );
-  fs.writeFileSync(file, bytes, { flag: "wx" });
+  // Keep the original inode alive until release. Unlink/recreate can otherwise
+  // reuse its number on Linux and make a foreign receipt look like our file.
+  const descriptor = fs.openSync(file, "wx");
+  try { fs.writeFileSync(descriptor, bytes); }
+  catch (error) { fs.closeSync(descriptor); throw error; }
   const fileId = identity(file);
   const entry = { closed: false, attached: false, released: false };
   const entries = active.get(key) || new Map();
@@ -79,11 +83,14 @@ function createGuard(workDir, kind) {
         fileId,
         "Owned holder receipt replacement preserves native state",
       );
+      assert.equal(fs.fstatSync(descriptor, { bigint: true }).nlink, 1n,
+        "Unlinked or shared original receipt preserves native state");
       assert.ok(
         fs.readFileSync(file).equals(bytes),
         "Owned holder receipt changed; preserve state",
       );
       fs.unlinkSync(file);
+      fs.closeSync(descriptor);
       entry.released = true;
       entries.delete(kind);
       if (entries.size === 0) active.delete(key);

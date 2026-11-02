@@ -25,6 +25,9 @@ function run({ files = discover(), workers = concurrency(), timeoutMs = TOOLING_
   assert.ok(files.length > 0, "Empty tooling inventory is not a successful run");
   console.log(`CertOps tooling: ${files.length} files, ${workers} workers, ${timeoutMs / 1000}s limit`);
   const env = { ...process.env, NODE_ENV: "test" };
+  // Hosted Windows exposes TEMP through an 8.3 alias. Owned fixture paths must
+  // start with its real name so strict anti-alias checks retain their meaning.
+  if (process.platform === "win32") env.TEMP = env.TMP = fs.realpathSync(os.tmpdir());
   // A nested test runner must start its own inventory, not inherit the parent's
   // worker context (which makes Node ignore --test and can report false success).
   delete env.NODE_TEST_CONTEXT;

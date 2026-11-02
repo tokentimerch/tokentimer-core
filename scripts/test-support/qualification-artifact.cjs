@@ -37,7 +37,7 @@ function matrixErrors(value, slot, candidateSha) {
 module.exports = { reportFacts, matrixErrors, sourceIdentity, windowsArtifact };
 
 // No digest cache: every artifact remains bound to the current source bytes.
-function sourceIdentity(file, resolve = false) {
+function sourceIdentity(file) {
   const fs = require("node:fs"),
     path = require("node:path"),
     crypto = require("node:crypto");
@@ -48,7 +48,7 @@ function sourceIdentity(file, resolve = false) {
       .createHash("sha256")
       .update(
         fs.readFileSync(
-          resolve ? path.resolve(root, file) : path.join(root, file),
+          path.resolve(root, file),
         ),
       )
       .digest("hex"),
