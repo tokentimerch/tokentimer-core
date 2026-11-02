@@ -101,13 +101,32 @@ function assertProof(value) {
   return true;
 }
 
+async function selectUncertainIssuer({ fixture, renewalFixture: live, caConfig }) {
+  assert.ok(live?.issuerId && live.authority);
+  assert.match(live.authority.keySha256, /^[a-f0-9]{64}$/);
+  // Preflight includes historical CA certificates in index order. Reconfirming
+  // its first certificate here would undo the earlier native key-rotation case.
+  const { rows } = await fixture.pool.query(
+    "SELECT v.ca_config,v.template,v.ca_key_sha256,v.confirmed_at,i.revalidation_required FROM certificate_issuers i JOIN certificate_issuer_versions v ON v.workspace_id=i.workspace_id AND v.issuer_id=i.id AND v.version=i.current_version WHERE i.workspace_id=$1 AND i.id=$2 AND i.kind='adcs'",
+    [fixture.workspaceId, live.issuerId],
+  );
+  assert.equal(rows.length, 1, "A current native issuer version is required");
+  const current = rows[0];
+  assert.ok(current.confirmed_at, "The native issuer must already be confirmed");
+  assert.equal(current.revalidation_required, false);
+  assert.equal(current.ca_config, caConfig);
+  assert.equal(current.template, "TTQualificationRSAShort");
+  assert.equal(current.ca_key_sha256, live.authority.keySha256,
+    "Uncertain recovery must retain the currently confirmed native CA key");
+  return live.issuerId;
+}
 async function qualifyUncertainScenario(context, mode = "abandon") {
   assert.ok(["abandon", "operator-created-ambiguity", "operator-created-unique"].includes(mode));
   const ambiguity = mode !== "abandon";
   const abandonActor=!ambiguity ? context.abandonActor : null;
   if(abandonActor){assert.equal(typeof abandonActor.abandonEnrollment,"function");assert.equal(typeof abandonActor.observeNativeCompletion,"function");}
   const variant = mode === "operator-created-unique" ? require("./certops-adcs-uncertain-operator-unique") : ambiguity ? require("./certops-adcs-uncertain-operator-ambiguity") : null;
-  const { gate, fixture, api, agentRowId, configDir, workDir, run, preflight, ps, command, until, jobFinished, ownedSites, ownedCertificateIds, ownedEnrollmentIds, ownedFirewallRules, ownedPhaseObservers, serviceOwned, caConfig } = context;
+  const { gate, fixture, api, agentRowId, configDir, workDir, run, ps, command, until, jobFinished, ownedSites, ownedCertificateIds, ownedEnrollmentIds, ownedFirewallRules, ownedPhaseObservers, serviceOwned, caConfig } = context;
   assert.equal(process.platform, "win32");
   assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB, "1");
   assert.equal(serviceOwned, true);
@@ -139,17 +158,7 @@ async function qualifyUncertainScenario(context, mode = "abandon") {
   const recoverySuspension = createOwnedRecoverySuspension({ readPolicy: policy, command });
   try {
     assert.equal(observe().subjectRequestCount, 0);
-    let issuerId;
-    if (ambiguity) {
-      assert.ok(context.renewalFixture?.issuerId);
-      issuerId = context.renewalFixture.issuerId;
-    } else {
-      const { issuerId: checkedIssuerId, result } = await preflight("TTQualificationRSAShort");
-      issuerId = checkedIssuerId;
-      assert.equal(result.caCheck.verdict, "safe");
-      assert.equal(result.templateCheck.verdict, "safe");
-      assert.equal((await fixture.request(`${api}/issuers/${issuerId}/confirm`, "POST", { caKeySha256: result.caCertificates[0].keySha256, caConfig, template: "TTQualificationRSAShort" })).status, 200);
-    }
+    const issuerId = await selectUncertainIssuer(context);
     const port = await new Promise((resolve, reject) => { const server = net.createServer(); server.once("error", reject); server.listen(0, "127.0.0.1", () => { const selected = server.address().port; server.close(error => error ? reject(error) : resolve(selected)); }); });
     const directory = path.join(workDir, site); fs.mkdirSync(directory); fs.writeFileSync(path.join(directory, "index.html"), "Native uncertain abandonment");
     ps(`Import-Module WebAdministration;if(Test-Path 'IIS:\\Sites\\${site}'){throw 'Existing uncertain site'};if(Get-NetFirewallRule -Name '${rule}' -ErrorAction SilentlyContinue){throw 'Existing uncertain firewall rule'};if(@(Get-NetFirewallProfile|Where-Object Enabled -ne True).Count){throw 'Firewall enforcement required'}`);
@@ -238,6 +247,6 @@ async function qualifyUncertainScenario(context, mode = "abandon") {
   else { assertProof(proof); gate.report.nativeUncertainAbandon = proof; }
 }
 function qualifyUncertainAbandon(context) { return qualifyUncertainScenario(context, "abandon"); }
-module.exports = { MAX_RECOVERY_WAIT_MS, qualifyUncertainScenario, qualifyUncertainAbandon, assertProof, validateDisposableCaAddress, recoveryWaitBudget, createOwnedRecoverySuspension, REQUIRED_SOURCES };
+module.exports = { MAX_RECOVERY_WAIT_MS, selectUncertainIssuer, qualifyUncertainScenario, qualifyUncertainAbandon, assertProof, validateDisposableCaAddress, recoveryWaitBudget, createOwnedRecoverySuspension, REQUIRED_SOURCES };
 // Local fail-closed abandon contract. This file remains the forest journey.
 module.exports.localContract = require("../../../scripts/certops-adcs-uncertain-abandon");

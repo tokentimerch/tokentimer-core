@@ -69,9 +69,9 @@ test("actual native descriptor and cache generations fit the original18 primary 
     rootCaRechecks +
     pendingNewKeyRecovery;
   const hierarchyMaximum =
-    initial.size + automaticFreshChecks + freshCapacity + 1; // cache cleared by flags; tail repopulates RSAshort
+    initial.size + automaticFreshChecks + freshCapacity;
   assert.equal(rootMaximum, 18);
-  assert.equal(hierarchyMaximum, 16);
+  assert.equal(hierarchyMaximum, 15);
   assert.ok(rootMaximum + 2 <= 20);
 });
 test("all primary caller and cache invalidation sites are explicitly audited", () => {
@@ -93,24 +93,25 @@ test("all primary caller and cache invalidation sites are explicitly audited", (
     main,
     /preflightCache\.set\(item\.template,\{issuerId,result:preflightResult\}\)/,
   );
-  const helpers = [
-    "algorithm-boundaries",
-    "issued-cancellation",
-    "journal-phase-experiment",
-    "local-rules",
-    "pending-elapsed",
-    "submission-boundaries",
-    "uncertain-abandon",
-    "validity-boundaries",
-  ];
-  for (const name of helpers)
+  // Uncertain journeys reuse the current confirmed issuer after key rotation.
+  const helpers = {
+    "algorithm-boundaries": 1,
+    "issued-cancellation": 1,
+    "journal-phase-experiment": 1,
+    "local-rules": 1,
+    "pending-elapsed": 1,
+    "submission-boundaries": 1,
+    "uncertain-abandon": 0,
+    "validity-boundaries": 1,
+  };
+  for (const [name, count] of Object.entries(helpers))
     assert.equal(
       (
         read(`tests/e2e/helpers/certops-adcs-${name}.js`).match(
           /await preflight\(/g,
         ) || []
       ).length,
-      1,
+      count,
       name,
     );
   const capacity = read("tests/e2e/helpers/certops-adcs-capacity.js");
