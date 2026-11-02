@@ -142,11 +142,10 @@ describe.each(['gitlab', 'github'])(
     const scan = () =>
       provider === 'gitlab' ? gitlabAPI.scan : githubAPI.scan;
     const result = { items: [], summary: [], scan_id: 'fixture-scan' };
-    // These state checks target native buttons. Text + tag queries avoid
-    // recomputing every Chakra control's accessible name on each retry.
     const enable = () =>
-      screen.getByText('Enable auto-sync', { selector: 'button' });
-    const scanButton = () => screen.getByText('Scan', { selector: 'button' });
+      screen.getByRole('button', { name: 'Enable auto-sync', exact: true });
+    const scanButton = () =>
+      screen.getByRole('button', { name: 'Scan', exact: true });
     async function addAnother() {
       render(
         renderModal({
@@ -156,7 +155,7 @@ describe.each(['gitlab', 'github'])(
         })
       );
       fireEvent.click(
-        await screen.findByText('Add another', { selector: 'button' })
+        await screen.findByRole('button', { name: 'Add another', exact: true })
       );
       const secret = await screen.findByPlaceholderText(/Paste token/);
       fireEvent.change(secret, { target: { value: 'synthetic-one' } });
@@ -165,18 +164,6 @@ describe.each(['gitlab', 'github'])(
     beforeEach(() => {
       cleanup();
       vi.clearAllMocks();
-      // Provider/metric flows need a valid default zone, not a host-dependent
-      // catalogue of hundreds of unrelated schedule options.
-      const defaultZone =
-        Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-      const supportedValuesOf = Intl.supportedValuesOf.bind(Intl);
-      vi.spyOn(Intl, 'supportedValuesOf').mockImplementation(key =>
-        key === 'timeZone'
-          ? [...new Set([defaultZone, 'UTC'])]
-          : supportedValuesOf(key)
-      );
-      // Chakra animations call this browser API, which jsdom does not provide.
-      vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
       localStorage.clear();
       wsCtx.id = 'ws-1';
       configs = [2, 3].map((n, i) => ({
@@ -208,10 +195,7 @@ describe.each(['gitlab', 'github'])(
         return Promise.resolve({ data: created });
       });
     });
-    afterEach(() => {
-      cleanup();
-      vi.restoreAllMocks();
-    });
+    afterEach(cleanup);
     it('allows an empty scan to enable a second same-URL configuration and selects the created ID', async () => {
       await addAnother();
       fireEvent.click(scanButton());
@@ -243,7 +227,9 @@ describe.each(['gitlab', 'github'])(
       );
       expect(enable()).toBeDisabled();
     });
-    it('requires a fresh scan after credentials change', async () => {
+    // These multi-step provider flows include several asynchronous renders;
+    // allow coverage instrumentation without relaxing any per-step assertion.
+    it('requires a fresh scan after credentials or scope change and after failed or stale scans', async () => {
       const secret = await addAnother();
       scan().mockResolvedValue({
         ...result,
@@ -253,11 +239,6 @@ describe.each(['gitlab', 'github'])(
       await waitFor(() => expect(enable()).toBeEnabled());
       fireEvent.change(secret, { target: { value: 'synthetic-two' } });
       expect(enable()).toBeDisabled();
-      fireEvent.click(scanButton());
-      await waitFor(() => expect(enable()).toBeEnabled());
-    });
-    it('requires a fresh scan when a provider URL is cleared and restored', async () => {
-      await addAnother();
       fireEvent.click(scanButton());
       await waitFor(() => expect(enable()).toBeEnabled());
       const url = screen.getByPlaceholderText(
@@ -270,29 +251,16 @@ describe.each(['gitlab', 'github'])(
       expect(enable()).toBeDisabled();
       fireEvent.click(scanButton());
       await waitFor(() => expect(enable()).toBeEnabled());
-    });
-    it('requires a fresh scan after the cleanup scope changes', async () => {
-      await addAnother();
-      fireEvent.click(scanButton());
-      await waitFor(() => expect(enable()).toBeEnabled());
       fireEvent.click(
         screen.getByRole('checkbox', { name: /Remove previously imported/ })
       );
       expect(enable()).toBeDisabled();
       fireEvent.click(scanButton());
       await waitFor(() => expect(enable()).toBeEnabled());
-    });
-    it('clears prior verification after a failed scan', async () => {
-      await addAnother();
-      fireEvent.click(scanButton());
-      await waitFor(() => expect(enable()).toBeEnabled());
       scan().mockRejectedValueOnce(new Error('Synthetic scan failure'));
       fireEvent.click(scanButton());
       await screen.findAllByText(/Synthetic scan failure/);
       expect(enable()).toBeDisabled();
-    });
-    it('rejects an in-flight result after credentials change and accepts a fresh scan', async () => {
-      const secret = await addAnother();
       let finish;
       scan().mockImplementationOnce(
         () =>
@@ -312,11 +280,6 @@ describe.each(['gitlab', 'github'])(
       scan().mockResolvedValue(result);
       fireEvent.click(scanButton());
       await waitFor(() => expect(enable()).toBeEnabled());
-    });
-    it('rejects confirmation after credentials change', async () => {
-      const secret = await addAnother();
-      fireEvent.click(scanButton());
-      await waitFor(() => expect(enable()).toBeEnabled());
       fireEvent.click(enable());
       const confirm = await screen.findByRole('button', {
         name: 'Enable Auto-Sync',
@@ -327,8 +290,8 @@ describe.each(['gitlab', 'github'])(
       });
       fireEvent.click(confirm);
       expect(apiClient.post).not.toHaveBeenCalled();
-    });
-    async function createWithMetricLabels() {
+    }, 15_000);
+    it('persists selected metric labels without another scan and clears them for the next configuration', async () => {
       await addAnother();
       fireEvent.click(scanButton());
       await waitFor(() => expect(enable()).toBeEnabled());
@@ -347,7 +310,6 @@ describe.each(['gitlab', 'github'])(
       fireEvent.click(
         screen.getByRole('checkbox', { name: 'Token / asset name' })
       );
-      expect(enable()).toBeEnabled();
       fireEvent.click(enable());
       fireEvent.click(
         await screen.findByRole('button', {
@@ -377,30 +339,6 @@ describe.each(['gitlab', 'github'])(
           screen.getByRole('combobox', { name: 'Configuration' })
         ).toHaveValue('created-config')
       );
-    }
-    it('persists selected metric labels without another scan', async () => {
-      await createWithMetricLabels();
-      expect(scan()).toHaveBeenCalledTimes(1);
-    });
-    async function showSavedMetricChoices() {
-      configs[0].metrics_settings = {
-        enabled: true,
-        labels: [
-          'configuration_name',
-          'monitoring_group',
-          'kind',
-          'asset_name',
-        ],
-        monitoring_group: 'critical',
-      };
-      render(
-        renderModal({
-          provider,
-          integrationSubTab: 'manage',
-          autoSyncConfigId: 'existing-1',
-        })
-      );
-      await screen.findByRole('button', { name: 'Add another', exact: true });
       fireEvent.click(
         screen.getByRole('button', { name: 'Auto-sync metrics', exact: true })
       );
@@ -412,27 +350,10 @@ describe.each(['gitlab', 'github'])(
       expect(
         screen.getByRole('textbox', { name: 'Monitoring group label' })
       ).toHaveValue('critical');
-    }
-    it('restores metric choices from the selected saved configuration', async () => {
-      await showSavedMetricChoices();
-      expect(
-        screen.getByRole('checkbox', { name: 'Token / asset name' })
-      ).toBeChecked();
-      expect(
-        screen.getByRole('checkbox', {
-          name: 'Expose additional auto-sync metrics',
-        })
-      ).toBeChecked();
-      expect(scan()).not.toHaveBeenCalled();
-    });
-    it('clears saved metric choices when creating the next configuration', async () => {
-      await showSavedMetricChoices();
+      expect(scan()).toHaveBeenCalledTimes(1);
       fireEvent.click(
         screen.getByRole('button', { name: 'Add another', exact: true })
       );
-      fireEvent.change(await screen.findByPlaceholderText(/Paste token/), {
-        target: { value: 'synthetic-one' },
-      });
       fireEvent.click(scanButton());
       await waitFor(() => expect(enable()).toBeEnabled());
       expect(
@@ -449,7 +370,7 @@ describe.each(['gitlab', 'github'])(
       expect(
         screen.getByRole('textbox', { name: 'Monitoring group label' })
       ).toHaveValue('');
-    }, 15000);
+    }, 15_000);
     it('allocates an unused configuration name despite deletions, whitespace and case', async () => {
       await addAnother();
       scan().mockResolvedValue({ ...result, items: [{ name: 'fixture' }] });

@@ -1,5 +1,6 @@
 const { pool } = require("../db/database");
 const { currentWorkspaceAccessSql } = require("./rbac");
+const { resolvedTokenWorkspaceSql } = require("@tokentimer/alert-eligibility");
 
 /**
  * Requeue failed/blocked alerts for a user or a specific workspace.
@@ -21,11 +22,20 @@ async function requeueAlertsCore({
       ? `aq.status = 'blocked'`
       : `(aq.status = 'blocked' AND aq.error_message IS NOT NULL AND aq.error_message <> 'PLAN_LIMIT' AND aq.error_message NOT ILIKE '%PLAN_LIMIT%')`;
     const r = await pool.query(
-      `UPDATE alert_queue aq
+      `WITH retry_pagerduty AS (
+         UPDATE pagerduty_incidents pi SET retry_exhausted = FALSE, action_attempts = 0,
+           next_attempt_at = NOW(), updated_at = NOW()
+         WHERE pi.workspace_id = $1
+           AND (${currentWorkspaceAccessSql("pi.workspace_id", "$2")})
+           AND pi.state IN ('trigger_pending','resolve_pending') AND pi.retry_exhausted
+           AND (pi.claimed_until IS NULL OR pi.claimed_until <= NOW())
+         RETURNING pi.id
+       )
+       UPDATE alert_queue aq
        SET status = 'pending', attempts = 0, attempts_email = 0, attempts_webhooks = 0, attempts_whatsapp = 0,
            error_message = NULL, next_attempt_at = NOW(), updated_at = NOW()
        WHERE COALESCE(
-         (SELECT t.workspace_id FROM tokens t WHERE t.id = aq.token_id),
+         (SELECT ${resolvedTokenWorkspaceSql("t")} FROM tokens t WHERE t.id = aq.token_id),
          (SELECT ca.workspace_id FROM certops_agents ca WHERE ca.id = aq.certops_agent_id)
        ) = $1 AND (
          aq.status IN ('failed','limit_exceeded') OR
@@ -33,7 +43,7 @@ async function requeueAlertsCore({
          ${blockedCondition}
        )
        RETURNING aq.id`,
-      [workspaceId],
+      [workspaceId, userId],
     );
     await resolveRequeuedNotifications(r.rows, workspaceId);
     return r.rowCount || 0;
@@ -42,11 +52,21 @@ async function requeueAlertsCore({
     ? `aq.status = 'blocked'`
     : `(aq.status = 'blocked' AND aq.error_message IS NOT NULL AND aq.error_message <> 'PLAN_LIMIT' AND aq.error_message NOT ILIKE '%PLAN_LIMIT%')`;
   const workspaceAnchor = `COALESCE(
-    (SELECT t.workspace_id FROM tokens t WHERE t.id = aq.token_id),
+    (SELECT ${resolvedTokenWorkspaceSql("t")} FROM tokens t WHERE t.id = aq.token_id),
     (SELECT ca.workspace_id FROM certops_agents ca WHERE ca.id = aq.certops_agent_id)
   )`;
   const r = await pool.query(
-    `UPDATE alert_queue aq
+    `WITH retry_pagerduty AS (
+       UPDATE pagerduty_incidents pi SET retry_exhausted = FALSE, action_attempts = 0,
+         next_attempt_at = NOW(), updated_at = NOW()
+       WHERE (${currentWorkspaceAccessSql("pi.workspace_id", "$1")})
+         AND EXISTS (SELECT 1 FROM alert_queue original
+           WHERE original.id = pi.trigger_alert_queue_id AND original.user_id = $1)
+         AND pi.state IN ('trigger_pending','resolve_pending') AND pi.retry_exhausted
+         AND (pi.claimed_until IS NULL OR pi.claimed_until <= NOW())
+       RETURNING pi.id
+     )
+     UPDATE alert_queue aq
      SET status = 'pending', attempts = 0, attempts_email = 0, attempts_webhooks = 0, attempts_whatsapp = 0,
          error_message = NULL, next_attempt_at = NOW(), updated_at = NOW()
      WHERE aq.user_id = $1
