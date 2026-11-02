@@ -1740,14 +1740,14 @@ function renderChallengePage({ state, token, workspaceName, channel, code, fromN
 function renderResubscribeForm() {
   return renderPage(
     "Re-subscribe",
-    "<h1>Request email alerts again</h1><p>If you previously declined TokenTimer email alerts, enter that email address. When it matches, TokenTimer sends a confirmation link to that mailbox. Opening this page does not restore consent.</p><form method=\"post\" action=\"/verify/recipient/resubscribe\"><label>Email<br><input name=\"email\" type=\"email\" autocomplete=\"email\" required></label><br><button type=\"submit\">Email me a confirmation link</button></form>",
+    "<h1>Request email alerts again</h1><p>If you previously declined TokenTimer email alerts, enter that email address. If it matches and sending is allowed, TokenTimer emails a confirmation link to that mailbox. Daily and weekly limits also apply to re-subscription. Opening this page does not restore consent.</p><form method=\"post\" action=\"/verify/recipient/resubscribe\"><label>Email<br><input name=\"email\" type=\"email\" autocomplete=\"email\" required></label><br><button type=\"submit\">Email me a confirmation link</button></form>",
   );
 }
 
 function renderResubscribeAccepted() {
   return renderPage(
     "Check your email",
-    "<h1>Check your email</h1><p>If this address previously declined TokenTimer alerts, a confirmation link is on its way. The link works only for that address, and nothing is confirmed until you accept it.</p>",
+    "<h1>Check your email</h1><p>If this address previously declined TokenTimer alerts, a confirmation link may be emailed to that mailbox. Daily and weekly limits or an email delivery failure can delay it. Check spam; if nothing arrives, try again after 24 hours or contact your workspace administrator. Nothing is confirmed until you accept the link.</p>",
   );
 }
 

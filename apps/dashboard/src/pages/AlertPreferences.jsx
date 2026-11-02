@@ -965,6 +965,7 @@ export default function AlertPreferences({
   const [newContactDetails, setNewContactDetails] = useState({});
   const [testingContact, setTestingContact] = useState(null);
   const [verificationBusy, setVerificationBusy] = useState('');
+  const [whatsappShareLinks, setWhatsappShareLinks] = useState({});
   const [contactPhoneError, setContactPhoneError] = useState('');
   const [editingContactId, setEditingContactId] = useState(null);
   const [editContactFirstName, setEditContactFirstName] = useState('');
@@ -2758,14 +2759,21 @@ export default function AlertPreferences({
       }
       const shareUrl = response?.data?.share_url;
       if (!shareUrl) throw new Error('Confirmation link was not returned');
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(shareUrl);
-        showSuccess(
-          'Confirmation link copied. Send it through a channel you already trust. The person confirms from their own WhatsApp.'
-        );
-      } else {
-        window.prompt('Send this confirmation link to the recipient', shareUrl);
+      const shareKey = [workspaceId, contact.id, contact.phone_e164].join(':');
+      setWhatsappShareLinks(previous => ({
+        ...previous,
+        [shareKey]: { url: shareUrl, expiresAt: response?.data?.expires_at },
+      }));
+      // Keep the link usable even when clipboard permission or focus is lost.
+      try {
+        if (navigator.clipboard?.writeText)
+          await navigator.clipboard.writeText(shareUrl);
+      } catch {
+        /* The visible, selectable link remains available. */
       }
+      showSuccess(
+        'Confirmation link ready in Contacts. Copy it and send it through a channel you already trust.'
+      );
       await refreshContacts();
     } catch (error) {
       showError(verificationErrorMessage(error));
@@ -2808,7 +2816,9 @@ export default function AlertPreferences({
         `/api/test-whatsapp?workspace_id=${encodeURIComponent(workspaceId)}&use_template=true`,
         { phone_e164: phoneE164, contact_id: contactId }
       );
-      showSuccess('Test message sent');
+      showSuccess(
+        'Test submitted. Check the destination phone to confirm delivery.'
+      );
       setWaContactCooldowns(prev => ({
         ...prev,
         [cooldownKey]: now + 120000,
@@ -2824,6 +2834,9 @@ export default function AlertPreferences({
       } else if (String(code || '') === '63016') {
         msg =
           'Outside WhatsApp 24-hour session. Sending via approved template... please try again if it still fails.';
+      } else if (String(code || '') === '63112') {
+        msg =
+          'WhatsApp provider account unavailable. Ask the deployment administrator to check Meta business verification and account status.';
       } else if (code === 'WHATSAPP_NOT_CONFIGURED') {
         msg = 'WhatsApp is not configured. Please contact support.';
       } else if (code === 'TEMPLATE_NOT_CONFIGURED') {
@@ -2882,6 +2895,11 @@ export default function AlertPreferences({
           />
           <ContactVerificationControls
             contact={contact}
+            sharedInvitation={
+              whatsappShareLinks[
+                [workspaceId, contact?.id, contact?.phone_e164].join(':')
+              ]
+            }
             mode={recipientVerificationMode}
             isViewer={isViewer}
             busyKey={verificationBusy}
@@ -3441,6 +3459,13 @@ export default function AlertPreferences({
                                 </Text>
                                 <ContactVerificationControls
                                   contact={c}
+                                  sharedInvitation={
+                                    whatsappShareLinks[
+                                      [workspaceId, c?.id, c?.phone_e164].join(
+                                        ':'
+                                      )
+                                    ]
+                                  }
                                   mode={recipientVerificationMode}
                                   isViewer={isViewer}
                                   busyKey={verificationBusy}
@@ -4620,6 +4645,15 @@ export default function AlertPreferences({
             <VStack align='stretch' spacing={4}>
               <ContactVerificationControls
                 contact={editingContact}
+                sharedInvitation={
+                  whatsappShareLinks[
+                    [
+                      workspaceId,
+                      editingContact?.id,
+                      editingContact?.phone_e164,
+                    ].join(':')
+                  ]
+                }
                 mode={recipientVerificationMode}
                 isViewer={isViewer}
                 busyKey={verificationBusy}
