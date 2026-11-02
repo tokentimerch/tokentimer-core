@@ -21,6 +21,8 @@ queued actions from provider acceptance. Failed sends remain pending or show an
 exhausted retry budget. After correcting an ACK delivery error, **Acknowledge**
 can request another bounded attempt; previous audit and delivery history remain.
 A changed expiration starts a new notification cycle.
+
+![PagerDuty acknowledgement and resolution controls in asset alert history](assets/pagerduty-incident-actions.png)
 The delivery worker periodically
 reevaluates active incidents, including when its ordinary alert queue is empty.
 When recovery is established, it sends:
