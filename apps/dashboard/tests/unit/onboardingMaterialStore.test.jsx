@@ -8,6 +8,7 @@ import {
 } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MaterialStoreStep } from '../../src/components/onboarding/materialStoreStep.jsx';
+import { distributionApi } from '../../src/components/certops/distributionApi.js';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 import {
   createJob,
@@ -21,6 +22,9 @@ import {
 vi.mock('../../src/components/certops/certopsJobsApi.js', () => ({
   createJob: vi.fn(),
   getJob: vi.fn(),
+}));
+vi.mock('../../src/components/certops/distributionApi.js', () => ({
+  distributionApi: { retry: vi.fn() },
 }));
 vi.mock('../../src/components/onboarding/JobActivity.jsx', () => ({
   default: ({ title }) => <div>{title}</div>,
@@ -54,6 +58,124 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe('Configure material store', () => {
+  it.each([
+    ['viewer', 'openbao-kv2', 1],
+    ['admin', 'openbao-kv2', 3],
+    ['admin', 'azure-key-vault', 1],
+  ])(
+    'does not retry for role %s, provider %s and attempt %s',
+    async (role, provider, attemptCount) => {
+      const ctx = materialContext(provider);
+      ctx.capabilities.viewer.workspaceRole = role;
+      ctx.session.progress.certops.vaultPublishJobId = 'publication-a';
+      getJob.mockResolvedValue({
+        job: { id: 'publication-a', status: 'failed', attemptCount },
+      });
+      show(ctx);
+      await waitFor(() =>
+        expect(getJob).toHaveBeenCalledWith(
+          ctx.workspaceId,
+          'publication-a',
+          expect.anything()
+        )
+      );
+      if (role === 'viewer') {
+        expect(
+          screen.queryByRole('button', {
+            name: 'Retry original publication',
+            hidden: true,
+          })
+        ).not.toBeInTheDocument();
+      } else {
+        const button = await screen.findByRole('button', {
+          name: 'Retry original publication',
+          hidden: true,
+        });
+        fireEvent.click(
+          screen.getByLabelText(
+            'I reviewed the job and completed any required host-local reconciliation'
+          )
+        );
+        expect(button).toBeDisabled();
+        fireEvent.click(button);
+      }
+      expect(distributionApi.retry).not.toHaveBeenCalled();
+      expect(createJob).not.toHaveBeenCalled();
+    }
+  );
+  it('retries the original failed publication after review without creating an order or changing saved intent', async () => {
+    const ctx = materialContext('openbao-kv2');
+    const saved = ctx.session.progress.certops;
+    saved.vaultPublishJobId = 'publication-a';
+    saved.vaultPublishRequestKey = 'original-request';
+    ctx.summary.certops.distribution.items[0].publication = null;
+    const before = JSON.stringify(ctx.session);
+    let retried = false;
+    getJob.mockImplementation(async (_ws, id) => ({
+      job:
+        id === 'publication-a'
+          ? { id, status: retried ? 'pending' : 'failed', attemptCount: 1 }
+          : {
+              id,
+              assignedAgentId: ISSUER,
+              status: 'dry_run_complete',
+              operation: 'noop',
+              mode: 'dry_run',
+            },
+    }));
+    distributionApi.retry.mockImplementation(async () => {
+      retried = true;
+      return { jobId: 'publication-a', status: 'pending' };
+    });
+    show(ctx);
+    const button = await screen.findByRole('button', {
+      name: 'Retry original publication',
+      hidden: true,
+    });
+    expect(button).toBeDisabled();
+    fireEvent.click(
+      screen.getByLabelText(
+        'I reviewed the job and completed any required host-local reconciliation'
+      )
+    );
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(distributionApi.retry).toHaveBeenCalledExactlyOnceWith(
+        ctx.workspaceId,
+        'publication-a'
+      )
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', {
+          name: 'Retry original publication',
+          hidden: true,
+        })
+      ).not.toBeInTheDocument()
+    );
+    expect(createJob).not.toHaveBeenCalled();
+    expect(ctx.controller.update).not.toHaveBeenCalled();
+    expect(JSON.stringify(ctx.session)).toBe(before);
+  });
+  it.each(['pending', 'running', 'succeeded'])(
+    'does not offer publication retry for %s work',
+    async status => {
+      const ctx = materialContext();
+      ctx.session.progress.certops.vaultPublishJobId = 'publication-a';
+      getJob.mockResolvedValue({
+        job: { id: 'publication-a', status, attemptCount: 1 },
+      });
+      show(ctx);
+      await screen.findByText('Publication job');
+      expect(
+        screen.queryByRole('button', {
+          name: 'Retry original publication',
+          hidden: true,
+        })
+      ).not.toBeInTheDocument();
+      expect(distributionApi.retry).not.toHaveBeenCalled();
+    }
+  );
   it('allows stopped-issuer preparation only after its observed signed check, retaining static requirements', async () => {
     const ctx = materialContext();
     Object.assign(ctx.summary.certops.agents.items[0], {

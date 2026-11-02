@@ -11,6 +11,6 @@ Updated 2026-11-02 for [draft PR #498](https://github.com/tokentimerch/tokentime
 
 ## Upgrade and acceptance
 
-Run the normal composed migration plan before starting matching API/workers. Fresh installations run through version 93; recognized preview histories preserve applied rows and append missing identities. Back up existing databases and allow time for outcome/recovery backfills. Upgrade agents before enabling calendars (`maintenance-calendar-v1`).
+Run the normal composed migration plan before starting matching API/workers. Fresh installations run through version 95; recognized preview histories preserve applied rows and append missing identities. Back up existing databases and allow time for outcome/recovery backfills. Upgrade agents before enabling calendars (`maintenance-calendar-v1`).
 
 Automated regression coverage includes real PostgreSQL migration histories, independent approvals, recurring failure accounting, cleanup races, provider readback and durable notification recovery. Those checks do not establish real-fleet acceptance. The current combined candidate still requires end-to-end operator testing of renewal, publication, activation, trust, drift, channel delivery, recovery and cleanup, with exact artifact provenance and retained evidence. Protected native qualification remains a separate release requirement. Keep the PR in draft until the required manual checks and current-head CI pass.

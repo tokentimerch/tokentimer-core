@@ -4,7 +4,7 @@ Publish one certificate version and install it on Linux consumers. Choose file d
 
 ## Prepare
 
-Use an HTTPS Vault KV v2 mount, reachable CA/DNS and a registered issuing agent. Consumers can be registered later in **Connect and validate consumers**; their absence does not block publication. A web service is needed only for the service-reload choice. Job approval is off by default, so one authorized operator can complete this workflow. If your workspace requires approval, arrange another authorized manager. Keep one workspace throughout.
+Use an HTTPS Vault or OpenBao KV v2 mount, reachable CA/DNS and a registered issuing agent. Consumers can be registered later in **Connect and validate consumers**; their absence does not block publication. A web service is needed only for the service-reload choice. Job approval is off by default, so one authorized operator can complete this workflow. If your workspace requires approval, arrange another authorized manager. Keep one workspace throughout.
 
 **Operator action:** file-only delivery requires the matching API/worker migration 78 and updated consumer agents. Older agents reject the new `installed` policy before changing files; do not work around that by approving an empty reload command.
 
@@ -31,6 +31,8 @@ In the Vault GUI, inspect the KV v2 engine, group-scoped policies and published 
 ## Publish, assign and roll out
 
 After readiness checks, deliberately set `execution.enabled: true` and `execution.dryRun: false` on the prepared hosts and restart their agents. Do not insert another dry-run polling phase while the real publication is queued. Approve the held job if required and follow the original publication under the actual workspace policy. Inspect its public receipt; publication alone is not installation.
+
+If publication fails, repair the reported cause. In **Configure material store → Prepare a real publication**, review the original job, complete any required host-local reconciliation, acknowledge that review and choose **Retry original publication**. This preserves the original version and request; do not delete an uncertain provider checkpoint or create another order to hide the failure.
 
 In **Connect and validate consumers**, select **First consumer** (use **Refresh consumer evidence** after registration), assign it and use **Additional consumer → Add consumer** for the second. Each assignment returns its actual authorization revision and a matching host configuration. Signed checks here belong to that selected host, not the issuer. Copy the configuration to that host, preserve the enrolled identity, and confirm the saved configuration after restarting the agent. A confirmation records your action; it is not deployment evidence.
 
