@@ -188,7 +188,7 @@ Set `RECIPIENT_FINGERPRINT_SECRET` (or rely on `PHONE_HASH_SALT` or `SESSION_SEC
 
 Point Twilio's inbound WhatsApp webhook at `POST /webhooks/twilio/whatsapp/inbound`. The signature is checked against `PUBLIC_BASE_URL` or `API_URL` plus the request path and the raw form body. A missing base URL or auth token returns 503 and does not confirm a number. Delivery status callbacks are not consent.
 
-The standard migration runner applies pending migrations in version order. Migration 78 is CertOps installed-file distribution. Migrations 79 and 80 are auto-sync metrics. Migration 81 (`auto_sync_metric_labels`) is the auto-sync label ledger. Migration 82 (`recipient_channel_verification`) adds the verification tables and does not mark existing contacts verified. Migration 83 (`weekly_digest_recipient_claim_token`) adds weekly-digest claim ownership, in-flight delivery state, and provider-acceptance tracking. Versions 84 and later stay available for the open CertOps distribution and PagerDuty incident migrations. Self-hosted `off` means verification is not enforced. It does not mean migration 82 should be skipped. A database that already applied the recipient preview as migrations 81 and 82 keeps those rows. See [recipient verification](recipient-verification.md).
+The standard migration runner applies pending migrations in version order. Recipient verification uses migration 84; migration 85 adds weekly-digest delivery tracking. Leaving verification off does not skip these migrations. Existing databases keep previously applied preview versions and timestamps; do not rename or hand-apply migration rows. See [recipient verification](recipient-verification.md#rollout).
 
 ## Alerts, limits, and webhooks
 

@@ -337,7 +337,7 @@ export default function AlertStateDisplay({
   if (realAttempt) {
     attemptLine = (
       <Text color={muted} fontSize='xs'>
-        Last delivery
+        Last attempt
         {lastDeliveryChannel ? `: ${lastDeliveryChannel}` : ''}
         {' · '}
         {formatDateTime(realAttempt.attempted_at)}

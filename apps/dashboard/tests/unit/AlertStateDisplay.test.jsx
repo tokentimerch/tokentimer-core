@@ -24,6 +24,15 @@ function renderDisplay(alertState, props = {}) {
 }
 
 describe('AlertStateDisplay', () => {
+  it('labels a blocked WhatsApp attempt accurately after email delivered', () => {
+    renderDisplay({ eligibility: { status: 'due', effective_threshold: 1, days_until_expiry: 1 },
+      delivery: { status: 'partial', latest_attempt: { id: 103, channel: 'whatsapp', status: 'failed',
+        error_message: 'NO_VERIFIED_RECIPIENTS', attempted_at: '2026-11-02T12:00:00Z' } } });
+    const delivery = within(screen.getByTestId('alert-delivery'));
+    expect(delivery.getByText('Partially delivered')).toBeInTheDocument();
+    expect(delivery.getByText(/Last attempt: WhatsApp/)).toBeInTheDocument();
+    expect(delivery.queryByText(/Last delivery/)).not.toBeInTheDocument();
+  });
   it('renders a compact current-status view without repeating badge prose', () => {
     renderDisplay(
       {
@@ -60,7 +69,7 @@ describe('AlertStateDisplay', () => {
       eligibility.getByText('Channels: Email, Webhooks')
     ).toBeInTheDocument();
     expect(delivery.getByText('Failed')).toBeInTheDocument();
-    expect(delivery.getByText(/Last delivery: Email ·/)).toBeInTheDocument();
+    expect(delivery.getByText(/Last attempt: Email ·/)).toBeInTheDocument();
     expect(
       delivery.queryByText(/Previous alert:/)
     ).not.toBeInTheDocument();
@@ -93,7 +102,7 @@ describe('AlertStateDisplay', () => {
     expect(
       delivery.getByText('Previous alert: 14 days before expiry')
     ).toBeInTheDocument();
-    expect(delivery.getByText(/Last delivery: Email ·/)).toBeInTheDocument();
+    expect(delivery.getByText(/Last attempt: Email ·/)).toBeInTheDocument();
     expect(
       within(screen.getByTestId('alert-eligibility')).getByText(
         'Current threshold: 7 days before expiry'

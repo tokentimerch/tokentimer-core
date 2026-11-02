@@ -1573,7 +1573,7 @@ describe("recipient verification", () => {
     assert.deepEqual(verification.requeueWebhookChannel(["email"]), ["email", "webhooks"]);
 
     const api = fs.readFileSync(path.join(ROOT, "apps/api/index.js"), "utf8");
-    assert.match(api, /planManualRetry\(alert\.channels, channel\)/);
+    assert.match(api, /planManualRetry\(\s*alert\.channels,\s*channel,?\s*\)/);
     assert.match(api, /manualRetryUpdateSql\(/);
     assert.match(api, /DELIVERY_IN_PROGRESS/);
     assert.match(api, /currentWorkspaceAccessSql\(currentAnchor, "\$3"\)/);
