@@ -150,6 +150,15 @@ openssl req -x509 -new -nodes -key leaf.key.pem -sha256 -days 825 \
   -out selfsigned.crt.pem -subj "/CN=valid.example.com" \
   -addext "subjectAltName=DNS:valid.example.com,DNS:www.valid.example.com"
 
+# A second TLS leaf for actual activation/retained rollback, reusing the
+# synthetic leaf key. Unlike the legacy selfsigned fixture, it is not a CA.
+openssl req -x509 -new -key leaf.key.pem -sha256 -days 825 \
+  -out material-renewed.crt.pem -subj "/CN=valid.example.com" \
+  -addext "subjectAltName=DNS:valid.example.com,DNS:www.valid.example.com" \
+  -addext "basicConstraints=critical,CA:FALSE" \
+  -addext "keyUsage=critical,digitalSignature,keyEncipherment" \
+  -addext "extendedKeyUsage=serverAuth"
+
 DEST="$(cd "$(dirname "$0")" && pwd)"
 cp ca.crt.pem intermediate.crt.pem \
   leaf.crt.pem leaf.key.pem \
@@ -158,7 +167,7 @@ cp ca.crt.pem intermediate.crt.pem \
   mismatch.key.pem \
   expired.crt.pem expired.key.pem \
   future.crt.pem future.key.pem \
-  selfsigned.crt.pem \
+  selfsigned.crt.pem material-renewed.crt.pem \
   "$DEST/"
 # leaf.crt.pem is signed directly by the test CA (not the intermediate).
 cat leaf.crt.pem ca.crt.pem > "$DEST/leaf-fullchain.crt.pem"

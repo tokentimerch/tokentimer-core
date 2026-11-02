@@ -19,9 +19,9 @@ export const OBJECTIVES = {
       'A domain-joined Windows agent enrolls certificates for an HTTPS listener (IIS) from your private CA.',
   },
   vault: {
-    label: 'Share one certificate across servers with Vault',
+    label: 'Share one certificate across servers',
     description:
-      'Publish a certificate to your Vault and deploy it to other agents.',
+      'Publish through a customer-local material store and deploy to authorized agents.',
   },
 };
 

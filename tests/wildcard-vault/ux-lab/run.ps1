@@ -4,6 +4,7 @@ param(
   [ValidateSet('all','functional','observations','setup','prepare-publication','publish','bindings','rejection','authorization','recovery','deployment-recovery','repair','validation','scanner','transfer','transfer-status','status')][string]$Phase = 'all',
   [ValidateRange(1024,65392)][int]$BasePort = 58800,
   [ValidateSet('san','wildcard','ordinary')][string]$CertificateMode = 'san',
+  [ValidateSet('vault-kv2','openbao-kv2')][string]$MaterialProvider = 'vault-kv2',
   [switch]$BuildImages,
   [switch]$PackageAcceptance,
   [string]$ApiImage,
@@ -30,7 +31,8 @@ function BuildImage([string]$dockerfile, [string]$tag) {
 Push-Location $repo
 $environmentNames = @('TT_WILDCARD_UX_OUTPUT','TT_UX_API_IMAGE','TT_UX_WORKER_IMAGE','TT_UX_CUSTOMER_IMAGE',
   'TT_UX_API_PORT','TT_UX_WEB_PORT','TT_UX_MAIL_PORT','TT_UX_CONTROL_PORT','TT_UX_NGINX_PORT','TT_UX_HAPROXY_PORT',
-  'TT_UX_CERTIFICATE_MODE','TT_UX_CORE_COMMIT','TT_UX_PROJECT','TT_UX_PACKAGE_ACCEPTANCE','CERTOPS_DISTRIBUTION_QUALIFICATION')
+  'TT_UX_CERTIFICATE_MODE','TT_UX_CORE_COMMIT','TT_UX_PROJECT','TT_UX_PACKAGE_ACCEPTANCE','CERTOPS_DISTRIBUTION_QUALIFICATION',
+  'TT_UX_MATERIAL_PROVIDER','TT_UX_KV_IMAGE','TT_UX_KV_BINARY')
 $previousEnvironment = @{}
 foreach ($name in $environmentNames) { $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 try {
@@ -42,6 +44,7 @@ try {
     $BasePort = [int]$options.basePort
     $CertificateMode = $options.certificateMode
     $PackageAcceptance = [bool]$options.packageAcceptance
+    if ($options.materialProvider) { $MaterialProvider = $options.materialProvider }
   }
   $env:TT_UX_API_PORT = "$BasePort"
   $env:TT_UX_WEB_PORT = "$($BasePort + 1)"
@@ -50,6 +53,9 @@ try {
   $env:TT_UX_NGINX_PORT = "$($BasePort + 43)"
   $env:TT_UX_HAPROXY_PORT = "$($BasePort + 143)"
   $env:TT_UX_CERTIFICATE_MODE = $CertificateMode
+  $env:TT_UX_MATERIAL_PROVIDER = $MaterialProvider
+  $env:TT_UX_KV_IMAGE = if($MaterialProvider -eq 'openbao-kv2'){'openbao/openbao:2.4.1'}else{'hashicorp/vault:1.21.0'}
+  $env:TT_UX_KV_BINARY = if($MaterialProvider -eq 'openbao-kv2'){'bao'}else{'vault'}
   $env:TT_UX_PACKAGE_ACCEPTANCE = if($PackageAcceptance){'1'}else{'0'}
   if($Action -eq 'Up' -and $PackageAcceptance -and $Project -notmatch '^tt-wildcard-ux-(?:ci|qual)-[a-z0-9-]+$') {
     throw 'Strict package acceptance requires an owned privacy-audit namespace: use tt-wildcard-ux-qual- followed by a unique name.'
@@ -80,9 +86,10 @@ try {
         $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $port)
         try { $probe.Start() } catch { throw "Port $port is occupied. Choose a different BasePort." } finally { $probe.Stop() }
       }
-      @{basePort=$BasePort;certificateMode=$CertificateMode;coreCommit=$env:TT_UX_CORE_COMMIT;packageAcceptance=[bool]$PackageAcceptance} | ConvertTo-Json | Set-Content $optionsFile
+      @{basePort=$BasePort;certificateMode=$CertificateMode;materialProvider=$MaterialProvider;coreCommit=$env:TT_UX_CORE_COMMIT;packageAcceptance=[bool]$PackageAcceptance} | ConvertTo-Json | Set-Content $optionsFile
       if($PackageAcceptance){
-        & node scripts/certops-agent-package.js (Join-Path $repo 'packages/agent') (Join-Path $output 'agent-package') $env:TT_UX_CORE_COMMIT 'material-store-vault-kv2-v1,certificate-publication-v1,deploy-from-store-v1'
+        $providerCapability = if($MaterialProvider -eq 'openbao-kv2'){'material-store-openbao-kv2-v1'}else{'material-store-vault-kv2-v1'}
+        & node scripts/certops-agent-package.js (Join-Path $repo 'packages/agent') (Join-Path $output 'agent-package') $env:TT_UX_CORE_COMMIT "$providerCapability,certificate-publication-v1,deploy-from-store-v1"
         if($LASTEXITCODE -ne 0){throw 'Canonical package creation failed'}
       }
       if ($BuildImages) {

@@ -12,6 +12,8 @@ node_modules
 # in image build contexts, even when a Dockerfile copies only selected sources.
 .scratch/
 .build/
+.tmp/
+**/.tmp/
 qualification-results/
 apps/dashboard/dist
 apps/dashboard/.vite

@@ -2,6 +2,38 @@
   "schemaVersion": 1,
   "description": "Static skip ownership and candidate execution environments. Classification is a review aid, never execution evidence. No entry claims qualified execution.",
   "environments": {
+    "windows-material-iis": {
+      "capabilities": [
+        "windows-server",
+        "iis",
+        "machine-cng",
+        "disposable-store"
+      ],
+      "owner": "Native shared material qualification",
+      "workflow": ".github/workflows/ci.yml",
+      "status": "candidate-environment-not-qualified"
+    },
+    "distribution-kv-live": {
+      "capabilities": [
+        "linux",
+        "disposable-vault-kv2",
+        "synthetic-credentials"
+      ],
+      "owner": "Live material provider compatibility",
+      "workflow": ".github/workflows/ci.yml",
+      "status": "candidate-environment-not-qualified"
+    },
+    "distribution-azure-live": {
+      "capabilities": [
+        "azure-keyvault",
+        "oidc",
+        "protected-environment",
+        "disposable-vault"
+      ],
+      "owner": "Protected Azure material qualification",
+      "workflow": ".github/workflows/certops-azure-keyvault-qualification.yml",
+      "status": "candidate-environment-not-qualified"
+    },
     "distribution-vault-adapter": {
       "capabilities": [
         "linux",
@@ -228,7 +260,7 @@
     {
       "id": "a0b75f0de8c699728470",
       "file": "packages/agent/scripts/pack-release.test.js",
-      "line": 204,
+      "line": 207,
       "name": "tracks install-agent.sh as executable in git (mode 100755)",
       "environment": "linux-filesystem",
       "workflow": ".github/workflows/ci.yml",
@@ -237,7 +269,7 @@
     {
       "id": "efaa1f1fb388b4cd75cb",
       "file": "packages/agent/scripts/pack-release.test.js",
-      "line": 213,
+      "line": 216,
       "name": "assertExecutableEntries rejects a tarball whose installer lost the exec bit",
       "reason": "platform",
       "environment": "linux-filesystem",
@@ -637,7 +669,7 @@
     {
       "id": "0b022e58e2d61f2eee08",
       "file": "packages/agent/src/material-store/material-store.test.js",
-      "line": 88,
+      "line": 95,
       "name": "real isolated Vault KV v2: pinned publication and idempotent CAS",
       "kind": "test(..., { skip }) option-object",
       "environment": "distribution-vault-adapter",
@@ -647,7 +679,7 @@
     {
       "id": "501fb9619042e3d53d38",
       "file": "packages/agent/src/material-store/material-store.test.js",
-      "line": 130,
+      "line": 137,
       "name": "real Vault ACL separates issuer, consumer, scanner and customer prefixes",
       "kind": "test(..., { skip }) option-object",
       "environment": "distribution-vault-adapter",
@@ -696,6 +728,17 @@
       "environment": "linux-filesystem",
       "workflow": ".github/workflows/ci.yml",
       "workflowJob": "backend_quality"
+    },
+    {
+      "id": "1fa4d70fb0c82a205c4a",
+      "file": "packages/agent/src/windows-material/pkcs12.test.js",
+      "line": 14,
+      "name": "Windows CryptoAPI parses encrypted PKCS#12 and proves private-key association without persisting a key",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflow": ".github/workflows/ci.yml",
+      "workflowJob": "windows_agent_quality"
     },
     {
       "id": "05aa960bbad451e36be4",
@@ -1214,6 +1257,48 @@
       "line": 30,
       "name": "quota-blocked real filesystem discovery preserves unmanaged visibility",
       "environment": "core-certificate-api"
+    },
+    {
+      "id": "4f780fdb59305998ec03",
+      "file": "tests/e2e/material-providers-real.test.js",
+      "line": 80,
+      "name": "real KV v2: AppRole, ACLs, rotation, exact versions, CAS and uncertain writes",
+      "kind": "test(..., { skip }) option-object",
+      "environment": "distribution-kv-live",
+      "workflow": ".github/workflows/ci.yml",
+      "workflowJob": "material_store_compatibility"
+    },
+    {
+      "id": "022c19aabd803e6704bf",
+      "file": "tests/e2e/material-providers-real.test.js",
+      "line": 244,
+      "name": "real Azure Key Vault Secrets: publication, recovery and exact immutable retrieval",
+      "kind": "test(..., { skip }) option-object",
+      "environment": "distribution-azure-live",
+      "workflow": ".github/workflows/certops-azure-keyvault-qualification.yml",
+      "workflowJob": "lab"
+    },
+    {
+      "id": "66e8527b33d07466f504",
+      "file": "tests/e2e/windows-material-custody-real.test.js",
+      "line": 10,
+      "name": "native Windows existing-key custody and association reject unsafe reuse without mutation",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-material-iis",
+      "workflow": ".github/workflows/ci.yml",
+      "workflowJob": "windows_material_qualification"
+    },
+    {
+      "id": "34153b48e1ec6b015ee4",
+      "file": "tests/e2e/windows-material-real.test.js",
+      "line": 33,
+      "name": "(unknown - no enclosing describe()/it()/test() title found above this line)",
+      "kind": "it(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-material-iis",
+      "workflow": ".github/workflows/ci.yml",
+      "workflowJob": "windows_material_qualification"
     },
     {
       "id": "de4f6cd9300734d5c6a4",

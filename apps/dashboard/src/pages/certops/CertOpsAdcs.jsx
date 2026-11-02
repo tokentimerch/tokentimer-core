@@ -899,7 +899,7 @@ export default function CertOpsAdcs({
 
   const reload = useCallback(
     async signal => {
-      if (!workspaceId || !canManage) return;
+      if (!workspaceId || roleStatus !== 'ready' || !canManage) return;
       const [issuerPage, enrollmentPage, agentPage] = await Promise.all([
         listIssuers(workspaceId, {
           limit: PAGE_LIMIT,
@@ -918,11 +918,11 @@ export default function CertOpsAdcs({
       setEnrollmentTotal(Number(enrollmentPage.pagination?.total || 0));
       setLoadError('');
     },
-    [workspaceId, canManage]
+    [workspaceId, roleStatus, canManage]
   );
 
   useEffect(() => {
-    if (!canManage) {
+    if (roleStatus !== 'ready' || !canManage) {
       setLoading(false);
       return undefined;
     }
@@ -948,7 +948,7 @@ export default function CertOpsAdcs({
       cancelled = true;
       controller.abort();
     };
-  }, [canManage, reload]);
+  }, [roleStatus, canManage, reload]);
 
   const loadMoreIssuers = useCallback(async () => {
     setLoadingMore('issuers');

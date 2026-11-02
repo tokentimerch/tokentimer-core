@@ -23,6 +23,7 @@ const base = "http://127.0.0.1:" + (process.env.TT_UX_WEB_PORT || "58801"),
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 state.certificateMode ||= process.env.TT_UX_CERTIFICATE_MODE || "san";
 state.coreCommit ||= process.env.TT_UX_CORE_COMMIT || null;
+state.materialProvider ||= process.env.TT_UX_MATERIAL_PROVIDER || "vault-kv2";
 const certificateSans = state.certificateMode === "wildcard"
   ? ["*.wildcard.test", "wildcard.test"]
   : state.certificateMode === "ordinary" ? ["nginx.wildcard.test"]
@@ -65,7 +66,10 @@ class User {
   async request(route, method = "GET", body, expected = 200, headers = {}) {
     if (method !== "GET" && !this.csrf)
       this.csrf = (await this.request("/api/csrf-token")).csrfToken;
-    const r = await fetch(base + route, {
+    let r;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        r = await fetch(base + route, {
       method,
       redirect: "manual",
       signal: AbortSignal.timeout(12000),
@@ -76,7 +80,17 @@ class User {
         ...headers,
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
+        });
+        break;
+      } catch (error) {
+        // Re-read public state after a bounded local transport interruption.
+        // Mutations must retain their original ambiguous-response behavior.
+        if (method !== "GET" || attempt >= 2) throw error;
+        state.readTransportRetries = (state.readTransportRetries || 0) + 1;
+        console.log("RETRY public GET after a lab transport interruption");
+        await sleep(500);
+      }
+    }
     for (const cookie of r.headers.getSetCookie()) {
       const pair = cookie.split(";")[0],
         i = pair.indexOf("=");
@@ -376,6 +390,7 @@ async function preparePublication() {
       keySize: 256,
       keyRotation: true,
       publicationDestination: {
+        type: state.materialProvider,
         materialStoreRef: "customer",
         issuanceProfileRef: "wildcard",
         profileRevision: 1,
@@ -437,9 +452,18 @@ async function publish() {
   const managerRepair = await approver.request(repairRoute, "POST", {});
   assert.equal(managerRepair.created, false);
   assert.equal(managerRepair.profileId, detail.certificate.profileId);
+  const managerSession = await approver.request("/api/session");
+  const memberRoute =
+    "/api/v1/workspaces/" + state.workspaceId + "/members/" + managerSession.user.id;
+  await owner.request(memberRoute, "PATCH", { role: "viewer" });
+  try {
+    await approver.request(repairRoute, "POST", {}, 403);
+  } finally {
+    await owner.request(memberRoute, "PATCH", { role: "workspace_manager" });
+  }
   await owner.request(repairRoute, "POST", { keyRotation: false }, 422);
   check(
-    "SAN-only publication automatically configures renewal; owner and manager repair preserve the profile and reject invalid input",
+    "SAN-only publication configures renewal; owner and manager repair preserve the profile, viewers are denied and input stays constrained",
   );
 }
 async function bindings() {
@@ -799,6 +823,7 @@ async function rejection() {
       keySize: 256,
       keyRotation: true,
       publicationDestination: {
+        type: state.materialProvider,
         materialStoreRef: "customer",
         issuanceProfileRef: "rejection-only",
         profileRevision: 1,
@@ -1119,6 +1144,7 @@ async function main() {
         {
           passed: true,
           coreCommit: state.coreCommit,
+          materialProvider: state.materialProvider,
           certificateMode: state.certificateMode,
           runId: state.runId,
           workspaceId: state.workspaceId,
