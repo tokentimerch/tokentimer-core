@@ -1,4 +1,13 @@
-import { Badge, Button, HStack, Text, VStack } from '@chakra-ui/react';
+import {
+  Badge,
+  Button,
+  FormControl,
+  FormLabel,
+  HStack,
+  Input,
+  Text,
+  VStack,
+} from '@chakra-ui/react';
 import {
   channelStatus,
   verificationWaitCopy,
@@ -49,6 +58,7 @@ function ChannelLine({ label, entry, actionLabel, onAction, busy, disabled }) {
 
 export default function ContactVerificationControls({
   contact,
+  sharedInvitation,
   mode,
   isViewer,
   busyKey,
@@ -59,6 +69,14 @@ export default function ContactVerificationControls({
   if (mode !== 'enforce' && mode !== 'shadow') return null;
   const email = channelStatus(contact, 'email');
   const whatsapp = channelStatus(contact, 'whatsapp');
+  const sharedExpiry = Date.parse(sharedInvitation?.expiresAt || '');
+  const showSharedLink =
+    !isViewer &&
+    whatsapp?.status === 'pending' &&
+    sharedExpiry > Date.now() &&
+    (!whatsapp.invitation ||
+      Date.parse(whatsapp.invitation.expires_at) === sharedExpiry);
+
   if (!email && !whatsapp) return null;
   const waitCopy = verificationWaitCopy(mode);
   const actionFor = (channel, entry) => {
@@ -105,6 +123,22 @@ export default function ContactVerificationControls({
           disabled={isViewer}
         />
       ) : null}
+      {showSharedLink && (
+        <FormControl minW='240px' maxW='100%'>
+          <FormLabel fontSize='xs'>WhatsApp confirmation link</FormLabel>
+          <Input
+            size='sm'
+            fontSize='xs'
+            isReadOnly
+            value={sharedInvitation.url}
+            onFocus={event => event.target.select()}
+          />
+          <Text fontSize='xs' mt={1}>
+            Copy this link before leaving the page and share it with this
+            contact. Creating another invitation is subject to limits.
+          </Text>
+        </FormControl>
+      )}
     </VStack>
   );
 }

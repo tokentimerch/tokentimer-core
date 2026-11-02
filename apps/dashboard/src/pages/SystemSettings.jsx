@@ -59,6 +59,7 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
   const [testingSmtp, setTestingSmtp] = useState(false);
   const [testingWhatsapp, setTestingWhatsapp] = useState(false);
   const [testEmail, setTestEmail] = useState('');
+  const smtpTestRecipient = smtp.test_recipient || null;
   const [testPhone, setTestPhone] = useState('');
   const [showSmtpPass, setShowSmtpPass] = useState(false);
   const [showAuthToken, setShowAuthToken] = useState(false);
@@ -206,7 +207,7 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
   }
 
   async function handleTestSmtp() {
-    const email = testEmail.trim();
+    const email = smtpTestRecipient || testEmail.trim() || session?.email || '';
     if (!isValidEmail(email)) {
       showWarning('Enter a valid email address for the test');
       return;
@@ -231,12 +232,18 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
     }
     try {
       setTestingWhatsapp(true);
-      const res = await apiClient.post('/api/admin/test-whatsapp', {
+      await apiClient.post('/api/admin/test-whatsapp', {
         phone: testPhone.trim(),
       });
-      showSuccess(res.data?.message || 'Test message sent');
+      showSuccess(
+        'Test submitted. Check the destination phone to confirm delivery.'
+      );
     } catch (e) {
-      showWarning(e?.response?.data?.error || 'WhatsApp test failed');
+      showWarning(
+        String(e?.response?.data?.code || '') === '63112'
+          ? 'WhatsApp provider account unavailable. Check Meta business verification and account status for this sender.'
+          : e?.response?.data?.error || 'WhatsApp test failed'
+      );
     } finally {
       setTestingWhatsapp(false);
     }
@@ -542,15 +549,31 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
                 flexWrap='wrap'
                 rowGap={3}
               >
-                <HStack spacing={3} align='end' flexWrap='wrap' rowGap={2}>
-                  <FormControl maxW='220px' isDisabled={!smtp.configured}>
+                <HStack
+                  spacing={3}
+                  align='end'
+                  flexWrap='wrap'
+                  rowGap={2}
+                  w={{ base: '100%', md: 'auto' }}
+                >
+                  <FormControl
+                    w={{ base: '100%', md: '220px' }}
+                    maxW={{ base: 'none', md: '220px' }}
+                    isDisabled={!smtp.configured}
+                  >
                     <FormLabel fontSize='sm' mb={1}>
                       Test recipient
                     </FormLabel>
                     <Input
                       size='sm'
                       placeholder={session?.email || 'recipient@example.com'}
-                      value={testEmail}
+                      value={smtpTestRecipient || testEmail}
+                      aria-describedby={
+                        smtpTestRecipient
+                          ? 'smtp-test-recipient-guidance'
+                          : undefined
+                      }
+                      isDisabled={!!smtpTestRecipient}
                       onChange={e => setTestEmail(e.target.value)}
                     />
                   </FormControl>
@@ -574,6 +597,17 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
                   Save SMTP
                 </DashboardActionButton>
               </HStack>
+              {smtpTestRecipient && (
+                <Text
+                  id='smtp-test-recipient-guidance'
+                  fontSize='xs'
+                  mt={2}
+                  color={muted}
+                >
+                  Recipient confirmation is enforced. This transport test goes
+                  to the signed-in administrator.
+                </Text>
+              )}
             </SettingsFormWidth>
           </SettingsIntegrationCard>
 

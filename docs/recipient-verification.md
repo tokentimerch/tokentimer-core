@@ -17,7 +17,7 @@ Each channel is independent:
 
 Changing the email address invalidates email verification only. Changing the phone number invalidates WhatsApp verification only. A confirmation in one workspace does not authorize another workspace. Deleting and recreating a contact does not clear a decline for that destination in the same workspace.
 
-An email decline stays in force until the recipient accepts a new confirmation sent to that mailbox. An administrator cannot receive or open that link. The recipient requests it from `/verify/recipient/resubscribe`. Expired, used, revoked, and superseded links do not restore consent.
+An email decline stays in force until the recipient accepts a new confirmation sent to that mailbox. An administrator cannot receive or open that link. The recipient requests it from `/verify/recipient/resubscribe`. Daily and weekly invitation limits still apply. The generic response does not guarantee an email was sent; check spam and try again after 24 hours, or contact the workspace administrator. Expired, used, revoked, and superseded links do not restore consent.
 
 Historical `contact_opt_ins` rows recorded when a contact was created are not treated as consent. New contacts do not write that row.
 
@@ -27,7 +27,7 @@ A workspace admin or manager sends a verification invitation. TokenTimer emails 
 
 ## WhatsApp
 
-TokenTimer does not send an unsolicited verification message to a new number. The admin copies a confirmation link and sends it through a channel they already trust. The recipient opens the page and sends the prefilled `CONFIRM` message from their own WhatsApp to the official TokenTimer number. The inbound Twilio webhook must present a valid signature for the external URL. The sender address must match the saved E.164 number and the unexpired challenge. Delivery success is not consent.
+Choose **Copy confirmation link**, then copy the visible **WhatsApp confirmation link** before leaving the page. Use that field if clipboard copying fails and share the link through a trusted channel. TokenTimer sends no unsolicited verification message. The recipient opens the link and sends the prefilled `CONFIRM` from the saved WhatsApp number. Consent requires a valid signed Twilio inbound request. Links expire; creating another is subject to invitation limits. A submitted test is not delivery confirmation: check the phone, then Twilio logs if missing. Delivery success is not consent.
 
 WhatsApp re-subscription is not currently available after a decline, and managers cannot create a new confirmation link. The public re-subscribe page supports email only.
 

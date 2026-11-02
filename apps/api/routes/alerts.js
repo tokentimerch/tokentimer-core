@@ -108,6 +108,10 @@ router.get(
         secure: all.smtp_secure,
         require_tls: all.smtp_require_tls,
         configured: await systemSettings.isSmtpConfigured(pool),
+        test_recipient:
+          recipientVerification.resolveEnforcementMode() === "enforce"
+            ? req.user.email
+            : null,
       };
       const whatsapp = {
         account_sid: all.twilio_account_sid,
