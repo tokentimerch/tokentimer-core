@@ -39,7 +39,7 @@ function service(command, args, name, serviceEnv = env) {
   const child = spawnCommand(command, args, { cwd: root, env: serviceEnv, stdio: ["ignore", log, log], windowsHide: true });
   fs.closeSync(log);
   children.add(child);
-  child.on("error", (error) => console.error(error.message));
+  child.on("error", () => console.error("Could not start a browser validation service; see service logs."));
   return child;
 }
 
@@ -112,4 +112,6 @@ async function main() {
   }
 }
 
-main().catch((error) => { console.error(error.message); process.exitCode = 1; });
+// Process errors can contain inherited environment values. Services have their
+// own logs, and the test runner already prints test failure diagnostics.
+main().catch(() => { console.error("Recipient verification validation failed; see test-results/recipient-verification logs."); process.exitCode = 1; });

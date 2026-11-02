@@ -136,6 +136,21 @@ describe(`recipient verification in Chromium: ${mode}`, { skip: !enabled, timeou
     await screenshot("contact-pending");
   });
 
+  it("keeps Vite-denied files private when query suffixes are supplied", async () => {
+    const fixture = path.resolve("apps/dashboard/.env.recipient-browser-security-probe");
+    const canary = `recipient-browser-deny-${crypto.randomUUID()}`;
+    fs.writeFileSync(fixture, canary, { flag: "wx" });
+    try {
+      for (const query of ["?raw", "?import&raw", "?import&url&inline"]) {
+        const response = await context.request.get(`${app}/@fs/${fixture.replaceAll("\\", "/")}${query}`);
+        assert.equal(response.status(), 403);
+        assert.equal((await response.text()).includes(canary), false);
+      }
+    } finally {
+      fs.unlinkSync(fixture);
+    }
+  });
+
   it("keeps existing alerts and contact groups usable with pending contacts", async () => {
     const settingsPath = `/api/v1/workspaces/${workspace}/alert-settings`;
     const settings = await (await apiCall("GET", settingsPath)).json();
