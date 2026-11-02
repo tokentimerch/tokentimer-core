@@ -12,6 +12,10 @@ import { MemoryRouter } from 'react-router';
 import CertificateDetailsModal from '../../src/components/certops/CertificateDetailsModal.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
+vi.mock('../../src/components/PagerDutyIncidentActions.jsx', () => ({
+  default: () => null,
+}));
+
 const { updateTokenMock } = vi.hoisted(() => ({
   updateTokenMock: vi.fn(),
 }));

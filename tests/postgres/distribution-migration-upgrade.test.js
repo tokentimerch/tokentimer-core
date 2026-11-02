@@ -194,7 +194,9 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
     "version": 92,
     "name": "pagerduty_incident_lifecycle"
   },
-  {"version":93,"name":"pagerduty_resolution_reason"}
+  {"version":93,"name":"pagerduty_resolution_reason"},
+  {"version":94,"name":"pagerduty_operator_actions"},
+  {"version":95,"name":"remove_pagerduty_rest_lookup"}
 ]);
     const constraints =
       await pool.query(`SELECT conname, pg_get_constraintdef(oid) AS definition

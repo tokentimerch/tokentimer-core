@@ -14,6 +14,7 @@ function Invoke-CaBootstrapProcess([string]$Script,[string]$Password,[string]$Ro
  if($env:OS -eq 'Windows_NT'){
   if(-not ('CertOpsCaOwnedJob' -as [type])){Add-Type -TypeDefinition @'
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 public sealed class CertOpsCaOwnedJob : IDisposable {
@@ -25,9 +26,19 @@ public sealed class CertOpsCaOwnedJob : IDisposable {
  [StructLayout(LayoutKind.Sequential)] struct Extended {
   public Limits basic; public Counters io; public UIntPtr processMemory,jobMemory,peakProcess,peakJob;
  }
+ [StructLayout(LayoutKind.Sequential)] struct Accounting {
+  public long user,kernel,periodUser,periodKernel;
+  public uint faults,total,active,terminated;
+ }
  [DllImport("kernel32.dll",SetLastError=true)] static extern IntPtr CreateJobObject(IntPtr attrs,string name);
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool SetInformationJobObject(IntPtr job,int kind,ref Extended limits,int size);
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr job,IntPtr process);
+ [DllImport("kernel32.dll",SetLastError=true)] static extern bool TerminateJobObject(IntPtr job,uint code);
+ [DllImport("kernel32.dll",SetLastError=true)] static extern bool QueryInformationJobObject(IntPtr job,int kind,out Accounting info,int size,IntPtr returned);
+ [DllImport("kernel32.dll",EntryPoint="QueryInformationJobObject",SetLastError=true)] static extern bool QueryProcesses(IntPtr job,int kind,IntPtr info,int size,IntPtr returned);
+ [DllImport("kernel32.dll",SetLastError=true)] static extern bool IsProcessInJob(IntPtr process,IntPtr job,out bool member);
+ [DllImport("kernel32.dll",SetLastError=true)] static extern IntPtr OpenProcess(uint access,bool inherit,uint pid);
+ [DllImport("kernel32.dll",SetLastError=true)] static extern uint WaitForSingleObject(IntPtr process,uint milliseconds);
  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
  IntPtr handle;
  public CertOpsCaOwnedJob() {
@@ -39,6 +50,58 @@ public sealed class CertOpsCaOwnedJob : IDisposable {
   }
  }
  public void Add(IntPtr process) {if(!AssignProcessToJobObject(handle,process)) throw new Win32Exception(Marshal.GetLastWin32Error());}
+ public bool Contains(IntPtr process) {
+  bool member;
+  if(!IsProcessInJob(process,handle,out member)) throw new Win32Exception(Marshal.GetLastWin32Error());
+  return member;
+ }
+ List<IntPtr> CaptureMembers() {
+  var members=new List<IntPtr>();
+  int size=8+8192*IntPtr.Size;
+  IntPtr buffer=Marshal.AllocHGlobal(size);
+  try {
+   if(!QueryProcesses(handle,3,buffer,size,IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error());
+   int assigned=Marshal.ReadInt32(buffer),count=Marshal.ReadInt32(buffer,4);
+   if(assigned<0 || assigned>8192 || count!=assigned) throw new InvalidOperationException("Owned CA process inventory exceeded its bound");
+   for(int i=0;i<count;i++) {
+    long pid=Marshal.ReadIntPtr(buffer,8+i*IntPtr.Size).ToInt64();
+    if(pid<=0 || pid>UInt32.MaxValue) throw new InvalidOperationException("Invalid owned CA process identity");
+    IntPtr process=OpenProcess(0x00101000,false,(uint)pid);
+    if(process==IntPtr.Zero) {
+     int error=Marshal.GetLastWin32Error();
+     if(error==87) continue; // The process already exited before handle capture.
+     throw new Win32Exception(error);
+    }
+    members.Add(process);
+    if(!Contains(process)) throw new InvalidOperationException("Owned CA process identity changed");
+   }
+   return members;
+  } catch {
+   foreach(IntPtr process in members) CloseHandle(process);
+   throw;
+  } finally {Marshal.FreeHGlobal(buffer);}
+ }
+ public void StopAndDrain(int milliseconds) {
+  var clock=System.Diagnostics.Stopwatch.StartNew();
+  var members=CaptureMembers();
+  try {
+   if(!TerminateJobObject(handle,1)) throw new Win32Exception(Marshal.GetLastWin32Error());
+   // Job accounting can reach zero before a terminated process is signaled.
+   // Retain and wait on exact member handles; never reopen a PID to stop it.
+   foreach(IntPtr process in members) {
+    uint remaining=(uint)Math.Max(0,milliseconds-clock.ElapsedMilliseconds);
+    if(WaitForSingleObject(process,remaining)!=0) throw new TimeoutException("Owned CA process handle did not drain");
+   }
+   do {
+    Accounting value;
+    if(!QueryInformationJobObject(handle,1,out value,Marshal.SizeOf(typeof(Accounting)),IntPtr.Zero))
+     throw new Win32Exception(Marshal.GetLastWin32Error());
+    if(value.active==0) return;
+    System.Threading.Thread.Sleep(10);
+   } while(clock.ElapsedMilliseconds<milliseconds);
+   throw new TimeoutException("Owned CA bootstrap descendants did not drain");
+  } finally {foreach(IntPtr process in members) CloseHandle(process);}
+ }
  public void Dispose() {if(handle!=IntPtr.Zero){CloseHandle(handle);handle=IntPtr.Zero;}}
 }
 '@}
@@ -66,11 +129,11 @@ public sealed class CertOpsCaOwnedJob : IDisposable {
   $json=$null
   $process.StandardInput.Close()
   if(-not $process.WaitForExit(($Seconds+$GraceSeconds)*1000)){
-   if($ownedJob){$ownedJob.Dispose();$ownedJob=$null}else{$process.Kill($true)}
+   if($ownedJob){$ownedJob.StopAndDrain(5000);$ownedJob.Dispose();$ownedJob=$null}else{$process.Kill($true)}
    $null=$process.WaitForExit(5000)
    throw [TimeoutException]::new('Owned CA bootstrap process deadline exceeded')
   }
-  if($ownedJob){$ownedJob.Dispose();$ownedJob=$null}
+  if($ownedJob){$ownedJob.StopAndDrain(5000);$ownedJob.Dispose();$ownedJob=$null}
   if(-not $stdout.Wait(5000)){throw [TimeoutException]::new('Owned CA bootstrap output deadline exceeded')}
   $output=$stdout.GetAwaiter().GetResult()
   # Only fixed bootstrap receipts may cross the child-process boundary.
@@ -84,9 +147,10 @@ public sealed class CertOpsCaOwnedJob : IDisposable {
    throw ('Owned CA bootstrap process failed: '+$kind+' (exit '+$process.ExitCode+')')
   }
  }finally{
-  if($ownedJob){$ownedJob.Dispose()}
-  if($started -and -not $process.HasExited){$process.Kill()}
-  $process.Dispose()
+  try{if($ownedJob){$ownedJob.StopAndDrain(5000)}}finally{
+   if($ownedJob){$ownedJob.Dispose()}
+   try{if($started -and -not $process.HasExited){$process.Kill();$null=$process.WaitForExit(5000)}}finally{$process.Dispose()}
+  }
  }
 }
 if(-not $BootstrapWorker){

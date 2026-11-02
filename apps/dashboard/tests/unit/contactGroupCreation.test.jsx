@@ -610,6 +610,62 @@ describe('onboarding shared group editor', () => {
 });
 
 describe('webhook creation inside the shared group modal', () => {
+  it('renames a verified webhook and its group references without sending another test notification', async () => {
+    settings.webhook_urls = [
+      {
+        name: 'Original',
+        kind: 'generic',
+        url: 'https://hooks.example.invalid/ops',
+        verified: true,
+        verifiedUrl: 'https://hooks.example.invalid/ops',
+      },
+    ];
+    settings.contact_groups = [
+      { id: 'ops', name: 'Operations', webhook_names: ['Original'] },
+    ];
+    apiClient.post.mockImplementation(async (url, body) => {
+      if (url.endsWith('/webhooks/rename')) {
+        settings.webhook_urls = [body.webhook];
+        settings.contact_groups[0].webhook_names = [body.name];
+      }
+      return { data: { success: true } };
+    });
+    render(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <MemoryRouter>
+            <AlertPreferences />
+          </MemoryRouter>
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+    await screen.findByText('Original');
+    const edit = within(document.getElementById('webhooks')).getByRole(
+      'button',
+      { name: 'Edit', exact: true }
+    );
+    await waitFor(() => expect(edit).toBeEnabled());
+    fireEvent.click(edit);
+    const dialog = await screen.findByRole('dialog', { name: /^Edit webhook/ });
+    fireEvent.change(
+      within(dialog).getByPlaceholderText(
+        'Name (required): e.g., On-call Slack, Incident Discord, Primary Teams'
+      ),
+      { target: { value: 'Renamed' } }
+    );
+    const save = within(dialog).getByRole('button', { name: 'Save webhook' });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    await waitFor(() =>
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/api/v1/workspaces/workspace-1/webhooks/rename',
+        expect.objectContaining({ previousName: 'Original', name: 'Renamed' })
+      )
+    );
+    expect(alertAPI.testWebhook).not.toHaveBeenCalled();
+    expect(settings.contact_groups[0].webhook_names).toEqual(['Renamed']);
+  });
+
   it('creates and selects a webhook from workspace preferences without resetting the edited group', async () => {
     render(
       <ChakraProvider>

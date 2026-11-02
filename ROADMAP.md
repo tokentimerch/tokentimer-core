@@ -139,9 +139,9 @@ does not promise a version or add a v1.0.0 gate.
   owner/backup thresholds, acknowledgement, delivery fallback and external
   incident lifecycle are distinct outcomes.
   PagerDuty expiration incidents ([PR #496](https://github.com/tokentimerch/tokentimer-core/pull/496))
-  include resolution after verified renewal or confirmed certificate retirement,
-  and distribution incidents ([PR #498](https://github.com/tokentimerch/tokentimer-core/pull/498))
-  cover these incident types; the broader escalation scope remains open.
+  with resolution after verified renewal or confirmed certificate retirement
+  and audited manager ACK/Resolve actions, alongside distribution incidents ([PR #498](https://github.com/tokentimerch/tokentimer-core/pull/498))
+  are active increments, not completion of the entire umbrella.
 - **Windows service certificates beyond IIS**
   ([#504](https://github.com/tokentimerch/tokentimer-core/issues/504)):
   service discovery, typed connectors, controlled activation and fleet

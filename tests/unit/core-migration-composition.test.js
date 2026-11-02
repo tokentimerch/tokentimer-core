@@ -588,7 +588,7 @@ test("all 73 enrollment-first preview definitions retain their immutable histori
 
 test("PagerDuty's independent slot preserves applied history while companion migrations arrive later", () => {
   const registered = require("../../apps/api/migrations/migrate").migrations;
-  const migrations = registered.filter(row => row.version <= 82 || ["pagerduty_incident_lifecycle", "pagerduty_resolution_reason"].includes(row.name));
+  const migrations = registered.filter(row => row.version <= 82 || ["pagerduty_incident_lifecycle", "pagerduty_resolution_reason", "pagerduty_operator_actions", "remove_pagerduty_rest_lookup"].includes(row.name));
   const applied = migrations.map(({ version, name }) => ({ version, name, executed_at: "unchanged" }));
   const snapshot = JSON.stringify(applied);
   const companions = [

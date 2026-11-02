@@ -22,7 +22,7 @@ after(() => pool.end());
 
 it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, async () => {
   assert.ok(
-    ["78", "80", "81", "82", "92", "legacy79", "legacy81"].includes(upgradeFrom),
+    ["78", "80", "81", "82", "92", "94", "legacy79", "legacy81"].includes(upgradeFrom),
   );
   assert.match(
     process.env.DB_NAME || "",
@@ -89,11 +89,23 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
     )
   ).rows[0].id;
   let originalIncident;
-  const originalExpirationSnapshot = upgradeFrom === "92" ? (await pool.query(
+  const originalExpirationSnapshot = ["92", "94"].includes(upgradeFrom) ? (await pool.query(
     "SELECT expiration_snapshot::text FROM alert_queue WHERE id=$1", [alertId],
   )).rows[0]?.expiration_snapshot : null;
   let functionIds;
   let legacyExecutedAt;
+  let operatorIncident;
+  if (upgradeFrom === "94") {
+    operatorIncident = (await pool.query(`INSERT INTO pagerduty_incidents
+      (id,workspace_id,token_id,token_id_snapshot,destination_id,dedup_key,original_expiration,
+       expiry_authority,risk_threshold_days,state,trigger_accepted_at,trigger_alert_queue_id,
+       resolution_reason,operator_reason,requested_by,manual_suppression_active,resolve_requested_at,recovery_expiration,resolved_at)
+      VALUES($1,$2,$3,$3,$4,'tt:expiry:operator',CURRENT_DATE+1,'manual',7,'resolved',NOW(),$5,
+       'manual_resolve','Handled by operations',$6,TRUE,NOW(),CURRENT_DATE+1,NOW()) RETURNING *`,
+    [crypto.randomUUID(),workspaceId,tokenId,"f".repeat(64),alertId,userId])).rows[0];
+    await pool.query("INSERT INTO pagerduty_ack_requests(incident_id,requested_by,accepted_at,attempts) VALUES($1,$2,NOW(),1)",[operatorIncident.id,userId]);
+    await pool.query("INSERT INTO pagerduty_lookup_credentials(workspace_id,destination_id,token_encrypted,region) VALUES($1,$2,'synthetic-retired-credential','eu')",[workspaceId,"f".repeat(64)]);
+  }
   if (legacy) {
     const client = await pool.connect();
     try {
@@ -273,7 +285,7 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
   );
   assert.equal(
     (await pool.query("SELECT 1 FROM pagerduty_incidents")).rowCount,
-    legacy ? 1 : 0,
+    legacy || operatorIncident ? 1 : 0,
     "No invented legacy correlation",
   );
   assert.deepEqual(
@@ -306,6 +318,8 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
     { version: 91, name: "certops_distribution_resolution_delivery" },
     { version: 92, name: "pagerduty_incident_lifecycle" },
     { version: 93, name: "pagerduty_resolution_reason" },
+    { version: 94, name: "pagerduty_operator_actions" },
+    { version: 95, name: "remove_pagerduty_rest_lookup" },
   ]);
   assert.equal(
     (
@@ -331,7 +345,9 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
           originalIncident.id,
         ])
       ).rows[0],
-      { ...originalIncident, resolution_reason: null },
+      { ...originalIncident, resolution_reason: null, operator_reason: null,
+        manual_suppression_active: false, requested_by: null, acknowledged_at: null,
+      },
     );
     assert.equal(
       (
@@ -348,6 +364,14 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
       functionIds,
       "Existing functions are never replaced",
     );
+  }
+  assert.equal((await pool.query("SELECT to_regclass('pagerduty_lookup_credentials') AS name")).rows[0].name,null);
+  assert.equal((await pool.query("SELECT 1 FROM information_schema.columns WHERE table_name='pagerduty_incidents' AND column_name IN ('remote_incident_id','remote_incident_url','remote_status','lookup_at','lookup_error')")).rowCount,0);
+  if (operatorIncident) {
+    const preserved={...operatorIncident};
+    for (const key of ['remote_incident_id','remote_incident_url','remote_status','lookup_at','lookup_error']) delete preserved[key];
+    assert.deepEqual((await pool.query("SELECT * FROM pagerduty_incidents WHERE id=$1",[operatorIncident.id])).rows[0],preserved);
+    assert.equal((await pool.query("SELECT 1 FROM pagerduty_ack_requests WHERE incident_id=$1 AND accepted_at IS NOT NULL AND attempts=1",[operatorIncident.id])).rowCount,1);
   }
   assert.equal(
     (
@@ -387,8 +411,9 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
   );
   assert.equal(
     (await pool.query("SELECT 1 FROM pagerduty_incidents")).rowCount,
-    legacy ? 1 : 0,
+    legacy || operatorIncident ? 1 : 0,
   );
+  if (operatorIncident) assert.equal((await pool.query("SELECT manual_suppression_active FROM pagerduty_incidents WHERE id=$1",[operatorIncident.id])).rows[0].manual_suppression_active,false);
   // The real migration runner must be restart-safe and leave installed triggers
   // alone, rather than replaying CREATE TRIGGER on a committed migration.
   await runMigrations();

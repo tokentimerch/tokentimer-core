@@ -35,6 +35,92 @@ tags:
 security:
   - cookieAuth: []
 paths:
+  /api/v1/workspaces/{id}/webhooks/rename:
+    post:
+      tags: [Alerts]
+      operationId: renameWorkspaceWebhook
+      summary: Rename a webhook and its contact-group references atomically
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [previousName, name]
+              properties:
+                previousName: { type: string }
+                name: { type: string, minLength: 1, maxLength: 120 }
+                webhook: { type: object, additionalProperties: true }
+      responses:
+        "200": { description: Webhook and group references saved }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: "Missing, ambiguous or conflicting webhook name" }
+  /api/v1/workspaces/{id}/tokens/{tokenId}/pagerduty-incidents:
+    get:
+      tags: [Alerts]
+      operationId: listTokenPagerDutyIncidents
+      summary: List up to 20 recent incidents and the caller's management capability
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: tokenId
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Lifecycle and action state; no routing credentials
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [incidents, canManage]
+                properties:
+                  canManage: { type: boolean }
+                  incidents:
+                    type: array
+                    maxItems: 20
+                    items: { type: object, additionalProperties: true }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/workspaces/{id}/pagerduty-incidents/{incidentId}/actions:
+    post:
+      tags: [Alerts]
+      operationId: requestPagerDutyIncidentAction
+      summary: Queue an audited ACK or confirmed manual resolution as a workspace manager
+      description: Acceptance means queued, not completed. Manual closure suppresses later thresholds in this expiration cycle without changing the asset's expiration.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/pagerDutyIncidentIdParam"
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  required: [action]
+                  properties:
+                    action: { type: string, enum: [acknowledge] }
+                - type: object
+                  required: [action, confirmed, reason]
+                  properties:
+                    action: { type: string, enum: [resolve] }
+                    confirmed: { type: boolean, enum: [true] }
+                    reason: { type: string, minLength: 5, maxLength: 1000 }
+      responses:
+        "202": { description: Durable action queued or ACK already requested }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "Incident busy, pending or already closed" }
   /health:
     get:
       tags: [Health]
@@ -10011,6 +10097,11 @@ components:
       scheme: bearer
       description: Per-agent credential (bearer) issued at registration, used for agent heartbeat, job claim, and result/evidence calls. CSRF-exempt. Not valid for registration.
   parameters:
+    pagerDutyIncidentIdParam:
+      in: path
+      name: incidentId
+      required: true
+      schema: { type: string, format: uuid }
     recipientContactIdParam:
       in: path
       name: contactId
