@@ -144,6 +144,7 @@ describe("Core distribution and lifecycle migration histories", function () {
           "auto_sync_metric_labels",
           "auto_sync_system_metrics",
           "pagerduty_incident_lifecycle",
+          "pagerduty_resolution_reason",
         ];
         assert.deepEqual(
           after.filter((row) => row.version >= 70).map((row) => row.name),
