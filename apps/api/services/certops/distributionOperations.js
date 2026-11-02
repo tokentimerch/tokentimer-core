@@ -38,7 +38,8 @@ async function putBinding({ workspaceId, groupId, bindingId = crypto.randomUUID(
       profile_revision: binding.profileRevision, required: binding.required, wave: binding.wave,
       verification_policy: binding.verificationPolicy, freshness_seconds: binding.freshnessSeconds, state: binding.state };
     if (old && Object.entries(authorization).every(([key,value]) => old[key] === value)) return old;
-    const row = (await client.query(`INSERT INTO certops_consumer_bindings(id,workspace_id,group_id,assigned_agent_id,deployment_profile_ref,
+    let row;
+    try { row = (await client.query(`INSERT INTO certops_consumer_bindings(id,workspace_id,group_id,assigned_agent_id,deployment_profile_ref,
       profile_revision,required,wave,verification_policy,freshness_seconds,state)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
       ON CONFLICT(id) DO UPDATE SET assigned_agent_id=EXCLUDED.assigned_agent_id,
@@ -49,6 +50,16 @@ async function putBinding({ workspaceId, groupId, bindingId = crypto.randomUUID(
       WHERE certops_consumer_bindings.workspace_id=EXCLUDED.workspace_id RETURNING *`,
     [bindingId,workspaceId,groupId,binding.agentId,binding.deploymentProfileRef,binding.profileRevision,
       binding.required,binding.wave,binding.verificationPolicy,binding.freshnessSeconds,binding.state])).rows[0];
+    } catch (error) {
+      // The profile reservation survives removal; do not replace its history.
+      if (error.code === "23505" && error.constraint === "certops_consumer_bindings_workspace_id_assigned_agent_id_de_key") {
+        const conflict = new Error("This agent and local deployment profile already belong to a binding, including a disabled binding. Edit that binding or choose a distinct local deployment profile.");
+        conflict.code = "CERTOPS_BINDING_PROFILE_IN_USE";
+        conflict.status = conflict.statusCode = 409;
+        throw conflict;
+      }
+      throw error;
+    }
     if (!row) fail("CERTOPS_BINDING_NOT_FOUND",404);
     await require("../audit").writeAudit({ client, actorUserId, workspaceId, action: "CERTOPS_CONSUMER_BINDING_CHANGED",
       targetType: "certops_consumer_binding", targetId: bindingId, metadata: { groupId, authorizationRevision: row.authorization_revision } });

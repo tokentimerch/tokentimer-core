@@ -15,6 +15,19 @@ const administration=require("../../apps/api/services/certops/distributionAdmini
 const discovery=require("../../apps/api/services/certops/consumerDiscovery");
 const request=require("supertest");
 test.after(()=>pool.end());
+test("agent/profile collisions return a conflict and preserve disabled binding history",async()=>{
+  const f=await fixture(),replacement=require("node:crypto").randomUUID();
+  const input={...f,bindingId:replacement,binding:{...f.binding},actorUserId:f.actor};
+  const conflict=error=>error.code==="CERTOPS_BINDING_PROFILE_IN_USE"&&error.statusCode===409;
+  await assert.rejects(operations.putBinding(input),conflict);
+  await operations.putBinding({...f,binding:{...f.binding,state:"removed"},actorUserId:f.actor});
+  const before=(await pool.query("SELECT * FROM certops_consumer_bindings WHERE workspace_id=$1 AND id=$2",[f.workspaceId,f.bindingId])).rows[0];
+  await assert.rejects(operations.putBinding(input),conflict);
+  assert.deepEqual((await pool.query("SELECT * FROM certops_consumer_bindings WHERE workspace_id=$1 AND id=$2",[f.workspaceId,f.bindingId])).rows[0],before);
+  assert.equal((await pool.query("SELECT 1 FROM certops_consumer_bindings WHERE workspace_id=$1 AND id=$2",[f.workspaceId,replacement])).rowCount,0);
+  const independent=await operations.putBinding({...input,binding:{...input.binding,deploymentProfileRef:"distinct-local-profile"}});
+  assert.equal(independent.id,replacement);assert.equal(independent.authorization_revision,1);
+});
 function publish(f,revision){return operations.transaction(client=>lifecycle.onMaterialPublished({client,workspaceId:f.workspaceId,
   payload:{groupId:f.groupId,materialVersionId:f.materialVersionId,policyRevision:revision}}));}
 async function configure(f,mode){const policy=structuredClone(lifecycle.DEFAULT_POLICY);policy.mode=mode;
