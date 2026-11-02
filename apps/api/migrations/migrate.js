@@ -4871,6 +4871,16 @@ const migrations = [
     name: "pagerduty_resolution_reason",
     sql: fs.readFileSync(require("path").join(__dirname, "093-pagerduty-resolution-reason.sql"), "utf8"),
   },
+  {
+    version: 94,
+    name: "pagerduty_operator_actions",
+    sql: fs.readFileSync(require("path").join(__dirname, "094-pagerduty-operator-actions.sql"), "utf8"),
+  },
+  {
+    version: 95,
+    name: "remove_pagerduty_rest_lookup",
+    sql: fs.readFileSync(require("path").join(__dirname, "095-remove-pagerduty-rest-lookup.sql"), "utf8"),
+  },
 ];
 
 
