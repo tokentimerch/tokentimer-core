@@ -717,7 +717,14 @@ function MaintenanceForm({
   );
 }
 
-function Management({ workspaceId, groupId, canManage, canAdmin, paused }) {
+function Management({
+  workspaceId,
+  groupId,
+  canManage,
+  canAdmin,
+  paused,
+  pauseUnresolved,
+}) {
   const read = useCallback(
     async (signal, startedAt) => {
       const data = await distributionApi.management(
@@ -754,6 +761,7 @@ function Management({ workspaceId, groupId, canManage, canAdmin, paused }) {
       busy ||
       Boolean(state.error) ||
       paused ||
+      pauseUnresolved ||
       !canManage ||
       data?.group.state !== 'active' ||
       Boolean(data?.group.ended_at);
@@ -827,7 +835,13 @@ function Management({ workspaceId, groupId, canManage, canAdmin, paused }) {
           </Button>
         </Alert>
       ) : null}
-      {paused ? (
+      {pauseUnresolved ? (
+        <Alert status='info'>
+          <AlertIcon />
+          Waiting for workspace pause status before allowing distribution
+          changes.
+        </Alert>
+      ) : paused ? (
         <Alert status='warning'>
           <AlertIcon />
           Certificate operations are paused for this workspace.
@@ -1228,7 +1242,8 @@ function Management({ workspaceId, groupId, canManage, canAdmin, paused }) {
                     isDisabled={
                       busy ||
                       Boolean(state.error) ||
-                      (rollout.state === 'paused' && paused)
+                      (rollout.state === 'paused' &&
+                        (paused || pauseUnresolved))
                     }
                     onClick={() =>
                       confirm(
@@ -1504,7 +1519,7 @@ export default function CertOpsDistribution() {
   const { workspaceId } = useWorkspace(),
     canManage = useCertOpsCanManage(),
     canAdmin = useCertOpsIsWorkspaceAdmin(),
-    { certOpsPaused } = useOutletContext() || {};
+    { certOpsPaused, killSwitchResolved } = useOutletContext() || {};
   const [params, setParams] = useSearchParams();
   const read = useCallback(
     signal => distributionApi.groups(workspaceId, signal),
@@ -1580,6 +1595,7 @@ export default function CertOpsDistribution() {
           canManage={canManage}
           canAdmin={canAdmin}
           paused={Boolean(certOpsPaused)}
+          pauseUnresolved={killSwitchResolved === false}
         />
       )}
     </Stack>

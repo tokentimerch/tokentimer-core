@@ -14,7 +14,7 @@ const policy={mode:'manual',maxParallel:1,authorizationExpiresAt:null,verificati
 const consumer={binding_id:'binding',assigned_agent_id:'agent',deployment_profile_ref:'nginx',profile_revision:1,authorization_revision:2,required:true,wave:0,verification_policy:'served',freshness_seconds:3600,
   binding_state:'active',agent_name:'Consumer host',agent_status:'offline',desired_version:2,observed_version:1,health_status:'old_certificate_active',verification_method:'installed',observed_at:new Date().toISOString(),observed_valid_to:'2027-01-01T00:00:00Z'};
 let data;
-function page({paused=false}={}){return render(<ChakraProvider><DashboardThemeProvider><MemoryRouter><Routes><Route element={<Outlet context={{certOpsPaused:paused}}/>}><Route path='/' element={<CertOpsDistribution/>}/></Route></Routes></MemoryRouter></DashboardThemeProvider></ChakraProvider>);}
+function page({paused=false,resolved=true}={}){return render(<ChakraProvider><DashboardThemeProvider><MemoryRouter><Routes><Route element={<Outlet context={{certOpsPaused:paused,killSwitchResolved:resolved}}/>}><Route path='/' element={<CertOpsDistribution/>}/></Route></Routes></MemoryRouter></DashboardThemeProvider></ChakraProvider>);}
 beforeEach(()=>{vi.clearAllMocks();manage.mockReturnValue(true);admin.mockReturnValue(true);api.cleanup.mockResolvedValue({status:'pending_approval'});data={evaluated_at:new Date().toISOString(),group:{id:'group',state:'active',generation:1,material_store_ref:'customer',latest_material_version_id:latest},
   policy:null,defaults:structuredClone(policy),consumers:[structuredClone(consumer)],versions:[{id:latest,state:'published',provider_version:2,valid_to:'2027-01-01T00:00:00Z'},{id:retained,state:'published',provider_version:1,valid_to:'2026-12-01T00:00:00Z'}],
   rollouts:[],approvals:[],incidents:[],schedule:null,discoveries:[],agents:[{id:'agent',name:'Consumer host',status:'active'}],contactGroups:[{id:'ops',name:'Operations'}]};
@@ -55,6 +55,10 @@ describe('Distribution Management',()=>{
   });
   it('disables mutations when workspace operations are paused',async()=>{
     page({paused:true});expect(await screen.findByRole('button',{name:'Request rollout'})).toBeDisabled();expect(screen.getByRole('button',{name:'Save distribution policy'})).toBeDisabled();
+  });
+  it('waits for workspace pause authority before enabling mutations',async()=>{
+    page({resolved:false});expect(await screen.findByRole('button',{name:'Request rollout'})).toBeDisabled();expect(screen.getByRole('button',{name:'Save distribution policy'})).toBeDisabled();
+    expect(screen.getByRole('button',{name:'Run safe preflight'})).toBeEnabled();
   });
   it('requests exact-version cleanup approval only after administrator confirmation',async()=>{
     data.policy={revision:1,policy:structuredClone(policy)};data.policy.policy.retention.cleanupEnabled=true;data.policy.policy.retention.reportOnly=false;
