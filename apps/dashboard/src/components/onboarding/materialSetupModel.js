@@ -155,7 +155,7 @@ export function agentRequirements(
   if (
     !Array.isArray(agent.supportedOperations) ||
     !agent.supportedOperations.includes(
-      role === 'issuer' ? 'issue' : 'deploy-from-store'
+      role === 'issuer' ? 'renew' : 'deploy-from-store'
     )
   )
     errors.push(

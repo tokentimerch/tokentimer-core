@@ -74,6 +74,69 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe('Connect and validate consumers', () => {
+  it('authorizes the chosen first consumer when another registered host sorts first', async () => {
+    const ctx = materialContext();
+    const consumer = ctx.summary.certops.agents.items[1];
+    ctx.summary.certops.agents.items.splice(1, 0, {
+      ...consumer,
+      id: '66666666-6666-4666-8666-666666666666',
+      wireAgentId: 'other-host',
+      name: 'Other host',
+    });
+    assignConsumer.mockImplementation(async (_ws, groupId, id, body) => ({
+      binding: {
+        id,
+        group_id: groupId,
+        assigned_agent_id: body.agentId,
+        deployment_profile_ref: body.deploymentProfileRef,
+        profile_revision: 1,
+        authorization_revision: 1,
+        verification_policy: body.verificationPolicy,
+        state: 'active',
+      },
+    }));
+    show(ctx);
+    fireEvent.change(
+      screen.getByLabelText('Customer-local store HTTPS address'),
+      {
+        target: { value: 'https://store.example.test' },
+      }
+    );
+    fireEvent.change(screen.getByLabelText('First consumer'), {
+      target: { value: CONSUMER },
+    });
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Assign Consumer' })
+    );
+    await waitFor(() => expect(assignConsumer).toHaveBeenCalledTimes(1));
+    expect(assignConsumer.mock.calls[0][3].agentId).toBe(CONSUMER);
+    await waitFor(() =>
+      expect(ctx.session.progress.certops.vaultConsumers).toHaveLength(1)
+    );
+    cleanup();
+    show(ctx);
+    expect(screen.getByLabelText('First consumer')).toHaveValue(CONSUMER);
+    expect(screen.getByLabelText('First consumer')).toBeDisabled();
+  });
+  it('lets a manager bootstrap the first consumer before any consumer has registered', () => {
+    const ctx = materialContext('openbao-kv2');
+    ctx.summary.certops.agents.items = ctx.summary.certops.agents.items.slice(
+      0,
+      1
+    );
+    const view = show(ctx);
+    expect(
+      screen.getByRole('button', { name: 'Create a consumer bootstrap token' })
+    ).toBeEnabled();
+    view.unmount();
+    ctx.capabilities.viewer.workspaceRole = 'viewer';
+    show(ctx);
+    expect(
+      screen.queryByRole('button', {
+        name: 'Create a consumer bootstrap token',
+      })
+    ).not.toBeInTheDocument();
+  });
   it('prepares a discovery-only consumer binding before enabling execution, while real deployment stays disabled', async () => {
     const ctx = materialContext();
     ctx.summary.certops.agents.items[1].supportedOperations = [];
@@ -359,6 +422,15 @@ describe('Connect and validate consumers', () => {
     });
     expect(config.textContent).toContain('windows-material-iis-v1');
     expect(config.textContent).toContain('windows-iis');
+    const generated = JSON.parse(config.querySelector('pre').textContent);
+    const bindingId = assignConsumer.mock.calls[0][2];
+    expect(generated.declaredTargetSelectors).toEqual([
+      bindingId,
+      'iis-public',
+    ]);
+    expect(generated.materialBindings[bindingId].target.reference).toBe(
+      'iis-public'
+    );
     expect(assignConsumer.mock.calls[0][3].verificationPolicy).toBe('trust');
     expect(
       screen.getByRole('button', { name: 'Request real IIS deployment' })

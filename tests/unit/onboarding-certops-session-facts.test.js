@@ -198,6 +198,19 @@ describe("loadDistributionReality session facts", () => {
     assert.equal(pausedOnly.items[0].completed, false);
   });
 
+  it("retains current consumer completion after a successful read-only verification", async () => {
+    for (const state of ["installed", "verified"]) {
+      const { items } = await load([{ completed: true, latest_rollout_state: state,
+        verification_only: true, last_completed_at: "2026-10-22T11:00:00.000Z" }], { since: SINCE });
+      assert.equal(items[0].completed, true);
+      assert.equal(items[0].verified, state === "verified", "file readback never implies listener verification");
+      assert.equal(items[0].existedBeforeSession, false);
+      const stale = await load([{ completed: true, latest_rollout_state: state,
+        verification_only: true, converged: false }], { since: SINCE });
+      assert.equal(stale.items[0].completed, false, "the coordinator alone cannot complete onboarding");
+    }
+  });
+
   it("does not reuse historical live verification for a later file-only rollout or stale authorization", async () => {
     for (const converged of [true, false]) {
       const { items, verified, completed } = await load([{ verified: true, completed: true,

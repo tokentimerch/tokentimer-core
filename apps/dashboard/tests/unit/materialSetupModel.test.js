@@ -17,6 +17,24 @@ import { observedDoneStep } from '../../src/components/onboarding/heldSteps.js';
 import { resolveNavigation } from '../../src/components/onboarding/stepNavigation.js';
 
 describe('material onboarding evidence and planner', () => {
+  it('accepts the real issuer wire declaration and still requires renewal execution', () => {
+    const issuer = {
+      ...materialContext('openbao-kv2').summary.certops.agents.items[0],
+      supportedOperations: ['noop', 'renew'],
+    };
+    expect(agentRequirements(issuer, 'openbao-kv2')).toEqual([]);
+    expect(
+      agentRequirements(
+        { ...issuer, supportedOperations: ['noop'] },
+        'openbao-kv2'
+      )
+    ).toContain(
+      'Enable the required execution operation locally, then restart/check in.'
+    );
+    expect(agentRequirements(issuer, 'openbao-kv2', 'consumer')).toContain(
+      'Enable the required execution operation locally, then restart/check in.'
+    );
+  });
   it('adds both steps to the existing goal and holds an observed completion until Continue', () => {
     expect(stepsForGoal('certops_vault')).toContain('certops_material_store');
     expect(stepsForGoal('certops_vault')).toContain('certops_consumers');
