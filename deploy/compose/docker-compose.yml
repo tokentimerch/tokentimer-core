@@ -85,6 +85,7 @@ services:
       # false to disable the CertOps layer. Must match the endpoint-check
       # worker below so the monitor bridge gate resolves consistently.
       CERTOPS_ENABLED: ${CERTOPS_ENABLED:-true}
+      CERTOPS_MATERIAL_CLEANUP_ENABLED: ${CERTOPS_MATERIAL_CLEANUP_ENABLED:-false}
 
       # AES-256-GCM wrap keys for CertOps job-signing key custody and agent
       # registration-replay credential encryption (64 hex chars = 32 bytes
@@ -370,6 +371,7 @@ services:
       TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED: ${TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED:-}
       TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN: ${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN:-}
       TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED: ${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED:-}
+      TWILIO_WHATSAPP_ALERT_CONTENT_SID_DISTRIBUTION: ${TWILIO_WHATSAPP_ALERT_CONTENT_SID_DISTRIBUTION:-}
       TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID: ${TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID:-}
       WHATSAPP_RATE_PER_MIN: ${WHATSAPP_RATE_PER_MIN:-}
       WHATSAPP_DRY_RUN: ${WHATSAPP_DRY_RUN:-}
@@ -597,6 +599,10 @@ services:
       # (silently counted as skippedPaused, no error log) even though the API
       # and every other worker correctly see CertOps as enabled.
       CERTOPS_ENABLED: ${CERTOPS_ENABLED:-true}
+      CERTOPS_SWEEP_DISTRIBUTION_SCHEDULER_ENABLED: ${CERTOPS_SWEEP_DISTRIBUTION_SCHEDULER_ENABLED:-true}
+      CERTOPS_SWEEP_DISTRIBUTION_SCHEDULER_TIMEOUT_MS: ${CERTOPS_SWEEP_DISTRIBUTION_SCHEDULER_TIMEOUT_MS:-120000}
+      CERTOPS_SWEEP_DISTRIBUTION_MONITORING_ENABLED: ${CERTOPS_SWEEP_DISTRIBUTION_MONITORING_ENABLED:-true}
+      CERTOPS_SWEEP_DISTRIBUTION_MONITORING_TIMEOUT_MS: ${CERTOPS_SWEEP_DISTRIBUTION_MONITORING_TIMEOUT_MS:-120000}
       # How long an active agent may go without a heartbeat before this
       # sweep marks it offline (ms). Keep in sync with the fleet panel's
       # expectations; default is 10 minutes when unset.

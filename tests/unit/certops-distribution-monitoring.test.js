@@ -3,6 +3,18 @@ const test=require("node:test"),assert=require("node:assert/strict");
 const {consumerHealth,consumerConditions,verificationFailureCounts,consumerVerificationFailureCount}=require("../../apps/api/services/certops/distributionMonitoring");
 const {DEFAULT_POLICY}=require("../../apps/api/services/certops/distributionLifecycle");
 const now=Date.now();
+test("distribution incident links use the configured instance and preserve explicit APP_URL precedence",async t=>{
+  const previous={APP_URL:process.env.APP_URL,FRONTEND_URL:process.env.FRONTEND_URL};
+  t.after(()=>{for(const [key,value]of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
+  const {distributionContent}=await import("../../apps/worker/src/shared/distributionAlerts.js");
+  const alert={workspace_id:"11111111-1111-4111-8111-111111111111",metadata:{groupId:"33333333-3333-4333-8333-333333333333"}};
+  process.env.FRONTEND_URL="https://staging.example.test/";delete process.env.APP_URL;
+  assert.ok(distributionContent(alert).href.startsWith("https://staging.example.test/certops/distribution?workspace="));
+  process.env.APP_URL="https://explicit.example.test/";
+  assert.ok(distributionContent(alert).href.startsWith("https://explicit.example.test/certops/distribution?workspace="));
+  delete process.env.APP_URL;delete process.env.FRONTEND_URL;
+  assert.ok(distributionContent(alert).href.startsWith("http://localhost:5173/certops/distribution?workspace="));
+});
 const row={binding_state:"active",agent_status:"active",agent_last_seen_at:new Date(now),required:true,converged:true,
   desired_material_version_id:"new",observed_material_version_id:"new",desired_fingerprint_sha256:"a",observed_fingerprint_sha256:"a",
   observed_valid_to:new Date(now+5*86400000),observed_at:new Date(now),freshness_seconds:3600,verification_policy:"served",verification_method:"served"};

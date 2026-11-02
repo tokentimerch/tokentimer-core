@@ -48,7 +48,7 @@ export function distributionContent(alert) {
     ? c.transition
     : "opened";
   const subject = `Certificate distribution ${transition}: ${code.replaceAll("_", " ")}`;
-  const base = (process.env.APP_URL || "http://localhost:5173").replace(
+  const base = (process.env.APP_URL || process.env.FRONTEND_URL || "http://localhost:5173").replace(
     /\/$/,
     "",
   );
