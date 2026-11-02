@@ -45,7 +45,7 @@ called stable while they are open.
   certificate, including ordinary and wildcard certificates, shipped in 0.18.0
   (see [CHANGELOG.md](CHANGELOG.md)); the remaining destination scope stays
   open on the issue.
-  Active, unmerged increments are [PR #498](https://github.com/tokentimerch/tokentimer-core/pull/498)
+  Implemented increments are [PR #498](https://github.com/tokentimerch/tokentimer-core/pull/498)
   for the distribution lifecycle and [PR #460](https://github.com/tokentimerch/tokentimer-core/pull/460)
   for Windows/IIS shared material and provider extensions. Functional
   implementation is separate from remaining fleet/protected qualification;
@@ -141,7 +141,7 @@ does not promise a version or add a v1.0.0 gate.
   PagerDuty expiration incidents ([PR #496](https://github.com/tokentimerch/tokentimer-core/pull/496))
   include resolution after verified renewal or confirmed certificate retirement,
   and distribution incidents ([PR #498](https://github.com/tokentimerch/tokentimer-core/pull/498))
-  are active increments, not completion of the entire umbrella.
+  cover these incident types; the broader escalation scope remains open.
 - **Windows service certificates beyond IIS**
   ([#504](https://github.com/tokentimerch/tokentimer-core/issues/504)):
   service discovery, typed connectors, controlled activation and fleet
