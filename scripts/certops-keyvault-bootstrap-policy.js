@@ -68,7 +68,7 @@ function validate(workflow) {
         "/infra/certops-azure-keyvault/\n/infra/certops-adcs/login-oidc.ps1\n",
     }) ||
     steps[1]?.uses !==
-      "actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f" ||
+      "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1" ||
     !exact(steps[1]?.with, { "node-version": "24" })
   )
     errors.push(

@@ -24,6 +24,19 @@ pnpm --filter @tokentimer/agent pack:release
 # and dist/tokentimer-agent-<version>.tgz.sha256
 ```
 
+The canonical pack command requires Go and freshly cross-compiles both Windows
+service-host and chain/store-query helpers for amd64 and arm64 before creating
+the archive. A failed or wrong-architecture helper build stops packaging. The
+single cross-platform tarball contains the four architecture-named executables
+under `bin/`; development `reference/adcs-chain/dist` binaries and other stale
+`bin/*.exe` files are not distribution inputs. Windows selects the exact runtime
+architecture; ARM64 never falls back to the amd64 helper. These are unsigned
+source-build artifacts, not proof of hosted Windows execution.
+
+For development from this source checkout, build only the chain helper with
+`pnpm --filter @tokentimer/agent build:windows-chain-helper`. Build scripts and Go
+sources are development inputs; installed archives already contain the helpers.
+
 Operators verify integrity before install:
 
 ```sh

@@ -19,6 +19,7 @@ const REQUIRED_SCENARIOS = Object.freeze([
   "adcs-real-browser-owned-cleanup",
 ]);
 const REQUIRED_SOURCES = Object.freeze([
+  "scripts/certops-adcs-lab-contract.js",
   "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
   "tests/e2e/helpers/certops-native-issuer-reassignment.js",
   "tests/e2e/certops-adcs-real-e2e.test.js",

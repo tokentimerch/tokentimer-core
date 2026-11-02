@@ -1,0 +1,81 @@
+name: "CertOps / Native Alpine foreground certificate qualification"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  alpine-acme:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        client: [certbot, acme.sh]
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: tokentimer
+          POSTGRES_PASSWORD: qualification-alpine-only
+          POSTGRES_DB: tokentimer
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U tokentimer"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      NODE_ENV: test
+      CERTOPS_ENABLED: 'true'
+      CERTOPS_PROTOCOL_DISPOSABLE_STACK: '1'
+      CERTOPS_ALPINE_DISPOSABLE_STACK: '1'
+      CERTOPS_REAL_ACME_CLIENT: ${{ matrix.client }}
+      CERTOPS_REAL_ACME_EAB: none
+      CERTOPS_SIGNING_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      CERTOPS_REGISTRATION_ENCRYPTION_KEY: abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+      DB_HOST: localhost
+      DB_PORT: '5432'
+      DB_USER: tokentimer
+      DB_PASSWORD: qualification-alpine-only
+      DB_NAME: tokentimer
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Execute actual musl agent and both genuine renewal cycles
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p "$RUNNER_TEMP/alpine-input" qualification-results
+          git archive --format=tar HEAD > "$RUNNER_TEMP/alpine-input/candidate.tar"
+          cp scripts/certops-alpine-bootstrap.sh "$RUNNER_TEMP/alpine-input/bootstrap.sh"
+          fixture="certops-alpine-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ matrix.client }}"
+          cleanup() {
+            if docker inspect "$fixture" >/dev/null 2>&1; then
+              test "$(docker inspect --format '{{index .Config.Labels "certops.owner"}}' "$fixture")" = "$GITHUB_RUN_ID"
+              docker rm -f -v "$fixture"
+            fi
+          }
+          trap cleanup EXIT
+          docker create --name "$fixture" --label "certops.owner=$GITHUB_RUN_ID" --network host \
+            --mount "type=bind,source=$RUNNER_TEMP/alpine-input,target=/input,readonly" \
+            -e GITHUB_ACTIONS -e GITHUB_SHA -e NODE_ENV -e CERTOPS_ENABLED \
+            -e CERTOPS_PROTOCOL_DISPOSABLE_STACK -e CERTOPS_ALPINE_DISPOSABLE_STACK \
+            -e CERTOPS_REAL_ACME_CLIENT -e CERTOPS_REAL_ACME_EAB \
+            -e CERTOPS_SIGNING_ENCRYPTION_KEY -e CERTOPS_REGISTRATION_ENCRYPTION_KEY \
+            -e DB_HOST -e DB_PORT -e DB_USER -e DB_PASSWORD -e DB_NAME \
+            node@sha256:9ec4a2e289874ed0d722e1772ec2de45d2801541db8612f3638b26f128c69ac2 \
+            sh /input/bootstrap.sh
+          status=0
+          docker start -a "$fixture" || status=$?
+          test "$(docker inspect --format '{{.State.ExitCode}}' "$fixture")" = 0 || status=1
+          docker cp "$fixture:/workspace/qualification-results/real-acme.jsonl" qualification-results/alpine-acme.jsonl || status=1
+          test "$status" = 0
+      - name: Preserve sanitized native execution report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: alpine-acme-${{ matrix.client }}-${{ github.sha }}
+          path: qualification-results/alpine-acme.jsonl
+          if-no-files-found: error
+          retention-days: 14
