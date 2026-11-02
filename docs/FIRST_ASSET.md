@@ -16,13 +16,13 @@ An **asset**, called a **token** in TokenTimer, is a metadata record. Do not pas
 
 As a system administrator, configure SMTP in **System Settings** or through deployment environment variables. Use the SMTP test action and confirm that the test message arrives. Values supplied through environment variables are locked in the UI; edit the deployment configuration to change them. See [Configuration basics](CONFIGURATION_BASICS.md) for SMTP settings.
 
-A successful SMTP test checks transport only. The asset check below verifies workspace routing, thresholds, and worker delivery as well.
+When recipient confirmation is enforced, the SMTP test goes to the signed-in administrator shown in the form. A successful SMTP test checks transport only. The asset check below verifies workspace routing, thresholds, and worker delivery as well.
 
 ## 2. Choose recipients
 
 In your workspace alert settings:
 
-1. Add a workspace contact with your email address.
+1. Add a workspace contact with your email address. If recipient confirmation is enforced, send an invitation and have the recipient accept it before expecting alerts. Refresh contacts to check the status.
 2. Add that contact to a contact group and enable its email channel.
 3. Select that group as the workspace default. If a suitable default already exists, use it.
 4. Review the threshold days and delivery window. Ensure `1` is a threshold for this check and that the window includes the time you expect delivery. Save the settings.

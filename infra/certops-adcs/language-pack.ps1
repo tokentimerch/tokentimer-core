@@ -59,39 +59,13 @@ $phase='system-locale'
 Set-WinSystemLocale -SystemLocale $Language
 $phase='culture'
 Set-Culture -CultureInfo $Language
+# These cmdlets persist the language for the current LocalSystem service
+# account. Copy welcome-screen/new-user defaults where Windows supports it;
+# older Servers must not launch a Control Panel process from headless Run Command.
+# The provisioner reboots and verifies the actual UI language in a fresh process.
 $phase='system-settings-copy'
 if(Get-Command Copy-UserInternationalSettingsToSystem -ErrorAction SilentlyContinue){
   Copy-UserInternationalSettingsToSystem -WelcomeScreen $true -NewUser $true
-}else{
-  # Server 2019/2022 lack the newer copy cmdlet. Apply installed MUI settings
-  # through the supported international-settings answer file, including SYSTEM.
-  # https://learn.microsoft.com/en-us/troubleshoot/windows-client/setup-upgrade-and-drivers/automate-regional-language-settings
-  $settingsDirectory=Join-Path $env:TEMP ('certops-language-settings-'+[Guid]::NewGuid().ToString('N'))
-  New-Item -ItemType Directory -Path $settingsDirectory | Out-Null
-  try{
-    $settingsPath=Join-Path $settingsDirectory 'international.xml'
-    $settingsXml=@"
-<gs:GlobalizationServices xmlns:gs="urn:longhornGlobalizationUnattend">
-  <gs:UserList><gs:User UserID="Current" CopySettingsToDefaultUserAcct="true" CopySettingsToSystemAcct="true"/></gs:UserList>
-  <gs:MUILanguagePreferences><gs:MUILanguage Value="$Language"/><gs:MUIFallback Value="en-US"/></gs:MUILanguagePreferences>
-  <gs:SystemLocale Name="$Language"/>
-  <gs:UserLocale><gs:Locale Name="$Language" SetAsCurrent="true" ResetAllSettings="false"/></gs:UserLocale>
-</gs:GlobalizationServices>
-"@
-    [IO.File]::WriteAllText($settingsPath,$settingsXml,[Text.UTF8Encoding]::new($false))
-    # -Wait includes descendants; the outer owned Run Command deadline remains
-    # authoritative. Do not remove the answer file while its consumer is live.
-    $settingsProcess=Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\control.exe') -ArgumentList ('intl.cpl,,/f:"{0}"' -f $settingsPath) -WindowStyle Hidden -Wait -PassThru
-    if($settingsProcess.ExitCode -ne 0){throw 'Native system language settings copy failed'}
-  }finally{
-    $operationPhase=$phase
-    $phase='temporary-cleanup'
-    $cleanupPath=[IO.Path]::GetFullPath($settingsDirectory)
-    $cleanupRoot=[IO.Path]::GetFullPath($env:TEMP).TrimEnd('\')+'\'
-    if(-not $cleanupPath.StartsWith($cleanupRoot,[StringComparison]::OrdinalIgnoreCase) -or (Split-Path $cleanupPath -Leaf) -notmatch '^certops-language-settings-[a-f0-9]{32}$'){throw 'Refusing language settings cleanup outside owned temporary directory'}
-    Remove-Item -LiteralPath $cleanupPath -Recurse -Force
-    $phase=$operationPhase
-  }
 }
 $phase='resource-verification'
 if($Language -ne 'en-US' -and -not (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Control\MUI\UILanguages\$Language")){throw 'Actual Windows display language resources not installed'}
