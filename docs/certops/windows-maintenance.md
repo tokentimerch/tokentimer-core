@@ -13,13 +13,13 @@ Get-Service TokenTimerAgent
 
 Confirm **Running** and a fresh fleet heartbeat. If startup fails, inspect its log before submitting jobs.
 
-If an elevated editor gets Access denied, inspect the file's owner and DACL. Agent-created config may be SYSTEM-only. Have an authorized administrator save the original config/owner/DACL, obtain approved maintenance access to **this config file only**, then restore temporary permissions after the edit/restart. Do not grant broad access to the state directory, credentials, keys or journals. Never delete identity or custody state to clear an error. See the [Windows permission model](agent/install-windows.md).
+If an elevated editor gets Access denied, agent-created config may be SYSTEM-only. Use an authorized LocalSystem provisioning tool or the [one-shot scheduled-task procedure](https://tokentimer.ch/docs/self-hosted/runbooks/certops-windows-maintenance#edit-config). Keep the maintenance script restricted to administrators/SYSTEM, merge only intended fields, check its result and remove the temporary task/script. Preserve the original owner/DACL; do not widen access to credentials, keys or journals. Never delete identity or custody state to clear an error. See the [Windows permission model](agent/install-windows.md).
 
 ## Keep private-CA trust paths separate
 
 - `caBundlePath` configures agent-to-TokenTimer API HTTPS trust.
 - The ACME client's TLS settings must trust its directory's HTTPS endpoint.
-- Windows must trust the CA chain signing the issued leaf; it may differ from the directory's transport CA.
+- Before IIS activation, install the approved root in `LocalMachine\Root` and intermediate issuers in `LocalMachine\CA`; they may differ from the directory's transport CA. A probe's `trustCaFile` does not configure these Windows stores. Shared import does not grant root trust. After a trust correction, verify the served chain; HTTP.sys may need the exact affected HTTPS binding refreshed before [read-only reconciliation](distribution-extensions.md#failure-recovery-and-rollback).
 - Independent probes validate the served hostname and chain.
 
 Retrieve CA certificates through a trusted administrative/export channel and compare their identity independently. Do not disable TLS validation to bootstrap trust.

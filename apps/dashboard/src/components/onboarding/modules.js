@@ -23,6 +23,14 @@ export const STEP_DEFS = {
   certops_execution: { title: 'Turn on execution safely', kind: 'verify' },
   certops_first: { title: 'See your first certificate', kind: 'verify' },
   certops_adcs: { title: 'Connect your Microsoft CA', kind: 'ui' },
+  certops_material_store: {
+    title: 'Configure material store',
+    kind: 'runbook',
+  },
+  certops_consumers: {
+    title: 'Connect and validate consumers',
+    kind: 'verify',
+  },
   certops_vault: {
     title: 'Share a certificate through Vault',
     kind: 'runbook',
@@ -182,18 +190,19 @@ export const GOALS = {
   },
   certops_vault: {
     doneText:
-      'Your Vault distribution is set up. It is not verified until a rollout is: the verify step shows the rollout state. Open Certificate Management → Certificates → the certificate → Deployments to review each consumer.',
-    label: 'Share one certificate across servers with Vault',
+      'Your material store and consumers are configured. Distribution is not verified until the backend accepts the applicable rollout evidence; the verification step shows that state. Open Certificate Management → Certificates → the certificate → Deployments to review each consumer. File installation alone does not prove a service uses the certificate.',
+    label: 'Share one certificate across servers',
     doneUnverified: true,
     description:
-      'Publish an issued certificate to your Vault and deploy it to several hosts.',
+      'Publish through Vault or OpenBao and connect authorized consumers. Azure and Windows shared import remain qualification-gated.',
     time: 'Needs a server, about 20 min',
     steps: [
       'certops_objective',
       'certops_config',
       'certops_agent',
       'certops_execution',
-      'certops_vault',
+      'certops_material_store',
+      'certops_consumers',
       'recipients',
       'verify',
     ],

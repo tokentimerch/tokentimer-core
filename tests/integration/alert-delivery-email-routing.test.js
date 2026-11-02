@@ -144,15 +144,9 @@ describe("Alert Delivery - contact group routing (token group > workspace defaul
 
     // Basic channel check for t1 (ops group routes email)
     const t1Row = byToken.get(t1.rows[0].id);
-    const t1Channels = Array.isArray(t1Row.channels)
-      ? t1Row.channels
-      : (function () {
-          try {
-            return JSON.parse(t1Row.channels || "[]");
-          } catch (_) {
-            return [];
-          }
-        })();
+    const t1Channels = require("../../packages/recipient-verification")
+      .publicDeliveryChannels(t1Row.channels)
+      .map((row) => row.channel);
     expect(t1Channels).to.include("email");
     const queuedAudit = await TestUtils.execQuery(
       `SELECT workspace_id, metadata FROM audit_events

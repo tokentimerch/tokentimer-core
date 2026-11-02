@@ -4,7 +4,7 @@
 // Asserts that pnpm-lock.yaml actually resolves the security-patched versions
 // pinned in pnpm-workspace.yaml overrides. This catches the failure mode where
 // override configuration moves (or is duplicated) and silently stops applying.
-// Mirror of the tokentimer-cloud checker, with the core override set.
+// Checks the Core lockfile against its declared dependency overrides.
 
 const fs = require("node:fs");
 const path = require("node:path");
@@ -16,6 +16,7 @@ const pkgPath = path.join(repoRoot, "package.json");
 // name -> { major: expected version } ; major "*" means any major.
 // Keep in sync with the overrides block in pnpm-workspace.yaml.
 const REQUIRED_PINS = {
+  glob: { 9: "14.0.2", 10: "14.0.2", 11: "14.0.2", 12: "14.0.2", 13: "14.0.2", 14: "14.0.2" },
   tar: { "*": "7.5.7" },
   "fast-xml-parser": { "*": "5.7.3" },
   minimatch: { "*": "11.0.1" },

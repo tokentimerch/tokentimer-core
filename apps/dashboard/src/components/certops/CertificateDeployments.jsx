@@ -76,6 +76,41 @@ const publicationLabels = {
 const failureReasons = {
   service_unavailable: 'The destination service was unavailable.',
   verification_failed: 'The destination did not pass verification.',
+  material_drift_detected:
+    'The installed or served certificate has drifted from the pinned material.',
+  material_auth_denied:
+    'The material store denied access. Check the customer-local identity and permissions.',
+  material_auth_unavailable:
+    'The customer-local store credential is unavailable or expired.',
+  material_version_unavailable:
+    'The pinned material version is deleted, disabled, or unavailable.',
+  material_publication_uncertain:
+    'Publication needs customer-local reconciliation before retry.',
+  material_cas_conflict:
+    'The material object conflicts with the immutable publication intent.',
+  material_bundle_too_large:
+    'The certificate bundle exceeds the material store limit.',
+  material_response_invalid:
+    'The material store returned an invalid bundle or version reference.',
+  material_store_config_invalid:
+    'The customer-local material store configuration is unsupported.',
+  material_windows_activation_failed:
+    'IIS activation failed. Review and reconcile the exact listener before retry.',
+  material_windows_algorithm_unsupported:
+    'This Windows IIS connector supports RSA and EC P-256/P-384 certificates. The requested key was rejected before import.',
+  material_windows_import_failed:
+    'Windows certificate import or private-key permissions failed.',
+  material_windows_binding_mismatch:
+    'The Windows store and configured IIS binding do not match the pinned certificate.',
+  material_windows_preflight_failed:
+    'The configured IIS site, HTTPS binding, or native prerequisites could not be verified.',
+  material_windows_verify_failed:
+    'The installed Windows certificate, private-key permissions, or IIS binding failed verification.',
+};
+const storeProviders = {
+  'vault-kv2': 'HashiCorp Vault KV v2',
+  'openbao-kv2': 'OpenBao KV v2',
+  'azure-key-vault': 'Azure Key Vault',
 };
 const EMPTY_ROWS = [];
 function SectionBody({ children }) {
@@ -92,7 +127,9 @@ function profileName(ref) {
 }
 function providerRevision(value) {
   return value !== null && value !== undefined && value !== ''
-    ? `Vault provider revision ${value}`
+    ? typeof value === 'string'
+      ? `Azure secret version ${value}`
+      : `KV v2 provider revision ${value}`
     : 'Provider revision unavailable';
 }
 function JobLink({ workspaceId, jobId, children = 'View job and evidence' }) {
@@ -146,10 +183,7 @@ function ProviderRevision({ value }) {
   return (
     <HStack as='span' display='inline-flex' spacing={0}>
       <Text as='span'>{providerRevision(value)}</Text>
-      <DeploymentHelp
-        label='Vault provider revision'
-        text={providerRevisionHelp}
-      />
+      <DeploymentHelp label='Provider version' text={providerRevisionHelp} />
     </HStack>
   );
 }
@@ -362,11 +396,13 @@ function GroupDeployments({
       <Box>
         <HStack justify='space-between' align='start' spacing={2}>
           <Text fontSize='sm' fontWeight='medium' overflowWrap='anywhere'>
-            {group.material_store_ref}
+            {group.material_store_ref} ·{' '}
+            {storeProviders[group.material_store_provider || 'vault-kv2'] ||
+              'Unknown provider'}
           </Text>
           <DeploymentHelp
             label='Certificate publication'
-            text='Certificate material stored in the customer Vault.'
+            text='Certificate material stored in the customer-controlled secret store.'
           />
         </HStack>
         <HStack spacing={2} flexWrap='wrap' fontSize='xs'>
@@ -376,7 +412,7 @@ function GroupDeployments({
               : state.loading
                 ? 'Loading publication…'
                 : attempt?.state === 'published'
-                  ? 'Published to Vault'
+                  ? 'Published to store'
                   : attempt
                     ? publicationLabels[attempt.state] ||
                       'Publication requires review'
@@ -484,6 +520,9 @@ function GroupDeployments({
                               </Text>
                               <Text fontSize='xs' color='dashboard.modal.muted'>
                                 {profileName(c.deployment_profile_ref)}
+                                {c.agent_platform
+                                  ? ` · ${{ win32: 'Windows / IIS', linux: 'Linux' }[c.agent_platform] || c.agent_platform}`
+                                  : ''}
                               </Text>
                             </Td>
                             <Td px={2} fontSize='xs'>
@@ -640,7 +679,7 @@ function GroupDeployments({
                     ].map(([label, value]) => (
                       <Identifier key={label} label={label} value={value} />
                     ))}
-                    <Fact label='Vault provider revision'>
+                    <Fact label='Provider version'>
                       {v.provider_version !== null &&
                       v.provider_version !== undefined &&
                       v.provider_version !== ''
@@ -776,9 +815,12 @@ export default function CertificateDeployments({
                   <option value=''>Select a distribution registration</option>
                   {groups.map((g, index) => (
                     <option key={g.id} value={g.id}>
-                      {g.material_store_ref} · {g.active ? 'Current' : 'Ended'}{' '}
-                      · {formatDateTime(g.created_at)} · Registration{' '}
-                      {index + 1}
+                      {g.material_store_ref} ·{' '}
+                      {storeProviders[
+                        g.material_store_provider || 'vault-kv2'
+                      ] || 'Unknown provider'}{' '}
+                      · {g.active ? 'Current' : 'Ended'} ·{' '}
+                      {formatDateTime(g.created_at)} · Registration {index + 1}
                     </option>
                   ))}
                 </Select>

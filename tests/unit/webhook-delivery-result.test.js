@@ -127,6 +127,7 @@ it("keeps PagerDuty response bodies out of failed delivery results", async () =>
     assert.deepEqual(failed, {
       success: false,
       status: 503,
+      code: "WEBHOOK_PROVIDER_REJECTED",
       error: "PagerDuty responded HTTP 503",
     });
     assert.doesNotMatch(JSON.stringify(failed), /provider-response-secret/);

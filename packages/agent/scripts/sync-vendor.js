@@ -15,6 +15,11 @@ const repoRoot = path.resolve(packageRoot, "..", "..");
 
 const VENDOR_MAP = [
   {
+    from: path.join(repoRoot, "packages", "contracts", "certops", "material-provider.cjs"),
+    to: path.join(packageRoot, "vendor", "contracts", "material-provider.cjs"),
+    raw: true,
+  },
+  {
     from: path.join(repoRoot, "packages", "log-scrub", "agent-log-text.js"),
     to: path.join(packageRoot, "vendor", "log-scrub", "agent-log-text.js"),
     attribution: [

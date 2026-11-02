@@ -6,6 +6,7 @@
  */
 
 const assert = require("node:assert/strict");
+const {assessLab, createClosedReport, writeReport} = require("../../../scripts/certops-adcs-lab-contract");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -29,9 +30,9 @@ const REQUIRED_CAPABILITIES = Object.freeze([
   "qualifiedBuild",
 ]);
 const REQUIRED_SOURCES = Object.freeze([
+  "scripts/certops-adcs-lab-contract.js",
   SOURCE,
   "scripts/certops-adcs-browser-enrollment.js",
-  "docs/certops/adcs/browser-enrollment.md",
   ".github/workflows/certops-adcs-coverage-variants.yml",
 ]);
 const PROOF_KEYS = Object.freeze([
@@ -45,23 +46,7 @@ const PROOF_KEYS = Object.freeze([
   "hostCapabilityAbsentIsPass",
 ]);
 
-function assessLab(env = process.env, platform = process.platform) {
-  const missing = [];
-  if (platform !== "win32") missing.push("win32");
-  if (env.CERTOPS_ADCS_DISPOSABLE_LAB !== "1") missing.push("CERTOPS_ADCS_DISPOSABLE_LAB");
-  try {
-    if (new URL(env.CERTOPS_ADCS_API_URL || "").protocol !== "https:") missing.push("CERTOPS_ADCS_API_URL");
-  } catch {
-    missing.push("CERTOPS_ADCS_API_URL");
-  }
-  return {
-    ok: missing.length === 0,
-    missing,
-    passed: false,
-    nativeQualified: false,
-    hostCapabilityAbsentIsPass: false,
-  };
-}
+
 
 function assessBrowser(probe) {
   const required = ["browser", "ownedPage", "confirmationControl"];
@@ -147,44 +132,16 @@ function qualifyBrowserEnrollment(context = {}) {
   throw new Error("Browser enrollment contract does not launch a browser");
 }
 
-function buildClosedReport(reason) {
-  const now = new Date().toISOString();
-  const candidate = process.env.GITHUB_SHA;
-  return {
-    schemaVersion: 1,
-    suite: SUITE,
-    strict: true,
-    evidenceLevel: EVIDENCE_LEVEL,
-    status: "failed",
-    nativeExecutionQualified: false,
-    hostCapabilityAbsentIsPass: false,
-    disposableForestRan: false,
-    browserLaunched: false,
-    startedAt: now,
-    finishedAt: now,
-    candidateSha: /^[a-f0-9]{40}$/i.test(candidate || "") ? candidate : "0".repeat(40),
-    requiredCapabilities: [...REQUIRED_CAPABILITIES],
-    capabilities: {},
-    requiredScenarios: [...REQUIRED_SCENARIOS],
-    missingScenarios: [...REQUIRED_SCENARIOS],
-    missingCapabilities: [...REQUIRED_CAPABILITIES],
-    scenarios: [],
-    cleanup: { status: "failed", summary: String(reason).slice(0, 512) },
-    fixturePrerequisite: "No disposable forest executed this journey. A failed report is not native qualification.",
-  };
-}
+const buildClosedReport = createClosedReport({SUITE, EVIDENCE_LEVEL, REQUIRED_CAPABILITIES, REQUIRED_SCENARIOS}, {browserLaunched: false}, {});
 
-function writeReport(reportPath, report) {
-  fs.mkdirSync(path.dirname(reportPath), { recursive: true });
-  fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
-}
+
 // Native qualification reuses the complete supported browser renewal journey.
 // Local marker/ordering contracts never enter this projection.
 function nativeRequiredScenarios() {
   return ["adcs-real-installed-native-language", "adcs-real-agent-registration-system", ...require("./certops-adcs-browser-journey").REQUIRED_SCENARIOS, "adcs-real-owned-cleanup"];
 }
 function nativeRequiredSources() {
-  return [...new Set([SOURCE, ...require("./certops-adcs-browser-journey").REQUIRED_SOURCES])];
+  return [...new Set([SOURCE, "scripts/certops-adcs-lab-contract.js", ...require("./certops-adcs-browser-journey").REQUIRED_SOURCES])];
 }
 function verifyNativeProof(value) {
   assert.deepEqual(Object.keys(value).sort(), ["scope", "nativeExecutionQualified", "browserLaunched", "disposableForestRan", "hostCapabilityAbsentIsPass", "confirmationBeforeSubmit", "parentSuite", "nativeBrowserJourney"].sort());

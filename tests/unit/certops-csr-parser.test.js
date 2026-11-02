@@ -5,10 +5,24 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const { generateKeyPairToFile, generateCsr } = require("../../packages/agent/src/keys");
 const { parsePublicCsr } = require("../../apps/api/services/certops/csrParser");
 
 describe("public CSR parser", () => {
+  it("rejects long malformed whitespace bodies without regex backtracking", () => {
+    const result = spawnSync(process.execPath, ["-e", `
+      const assert = require('node:assert/strict');
+      const { parsePublicCsr } = require('./apps/api/services/certops/csrParser');
+      (async () => {
+        for (const tail of ['', '!', '-----END CERTIFICATE REQUEST-----']) {
+          await assert.rejects(parsePublicCsr('-----BEGIN CERTIFICATE REQUEST-----' + '\\t'.repeat(64000) + tail), { code: 'CERTOPS_CSR_INVALID' });
+        }
+      })().catch(() => process.exitCode = 1);
+    `], { cwd: path.resolve(__dirname, "../.."), timeout: 5000, encoding: "utf8", windowsHide: true });
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+  });
   it("canonicalizes a signed CSR and derives DER and SPKI identities", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "certops-csr-parser-"));
     try {

@@ -25,7 +25,6 @@ import { uniqueWebhookDestinations, webhookDestinationId } from "./shared/webhoo
 import alertEligibility from "@tokentimer/alert-eligibility";
 import { webhookDeliveryEvidence } from "./shared/deliveryEvidence.js";
 import { deliveryWindowAdmission, deliveryWindowDeferralMs } from "./shared/deliveryWindow.js";
-import { notificationDeliveryState, DELIVERY_CLAIM_EXCLUSION_SQL } from "./shared/notificationDeliveryState.js";
 import crypto from "node:crypto";
 import { logger } from "./logger.js";
 import emailAddress from "../../../packages/email-address/index.js";
@@ -37,7 +36,6 @@ import {
   getWebhookNames,
   unionGroupsForThresholdWindow,
   unionContactIds,
-  dedupeNormalizedDestinations,
   deliveryChannelsFromEligibleGroups,
   channelsForDeliveryAttempt,
 } from "./shared/contactGroups.js";
@@ -57,6 +55,19 @@ import {
   retryPendingOperationalIncidentEmails,
   reconcileStaleDeliveryIncidents,
 } from "./shared/opNotifications.js";
+import {
+  recheckDestination,
+  describeEnforcement,
+  verificationMode,
+  queueDeliveryOutcome,
+  selectDeliverableDestinations,
+  mergeDeliveryAttempt,
+  webhookRetryGenerationFromStored,
+  webhookPermanentHashes,
+  DELIVERY_CLAIM_EXCLUSION_SQL,
+} from "./shared/recipientDeliveryGate.js";
+
+import { notificationDeliveryState } from "./shared/notificationDeliveryState.js";
 
 const OPERATIONAL_EMAIL_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
 let lastOperationalEmailSweepAt = 0;
@@ -1433,6 +1444,61 @@ const shutdown = async (signal) => {
   process.exit(0);
 };
 
+const TERMINAL_WEBHOOK_CODES = new Set([
+  "WEBHOOK_PRIVATE_IP_BLOCKED",
+  "WEBHOOK_INVALID_URL",
+  "WEBHOOK_INVALID_SCHEME",
+  "WEBHOOK_HOST_NOT_ALLOWED",
+  "WEBHOOK_REDIRECT_REFUSED",
+]);
+
+const TRANSIENT_WEBHOOK_CODES = new Set([
+  "ETIMEDOUT",
+  "ESOCKETTIMEDOUT",
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "ECONNABORTED",
+  "WEBHOOK_NETWORK",
+  "WEBHOOK_TIMEOUT",
+  "WEBHOOK_UNREACHABLE",
+  "WEBHOOK_DNS_UNRESOLVED",
+]);
+
+function webhookLogDomain(url) {
+  try {
+    const parsed = new URL(String(url || ""));
+    return parsed.hostname || null;
+  } catch {
+    return null;
+  }
+}
+
+function webhookEndpointTerminal(result) {
+  const code = String((result && result.code) || "");
+  const status = Number(result && result.status);
+  if (code === "WEBHOOK_PROVIDER_REJECTED") {
+    if (status === 408 || status === 409 || status === 429) return false;
+    if (Number.isFinite(status) && status >= 500 && status < 600) return false;
+    return true;
+  }
+  if (TERMINAL_WEBHOOK_CODES.has(code)) return true;
+  if (TRANSIENT_WEBHOOK_CODES.has(code)) return false;
+  if (status === 408 || status === 409 || status === 429) return false;
+  if (Number.isFinite(status) && status >= 500 && status < 600) return false;
+  if (Number.isFinite(status) && status >= 400 && status < 500) return true;
+  if (Number.isFinite(status) && status >= 200 && status < 300) return false;
+  if (!code) {
+    const error = String((result && result.error) || "");
+    return /host not allowed|invalid webhook url scheme|private\/reserved|WEBHOOK_PRIVATE/i.test(error);
+  }
+  return false;
+}
+
 // Exported for direct unit testing without spinning up the full worker job.
 export const _test = {
   DEGRADED_ATTEMPTS_THRESHOLD,
@@ -1448,6 +1514,7 @@ export const _test = {
   getCertRenewalFailedContext,
   neutralizeMentions,
   RENEWAL_PATH_STATE_LABELS,
+  webhookEndpointTerminal,
 };
 
 export async function deliveryWorkerJob({
@@ -1601,8 +1668,8 @@ export async function deliveryWorkerJob({
         WHERE aq.status IN ('pending', 'failed', 'partial') 
          AND aq.due_date <= CURRENT_DATE
          AND (t.id IS NOT NULL OR ca.id IS NOT NULL)
-         ${gatingClause}
          ${DELIVERY_CLAIM_EXCLUSION_SQL}
+         ${gatingClause}
        ORDER BY aq.due_date ASC, aq.created_at ASC
        LIMIT 1000
        FOR UPDATE OF aq SKIP LOCKED`,
@@ -1854,14 +1921,26 @@ export async function deliveryWorkerJob({
             alertKey: alert.alert_key,
           },
         );
-        // First attempt re-derives channels from current groups. After a
-        // partial send, alert.channels holds only the failed set so a retry
-        // cannot resend a channel that already succeeded.
+        // First attempt uses the current groups. A retry uses the durable ledger
+        // and attempts only channels that are still retryable.
         const finalChannels = channelsForDeliveryAttempt(
           liveChannels,
           alert.channels,
           { isRetry: Number(alert.attempts || 0) > 0 },
         );
+        let priorDeliveryRows = [];
+        try {
+          const priorDeliveryRes = await client.query(
+            `SELECT channel, status, error_message, metadata
+               FROM alert_delivery_log
+              WHERE alert_queue_id = $1
+              ORDER BY sent_at ASC, id ASC`,
+            [alert.id],
+          );
+          priorDeliveryRows = priorDeliveryRes.rows || [];
+        } catch (priorErr) {
+          logger.debug("Non-critical operation failed", { error: priorErr.message });
+        }
         const queuedLedger = deliveryState.parse(alert.channels);
         if (!queuedLedger || (!queuedLedger.legacy && finalChannels.length === 0)) {
           await client.query(`UPDATE alert_queue SET status=CASE WHEN status='partial' THEN status ELSE 'blocked' END,
@@ -1871,8 +1950,17 @@ export async function deliveryWorkerJob({
           continue;
         }
 
-        // If no eligible channels remain, mark failed and continue
+        // An empty retry set is terminal. Do not relabel a previous partial
+        // delivery as a missing contact group.
         if (!Array.isArray(finalChannels) || finalChannels.length === 0) {
+          const idle = mergeDeliveryAttempt({
+            prior: alert.channels,
+            logRows: priorDeliveryRows,
+            attempted: [],
+            liveChannels: liveChannels.length ? liveChannels : undefined,
+          });
+          const idleKnown = idle.results.length > 0 || (Array.isArray(liveChannels) && liveChannels.length > 0);
+          if (!idleKnown) {
           const minimalCooldown =
             process.env.NODE_ENV === "test"
               ? new Date(Date.now() + 1000)
@@ -1912,6 +2000,25 @@ export async function deliveryWorkerJob({
             });
           }
           failed++;
+          continue;
+          }
+          const idleStatus = idle.outcome.status === "sent" && idle.results.some((row) => row.success !== true)
+            ? "partial"
+            : idle.outcome.status;
+          const idleNext = idle.outcome.retry
+            ? (process.env.NODE_ENV === "test" ? new Date(Date.now() + 1000).toISOString() : null)
+            : null;
+          const idleRes = await client.query(
+            `UPDATE alert_queue
+                SET status = $2, attempts = attempts + 1, last_attempt = NOW(),
+                    channels = $3, next_attempt_at = $4, delivery_claim_id = NULL, updated_at = NOW()
+              WHERE id = $1 AND delivery_claim_id = $5`,
+            [alert.id, idleStatus, JSON.stringify(idle.ledger), idleNext, claimId],
+          );
+          if (idleRes.rowCount === 0) {
+            logger.warn("Skipped idle delivery write: another worker took ownership", { alertId: alert.id });
+          } else if (idleStatus === "sent") sent++;
+          else failed++;
           continue;
         }
         let allSucceeded = true;
@@ -1955,6 +2062,10 @@ export async function deliveryWorkerJob({
           let errorMessage = null;
           let errorCode = null;
           let eligibilityTerminal = false;
+          let channelTerminal = false;
+          let channelRecipients = null;
+          let partialSuccess = false;
+          let deliveryEndpoints = null;
 
           try {
             if (channel === "email") {
@@ -1976,14 +2087,17 @@ export async function deliveryWorkerJob({
                   recipients = contactsRes.rows
                     .map((r) => {
                       try {
-                        return String((r.details && r.details.email) || "")
+                        const destination = String((r.details && r.details.email) || "")
                           .toLowerCase()
                           .trim();
+                        return isValidEmail(destination)
+                          ? { contactId: r.id, destination }
+                          : null;
                       } catch (_) {
-                        return "";
+                        return null;
                       }
                     })
-                    .filter((e) => isValidEmail(e));
+                    .filter(Boolean);
                 }
               } catch (_err) {
                 logger.debug("Non-critical operation failed", {
@@ -1992,19 +2106,55 @@ export async function deliveryWorkerJob({
               }
               // No fallback: if recipients is empty, email channel will result in no sends
 
-              // Dedupe recipients
-              const gated = await deliveryState.recipients(client, alert.workspace_id, "email", emailContacts.map(row => ({
-                contactId: row.id, destination: String(row.details?.email || "").trim().toLowerCase(),
-              })).filter(row => isValidEmail(row.destination)));
-              if (gated.unavailable || gated.blocked.some(row => !row.shadow && row.code === "RECIPIENT_VERIFICATION_UNAVAILABLE")) throw new Error("RECIPIENT_VERIFICATION_UNAVAILABLE");
-              eligibilityTerminal = recipients.length > 0 && gated.allowed.length === 0 && gated.enforced;
-              const contactIdByEmail = new Map(gated.allowed.map(row => [row.destination, row.contactId]));
-              const trimmed = dedupeNormalizedDestinations(
-                gated.allowed.map(row => row.destination),
+              const gated = await deliveryState.recipients(
+                client,
+                alert.workspace_id,
                 "email",
-              ).filter((e) => isValidEmail(e));
+                recipients,
+              );
+              if (gated.blocked.some((row) => row.shadow)) {
+                logger.warn(
+                  JSON.stringify({
+                    message: "recipient-verification-shadow",
+                    channel: "email",
+                    workspaceId: alert.workspace_id,
+                    count: gated.blocked.filter((row) => row.shadow).length,
+                  }),
+                );
+              }
+              const selected = selectDeliverableDestinations(gated.allowed);
+              const trimmed = selected.destinations.filter((email) => isValidEmail(email));
+              const contactIdByEmail = selected.contactIdByDestination;
+              channelRecipients = {};
+              for (const row of gated.blocked) {
+                if (!row?.destination || row.shadow || trimmed.includes(row.destination)) continue;
+                channelRecipients[String(row.destination).trim().toLowerCase()] = row.code === "RECIPIENT_VERIFICATION_UNAVAILABLE"
+                  ? { state: "unavailable", code: row.code }
+                  : { state: "excluded", code: row.code || "RECIPIENT_NOT_VERIFIED" };
+              }
 
-              if (trimmed.length === 0) {
+              if (recipients.length > 0 && trimmed.length === 0 && gated.enforced) {
+                const infrastructure = gated.code === "RECIPIENT_VERIFICATION_UNAVAILABLE";
+                success = false;
+                eligibilityTerminal = !infrastructure;
+                errorCode = infrastructure
+                  ? "RECIPIENT_VERIFICATION_UNAVAILABLE"
+                  : (gated.code || "NO_VERIFIED_RECIPIENTS");
+                errorMessage = errorCode;
+                await client.query(
+                  `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
+                   VALUES ($1,$2,$3,$4,'email',$5,$6,$7)`,
+                  [
+                    alert.id,
+                    alert.owner_user_id,
+                    alert.token_id,
+                    alert.workspace_id,
+                    infrastructure ? "failed" : "blocked",
+                    errorCode,
+                    JSON.stringify({ group_id: groupIdUsed, code: errorCode }),
+                  ],
+                );
+              } else if (trimmed.length === 0) {
                 success = false;
                 errorCode = eligibilityTerminal ? gated.code || "NO_VERIFIED_RECIPIENTS" : null;
                 errorMessage = errorCode || "No email contacts are defined in the selected contact group";
@@ -2044,6 +2194,16 @@ export async function deliveryWorkerJob({
                       ? buildAgentHealthEmailContent(alert)
                       : buildEmailContent(alert, daysLeft);
                 let allOk = true;
+                let emailSends = 0;
+                let emailEligibilitySkips = 0;
+                let verificationDeferred = Object.values(channelRecipients).some(row => row.state === "unavailable");
+                channelRecipients = channelRecipients || {};
+                const priorEmailSuccess = new Set(
+                  priorDeliveryRows
+                    .filter((row) => row.channel === "email" && row.status === "success")
+                    .map((row) => String((row.metadata && row.metadata.recipient) || "").trim().toLowerCase())
+                    .filter(Boolean),
+                );
                 for (const rcpt of trimmed) {
                   await assertStillOwnsDelivery(
                     client,
@@ -2051,6 +2211,59 @@ export async function deliveryWorkerJob({
                     claimId,
                     CLAIM_MARKER_MS,
                   );
+                  const liveRecipient = await recheckDestination(
+                    client,
+                    alert.workspace_id,
+                    "email",
+                    { contactId: contactIdByEmail.get(rcpt), destination: rcpt },
+                  );
+                  const recipientKey = String(rcpt).trim().toLowerCase();
+                  if (verificationMode() === "enforce" && !liveRecipient.allowed) {
+                    const liveCode = liveRecipient.code || "RECIPIENT_NOT_VERIFIED";
+                    errorCode = liveCode;
+                    if (liveCode === "RECIPIENT_VERIFICATION_UNAVAILABLE") {
+                      verificationDeferred = true;
+                      channelRecipients[recipientKey] = { state: "unavailable", code: liveCode };
+                      await client.query(
+                        `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+                        [
+                          alert.id,
+                          alert.owner_user_id,
+                          alert.token_id,
+                          alert.workspace_id,
+                          "email",
+                          "failed",
+                          liveCode,
+                          JSON.stringify({ group_id: groupIdUsed, code: liveCode, recipient: rcpt }),
+                        ],
+                      );
+                      continue;
+                    }
+                    emailEligibilitySkips += 1;
+                    channelRecipients[recipientKey] = { state: "excluded", code: liveCode };
+                    await client.query(
+                      `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+                      [
+                        alert.id,
+                        alert.owner_user_id,
+                        alert.token_id,
+                        alert.workspace_id,
+                        "email",
+                        "blocked",
+                        errorCode,
+                        JSON.stringify({ group_id: groupIdUsed, code: errorCode, recipient: rcpt }),
+                      ],
+                    );
+                    continue;
+                  }
+                  if (priorEmailSuccess.has(recipientKey)) {
+                    emailSends += 1;
+                    channelRecipients[recipientKey] = { state: "sent" };
+                    continue;
+                  }
+                  emailSends += 1;
                   const res = await sendEmailNotification({
                     to: rcpt,
                     subject,
@@ -2097,10 +2310,25 @@ export async function deliveryWorkerJob({
                       error: _.message,
                     });
                   }
+                  channelRecipients[recipientKey] = res.success
+                    ? { state: "sent" }
+                    : { state: "failed", code: res.error || "PARTIAL_FAILURE" };
                   if (!res.success) allOk = false;
                 }
-                success = allOk;
-                errorMessage = allOk ? null : "PARTIAL_FAILURE";
+                if (verificationDeferred) {
+                  success = false;
+                  eligibilityTerminal = false;
+                  errorCode = "RECIPIENT_VERIFICATION_UNAVAILABLE";
+                  errorMessage = errorCode;
+                } else if (emailSends === 0 && emailEligibilitySkips > 0) {
+                  success = false;
+                  eligibilityTerminal = true;
+                  errorCode = errorCode || "NO_VERIFIED_RECIPIENTS";
+                  errorMessage = errorCode;
+                } else {
+                  success = allOk && emailSends > 0;
+                  errorMessage = success ? null : "PARTIAL_FAILURE";
+                }
               }
             } else if (channel === "webhooks") {
               let webhooks = Array.isArray(alert.webhook_urls)
@@ -2128,8 +2356,11 @@ export async function deliveryWorkerJob({
                 errorMessage =
                   "No webhook names defined in the selected contact group";
               } else {
-                // Keep the channel retryable until every selected destination succeeds.
-                let webhookSuccess = false;
+                let succeededEndpoints = 0;
+                let transientEndpoints = 0;
+                let permanentEndpoints = 0;
+                let consideredEndpoints = 0;
+                const webhookEndpoints = {};
                 const errors = [];
 
                 // Load previously successful webhook url hashes for this alert_queue
@@ -2140,40 +2371,87 @@ export async function deliveryWorkerJob({
                    AND COALESCE(metadata->>'event_action', 'trigger') = 'trigger'`,
                   [alert.id],
                 );
-                const priorSuccess = new Set();
+                const priorSuccess = new Set(
+                  priorSuccessRes.rows
+                    .map((r) => String(r.h || "").trim())
+                    .filter(Boolean),
+                );
+                const webhookGeneration = webhookRetryGenerationFromStored(alert.channels);
+                const priorPermanent = new Set(
+                  webhookPermanentHashes(priorDeliveryRows, alert.channels),
+                );
 
                 for (const wh of webhooks) {
                   const kind = resolveWebhookProviderKind(wh);
                   const url = String(wh?.url || "");
                   const routingKey = String(wh?.routingKey || "");
-                  if (!url) continue;
+                  const trimmedUrl = url.trim();
+                  if (!trimmedUrl) {
+                    consideredEndpoints += 1;
+                    permanentEndpoints += 1;
+                    const blankHash = crypto.createHash("sha256").update("").digest("hex");
+                    webhookEndpoints[blankHash] = "permanent";
+                    if (priorPermanent.has(blankHash)) continue;
+                    errors.push(`${kind}: Invalid webhook URL`);
+                    await client.query(
+                      `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
+                       VALUES ($1, $2, $3, $4, 'webhooks', 'failed', $5, $6)`,
+                      [
+                        alert.id,
+                        alert.owner_user_id,
+                        alert.token_id,
+                        alert.workspace_id,
+                        "Invalid webhook URL",
+                        JSON.stringify({
+                          kind,
+                          urlDomain: null,
+                          urlHash: blankHash,
+                          group_id: groupIdUsedForWebhooks,
+                          terminal: true,
+                          code: "WEBHOOK_INVALID_URL",
+                          retryGeneration: webhookGeneration,
+                        }),
+                      ],
+                    );
+                    continue;
+                  }
+                  consideredEndpoints += 1;
+
+                  // Compute a stable hash for the URL to identify unique endpoints without storing the raw URL
                   if (kind === "pagerduty" && !alert.workspace_id) {
+                    transientEndpoints += 1;
                     errors.push("pagerduty: asset_workspace_unavailable");
                     continue;
                   }
-
-                  // PagerDuty integrations share their endpoint URL: identity
-                  // includes the tenant and routing key, without exposing it.
                   const urlHash = webhookDestinationId(alert.workspace_id, wh);
                   const evidence = webhookDeliveryEvidence(alert.workspace_id, wh, alert.webhook_urls, priorSuccessRes.rows);
                   if (priorSuccess.has(urlHash) || evidence === "delivered") {
-                    // Already delivered successfully to this endpoint for this alert; skip re-sending
-                    webhookSuccess = true;
+                    succeededEndpoints += 1;
+                    webhookEndpoints[urlHash] = "sent";
+                    continue;
+                  }
+                  if (priorPermanent.has(urlHash)) {
+                    permanentEndpoints += 1;
+                    webhookEndpoints[urlHash] = "permanent";
                     continue;
                   }
                   if (evidence === "legacy_ambiguous") {
+                    transientEndpoints += 1;
+                    webhookEndpoints[urlHash] = "pending";
                     errors.push("pagerduty_legacy_destination_ambiguous");
                     continue;
                   }
                   if (kind === "pagerduty" && alert.alert_key?.startsWith("token_expiry:")) {
                     await assertStillOwnsDelivery(client, alert.id, claimId, CLAIM_MARKER_MS);
-                    const result = await deliverPagerDutyExpiration(client, {
-                      alert, webhook: wh, send: webhookSender, deliveryState,
-                    });
-                    if (result.success) webhookSuccess = true;
-                    else errors.push(`pagerduty: ${result.error}`);
-                    // The lifecycle writer atomically records provider acceptance
-                    // and history; never fabricate a success log for an intent.
+                    const result = await deliverPagerDutyExpiration(client, { alert, webhook: wh, send: webhookSender, deliveryState });
+                    if (result.success) {
+                      succeededEndpoints += 1;
+                      webhookEndpoints[urlHash] = "sent";
+                    } else {
+                      transientEndpoints += 1;
+                      webhookEndpoints[urlHash] = "pending";
+                      errors.push(`pagerduty: ${result.error}`);
+                    }
                     continue;
                   }
                   const name = alert.name || `Token #${alert.token_id}`;
@@ -2366,11 +2644,19 @@ export async function deliveryWorkerJob({
                       error: _.message,
                     });
                   }
+                  const endpointTerminal = !res.success && webhookEndpointTerminal(res);
                   if (!res.success) {
                     errors.push(`${kind}: ${res.error}`);
+                    if (endpointTerminal) {
+                      permanentEndpoints += 1;
+                      webhookEndpoints[urlHash] = "permanent";
+                    } else {
+                      transientEndpoints += 1;
+                      webhookEndpoints[urlHash] = "failed";
+                    }
                   } else {
-                    webhookSuccess = true;
-                    // Mark this urlHash as delivered to avoid future re-sends for this alert
+                    succeededEndpoints += 1;
+                    webhookEndpoints[urlHash] = "sent";
                     priorSuccess.add(urlHash);
                   }
                   // Log each individual webhook delivery attempt
@@ -2387,7 +2673,7 @@ export async function deliveryWorkerJob({
                       res.success ? null : res.error || null,
                       JSON.stringify({
                         kind,
-                        urlDomain: new URL(url).hostname,
+                        urlDomain: webhookLogDomain(url),
                         urlHash,
                         ...(kind === "pagerduty" && { destination_id: urlHash }),
                         group_id: groupIdUsedForWebhooks,
@@ -2404,22 +2690,28 @@ export async function deliveryWorkerJob({
                         agent_transition: isAgentHealthWebhook
                           ? tokenData?.transition || null
                           : null,
+                        terminal: endpointTerminal === true,
+                        retryGeneration: webhookGeneration,
+                        ...(res.code ? { code: res.code } : {}),
                       }),
                     ],
                   );
                 }
-                success = webhookSuccess && errors.length === 0;
+                success = consideredEndpoints > 0 && transientEndpoints === 0 && permanentEndpoints === 0;
+                partialSuccess = succeededEndpoints > 0 && (transientEndpoints > 0 || permanentEndpoints > 0);
+                channelTerminal = transientEndpoints === 0 && permanentEndpoints > 0;
                 if (errors.length > 0) {
                   errorMessage = errors.join("; ");
-                } else if (!webhookSuccess) {
+                } else if (!success && !partialSuccess) {
                   errorMessage =
                     "Webhook delivery skipped because no endpoint was eligible";
                 } else {
                   errorMessage = null;
                 }
-                if (webhookSuccess && errors.length > 0) {
+                if (errors.length > 0) {
                   webhookPartialErrors = errors.slice();
                 }
+                deliveryEndpoints = webhookEndpoints;
               }
             } else if (channel === "whatsapp") {
               let trimmed = [];
@@ -2427,7 +2719,6 @@ export async function deliveryWorkerJob({
 
               {
                 // Resolve phones by querying workspace_contacts with contact_ids from group
-                let recipients = [];
                 let contactInfos = [];
                 try {
                   const waIds = unionContactIds(
@@ -2447,7 +2738,6 @@ export async function deliveryWorkerJob({
                         phone: String(r.phone_e164 || "").trim(),
                       }))
                       .filter((c) => !!c.phone);
-                    recipients = contactInfos.map((c) => c.phone);
                   }
                 } catch (_err) {
                   logger.debug("Non-critical operation failed", {
@@ -2471,25 +2761,68 @@ export async function deliveryWorkerJob({
                   }
                 }
 
-                // Dedupe recipients
-                const gated = await deliveryState.recipients(client, alert.workspace_id, "whatsapp", contactInfos.map(row => ({ contactId: row.id, destination: row.phone })));
-                if (gated.unavailable || gated.blocked.some(row => !row.shadow && row.code === "RECIPIENT_VERIFICATION_UNAVAILABLE")) throw new Error("RECIPIENT_VERIFICATION_UNAVAILABLE");
-                eligibilityTerminal = recipients.length > 0 && gated.allowed.length === 0 && gated.enforced;
-                const contactIdByPhone = new Map(gated.allowed.map(row => [row.destination, row.contactId]));
-                trimmed = dedupeNormalizedDestinations(
-                  gated.allowed.map(row => row.destination),
-                  "phone",
-                ).filter((p) => /^\+?\d{6,15}$/.test(String(p).trim()));
-                // Build a map phone->first_name for template variables
+                const phoneRows = contactInfos
+                  .filter((item) => /^\+?\d{6,15}$/.test(String(item.phone || "").trim()))
+                  .map((item) => ({
+                    contactId: item.id,
+                    destination: String(item.phone).trim(),
+                  }));
+                const gatedPhones = await deliveryState.recipients(
+                  client,
+                  alert.workspace_id,
+                  "whatsapp",
+                  phoneRows,
+                );
+                if (gatedPhones.blocked.some((row) => row.shadow)) {
+                  logger.warn(
+                    JSON.stringify({
+                      message: "recipient-verification-shadow",
+                      channel: "whatsapp",
+                      workspaceId: alert.workspace_id,
+                      count: gatedPhones.blocked.filter((row) => row.shadow).length,
+                    }),
+                  );
+                }
+                const selectedPhones = selectDeliverableDestinations(gatedPhones.allowed);
+                trimmed = selectedPhones.destinations;
+                const contactIdByPhone = selectedPhones.contactIdByDestination;
+                channelRecipients = {};
+                for (const row of gatedPhones.blocked) {
+                  if (!row?.destination || row.shadow || trimmed.includes(row.destination)) continue;
+                  channelRecipients[String(row.destination).trim()] = row.code === "RECIPIENT_VERIFICATION_UNAVAILABLE"
+                    ? { state: "unavailable", code: row.code }
+                    : { state: "excluded", code: row.code || "RECIPIENT_NOT_VERIFIED" };
+                }
                 const firstNameByPhone = new Map();
-                for (const c of contactInfos) {
-                  if (c.phone && !firstNameByPhone.has(c.phone))
-                    firstNameByPhone.set(c.phone, c.first_name || "there");
+                for (const destination of trimmed) {
+                  const info = contactInfos.find((item) => item.id === contactIdByPhone.get(destination));
+                  firstNameByPhone.set(destination, info?.first_name || "there");
                 }
 
                 if (errorMessage === "ORG_RATE_LIMIT") {
                   // Skip sending due to throttle; log for visibility
                   success = false;
+                } else if (phoneRows.length > 0 && trimmed.length === 0 && gatedPhones.enforced) {
+                  const infrastructure = gatedPhones.code === "RECIPIENT_VERIFICATION_UNAVAILABLE";
+                  success = false;
+                  eligibilityTerminal = !infrastructure;
+                  errorCode = infrastructure
+                    ? "RECIPIENT_VERIFICATION_UNAVAILABLE"
+                    : (gatedPhones.code || "NO_VERIFIED_RECIPIENTS");
+                  errorMessage = errorCode;
+                  await client.query(
+                    `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
+                     VALUES ($1,$2,$3,$4,'whatsapp',$5,$6,$7)`,
+                    [
+                      alert.id,
+                      alert.owner_user_id,
+                      alert.token_id,
+                      alert.workspace_id,
+                      infrastructure ? "failed" : "blocked",
+                      errorCode,
+                      JSON.stringify({ group_id: groupIdUsed, code: errorCode }),
+                    ],
+                  );
                 } else if (trimmed.length === 0) {
                   success = false;
                   errorCode = eligibilityTerminal ? gated.code || "NO_VERIFIED_RECIPIENTS" : null;
@@ -2632,6 +2965,10 @@ export async function deliveryWorkerJob({
                       : null;
 
                     let allOk = true;
+                    let whatsAppSends = 0;
+                    let whatsAppEligibilitySkips = 0;
+                    let verificationDeferred = Object.values(channelRecipients).some(row => row.state === "unavailable");
+                    channelRecipients = channelRecipients || {};
                     for (const rcpt of trimmed) {
                       await assertStillOwnsDelivery(
                         client,
@@ -2656,6 +2993,47 @@ export async function deliveryWorkerJob({
                       const contentVariables = perRecipientBase
                         ? sanitizeWhatsAppTemplateVars(perRecipientBase)
                         : null;
+                      const liveWhatsApp = await recheckDestination(
+                        client,
+                        alert.workspace_id,
+                        "whatsapp",
+                        { contactId: contactIdByPhone.get(rcpt), destination: rcpt },
+                      );
+                      if (verificationMode() === "enforce" && !liveWhatsApp.allowed) {
+                        const liveCode = liveWhatsApp.code || "RECIPIENT_NOT_VERIFIED";
+                        errorCode = liveCode;
+                        if (liveCode === "RECIPIENT_VERIFICATION_UNAVAILABLE") {
+                          verificationDeferred = true;
+                          channelRecipients[String(rcpt).trim()] = { state: "unavailable", code: liveCode };
+                          await client.query(
+                            `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
+                             VALUES ($1,$2,$3,$4,'whatsapp','failed',$5,$6)`,
+                            [
+                              alert.id,
+                              alert.owner_user_id,
+                              alert.token_id,
+                              alert.workspace_id,
+                              liveCode,
+                              JSON.stringify({ group_id: groupIdUsed, code: liveCode, recipient: rcpt }),
+                            ],
+                          );
+                          continue;
+                        }
+                        whatsAppEligibilitySkips += 1;
+                        channelRecipients[String(rcpt).trim()] = { state: "excluded", code: liveCode };
+                        continue;
+                      }
+                      const priorWhatsAppSuccess = priorDeliveryRows.some((row) => (
+                        row.channel === "whatsapp"
+                        && row.status === "success"
+                        && String((row.metadata && row.metadata.recipient) || "") === String(rcpt)
+                      ));
+                      if (priorWhatsAppSuccess) {
+                        whatsAppSends += 1;
+                        channelRecipients[String(rcpt).trim()] = { state: "sent" };
+                        continue;
+                      }
+                      whatsAppSends += 1;
                       const res = await sendWhatsApp({
                         to: rcpt,
                         body: null,
@@ -2712,16 +3090,32 @@ export async function deliveryWorkerJob({
                           }),
                         ],
                       );
+                      channelRecipients[String(rcpt).trim()] = res.success
+                        ? { state: "sent" }
+                        : { state: "failed", code: res.error || "PARTIAL_FAILURE" };
                       if (!res.success) allOk = false;
                     }
-                    success = allOk;
-                    errorMessage = allOk ? null : "PARTIAL_FAILURE";
+                    if (verificationDeferred) {
+                      success = false;
+                      eligibilityTerminal = false;
+                      errorCode = "RECIPIENT_VERIFICATION_UNAVAILABLE";
+                      errorMessage = errorCode;
+                    } else if (whatsAppSends === 0 && whatsAppEligibilitySkips > 0) {
+                      success = false;
+                      eligibilityTerminal = true;
+                      errorCode = errorCode || "NO_VERIFIED_RECIPIENTS";
+                      errorMessage = errorCode;
+                    } else {
+                      success = allOk && whatsAppSends > 0;
+                      errorMessage = success ? null : "PARTIAL_FAILURE";
+                    }
                   }
                 }
               }
 
-              // If WhatsApp failed without per-recipient rows (rate limit or no recipients), log a channel-level entry
-              if (!success && trimmed.length === 0) {
+              // Eligibility already recorded a blocked row. A second failed row would
+              // make a later replay treat the opt-out as retryable.
+              if (!success && trimmed.length === 0 && !eligibilityTerminal) {
                 try {
                   await client.query(
                     `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
@@ -2823,13 +3217,25 @@ export async function deliveryWorkerJob({
             }
           }
 
-          deliveryResults.push({ channel, success, errorMessage, errorCode, eligibilityTerminal, terminal: eligibilityTerminal });
+          deliveryResults.push({
+            channel,
+            success,
+            errorMessage,
+            errorCode,
+            eligibilityTerminal,
+            terminal: channelTerminal || eligibilityTerminal,
+            partialSuccess,
+            endpoints: deliveryEndpoints,
+            recipients: channelRecipients,
+          });
           // If WhatsApp failed and it's not a soft throttle, consider it permanent and block the queue entry
+          const verificationUnavailable = String(errorCode || "") === "RECIPIENT_VERIFICATION_UNAVAILABLE"
+            || (channelRecipients && Object.values(channelRecipients).some((row) => row && row.state === "unavailable"));
           if (
             channel === "whatsapp" &&
             !success &&
             !eligibilityTerminal &&
-            errorCode !== "RECIPIENT_VERIFICATION_UNAVAILABLE" &&
+            !verificationUnavailable &&
             errorMessage !== "ORG_RATE_LIMIT" &&
             String(errorCode || "").toUpperCase() !== "RATE_LIMIT"
           ) {
@@ -2846,7 +3252,9 @@ export async function deliveryWorkerJob({
               logger.debug("Metrics recording failed", { error: _.message });
             }
           }
-          if (!success) allSucceeded = false;
+          if (!success) {
+            allSucceeded = false;
+          }
           if (!success && !eligibilityTerminal) {
             if (channel === "email") {
               newAttemptsEmail += 1;
@@ -2903,26 +3311,33 @@ export async function deliveryWorkerJob({
           }
         }
 
-        // Update alert queue status
-        // Determine status: "sent" only when all channels succeeded; "partial" when some succeeded and others failed/blocked; "failed" when none succeeded
-        const someSucceeded = deliveryResults.some((r) => r.success) || webhookPartialErrors.length > 0;
-        const someFailed = deliveryResults.some((r) => !r.success);
-        const hasPartialIssues = webhookPartialErrors.length > 0;
+        // If webhooks channel present and at least one endpoint succeeded, don't force overall failure.
+        // Only force failure if all webhook endpoints failed (webhookSuccess === false) which is already
+        // reflected in the channel result above. Here we avoid overriding a true allSucceeded due to partials.
+        // allSucceeded remains as computed from per-channel success values.
 
-        let newStatus;
-        if (allSucceeded && !hasPartialIssues) {
-          newStatus = "sent";
-        } else if (someSucceeded && (someFailed || hasPartialIssues)) {
-          newStatus = "partial";
-        } else {
-          newStatus = "failed";
-        }
-        const parsedLedger = deliveryState.parse(alert.channels);
-        const settlement = parsedLedger && (!parsedLedger.legacy || deliveryResults.some(row => row.eligibilityTerminal))
-          ? deliveryState.settle({ prior: alert.channels, attempted: deliveryResults.map(row => ({ ...row,
-            partialSuccess: row.channel === "webhooks" && webhookPartialErrors.length > 0,
-          })), liveChannels: [...new Set([...parsedLedger.required, ...parsedLedger.retry, ...liveChannels])] }) : null;
-        if (settlement) newStatus = settlement.outcome.status;
+        // Queue status comes from one disposition: sent, partial, failed, or blocked.
+        const reachedMaxAttempts =
+          MAX_ATTEMPTS_PER_CHANNEL > 0 &&
+          (newAttemptsEmail >= MAX_ATTEMPTS_PER_CHANNEL ||
+            newAttemptsWebhooks >= MAX_ATTEMPTS_PER_CHANNEL ||
+            newAttemptsWhatsApp >= MAX_ATTEMPTS_PER_CHANNEL);
+        const priorLedger = deliveryState.parse(alert.channels);
+        const settlementChannels = priorLedger && !priorLedger.legacy
+          ? [...new Set([...(deliveryState.channels(alert.channels) || []), ...liveChannels])]
+          : liveChannels;
+        const settlement = mergeDeliveryAttempt({
+          prior: alert.channels,
+          logRows: priorDeliveryRows,
+          attempted: deliveryResults,
+          liveChannels: settlementChannels,
+        });
+        const deliveryOutcome = queueDeliveryOutcome(settlement.results, {
+          hasPartialIssues: false,
+          whatsappPermanentFailure,
+          reachedMaxAttempts,
+        });
+        const newStatus = deliveryOutcome.status;
 
         const attempts = alert.attempts + 1;
         let errorMessages = deliveryResults
@@ -2942,7 +3357,7 @@ export async function deliveryWorkerJob({
             `UPDATE alert_queue 
            SET status = $1, attempts = $2, last_attempt = NOW(), error_message = $3, updated_at = NOW(),
                attempts_email = $5, attempts_webhooks = $6, attempts_whatsapp = $7, next_attempt_at = NULL,
-               channels = COALESCE($9::jsonb, channels), delivery_claim_id = NULL
+               channels = $9, delivery_claim_id = NULL
            WHERE id = $4 AND delivery_claim_id = $8`,
             [
               newStatus,
@@ -2953,7 +3368,7 @@ export async function deliveryWorkerJob({
               newAttemptsWebhooks,
               newAttemptsWhatsApp,
               claimId,
-              settlement ? JSON.stringify(settlement.ledger) : null,
+              JSON.stringify(settlement.ledger),
             ],
           );
           if (sentRes.rowCount === 0) {
@@ -2990,20 +3405,10 @@ export async function deliveryWorkerJob({
             });
           }
         } else {
-          // In test mode, ensure a minimal cooldown exists to satisfy cooldown tests
-          if (!nextAttemptTimestamp && process.env.NODE_ENV === "test") {
+          if (deliveryOutcome.retry && !nextAttemptTimestamp && process.env.NODE_ENV === "test") {
             nextAttemptTimestamp = new Date(Date.now() + 1000);
           }
-          // If max attempts reached on any channel, permanently block this alert
-          let reachedMaxAttempts = false;
-          if (
-            MAX_ATTEMPTS_PER_CHANNEL > 0 &&
-            (newAttemptsEmail >= MAX_ATTEMPTS_PER_CHANNEL ||
-              newAttemptsWebhooks >= MAX_ATTEMPTS_PER_CHANNEL ||
-              newAttemptsWhatsApp >= MAX_ATTEMPTS_PER_CHANNEL)
-          ) {
-            reachedMaxAttempts = true;
-            // Ensure no further retries are scheduled
+          if (reachedMaxAttempts) {
             nextAttemptTimestamp = null;
             errorMessages = errorMessages
               ? `${errorMessages}; MAX_ATTEMPTS`
@@ -3028,21 +3433,26 @@ export async function deliveryWorkerJob({
               logger.warn("WhatsApp operation failed", { error: _err.message });
             }
           }
-          // Keep only failed channels for retry to avoid resending successful ones
-          const failedChannels = Array.from(
-            new Set(
-              deliveryResults.filter((r) => !r.success).map((r) => r.channel),
-            ),
-          );
-          const channelsToStore = settlement ? settlement.ledger : failedChannels;
-          if (settlement && reachedMaxAttempts) channelsToStore.retry = [];
-
-          // Compute next_attempt_at based on failed channels
-          let finalNextAttempt = nextAttemptTimestamp;
-          if (settlement && !settlement.ledger.retry.length) finalNextAttempt = null;
-
-          // If WhatsApp had a permanent failure, block immediately (no further retries)
+          const failedChannels = deliveryOutcome.channels;
+          const channelsToStore = settlement.ledger;
           const blockDueToWhatsApp = whatsappPermanentFailure === true;
+          const blockDueToEligibility = deliveryOutcome.notifyUnverified
+            && !blockDueToWhatsApp
+            && !reachedMaxAttempts;
+          if (blockDueToEligibility && !deliveryOutcome.retry) {
+            const eligibilityCode = deliveryOutcome.code === "RECIPIENT_OPTED_OUT"
+              ? "RECIPIENT_OPTED_OUT"
+              : "NO_VERIFIED_RECIPIENTS";
+            errorMessages = errorMessages
+              ? `${errorMessages}; ${eligibilityCode}`
+              : eligibilityCode;
+          }
+          if (deliveryOutcome.notifyProviderTerminal && !blockDueToWhatsApp) {
+            errorMessages = errorMessages
+              ? `${errorMessages}; PERMANENT_DELIVERY_FAILURE`
+              : "PERMANENT_DELIVERY_FAILURE";
+          }
+          let finalNextAttempt = deliveryOutcome.retry ? nextAttemptTimestamp : null;
           if (blockDueToWhatsApp) {
             if (settlement) channelsToStore.retry = [];
             finalNextAttempt = null;
@@ -3074,7 +3484,7 @@ export async function deliveryWorkerJob({
                delivery_claim_id = NULL
            WHERE id = $4 AND delivery_claim_id = $10`,
             [
-              reachedMaxAttempts || blockDueToWhatsApp ? "blocked" : newStatus,
+              newStatus,
               attempts,
               errorMessages || null,
               alert.id,
@@ -3082,11 +3492,7 @@ export async function deliveryWorkerJob({
               newAttemptsEmail,
               newAttemptsWebhooks,
               newAttemptsWhatsApp,
-              reachedMaxAttempts || blockDueToWhatsApp
-                ? null
-                : finalNextAttempt
-                  ? finalNextAttempt.toISOString()
-                  : null,
+              finalNextAttempt ? finalNextAttempt.toISOString() : null,
               claimId,
             ],
           );
@@ -3095,7 +3501,52 @@ export async function deliveryWorkerJob({
               "Skipped failed/blocked terminal write: another worker took ownership",
               { alertId: alert.id },
             );
-          } else if (reachedMaxAttempts || blockDueToWhatsApp) {
+          } else if (blockDueToEligibility && alert.workspace_id) {
+            await raiseOperationalNotification(client, {
+              workspaceId: alert.workspace_id,
+              tokenId: alert.token_id,
+              category: "delivery",
+              type: "delivery_unverified_recipients",
+              severity: "warning",
+              dedupeKey: `delivery_unverified:${alert.workspace_id}`,
+              title: `Alerts need verified recipients: ${incidentAssetLabel(alert)}`,
+              message: deliveryOutcome.code === "RECIPIENT_OPTED_OUT"
+                ? "Email or WhatsApp was not sent because the recipient opted out."
+                : (newStatus === "blocked"
+                  ? "Email or WhatsApp delivery was not sent because no recipient has confirmed that destination."
+                  : "Some Email or WhatsApp recipients were skipped because they have not confirmed that destination."),
+              metadata: {
+                alert_queue_id: alert.id,
+                reason: "no_verified_recipients",
+                workspace_name: alert.workspace_name,
+                token_name: alert.name,
+              },
+            });
+          }
+          if (
+            terminalRes.rowCount > 0
+            && deliveryOutcome.notifyProviderTerminal
+            && !blockDueToWhatsApp
+            && alert.workspace_id
+          ) {
+            await raiseOperationalNotification(client, {
+              workspaceId: alert.workspace_id,
+              tokenId: alert.token_id,
+              category: "delivery",
+              type: "delivery_webhook_permanent",
+              severity: "warning",
+              dedupeKey: `delivery_webhook_permanent:${alert.id}`,
+              title: `Webhook delivery failed: ${incidentAssetLabel(alert)}`,
+              message: "A webhook endpoint rejected the alert. That endpoint is not retried until it is fixed and the channel is retried.",
+              metadata: {
+                alert_queue_id: alert.id,
+                reason: "webhook_permanent_failure",
+                workspace_name: alert.workspace_name,
+                token_name: alert.name,
+              },
+            });
+          }
+          if (terminalRes.rowCount > 0 && (reachedMaxAttempts || blockDueToWhatsApp)) {
             await raiseDeliveryBlockedIncident(
               client,
               alert,
@@ -3111,6 +3562,7 @@ export async function deliveryWorkerJob({
               },
             );
           } else if (
+            terminalRes.rowCount > 0 &&
             alert.workspace_id &&
             !isPlanLimitError(errorMessages) &&
             (newAttemptsEmail >= DEGRADED_ATTEMPTS_THRESHOLD ||
@@ -3151,7 +3603,7 @@ export async function deliveryWorkerJob({
                 metadata: {
                   days: alert.threshold_days,
                   next_attempt_at: nextAttemptTimestamp.toISOString(),
-                  channels_to_retry: settlement ? channelsToStore.retry : channelsToStore,
+                  channels_to_retry: deliveryOutcome.channels,
                   workspace_name: alert.workspace_name,
                   token_name: alert.name,
                   contact_group_id: contactGroupId,
@@ -3166,7 +3618,7 @@ export async function deliveryWorkerJob({
           }
         }
 
-        if (allSucceeded) {
+        if (newStatus === "sent") {
           sent++;
           await writeAlertAudit(client, alert, {
             subjectUserId: alert.user_id,
@@ -3354,6 +3806,7 @@ export async function deliveryWorkerJob({
 // Run delivery worker if this file is executed directly
 if (isNodeEntrypoint(import.meta.url)) {
   warnIfNodeUseEnvProxyUnsupported();
+  logger.info(JSON.stringify({ message: "recipient verification mode", ...describeEnforcement() }));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
 

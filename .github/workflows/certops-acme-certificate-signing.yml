@@ -1,0 +1,69 @@
+# Separate Azure-free single-agent database; never rotates a shared fleet.
+name: "CertOps / Certificate execution across signing rotation"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  certificate-signing:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      NODE_ENV: test
+      CERTOPS_ENABLED: 'true'
+      CERTOPS_CSR_DISPOSABLE_STACK: '1'
+      CERTOPS_CERTIFICATE_SIGNING_DISPOSABLE_STACK: '1'
+      CERTOPS_CERTIFICATE_SIGNING_API_URL: http://127.0.0.1:4000
+      CERTOPS_REAL_ACME_CLIENT: certbot
+      CERTOPS_REAL_ACME_EAB: none
+      CERTOPS_SIGNING_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      CERTOPS_REGISTRATION_ENCRYPTION_KEY: abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+      DB_HOST: 127.0.0.1
+      DB_PORT: '5432'
+      DB_USER: tokentimer
+      DB_PASSWORD: password
+      DB_NAME: tokentimer
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/certops-node-setup
+      - name: Install pinned native CA and actual ACME client
+        run: |
+          python3 -m venv "$RUNNER_TEMP/certbot"
+          "$RUNNER_TEMP/certbot/bin/pip" install certbot==4.2.0
+          echo "$RUNNER_TEMP/certbot/bin" >> "$GITHUB_PATH"
+          GOBIN="$RUNNER_TEMP/pebble-bin" go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.8.0
+          GOBIN="$RUNNER_TEMP/pebble-bin" go install github.com/letsencrypt/pebble/v2/cmd/pebble-challtestsrv@v2.8.0
+          echo "$RUNNER_TEMP/pebble-bin" >> "$GITHUB_PATH"
+      - name: Refuse foreign stack and start only isolated API and PostgreSQL
+        run: |
+          test ! -e .env
+          for name in tokentimer-core-postgres-test tokentimer-core-api-test tokentimer-core-mailhog-test; do
+            test -z "$(docker ps -aq --filter "name=^/${name}$")"
+          done
+          docker compose -p certops-certificate-signing -f deploy/compose/docker-compose.test.yml up -d --build postgres api
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:4000/ >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - name: Complete non-forced rotation while the owned renewal claim remains in flight
+        run: node scripts/certops-acme-certificate-signing.js
+      - name: Preserve unresolved native ownership before isolated stack removal
+        if: always()
+        run: |
+          node -e "const fs=require('fs');require('./scripts/certops-acme-certificate-signing').projectReport(JSON.parse(fs.readFileSync('qualification-results/certificate-signing-rotation.json')))"
+          if ! docker compose -p certops-certificate-signing -f deploy/compose/docker-compose.test.yml down -v --remove-orphans; then
+            node scripts/certops-acme-certificate-signing.js fail-teardown
+            exit 1
+          fi
+      - name: Preserve bounded native qualification report only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-certificate-signing-rotation
+          path: qualification-results/certificate-signing-rotation.json
+          if-no-files-found: error
+          retention-days: 14

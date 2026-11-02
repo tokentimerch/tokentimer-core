@@ -1,0 +1,16 @@
+name: "CertOps / Unsupported Windows ARM64 full host qualification"
+# This historical manual entry cannot qualify the AMD64-only full host suite.
+# Fail every dispatch before checkout, credentials or native host mutations.
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  unsupported-full-host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Refuse unsupported full host scope
+        shell: bash
+        run: |
+          echo '::error::Full windows-host qualification on ARM64 is unsupported. Use certops-windows-arm64-cng.yml for native desktop CNG and certops-windows-arm64-scm.yml for candidate packaged service-host/mock-child lifecycle. These separate scopes do not qualify the full host suite, real agent, API, installer, IIS, Server or domain AD CS.'
+          exit 1

@@ -1,5 +1,7 @@
 "use strict";
 
+const { safeDeliveryKey, deliveryData, deliveryChannelNames } = require("./deliveryData");
+
 // Shared wire contract with recipient verification (#461). Unknown ledger
 // versions fail closed; a retry array remains legitimate pre-ledger data.
 function parseDeliveryLedger(value) {
@@ -17,7 +19,7 @@ function parseDeliveryLedger(value) {
   ) {
     return {
       version: 0,
-      retry: [...parsed],
+      retry: deliveryChannelNames(parsed),
       required: [],
       outcomes: {},
       legacy: true,
@@ -38,10 +40,10 @@ function parseDeliveryLedger(value) {
   )
     return null;
   return {
-    ...parsed,
-    retry: [...parsed.retry],
-    required: [...parsed.required],
-    outcomes: { ...parsed.outcomes },
+    ...deliveryData(parsed),
+    retry: deliveryChannelNames(parsed.retry),
+    required: deliveryChannelNames(parsed.required),
+    outcomes: deliveryData(parsed.outcomes),
     legacy: false,
   };
 }
@@ -82,8 +84,9 @@ function queueDeliveryOutcome(results) {
 function mergeDeliveryAttempt({ prior, attempted = [], liveChannels } = {}) {
   const ledger = parseDeliveryLedger(prior);
   if (!ledger) throw new Error("unsupported_delivery_ledger");
-  const outcomes = { ...ledger.outcomes };
+  const outcomes = Object.assign(Object.create(null), ledger.outcomes);
   for (const row of attempted) {
+    if (!row || typeof row.channel !== "string" || !safeDeliveryKey(row.channel)) continue;
     const terminal = row.terminal === true || row.eligibilityTerminal === true;
     outcomes[row.channel] = {
       ...outcomes[row.channel],
@@ -103,16 +106,16 @@ function mergeDeliveryAttempt({ prior, attempted = [], liveChannels } = {}) {
             ? "provider"
             : null,
       code: row.success ? null : row.errorCode || null,
-      endpoints: { ...outcomes[row.channel]?.endpoints, ...row.endpoints },
+      endpoints: { ...outcomes[row.channel]?.endpoints, ...deliveryData(row.endpoints) },
     };
   }
   const required = [
     ...new Set(
-      liveChannels || [
+      deliveryChannelNames(liveChannels || [
         ...ledger.required,
         ...ledger.retry,
         ...Object.keys(outcomes),
-      ],
+      ]),
     ),
   ];
   const results = required.map((channel) =>
@@ -126,7 +129,7 @@ function mergeDeliveryAttempt({ prior, attempted = [], liveChannels } = {}) {
       version: 1,
       retry: outcome.channels,
       required,
-      outcomes,
+      outcomes: Object.fromEntries(Object.entries(outcomes)),
     },
     results,
     outcome,

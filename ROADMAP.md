@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-02 against main 01d23da3 (v0.18.2). Other
+Last reviewed: 2026-11-02 against main 5bc9b519 (v0.18.2). Other
 certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
 
 This page is the repository milestone index: what Core takes next, what must
@@ -50,6 +50,9 @@ called stable while they are open.
   for Windows/IIS shared material and provider extensions. Functional
   implementation is separate from remaining fleet/protected qualification;
   neither PR completes every #248 requirement.
+  Provider extensions cover OpenBao KV v2 and Azure Key Vault Secrets exact
+  versions. Azure and Windows/IIS remain subject to independent production
+  qualification; see [implementation and evidence](docs/certops/distribution-extensions-qualification.md).
 - **Shared outbound policy**
   ([#233](https://github.com/tokentimerch/tokentimer-core/issues/233)).
   Wire offline mode and outbound allowlists into API and worker egress.
@@ -75,6 +78,16 @@ called stable while they are open.
 Accepted work that ships in 0.x stages on its own schedule. v1.0.0 can be
 called stable while it is open.
 
+- **Verifiable certificate lifecycle and real-host qualification**
+  ([#354](https://github.com/tokentimerch/tokentimer-core/issues/354)).
+  Cover Windows installation, services, CNG, certificate stores and IIS,
+  enterprise AD CS enrollment and recovery, ACME, Linux destinations and
+  edition integration. Use disposable hosted Windows runners and isolated
+  on-demand domain labs, with independent cleanup safeguards. Mandatory
+  execution reports must fail on missing prerequisites or skipped tests.
+  Implementation and focused local evidence are separate from hosted
+  execution and release qualification; see
+  [the qualification guide](.github/maintainers/certops/e2e-qualification.md).
 - **MCP operator interface**
   ([#502](https://github.com/tokentimerch/tokentimer-core/issues/502),
   implementation [PR #406](https://github.com/tokentimerch/tokentimer-core/pull/406)).

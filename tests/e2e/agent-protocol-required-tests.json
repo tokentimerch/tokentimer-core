@@ -1,0 +1,16 @@
+{
+  "requiredTests": [
+    "happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack",
+    "tamper: mutating a signed field fails agent-side verification",
+    "bootstrap token reuse is rejected with 401",
+    "bad agent credential is rejected with 401",
+    "retired agent gets 410 on heartbeat, claim, and results",
+    "workspace kill switch blocks claims with 409",
+    "evidence is accepted; private key material is rejected with 422",
+    "second claim returns no jobs while the lease is held",
+    "lease reaper defers, then requeues once the claiming agent goes silent",
+    "lease reaper fails an expired job with exhausted retry budget",
+    "sequence enforcement: monotonic accepted, regression 409, re-register resets the generation, sequence-less accepted"
+  ],
+  "scope": "agent-protocol-api-worker"
+}

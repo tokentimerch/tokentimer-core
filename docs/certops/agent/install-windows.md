@@ -21,6 +21,8 @@ Get-Service TokenTimerAgent
 
 The installer prompts privately for the bootstrap token. The service runs as LocalSystem through the bundled native service host. The app lives at `C:\ProgramData\TokenTimerAgent\app`; configuration and custody state live at `C:\ProgramData\TokenTimerAgent\state`.
 
+For a private API CA, set `caBundlePath` in any prewritten configuration. `--ca-bundle` copies the CA into the state directory but only adds that setting when creating a new config. API, material-store and issued-certificate trust are separate.
+
 Write your policy first, then run the installer: it keeps an existing `config.json` and only creates one when absent. Command profile names and target selectors are read when the agent starts, so prepare them before the first registration. With a loopback `http` API address, pass `--allow-insecure-local-http` and also add `"allowInsecureLocalHttp": true` to a hand-written `config.json`. On an upgrade the installer still asks for a token; a registered agent keeps its credential and does not use it, so paste any value that starts with `ttboot_` or set `$env:TOKENTIMER_AGENT_BOOTSTRAP_TOKEN = 'ttboot_unused'`.
 
 Save `config.json` and any DNS credentials file as UTF-8 without a byte order mark. Windows PowerShell 5.1 `Set-Content -Encoding utf8` adds one and the agent refuses the file. Use Notepad, or `[IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding($false)))`.

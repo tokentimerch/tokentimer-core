@@ -559,7 +559,7 @@ describe("deployCertificate", () => {
 
   it(
     "rejects a symlinked destination escaping the allowed root (realpath re-check)",
-    // skip-reason: no-host - symlink creation on win32 needs Developer
+    // skip-reason: platform - symlink creation on win32 needs Developer
     // Mode or elevated privileges, not reliably available in CI.
     { skip: SYMLINK_SKIP },
     async () => {
@@ -588,7 +588,7 @@ describe("deployCertificate", () => {
 
   it(
     "rejects a symlinked parent directory escaping the allowed root",
-    // skip-reason: no-host - symlink creation on win32 needs Developer
+    // skip-reason: platform - symlink creation on win32 needs Developer
     // Mode or elevated privileges, not reliably available in CI.
     { skip: SYMLINK_SKIP },
     async () => {

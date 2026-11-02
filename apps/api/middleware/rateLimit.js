@@ -437,6 +437,38 @@ function createCsrfTokenLimiter({ windowMs, max } = {}) {
 
 const csrfTokenLimiter = createCsrfTokenLimiter();
 
+const recipientVerificationPageLimiter = rateLimit({
+  windowMs: intEnv("RECIPIENT_VERIFY_PAGE_WINDOW_MS", 10 * 60 * 1000),
+  max: intEnv("RECIPIENT_VERIFY_PAGE_MAX", isDevOrTest ? 10000 : 60),
+  message: "Please wait before trying again.",
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  keyGenerator: (req) => {
+    const ip = resolveClientIp(req) || ipKeyGenerator(req);
+    return `recipient-verify:${ip}`;
+  },
+  handler: (req, res) => {
+    const windowMs = intEnv("RECIPIENT_VERIFY_PAGE_WINDOW_MS", 10 * 60 * 1000);
+    const fallbackRetrySec = Math.max(1, Math.ceil(windowMs / 1000));
+    const resetTime = req.rateLimit?.resetTime;
+    const retryAfterSeconds =
+      resetTime instanceof Date
+        ? Math.max(1, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
+        : fallbackRetrySec;
+    logger.warn("RATE_LIMIT_EXCEEDED", {
+      type: "recipient_verification_page",
+      retryAfterSeconds,
+    });
+    res.set("Retry-After", String(retryAfterSeconds));
+    res.set("Cache-Control", "no-store");
+    res.set("Referrer-Policy", "no-referrer");
+    res.status(429).type("html").send(
+      "<!doctype html><html><head><meta name=\"referrer\" content=\"no-referrer\"><title>Please wait</title></head><body><p>Please wait before trying again.</p></body></html>",
+    );
+  },
+});
+
 const noRateLimit = (req, res, next) => next();
 
 /**
@@ -535,6 +567,7 @@ module.exports = {
   getDiagnosticBootstrapLimiter,
   getTestApiLimiter,
   csrfTokenLimiter,
+  recipientVerificationPageLimiter,
   createCsrfTokenLimiter,
   noRateLimit,
   applyGlobalRateLimit,

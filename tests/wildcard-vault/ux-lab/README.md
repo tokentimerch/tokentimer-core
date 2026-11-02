@@ -11,6 +11,15 @@ actual operator role contract; viewers receive 403.
 
 Run from the implementation checkout, with Docker Desktop, Node 24, pnpm, and the checkout's dependencies installed. This is a separate Core installation with its own PostgreSQL, mail capture, Vault, Pebble DNS-01 CA, maintenance worker, dashboard, and customer hosts. All published ports bind to `127.0.0.1`; PostgreSQL and Vault have no host port.
 
+Pass `-MaterialProvider openbao-kv2` on `Up` to run the complete journey against
+OpenBao 2.4.1, including explicit provider authority in signed issuance and
+deployment jobs. The default is Vault 1.21.0. The selected provider is retained
+with the lab options. Both providers support `-PackageAcceptance`: that mode
+uses a checksum-verified agent package, an unprivileged agent account, and
+separate scoped AppRoles and protected sinks managed by the Vault Agent client.
+Credential rotation, denied access, lost responses, reconciliation, rollback,
+browser checks and custody scans execute against the selected real service.
+
 The journey uses public HTTP routes with session cookies and CSRF tokens. It creates a workspace, invites a second user through captured email, verifies that account, enrolls real agents with bootstrap tokens, submits work, and approves/rejects it as a different user. The customer host runs the full agent CLI, including signing, replay protection, live leases, evidence, and result outbox. Real nginx and HAProxy processes load the certificate and receive TLS probes. There are no SQL commands, direct database connections, inserted receipts, service-layer calls, or database fixture injection in the harness. Ordinary API startup migrations/admin bootstrap and the ordinary worker retain their normal database access.
 
 ## Start and test
@@ -72,7 +81,7 @@ The localhost-only customer control endpoint at BasePort + 5 (`60805` in the exa
 | Phase | User/API behavior |
 |---|---|
 | setup | Normal startup, invite/register/verify/login, bootstrap and full agent enrollment |
-| publish | Explicit initial `issue` job, approval, SAN-only DNS-01 issuance, Vault write, automatic renewal profile, custom canonical key directory and permissions; repair replay/admin/input checks |
+| publish | Explicit initial `issue` job, approval, SAN-only DNS-01 issuance, Vault write, automatic renewal profile, custom canonical key directory and permissions; idempotent manager repair, viewer denial and input checks |
 | bindings | Two real TLS consumers, concurrent identical PUTs, unchanged proof, idempotent retries before approval and after completion, changed parameters rejected, changed membership replay |
 | validation | Nine malformed distribution requests return 422 and create no jobs |
 | scanner | Scan actual published Vault bundle prefixes with five raw/encoded forms; customer-side HTTP observations prove no private object request occurs |
@@ -84,7 +93,7 @@ The localhost-only customer control endpoint at BasePort + 5 (`60805` in the exa
 
 The recovery sequence expects three ACME invocations total: initial issuance, rotated renewal, then renewal reusing the recovered key. The fault proxy drops a committed Vault write response and blocks readback, including versioned GETs, until the operator clears the fault and retries the original job. The accepted publication receipt must clear that job's reconciliation flag before the final transfer can succeed. The customer reload hook waits for a trusted TLS handshake serving the installed certificate before it returns; the agent independently verifies that listener afterward. The lab does not fabricate a historical pre-migration row or never-claimed cancellation. There is no standalone public job-cancel API; retirement fences claimed/running leases, which cannot satisfy the never-claimed predicate. Those migration/cancellation regression cases require separate test evidence and are outside this public user journey.
 
-The supported repair endpoint is `POST /api/v1/workspaces/:id/certops/certificates/:certId/renewal-profile/repair`, with an empty JSON body, workspace-admin session and CSRF token. It validates the current management period, live issuer and accepted publication proof. It accepts no new execution settings and never reads private keys or contacts Vault. `Test -Phase repair` exercises that endpoint on the journey's certificate.
+The supported repair endpoint is `POST /api/v1/workspaces/:id/certops/certificates/:certId/renewal-profile/repair`, with an empty JSON body, workspace-manager or owner session and CSRF token. It validates the current management period, live issuer and accepted publication proof. It accepts no new execution settings and never reads private keys or contacts Vault. `Test -Phase repair` exercises that endpoint on the journey's certificate.
 
 To exercise a genuinely missing profile without database injection, pause between the bindings and recovery phases. Sign in as owner, use the certificate's **Detach** action, then **Repair renewal profile**. Run `Test -Phase repair` and then `Test -Phase all` to verify renewal and continue. Perform this before the final inventory transfer, which intentionally removes source management authority.
 
