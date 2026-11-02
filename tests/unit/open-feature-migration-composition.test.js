@@ -21,6 +21,7 @@ const tail = [
   [90, "certops_consumer_verification_failures"],
   [91, "certops_distribution_resolution_delivery"],
   [92, "pagerduty_incident_lifecycle"],
+  [93, "pagerduty_resolution_reason"],
 ];
 const names = new Set(migrations.map((row) => row.name));
 const combined = [
@@ -53,7 +54,7 @@ test("all feature schemas coexist without duplicate identities or no-op reservat
   for (const [version, name] of tail)
     assert.equal(plan.find((row) => row.name === name)?.version, version);
 });
-for (const alreadyApplied of [[], [83], [84, 85], [92], [83, 84, 85, 92]])
+for (const alreadyApplied of [[], [83], [84, 85], [92], [92, 93], [83, 84, 85, 92, 93]])
   test(
     "independent applied feature rows survive later companion integration: " +
       alreadyApplied,

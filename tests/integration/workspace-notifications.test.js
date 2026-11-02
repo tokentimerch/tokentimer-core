@@ -1319,7 +1319,7 @@ describe("Persisted operational notifications (bell)", function () {
   });
 
   it("reconciles recovered and missing delivery queues before critical email retry", async () => {
-    const { retryPendingOperationalIncidentEmails } =
+    const { retryPendingOperationalIncidentEmails, reconcileStaleDeliveryIncidents } =
       await import("../../apps/worker/src/shared/opNotifications.js");
     const queues = await client.query(
       `INSERT INTO alert_queue
@@ -1356,6 +1356,7 @@ describe("Persisted operational notifications (bell)", function () {
     );
     try {
       const sent = [];
+      await reconcileStaleDeliveryIncidents(client);
       await retryPendingOperationalIncidentEmails(
         client,
         async ({ subject }) => {

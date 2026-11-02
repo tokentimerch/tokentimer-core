@@ -468,6 +468,30 @@ jobs:
         run: node apps/api/migrations/migrate.js
       - name: Exercise manual and fenced auto-sync cleanup through HTTP routes
         run: node --test tests/postgres/vault-material-cleanup.test.js
+      - name: Preserve provider-owned expiration under concurrent manual edits
+        env:
+          DB_NAME: core_token_expiry_test
+        run: |
+          node - <<'NODE'
+          const { Client } = require('pg');
+          async function main() {
+            const client = new Client({
+              host: process.env.DB_HOST,
+              port: Number(process.env.DB_PORT),
+              user: process.env.DB_USER,
+              password: process.env.DB_PASSWORD,
+              database: 'postgres',
+            });
+            await client.connect();
+            try {
+              await client.query('CREATE DATABASE core_token_expiry_test');
+            } finally {
+              await client.end();
+            }
+          }
+          main().catch(error => { console.error(error.message); process.exitCode = 1; });
+          NODE
+          node --test --test-force-exit tests/postgres/token-expiry-ownership.test.js
       - name: Upgrade main enrollment history to distribution without rewriting migrations
         env:
           DB_NAME: pr329_distribution_upgrade_ci_test
@@ -490,6 +514,10 @@ jobs:
               await client.query('CREATE DATABASE wildcard_candidate_ci_test');
               await client.query('CREATE DATABASE pr329_issuance_path_reuse_ci_test');
               await client.query('CREATE DATABASE pr329_workspace_delete_ci_test');
+              await client.query('CREATE DATABASE pagerduty_ci_issue364_test');
+              for (const history of ['78','80','81','82','92','legacy79','legacy81']) {
+                await client.query(`CREATE DATABASE pd_${history}_migration_issue364_test`);
+              }
               await client.query('CREATE DATABASE recipient_delivery_worker_ci_test');
             } finally {
               await client.end();
@@ -498,6 +526,21 @@ jobs:
           main().catch(error => { console.error(error.message); process.exitCode = 1; });
           NODE
           node --test --test-force-exit tests/postgres/distribution-migration-upgrade.test.js
+      - name: Exercise PagerDuty lifecycle and actual recipient-runtime interoperability
+        env:
+          DB_NAME: pagerduty_ci_issue364_test
+          PAGERDUTY_COMPANION_ROOT: ${{ github.workspace }}
+        run: |
+          node apps/api/migrations/migrate.js
+          node --test --test-force-exit tests/postgres/pagerduty-incident-lifecycle.test.js
+      - name: Verify PagerDuty upgrades and explicit preview recovery
+        env:
+          PAGERDUTY_COMPANION_ROOT: ${{ github.workspace }}
+        run: |
+          for history in 78 80 81 82 92 legacy79 legacy81; do
+            DB_NAME="pd_${history}_migration_issue364_test" PAGERDUTY_UPGRADE_FROM="$history" \
+              node --test --test-force-exit tests/postgres/pagerduty-migration.test.js
+          done
       - name: Verify recipient delivery retries and ledger outcomes
         env:
           DELIVERY_WORKER_DB_HOST: ${{ env.DB_HOST }}
