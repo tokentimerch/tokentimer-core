@@ -31,18 +31,20 @@ test("public renewal profile permissions and immutable execution policy", { time
     const created = await fixture.request(route, "POST", input); assert.equal(created.status, 201); const profileId = created.body.id; const detail = `${route}/${profileId}`;
     await gate.scenario("profile-manager-read-write-fence", async () => {
       assert.equal((await manager.request(detail)).status, 200);
-      assert.equal((await manager.request(detail, "PATCH", { renewBeforeDays: 45 })).status, 403);
-      assert.equal((await manager.request(route, "POST", input)).status, 403);
-      assert.equal((await fixture.request(detail)).body.renewBeforeDays, 30);
+      assert.equal((await manager.request(detail, "PATCH", { renewBeforeDays: 45 })).status, 200);
+      assert.equal((await manager.request(route, "POST", { ...input, name: "Manager-created profile" })).status, 201);
+      assert.equal((await fixture.request(detail)).body.renewBeforeDays, 45);
+      assert.equal((await fixture.pool.query("SELECT count(*)::int AS count FROM audit_events WHERE workspace_id=$1 AND actor_user_id=$2 AND action='CERTOPS_RENEWAL_PROFILE_UPDATED' AND metadata->>'profileId'=$3", [fixture.workspaceId, manager.userId, profileId])).rows[0].count, 1);
     });
     await gate.scenario("profile-viewer-topology-fence", async () => {
       for (const url of [route, detail]) assert.equal((await viewer.request(url)).status, 403);
       assert.equal((await viewer.request(detail, "PATCH", { status: "disabled" })).status, 403);
+      assert.equal((await viewer.request(route, "POST", input)).status, 403);
       assert.equal((await manager.request(`/api/v1/workspaces/${manager.workspaceId}/certops/profiles/${profileId}`)).status, 404);
     });
     await gate.scenario("profile-disable-resume-audit", async () => {
       for (const status of ["disabled", "active"]) { const result = await fixture.request(detail, "PATCH", { autoRenewEnabled: status === "active" }); assert.equal(result.status, 200); assert.equal(result.body.status, status); }
-      assert.equal((await fixture.pool.query("SELECT count(*)::int AS count FROM audit_events WHERE workspace_id=$1 AND action='CERTOPS_RENEWAL_PROFILE_UPDATED' AND metadata->>'profileId'=$2", [fixture.workspaceId, profileId])).rows[0].count, 2);
+      assert.equal((await fixture.pool.query("SELECT count(*)::int AS count FROM audit_events WHERE workspace_id=$1 AND actor_user_id=$2 AND action='CERTOPS_RENEWAL_PROFILE_UPDATED' AND metadata->>'profileId'=$3", [fixture.workspaceId, fixture.userId, profileId])).rows[0].count, 2);
     }, { oracle: "Actual reversible profile status and attributable audit; no scheduler execution inferred" });
     await gate.scenario("profile-execution-selector-atomic-refusal", async () => {
       const before = (await fixture.request(detail)).body;
