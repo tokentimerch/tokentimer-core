@@ -3,8 +3,8 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),{spawnSync}=require('node:child_process');
 const bootstrapCases=[];
-for(const language of ['en-US','de-DE','fr-FR'])for(const mode of language==='en-US'?['success']:['download','digest','package-install','resource-verification','system-settings-copy','success'])bootstrapCases.push({language,mode,legacy:false});
-for(const language of ['en-US','de-DE','fr-FR'])bootstrapCases.push({language,mode:'success',legacy:true});
+for(const language of ['en-US','de-DE','fr-FR'])for(const mode of language==='en-US'?['system-ui-policy','success']:['download','digest','package-install','resource-verification','system-ui-policy','system-settings-copy','success'])bootstrapCases.push({language,mode,legacy:false});
+for(const language of ['en-US','de-DE','fr-FR'])for(const mode of ['system-ui-policy','success'])bootstrapCases.push({language,mode,legacy:true});
 for(const {language,mode,legacy} of bootstrapCases)test(language+' '+(legacy?'legacy':'modern')+' language '+mode+' applies actual system settings without private URI',()=>{
  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'language-failure-'));
  const probe=path.join(directory,'probe.ps1');
@@ -14,7 +14,26 @@ $ErrorActionPreference='Stop'
 $ProgressPreference='Continue'
 $script:userLanguageListApplied=$false
 $script:systemSettingsCopied=$false
+$script:resourcesVerified=$false
+$script:systemUiLanguage=$null
+$script:systemUiLock=$null
 function Get-CimInstance { @{Domain='WORKGROUP'} }
+function New-Item {
+ param($Path,$ItemType,[switch]$Force)
+ if($Path -like 'HKLM:*'){
+  if($Path -cne 'HKLM:\SOFTWARE\Policies\Microsoft\MUI\Settings' -or -not $Force -or -not $script:resourcesVerified){throw 'Machine UI policy requires installed resources and the exact owned configuration key'}
+  return
+ }
+ Microsoft.PowerShell.Management\New-Item -Path $Path -ItemType $ItemType -Force:$Force
+}
+function New-ItemProperty {
+ param($Path,$Name,$Value,$PropertyType,[switch]$Force)
+ if($Path -cne 'HKLM:\SOFTWARE\Policies\Microsoft\MUI\Settings' -or -not $Force -or -not $script:resourcesVerified){throw 'Wrong machine UI policy target'}
+ if($env:LANGUAGE_FAILURE_MODE -eq 'system-ui-policy'){throw [UnauthorizedAccessException]::new('SECRET_SAS_AND_EXCEPTION')}
+ if($Name -ceq 'PreferredUILanguages' -and $PropertyType -ceq 'String' -and $Value -ceq $env:LANGUAGE_TEST_SELECTED){$script:systemUiLanguage=$Value;return}
+ if($Name -ceq 'MachineUILock' -and $PropertyType -ceq 'DWord' -and $Value -eq 1){$script:systemUiLock=$Value;return}
+ throw 'Wrong native machine UI policy value or registry type'
+}
 function Invoke-WebRequest {
  param($Uri,$OutFile,[switch]$UseBasicParsing,[int]$TimeoutSec)
  if($env:LANGUAGE_TEST_SELECTED -eq 'en-US'){throw 'English must not acquire an extra language CAB'}
@@ -49,12 +68,12 @@ function Start-Process {
  param($FilePath,$ArgumentList,[switch]$Wait,[switch]$PassThru,$WindowStyle)
  throw 'Headless language setup must not launch a Control Panel process'
 }
-function Test-Path { param($Path); if($Path -like 'HKLM:*'){if($Path -notlike ('*\'+$env:LANGUAGE_TEST_SELECTED)){throw 'Wrong language resource lookup'};return $env:LANGUAGE_FAILURE_MODE -ne 'resource-verification'};Microsoft.PowerShell.Management\Test-Path -Path $Path }
+function Test-Path { param($Path); if($Path -like 'HKLM:*'){if($Path -cne ('HKLM:\SYSTEM\CurrentControlSet\Control\MUI\UILanguages\'+$env:LANGUAGE_TEST_SELECTED)){throw 'Wrong language resource lookup'};$script:resourcesVerified=$env:LANGUAGE_FAILURE_MODE -ne 'resource-verification';return $script:resourcesVerified};Microsoft.PowerShell.Management\Test-Path -Path $Path }
 $body=[IO.File]::ReadAllText($env:LANGUAGE_FAILURE_SOURCE)
 # The producer targets Windows. Adapt only its directory separator when these
 # command doubles run under the Linux tooling job; its ownership check remains.
 if($env:LANGUAGE_TEST_UNIX -eq '1'){$body=$body.Replace(".TrimEnd('\')+'\'",".TrimEnd('/')+'/'")}
-try{& ([scriptblock]::Create($body)) -Language $env:LANGUAGE_TEST_SELECTED -PackageUri 'https://owned.blob.core.windows.net/fixture.cab?sig=SECRET_SAS_AND_EXCEPTION' -PackageSha256 ('a'*64);if($env:LANGUAGE_FAILURE_MODE -eq 'success'){if(-not $script:userLanguageListApplied -or ($env:LANGUAGE_TEST_LEGACY -ne '1' -and -not $script:systemSettingsCopied)){throw 'Actual service-account language configuration was skipped'};exit 0};exit 2}catch{if($env:LANGUAGE_FAILURE_MODE -eq 'success'){exit 3};Write-Output 'EXPECTED_LANGUAGE_FAILURE';exit 0}
+try{& ([scriptblock]::Create($body)) -Language $env:LANGUAGE_TEST_SELECTED -PackageUri 'https://owned.blob.core.windows.net/fixture.cab?sig=SECRET_SAS_AND_EXCEPTION' -PackageSha256 ('a'*64);if($env:LANGUAGE_FAILURE_MODE -eq 'success'){if($script:systemUiLanguage -cne $env:LANGUAGE_TEST_SELECTED -or $script:systemUiLock -ne 1 -or -not $script:userLanguageListApplied -or ($env:LANGUAGE_TEST_LEGACY -ne '1' -and -not $script:systemSettingsCopied)){throw 'Machine and service-account language configuration required'};exit 0};exit 2}catch{if($env:LANGUAGE_FAILURE_MODE -eq 'success'){exit 3};Write-Output 'EXPECTED_LANGUAGE_FAILURE';exit 0}
 `;
  try{fs.writeFileSync(probe,script);const result=spawnSync(process.platform==='win32'?'powershell.exe':'pwsh',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',probe],{encoding:'utf8',timeout:30000,windowsHide:true,env:{...process.env,LANGUAGE_FAILURE_SOURCE:source,LANGUAGE_FAILURE_MODE:mode,LANGUAGE_TEST_SELECTED:language,LANGUAGE_TEST_LEGACY:legacy?'1':'0',LANGUAGE_TEST_UNIX:process.platform==='win32'?'0':'1',TEMP:directory}});
  assert.equal(result.status,0,result.stderr);assert.doesNotMatch(result.stdout+result.stderr,/SECRET_SAS_AND_EXCEPTION|sig=|https:\/\//);
