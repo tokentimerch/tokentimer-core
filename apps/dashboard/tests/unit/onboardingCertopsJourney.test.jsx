@@ -134,6 +134,47 @@ describe('CertOps journey', () => {
     ],
   };
 
+  it('keeps the confirmed stopped issuer installed while a publication request is being persisted', () => {
+    const saved = {
+      objective: 'vault',
+      infrastructure: 'linux',
+      configReviewed: true,
+      chosenAgentId: 'issuer',
+      chosenAgentConfirmed: 'issuer',
+      vaultIssuerAgentId: 'issuer',
+      dryRunJobId: 'checked',
+      vaultPublishRequestKey: 'pending-publication',
+    };
+    saved.installerKey = installerOptionsKey(installerOptionsFor(saved));
+    const run = progress =>
+      planJourney({
+        intent: { goal: 'certops_vault' },
+        capabilities: caps,
+        progress: { certops: progress },
+        reality: {
+          alerts: { smtpConfigured: true },
+          certops: {
+            agents: {
+              live: 0,
+              items: [
+                {
+                  id: 'issuer',
+                  platform: 'linux',
+                  livenessState: 'stale',
+                  commandProfiles: ['certbot'],
+                  declaredCapabilities: VAULT_CAPS,
+                },
+              ],
+            },
+            dryRun: { id: 'checked', status: 'dry_run_complete' },
+          },
+        },
+      }).steps.find(step => step.id === 'certops_agent').status;
+    expect(run(saved)).toBe('done');
+    expect(run({ ...saved, dryRunJobId: 'different' })).not.toBe('done');
+    expect(run({ ...saved, vaultPublishRequestKey: '' })).not.toBe('done');
+  });
+
   it('puts configuration before agent registration for automation', () => {
     const plan = planJourney({
       intent: { goal: 'certops_automate' },
@@ -336,6 +377,7 @@ describe('CertOps journey', () => {
       reality: { alerts: { smtpConfigured: true } },
     });
     expect(plan.blocked).toBeNull();
-    expect(plan.steps.map(s => s.id)).toContain('certops_vault');
+    expect(plan.steps.map(s => s.id)).toContain('certops_material_store');
+    expect(plan.steps.map(s => s.id)).toContain('certops_consumers');
   });
 });

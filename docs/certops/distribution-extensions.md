@@ -1,6 +1,9 @@
 # Distribution providers and Windows IIS consumers
 
 This extends [the distribution operations runbook](wildcard-vault-operations.md).
+The existing onboarding wizard now guides [material-store setup and consumer
+validation](distribution-onboarding-lab.md), including reproducible UI checks
+and a manual customer/API lab walkthrough.
 One ordinary, wildcard or SAN certificate can be published once, then rolled
 out independently to authorized consumers. Sharing a key increases the impact
 of a consumer compromise. Use an explicit distribution group and customer
