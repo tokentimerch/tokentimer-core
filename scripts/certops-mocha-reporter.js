@@ -10,7 +10,7 @@ const crypto=require("node:crypto");
 module.exports = class QualificationReporter {
   constructor(runner) {
     const group=process.env.CERTOPS_INTEGRATION_GROUP || "adcs";
-    const definition=require("../tests/integration/certops-qualification-groups.json")[group];
+    const definition=require("./certops-integration-inventory").groups[group];
     if(!definition)throw new Error("Unknown integration evidence source group");
     const fixtureSources=definition.files.map(file=>({file:`tests/integration/${file}`,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"../tests/integration",file))).digest("hex")}));
     const qualificationEnvironment=require("./certops-stack-reporter").measuredEnvironment();

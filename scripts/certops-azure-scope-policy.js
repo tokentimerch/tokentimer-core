@@ -4,10 +4,27 @@
 const KV = "certops-azure-keyvault-qualification.yml";
 const KV_CLEANUP = "certops-azure-keyvault-janitor.yml";
 const PROVISION = Object.freeze([
-  "certops-enterprise-adcs-qualification.yml",
   KV,
+  "certops-native-issuer-reassignment.yml",
+  "certops-enterprise-adcs-qualification.yml",
+  "certops-enterprise-adcs-hierarchy-qualification.yml",
+  "certops-enterprise-adcs-pending-elapsed.yml",
+  "certops-enterprise-adcs-journal-phase-experiment.yml",
+  "certops-enterprise-adcs-response-loss-experiment.yml",
+  "certops-retention24h-prepare.yml",
+  "certops-adcs-ttl24h-prepare.yml",
+  "certops-retention-cadence-prepare.yml",
 ]);
-const LIFECYCLE = Object.freeze(["certops-adcs-lab-janitor.yml", KV_CLEANUP]);
+const LIFECYCLE = Object.freeze([
+  KV_CLEANUP,
+  "certops-adcs-lab-janitor.yml",
+  "certops-retention24h-finalize.yml",
+  "certops-retention24h-janitor.yml",
+  "certops-adcs-ttl24h-finalize.yml",
+  "certops-adcs-ttl24h-janitor.yml",
+  "certops-retention-cadence-finalize.yml",
+  "certops-retention-cadence-janitor.yml",
+]);
 const MAIN = "github.ref == 'refs/heads/main'";
 const PROVISION_IF = MAIN + " && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'";
 const KEYVAULT_IF =

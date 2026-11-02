@@ -11,7 +11,7 @@ const {createHostGate}=require("../../packages/agent/scripts/host-gate");
 const IDS=["adcs-policy-api-immutable-defaults","adcs-policy-api-bounded-options","adcs-policy-api-invalid-atomic","adcs-policy-api-cancel-preserves-snapshot","adcs-policy-api-cleanup","adcs-policy-api-native-request-id-distinct-from-operator-hint"];
 test("public AD CS enrollment policy bounds and immutable snapshots",{timeout:120000},async t=>{
   const url=process.env.CERTOPS_CSR_API_URL;if(!url&&process.env.CERTOPS_E2E_REQUIRED!=="1"){
-    // skip-reason: no-host - requires isolated authenticated API and PostgreSQL
+    // skip-reason: prerequisite - requires isolated authenticated API and PostgreSQL
     t.skip("Disposable API URL required");return;
   }
   assert.ok(url);const fixture=await createApiFixture(url);let primaryError;

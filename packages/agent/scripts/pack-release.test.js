@@ -203,7 +203,7 @@ describe("pack-release (H10)", () => {
       { cwd: path.resolve(__dirname, ".."), encoding: "utf8" },
     );
     if (ls.status !== 0 || !ls.stdout.trim()) {
-      // skip-reason: no-host - requires a git checkout with tracked installer modes
+      // skip-reason: prerequisite - requires a git checkout with tracked installer modes
       t.skip("not a git checkout");
       return;
     }
@@ -212,7 +212,7 @@ describe("pack-release (H10)", () => {
 
   it("assertExecutableEntries rejects a tarball whose installer lost the exec bit", (t) => {
     if (process.platform === "win32") {
-      // skip-reason: no-host - tar modes are not controllable on win32
+      // skip-reason: platform - tar modes are not controllable on win32
       t.skip("tar modes are not controllable on win32");
       return;
     }

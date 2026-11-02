@@ -1,10 +1,12 @@
-# Customer Vault distribution testing
+# Certificate distribution qualification
 
-Run `certops-distribution-qualification.yml` from trusted main. It uses disposable Docker services rather than Azure and covers ordinary, SAN and wildcard certificate distribution, PostgreSQL state/authorization, Vault delivery, browser journeys and privacy checks.
+Distribution remains outside the shipped agent capability manifest. Passing a
+source-mounted lab is supporting E2E evidence, not production release approval.
+Shared policy: [certificate lifecycle qualification](../../e2e-qualification.md).
 
-The workflow runs only through manual dispatch on main; pushes and pull requests do not start it. Core product CI remains separate.
+Use the trusted workflow inputs to select disposable supporting runs. Core product CI remains separate.
 
-A successful run must execute every required cohort with no missing prerequisites or hidden skips. Sanitized JSON reports identify the candidate and test counts; inspect failed cohort artifacts before rerunning. Private keys and credentials must stay out of console logs and uploaded artifacts.
+## Reproduce the supporting runs
 
 The operator journey exercises workspace approval off: a requester starts a
 rollout, both enrolled consumers complete, and fresh strict TLS matches the

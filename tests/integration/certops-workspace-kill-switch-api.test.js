@@ -476,7 +476,7 @@ describe("CertOps workspace kill-switch API", function () {
   });
 
   it("rejects internal worker credentials from reading or changing settings", async function () {
-    // skip-reason: no-host - INTERNAL_WORKER_KEY is not configured in this
+    // skip-reason: prerequisite - INTERNAL_WORKER_KEY is not configured in this
     // test environment, so the internal-worker-credential path this test
     // exercises cannot be driven end to end here.
     if (!INTERNAL_WORKER_KEY) this.skip();
@@ -517,7 +517,7 @@ describe("CertOps workspace kill-switch API", function () {
   });
 
   it("rejects worker settings key material before the session-user denial", async function () {
-    // skip-reason: no-host - INTERNAL_WORKER_KEY is not configured in this
+    // skip-reason: prerequisite - INTERNAL_WORKER_KEY is not configured in this
     // test environment, so the internal-worker-credential path this test
     // exercises cannot be driven end to end here.
     if (!INTERNAL_WORKER_KEY) this.skip();
@@ -666,7 +666,7 @@ describe("CertOps workspace kill-switch API", function () {
   });
 
   it("keeps a same-request idempotent manual-job replay to one audit", async function () {
-    // skip-reason: no-host - CERTOPS_ENABLED is not set in this test
+    // skip-reason: prerequisite - CERTOPS_ENABLED is not set in this test
     // environment, so the real-PostgreSQL CertOps pause/manual-job path this
     // test exercises cannot be driven end to end here.
     if (!CERTOPS_ENABLED) this.skip();
@@ -768,7 +768,7 @@ describe("CertOps workspace kill-switch API", function () {
   });
 
   it("keeps machine event and evidence ingestion available for pre-existing work while paused", async function () {
-    // skip-reason: no-host - CERTOPS_ENABLED is not set in this test
+    // skip-reason: prerequisite - CERTOPS_ENABLED is not set in this test
     // environment, so the real-PostgreSQL CertOps pause/manual-job path this
     // test exercises cannot be driven end to end here.
     if (!CERTOPS_ENABLED) this.skip();
@@ -898,7 +898,7 @@ describe("CertOps workspace kill-switch API", function () {
   });
 
   it("serializes real PostgreSQL pause and manual-job races in both commit orders", async function () {
-    // skip-reason: no-host - CERTOPS_ENABLED is not set in this test
+    // skip-reason: prerequisite - CERTOPS_ENABLED is not set in this test
     // environment, so the real-PostgreSQL CertOps pause/manual-job path this
     // test exercises cannot be driven end to end here.
     if (!CERTOPS_ENABLED) this.skip();

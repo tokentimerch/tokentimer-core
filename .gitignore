@@ -86,12 +86,17 @@ reports/
 /docs/agents/
 # .scratch is local-only planning/notes space; nothing under it is tracked.
 /.scratch/
-
-# Disposable qualification outputs and browser/Python caches.
+/.qualification-browsers/
 /qualification-results/
+# Qualification collector interpreter cache is local execution output.
+/scripts/__pycache__/
+
 /playwright-report/
+
 /test-results/
+
 __pycache__/
+
 *.pyc
 
 # Default config files the domain discovery tool writes when it runs

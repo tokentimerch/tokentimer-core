@@ -6,7 +6,7 @@ const { spawnSync } = require("node:child_process");
 
 test(
   "native Windows existing-key custody and association reject unsafe reuse without mutation",
-  // skip-reason: no-host — requires an elevated disposable Windows host for isolated machine keys/stores.
+  // skip-reason: platform — requires an elevated disposable Windows host for isolated machine keys/stores.
   { skip: process.env.TT_WINDOWS_MATERIAL_REAL !== "1", timeout: 180000 },
   async (t) => {
     assert.equal(process.platform, "win32");
