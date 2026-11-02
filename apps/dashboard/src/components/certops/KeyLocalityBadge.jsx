@@ -15,9 +15,12 @@ export default function KeyLocalityBadge({ keyMode, keyReference }) {
         ? `${keyReference.slice(0, 45)}...`
         : keyReference
       : fallbackLabel;
-  const tooltip = keyReference
-    ? `${keyReference} (non-secret; the key never leaves its host)`
-    : 'TokenTimer records where the key lives, never the key itself.';
+  const tooltip =
+    keyMode === 'vault-managed'
+      ? 'Shared material stays in the customer-controlled secret store and authorized consumer hosts. TokenTimer holds public metadata and references.'
+      : keyReference
+        ? `${keyReference} (non-secret; the key never leaves its host)`
+        : 'TokenTimer records where the key lives, never the key itself.';
 
   return (
     <Tooltip label={tooltip} hasArrow placement='top' openDelay={250}>

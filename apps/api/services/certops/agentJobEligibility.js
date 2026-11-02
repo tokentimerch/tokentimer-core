@@ -137,9 +137,12 @@ function evaluateAgentJobEligibility({
   if (!supportedOperations.includes(wireActionForOperation(job.operation))) {
     return result(false, "operation_unsupported");
   }
+  const { providerOf, providerCapability } = require("../../../../packages/contracts/certops/material-provider.cjs");
+  const materialProviderCapability = providerCapability(providerOf(job.payload?.publication || job.payload?.materialDeployment));
   const materialCapabilities = job.payload?.publication
-    ? ["material-store-vault-kv2-v1", "certificate-publication-v1", EVIDENCE_CLAIM_BINDING_CAPABILITY]
-    : job.operation === "deploy-from-store" ? ["material-store-vault-kv2-v1", "deploy-from-store-v1", EVIDENCE_CLAIM_BINDING_CAPABILITY] : [];
+    ? [materialProviderCapability, "certificate-publication-v1", EVIDENCE_CLAIM_BINDING_CAPABILITY]
+    : job.operation === "deploy-from-store" ? [materialProviderCapability, "deploy-from-store-v1", EVIDENCE_CLAIM_BINDING_CAPABILITY,
+      ...(agent.platform === "win32" ? ["windows-material-iis-v1", "windows-cert-store-v1", "iis-binding-v1"] : [])] : [];
   if (materialCapabilities.length && (!routing.assignedAgentId || materialCapabilities.some((capability) =>
     !hasFreshCapability({ declaredCapabilities: agent.declaredCapabilities, capabilitiesUpdatedAt: agent.capabilitiesUpdatedAt, capability, env, now })))) {
     return result(false, "material_capability_unavailable");

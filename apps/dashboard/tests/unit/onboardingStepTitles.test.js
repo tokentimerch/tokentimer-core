@@ -22,6 +22,8 @@ const HEADER_FILE = {
   certops_first: 'certopsFinalSteps.jsx',
   certops_adcs: 'certopsAdcsStep.jsx',
   certops_vault: 'certopsFinalSteps.jsx',
+  certops_material_store: 'materialStoreStep.jsx',
+  certops_consumers: 'materialConsumerStep.jsx',
 };
 
 const read = file =>

@@ -32,6 +32,24 @@ test("missing CI ownership and obsolete missing-host tags fail the inventory gat
     assert.ok(require("./generate-skip-inventory.cjs").validateReasons([{...current.sites[0], reason}]).length);
   }
 });
+
+test("distribution provider and native custody skips select their actual executable qualification jobs", () => {
+  const cases = [
+    ["tests/e2e/windows-material-real.test.js", "native IIS", "windows_material_qualification"],
+    ["tests/e2e/windows-material-custody-real.test.js", "native custody", "windows_material_qualification"],
+    ["packages/agent/src/windows-material/pkcs12.test.js", "native PKCS12", "windows_agent_quality"],
+    ["tests/e2e/material-providers-real.test.js", "real KV v2: exact versions", "material_store_compatibility"],
+    ["tests/e2e/material-providers-real.test.js", "real Azure Key Vault Secrets: publication", "lab"],
+  ];
+  for (const [file, name, job] of cases) {
+    const result = generate([{file, name, line: 1, kind: "conditional", reason: "prerequisite"}]);
+    const site = result.sites[0];
+    assert.equal(site.workflowJob, job, file);
+    assert.equal(site.workflowStatus, "file-selected-not-qualified");
+    assert.equal(site.executionStatus, "not-qualified");
+    assert.ok(result.environments[site.environment].capabilities.length > 0);
+  }
+});
 test("new or changed skip prerequisites require mapping regeneration", () => {
   const site = {
     file: "tests/fixture.test.js",

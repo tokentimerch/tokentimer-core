@@ -13,6 +13,7 @@ import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 import { commandProfileFor } from '../../src/components/onboarding/certopsMatrix.js';
 import { realAgent } from './helpers/realAgentPayload.js';
 import { stubOf } from './helpers/heldStepStubs.js';
+import { materialContext } from './materialOnboardingFixtures.js';
 import {
   registerEditionModule,
   resetEditionModules,
@@ -74,6 +75,19 @@ vi.mock('../../src/components/onboarding/certopsFinalSteps.jsx', async () => ({
 vi.mock('../../src/components/onboarding/certopsAdcsStep.jsx', async () => ({
   default: (await import('./helpers/heldStepStubs.js')).stubOf('certops_adcs'),
 }));
+vi.mock('../../src/components/onboarding/materialStoreStep.jsx', async () => ({
+  MaterialStoreStep: (await import('./helpers/heldStepStubs.js')).stubOf(
+    'certops_material_store'
+  ),
+}));
+vi.mock(
+  '../../src/components/onboarding/materialConsumerStep.jsx',
+  async () => ({
+    MaterialConsumerStep: (await import('./helpers/heldStepStubs.js')).stubOf(
+      'certops_consumers'
+    ),
+  })
+);
 vi.mock(
   '../../src/components/onboarding/recipientAndVerifySteps.jsx',
   async () => ({
@@ -376,11 +390,17 @@ describe('a step that finishes by itself stays open until Continue', () => {
     expect(await screen.findByTestId('stub-recipients')).toBeVisible();
   });
 
-  it('keeps the Vault step open when a rollout is verified', async () => {
+  it('keeps the consumer step open when a rollout is verified', async () => {
+    const material = materialContext();
     const profile = commandProfileFor('vault', 'linux');
     seed(
       'certops_vault',
-      { objective: 'vault', infrastructure: 'linux', configReviewed: true },
+      {
+        objective: 'vault',
+        infrastructure: 'linux',
+        configReviewed: true,
+        materialSetup: material.session.progress.certops.materialSetup,
+      },
       {
         agents: {
           live: 1,
@@ -392,18 +412,18 @@ describe('a step that finishes by itself stays open until Continue', () => {
             }),
           ],
         },
-        distribution: { groups: 1, verified: false },
+        distribution: material.summary.certops.distribution,
         dryRun: { status: 'dry_run_complete' },
       }
     );
     mount();
-    await screen.findByTestId('stub-certops_vault');
+    await screen.findByTestId('stub-certops_consumers');
 
-    server.summary.certops.distribution = { groups: 1, verified: true };
-    poll('certops_vault');
+    server.summary.certops.distribution.items[0].verified = true;
+    poll('certops_consumers');
 
     await waitFor(() => expect(continueBar()).not.toBeNull());
-    expect(screen.getByTestId('stub-certops_vault')).toBeVisible();
+    expect(screen.getByTestId('stub-certops_consumers')).toBeVisible();
     clickContinue();
     expect(await screen.findByTestId('stub-recipients')).toBeVisible();
   });

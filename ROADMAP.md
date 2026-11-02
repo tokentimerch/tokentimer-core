@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-02 against main 2fd44c5a (v0.18.2). Other
+Last reviewed: 2026-11-02 against main 5bc9b519 (v0.18.2). Other
 certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
 
 This page is the repository milestone index: what Core takes next, what must
@@ -50,6 +50,9 @@ called stable while they are open.
   for Windows/IIS shared material and provider extensions. Functional
   implementation is separate from remaining fleet/protected qualification;
   neither PR completes every #248 requirement.
+  Provider extensions cover OpenBao KV v2 and Azure Key Vault Secrets exact
+  versions. Azure and Windows/IIS remain subject to independent production
+  qualification; see [implementation and evidence](docs/certops/distribution-extensions-qualification.md).
 - **Shared outbound policy**
   ([#233](https://github.com/tokentimerch/tokentimer-core/issues/233)).
   Wire offline mode and outbound allowlists into API and worker egress.

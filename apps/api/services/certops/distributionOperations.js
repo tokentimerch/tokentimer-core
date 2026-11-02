@@ -23,6 +23,10 @@ async function putBinding({ workspaceId, groupId, bindingId = crypto.randomUUID(
     await material.lockGroup(client, workspaceId, groupId);
     const old = (await client.query(`SELECT * FROM certops_consumer_bindings WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, [workspaceId, bindingId])).rows[0];
     if (old && old.group_id !== groupId) fail("CERTOPS_BINDING_GROUP_IMMUTABLE");
+    if (binding.verificationPolicy === "installed") {
+      const agent = (await client.query("SELECT platform FROM certops_agents WHERE workspace_id=$1 AND id=$2", [workspaceId,binding.agentId])).rows[0];
+      if (agent?.platform === "win32") fail("CERTOPS_DEPLOYMENT_ASSURANCE_MISMATCH",422);
+    }
     // Compare validated typed values while holding the group and binding locks.
     // An identical PUT must preserve approvals, proofs and local authorization.
     const authorization = { assigned_agent_id: binding.agentId, deployment_profile_ref: binding.deploymentProfileRef,
@@ -117,7 +121,7 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
   // Read inactive groups under the same locks solely to retire stale work.
   // Admission/dispatch continue to require an active group and valid version.
   const group = await material.lockGroup(client,workspaceId,groupId,{allowInactive:true});
-  const rollout = (await client.query(`SELECT r.*,v.provider_version,v.fingerprint_sha256,v.valid_to FROM certops_distribution_rollouts r
+  const rollout = (await client.query(`SELECT r.*,v.provider_version,v.provider_version_ref,v.fingerprint_sha256,v.valid_to FROM certops_distribution_rollouts r
     JOIN certops_material_versions v ON v.workspace_id=r.workspace_id AND v.id=r.material_version_id
     WHERE r.workspace_id=$1 AND r.group_id=$2 AND r.id=$3 FOR UPDATE OF r`,[workspaceId,groupId,rolloutId])).rows[0];
   if (!rollout || ["retired","installed","verified"].includes(rollout.state)) return { queued: false,reason:"rollout_inactive" };
@@ -164,7 +168,9 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
       idempotencyKey:`distribution:${rolloutId}:${d.binding_id}`,payload:{ keyMode:"vault-managed",
         target:{ type:"endpoint",reference:d.binding_id },materialDeployment:{ bindingId:d.binding_id,
           rolloutId,groupId,materialVersionId:rollout.material_version_id,materialStoreRef:group.material_store_ref,
-          providerVersion:rollout.provider_version,fingerprintSha256:rollout.fingerprint_sha256,generation:Number(rollout.generation),
+          providerVersion:rollout.provider_version_ref ?? rollout.provider_version,
+          ...(group.material_store_provider && group.material_store_provider !== "vault-kv2" ? {provider:group.material_store_provider} : {}),
+          fingerprintSha256:rollout.fingerprint_sha256,generation:Number(rollout.generation),
           deploymentProfileRef:d.deployment_profile_ref,profileRevision:d.profile_revision,
           authorizationRevision:d.authorization_revision,verificationPolicy:d.verification_policy,
           ...(rollout.verification_only?{verificationOnly:true}:{}) } } });

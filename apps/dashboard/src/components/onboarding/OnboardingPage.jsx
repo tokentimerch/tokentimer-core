@@ -73,7 +73,9 @@ import { NotificationsStep, SmtpStep } from './notificationSteps.jsx';
 import { ConfigStep, ObjectiveStep } from './certopsSetupSteps.jsx';
 import { AgentStep } from './certopsAgentStep.jsx';
 import { ExecutionStep } from './certopsExecutionStep.jsx';
-import { FirstCertificateStep, VaultStep } from './certopsFinalSteps.jsx';
+import { FirstCertificateStep } from './certopsFinalSteps.jsx';
+import { MaterialStoreStep } from './materialStoreStep.jsx';
+import { MaterialConsumerStep } from './materialConsumerStep.jsx';
 import AdcsStep from './certopsAdcsStep.jsx';
 import { resolveApiBaseUrl } from '../../utils/resolveApiBaseUrl.js';
 
@@ -175,7 +177,8 @@ export const STEP_COMPONENTS = {
   certops_execution: ExecutionStep,
   certops_first: FirstCertificateStep,
   certops_adcs: AdcsStep,
-  certops_vault: VaultStep,
+  certops_material_store: MaterialStoreStep,
+  certops_consumers: MaterialConsumerStep,
 };
 
 function journeyInputs(onboarding) {
