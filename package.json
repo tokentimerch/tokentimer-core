@@ -58,6 +58,7 @@
     "check:certops:dns-errors": "node scripts/ci-guards/certops-dns-errors.cjs",
     "check:certops:catalog": "node scripts/certops-qualification-catalog.js docs/certops/qualification-suites.json",
     "check:certops:skip-qualification": "node scripts/certops-skip-qualification.js",
+    "test:e2e:recipient-verification": "node scripts/run-recipient-verification-browser.cjs",
     "test:baseline": "node scripts/run-baseline.js",
     "test:proxy-smoke": "node scripts/proxy-smoke-test.js",
     "test:ci": "pnpm run test:unit && node scripts/run-tests-local.js core",

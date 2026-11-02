@@ -9393,6 +9393,297 @@ paths:
           description: Stale intent, version, generation, period or approval
         '422':
           description: Invalid public intent
+  /api/v1/workspaces/{id}/contacts/{contactId}/verifications/{channel}:
+    post:
+      tags: [Alerts]
+      summary: Invite a contact to confirm a notification channel
+      operationId: inviteRecipientVerification
+      description: >-
+        Requires an admin or workspace_manager membership in this workspace.
+        Email sends a confirmation invitation; WhatsApp returns a share link for
+        the recipient to confirm from their own account. An opted-out destination
+        remains opted out and receives no invitation from this operation.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/recipientContactIdParam"
+        - $ref: "#/components/parameters/recipientChannelParam"
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+      responses:
+        "200":
+          description: Destination opted out; email includes a recipient-initiated resubscribe URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecipientVerificationInvitation"
+        "201":
+          description: WhatsApp invitation pending; share_url must be shared with the recipient
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecipientVerificationInvitation"
+        "202":
+          description: Email confirmation invitation sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecipientVerificationInvitation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Prior verification email dispatch is still sending or uncertain (VERIFICATION_DISPATCH_UNCONFIRMED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Invitation cooldown or rate limit; JSON may include retryAfter in seconds
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Email delivery failed or is uncertain (VERIFICATION_EMAIL_FAILED or VERIFICATION_EMAIL_UNCERTAIN)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Verification URL or recipient verification configuration is unavailable (RECIPIENT_VERIFICATION_UNAVAILABLE)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/contacts/{contactId}/verifications/{channel}/revoke:
+    post:
+      tags: [Alerts]
+      summary: Revoke a contact's notification channel verification
+      operationId: revokeRecipientVerification
+      description: Requires an admin or workspace_manager membership in this workspace.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/recipientContactIdParam"
+        - $ref: "#/components/parameters/recipientChannelParam"
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+      responses:
+        "200":
+          description: Channel verification revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, channel]
+                properties:
+                  status:
+                    type: string
+                    enum: [revoked]
+                  channel:
+                    type: string
+                    enum: [email, whatsapp]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          description: Recipient management request rate limit exceeded
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying.
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /verify/recipient/resubscribe:
+    get:
+      tags: [Alerts]
+      summary: Show the recipient email resubscribe form
+      operationId: getRecipientResubscribeForm
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/RecipientVerificationPage"
+        "429":
+          $ref: "#/components/responses/RecipientVerificationPageRateLimited"
+        "503":
+          $ref: "#/components/responses/RecipientVerificationPageUnavailable"
+    post:
+      tags: [Alerts]
+      summary: Request an email invitation to resubscribe
+      operationId: requestRecipientResubscribe
+      description: >-
+        Returns the same acknowledgement whether or not a matching destination
+        exists. A new invitation does not restore consent until accepted.
+      security: []
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                destination:
+                  type: string
+                  format: email
+                  description: Accepted alias for email when email is absent.
+      responses:
+        "200":
+          $ref: "#/components/responses/RecipientVerificationPage"
+        "429":
+          $ref: "#/components/responses/RecipientVerificationPageRateLimited"
+        "503":
+          $ref: "#/components/responses/RecipientVerificationPageUnavailable"
+  /verify/recipient/done:
+    get:
+      tags: [Alerts]
+      summary: Show the recipient verification result page
+      operationId: getRecipientVerificationResult
+      security: []
+      parameters:
+        - in: query
+          name: result
+          description: accepted or declined; all other values display an invalid result.
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/RecipientVerificationPage"
+        "429":
+          $ref: "#/components/responses/RecipientVerificationPageRateLimited"
+        "503":
+          $ref: "#/components/responses/RecipientVerificationPageUnavailable"
+  /verify/recipient/{token}:
+    get:
+      tags: [Alerts]
+      summary: Review a recipient confirmation invitation
+      operationId: getRecipientVerificationChallenge
+      description: Opening this page does not confirm the destination or consume the challenge.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/tokenParam"
+      responses:
+        "200":
+          $ref: "#/components/responses/RecipientVerificationPage"
+        "404":
+          description: Invalid or unavailable challenge; HTML result page
+          content:
+            text/html:
+              schema:
+                type: string
+        "429":
+          $ref: "#/components/responses/RecipientVerificationPageRateLimited"
+        "503":
+          $ref: "#/components/responses/RecipientVerificationPageUnavailable"
+  /verify/recipient/{token}/accept:
+    post:
+      tags: [Alerts]
+      summary: Accept an email recipient confirmation invitation
+      operationId: acceptRecipientVerification
+      description: Consumes the email challenge and redirects to an accepted or invalid result page.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/tokenParam"
+      responses:
+        "303":
+          $ref: "#/components/responses/RecipientVerificationRedirect"
+        "429":
+          $ref: "#/components/responses/RecipientVerificationPageRateLimited"
+        "503":
+          $ref: "#/components/responses/RecipientVerificationPageUnavailable"
+  /verify/recipient/{token}/decline:
+    post:
+      tags: [Alerts]
+      summary: Decline a recipient confirmation invitation
+      operationId: declineRecipientVerification
+      description: Declines an email or WhatsApp challenge and redirects to a declined or invalid result page.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/tokenParam"
+      responses:
+        "303":
+          $ref: "#/components/responses/RecipientVerificationRedirect"
+        "429":
+          $ref: "#/components/responses/RecipientVerificationPageRateLimited"
+        "503":
+          $ref: "#/components/responses/RecipientVerificationPageUnavailable"
+  /webhooks/twilio/whatsapp/inbound:
+    post:
+      tags: [Alerts]
+      summary: Receive a signed Twilio WhatsApp recipient confirmation
+      operationId: receiveRecipientWhatsAppConfirmation
+      description: >-
+        Verifies the Twilio signature using the configured public URL and form
+        fields before processing the sender, confirmation message and message ID.
+        Callbacks that pass rate limits and signature validation receive an empty
+        TwiML response even when the
+        message cannot confirm a challenge.
+      security: []
+      parameters:
+        - in: header
+          name: X-Twilio-Signature
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                From:
+                  type: string
+                Body:
+                  type: string
+                MessageSid:
+                  type: string
+                SmsSid:
+                  type: string
+                  description: Message identifier fallback when MessageSid is absent.
+              additionalProperties:
+                type: string
+      responses:
+        "200":
+          description: Callback acknowledged
+          content:
+            text/xml:
+              schema:
+                type: string
+                example: <Response></Response>
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          description: Inbound webhook request rate limit exceeded
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying.
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Twilio signing token or public URL is missing (WEBHOOK_NOT_CONFIGURED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     cookieAuth:
@@ -9413,6 +9704,20 @@ components:
       scheme: bearer
       description: Per-agent credential (bearer) issued at registration, used for agent heartbeat, job claim, and result/evidence calls. CSRF-exempt. Not valid for registration.
   parameters:
+    recipientContactIdParam:
+      in: path
+      name: contactId
+      required: true
+      schema:
+        type: string
+        format: uuid
+    recipientChannelParam:
+      in: path
+      name: channel
+      required: true
+      schema:
+        type: string
+        enum: [email, whatsapp]
     csrIdParam:
       in: path
       name: csrId
@@ -9599,6 +9904,36 @@ components:
       schema:
         type: string
   responses:
+    RecipientVerificationPage:
+      description: Recipient verification HTML page
+      content:
+        text/html:
+          schema:
+            type: string
+    RecipientVerificationPageRateLimited:
+      description: Public verification rate limit exceeded
+      headers:
+        Retry-After:
+          description: Delay in seconds before retrying.
+          schema:
+            type: integer
+      content:
+        text/html:
+          schema:
+            type: string
+    RecipientVerificationPageUnavailable:
+      description: Public verification budget service is unavailable
+      content:
+        text/html:
+          schema:
+            type: string
+    RecipientVerificationRedirect:
+      description: Redirect to the accepted, declined or invalid HTML result page
+      headers:
+        Location:
+          schema:
+            type: string
+          description: Relative /verify/recipient/done URL with a result query parameter.
     BadRequest:
       description: Bad request
       content:
@@ -9639,6 +9974,31 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    RecipientVerificationInvitation:
+      type: object
+      required: [status, channel]
+      properties:
+        status:
+          type: string
+          enum: [pending, sent, opted_out]
+        channel:
+          type: string
+          enum: [email, whatsapp]
+        expires_at:
+          type: string
+          format: date-time
+          description: Challenge expiry for pending or sent invitations.
+        share_url:
+          type: string
+          format: uri
+          description: Pending WhatsApp invitation URL for the recipient.
+        code:
+          type: string
+          enum: [RECIPIENT_OPTED_OUT]
+        resubscribe_url:
+          type: string
+          format: uri
+          description: Recipient-initiated resubscribe form for opted-out email destinations.
     AutoSyncMetricPolicy:
       type: object
       properties:
