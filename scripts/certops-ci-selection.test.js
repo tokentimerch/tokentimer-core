@@ -49,7 +49,12 @@ test("selector uses actual candidate diff and fails safely on missing history or
   const scoped=invoke({before,after});assert.equal(scoped.status,0,scoped.stderr);assert.match(scoped.output,/windows=false/);assert.match(scoped.output,/stack=true/);assert.match(scoped.output,new RegExp(`candidate_sha=${after}`));
   for(const event of [{before:"0".repeat(40),after},{before,after,forced:true},{before:"f".repeat(40),after}]){const fallback=invoke(event);assert.equal(fallback.status,0,fallback.stderr);assert.match(fallback.output,/windows=true/);assert.match(fallback.output,/stack=true/);}
   for(const overrides of [{GITHUB_REF:"refs/pull/123/merge"},{GITHUB_SHA:before},{GITHUB_EVENT_NAME:"workflow_dispatch",CERTOPS_CI_LANE:"all || true"}]){const result=invoke({before,after},overrides);assert.notEqual(result.status,0);assert.equal(result.output,"");}
- }finally{fs.rmSync(root,{recursive:true});}
+ }finally{
+  assert.equal(path.dirname(path.resolve(root)),path.resolve(os.tmpdir()));
+  assert.match(path.basename(root),/^certops-ci-selector-[A-Za-z0-9]{6}$/);
+  // Hosted Windows can briefly retain filesystem handles after Git exits.
+  fs.rmSync(root,{recursive:true,maxRetries:5,retryDelay:100});
+ }
 });
 
 // CertOps UI authority changes require real component regressions, while native
