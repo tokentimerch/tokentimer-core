@@ -2,6 +2,7 @@
 
 const crypto = require("crypto");
 const { isValidEmail } = require("./emailCheck");
+const { safeDeliveryKey, deliveryData, deliveryChannelNames } = require("../alert-eligibility/deliveryData");
 
 const CONSENT_POLICY_VERSION = "2026-10-25";
 const DEFAULT_DEPLOYMENT = "self-hosted";
@@ -444,7 +445,8 @@ function recipientIdentity(channel, value) {
 }
 
 function recipientChannelOutcome(recipients) {
-  const entries = Object.entries(recipients || {}).filter(([, value]) => value && value.state);
+  const entries = Object.entries(deliveryData(recipients) || {})
+    .filter(([, value]) => value && value.state);
   const required = entries.filter(([, value]) => value.state !== "excluded");
   const outcome = { recipients: Object.fromEntries(entries) };
   if (required.some(([, value]) => value.state === "unavailable")) {
@@ -563,14 +565,14 @@ function parseDeliveryLedger(value) {
     }
   }
   if (Array.isArray(parsed)) {
-    return { version: 0, retry: parsed.map(String), required: [], outcomes: {}, legacy: true };
+    return { version: 0, retry: deliveryChannelNames(parsed), required: [], outcomes: {}, legacy: true };
   }
   if (parsed && typeof parsed === "object" && Number(parsed.version) === 1) {
     return {
       version: 1,
-      retry: Array.isArray(parsed.retry) ? parsed.retry.map(String) : [],
-      required: Array.isArray(parsed.required) ? parsed.required.map(String) : [],
-      outcomes: parsed.outcomes && typeof parsed.outcomes === "object" ? parsed.outcomes : {},
+      retry: deliveryChannelNames(parsed.retry),
+      required: deliveryChannelNames(parsed.required),
+      outcomes: parsed.outcomes && typeof parsed.outcomes === "object" ? deliveryData(parsed.outcomes) : {},
       legacy: false,
     };
   }
@@ -578,13 +580,14 @@ function parseDeliveryLedger(value) {
 }
 
 function foldDeliveryLog(rows) {
-  const outcomes = {};
+  const outcomes = Object.create(null);
   for (const row of Array.isArray(rows) ? rows : []) {
     const channel = String(row && row.channel || "");
-    if (!channel) continue;
+    if (!channel || !safeDeliveryKey(channel)) continue;
     const current = outcomes[channel] || { state: "failed", terminal: false, endpoints: {} };
     const meta = metadataObject(row.metadata);
     if (channel === "webhooks" && meta.urlHash) {
+      if (!safeDeliveryKey(String(meta.urlHash))) continue;
       if (row.status === "success") current.endpoints[meta.urlHash] = "sent";
       else if (row.status === "blocked" || meta.terminal === true || meta.terminal === "true") {
         current.endpoints[meta.urlHash] = "permanent";
@@ -610,7 +613,7 @@ function foldDeliveryLog(rows) {
       // durable ledger already retains the actual recipients awaiting retry.
       const key = recipientIdentity(channel, meta.recipient || meta.destination);
       const code = row.error_message || meta.code || null;
-      if (!key) {
+      if (!key || !safeDeliveryKey(key)) {
         // Retain legacy terminal eligibility diagnostics without inventing a
         // recipient that a later successful delivery could never clear.
         if (ELIGIBILITY_CODES.has(code) && !current.recipients) {
@@ -647,7 +650,7 @@ function foldDeliveryLog(rows) {
     }
     outcomes[channel] = current;
   }
-  return outcomes;
+  return Object.fromEntries(Object.entries(outcomes));
 }
 
 function isEligibilityOutcome(outcome) {
@@ -706,11 +709,11 @@ function stableJson(value) {
 }
 
 function reconcileDeliveryChannels(stored, configuredChannels) {
-  const live = Array.isArray(configuredChannels) ? configuredChannels.map(String).filter(Boolean) : [];
+  const live = deliveryChannelNames(configuredChannels);
   const ledger = parseDeliveryLedger(stored);
   if (ledger.legacy) {
     const storedList = Array.isArray(stored)
-      ? stored.map(String)
+      ? ledger.retry
       : (typeof stored === "string" ? ledger.retry : null);
     let next = live.slice();
     if (Array.isArray(storedList) && storedList.length > 0) {
@@ -723,9 +726,9 @@ function reconcileDeliveryChannels(stored, configuredChannels) {
       changed: !Array.isArray(storedList) || !sameStringList(next, storedList),
     };
   }
-  const outcomes = {};
+  const outcomes = Object.create(null);
   for (const channel of live) {
-    if (ledger.outcomes[channel]) outcomes[channel] = ledger.outcomes[channel];
+    if (Object.hasOwn(ledger.outcomes, channel)) outcomes[channel] = ledger.outcomes[channel];
   }
   const retry = [];
   for (const channel of live) {
@@ -737,7 +740,7 @@ function reconcileDeliveryChannels(stored, configuredChannels) {
     if (outcome.state === "sent" || outcome.terminal === true || outcome.state === "blocked") continue;
     retry.push(channel);
   }
-  const next = { version: 1, retry, required: live.slice(), outcomes };
+  const next = { version: 1, retry, required: live.slice(), outcomes: Object.fromEntries(Object.entries(outcomes)) };
   return {
     format: "ledger",
     channels: next,
@@ -763,7 +766,7 @@ function planManualRetry(stored, requestedChannel) {
     if (!eligible.includes(channel)) return { ok: false, code: "CHANNEL_NOT_ELIGIBLE", eligible, format: "legacy" };
     return { ok: true, channel, eligible, format: "legacy", channels: [channel] };
   }
-  const outcomes = JSON.parse(JSON.stringify(ledger.outcomes || {}));
+  const outcomes = Object.assign(Object.create(null), ledger.outcomes);
   const known = ledger.required.length ? ledger.required.slice() : Object.keys(outcomes);
   const eligible = ledger.retry.filter((channel) => {
     const outcome = outcomes[channel];
@@ -804,7 +807,7 @@ function planManualRetry(stored, requestedChannel) {
       version: 1,
       retry: [channel],
       required: known.includes(channel) ? known : [...known, channel],
-      outcomes,
+      outcomes: Object.fromEntries(Object.entries(outcomes)),
     },
   };
 }
@@ -844,7 +847,9 @@ function requiredRecipientDelivery({ channel, recipients, history, eligibility =
   for (const recipient of Array.isArray(recipients) ? recipients : []) {
     const key = normalize(recipient);
     if (!key) continue;
-    const decision = eligibility[key] || eligibility[recipient] || null;
+    if (!safeDeliveryKey(key)) continue;
+    const decision = (Object.hasOwn(eligibility, key) ? eligibility[key] : null)
+      || (Object.hasOwn(eligibility, recipient) ? eligibility[recipient] : null);
     const code = decision && decision.code;
     if (code === TEMPORARY_VERIFICATION_CODE) {
       unavailable = true;
@@ -948,7 +953,7 @@ function outcomeFromAttempt(row) {
   const eligibility = row.eligibilityTerminal === true;
   const provider = Boolean(row.terminal) && !eligibility;
   if (row.success === true) {
-    return { state: "sent", terminal: true, code: null, reason: null, endpoints: row.endpoints || {} };
+    return { state: "sent", terminal: true, code: null, reason: null, endpoints: deliveryData(row.endpoints) || {} };
   }
   if (row.partialSuccess === true) {
     const terminal = Boolean(row.terminal || eligibility);
@@ -957,7 +962,7 @@ function outcomeFromAttempt(row) {
       terminal,
       code: row.errorCode || null,
       reason: eligibility ? "eligibility" : (terminal ? "provider" : null),
-      endpoints: row.endpoints || {},
+      endpoints: deliveryData(row.endpoints) || {},
     };
   }
   const terminal = Boolean(eligibility || row.terminal);
@@ -966,13 +971,13 @@ function outcomeFromAttempt(row) {
     terminal,
     reason: eligibility ? "eligibility" : (provider ? "provider" : null),
     code: row.errorCode || null,
-    endpoints: row.endpoints || {},
+    endpoints: deliveryData(row.endpoints) || {},
   };
 }
 
 function mergeDeliveryAttempt({ prior, logRows, attempted, liveChannels } = {}) {
   const ledger = parseDeliveryLedger(prior);
-  const outcomes = { ...ledger.outcomes };
+  const outcomes = Object.assign(Object.create(null), ledger.outcomes);
   for (const [channel, logged] of Object.entries(foldDeliveryLog(logRows))) {
     outcomes[channel] = logged.recipients
       ? recipientChannelOutcome({ ...outcomes[channel]?.recipients, ...logged.recipients })
@@ -981,6 +986,7 @@ function mergeDeliveryAttempt({ prior, logRows, attempted, liveChannels } = {}) 
   for (const row of Array.isArray(attempted) ? attempted : []) {
     if (!row || !row.channel) continue;
     const channel = String(row.channel);
+    if (!safeDeliveryKey(channel)) continue;
     const fromAttempt = outcomeFromAttempt(row);
     const previous = outcomes[channel];
     if (fromAttempt.recipients) {
@@ -1005,16 +1011,16 @@ function mergeDeliveryAttempt({ prior, logRows, attempted, liveChannels } = {}) 
     outcomes.webhooks = { ...outcomes.webhooks, retryGeneration: webhookGeneration };
     delete outcomes.webhooks.reopened;
   }
-  const configured = Array.isArray(liveChannels) ? liveChannels.map(String).filter(Boolean) : [];
+  const configured = deliveryChannelNames(liveChannels);
   const required = configured.length ? configured : Object.keys(outcomes);
   const results = required.map((channel) => resultFromOutcome(channel, outcomes[channel]));
   const disposition = queueDeliveryOutcome(results);
-  const stored = {};
+  const stored = Object.create(null);
   for (const channel of required) {
     if (outcomes[channel]) stored[channel] = outcomes[channel];
   }
   return {
-    ledger: { version: 1, retry: disposition.channels, required, outcomes: stored },
+    ledger: { version: 1, retry: disposition.channels, required, outcomes: Object.fromEntries(Object.entries(stored)) },
     outcome: disposition,
     results,
   };
@@ -1964,7 +1970,8 @@ async function attachVerification(db, workspaceId, contacts) {
   }
   const byContact = new Map();
   for (const row of rows) {
-    if (!byContact.has(String(row.contact_id))) byContact.set(String(row.contact_id), {});
+    if (row.channel !== "email" && row.channel !== "whatsapp") continue;
+    if (!byContact.has(String(row.contact_id))) byContact.set(String(row.contact_id), Object.create(null));
     byContact.get(String(row.contact_id))[row.channel] = {
       status: row.status,
       verified_at: row.verified_at,
@@ -1974,7 +1981,8 @@ async function attachVerification(db, workspaceId, contacts) {
   }
   const challengeByContact = new Map();
   for (const row of challenges) {
-    if (!challengeByContact.has(String(row.contact_id))) challengeByContact.set(String(row.contact_id), {});
+    if (row.channel !== "email" && row.channel !== "whatsapp") continue;
+    if (!challengeByContact.has(String(row.contact_id))) challengeByContact.set(String(row.contact_id), Object.create(null));
     challengeByContact.get(String(row.contact_id))[row.channel] = {
       expires_at: row.expires_at,
       destination_normalized: row.destination_normalized,
@@ -1993,7 +2001,7 @@ async function attachVerification(db, workspaceId, contacts) {
         : null;
       if (!storedMatches) return { status: "pending", invitation };
       return {
-        status: storedRow.status || "pending",
+        status: Object.hasOwn(empty.email, storedRow.status) ? storedRow.status : "pending",
         verified_at: storedRow.verified_at || null,
         consent_at: storedRow.consent_at || null,
         invitation,

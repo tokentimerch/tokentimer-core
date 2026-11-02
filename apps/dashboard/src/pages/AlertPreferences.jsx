@@ -949,6 +949,8 @@ export default function AlertPreferences({
   const [groupWeeklyDigestWebhooks, setGroupWeeklyDigestWebhooks] =
     useState(false);
   const [contacts, setContacts] = useState([]);
+  const [contactsLoadError, setContactsLoadError] = useState(false);
+  const [refreshingContacts, setRefreshingContacts] = useState(false);
   const [recipientVerificationMode, setRecipientVerificationMode] =
     useState(null);
   const [contactSortConfig, setContactSortConfig] = useState({
@@ -1393,6 +1395,7 @@ export default function AlertPreferences({
           applyContactList(contactsRes?.data);
         } catch (_) {
           setContacts([]);
+          setContactsLoadError(true);
           if (groupCreationOnly) setGroupLoadError(true);
         }
         setEmailEnabled(data.email_alerts_enabled !== false);
@@ -2670,13 +2673,21 @@ export default function AlertPreferences({
 
   async function refreshContacts() {
     if (!workspaceId) return;
-    const refreshed = await apiClient.get(
-      `/api/v1/workspaces/${workspaceId}/contacts`
-    );
-    applyContactList(refreshed?.data);
+    setRefreshingContacts(true);
+    try {
+      const refreshed = await apiClient.get(
+        `/api/v1/workspaces/${workspaceId}/contacts`
+      );
+      applyContactList(refreshed?.data);
+    } catch (_) {
+      setContactsLoadError(true);
+    } finally {
+      setRefreshingContacts(false);
+    }
   }
 
   function applyContactList(data) {
+    setContactsLoadError(false);
     setContacts(Array.isArray(data?.items) ? data.items : []);
     const mode = data?.verification_summary?.mode;
     if (mode === 'enforce' || mode === 'shadow' || mode === 'off') {
@@ -3279,20 +3290,47 @@ export default function AlertPreferences({
                 description={verificationIntro(recipientVerificationMode)}
                 muted={bodySecondary}
                 action={
-                  !isViewer ? (
-                    <DashboardActionButton
+                  <HStack>
+                    <Button
                       size='sm'
-                      colorScheme='blue'
-                      onClick={onAddContactOpen}
-                      isDisabled={!workspaceId}
-                      data-tour='preferences-contacts-add-trigger'
+                      variant='outline'
+                      onClick={refreshContacts}
+                      isLoading={refreshingContacts}
+                      isDisabled={!workspaceId || loading}
                     >
-                      Add contact
-                    </DashboardActionButton>
-                  ) : null
+                      Refresh contacts
+                    </Button>
+                    {!isViewer ? (
+                      <DashboardActionButton
+                        size='sm'
+                        colorScheme='blue'
+                        onClick={onAddContactOpen}
+                        isDisabled={!workspaceId}
+                        data-tour='preferences-contacts-add-trigger'
+                      >
+                        Add contact
+                      </DashboardActionButton>
+                    ) : null}
+                  </HStack>
                 }
               />
               <VStack align='stretch' spacing={4}>
+                {contactsLoadError && (
+                  <Alert status='error' borderRadius='md'>
+                    <AlertIcon />
+                    <AlertDescription>
+                      Contacts and confirmation status could not be loaded.
+                    </AlertDescription>
+                    <Button
+                      size='sm'
+                      ml='auto'
+                      onClick={refreshContacts}
+                      isLoading={refreshingContacts}
+                    >
+                      Retry contacts
+                    </Button>
+                  </Alert>
+                )}
                 {isViewer && (
                   <Alert status='info' borderRadius='md'>
                     <AlertIcon />
@@ -3303,7 +3341,10 @@ export default function AlertPreferences({
                   </Alert>
                 )}
 
-                <Box data-tour='preferences-contacts-list'>
+                <Box
+                  data-tour='preferences-contacts-list'
+                  hidden={contactsLoadError && contacts.length === 0}
+                >
                   <Box display={{ base: 'block', md: 'none' }}>
                     {contacts.length === 0 ? (
                       <Text color={bodySecondary} fontSize='sm'>

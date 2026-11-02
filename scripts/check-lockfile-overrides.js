@@ -16,6 +16,7 @@ const pkgPath = path.join(repoRoot, "package.json");
 // name -> { major: expected version } ; major "*" means any major.
 // Keep in sync with the overrides block in pnpm-workspace.yaml.
 const REQUIRED_PINS = {
+  glob: { 9: "14.0.2", 10: "14.0.2", 11: "14.0.2", 12: "14.0.2", 13: "14.0.2", 14: "14.0.2" },
   tar: { "*": "7.5.7" },
   "fast-xml-parser": { "*": "5.7.3" },
   minimatch: { "*": "11.0.1" },

@@ -1,0 +1,15 @@
+services:
+  postgres:
+    extends:
+      file: ../../deploy/compose/docker-compose.postgres.yml
+      service: postgres
+    container_name: tt-recipient-browser-postgres
+    ports: !override
+      - "127.0.0.1:${DB_PORT:-54339}:5432"
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports:
+      - "127.0.0.1:11025:1025"
+      - "127.0.0.1:18025:8025"
+volumes:
+  postgres_data:
