@@ -56,8 +56,9 @@ failure; use configuration run history to investigate individual connections.
 connections. Scope freshness and failure alerts to values greater than zero so
 unused providers and disabled or deleted connections do not page operators.
 Apply the opt-in `deploy/helm/examples/values-auto-sync-alerts.yaml` after your
-normal values, or load `deploy/prometheus/auto-sync.rules.yaml` in standalone
-Prometheus. Use a unique `installation` label per database, shared by its replicas;
+normal values. For standalone Prometheus, extract its
+`monitoring.prometheusRules.groups` into a rule file under the top-level `groups`
+key. Use a unique `installation` label per database, shared by its replicas;
 match Prometheus Operator selectors and check target discovery/rule loading.
 
 The creation alert detects rolling 15-minute activity, not one notification per
