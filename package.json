@@ -51,6 +51,7 @@
     "test:quick": "pnpm exec mocha tests/integration/endpoint-monitor.test.js tests/integration/endpoint-health-alerts.test.js --timeout 30000 --exit",
     "test:contracts": "node --test tests/contract/**/*.test.js",
     "test:e2e:agent": "node --test tests/e2e/certops-agent-e2e.test.js",
+    "test:e2e:recipient-verification": "node scripts/run-recipient-verification-browser.cjs",
     "test:baseline": "node scripts/run-baseline.js",
     "test:proxy-smoke": "node scripts/proxy-smoke-test.js",
     "test:ci": "pnpm run test:unit && node scripts/run-tests-local.js core",

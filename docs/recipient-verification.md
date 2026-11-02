@@ -73,6 +73,8 @@ RECIPIENT_VERIFICATION_MODE=enforce
 
 ## Monitoring
 
+See [browser validation and reproduction](recipient-verification-validation.md) for the executed UI/API scenarios, security review, local test command and provider limitations.
+
 - Audit actions: `RECIPIENT_VERIFICATION_INVITED`, `RECIPIENT_VERIFICATION_RATE_LIMITED`, `RECIPIENT_VERIFICATION_REVOKED`, `RECIPIENT_VERIFICATION_RESUBSCRIBE_REQUIRED`, `RECIPIENT_WHATSAPP_CONFIRMED`.
 - Worker log `recipient-verification-shadow` while shadow mode is on.
 - Operational notification type `delivery_unverified_recipients` when an enforced alert has no eligible recipient.

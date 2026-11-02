@@ -569,6 +569,24 @@ describe("recipient verification", () => {
     assert.equal(verification.normalizePhone("00123").ok, false);
   });
 
+  it("maps all 256 random byte values uniformly to the 32-symbol WhatsApp alphabet", async (t) => {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    assert.equal(new Set(alphabet).size, 32);
+    const original = crypto.randomBytes;
+    let byte = 0;
+    t.mock.method(crypto, "randomBytes", (size) => size === 10 ? Buffer.alloc(size, byte) : original(size));
+    const counts = new Map([...alphabet].map((symbol) => [symbol, 0]));
+    for (byte = 0; byte < 256; byte += 1) {
+      const store = createStore();
+      seedContact(store);
+      await verification.createInvitation({ pool: store.pool, workspaceId: "ws-1", contactId: "contact-1", channel: "whatsapp", actorUserId: 7 });
+      const code = verification.openCode(store.state.challenges[0].code_ciphertext);
+      assert.equal(code, alphabet[byte & 31].repeat(10));
+      counts.set(code[0], counts.get(code[0]) + 1);
+    }
+    assert.deepEqual([...counts.values()], Array(32).fill(8));
+  });
+
   it("classifies account mail separately from workspace notifications", () => {
     assert.equal(verification.DELIVERY_POLICIES.password_reset, "platform_transactional");
     assert.equal(verification.DELIVERY_POLICIES.account_verification, "platform_transactional");
