@@ -16,7 +16,7 @@ import { DetailsSection, StatusPanel } from './panels.jsx';
 import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
 import { buildVaultPublishJob, buildVaultPolicies } from './certopsConfig.js';
 import { createJob } from '../certops/certopsJobsApi.js';
-import { distributionApi } from '../certops/distributionApi.js';
+import { retryDeployment as retryPublication } from './vaultGuideApi.js';
 import {
   ApprovalPolicyNote,
   ApprovalWaitPanel,
@@ -192,7 +192,7 @@ function MaterialStoreForm({ ctx }) {
         observed.job?.attemptCount >= 3
       )
         return;
-      await distributionApi.retry(ctx.workspaceId, jobId);
+      await retryPublication(ctx.workspaceId, jobId);
       setRetryReviewed(false);
       setJobRefresh(index => index + 1);
       await ctx.refresh();

@@ -8,7 +8,7 @@ import {
 } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MaterialStoreStep } from '../../src/components/onboarding/materialStoreStep.jsx';
-import { distributionApi } from '../../src/components/certops/distributionApi.js';
+import { retryDeployment as retryPublication } from '../../src/components/onboarding/vaultGuideApi.js';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 import {
   createJob,
@@ -23,8 +23,9 @@ vi.mock('../../src/components/certops/certopsJobsApi.js', () => ({
   createJob: vi.fn(),
   getJob: vi.fn(),
 }));
-vi.mock('../../src/components/certops/distributionApi.js', () => ({
-  distributionApi: { retry: vi.fn() },
+vi.mock('../../src/components/onboarding/vaultGuideApi.js', async original => ({
+  ...(await original()),
+  retryDeployment: vi.fn(),
 }));
 vi.mock('../../src/components/onboarding/JobActivity.jsx', () => ({
   default: ({ title }) => <div>{title}</div>,
@@ -99,7 +100,7 @@ describe('Configure material store', () => {
         expect(button).toBeDisabled();
         fireEvent.click(button);
       }
-      expect(distributionApi.retry).not.toHaveBeenCalled();
+      expect(retryPublication).not.toHaveBeenCalled();
       expect(createJob).not.toHaveBeenCalled();
     }
   );
@@ -123,7 +124,7 @@ describe('Configure material store', () => {
               mode: 'dry_run',
             },
     }));
-    distributionApi.retry.mockImplementation(async () => {
+    retryPublication.mockImplementation(async () => {
       retried = true;
       return { jobId: 'publication-a', status: 'pending' };
     });
@@ -140,7 +141,7 @@ describe('Configure material store', () => {
     );
     fireEvent.click(button);
     await waitFor(() =>
-      expect(distributionApi.retry).toHaveBeenCalledExactlyOnceWith(
+      expect(retryPublication).toHaveBeenCalledExactlyOnceWith(
         ctx.workspaceId,
         'publication-a'
       )
@@ -173,7 +174,7 @@ describe('Configure material store', () => {
           hidden: true,
         })
       ).not.toBeInTheDocument();
-      expect(distributionApi.retry).not.toHaveBeenCalled();
+      expect(retryPublication).not.toHaveBeenCalled();
     }
   );
   it('allows stopped-issuer preparation only after its observed signed check, retaining static requirements', async () => {
