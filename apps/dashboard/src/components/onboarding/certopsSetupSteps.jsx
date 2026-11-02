@@ -95,7 +95,7 @@ const BEFORE_YOU_START = {
   ],
   vault: [
     ...DNS_PREREQUISITES,
-    'A HashiCorp Vault server with a KV v2 mount, and two Linux servers: one that issues the certificate and one that installs it.',
+    'An HTTPS Vault or OpenBao server with a KV v2 mount, and two Linux servers: one that issues the certificate and one that installs it.',
     STAGING_WARNING,
   ],
   adcs: [
@@ -151,6 +151,12 @@ export function ObjectiveStep({ ctx }) {
     const key = pickKey(ctx.session.intent?.goal, o.id);
     return {
       ...o,
+      ...(objective === 'vault' && o.id === 'linux'
+        ? {
+            detail:
+              'systemd, Node.js 22 or 24; web server only for service activation',
+          }
+        : {}),
       candidate: isCandidatePick(key),
       hint: pickHint(key),
     };
