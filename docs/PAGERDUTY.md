@@ -13,8 +13,15 @@ identity. Retries and later threshold notifications reuse that episode; they do
 not open another incident. A successfully accepted trigger is not sent again for
 each threshold, preserving the responder's workflow and acknowledgment.
 
-Acknowledge incidents inside PagerDuty. ACK is not synchronized into TokenTimer,
-and TokenTimer does not send acknowledge events. The delivery worker periodically
+In **Alerting and alert history**, workspace managers and admins can request
+**Acknowledge**. **Resolve** requires confirmation and a reason; it closes that
+alert and suppresses later thresholds in the same expiration cycle without
+changing the asset expiration. Requests are audited and queued; the UI distinguishes
+queued actions from provider acceptance. Failed sends remain pending or show an
+exhausted retry budget. After correcting an ACK delivery error, **Acknowledge**
+can request another bounded attempt; previous audit and delivery history remain.
+A changed expiration starts a new notification cycle.
+The delivery worker periodically
 reevaluates active incidents, including when its ordinary alert queue is empty.
 When recovery is established, it sends:
 
@@ -100,13 +107,23 @@ historically triggered destination after its groups are removed.
 The ledger stores a workspace-scoped fingerprint of the original endpoint and
 routing key, never another plaintext copy of credentials. At dispatch it finds
 that exact destination in the workspace's current webhook configuration. A
-renamed configuration with the same endpoint/key works. A removed configuration,
+renamed configuration with the same endpoint/key works. Renaming in alert preferences
+also updates contact-group references atomically. Groups with an older missing
+webhook display an unavailable selection that can be removed. A removed configuration,
 changed URL, or rotated key leaves `original_destination_unavailable`; the
 worker never substitutes another integration. Restore the original valid
 destination if it is still usable, or reconcile the old incident in PagerDuty.
-Deleting an asset, revoking a certificate or stopping monitoring does not prove
-renewal and does not send a resolve. Deleted assets retain a historical anchor
+Deleting an asset or stopping monitoring does not prove renewal and does not send
+a resolve. Confirmed managed-certificate retirement follows the recovery rule above.
+Deleted assets retain a historical anchor
 and `asset_unavailable`. Workspace deletion erases its lifecycle records.
+
+ACK and Resolve use the existing Events routing key. No REST API key is accepted
+or stored, and no direct PagerDuty incident link or remote-status lookup is shown.
+The UI reports queued actions and Events API acceptance; inspect PagerDuty for its
+current incident status. Grouped incidents can remain open for other alerts.
+Reasons remain in audit/delivery history and the resolve payload, rather than
+separate PagerDuty Notes comments.
 
 Incidents triggered before the PagerDuty lifecycle migration have no recoverable correlation key.
 They are not backfilled and are not automatically resolved. Resolve those
@@ -245,9 +262,10 @@ date reverted entirely between sweeps is not treated as an observed recovery.
 
 Prefer an Events API v2 integration tied directly to the intended service. If
 using Event Orchestration, ensure trigger and resolve events route to that same
-service and preserve `dedup_key`. A resolve event has only routing key, action
-and correlation key; rules depending on trigger-only summary/custom details
-must explicitly accommodate it. Rules that rewrite event actions, suppress
+service and preserve `dedup_key`. ACK and resolve events target the original
+correlation key; resolve payloads explain the closure reason rather than repeat
+the original expiration details. Rules depending on trigger-only details must
+accommodate those actions. Rules that rewrite event actions, suppress
 triggers, change correlation keys or route resolves elsewhere can prevent
 recovery even when Events API accepts the request. See
 [PagerDuty's routing and deduplication guidance](https://docs.pagerduty.com/ai-automation/aiops/event-orchestration).
@@ -255,8 +273,8 @@ recovery even when Events API accepts the request. See
 ## Edition compatibility
 
 This implementation is Core agnostic and adds no plan conditionals or schema
-changes to webhook configuration. Cloud/Enterprise rebases must carry migration
-92 and 93, the new worker modules, delivery-worker's lifecycle dispatch/drain hooks,
+changes to webhook configuration. Cloud/Enterprise rebases must carry migrations
+92–95, the new worker modules, delivery-worker's lifecycle dispatch/drain hooks,
 the shared legacy-workspace and delivery-evidence helpers, operational notification
 reconciliation, and alertQueue's scoped retry CTEs into any overridden counterparts.
 Apply API migrations before upgraded workers start. Preserve edition-owned entitlement,
@@ -266,8 +284,9 @@ automatically update independently pinned edition repositories.
 ## Migration 92 and preview-version compatibility
 
 PagerDuty uses `apps/api/migrations/092-pagerduty-incident-lifecycle.sql`.
-Migration 93 adds the durable resolution reason; apply both before starting
-updated workers. Existing episodes retain their original correlation keys.
+Migration 93 adds the durable resolution reason, 94 adds audited operator actions,
+and 95 removes the unpublished REST lookup credential storage. Apply all before
+starting updated workers. Existing episodes retain their original correlation keys.
 Released migration 79 is `auto_sync_provider_stats`; migration 80 is
 `auto_sync_run_metrics`; released migration 81 is `auto_sync_metric_labels`; migration 82 is
 `auto_sync_system_metrics`.

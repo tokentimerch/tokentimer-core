@@ -12,6 +12,10 @@ import TokenDetailModal from '../../src/components/TokenDetailModal.jsx';
 import { TOKEN_CATEGORIES } from '../../src/constants/tokenCategories.js';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
+vi.mock('../../src/components/PagerDutyIncidentActions.jsx', () => ({
+  default: () => null,
+}));
+
 const { updateTokenMock, getAlertTimelineMock } = vi.hoisted(() => ({
   updateTokenMock: vi.fn(),
   getAlertTimelineMock: vi.fn(),

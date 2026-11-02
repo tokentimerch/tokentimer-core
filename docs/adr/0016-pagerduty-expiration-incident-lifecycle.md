@@ -90,15 +90,18 @@ them. Expiration writes originate in multiple APIs and workers.
 - Current group membership as delivery evidence: cannot prove historical receipt
   and can silently send resolves to another integration.
 - API-specific recovery hooks: miss provider imports and direct worker writes.
-- PagerDuty REST polling/inbound ACK synchronization: adds credentials and
-  infrastructure outside expiration lifecycle scope.
+- PagerDuty REST lookup/polling or inbound ACK synchronization: adds credentials
+  or infrastructure beyond the existing Events integration.
 - Exactly-once HTTP: cannot be guaranteed across an external send and local
   commit. Provider correlation plus explicit uncertainty is the honest boundary.
 
 ## Consequences
 
 The existing Compose and Helm delivery paths support automatic recovery without
-new services or permissions. ACK remains in PagerDuty. Missing original
+new services. Workspace managers can queue audited ACK/Resolve actions through
+the same Events routing key. Manual resolution records its reason and suppresses
+thresholds until the expiration changes. No REST credentials, incident URL lookup
+or remote-status synchronization are provided. Missing original
 credentials and unprovable acceptance require operator action. Event
 Orchestration must route minimal resolves consistently with triggers. See
 [PagerDuty operations and compatibility](../PAGERDUTY.md) for deployment, retries,

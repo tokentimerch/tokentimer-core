@@ -341,6 +341,12 @@ export async function enqueuePagerDutyIncident(client, { alert, webhook }) {
         AND aq.alert_key LIKE 'token_expiry:%' AND aq.alert_key NOT LIKE '%:previous_expiration:%'
         AND aq.expiration_snapshot = t.expiration
         AND aq.status IN ('pending','failed','partial')
+        AND NOT EXISTS (
+          SELECT 1 FROM pagerduty_incidents closed
+          WHERE closed.workspace_id=$2 AND closed.token_id_snapshot=$3 AND closed.destination_id=$4
+            AND closed.resolution_reason='manual_resolve' AND closed.state IN ('resolve_pending','resolved')
+            AND closed.manual_suppression_active
+        )
      ON CONFLICT (workspace_id, token_id_snapshot, destination_id)
        WHERE state IN ('trigger_pending','open')
      DO UPDATE SET risk_threshold_days = GREATEST(pagerduty_incidents.risk_threshold_days,
@@ -359,6 +365,14 @@ export async function enqueuePagerDutyIncident(client, { alert, webhook }) {
     ],
   );
   if (result.rows[0]) return result.rows[0];
+  const manuallyClosed = await client.query(
+    `SELECT 1 FROM pagerduty_incidents p
+    WHERE p.workspace_id=$1 AND p.token_id_snapshot=$2 AND p.destination_id=$3
+      AND p.resolution_reason='manual_resolve' AND p.state IN ('resolve_pending','resolved')
+      AND p.manual_suppression_active LIMIT 1`,
+    [alert.workspace_id, alert.token_id, destinationId],
+  );
+  if (manuallyClosed.rowCount) return null;
   const current = (
     await client.query(
       "SELECT status, alert_key FROM alert_queue WHERE id=$1 AND token_id=$2",
@@ -774,7 +788,10 @@ export async function processPagerDutyIncident(
           "expiry_evidence_unavailable",
         );
       }
-      if (retirementReason || isPagerDutyRecovery(incident, context, threshold)) {
+      if (
+        retirementReason ||
+        isPagerDutyRecovery(incident, context, threshold)
+      ) {
         if (!incident.trigger_accepted_at) {
           // A timeout or send/commit crash can mean acceptance is unknown.
           // Do not fabricate acceptance, send a stale trigger, or claim a
@@ -912,10 +929,21 @@ export async function processPagerDutyIncident(
             source: "TokenTimer",
             severity: "info",
             custom_details: {
-              resolution_reason: incident.resolution_reason || "expiration_extended",
+              resolution_reason:
+                incident.resolution_reason || "expiration_extended",
+              ...(incident.operator_reason
+                ? {
+                    operator_reason: incident.operator_reason,
+                    requested_by: incident.requested_by,
+                  }
+                : {}),
               token_id: incident.token_id_snapshot,
-              original_expiration: alertEligibility.formatCalendarDay(incident.original_expiration),
-              recovery_expiration: alertEligibility.formatCalendarDay(incident.recovery_expiration),
+              original_expiration: alertEligibility.formatCalendarDay(
+                incident.original_expiration,
+              ),
+              recovery_expiration: alertEligibility.formatCalendarDay(
+                incident.recovery_expiration,
+              ),
             },
           },
         }
@@ -1025,7 +1053,14 @@ export async function processPagerDutyIncident(
               kind: "pagerduty",
               payload_type: "token_expiry",
               event_action: resolving ? "resolve" : "trigger",
-              ...(resolving ? { resolution_reason: incident.resolution_reason || "expiration_extended" } : {}),
+              ...(resolving
+                ? {
+                    resolution_reason:
+                      incident.resolution_reason || "expiration_extended",
+                    operator_reason: incident.operator_reason,
+                    requested_by: incident.requested_by,
+                  }
+                : {}),
               incident_id: incident.id,
               destination_id: incident.destination_id,
               dedup_key: incident.dedup_key,
@@ -1070,6 +1105,135 @@ export async function deliverPagerDutyExpiration(
   return processPagerDutyIncident(client, incident.id, { send, deliveryState });
 }
 
+async function reconcilePagerDutyAcknowledgements(client, send, limit) {
+  const due = await client.query(
+    `SELECT incident_id FROM pagerduty_ack_requests
+    WHERE accepted_at IS NULL AND cancelled_at IS NULL AND NOT exhausted AND next_attempt_at<=NOW()
+    ORDER BY next_attempt_at,incident_id LIMIT $1`,
+    [limit],
+  );
+  for (const { incident_id: id } of due.rows) {
+    const lock = await client.query(
+      "SELECT pg_try_advisory_lock(hashtextextended('pagerduty:' || $1::text,0)) AS owned",
+      [id],
+    );
+    if (!lock.rows[0].owned) continue;
+    try {
+      const { rows } = await client.query(
+        `SELECT a.*,p.workspace_id,p.token_id_snapshot,p.destination_id,p.dedup_key,p.state
+        FROM pagerduty_ack_requests a JOIN pagerduty_incidents p ON p.id=a.incident_id
+        WHERE a.incident_id=$1 AND a.accepted_at IS NULL AND a.cancelled_at IS NULL AND NOT a.exhausted AND a.next_attempt_at<=NOW()`,
+        [id],
+      );
+      const request = rows[0];
+      if (!request) continue;
+      if (request.state !== "open") {
+        await client.query(
+          "UPDATE pagerduty_ack_requests SET cancelled_at=NOW() WHERE incident_id=$1",
+          [id],
+        );
+        continue;
+      }
+      const context = await loadContext(
+        client,
+        request.workspace_id,
+        request.token_id_snapshot,
+      );
+      const webhook =
+        context &&
+        destinationConfig(
+          context,
+          request.workspace_id,
+          request.destination_id,
+        );
+      if (
+        !webhook ||
+        !/^[a-zA-Z0-9]{32}$/.test(String(webhook.routingKey || "").trim())
+      ) {
+        await client.query(
+          "UPDATE pagerduty_ack_requests SET last_error='original_destination_unavailable',next_attempt_at=NOW()+INTERVAL '5 minutes' WHERE incident_id=$1",
+          [id],
+        );
+        continue;
+      }
+      const attempted = await client.query(
+        `UPDATE pagerduty_ack_requests SET attempts=attempts+1,
+          exhausted=(attempts+1 >= $2),last_error='acknowledge_delivery_uncertain',
+          next_attempt_at=NOW()+($3 * INTERVAL '1 millisecond')
+          WHERE incident_id=$1 AND attempts<$2 RETURNING attempts`,
+        [id, MAX_PAGERDUTY_ATTEMPTS, pagerDutyRetryDelay(request.attempts + 1)],
+      );
+      if (!attempted.rowCount) continue;
+      const attempts = attempted.rows[0].attempts;
+      let raw;
+      try {
+        raw = await send(
+          String(webhook.url).trim(),
+          {
+            routing_key: String(webhook.routingKey).trim(),
+            event_action: "acknowledge",
+            dedup_key: request.dedup_key,
+          },
+          "pagerduty",
+        );
+      } catch {
+        raw = { success: false };
+      }
+      const outcome = classifyPagerDutyResult(raw);
+      await client.query("BEGIN");
+      try {
+        await client.query(
+          `UPDATE pagerduty_ack_requests SET accepted_at=CASE WHEN $2 THEN NOW() ELSE NULL END,
+          last_error=$3,exhausted=$4,next_attempt_at=NOW()+($5 * INTERVAL '1 millisecond') WHERE incident_id=$1`,
+          [
+            id,
+            outcome.success,
+            outcome.error,
+            !outcome.success &&
+              (!outcome.retryable || attempts >= MAX_PAGERDUTY_ATTEMPTS),
+            pagerDutyRetryDelay(attempts),
+          ],
+        );
+        if (outcome.success)
+          await client.query(
+            "UPDATE pagerduty_incidents SET acknowledged_at=NOW(),updated_at=NOW() WHERE id=$1",
+            [id],
+          );
+        await client.query(
+          `INSERT INTO alert_delivery_log(alert_queue_id,user_id,token_id,workspace_id,channel,status,error_message,metadata)
+          SELECT p.trigger_alert_queue_id,w.created_by,p.token_id,p.workspace_id,'webhooks',$2,$3,$4::jsonb
+          FROM pagerduty_incidents p JOIN workspaces w ON w.id=p.workspace_id WHERE p.id=$1`,
+          [
+            id,
+            outcome.success ? "success" : "failed",
+            outcome.error,
+            JSON.stringify({
+              kind: "pagerduty",
+              event_action: "acknowledge",
+              incident_id: id,
+              requested_by: request.requested_by,
+            }),
+          ],
+        );
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      }
+      if (!outcome.success)
+        logger.warn("PagerDuty acknowledge delivery failed", {
+          incidentId: id,
+          error: outcome.error,
+        });
+    } finally {
+      await client.query(
+        "SELECT pg_advisory_unlock(hashtextextended('pagerduty:' || $1::text,0))",
+        [id],
+      );
+    }
+  }
+}
+
 export async function reconcilePagerDutyIncidents(
   client,
   { send = postJson, batchSize = 100, deliveryState, now } = {},
@@ -1078,6 +1242,7 @@ export async function reconcilePagerDutyIncidents(
     1,
     Math.min(500, Math.floor(Number(batchSize) || 100)),
   );
+  await reconcilePagerDutyAcknowledgements(client, send, limit);
   const due = await client.query(
     `SELECT id FROM pagerduty_incidents
       WHERE state IN ('trigger_pending','open','resolve_pending') AND next_attempt_at <= NOW()
