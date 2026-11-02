@@ -11,7 +11,7 @@
  * dispatch ownership-aware cleanup manually. Never shorten elapsed deadlines or transfer machine-bound
  * CNG keys.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 "use strict";
 /** Read-only starting plan for hosted qualification. Prints reviewed commands;
@@ -206,7 +206,7 @@ function main(args = process.argv.slice(2)) {
     console.log("");
   }
   console.log(
-    "Then expand hosted profiles using docs/certops/e2e-qualification.md.\n" +
+    "Then expand hosted profiles using .github/maintainers/certops/e2e-qualification.md.\n" +
       plan.collection.warning,
   );
 }

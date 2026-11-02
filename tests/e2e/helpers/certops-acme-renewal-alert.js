@@ -9,7 +9,7 @@
  * key/trusted TLS. This controlled proxy fault cannot stand in for a native CA failure
  * or issuance. Retain the actual outbox/delivery path;
  * CERTOPS_NATIVE_RENEWAL_MAILHOG_URL and CERTOPS_NATIVE_RENEWAL_SMTP_PORT select the
- * disposable mail observer. Shared policy: docs/certops/e2e-qualification.md.
+ * disposable mail observer. Shared policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Native renewal failure through actual SMTP. The parent owns the disposable
  * API, agent, CA proxy and MailHog. No result, claim, nonce or due date is forged.

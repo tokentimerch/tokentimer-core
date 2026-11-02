@@ -14,7 +14,7 @@
  * keys or child output. acme-dns accepts status-only acknowledgements and has no
  * deletion API: never invent deletion evidence.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /**
  * Exercises production DNS solvers under deterministic upstream faults. The manual DNS error

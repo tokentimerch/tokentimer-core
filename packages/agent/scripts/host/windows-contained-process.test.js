@@ -9,7 +9,7 @@ const test = require("node:test"),
   { spawnSync } = require("node:child_process");
 const helper = require("../../../../tests/e2e/helpers/certops-windows-contained-process");
 const pause = () => new Promise((resolve) => setTimeout(resolve, 50));
-// skip-reason: no-host - requires native Windows file-sharing semantics.
+// skip-reason: platform - requires native Windows file-sharing semantics.
 test("closed gate publication prevents Windows reader sharing failures and refuses clobber", {skip:process.platform!=="win32"},()=>{
   const root=fs.mkdtempSync(path.join(require("node:os").tmpdir(),"gate-publication-"));
   const rootId=fs.lstatSync(root,{bigint:true}).ino;
@@ -73,7 +73,7 @@ function observe(processId) {
 }
 test(
   "real owned JobObject preserves suspended identity and drains an actual descendant",
-  // skip-reason: no-host
+  // skip-reason: platform
   { skip: process.platform !== "win32", timeout: 180000 },
   async () => {
     const base = path.resolve(__dirname, "../../../../.build");

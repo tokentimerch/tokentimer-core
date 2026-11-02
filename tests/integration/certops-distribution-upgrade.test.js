@@ -133,7 +133,17 @@ describe("Core distribution and lifecycle migration histories", function () {
           "certops_distribution_review",
           "certops_distribution_transfer",
         ];
-        const expected = history === "distribution-first" ? [canonical[4],canonical[5],canonical[6],canonical[0],canonical[1],canonical[2],canonical[3]] : history === "enrollment-first" ? [canonical[0],canonical[4],canonical[5],canonical[6],canonical[1],canonical[2],canonical[3]] : history === "previous-distribution" ? [canonical[0],canonical[1],canonical[2],canonical[4],canonical[5],canonical[6],canonical[3]] : canonical;
+        const mainlineOrder = history === "distribution-first" ? [canonical[4],canonical[5],canonical[6],canonical[0],canonical[1],canonical[2],canonical[3]] : history === "enrollment-first" ? [canonical[0],canonical[4],canonical[5],canonical[6],canonical[1],canonical[2],canonical[3]] : history === "previous-distribution" ? [canonical[0],canonical[1],canonical[2],canonical[4],canonical[5],canonical[6],canonical[3]] : canonical;
+        // Onboarding and installed-file delivery land after every supported history.
+        const expected = [
+          ...mainlineOrder,
+          "onboarding_sessions",
+          "certops_installed_file_distribution",
+          "auto_sync_provider_stats",
+          "auto_sync_run_metrics",
+          "auto_sync_metric_labels",
+          "auto_sync_system_metrics",
+        ];
         assert.deepEqual(
           after.filter((row) => row.version >= 70).map((row) => row.name),
           expected,
@@ -178,6 +188,9 @@ describe("Core distribution and lifecycle migration histories", function () {
           "certificate_enrollments",
           "certops_distribution_groups",
           "certops_agent_job_log",
+          "auto_sync_provider_stats",
+          "auto_sync_run_outcome_stats",
+          "auto_sync_run_freshness",
         ]) {
           assert.equal(
             (await db.query("SELECT to_regclass($1)::text AS name", [table]))

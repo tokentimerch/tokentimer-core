@@ -104,6 +104,7 @@ test("native lifecycle guard refuses growth and equal-byte foreign file replacem
   const fs = require("node:fs"),
     path = require("node:path"),
     h = require("../tests/e2e/helpers/certops-acme-browser-lifecycle");
+  fs.mkdirSync(path.resolve(__dirname, "../.build"), { recursive: true });
   const directory = fs.mkdtempSync(
       path.resolve(__dirname, "../.build/browser-lifecycle-guard-"),
     ),

@@ -13,7 +13,7 @@
  *
  * Scopes: `agent-log-maintenance-worker`.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Real five-minute upload grace and production worker retention qualification.
@@ -40,7 +40,7 @@ const scenarios = ["log-maintenance-genuine-stream-terminal-job", "log-maintenan
 test("actual log upload grace, abandoned stream and worker retention", { timeout: 420000 }, async t => {
   const base = process.env.CERTOPS_CSR_API_URL;
   if (!base && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires exclusive disposable API/PostgreSQL and five real elapsed minutes
+    // skip-reason: prerequisite - requires exclusive disposable API/PostgreSQL and five real elapsed minutes
     t.skip("Exclusive disposable maintenance stack required"); return;
   }
   assert.ok(base); assert.equal(process.env.CERTOPS_LOG_MAINTENANCE_EXCLUSIVE_STACK, "1");

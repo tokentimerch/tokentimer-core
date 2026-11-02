@@ -76,6 +76,20 @@ services:
       - WEBHOOK_EXTRA_PROVIDER_HOSTS=${WEBHOOK_EXTRA_PROVIDER_HOSTS:-}
       - WEBHOOK_ALLOW_ALL_HOSTS=${WEBHOOK_ALLOW_ALL_HOSTS:-false}
       - WEBHOOK_ALLOW_PRIVATE_IPS=${WEBHOOK_ALLOW_PRIVATE_IPS:-false}
+      - INTEGRATION_ALLOW_PRIVATE_IPS=${INTEGRATION_ALLOW_PRIVATE_IPS:-false}
+      # Domain checker (empty = code defaults; see docs/CONFIGURATION.md)
+      - SUBFINDER_BIN=${SUBFINDER_BIN:-}
+      - DOMAIN_CHECKER_TOOL_TMPDIR=${DOMAIN_CHECKER_TOOL_TMPDIR:-}
+      - DOMAIN_CHECKER_TOOL_TIMEOUT_MS=${DOMAIN_CHECKER_TOOL_TIMEOUT_MS:-}
+      - DOMAIN_CHECKER_OVERALL_TIMEOUT_MS=${DOMAIN_CHECKER_OVERALL_TIMEOUT_MS:-}
+      - DOMAIN_CHECKER_TLS_TIMEOUT_MS=${DOMAIN_CHECKER_TLS_TIMEOUT_MS:-}
+      - DOMAIN_CHECKER_IMPORT_SOCKET_TIMEOUT_MS=${DOMAIN_CHECKER_IMPORT_SOCKET_TIMEOUT_MS:-}
+      - DOMAIN_CHECKER_MAX_RESULTS=${DOMAIN_CHECKER_MAX_RESULTS:-}
+      - DOMAIN_CHECKER_IMPORT_MAX_CERTIFICATES=${DOMAIN_CHECKER_IMPORT_MAX_CERTIFICATES:-}
+      - DOMAIN_CHECKER_DISCOVERY_LIMITS=${DOMAIN_CHECKER_DISCOVERY_LIMITS:-}
+      - DOMAIN_CHECKER_IMPORT_LIMITS=${DOMAIN_CHECKER_IMPORT_LIMITS:-}
+      - DOMAIN_CHECKER_LOOKUP_RATE_LIMIT_MAX=${DOMAIN_CHECKER_LOOKUP_RATE_LIMIT_MAX:-}
+      - DOMAIN_CHECKER_LOOKUP_RATE_LIMIT_WINDOW_MS=${DOMAIN_CHECKER_LOOKUP_RATE_LIMIT_WINDOW_MS:-}
       # SMTP (optional - configure here or via System Settings UI)
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-}
@@ -100,6 +114,17 @@ services:
       - WHATSAPP_DRY_RUN=${WHATSAPP_DRY_RUN:-}
       # Metrics / diagnostics
       - ENABLE_METRICS=${ENABLE_METRICS:-false}
+      # Optional System Settings override; leave empty to use saved settings.
+      - AUTO_SYNC_METRICS_ENABLED=${AUTO_SYNC_METRICS_ENABLED:-}
+      - AUTO_SYNC_METRICS_LABELS=${AUTO_SYNC_METRICS_LABELS:-}
+      # Optional global monitoring group; empty uses saved or connection settings.
+      - AUTO_SYNC_METRICS_MONITORING_GROUP=${AUTO_SYNC_METRICS_MONITORING_GROUP:-}
+      # Extra labels: asset_name, project, group; none disables them.
+      # Empty uses saved UI choices (off by default); a list restricts the available asset labels.
+      # Selected labels appear on auto_sync_items_created_detailed_total and
+      # auto_sync_last_creation_timestamp_seconds; aggregate counters stay unchanged.
+      # Each distinct label combination creates a series in both metrics; combining labels can greatly increase cardinality and expose asset metadata.
+      - AUTO_SYNC_METRICS_EXTRA_LABELS=${AUTO_SYNC_METRICS_EXTRA_LABELS:-}
       - ENVIRONMENT_SUFFIX=${ENVIRONMENT_SUFFIX:-}
     depends_on:
       postgres:

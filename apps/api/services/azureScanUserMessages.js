@@ -75,7 +75,7 @@ function azureAdUserMessage(e, errorRef, formatIntegrationError) {
     return "Cannot connect to Microsoft Graph API. Check your network connectivity.";
   }
   if (e?.message) return e.message;
-  return formatIntegrationError("Azure AD", e, errorRef);
+  return formatIntegrationError("Microsoft Entra ID", e, errorRef);
 }
 
 module.exports = {

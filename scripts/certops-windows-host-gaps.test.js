@@ -1,6 +1,6 @@
 /*
  * Qualification notes: standalone-adcs-feasibility
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Experimental certops-standalone-adcs-smoke.yml uses elevated fresh Server2022,refuses existing
  * CA/reboot requests. Require actual standalone pending request,officer resubmit/retrieve/accept using
  * nonexportable CNG,and unique IIS SNI trustedTLS with DNS SAN/serverAuth. No product AD CS capability

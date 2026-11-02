@@ -29,6 +29,9 @@ const REQUIRED_SCENARIOS = Object.freeze([
   "adcs-real-pending-request-refuses-new-ca-key",
   "adcs-real-pending-issuer-reconfirmation-fresh-request-recovers",
 ]);
+// certutil -deny leaves a pending request at disposition 31 (denied). 30 (failed) is accepted
+// like the sibling AD CS helpers; either is terminal and never issued.
+const isDeniedDisposition = (value) => value === 30 || value === 31;
 const FLAGS = Object.freeze([
   "actualPendingBeforeRekey",
   "pendingNativeSignatureVerified",
@@ -155,6 +158,20 @@ function verifyCrossProof(value, control) {
   assert.equal(value.predecessorFingerprint, control.leafFingerprint);
   assert.equal(value.oldCaKeySha256, control.caKeySha256);
   return true;
+}
+// Waits for a job that must end failed; any other terminal status is a defect.
+async function waitForFailedJob({ until, query, workspaceId, jobId }) {
+  return until(async () => {
+    const row = (
+      await query(
+        "SELECT status FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",
+        [workspaceId, jobId],
+      )
+    ).rows[0];
+    if (["succeeded", "rejected", "cancelled"].includes(row?.status))
+      throw new Error(`Job ended ${row.status}, expected failed`);
+    return row?.status === "failed";
+  });
 }
 async function qualifyPendingCaKeyChange(context) {
   const {
@@ -420,7 +437,11 @@ async function qualifyPendingCaKeyChange(context) {
     ownedEnrollmentIds.push(response.body.enrollmentId);
     return response.body;
   };
-  const continuePending = async (id, pending) => {
+  const continuePending = async (
+    id,
+    pending,
+    { expectFailure = false } = {},
+  ) => {
     const scheduled = (
       await require("../../../apps/api/services/certops/certificateEnrollments").scheduleDueEnrollments(
         {
@@ -430,7 +451,14 @@ async function qualifyPendingCaKeyChange(context) {
       )
     ).find((value) => value.enrollmentId === id);
     assert.ok(scheduled);
-    await jobFinished(scheduled.jobId);
+    if (expectFailure)
+      await waitForFailedJob({
+        until,
+        query,
+        workspaceId: fixture.workspaceId,
+        jobId: scheduled.jobId,
+      });
+    else await jobFinished(scheduled.jobId);
     return scheduled.jobId;
   };
   const predecessorUnchanged = async () => {
@@ -472,6 +500,7 @@ async function qualifyPendingCaKeyChange(context) {
     freshPending,
     freshJournal,
     freshContinuationJobId,
+    deniedDisposition,
     preflightJobId,
     newAuthority,
     leaf;
@@ -517,9 +546,11 @@ async function qualifyPendingCaKeyChange(context) {
         "Pending native key identity changed before signed refusal",
       );
       await predecessorUnchanged();
+      // The signed refusal is the expected outcome, so a failed job is success here.
       oldContinuationJobId = await continuePending(
         old.enrollmentId,
         oldPending,
+        { expectFailure: true },
       );
       const refused = await until(async () => {
         const value = await row(old.enrollmentId);
@@ -572,7 +603,11 @@ async function qualifyPendingCaKeyChange(context) {
       // denies only this independently owned still-pending CA request.
       officer(oldRequestId, "deny");
       const denied = observe(oldRequestId);
-      assert.equal(denied.disposition, 30);
+      assert.ok(
+        isDeniedDisposition(denied.disposition),
+        `Officer deny left CA disposition ${denied.disposition}`,
+      );
+      deniedDisposition = denied.disposition;
       assert.equal(
         denied.subjectRequestCount,
         nativeBefore.subjectRequestCount,
@@ -664,7 +699,7 @@ async function qualifyPendingCaKeyChange(context) {
         pendingNative.subjectRequestCount,
         nativeBefore.subjectRequestCount + 1,
       );
-      assert.equal(observe(oldRequestId).disposition, 30);
+      assert.equal(observe(oldRequestId).disposition, deniedDisposition);
       await predecessorUnchanged();
       officer(requestId, "approve");
       const actual = invoke("owned-ca-request-certificate.ps1", [
@@ -799,7 +834,7 @@ async function qualifyPendingCaKeyChange(context) {
         pendingNative.subjectRequestCount,
       );
       assert.equal(observe(requestId).disposition, 20);
-      assert.equal(observe(oldRequestId).disposition, 30);
+      assert.equal(observe(oldRequestId).disposition, deniedDisposition);
       const evidence = (
         await query(
           "SELECT e.metadata FROM certificate_evidence e JOIN certificate_jobs j ON j.workspace_id=e.workspace_id AND j.id=e.job_id WHERE e.workspace_id=$1 AND e.job_id=$2 AND e.evidence_type='validation.passed' AND e.claim_id=j.claim_id AND e.metadata->>'step'='verify'",
@@ -866,7 +901,9 @@ module.exports = {
   FLAGS,
   REQUIRED_SCENARIOS,
   REQUIRED_SOURCES,
+  isDeniedDisposition,
   verifyProof,
   verifyCrossProof,
+  waitForFailedJob,
   qualifyPendingCaKeyChange,
 };

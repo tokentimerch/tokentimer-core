@@ -7,7 +7,7 @@
  * forest/deterministic native loss executes; native/absent-host-as-pass flags remain false and
  * missing lab fails closed.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 
 const test = require("node:test");

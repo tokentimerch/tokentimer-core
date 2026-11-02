@@ -9,7 +9,7 @@ const view = props => (
 );
 it.each([
   ['verified', 3, 'Verified and current'],
-  ['partial', 2, 'Partially verified'],
+  ['partial', 2, 'Partially complete'],
   ['failed', 0, 'Deployment failed'],
   ['uncertain', 0, 'Deployment outcome uncertain'],
   ['stale', 0, 'Verification outdated'],

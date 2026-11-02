@@ -16,7 +16,7 @@
  * historical package upgrade, rollback or ARM64 qualification is implied by candidate
  * reapplication.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /* Native same-candidate installer reapplication inside the already owned Linux
  * systemd journey. Requires a disposable hosted VM, existing registration and

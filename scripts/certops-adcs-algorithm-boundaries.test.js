@@ -9,7 +9,7 @@
  * RequestId/key/accepted leaf/journal/receipt stay absent. Root/hierarchy require closed
  * nativeAlgorithmBoundaries; pending-elapsed and arbitrary template pairs remain separate.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Pure production policy/descriptor and proof adversaries. Static public CA
  * test material never constitutes native template observation or host execution. */

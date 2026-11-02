@@ -16,7 +16,7 @@ const { createHostGate } = require("../../packages/agent/scripts/host-gate");
 test("external CSR algorithm compatibility through public API", { timeout: 120000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - needs disposable authenticated API and OpenSSL
+    // skip-reason: prerequisite - needs disposable authenticated API and OpenSSL
     t.skip("Disposable API URL required"); return;
   }
   assert.ok(baseUrl); const fixture = await createApiFixture(baseUrl);

@@ -1,6 +1,6 @@
 /*
  * Qualification notes: installer-path-controls
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Run actual AST-extracted Copy-PackageTree/Activate-StagedPackage on owned public temp files only.
  * Three spaces/Unicode/bracket positives verify activation+predecessor bytes/native IDs;6 copy
  * junction cases cover source/root/nested/ancestor and destination equivalents with no outside

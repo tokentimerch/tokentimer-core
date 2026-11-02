@@ -13,7 +13,7 @@
  * cleanup even after restore. Runs after worker renewals; private DACL stays CA-local for lab
  * teardown. Static unsafe-template preflight is separate.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /* Supporting contract/source controls only. The protected disposable AD CS lab
  * must execute the helper to qualify actual machine permissions and issuance.

@@ -1,6 +1,6 @@
 /*
  * Qualification notes: arm64-native-cng-runtime
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Six mandatory cases measure OS product type,native ARM64 CPU/Node/PowerShell/Go,current
  * helperPE/source. ARM64EC/ARM64X remain distinct/refused. RSA2048 AND ECP256 use actual
  * productionCSR/acceptance inMy. In-memory ephemeral.NET signer verifiesPKCS10,rejects corrupted

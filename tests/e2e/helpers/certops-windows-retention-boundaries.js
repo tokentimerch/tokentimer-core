@@ -1,6 +1,6 @@
 /*
  * Qualification notes: retention-boundaries
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Classify zero/negative/below24,min24,default168,through720,above720 policies and before/exact/after
  * deadline. A wait<24h fails elapsed gate; even>=24h script contract never claims actual elapsed run.
  * twentyFourHourElapsedQualified/nativeExecutionQualified remain false; configuration classification

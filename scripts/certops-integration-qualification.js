@@ -7,7 +7,7 @@
  * payloads or secrets. Real PostgreSQL and service execution remain supporting evidence, not native
  * host qualification.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 "use strict";
 /**

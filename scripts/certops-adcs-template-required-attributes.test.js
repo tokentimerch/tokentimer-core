@@ -11,7 +11,7 @@
  * checks use isolated cohorts/unchanged primary limit. Wrong-typed algorithm directory rendering
  * is outside established scope; pure proof cannot qualify native restoration.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Pure descriptor/parser/proof controls, never native LDAP or CA evidence. */
 const test = require("node:test"),

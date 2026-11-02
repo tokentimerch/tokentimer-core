@@ -28,7 +28,7 @@ describe("CertOps Kubernetes controller wiring", () => {
     const dockerfile = read("apps/k8s-controller/Dockerfile");
     const logScrubber = read("packages/log-scrub/index.js");
     const apiDetectorShim = read("apps/api/utils/secretMaterial.js");
-    expect(dockerfile).to.include("FROM node:22.23.2-alpine3.23");
+    expect(dockerfile).to.include("FROM node:22.23.4-alpine3.23");
     expect(dockerfile).to.include("pnpm install --prod --frozen-lockfile");
     expect(dockerfile).to.include(
       "rm -rf /app/apps/k8s-controller/node_modules /app/packages/log-scrub/node_modules",

@@ -12,7 +12,7 @@
  *
  * Scopes: `browser-certificate-audit`.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Real Chromium audit filtering over genuine public certificate retirements.
  * Run in the manual dashboard qualification lane with disposable API/PostgreSQL.

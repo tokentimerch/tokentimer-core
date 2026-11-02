@@ -18,7 +18,7 @@
  * initially and 40min before mutation. Uncertainty/time fails with independently owned teardown;
  * timing alone is not full controller/release proof.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Pure resident admission/source controls; no native execution or elapsed claim. */
 const { test } = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), { spawnSync } = require("node:child_process");

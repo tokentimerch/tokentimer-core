@@ -6,7 +6,7 @@
  * independently calculated before collection. The private key lives outside the scanned directory, and
  * the fixture never advertises Windows CNG or machine-store custody.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Supporting API/PostgreSQL qualification: quota-blocked real filesystem discovery preserves unmanaged visibility.
@@ -26,7 +26,7 @@ const scenarios = ["unmanaged-discovery-real-source", "unmanaged-discovery-admis
 test("quota-blocked real filesystem discovery preserves unmanaged visibility", { timeout: 120000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires disposable API PostgreSQL OpenSSL and native temporary certificate files
+    // skip-reason: prerequisite - requires disposable API PostgreSQL OpenSSL and native temporary certificate files
     t.skip("Disposable API and OpenSSL required"); return;
   }
   assert.ok(baseUrl);

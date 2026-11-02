@@ -72,14 +72,32 @@ function validRequest({ payload, ...overrides } = {}) {
 function createIssuanceClient({
   existingJobId = null,
   existingCertificateId = null,
+  pathHolder = null,
 } = {}) {
-  const state = { inserts: [], queries: [] };
+  const state = { inserts: [], queries: [], reuses: [] };
   const client = {
     query: async (text, params) => {
       const sql = typeof text === "string" ? text : text?.text || "";
       state.queries.push({ sql, params });
       if (sql.includes("pg_advisory_xact_lock")) {
         return { rows: [] };
+      }
+      if (sql.includes("deployed_cert_path = $3")) {
+        return { rows: pathHolder ? [pathHolder] : [] };
+      }
+      if (sql.includes("UPDATE managed_certificates")) {
+        state.reuses.push(params);
+        return {
+          rows: [
+            {
+              id: params[1],
+              status: ISSUANCE_STATUS,
+              source: ISSUANCE_SOURCE,
+              source_ref: params[2],
+              common_name: params[3],
+            },
+          ],
+        };
       }
       if (sql.includes("FROM managed_certificates") && sql.includes("source_ref")) {
         return { rows: existingCertificateId ? [{ id: existingCertificateId }] : [] };
@@ -494,6 +512,88 @@ describe("certops issuance job creation", () => {
       () => createCertificateIssuanceJob({ ...validRequest(), client: null }),
       /kill-switch-locked client/,
     );
+  });
+
+  it("reuses an abandoned first order's certificate instead of inserting a second", async () => {
+    const abandonedId = "33333333-3333-4333-8333-333333333333";
+    const { state, client } = createIssuanceClient({
+      pathHolder: { id: abandonedId, status: "provisioning", abandoned: true },
+    });
+    let jobOptions = null;
+    await createCertificateIssuanceJob({
+      ...validRequest(),
+      assignedAgentId: "44444444-4444-4444-8444-444444444444",
+      client,
+      jobCreatorOverride: async (options) => {
+        jobOptions = options;
+        return { job: { id: "job-2" }, created: true };
+      },
+    });
+    assert.equal(state.inserts.length, 0);
+    assert.equal(state.reuses.length, 1);
+    assert.equal(state.reuses[0][1], abandonedId);
+    assert.equal(jobOptions.subjectId, abandonedId);
+    assert.equal(jobOptions.payload.certificateId, abandonedId);
+  });
+
+  it("refuses a path held by a live certificate with an actionable error", async () => {
+    const { state, client } = createIssuanceClient({
+      pathHolder: {
+        id: "55555555-5555-4555-8555-555555555555",
+        status: "active",
+        name: "web-01.example.com",
+        abandoned: false,
+      },
+    });
+    await assert.rejects(
+      createCertificateIssuanceJob({
+        ...validRequest(),
+        assignedAgentId: "44444444-4444-4444-8444-444444444444",
+        client,
+        jobCreatorOverride: async () => {
+          throw new Error("no job may be created");
+        },
+      }),
+      (error) => {
+        assert.equal(error.code, "CERTOPS_CERTIFICATE_PATH_IN_USE");
+        assert.match(error.message, /Retire that certificate/);
+        assert.match(error.message, /different certPath/);
+        return true;
+      },
+    );
+    assert.equal(state.inserts.length, 0);
+  });
+
+  it("locks the path before reading its abandonment state in a new statement", async () => {
+    const { state, client } = createIssuanceClient({
+      pathHolder: { id: NEW_CERT_ID, status: "provisioning", abandoned: true },
+    });
+    await createCertificateIssuanceJob({
+      ...validRequest(),
+      assignedAgentId: "44444444-4444-4444-8444-444444444444",
+      client,
+      jobCreatorOverride: async () => ({ job: { id: "retry-job" }, created: true }),
+    });
+    const reads = state.queries.filter(({ sql }) => sql.includes("deployed_cert_path = $3"));
+    assert.equal(reads.length, 2);
+    assert.match(reads[0].sql, /FOR UPDATE OF mc/);
+    assert.doesNotMatch(reads[0].sql, /certificate_jobs|AS abandoned/);
+    assert.match(reads[1].sql, /FROM certificate_jobs/);
+    assert.match(reads[1].sql, /AS abandoned/);
+    assert.doesNotMatch(reads[1].sql, /FOR UPDATE/);
+    assert.deepEqual(reads[0].params, reads[1].params.slice(0, 3));
+    assert.equal(state.reuses.length, 1);
+  });
+
+  it("does not look up a path holder without an assigned agent", async () => {
+    const { state, client } = createIssuanceClient();
+    await createCertificateIssuanceJob({
+      ...validRequest(),
+      client,
+      jobCreatorOverride: async () => ({ job: { id: "job-1" }, created: true }),
+    });
+    assert.ok(!state.queries.some((q) => q.sql.includes("deployed_cert_path = $3")));
+    assert.equal(state.inserts.length, 1);
   });
 
   it("creates a windows-iis provisioning certificate with os-store-managed key_mode and a winstore:// key_reference, and a job payload carrying keyMode instead of certPath", async () => {

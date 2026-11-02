@@ -7,7 +7,7 @@
  *
  * Expected refusal: `CERTOPS_CERTIFICATE_NOT_RENEWABLE`.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Exclusive real API/PostgreSQL scheduler retirement qualification.
  * Imports real short-lived certificates, provisions explicit complete local
@@ -45,7 +45,7 @@ test(
       !process.env.CERTOPS_CSR_API_URL &&
       process.env.CERTOPS_E2E_REQUIRED !== "1"
     ) {
-      // skip-reason: no-host - requires exclusive disposable authenticated API PostgreSQL and OpenSSL fixture
+      // skip-reason: prerequisite - requires exclusive disposable authenticated API PostgreSQL and OpenSSL fixture
       t.skip("Exclusive disposable scheduler stack required");
       return;
     }

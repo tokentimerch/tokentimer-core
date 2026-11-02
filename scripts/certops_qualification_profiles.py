@@ -10,7 +10,7 @@ PROFILES = {"full": {"hosted", "domain-adcs", "extended-domain-adcs"}, "standard
 
 def select_profile(matrix, profile="full", capabilities=None):
     if capabilities is None:
-        capabilities=qualification_manifest.load(Path(__file__).resolve().parent.parent / "docs/certops/qualification-suites.json")["requiredCapabilities"]
+        capabilities=qualification_manifest.load(Path(__file__).resolve().parent.parent / ".github/maintainers/certops/qualification-suites.json")["requiredCapabilities"]
     if not isinstance(profile, str) or profile not in PROFILES:
         raise ValueError("Unknown qualification profile")
     slots = matrix.get("slots")

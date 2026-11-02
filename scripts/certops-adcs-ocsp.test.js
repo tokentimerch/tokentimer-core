@@ -20,7 +20,7 @@
  * actions including restore retries. No private exchanges/ACL/key/credentials in artifacts. No
  * authoritative revoked/unknown, agent revoked refusal, CMC or alternate signer claim.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -95,6 +95,8 @@ test("remote broker admits only fixed actions/candidate tools and gates before r
   assert.doesNotMatch(source, /Invoke-Expression|taskkill|Stop-Process/);
   assert.match(source, /\$request\.helperPath -cnotin \$helperPaths/);
   assert.match(source, /\$request\.action -cnotin \$actions/);
+  assert.match(source, /OutputPath\+'\.error'/);
+  assert.match(source, /Replace\(\$env:CERTOPS_ADCS_OFFICER_PASSWORD/);
 });
 test("operation drain uses actual shared nativeHandlesClosed contract and refuses invented or incomplete proof", () => {
   const closed = {

@@ -1,6 +1,6 @@
 /*
  * Qualification notes: README
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Run from repository root: CERTOPS_HOST_TESTS=1 CERTOPS_QUALIFICATION_STRICT=1 node --test
  * packages/agent/scripts/host/windows-host.test.js (set these env variables natively in PowerShell on
  * Windows). Set CERTOPS_QUALIFICATION_REPORT JSON path and CERTOPS_HOST_ARTIFACTS diagnostics
@@ -87,7 +87,7 @@ test("Windows real-host discovery and service-host qualification", { timeout: 24
     }),
   });
   if (!await gate.preflight()) {
-    // skip-reason: no-host
+    // skip-reason: platform
     t.skip("requires opted-in elevated Windows and Go"); return;
   }
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "certops-host-"));

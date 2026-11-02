@@ -104,7 +104,9 @@ pVdkCX5AyMD6SSZ4+20GCWDyQlf4BTsB/I/zWhtFx3tWrwuxte9xyBo=
 -----END CERTIFICATE-----`;
 
 /**
- * Starts a minimal HTTPS server on 127.0.0.1 for endpoint SSL checks.
+ * Starts a minimal HTTPS server for endpoint SSL checks. Native callers keep
+ * the loopback default. A host-side test that calls an API in Docker can bind
+ * all interfaces and advertise the host-gateway alias to that API instead.
  *
  * The returned object exposes `rotateCertificate()`, which swaps the served
  * certificate in place (same host/port) so tests can simulate a cert rotation
@@ -112,7 +114,10 @@ pVdkCX5AyMD6SSZ4+20GCWDyQlf4BTsB/I/zWhtFx3tWrwuxte9xyBo=
  *
  * @returns {Promise<{ server: import('https').Server, url: string, rotateCertificate: () => void, close: () => Promise<void> }>}
  */
-function startLocalHttpsServer() {
+function startLocalHttpsServer({
+  listenHost = "127.0.0.1",
+  advertisedHost = listenHost,
+} = {}) {
   return new Promise((resolve, reject) => {
     const server = https.createServer(
       { key: TEST_HTTPS_KEY, cert: TEST_HTTPS_CERT },
@@ -122,11 +127,11 @@ function startLocalHttpsServer() {
       },
     );
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(0, listenHost, () => {
       const { port } = server.address();
       resolve({
         server,
-        url: `https://127.0.0.1:${port}`,
+        url: `https://${advertisedHost.includes(":") ? `[${advertisedHost}]` : advertisedHost}:${port}`,
         rotateCertificate: () =>
           server.setSecureContext({
             key: TEST_HTTPS_KEY_ROTATED,

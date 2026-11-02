@@ -6,7 +6,7 @@
  * until acknowledgement. Replay retains observation provenance; observation does not become manual
  * installation attestation.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Supporting API/PostgreSQL qualification: real TLS CSR observation preserves selected active identity and expiry until name review.
@@ -23,7 +23,7 @@ const { createHostGate } = require("../../packages/agent/scripts/host-gate");
 test("real TLS CSR observation preserves selected active identity and expiry until name review", { timeout: 120000 }, async (t) => {
   const url = process.env.CERTOPS_CSR_API_URL;
   if (!url && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires disposable API PostgreSQL and actual TLS endpoint
+    // skip-reason: prerequisite - requires disposable API PostgreSQL and actual TLS endpoint
     t.skip("Disposable API URL required"); return;
   }
   assert.ok(url); const fixture = await createApiFixture(url);

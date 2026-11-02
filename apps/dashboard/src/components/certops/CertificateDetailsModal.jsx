@@ -172,6 +172,48 @@ function DetailRow({
   );
 }
 
+// Collapsed by default; lives at the end of Certificate operations.
+function CertificateDiagnostics({
+  certificate,
+  tableStyle,
+  propertyValueStyle,
+}) {
+  const rowProps = { tableStyle, propertyValueStyle };
+  return (
+    <Box as='details' data-testid='certificate-diagnostics'>
+      <Box
+        as='summary'
+        py={2}
+        fontSize='xs'
+        fontWeight='semibold'
+        cursor='pointer'
+      >
+        Advanced certificate diagnostics
+      </Box>
+      <Box sx={{ '& > [data-detail-row]:last-of-type': { borderBottom: 0 } }}>
+        {hasValue(certificate?.fingerprintSha256) ? (
+          <DetailRow label='SHA-256 fingerprint' {...rowProps}>
+            <CopyableId
+              id={certificate.fingerprintSha256}
+              size='sm'
+              color='dashboard.modal.text'
+            />
+          </DetailRow>
+        ) : null}
+        {hasValue(certificate?.id) ? (
+          <DetailRow label='Managed certificate ID' {...rowProps}>
+            <CopyableId
+              id={certificate.id}
+              size='sm'
+              color='dashboard.modal.text'
+            />
+          </DetailRow>
+        ) : null}
+      </Box>
+    </Box>
+  );
+}
+
 export default function CertificateDetailsModal({
   token,
   isOpen,
@@ -293,6 +335,10 @@ export default function CertificateDetailsModal({
     certificate?.fingerprintSha256,
     certificate?.id
   );
+  const hasDiagnostics = hasAnyValue(
+    certificate?.fingerprintSha256,
+    certificate?.id
+  );
   const hasObservedLocations = Array.isArray(instances) && instances.length > 0;
   const expiryColor =
     expiry.scheme === 'red'
@@ -342,7 +388,11 @@ export default function CertificateDetailsModal({
       formatContactGroupNames(
         hydrateContactGroupIds(token),
         contactGroups,
-        'Use workspace default'
+        token.id == null &&
+          token.contact_group_ids === undefined &&
+          token.contact_group_id === undefined
+          ? 'Not recorded for this certificate'
+          : 'Use workspace default'
       ),
     [contactGroups, token]
   );
@@ -590,27 +640,22 @@ export default function CertificateDetailsModal({
                   )}
                 </DetailRow>
               ) : null}
-              {isEditing || hasValue(hydrateContactGroupIds(token)) ? (
-                <DetailRow
-                  label='Contact groups'
-                  valueTitle={contactGroupLabel}
-                >
-                  {isEditing ? (
-                    <ContactGroupCheckboxGroup
-                      contactGroups={contactGroups}
-                      value={editData.contact_group_ids}
-                      onChange={ids =>
-                        setEditData(current => ({
-                          ...current,
-                          contact_group_ids: ids,
-                        }))
-                      }
-                    />
-                  ) : (
-                    <Text fontSize='sm'>{contactGroupLabel}</Text>
-                  )}
-                </DetailRow>
-              ) : null}
+              <DetailRow label='Contact groups' valueTitle={contactGroupLabel}>
+                {isEditing ? (
+                  <ContactGroupCheckboxGroup
+                    contactGroups={contactGroups}
+                    value={editData.contact_group_ids}
+                    onChange={ids =>
+                      setEditData(current => ({
+                        ...current,
+                        contact_group_ids: ids,
+                      }))
+                    }
+                  />
+                ) : (
+                  <Text fontSize='sm'>{contactGroupLabel}</Text>
+                )}
+              </DetailRow>
               {isEditing ? (
                 <DetailRow label='Asset expiration'>
                   {isEditing ? (
@@ -790,6 +835,15 @@ export default function CertificateDetailsModal({
                 enclosed={compactTableSections}
                 compactValues={compactTableSections && !isEditing}
                 propertyValueRows={propertyValueRows}
+                footer={
+                  hasDiagnostics ? (
+                    <CertificateDiagnostics
+                      certificate={certificate}
+                      tableStyle={compactTableSections}
+                      propertyValueStyle={propertyValueRows}
+                    />
+                  ) : null
+                }
               >
                 {hasKeyLocality ? (
                   <DetailRow label='Key locality'>
@@ -857,41 +911,6 @@ export default function CertificateDetailsModal({
                   />
                 ) : null}
               </Section>
-            ) : null}
-
-            {hasValue(certificate?.fingerprintSha256) ||
-            hasValue(certificate?.id) ? (
-              <Box as='details' mb={6}>
-                <Box as='summary' fontSize='xs' cursor='pointer'>
-                  Advanced certificate diagnostics
-                </Box>
-                <Grid
-                  templateColumns={{
-                    base: 'minmax(0, 1fr)',
-                    md: 'repeat(2, minmax(0, 1fr))',
-                  }}
-                  mt={2}
-                >
-                  {hasValue(certificate?.fingerprintSha256) ? (
-                    <DetailRow label='SHA-256 fingerprint'>
-                      <CopyableId
-                        id={certificate.fingerprintSha256}
-                        size='sm'
-                        color='dashboard.modal.text'
-                      />
-                    </DetailRow>
-                  ) : null}
-                  {hasValue(certificate?.id) ? (
-                    <DetailRow label='Managed certificate ID'>
-                      <CopyableId
-                        id={certificate.id}
-                        size='sm'
-                        color='dashboard.modal.text'
-                      />
-                    </DetailRow>
-                  ) : null}
-                </Grid>
-              </Box>
             ) : null}
 
             {isEditing || hasValue(token.notes) || identityPanel ? (

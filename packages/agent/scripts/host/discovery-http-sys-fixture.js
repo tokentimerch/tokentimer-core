@@ -1,6 +1,6 @@
 /*
  * Qualification notes: native-discovery-qualification
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * windows-discovery-http-sys-selectors owns2 CNG certificates/3 bindings:IPv4ipport,IPv6ipport,non-IIS
  * hostnameport. Move one certificate toWebHosting while configuring productionMy-only:referenced store
  * must auto-include. Native registry/publicDER SHA256 bind

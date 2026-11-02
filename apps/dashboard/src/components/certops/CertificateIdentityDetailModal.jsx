@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   FormControl,
+  FormHelperText,
   FormLabel,
   HStack,
   Select,
@@ -110,8 +111,20 @@ export default function CertificateIdentityDetailModal({
       latestSourceById.set(source.managedCertificateId, source);
   }
   const sourceOptions = [...latestSourceById.values()];
+  const isEndedSource = source =>
+    Boolean(source.periodEndedAt || source.endedAt);
+  // With exactly one current registration, preselect it so the operator does
+  // not have to open the dropdown. Ended ones stay one click away.
+  const currentSourceOptions = sourceOptions.filter(
+    source => !isEndedSource(source)
+  );
+  const defaultManagedId =
+    sourceOptions.length > 1 && currentSourceOptions.length === 1
+      ? currentSourceOptions[0].managedCertificateId
+      : '';
   const selectedManagedId =
     selectedSourceId ||
+    defaultManagedId ||
     (sourceOptions.length === 1
       ? sourceOptions[0].managedCertificateId
       : sourceOptions.length
@@ -152,6 +165,32 @@ export default function CertificateIdentityDetailModal({
       active = false;
     };
   }, [workspaceId, certificate, isOpen, canManage]);
+
+  useEffect(() => {
+    setContactGroups([]);
+    setWorkspaceContacts([]);
+    if (!isOpen || !workspaceId) return undefined;
+    let active = true;
+    // Workspace routing definitions also describe retained, verified assets
+    // after their last certificate-management registration has stopped.
+    Promise.all([
+      workspaceAPI.getAlertSettings(workspaceId).catch(() => null),
+      apiClient
+        .get(`/api/v1/workspaces/${workspaceId}/contacts`)
+        .catch(() => null),
+    ]).then(([settings, contacts]) => {
+      if (!active) return;
+      setContactGroups(
+        Array.isArray(settings?.contact_groups) ? settings.contact_groups : []
+      );
+      setWorkspaceContacts(
+        Array.isArray(contacts?.data?.items) ? contacts.data.items : []
+      );
+    });
+    return () => {
+      active = false;
+    };
+  }, [isOpen, workspaceId]);
 
   const tokenId = detail?.tokenId;
   useEffect(() => {
@@ -223,14 +262,8 @@ export default function CertificateIdentityDetailModal({
       if (!tokenId || !detail.tokenSnapshot || detail.managed === false)
         return undefined;
       let active = true;
-      Promise.all([
-        getManagedCertificatesForToken(workspaceId, tokenId),
-        workspaceAPI.getAlertSettings(workspaceId).catch(() => null),
-        apiClient
-          .get(`/api/v1/workspaces/${workspaceId}/contacts`)
-          .catch(() => null),
-      ])
-        .then(([certificates, settings, contacts]) => {
+      getManagedCertificatesForToken(workspaceId, tokenId)
+        .then(certificates => {
           if (!active) return;
           const normalize = value =>
             String(value || '')
@@ -252,14 +285,6 @@ export default function CertificateIdentityDetailModal({
                 }
               : detail.certificateSnapshot || null
           );
-          setContactGroups(
-            Array.isArray(settings?.contact_groups)
-              ? settings.contact_groups
-              : []
-          );
-          setWorkspaceContacts(
-            Array.isArray(contacts?.data?.items) ? contacts.data.items : []
-          );
         })
         .catch(() => {
           // Retained public fields remain usable when live enrichment is unavailable.
@@ -279,13 +304,9 @@ export default function CertificateIdentityDetailModal({
     setTokenError('');
     Promise.all([
       tokenAPI.getToken(tokenId),
-      workspaceAPI.getAlertSettings(workspaceId).catch(() => null),
-      apiClient
-        .get(`/api/v1/workspaces/${workspaceId}/contacts`)
-        .catch(() => null),
       getManagedCertificatesForToken(workspaceId, tokenId),
     ])
-      .then(([tokenData, settings, contacts, certificates]) => {
+      .then(([tokenData, certificates]) => {
         if (!active) return;
         setToken(tokenData || null);
         // Reuse the token modal's enrichment, scoped to this immutable
@@ -303,12 +324,6 @@ export default function CertificateIdentityDetailModal({
         );
         setCertificateFields(
           matching.find(item => item.id === selectedManagedId) || null
-        );
-        setContactGroups(
-          Array.isArray(settings?.contact_groups) ? settings.contact_groups : []
-        );
-        setWorkspaceContacts(
-          Array.isArray(contacts?.data?.items) ? contacts.data.items : []
         );
       })
       .catch(err => {
@@ -409,18 +424,28 @@ export default function CertificateIdentityDetailModal({
     }
   }
   const canRestart = source =>
-    Boolean(source.periodEndedAt) &&
-    latestSources.get(source.managedCertificateId) === source &&
-    source.endedReason !== 'endpoint_monitor_deleted' &&
-    (!detail.identityId || source.currentIdentityId === detail.identityId) &&
-    !openSourceIds.has(source.managedCertificateId);
-  const visibleSources = showHistory
+    !['revoked', 'decommissioned'].includes(detail.lifecycleStatus) &&
+    (source.restartCandidate ||
+      (Boolean(source.periodEndedAt) &&
+        latestSources.get(source.managedCertificateId) === source &&
+        source.endedReason !== 'endpoint_monitor_deleted' &&
+        (!detail.identityId ||
+          source.currentIdentityId === detail.identityId) &&
+        !openSourceIds.has(source.managedCertificateId)));
+  const periodSources = showHistory
     ? detail.sources || []
     : (detail.sources || []).filter(
         source => activeSources.includes(source) || canRestart(source)
       );
+  const visibleSources = [
+    ...periodSources,
+    ...(detail.restartableSources || []).map(source => ({
+      ...source,
+      restartCandidate: true,
+    })),
+  ];
   const hiddenPeriodCount =
-    (detail.sources || []).length - visibleSources.length;
+    (detail.sources || []).length - periodSources.length;
   // Job history and deployment details follow an explicitly selected registration.
   // An immutable identity ID is never a managed certificate ID.
   const managedCertificateId = selectedManagedId;
@@ -459,25 +484,6 @@ export default function CertificateIdentityDetailModal({
   ]);
   const identityPanel = (
     <VStack align='stretch' spacing={6} mb={6}>
-      {sourceOptions.length > 1 ? (
-        <Select
-          aria-label='Management registration to inspect'
-          value={selectedSourceId}
-          onChange={event => setSelectedSourceId(event.target.value)}
-        >
-          <option value=''>Select a management registration</option>
-          {sourceOptions.map((source, index) => (
-            <option
-              key={source.managedCertificateId}
-              value={source.managedCertificateId}
-            >
-              {sourceLabel(source.source)} ·{' '}
-              {source.sourceRef || `Registration ${index + 1}`} ·{' '}
-              {source.periodEndedAt || source.endedAt ? 'Ended' : 'Current'}
-            </option>
-          ))}
-        </Select>
-      ) : null}
       <HStack spacing={2} flexWrap='wrap'>
         <CertOpsBadge>
           {detail.locationCount ?? (detail.locations || []).length} locations
@@ -657,6 +663,43 @@ export default function CertificateIdentityDetailModal({
         mb={0}
       >
         <SectionContent>
+          {sourceOptions.length > 1 ? (
+            <FormControl mb={3}>
+              <FormLabel fontSize='sm' mb={1}>
+                Management registration
+              </FormLabel>
+              <Select
+                size='sm'
+                aria-label='Management registration to inspect'
+                value={selectedManagedId || ''}
+                onChange={event => setSelectedSourceId(event.target.value)}
+              >
+                {defaultManagedId ? null : (
+                  <option value=''>Select a management registration</option>
+                )}
+                {sourceOptions.map((source, index) => (
+                  <option
+                    key={source.managedCertificateId}
+                    value={source.managedCertificateId}
+                  >
+                    {sourceLabel(source.source)} ·{' '}
+                    {source.sourceRef || `Registration ${index + 1}`} ·{' '}
+                    {isEndedSource(source) ? 'Ended' : 'Current'}
+                  </option>
+                ))}
+              </Select>
+              <FormHelperText fontSize='xs' color='dashboard.modal.muted'>
+                Picks which registration&apos;s jobs, deployment and renewal
+                profile are shown for this certificate.
+              </FormHelperText>
+              {!selectedManagedId ? (
+                <Text fontSize='sm' mt={2}>
+                  Select a registration to see its jobs, deployment and renewal
+                  profile.
+                </Text>
+              ) : null}
+            </FormControl>
+          ) : null}
           <FormControl display='flex' alignItems='center' mb={3}>
             <Switch
               id='certificate-management-history'
@@ -703,7 +746,9 @@ export default function CertificateIdentityDetailModal({
                     const current = activeSources.includes(source);
                     const canReadd = canRestart(source);
                     return (
-                      <Tr key={`${source.periodId}-${source.startedAt}`}>
+                      <Tr
+                        key={`${source.periodId || source.managedCertificateId}-${source.startedAt || 'replacement'}`}
+                      >
                         <Td>
                           <Text fontSize='sm' fontWeight='semibold'>
                             {sourceLabel(source.source)}
@@ -725,12 +770,18 @@ export default function CertificateIdentityDetailModal({
                         </Td>
                         <Td>
                           <Text fontSize='xs' color='dashboard.modal.muted'>
-                            {formatDate(source.startedAt)} –{' '}
-                            {source.endedAt || source.periodEndedAt
-                              ? formatDate(
-                                  source.endedAt || source.periodEndedAt
-                                )
-                              : 'present'}
+                            {source.restartCandidate ? (
+                              'No active period'
+                            ) : (
+                              <>
+                                {formatDate(source.startedAt)} –{' '}
+                                {source.endedAt || source.periodEndedAt
+                                  ? formatDate(
+                                      source.endedAt || source.periodEndedAt
+                                    )
+                                  : 'present'}
+                              </>
+                            )}
                           </Text>
                         </Td>
                         <Td>

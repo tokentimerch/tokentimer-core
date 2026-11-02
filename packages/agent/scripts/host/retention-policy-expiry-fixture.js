@@ -1,6 +1,6 @@
 /*
  * Qualification notes: native-retention-policy-expiry
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * For explicit168h/720h policies independently own2 cutovers,short-lived CNG leaves,IIS and immutable
  * ledger. Actual expiry+300s grace wins before policy deadline: preserve before due, real
  * wall/monotonic wait<10min/policy, interrupt after native cert deletion before key deletion, then

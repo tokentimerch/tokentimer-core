@@ -1,6 +1,6 @@
 /*
  * Qualification notes: resident-retention24h-interrupted-delete
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * After actual resident monotonic24h on original AD CS VM, gate contained native fault child using
  * same protected state/source/config/deadline. Delegate real native commands unchanged; exit86 only
  * after certutil -delstore My <thumbprint> succeeds and before key deletion/ledger completion. Drain

@@ -3,7 +3,7 @@
 /**
  * TokenTimer Agent - execution-plane entry.
  *
- * Structural scope note (docs/certops/CONTEXT.md): this package is the
+ * Structural scope note (.github/maintainers/certops/CONTEXT.md): this package is the
  * execution plane, the only component that touches private keys. It holds
  * keys on the host it runs on; TokenTimer's control plane never receives or
  * stores them. Every module here must stay safe to run against an untrusted
@@ -134,6 +134,7 @@ const {
   deployCertificate,
   deployCertificateAndKey,
   resolveAgentCustodyKey,
+  restoreCustodyKey,
   discardDeployBackups,
   removeDeployedArtifacts,
   getDeployMetrics,
@@ -199,6 +200,7 @@ const {
   distributeTrust,
   revokeTrust,
   trustStoreCommandRefForFamily,
+  freshUpdateCommandArgvForRevoke,
 } = require("./trust-store");
 
 const { version: AGENT_VERSION } = require("../package.json");
@@ -1034,6 +1036,30 @@ function isValidCertificateId(candidate) {
     candidate.length > 0 &&
     candidate.length <= 128 &&
     /^[A-Za-z0-9_.:-]+$/.test(candidate)
+  );
+}
+
+/**
+ * Error text for a custody key that cannot be used and has no staging key to
+ * fall back on. A quarantine marker means a promotion outcome is unknown; no
+ * marker means the key simply no longer matches the deployed certificate.
+ * Both end the same way: drop the key and the next renewal issues a new one.
+ *
+ * @param {string} keyPath live custody key path for the certificate
+ * @returns {string}
+ */
+function custodyUnavailableMessage(keyPath) {
+  const marker = `${keyPath}.custody-quarantine`;
+  if (fs.existsSync(marker)) {
+    return (
+      "agent custody key is quarantined after a failed promotion and no rotation staging key remains. " +
+      `Recovery: delete ${keyPath} and ${marker}; the next renewal issues a new key.`
+    );
+  }
+  return (
+    "agent custody key does not match the deployed certificate and no rotation staging key remains. " +
+    `Recovery: delete ${keyPath} (or restore the key that matches the deployed certificate there); ` +
+    "the next renewal issues a new key."
   );
 }
 
@@ -2511,6 +2537,16 @@ async function executeJob({
           executionContext, log, leaseOpts, onBeforeMutation: markMutation, publication: session });
       });
     } catch (error) {
+      // These failures are raised by local configuration admission, before
+      // fetching material or creating a side-effect marker. Do not invent an
+      // uncertain installation. A recovery-only attempt still preserves its
+      // earlier unresolved execution fence.
+      if (executionContext.materialRecoveryOnly !== true && [
+        "material_binding_policy_denied", "material_destination_denied",
+        "material_intent_invalid", "material_scope_denied", "material_store_config_invalid",
+      ].includes(error.code)) {
+        return { status: "blocked", errorMessage: error.code };
+      }
       return { status: "orphaned_unknown_effect", errorMessage:
         /^material_[a-z_]+$/.test(error.code || "") ? error.code : "material_execution_failed" };
     }
@@ -3118,9 +3154,7 @@ async function executeRenewJob({
   if (custodyChoice.quarantined && !custodyChoice.path) {
     return {
       status: "failed",
-      errorMessage: boundErrorMessage(
-        "agent custody key is quarantined after a failed promotion and no rotation staging key remains",
-      ),
+      errorMessage: boundErrorMessage(custodyUnavailableMessage(keyPath)),
       keyRotated: false,
     };
   }
@@ -5118,6 +5152,28 @@ async function rollbackAfterFailedTail({
     mirrorToJobConsole("warn", custodyWarnMsg);
   }
 
+  // The rotation promoted its new key over the live custody file before this
+  // rollback ran. With the previous pair back in production, custody has to
+  // follow, otherwise no custody key matches the deployed certificate.
+  if (
+    restored &&
+    keyBackupPath &&
+    liveKeyPath &&
+    typeof deployResult.custodyKeyPath === "string"
+  ) {
+    const custodyRestore = await restoreCustodyKey({
+      custodyKeyPath: deployResult.custodyKeyPath,
+      keyPath: liveKeyPath,
+      certificatePem: previousPem,
+    });
+    if (!custodyRestore.restored) {
+      const custodyRestoreMsg =
+        `job ${jobId}: previous certificate restored but the agent custody key could not be ` +
+        `restored (${custodyRestore.reason}); this path needs the custody recovery step`;
+      defaultAgentLogger.warn(custodyRestoreMsg);
+      mirrorToJobConsole("warn", custodyRestoreMsg);
+    }
+  }
   // Best-effort re-reload so the service serves the restored content again.
   let reloadNote = "not requested";
   if (restored && typeof job.reloadService === "string" && job.reloadService.length > 0) {
@@ -6419,7 +6475,12 @@ async function executeTrustJob({
   // tests inject fake exec/fs/spawn implementations into ../trust-store's
   // distributeTrust/revokeTrust without hitting a real certutil.exe/
   // update-ca-certificates/update-ca-trust or the real machine trust store.
-  const seams = { updateCommandArgv, certutilPath, ...(trustStoreSeams || {}) };
+  const seams = {
+    updateCommandArgv,
+    certutilPath,
+    freshUpdateCommandArgv: freshUpdateCommandArgvForRevoke(family, action, policyEngine),
+    ...(trustStoreSeams || {}),
+  };
 
   const trustResult =
     action === "distribute-trust"
@@ -6490,11 +6551,13 @@ async function runDiscoveryScan({ directories, client, log = null }) {
     // Node's X509Certificate is already a comma-separated string (or null
     // when the extension is absent); omit the entry when null rather than
     // sending an empty/null value the ingest path does not need.
+    const subject = cert.subject || null;
+    const issuer = cert.issuer || null;
     const metadata = [
       { name: "filePath", value: cert.path },
       { name: "targetHost", value: targetHost },
-      { name: "subject", value: cert.subject },
-      { name: "issuer", value: cert.issuer },
+      { name: "subject", value: subject },
+      { name: "issuer", value: issuer },
       { name: "serialNumber", value: cert.serialNumber },
       { name: "validFrom", value: cert.validFrom },
       { name: "validTo", value: cert.validTo },
@@ -6508,7 +6571,7 @@ async function runDiscoveryScan({ directories, client, log = null }) {
         eventType: "certificate.observed",
         observedAt,
         fingerprintSha256: cert.fingerprintSha256,
-        summary: `Observed certificate at ${cert.path} (subject: ${cert.subject})`,
+        summary: `Observed certificate at ${cert.path} (subject: ${subject})`,
         metadata,
       }),
     );
@@ -6572,12 +6635,14 @@ async function runWindowsDiscoveryScan({
     // observation contract. filePath is
     // intentionally absent -- locationKind !== 'filesystem' requires
     // locationSlot instead, never filePath.
+    const subject = observation.subject || null;
+    const issuer = observation.issuer || null;
     const metadata = [
       { name: "locationKind", value: observation.locationKind },
       { name: "locationSlot", value: observation.locationSlot },
       { name: "targetHost", value: targetHost },
-      { name: "subject", value: observation.subject ?? null },
-      { name: "issuer", value: observation.issuer ?? null },
+      { name: "subject", value: subject },
+      { name: "issuer", value: issuer },
       { name: "serialNumber", value: observation.serialNumber ?? null },
       { name: "validFrom", value: observation.notBefore ?? null },
       { name: "validTo", value: observation.notAfter ?? null },
@@ -6620,7 +6685,7 @@ async function runWindowsDiscoveryScan({
         eventType: "certificate.observed",
         observedAt,
         fingerprintSha256: observation.fingerprintSha256,
-        summary: `Observed certificate at ${observation.locationSlot} (${observation.locationKind}, subject: ${observation.subject})`,
+        summary: `Observed certificate at ${observation.locationSlot} (${observation.locationKind}, subject: ${subject})`,
         metadata,
       }),
     );

@@ -1,6 +1,6 @@
 /*
  * Qualification notes: credential-startup-refusals
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * An already registered service must explicitly refuse empty or malformed present credentials before
  * registration/polling, rather than silently replacing identity. Retain original credential privately
  * and require exact production reader errors. Reuse stopped SYSTEM retained-file startup engine with

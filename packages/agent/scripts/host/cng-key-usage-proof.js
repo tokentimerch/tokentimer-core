@@ -1,6 +1,6 @@
 /*
  * Qualification notes: native-key-usage
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Parse actual accepted DER X509KeyUsageExtension: RSA exactly160/0xa0 (signature+key encipherment),EC
  * exactly128/0x80(signature);missing/extra bits fail. Certificate KeyUsage differs from NCrypt
  * KeyUsageProperty. Request sets no exact operation mask:require signing,accept known

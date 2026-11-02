@@ -17,6 +17,19 @@ const REQUIRED_SOURCES = Object.freeze([
   "package.json",
   "pnpm-lock.yaml",
 ]);
+// Retain only owned step names, source coordinates and HTTP status. Browser
+// errors can contain credentials, DOM snapshots and response bodies.
+function browserFailure(error, stage) {
+  const step = /^[a-z-]{1,64}$/.test(stage || "") ? stage : "browser-action";
+  const frame = String(error?.stack || "").match(/\b(certops-adcs-[a-z-]+\.js):([0-9]{1,6}):[0-9]+/);
+  const kind = ["AssertionError", "TimeoutError", "TypeError"].includes(error?.constructor?.name)
+    ? error.constructor.name : "Error";
+  const status = Number.isInteger(error?.nativeBrowserStatus) && error.nativeBrowserStatus >= 100 && error.nativeBrowserStatus <= 599
+    ? `; HTTP ${error.nativeBrowserStatus}` : "";
+  const result = new Error(`Native AD CS browser session failed at ${step}; ${kind}${frame ? `; ${frame[1]}:${frame[2]}` : ""}${status}`);
+  result.code = "NATIVE_BROWSER_ACTION_FAILED";
+  return result;
+}
 function releaseBrowserResource(base) {
   let released = false;
   return {
@@ -113,16 +126,14 @@ async function withOwnedAdcsBrowserPage(
     const destination = new URL("/certops/renewals", origin);
     destination.searchParams.set("workspace", fixture.workspaceId);
     await page.goto(destination.href);
-    const section = page.locator(
-      'button[aria-controls="certops-adcs-section"]',
-    );
-    await section.waitFor();
-    if ((await section.getAttribute("aria-expanded")) !== "true")
-      await section.click();
+    await openAdcsSection(page);
     stage = "supported-enrollment-action";
-    result = await action(page, { origin });
-  } catch {
-    primary = new Error(`Native AD CS browser session failed at ${stage}`);
+    result = await action(page, { origin, markStage(name) {
+      assert.match(name, /^[a-z-]{1,64}$/);
+      stage = name;
+    } });
+  } catch (error) {
+    primary = browserFailure(error, stage);
   } finally {
     try {
       await resource.close();
@@ -136,8 +147,18 @@ async function withOwnedAdcsBrowserPage(
   if (primary) throw primary;
   return result;
 }
+async function openAdcsSection(page) {
+  // Reload remounts the disclosure closed. Reopen the actual section before
+  // checking manager controls rendered inside it.
+  const section = page.locator('button[aria-controls="certops-adcs-section"]');
+  await section.waitFor();
+  if ((await section.getAttribute("aria-expanded")) !== "true")
+    await section.click();
+}
 module.exports = {
+  browserFailure,
   REQUIRED_SOURCES,
+  openAdcsSection,
   releaseBrowserResource,
   withOwnedAdcsBrowserPage,
 };

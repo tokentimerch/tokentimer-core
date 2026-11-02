@@ -1,6 +1,6 @@
 /*
  * Qualification notes: ipv4-wildcard-shadow
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Own an IPv4 wildcard HTTP.sys shadow and independent SNI endpoint, observe actual selector
  * precedence with trusted TLS, require production refusal/rollback before foreign mutation, and
  * preserve exact predecessor/native metadata and sibling. Only exact owned wildcard tuple is

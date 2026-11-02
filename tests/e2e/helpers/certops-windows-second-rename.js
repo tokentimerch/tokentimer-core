@@ -1,6 +1,6 @@
 /*
  * Qualification notes: installer-second-rename-restoration
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * windows-activation-second-rename is RSA2048 Server2022/2025 function-only support, not full CLI.
  * Parent independently measures gated driver PID,parent,PowerShell,argv,creation; extracts only actual
  * copy/activation AST. Hold genuine staging directory GENERIC_READ with read/write sharing but no
@@ -12,7 +12,7 @@
  */
 /*
  * Qualification notes: second-rename
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Pure full-installer contract restores original directory after second rename failure while
  * preserving in-use binary/CNG key. Owned run manifest names original/staging/previous; refuse their
  * live binary/key deletion and blanket reset.

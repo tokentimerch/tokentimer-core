@@ -10,7 +10,7 @@
  *
  * Run prerequisites: `CERTOPS_E2E_REQUIRED=1`, `CERTOPS_CSR_DISPOSABLE_STACK=1`.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Public decommission lifecycle through a disposable authenticated API/PostgreSQL stack.
@@ -37,7 +37,7 @@ module.exports = { scenarios };
 test("decommission acknowledgement and factual rediscovery preserve operator lifecycle", { timeout: 120000 }, async t => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires disposable authenticated API PostgreSQL OpenSSL and native files
+    // skip-reason: prerequisite - requires disposable authenticated API PostgreSQL OpenSSL and native files
     t.skip("Disposable API stack required"); return;
   }
   assert.ok(baseUrl);

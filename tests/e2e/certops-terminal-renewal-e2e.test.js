@@ -6,7 +6,7 @@
  * agent-local renewal profiles/key mode are explicit SQL prerequisites. No jobs, certificate expiry or
  * observations are seeded.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Public renewal admission for terminal identities with complete stored profiles.
@@ -45,7 +45,7 @@ test(
       !process.env.CERTOPS_CSR_API_URL &&
       process.env.CERTOPS_E2E_REQUIRED !== "1"
     ) {
-      // skip-reason: no-host - requires disposable authenticated API PostgreSQL and OpenSSL TLS fixture
+      // skip-reason: prerequisite - requires disposable authenticated API PostgreSQL and OpenSSL TLS fixture
       t.skip("Disposable API fixture required");
       return;
     }

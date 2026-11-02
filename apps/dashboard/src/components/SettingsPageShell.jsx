@@ -284,6 +284,89 @@ export function SettingsNestedSurface({ borderColor, bg, children, ...props }) {
   );
 }
 
+/**
+ * A bordered list of setting rows, as in the Display panel on Preferences.
+ * Rows go inside; each draws its own divider except the last.
+ */
+export function SettingsActionList({ children, ...props }) {
+  const { border } = useDashboardTheme();
+  return (
+    <Box
+      border='1px solid'
+      borderColor={border}
+      borderRadius={SETTINGS_NESTED_RADIUS}
+      overflow='hidden'
+      {...props}
+    >
+      {children}
+    </Box>
+  );
+}
+
+/**
+ * One setting: a semibold label with an optional status next to it, a muted
+ * description, and the control (button or switch) on the right. It stacks on
+ * narrow screens. Same look as the rows on Preferences and Account.
+ */
+export function SettingsActionRow({
+  label,
+  description,
+  status = null,
+  note = null,
+  showDivider = false,
+  children,
+}) {
+  const { text, muted } = useDashboardTheme();
+  return (
+    <>
+      <Box px={{ base: 3, md: 4 }} py={3}>
+        <HStack
+          justify='space-between'
+          align={{ base: 'flex-start', sm: 'center' }}
+          w='full'
+          spacing={4}
+          flexDirection={{ base: 'column', sm: 'row' }}
+        >
+          <Box
+            minW={0}
+            pr={{ base: 0, sm: 2 }}
+            w={{ base: 'full', sm: 'auto' }}
+            flex={{ sm: '1' }}
+          >
+            <HStack spacing={2} align='center' flexWrap='wrap'>
+              <Text
+                color={text}
+                fontSize='sm'
+                fontWeight='semibold'
+                lineHeight='short'
+              >
+                {label}
+              </Text>
+              {status}
+            </HStack>
+            {description ? (
+              <Text fontSize='sm' color={muted} lineHeight='1.45' mt={0.5}>
+                {description}
+              </Text>
+            ) : null}
+            {note ? (
+              <Text fontSize='xs' color={muted} lineHeight='1.45' mt={1}>
+                {note}
+              </Text>
+            ) : null}
+          </Box>
+          {children ? (
+            <Box flexShrink={0} w={{ base: 'full', sm: 'auto' }}>
+              {children}
+            </Box>
+          ) : null}
+        </HStack>
+      </Box>
+      {showDivider ? <Divider opacity={0.65} /> : null}
+    </>
+  );
+}
+
 /** Left-aligned readable width for forms (not page-centered). */
 export function SettingsFormWidth({ children, maxW = '760px', ...props }) {
   return (

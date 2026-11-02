@@ -38,6 +38,11 @@ vi.mock('../../src/components/certops/ApiTokenModal.jsx', () => ({
   default: () => null,
 }));
 
+// Has its own tests; this page only needs to place it.
+vi.mock('../../src/components/onboarding/CertopsQuickstartCard.jsx', () => ({
+  default: () => <div>Quickstart card</div>,
+}));
+
 function renderPage() {
   return render(
     <ChakraProvider>
@@ -66,6 +71,10 @@ beforeEach(() => {
 });
 
 describe('CertOpsSettings job approval policy', () => {
+  it('places the quickstart card on the page', () => {
+    renderPage();
+    expect(screen.getByText('Quickstart card')).toBeInTheDocument();
+  });
   it('shows the always-require-approval control and explains every creation path', () => {
     renderPage();
 
@@ -74,8 +83,9 @@ describe('CertOpsSettings job approval policy', () => {
       screen.getByText(/Require approval before every new job can run/)
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/machine API token calls, bulk renew, scheduled renewal/)
+      screen.getByText(/scheduled renewals, Vault rollouts and their deployment jobs/)
     ).toBeInTheDocument();
+    expect(screen.getByText(/renewal is not unattended/)).toBeInTheDocument();
     expect(
       screen.getByLabelText('Require approval for every new job')
     ).toBeInTheDocument();

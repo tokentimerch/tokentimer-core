@@ -49,6 +49,7 @@ import {
   DASHBOARD_SHELL_HEADER_HEIGHT,
 } from '../styles/dashboardLayout';
 import { getAppIconPath, getFaviconPath } from '../utils/logoUtils.js';
+import { SELF_HOSTED_DOCS_BASE } from '../utils/docsUrls';
 
 const DASHBOARD_SIDEBAR_STORAGE_KEY = 'tt_dashboard_sidebar_width';
 const DASHBOARD_SIDEBAR_WIDTH_CSS_VAR = '--tt-dashboard-sidebar-width';
@@ -439,7 +440,7 @@ export default function DashboardShell({
             key: 'docs',
             label: 'Docs',
             icon: BookOpen,
-            href: 'https://tokentimer.ch/docs/self-hosted',
+            href: SELF_HOSTED_DOCS_BASE,
           },
           {
             key: 'audit',
@@ -468,7 +469,7 @@ export default function DashboardShell({
             key: 'docs',
             label: 'Docs',
             icon: BookOpen,
-            href: 'https://tokentimer.ch/docs/self-hosted',
+            href: SELF_HOSTED_DOCS_BASE,
           },
         ]),
     ...(isSystemAdmin

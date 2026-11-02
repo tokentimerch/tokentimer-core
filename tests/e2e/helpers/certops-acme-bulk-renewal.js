@@ -20,7 +20,7 @@
  * 45/55 minutes. These are failure limits, not measured duration or every bulk fault
  * qualification.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Public bulk admission followed by genuine candidate-agent/Pebble executions.
  * Runs only in the existing disposable Ubuntu certbot/no-EAB native journey.

@@ -295,8 +295,11 @@ function verifyUnservedInventory(
   }
   return true;
 }
+// An HTTPS binding with no certificate assigned (a refused enrollment's owned site) serves neither
+// leaf, so it cannot contradict the unserved proof. Any assigned certificate must still resolve to an
+// exact My/WebHosting thumbprint, and central-certificate bindings stay refused.
 function iisInventoryScript() {
-  return `Import-Module WebAdministration;$rows=@();foreach($site in @(Get-Website)){foreach($b in @(Get-WebBinding -Name $site.Name -Protocol https)){if(([int]$b.sslFlags -band 2)-ne 0){throw 'Unresolved central-certificate IIS binding refused'};$hash=$b.certificateHash;if($hash-is[byte[]]){$hash=[BitConverter]::ToString($hash).Replace('-','')};$hash=([string]$hash).ToUpperInvariant();if($hash-cnotmatch'^[A-F0-9]{40}$'-or$b.certificateStoreName-notin @('My','WebHosting')){throw 'Incomplete IIS certificate inventory refused'};$rows+=,@{siteId=[int]$site.Id;site=[string]$site.Name;coordinates=[string]$b.bindingInformation;flags=[int]$b.sslFlags;store=[string]$b.certificateStoreName;thumbprint=$hash};if($rows.Count-gt 2048){throw 'Bounded IIS inventory required'}}};ConvertTo-Json -InputObject @($rows) -Depth 5 -Compress`;
+  return `Import-Module WebAdministration;$rows=@();foreach($site in @(Get-Website)){foreach($b in @(Get-WebBinding -Name $site.Name -Protocol https)){if(([int]$b.sslFlags -band 2)-ne 0){throw 'Unresolved central-certificate IIS binding refused'};$hash=$b.certificateHash;if($hash-is[byte[]]){$hash=[BitConverter]::ToString($hash).Replace('-','')};$hash=([string]$hash).ToUpperInvariant();if($hash-eq''){continue};if($hash-cnotmatch'^[A-F0-9]{40}$'-or$b.certificateStoreName-notin @('My','WebHosting')){throw 'Incomplete IIS certificate inventory refused'};$rows+=,@{siteId=[int]$site.Id;site=[string]$site.Name;coordinates=[string]$b.bindingInformation;flags=[int]$b.sslFlags;store=[string]$b.certificateStoreName;thumbprint=$hash};if($rows.Count-gt 2048){throw 'Bounded IIS inventory required'}}};ConvertTo-Json -InputObject @($rows) -Depth 5 -Compress`;
 }
 async function observeHistoricalUnserved({ historicalDer, currentDer, ps }) {
   assert.equal(process.platform, "win32");
@@ -331,6 +334,20 @@ function verifyRevokedResponse(bytes, options, nativeVerdict) {
     "Actual CryptoAPI chain must independently report revoked",
   );
   return verified;
+}
+// The sanitized report keeps only an error code, so encode what the responder
+// kept answering: a replayed pre-revocation response means a stale cache, a
+// fresh "good" means the revoked CRL was not loaded, "unknown" a provider fault.
+function revokedTimeoutCode(last, knownDigests = []) {
+  if (!last) return "CERTOPS_OCSP_REVOKED_SIGNED_TIMEOUT_NO_ANSWER";
+  if (last.status === "good")
+    return knownDigests.includes(last.responseSha256)
+      ? "CERTOPS_OCSP_REVOKED_SIGNED_TIMEOUT_STALE_GOOD"
+      : "CERTOPS_OCSP_REVOKED_SIGNED_TIMEOUT_FRESH_GOOD";
+  const status = String(last.status)
+    .replace(/[^a-z]/gi, "")
+    .toUpperCase();
+  return `CERTOPS_OCSP_REVOKED_SIGNED_TIMEOUT_${status.slice(0, 16) || "OTHER"}`;
 }
 async function qualifyHistoricalRevoked(c) {
   assert.equal(process.platform, "win32");
@@ -444,6 +461,7 @@ async function qualifyHistoricalRevoked(c) {
   };
 }
 module.exports = {
+  revokedTimeoutCode,
   SCENARIO,
   SCOPE,
   FLAGS,

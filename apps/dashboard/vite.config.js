@@ -66,7 +66,7 @@ export default defineConfig({
     // (worker OOM / transform hang) and swing the frontend coverage floor.
     // Serialize file execution whenever --coverage is on the argv.
     ...(process.argv.includes('--coverage')
-      ? { fileParallelism: false, maxWorkers: 2 }
+      ? { fileParallelism: false, maxWorkers: 2, testTimeout: 15000 }
       : {}),
     coverage: {
       provider: 'v8',

@@ -17,7 +17,7 @@ RUN go get \
     go mod tidy && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /go/bin/subfinder .
 
-FROM node:22.23.2-slim
+FROM node:22.23.4-slim
 
 WORKDIR /app
 
@@ -33,7 +33,7 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
 COPY --from=subfinder-builder /go/bin/subfinder /usr/local/bin/subfinder
 RUN subfinder -version
 
-RUN corepack enable && corepack prepare pnpm@11.13.0 --activate
+RUN corepack enable && corepack prepare pnpm@11.28.8 --activate
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 COPY --chown=nodejs:nodejs packages ./packages

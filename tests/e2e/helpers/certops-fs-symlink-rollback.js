@@ -6,7 +6,7 @@
  * regular owned file. followedSymlink remains false; missing filesystem labs fail closed
  * and catalog mappings do not establish native execution.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 
 /** Local filesystem containment contract. A symlink that leaves the owned

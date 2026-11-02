@@ -1,6 +1,6 @@
 /*
  * Qualification notes: retention24h-controller-lifecycle
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Main-only protected prepare creates owned Server2022 domain lab,initial4h receipt then authenticated
  * immutable artifact+repeat VM/task/process/custody/TLS/source readback authorizes one original32h
  * lease. Deallocate exact CA/control VMs only after sealed facts; member stays running. On any

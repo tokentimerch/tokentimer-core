@@ -9,7 +9,7 @@ const {createApiFixture}=require("./helpers/certops-api-fixture"),{createRegiste
 test("agent log cursor polling preserves live append and reconnect order",{timeout:120000},async t=>{
  const baseUrl=process.env.CERTOPS_CSR_API_URL;
  if(!baseUrl&&process.env.CERTOPS_E2E_REQUIRED!=="1"){
-  // skip-reason: no-host - requires disposable API PostgreSQL and actual agent log protocol
+  // skip-reason: prerequisite - requires disposable API PostgreSQL and actual agent log protocol
   t.skip("Disposable API URL required");return;
  }
  assert.ok(baseUrl);const fixture=await createApiFixture(baseUrl);let ready=false,failure;

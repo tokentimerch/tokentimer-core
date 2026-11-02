@@ -333,7 +333,10 @@ function formatBindingSelector(binding) {
  * @returns {string}
  */
 function formatIpPort(binding) {
-  return `${binding.address}:${binding.port}`;
+  // netsh rejects "*" in an ipport selector ("The parameter is incorrect");
+  // the IIS wildcard is 0.0.0.0 to http.sys.
+  const address = binding.address === "*" ? "0.0.0.0" : binding.address;
+  return `${address}:${binding.port}`;
 }
 
 /**

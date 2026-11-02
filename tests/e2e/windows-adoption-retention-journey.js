@@ -1,6 +1,6 @@
 /*
  * Qualification notes: windows-adoption-qualification
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Trusted installed Windows workflow covers5 profiles onServer2022/2025 within real
  * API/Postgres/Pebble/SYSTEM fixture. Own operator CNG nonexportable self-signed certificate/IIS SNI;
  * actual agent discovery persists it. Public renewal setup dry-run must create no profile/derivation

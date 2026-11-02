@@ -33,6 +33,11 @@ const { createCertificateJob } = require("./jobs");
 const { assertNoPrivateKeyMaterial } = require("../../utils/secretMaterial");
 
 const CERTOPS_JOB_INVALID = "CERTOPS_JOB_INVALID";
+const CERTOPS_CERTIFICATE_PATH_IN_USE = "CERTOPS_CERTIFICATE_PATH_IN_USE";
+// Job outcomes that leave nothing behind. orphaned_unknown_effect is excluded
+// on purpose: the agent may have placed a certificate we cannot account for.
+const ABANDONED_JOB_STATUS_SQL =
+  "('failed','cancelled','rejected','dry_run_complete')";
 const ISSUANCE_SOURCE = "agent_issuance";
 const ISSUANCE_STATUS = "provisioning";
 // An issue job for a filesystem target always ends with the agent holding
@@ -85,7 +90,7 @@ function isPlainObject(value) {
   return prototype === Object.prototype || prototype === null;
 }
 
-/** POSIX, Windows drive, or UNC — mirrors agent isAbsolutePathLike. */
+/** POSIX, Windows drive, or UNC, mirrors agent isAbsolutePathLike. */
 function isAbsoluteHostPath(candidate) {
   return (
     /^\//.test(candidate) ||
@@ -290,7 +295,7 @@ function normalizeIssuanceRequest(options) {
   // it here costs nothing and the agent's own deploy step enforces the same
   // shape. A relative path is equally unusable: the agent resolves it against
   // an unspecified working directory. Absolute means POSIX ("/..."), Windows
-  // drive ("C:\..." / "C:/..."), or UNC ("\\server\share\...") — same rule the
+  // drive ("C:\..." / "C:/..."), or UNC ("\\server\share\...") - same rule the
   // agent already uses for deploy/ACME paths (isAbsolutePathLike).
   if (!isAbsoluteHostPath(trimmedCertPath)) {
     throw issuanceError(
@@ -383,6 +388,94 @@ async function insertProvisioningCertificate(client, options) {
 }
 
 /**
+ * Resolves a certificate row that already holds this (agent, path) pair.
+ * Returns the id of an abandoned first order that can be reused, null when the
+ * path is free, and throws when the path is genuinely in use. Abandoned means
+ * a never-issued provisioning row whose every issue job ended without effect,
+ * so there is nothing on the host or in inventory worth protecting.
+ */
+async function resolveCertificatePathHolder(client, options) {
+  const { workspaceId, agentId, certPath } = options;
+  if (!agentId || !certPath) return null;
+  // Acquire the row lock in its own statement. A statement that waits for
+  // FOR UPDATE retains its original READ COMMITTED snapshot for subqueries;
+  // computing abandonment there can miss a competing retry's new job.
+  const locked = await client.query(
+    `SELECT mc.id FROM managed_certificates mc
+      WHERE mc.workspace_id = $1 AND mc.deployed_agent_id = $2
+        AND mc.deployed_cert_path = $3
+        AND mc.source IN ('agent_issuance', 'agent_filesystem')
+      FOR UPDATE OF mc`,
+    [workspaceId, agentId, certPath],
+  );
+  if (!locked.rows[0]) return null;
+  // This second statement gets a fresh snapshot after any lock wait. The row
+  // lock is retained through identity reuse and job insertion in this transaction.
+  const held = await client.query(
+    `SELECT mc.id, mc.source, mc.status, mc.name,
+            (mc.fingerprint_sha256 IS NULL AND mc.token_id IS NULL
+              AND mc.source = $4 AND mc.status = $5
+              AND NOT EXISTS (
+                SELECT 1 FROM certificate_jobs cj
+                 WHERE cj.workspace_id = mc.workspace_id
+                   AND cj.subject_type = 'managed_certificate'
+                   AND cj.subject_id = mc.id::text
+                   AND cj.status NOT IN ${ABANDONED_JOB_STATUS_SQL}
+              )) AS abandoned
+       FROM managed_certificates mc
+      WHERE mc.workspace_id = $1 AND mc.deployed_agent_id = $2
+        AND mc.deployed_cert_path = $3
+        AND mc.source IN ('agent_issuance', 'agent_filesystem')`,
+    [workspaceId, agentId, certPath, ISSUANCE_SOURCE, ISSUANCE_STATUS],
+  );
+  const holder = held.rows[0];
+  if (!holder) return null;
+  if (holder.abandoned) return holder.id;
+  throw certificatePathInUseError(certPath, holder);
+}
+
+function certificatePathInUseError(certPath, holder = null) {
+  const subject = holder
+    ? ` (${holder.name || holder.id}, status ${holder.status})`
+    : "";
+  const error = new Error(
+    `Another certificate${subject} already uses this certificate path on this agent: ${certPath}. ` +
+      "Retire that certificate in the inventory, or choose a different certPath.",
+  );
+  error.code = CERTOPS_CERTIFICATE_PATH_IN_USE;
+  return error;
+}
+
+// Re-points an abandoned first order at the new request so the retry keeps one
+// inventory identity instead of leaving a provisioning row behind.
+async function reuseAbandonedCertificate(client, certificateId, options) {
+  const result = await client.query(
+    `UPDATE managed_certificates
+        SET source_ref = $3, name = $4, common_name = $4,
+            subject_alt_names = $5, key_mode = $6,
+            public_metadata = $7::jsonb, updated_at = NOW()
+      WHERE workspace_id = $1 AND id = $2
+      RETURNING id, status, source, source_ref, common_name`,
+    [
+      options.workspaceId,
+      certificateId,
+      options.idempotencyKey,
+      options.commonName,
+      options.sans,
+      keyModeForTargetType(options.targetType),
+      JSON.stringify({
+        issuance: {
+          requestedAt: new Date().toISOString(),
+          certPath: options.certPath,
+          retryOfAbandonedOrder: true,
+        },
+      }),
+    ],
+  );
+  return result.rows[0];
+}
+
+/**
  * Creates the provisioning certificate and its issue job atomically.
  *
  * Must be called with a client that already holds the workspace CertOps lock
@@ -452,20 +545,44 @@ async function createCertificateIssuanceJob(options = {}) {
         returnOutcome: true,
       });
     }
-    const certificate = await insertProvisioningCertificate(client, {
+    // Mirrors the resolution createCertificateJob performs for the job row, so
+    // the certificate is correlated to the same agent that will deploy it.
+    const assignedAgentId =
+      jobOptions.assignedAgentId ?? options.payload?.assignedAgentId ?? null;
+    const abandonedId = await resolveCertificatePathHolder(client, {
       workspaceId,
-      idempotencyKey,
-      commonName,
-      sans,
-      targetType,
-      certPath,
-      windowsTarget,
-      publicationDestination,
-      // Mirrors the resolution createCertificateJob performs for the job row, so
-      // the certificate is correlated to the same agent that will deploy it.
-      assignedAgentId:
-        jobOptions.assignedAgentId ?? options.payload?.assignedAgentId ?? null,
+      agentId: assignedAgentId,
+      certPath: windowsTarget ? null : certPath,
     });
+    const certificate = abandonedId
+      ? await reuseAbandonedCertificate(client, abandonedId, {
+          workspaceId,
+          idempotencyKey,
+          commonName,
+          sans,
+          targetType,
+          certPath,
+        })
+      : await insertProvisioningCertificate(client, {
+          workspaceId,
+          idempotencyKey,
+          commonName,
+          sans,
+          targetType,
+          certPath,
+          windowsTarget,
+          publicationDestination,
+          assignedAgentId,
+        }).catch((error) => {
+          // A concurrent request for the same path won the unique index.
+          if (
+            error?.code === "23505" &&
+            String(error.constraint || "").includes("agent_deployed_path")
+          ) {
+            throw certificatePathInUseError(certPath);
+          }
+          throw error;
+        });
     certificateId = certificate.id;
   }
 
@@ -518,6 +635,7 @@ async function createCertificateIssuanceJob(options = {}) {
 }
 
 module.exports = {
+  CERTOPS_CERTIFICATE_PATH_IN_USE,
   CERTOPS_JOB_INVALID,
   ISSUANCE_KEY_MODE,
   ISSUANCE_SOURCE,

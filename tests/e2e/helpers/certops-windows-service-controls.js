@@ -1,6 +1,6 @@
 /*
  * Qualification notes: installed-service-controls
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Actual SCM Interrogate must succeed; unsupported Pause/Continue must return
  * ERROR_INVALID_SERVICE_CONTROL1052, not permission/state errors. Before each independently decode SCM
  * argv and observe original SYSTEM host+Node identity. Require unchanged config/credential/pin, CNG

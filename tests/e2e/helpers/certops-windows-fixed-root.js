@@ -1,6 +1,6 @@
 /*
  * Qualification notes: canonical-root-lifecycle
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Run certops-windows-fixed-root.yml on fresh Server2022/2025 only after proving TokenTimerAgent and
  * C:\ProgramData\TokenTimerAgent absent. Execute original packed install-agent.ps1 CLI byte-for-byte.
  * Seven cases require installation, authenticated registration/bootstrap registry scrub, fresh SYSTEM
@@ -14,7 +14,7 @@
  */
 /*
  * Qualification notes: fixed-root
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Pure contract preserves preexisting C:\ProgramData\TokenTimerAgent: owned manifest is elsewhere
  * under runID and may read but never copy/rename/delete existing root.
  * existingRootPreserved=true,installerRewroteFixedRoot=false,nativeExecutionQualified=false. Missing

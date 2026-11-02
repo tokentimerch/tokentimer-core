@@ -570,3 +570,34 @@ describe("Vault forward proxy responses", () => {
     } finally { global.fetch = originalFetch; }
   });
 });
+
+describe("Vault nested network diagnostics", () => {
+  for (const code of ["DEPTH_ZERO_SELF_SIGNED_CERT", "CERT_HAS_EXPIRED", "ERR_TLS_CERT_ALTNAME_INVALID", "ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT"]) {
+    it(`preserves the known ${code} cause of a fetch failure`, async () => {
+      const originalFetch = global.fetch;
+      try {
+        global.fetch = async () => {
+          const cause = Object.assign(new Error("Internal transport detail"), { code });
+          throw new TypeError("fetch failed", { cause: new Error("Transport wrapper", { cause }) });
+        };
+        await assert.rejects(() => vaultRequest({ address: "https://vault.example.test", token: "fixture-token", path: "/v1/sys/mounts" }), error => {
+          assert.equal(error.code, code);
+          assert.equal(error.status, undefined);
+          assert.equal(error.message, /CERT|SIGNATURE/.test(code) ? "Vault TLS certificate verification failed" : "fetch failed");
+          return true;
+        });
+      } finally { global.fetch = originalFetch; }
+    });
+  }
+  it("leaves unknown causes unclassified and terminates on cycles", async () => {
+    const originalFetch = global.fetch;
+    try {
+      global.fetch = async () => {
+        const cause = Object.assign(new Error("Unknown transport"), { code: "UNTRUSTED_PROVIDER_CODE" });
+        cause.cause = cause;
+        throw new TypeError("fetch failed", { cause });
+      };
+      await assert.rejects(() => vaultRequest({ address: "https://vault.example.test", token: "fixture-token", path: "/v1/sys/mounts" }), error => error.code === undefined && error.message === "fetch failed");
+    } finally { global.fetch = originalFetch; }
+  });
+});

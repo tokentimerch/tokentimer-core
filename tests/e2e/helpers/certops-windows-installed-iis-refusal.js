@@ -1,6 +1,6 @@
 /*
  * Qualification notes: installed-public-iis-refusal
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Submit real public standalone deploy for genuinely installed CNG/IIS certificate: signed dispatch
  * must fail with specific unsupported Windows IIS deploy error. Early branch emits no certificate
  * failure evidence; require exactly matching CERTOPS_JOB_FAILED audit(job/claim/agent/operation), no

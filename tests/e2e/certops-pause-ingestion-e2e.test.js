@@ -17,7 +17,7 @@ const scenarios = ["pause-ingestion-owned-claims", "pause-ingestion-audited-paus
 test("workspace pause blocks new work while retaining owned result ingestion", { timeout: 120000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires disposable authenticated API PostgreSQL and signing keys
+    // skip-reason: prerequisite - requires disposable authenticated API PostgreSQL and signing keys
     t.skip("Disposable API required"); return;
   }
   assert.ok(baseUrl);

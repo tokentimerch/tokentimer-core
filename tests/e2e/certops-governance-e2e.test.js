@@ -17,7 +17,7 @@ const { createHostGate } = require("../../packages/agent/scripts/host-gate");
 test("observed certificate governance through public API", { timeout: 120000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - needs disposable real authenticated API and PostgreSQL
+    // skip-reason: prerequisite - needs disposable real authenticated API and PostgreSQL
     t.skip("Disposable API URL required"); return;
   }
   assert.ok(baseUrl);

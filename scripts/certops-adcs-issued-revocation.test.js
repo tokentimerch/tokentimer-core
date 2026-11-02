@@ -15,7 +15,7 @@
  * CA count/predecessor CNG/IIS/TLS. Survivor guard preserves unknown acceptance/cleanup; no new
  * preflight/officer primitive.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Pure bounded proof and native-source ordering checks; no CA/native action. */
 const { test } = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path");

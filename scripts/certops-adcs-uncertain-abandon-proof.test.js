@@ -14,7 +14,7 @@
  * receipt/rule release/restart, failed drain preserves state. Three mandatory scenarios separate
  * from pending abandon refusal/crash/survivor qualifications.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /* Supporting proof-contract checks, without native host operations. Actual
  * submitting/recovery/abandon qualification requires the disposable forest. */

@@ -1,6 +1,6 @@
 /*
  * Qualification notes: two-unattended-renewals
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Require windows-two-unattended-renewals in every normal cell: actual worker maintenance/default
  * SQLNOW,signed installed claims and pinned Pebble6day leaves naturally within30day window. Wait
  * real1.1s between issuance seconds; derive distinct next idempotency from actual persisted expiry,no

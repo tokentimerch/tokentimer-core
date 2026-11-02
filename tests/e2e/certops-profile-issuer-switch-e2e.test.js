@@ -7,7 +7,7 @@
  * Repeating the same issuer produces the documented no-change response without jobs or additional
  * audit writes.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Supporting API/PostgreSQL qualification: public renewal issuer changes retain runnable policy and atomic audit.
@@ -20,7 +20,7 @@ const {createApiFixture}=require("./helpers/certops-api-fixture"),{createHostGat
 const scenarios=["issuer-switch-confirmed-update","issuer-switch-unconfirmed-atomic-refusal","issuer-switch-foreign-fence","issuer-switch-incomplete-acme-refusal","issuer-switch-noop-audit-fence","issuer-switch-cleanup"];
 test("public renewal issuer changes retain runnable policy and atomic audit",{timeout:120000},async t=>{
  const baseUrl=process.env.CERTOPS_CSR_API_URL;if(!baseUrl&&process.env.CERTOPS_E2E_REQUIRED!=="1"){
-  // skip-reason: no-host - requires disposable API and PostgreSQL
+  // skip-reason: prerequisite - requires disposable API and PostgreSQL
   t.skip("Disposable API and PostgreSQL required");return;
  }
  assert.ok(baseUrl);const fixture=await createApiFixture(baseUrl);let foreign,ready=false,failure;

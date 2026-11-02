@@ -13,7 +13,7 @@
  * store/key/replacement. No expiry deletion/ other stores/interval/CMC. Unresolved public cleanup
  * blocks key/state deletion; before rollover.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Public projection adversaries only. Native WebHosting enrollment is never
  * executed by these checks and remains pending its protected disposable lane. */
@@ -249,4 +249,63 @@ test("WebHosting fixture persists its exact source and verifies trigger-created 
   fixture.pool.query=async sql=>({rows:sql.startsWith("INSERT")?[{id}]:rows});
   await assert.rejects(()=>helper.provisionWebHostingSource({fixture,agentRowId:"agent",isolated}));
  }
+});
+
+test("background cleanup defers other-identity leaves only when they are independently owned thumbprints", () => {
+  const domain = "certops-adcs-0123456789-rsa2048.example.test";
+  const certificateId = "33333333-3333-4333-8333-333333333333";
+  const own = "44444444-4444-4444-8444-444444444444";
+  const foreign = {
+    thumbprint: "A".repeat(40),
+    containerName: "tokentimer-enr-55555555-5555-4555-8555-555555555555",
+  };
+  const unowned = {
+    thumbprint: "B".repeat(40),
+    containerName: "tokentimer-enr-66666666-6666-4666-8666-666666666666",
+  };
+  const run = (store, ownedThumbprints) => {
+    const removed = [];
+    const receipt = {
+      store: "My",
+      domain,
+      certificateId,
+      enrollmentIds: [own],
+      thumbprints: [],
+    };
+    const ps = (script) => {
+      if (script.startsWith("(Get-Service")) return "";
+      if (script.startsWith("@{processes="))
+        return JSON.stringify({ processes: [] });
+      if (script.includes("@{entries="))
+        return JSON.stringify({ entries: store });
+      removed.push(script);
+      return "";
+    };
+    helper.cleanupBackground({
+      receipts: [receipt],
+      configDir: "unused",
+      ps,
+      drain: { processes: [] },
+      ownedThumbprints,
+    });
+    return { removed, receipt };
+  };
+  // Without independent ownership another identity's leaf still blocks cleanup.
+  assert.throws(
+    () => run([foreign], new Set()),
+    /Preserve unowned WebHosting key association/,
+  );
+  assert.throws(
+    () => run([foreign]),
+    /Preserve unowned WebHosting key association/,
+  );
+  // An exact observed thumbprint is deferred to the exact-thumbprint step, never removed here.
+  const ok = run([foreign], new Set([foreign.thumbprint.toLowerCase()]));
+  assert.deepEqual(ok.removed, []);
+  assert.equal(ok.receipt.cleanupCompleted, true);
+  // A genuinely unknown leaf next to an owned one still fails closed.
+  assert.throws(
+    () => run([foreign, unowned], new Set([foreign.thumbprint])),
+    /Preserve unowned WebHosting key association/,
+  );
 });

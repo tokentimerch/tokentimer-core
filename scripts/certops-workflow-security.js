@@ -9,7 +9,7 @@ function validateNodeSetup(action){
  const keys=(value,expected)=>value&&Object.keys(value).sort().join(",")===expected;
  const remote=(step,prefix)=>keys(step,"uses,with")&&new RegExp("^"+prefix+"@[a-f0-9]{40}$").test(step.uses);
  if(!keys(action,"description,name,runs")||!keys(action.runs,"steps,using")||action.runs.using!=="composite"||!Array.isArray(steps)||steps.length!==3||
-    !remote(steps[0],"pnpm/action-setup")||!keys(steps[0].with,"version")||steps[0].with.version!=="11.13.0"||
+    !remote(steps[0],"pnpm/action-setup")||!keys(steps[0].with,"version")||steps[0].with.version!==require("../package.json").packageManager.split("@").at(-1)||
     !remote(steps[1],"actions/setup-node")||!keys(steps[1].with,"cache,node-version")||steps[1].with["node-version"]!=="24"||steps[1].with.cache!=="pnpm"||
     !keys(steps[2],"run,shell")||steps[2].run!=="pnpm install --frozen-lockfile"||steps[2].shell!=="bash")return ["Local CertOps setup must contain only pinned Node/pnpm setup and frozen install"];
  return [];
@@ -94,7 +94,7 @@ function validateWorkflow(workflow,name="workflow"){
     const distributionSummary=name==="certops-distribution-qualification.yml"&&id==="functional-summary"&&JSON.stringify(job.needs)===JSON.stringify(["postgres","agent-lab"])&&job.if==="${{ always() && github.ref == 'refs/heads/main' }}";
     if(job.if!=="github.ref == 'refs/heads/main'"&&!selectedCondition&&!dnsCondition&&!distributionSummary&&!require("./certops-azure-scope-policy").allowedCondition(name,job.if))fail(`${id} must enforce the exact trusted main reference`);
     if(name==="certops-qualification.yml"&&selectedLane&&!selectedCondition)fail(`${id} must narrow execution to its committed selection output`);
-    if(!Number.isInteger(job["timeout-minutes"])||job["timeout-minutes"]<1||job["timeout-minutes"]>180)fail(`${id} requires a bounded timeout`);
+    if(!Number.isInteger(job["timeout-minutes"])||job["timeout-minutes"]<1||job["timeout-minutes"]>(name==="certops-enterprise-adcs-qualification.yml"&&id==="lab"?300:180))fail(`${id} requires a bounded timeout`);
     if(job.permissions)for(const [key,value] of Object.entries(job.permissions))if(!(["contents","actions"].includes(key)&&value==="read")&&!(key==="id-token"&&value==="write"))fail(`${id} expands token permissions`);
     if((permissions["id-token"]==="write"||job.permissions?.["id-token"]==="write")&&!job.environment)fail(`${id} OIDC requires a protected qualification environment`);
     const steps=job.steps||[],runs=steps.map(step=>step.run||"").join("\n");

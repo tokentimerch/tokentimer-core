@@ -15,7 +15,7 @@
  * case does not qualify signed API admission, reload outage, uninterrupted availability
  * or cross-process coordination; pure controls are not native evidence.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Native consuming-daemon served-leaf mismatch source. A read-only local evidence recorder
  * observes the production coordinator; native validate/reload implementations

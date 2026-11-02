@@ -1,6 +1,6 @@
 /*
  * Qualification notes: state-read-refusals
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Supporting windows-state-config-read-denied,credential-read-denied,signing-pin-read-denied operate
  * only owned public temporary files. First production reader returns exact identity; then real native
  * ReadData denial must independently produce EACCES/EPERM before production refusal counts. Original

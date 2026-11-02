@@ -12,7 +12,7 @@
  * before keygen/submit, unresolved response/custody blocks cleanup through valid recovery.
  * Deliberate ambiguity does not qualify lost-response timing or borrowed certificate adoption.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Offline contracts and the actual pure candidate validator; no CA execution. */
 const test = require("node:test"),

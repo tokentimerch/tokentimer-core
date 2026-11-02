@@ -17,7 +17,7 @@
  * closed nativeFileDiscoveryRefusals proof/current source hashes. This is not
  * installed-service, Windows or arbitrary remote-filesystem qualification.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Native Ubuntu discovery refusal fixture. Only public certificates enter this
  * fixture. The real foreground agent and public API remain owned by the caller.

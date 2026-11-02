@@ -57,8 +57,9 @@ test("background continuity cannot be spliced from another profile, leaf, key or
     );
 });
 test("bounded sidecar reader binds both clients and excludes unrelated events", () => {
-  const parent = path.resolve(__dirname, "../.build"),
-    root = fs.mkdtempSync(path.join(parent, "acme-background-reader-"));
+  const parent = path.resolve(__dirname, "../.build");
+  fs.mkdirSync(parent, { recursive: true });
+  const root = fs.mkdtempSync(path.join(parent, "acme-background-reader-"));
   fs.mkdirSync(path.join(root, "qualification-results"));
   try {
     for (const scope of h.SCOPES) {

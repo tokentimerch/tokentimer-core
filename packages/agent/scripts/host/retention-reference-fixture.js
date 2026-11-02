@@ -1,6 +1,6 @@
 /*
  * Qualification notes: retention-reference-guards
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Actual owned CNG predecessor ledger gets2 explicit supporting recovery references; close one then
  * both with production APIs, unknown ref cannot close known. Fresh child reads after each. Native
  * sweep defers active_reference_present until all closed,then deadline_not_reached under unchanged24h

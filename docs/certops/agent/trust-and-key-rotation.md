@@ -2,6 +2,14 @@
 
 Use this reference when changing trust stores or the control-plane signing key. These are separate operations: CA anchors establish host trust; the signing key authenticates jobs. Configure only the command profiles needed for the operation.
 
+## Establish CA trust on a host
+
+With a workspace administrator, open **Certificate Management → Agents → Trust anchors**. Choose **Approve a trust anchor**, review the public CA certificate against a trusted source, then **Distribute to an agent**. Select only the intended hosts and inspect the job timeline and read-only **Agent output**. This is separate from placing an IIS leaf certificate/private key in Personal.
+
+Verify the approved fingerprint in the [native OS store](../verify-live-service.md#verify-a-trust-store-installation). Controlled **revoke-trust** removes the installation owned by that consumer; **Retire** makes the workspace anchor inactive and does not remove host installations or revoke the CA at its issuer. A lifecycle label such as **Revoked** after retirement does not establish external CA revocation. Keep ownership evidence before removal.
+
+The remainder is the signing-key and trust-job reference.
+
 <a id="signing-key-rotation-lifecycle"></a>
 
 ### Signing-key rotation lifecycle

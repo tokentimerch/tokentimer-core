@@ -1356,6 +1356,45 @@ describe("trust-store: revokeTrust on Debian-family (ownership-proof-gated remov
     assert.deepEqual(execFileImpl.calls[0], freshArgv);
   });
 
+  describe("freshUpdateCommandArgvForRevoke", () => {
+    const FRESH_REF = "trust-store:update-ca-certificates-fresh";
+    function engineWith(refs) {
+      return {
+        checkCommandRef(ref) {
+          return refs[ref]
+            ? { allowed: true, argv: [...refs[ref]] }
+            : { allowed: false, rejectionReason: "COMMAND_NOT_ALLOWLISTED" };
+        },
+      };
+    }
+
+    it("returns the allowlisted --fresh argv for a Debian revoke", () => {
+      const argv = ["/usr/sbin/update-ca-certificates", "--fresh"];
+      assert.deepEqual(
+        trustStore.freshUpdateCommandArgvForRevoke("debian", "revoke-trust", engineWith({ [FRESH_REF]: argv })),
+        argv,
+      );
+    });
+
+    it("returns undefined when the --fresh profile is not allowlisted, so revoke keeps its warned fallback", () => {
+      assert.equal(trustStore.freshUpdateCommandArgvForRevoke("debian", "revoke-trust", engineWith({})), undefined);
+    });
+
+    it("never looks the profile up for distribute, RHEL or Windows", () => {
+      let lookups = 0;
+      const engine = {
+        checkCommandRef() {
+          lookups += 1;
+          return { allowed: true, argv: ["x", "--fresh"] };
+        },
+      };
+      assert.equal(trustStore.freshUpdateCommandArgvForRevoke("debian", "distribute-trust", engine), undefined);
+      assert.equal(trustStore.freshUpdateCommandArgvForRevoke("rhel", "revoke-trust", engine), undefined);
+      assert.equal(trustStore.freshUpdateCommandArgvForRevoke("windows", "revoke-trust", engine), undefined);
+      assert.equal(lookups, 0);
+    });
+  });
+
   it("falls back to the plain update-ca-certificates argv with a non-fatal warning when no --fresh command-ref is configured (pre-0.14.2 config.json upgrade compat)", async () => {
     const receiptDir = path.join(makeTempDir("receipts"), "receipts");
     const fsImpl = makeFakeFs({});

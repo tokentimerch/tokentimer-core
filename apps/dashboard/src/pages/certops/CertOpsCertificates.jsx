@@ -67,10 +67,7 @@ import {
   sourceLabel,
   statusLabel,
 } from '../../components/certops/certopsFormat.js';
-import {
-  useCertOpsCanManage,
-  useCertOpsIsWorkspaceAdmin,
-} from '../../components/certops/useCertOps.js';
+import { useCertOpsCanManage } from '../../components/certops/useCertOps.js';
 import { useCertOpsCertificates } from '../../components/certops/useCertOpsCertificates.js';
 import {
   DashboardActionButton,
@@ -324,7 +321,6 @@ export default function CertOpsCertificates() {
     },
   };
   const canManage = useCertOpsCanManage();
-  const isWorkspaceAdmin = useCertOpsIsWorkspaceAdmin();
   const { workspaceId } = useWorkspace();
   const {
     limit,
@@ -1140,7 +1136,6 @@ export default function CertOpsCertificates() {
                                     />
                                   </Tooltip>
                                 ) : certificate.keyMode === 'vault-managed' ? (
-                                  isWorkspaceAdmin &&
                                   certificate.keyReference ? (
                                     <Tooltip label='Repair renewal profile'>
                                       <IconButton

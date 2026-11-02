@@ -17,7 +17,7 @@
  * Run prerequisites: `CERTOPS_CSR_DISPOSABLE_STACK=1`, `CERTOPS_E2E_REQUIRED=1`,
  * `CERTOPS_QUALIFICATION_STRICT=1`.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Qualify shared CSR provisional ownership and truthful manual attestation through
@@ -54,7 +54,7 @@ const scenarios = [
 test("shared CSR ownership, cancellation and truthful installation evidence", { timeout: 150000 }, async (t) => {
   const base = process.env.CERTOPS_CSR_API_URL;
   if (!base && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires disposable authenticated API, PostgreSQL and OpenSSL
+    // skip-reason: prerequisite - requires disposable authenticated API, PostgreSQL and OpenSSL
     t.skip("Disposable API/PostgreSQL stack required"); return;
   }
   assert.ok(base);

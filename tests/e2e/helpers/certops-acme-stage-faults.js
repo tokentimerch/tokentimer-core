@@ -15,7 +15,7 @@
  * Keep signed bodies, account material and TLS keys out of artifacts; all five native
  * slots require both named cases, closed proof and current causal sources.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Real public issue jobs with owned HTTPS refusal before CA order/finalization.
  * Genuine native clients, signed production admission, CA observations and DNS

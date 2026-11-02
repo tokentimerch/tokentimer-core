@@ -1,6 +1,6 @@
 /*
  * Qualification notes: shared-port-sni-qualification
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Require windows-iis-shared-port-sni-isolation on disposable elevated Server2022/2025,IIS and host
  * prerequisites. Own2 unique sites,2 hostnameport selectors on one free port,5 nonexportable certs
  * covering both names; refuse site/selector collisions/concrete-IP shadows. Actual SNI loopback

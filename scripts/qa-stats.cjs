@@ -135,7 +135,7 @@ function renderHuman(stats) {
   lines.push(`  tests:        ${stats.testCount}  (describe(...) blocks)`);
   lines.push(`  subtests:     ${stats.subtestCount}  (it(...)/test(...) cases)`);
   lines.push(`  fuzz targets: ${stats.fuzzTargetCount}  (fc.assert/fc.property calls)`);
-  lines.push(`  skips:        ${stats.skipCount}  (see docs/certops/skip-inventory.generated.md)`);
+  lines.push(`  skips:        ${stats.skipCount}  (see .github/maintainers/certops/skip-inventory.generated.md)`);
   return lines.join("\n");
 }
 

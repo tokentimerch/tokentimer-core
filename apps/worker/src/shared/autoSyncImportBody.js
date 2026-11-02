@@ -4,12 +4,17 @@
  * imports stay unattributed and a later cleanup-on run used to insert
  * a duplicate the cleanup engine could never reach.
  */
-export function buildAutoSyncImportBody({ items, scanId, cleanup, autoSyncRun }) {
+export function buildAutoSyncImportBody({ items, scanId, cleanup, autoSyncRun, contactGroupIds }) {
+  const groups = Array.isArray(contactGroupIds)
+    ? contactGroupIds.filter((id) => typeof id === "string" && id)
+    : [];
   return {
     items: Array.isArray(items) ? items : [],
     ...(scanId ? { scan_id: scanId } : {}),
     ...(cleanup ? { cleanup } : {}),
     ...(autoSyncRun ? { auto_sync_run: autoSyncRun } : {}),
+    // The API applies these to assets this run creates, never to existing ones.
+    ...(groups.length ? { contact_group_ids: groups } : {}),
   };
 }
 

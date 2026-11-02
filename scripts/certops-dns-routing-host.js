@@ -14,7 +14,7 @@
  * configuration. A prior local Windows hook run is a worktree baseline, not
  * hosted-Ubuntu or release qualification; real external IAM/errors stay separate.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /**
  * Runs the real DNS hook subprocess against an owned local authoritative DNS/API fixture.

@@ -4,7 +4,7 @@
  * Holds one exclusive IPC listen for acquireExclusiveLockFile.
  * SharedArrayBuffer Int32 layout:
  *   [0] state: 0=pending, 1=held, 2=busy, 3=error, 4=released
- *   [1] heartbeat: Date.now() truncated; parent assertHeld() uses this so
+ *   BigInt64 at byte 8: monotonic nanoseconds; parent uses this so
  *       loss is visible even before the worker `exit` event is delivered
  *
  * ipcKind:
@@ -28,6 +28,7 @@ const STATE_ERROR = 3;
 const STATE_RELEASED = 4;
 
 const state = new Int32Array(workerData.sab);
+const heartbeat = new BigInt64Array(workerData.sab, 8, 1);
 const ipcPath = workerData.ipcPath;
 const ipcKind = workerData.ipcKind;
 
@@ -47,9 +48,9 @@ function signal(code) {
 
 function startHeartbeat() {
   const tick = () => {
-    // Never store 0: parent treats beat===0 as "not heartbeating", and
-    // Date.now()&0x7fffffff is 0 for 1ms every ~24.85 days.
-    Atomics.store(state, 1, (Date.now() & 0x7fffffff) || 1);
+    // Both threads share the process monotonic clock, independent of clock steps.
+    Atomics.store(heartbeat, 0, process.hrtime.bigint());
+    Atomics.notify(heartbeat, 0);
   };
   tick();
   heartbeatTimer = setInterval(tick, 50);

@@ -10,7 +10,7 @@
  * row/original cutover time unchanged, predecessor key/cert retained. Optional observed window
  * remains experimental/not-qualified, not arbitrary crash timing.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Synthetic refusal controls; actual post-bind crash recovery remains pending. */
 const test = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto");

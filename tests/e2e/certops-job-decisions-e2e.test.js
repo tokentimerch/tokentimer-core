@@ -15,7 +15,7 @@ const { createHostGate } = require("../../packages/agent/scripts/host-gate");
 test("real API approval rejection and protocol terminal transitions", { timeout: 120000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires isolated authenticated API and PostgreSQL
+    // skip-reason: prerequisite - requires isolated authenticated API and PostgreSQL
     t.skip("Disposable API URL required"); return;
   }
   assert.ok(baseUrl);

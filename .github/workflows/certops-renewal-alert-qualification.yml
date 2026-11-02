@@ -44,7 +44,7 @@ jobs:
           exit 1
       - name: Execute actual renewal outbox and SMTP receipt assertions
         run: |
-          node --test tests/e2e/certops-renewal-alert-e2e.test.js
+          node --test tests/e2e/certops-renewal-alert-worker-e2e.test.js
           node scripts/certops-qualification-report.js qualification-results/renewal-alert.json
       - name: Destroy isolated stack
         if: always()

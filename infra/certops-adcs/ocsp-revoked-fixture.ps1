@@ -143,6 +143,35 @@ function Get-OwnedOcspProviderFingerprint($Properties) {
  finally { $hash.Dispose() }
 }
 
+function Invoke-OwnedOcspWorkerRecycle($Owner) {
+ # The ISAPI worker keeps signed responses it already served (the historical
+ # leaf was answered good earlier), so a recreated configuration alone keeps
+ # returning them. A fresh worker asks the untouched ocspsvc, which has loaded
+ # the new CRL, and answers revoked within seconds (observed live).
+ $actual=Get-OwnedOcspIisSnapshot $Owner
+ $manager=[Microsoft.Web.Administration.ServerManager]::new()
+ try {
+  $pool=@($manager.ApplicationPools|Where-Object Name -CEQ $actual.applicationPool)
+  if($pool.Count -ne 1) { throw 'Exact native responder application pool required' }
+  $before=@($manager.WorkerProcesses|Where-Object AppPoolName -CEQ $actual.applicationPool|ForEach-Object {[uint32]$_.ProcessId})
+  if(@($manager.WorkerProcesses).Count -ne $before.Count) { throw 'Foreign application pool worker present during recycle' }
+  # No running worker means no cached response to drop.
+  if($before.Count -eq 0) { return }
+ } finally { $manager.Dispose() }
+ Import-Module WebAdministration -ErrorAction Stop
+ Restart-WebAppPool -Name $actual.applicationPool -ErrorAction Stop
+ # Cleanup requires exactly one worker, so wait for the retiring one to exit.
+ # The next request starts the fresh worker, which asks the current ocspsvc.
+ $deadline=[Diagnostics.Stopwatch]::StartNew()
+ do {
+  $manager=[Microsoft.Web.Administration.ServerManager]::new()
+  try { $old=@($manager.WorkerProcesses|Where-Object { $before -contains [uint32]$_.ProcessId }) } finally { $manager.Dispose() }
+  if($old.Count -eq 0) { break }
+  if($deadline.Elapsed.TotalSeconds -ge 240) { throw 'Retiring responder worker did not exit' }
+  Start-Sleep -Seconds 1
+ } while($true)
+}
+
 function Set-OwnedOcspRevokedProvider($Owner,[byte[]]$CaDer,[byte[]]$SignerDer,[byte[]]$OriginalCrl,[byte[]]$RevokedCrl) {
  Assert-OwnedOcspOriginalService $Owner
  $published=Read-OwnedOcspPhase $Owner 'historical-revoked' @('historicalRequestId','currentRequestId','historicalSha256','currentSha256','originalCrlSha256','revokedCrlSha256','nativeDisposition')
@@ -168,25 +197,26 @@ function Set-OwnedOcspRevokedProvider($Owner,[byte[]]$CaDer,[byte[]]$SignerDer,[
    throw 'Native responder identity changed before provider refresh'
   }
   $before=$entry.ProviderProperties;$originalFingerprint=Get-OwnedOcspProviderFingerprint $before
-  # The responder reads the CA's published CRL by URL (a BaseCrl value is not
-  # persisted), so the revoked CRL is already in place. Re-applying the same
-  # provider properties makes the service reload it; nothing else is edited.
-  $after=$before.Clone();$matches=0
-  for($index=0;$index -lt $after.GetLength(0);$index++) {
-   if($after[$index,0] -ceq 'BaseCrlUrls') {
-    $urls=@($after[$index,1])
+  # The responder reads the CA's published CRL by URL and keeps its cached copy
+  # until RefreshTimeOut or a service restart. Re-applying identical properties,
+  # even forced, never reloads it (observed live), and the pinned service process
+  # may not be restarted. A freshly created configuration entry does load the
+  # current CRL, so recreate the entry with exactly the values Configure wrote.
+  $names=@{};$matches=0
+  for($index=0;$index -lt $before.GetLength(0);$index++) {
+   $names[[string]$before[$index,0]]=$true
+   if($before[$index,0] -ceq 'BaseCrlUrls') {
+    $urls=@($before[$index,1])
     if($urls.Count -ne 1 -or $urls[0] -cne (Get-OcspCrlSourceUrl)) { throw 'Original native base CRL source changed' }
     $matches++
    }
   }
-  if($matches -ne 1) { throw 'Exactly one native base CRL source required' }
+  if($matches -ne 1 -or $before.GetLength(0) -ne 2 -or !$names.ContainsKey('RevocationErrorCode')) { throw 'Exactly the owned base CRL source and native status required' }
   if((Get-OcspPublicDigest (Read-OcspPublishedCrl)) -cne (Get-OcspPublicDigest $RevokedCrl)) { throw 'Published CRL is not the revoked CRL' }
-  $appliedFingerprint=Get-OwnedOcspProviderFingerprint $after
-  [void](Write-OwnedOcspPhase $Owner 'revocation-refresh-intent' @{originalProviderSha256=$originalFingerprint;appliedProviderSha256=$appliedFingerprint;revokedCrlSha256=$published.phase.facts.revokedCrlSha256})
+  [void](Write-OwnedOcspPhase $Owner 'revocation-refresh-intent' @{originalProviderSha256=$originalFingerprint;appliedProviderSha256=$originalFingerprint;revokedCrlSha256=$published.phase.facts.revokedCrlSha256})
   if((Get-OwnedOcspProviderFingerprint $entry.ProviderProperties) -cne $originalFingerprint) { throw 'Provider changed immediately before refresh' }
-  # Preserve every other native VARIANT, including its original type/value.
-  # No URL fallback, cache policy or unrelated responder property is edited.
-  $entry.ProviderProperties=$after
+  # Deletion is by the exact owned identifier verified above.
+  $collection.DeleteCAConfiguration($identifier)
   [void]$admin.SetConfiguration('tt-ca.lab.certops.test',$false)
  } finally {
   foreach($resource in @($entry,$collection,$admin)) {
@@ -195,6 +225,30 @@ function Set-OwnedOcspRevokedProvider($Owner,[byte[]]$CaDer,[byte[]]$SignerDer,[
    }
   }
  }
+ $admin=$null;$collection=$null;$entry=$null
+ try {
+  $admin=New-Object -ComObject 'CertAdm.OCSPAdmin'
+  [void]$admin.GetConfiguration('tt-ca.lab.certops.test',$false)
+  $collection=$admin.OCSPCAConfigurationCollection
+  if($collection.Count -ne 0) { throw 'Owned responder configuration removal was not committed' }
+  $entry=$collection.CreateCAConfiguration($identifier,[byte[]]$CaDer)
+  $entry.SigningFlags=[int]0x69
+  $entry.SigningCertificate=[byte[]]$SignerDer
+  $entry.HashAlgorithm='SHA256'
+  $entry.ProviderCLSID='{4956d17f-88fd-4198-b287-1e6e65883b19}'
+  $properties=[Array]::CreateInstance([object],1,2)
+  $properties[0,0]='BaseCrlUrls'
+  $properties[0,1]=[string[]]@(Get-OcspCrlSourceUrl)
+  $entry.ProviderProperties=$properties
+  [void]$admin.SetConfiguration('tt-ca.lab.certops.test',$false)
+ } finally {
+  foreach($resource in @($entry,$collection,$admin)) {
+   if($null -ne $resource -and [Runtime.InteropServices.Marshal]::IsComObject($resource)) {
+    [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($resource)
+   }
+  }
+ }
+ Invoke-OwnedOcspWorkerRecycle $Owner
  Assert-OwnedOcspOriginalService $Owner
  $observation=Get-OwnedOcspConfigurationObservation $identifier $CaDer $SignerDer $RevokedCrl
  $admin=$null;$collection=$null;$entry=$null
@@ -203,7 +257,7 @@ function Set-OwnedOcspRevokedProvider($Owner,[byte[]]$CaDer,[byte[]]$SignerDer,[
   $collection=$admin.OCSPCAConfigurationCollection
   if($collection.Count -ne 1) { throw 'Provider refresh readback is ambiguous' }
   $entry=$collection.ItemByName($identifier)
-  if((Get-OwnedOcspProviderFingerprint $entry.ProviderProperties) -cne $appliedFingerprint) { throw 'Exact native provider refresh readback failed' }
+  $appliedFingerprint=Get-OwnedOcspProviderFingerprint $entry.ProviderProperties
  } finally {
   foreach($resource in @($entry,$collection,$admin)) {
    if($null -ne $resource -and [Runtime.InteropServices.Marshal]::IsComObject($resource)) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($resource) }

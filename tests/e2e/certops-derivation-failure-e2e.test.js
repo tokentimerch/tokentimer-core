@@ -15,7 +15,7 @@ const scenarios = ["derivation-failure-public-material", "derivation-failure-iss
 test("missing renewal derivation fields preserve real public certificate state", { timeout: 120000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires disposable authenticated API PostgreSQL and OpenSSL
+    // skip-reason: prerequisite - requires disposable authenticated API PostgreSQL and OpenSSL
     t.skip("Disposable API and OpenSSL required"); return;
   }
   assert.ok(baseUrl);

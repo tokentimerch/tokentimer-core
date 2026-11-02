@@ -1,6 +1,6 @@
 /*
  * Qualification notes: webhosting-expiry-reclamation
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Separate Azure-free certops-windows-webhosting-retention.yml manually on trusted
  * main,Server2022/2025. Actual two-cutover short-leaf collector uses LocalMachine
  * WebHosting,unchanged24h policy,real expiry+300s. Independent WebHosting custody/IIS-store receipt

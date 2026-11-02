@@ -19,7 +19,7 @@ const { createHostGate } = require("../../packages/agent/scripts/host-gate");
 test("real TLS endpoint certificate inventory lifecycle", { timeout: 120000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires disposable real authenticated API and database
+    // skip-reason: prerequisite - requires disposable real authenticated API and database
     t.skip("CERTOPS_CSR_API_URL required"); return;
   }
   assert.ok(baseUrl, "Strict inventory qualification requires API URL");

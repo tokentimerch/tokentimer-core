@@ -1,53 +1,95 @@
-# Auto-sync lifecycle and rollout
+# Import assets and keep them current
 
-## Configuration and inventory identity
+Use one configuration per provider connection. Core supports scheduled GitHub and GitLab scans; Enterprise adds entitled providers. Cloud performs one-time scans and does not offer scheduled provider sync.
 
-Configuration IDs are durable. Public `name` maps to `connection_key`: whitespace is collapsed, names contain 1–255 characters, and PostgreSQL enforces case-insensitive uniqueness per workspace and provider. Name and schedule edits keep an active run valid. Credentials, scan parameters, cleanup policy, and enabled state advance `scan_version` and supersede the active run. All comparisons use the locked current configuration, including concurrent edits.
+## Connect, preview and import
 
-In Import tokens, Disable auto-sync deletes only the selected configuration. The modal returns to Scan & Import and selects another configuration for that provider when available, keeping Manage auto-sync accessible and restoring the remaining configuration's settings. After deleting the provider's last configuration, the ordinary scan form offers Enable auto-sync again.
+1. Open **Import tokens** in the intended workspace. For a file, select the file option and review the parsed rows. For GitHub/GitLab, provide the instance URL and a suitably scoped credential, then scan.
+2. Apply filters and review the preview. A preview has not saved inventory. Select the intended rows, confirm **Import selected**, and wait for the result.
+3. Return to the same workspace inventory. Check the imported record's source, expiration and recipients before enabling unattended updates.
 
-Inventory identity is the existing `(workspace, provider, instance, owner key, source kind, source object ID)` tuple. Configurations finding that same identity share one token and have separate associations. This feature does not infer identity from secret values. GitHub/GitLab currently scope scan identity to the authenticated principal, so different principals' views of repository assets can have separate rows; changing that boundary requires provider-specific attribution and migration. Legacy rows are attached only through verified rediscovery, never guessed from provider alone. Migration cannot prove creation ownership from existing token data and leaves legacy inventory unmanaged and unassigned.
+TokenTimer tracks metadata rather than the secret value. A one-time scan does not create a saved sync connection; an explicitly enabled self-hosted sync keeps its credentials encrypted on your infrastructure.
 
-`auto_sync_managed` is false by default. Only creation inside a validated fenced import makes it true. Rediscovery of existing inventory never changes it to true. Manual integration import or confirmed CSV/JSON duplicate import makes it false. Deleting a configuration detaches its associations; otherwise orphaned inventory becomes unmanaged and remains present. Other configurations still protect their associations.
+## Enable a schedule
 
-## Run and transaction boundaries
+Use **Enable auto-sync**, give the configuration a recognizable name, then choose frequency, time and timezone. Select the notification groups for assets created by future runs. Existing assets keep their own group assignments.
 
-Claiming a due configuration locks its row with `FOR UPDATE SKIP LOCKED`, increments its generation, assigns a random run ID and lease owner, and records an allowlisted non-secret settings snapshot. The lease lasts 300 seconds and is renewed every 60 seconds. An expired owner cannot renew or write; the next claim supersedes its run and advances generation. Import, scan persistence, association writes and completion lock and validate the current configuration/run/generation/scan-version/owner in PostgreSQL. Provider calls occur outside the claim transaction.
+The worker's polling cadence (`WORKER_AUTO_SYNC_CRON` in Compose or `worker.cronjobs.autoSync.schedule` in Helm) determines when due configurations are checked. It is separate from each connection's own schedule. Confirm the configured worker is running.
 
-Run-now sets a durable boolean request. Repeated clicks during an active run coalesce into one subsequent manual run. Scan-affecting edits queue a replacement when the configuration is enabled. Manual and replacement requests coalesce into one next run, with manual taking precedence. Disabled configurations do not execute pending requests until enabled. Completion uses the current schedule, so schedule edits during a run are retained.
+Use **Manage auto-sync** to review or edit a saved connection. **Run now** requests a scan; repeated clicks while one is active coalesce into one later run. Disabled configurations do not run queued requests until enabled.
 
-Workers send `auto_sync_run` on scan and import requests. Scan persistence atomically binds each scan to its run under the fence. The observation timestamp is captured when the HTTP scan request begins, before provider network calls; older results cannot masquerade as newer observations. Stale runs cannot persist scan observations. Imports can use only scans bound to their own current run.
+## Verify an update
 
-Import looks up and updates/creates inventory in one transaction, taking deterministic advisory locks on source identity and legacy name/location, then a token row lock. This also serializes overlapping discoveries and manual adoption. `attached` and `detached` events preserve the configuration ID/name and token ID snapshot. PostgreSQL forbids changing their payload or deleting them while the workspace exists; token deletion may clear only the live token foreign key, and workspace deletion may cascade history.
+1. Open the selected configuration's run history. Check completion, partial/error status and separate created/updated counts. **Earlier runs** loads older results.
+2. Inspect the same inventory record after a provider-side metadata change and successful run. Match its source identity, not just a name. Two previews are not evidence of a persisted update.
+3. In asset details, review **Auto-sync** ownership/configuration and association history where present. Manual assets without sync provenance have no such section.
 
-## Destructive reconciliation
+Overlapping configurations may discover one provider identity and share its inventory record. Changing a name or schedule preserves the configuration. Changing credentials, scope or scan settings supersedes active work and queues a replacement when enabled.
 
-Negative reconciliation requires **all** scans registered to the run, every requested persisted scope positively complete, every observed item imported and associated in this generation, no durable import errors from any batch, and a current lease/version/owner fence. A verified complete zero-item scan is valid. Missing pagination, truncation, rate limits, inaccessible scopes, provider/item errors and partial scans retain associations. Partial status is reported even if cleanup is disabled.
+## New inventory metrics
 
-Within the transaction, unseen associations are considered only for the exact provider/instance/owner/kind/dimensions that the complete scan covered. Vault path prefixes are literal prefixes, including `%`, `_`, and backslashes; SQL wildcard matching cannot broaden the scanned scope. Assets outside the newly requested universe are not confirmed absent: changing instance, principal, filters or mounts can retain old associations until verified scanning covers them or the configuration is deleted. There is no destructive inference from a changed filter alone.
+With `ENABLE_METRICS=true`, API `/metrics` exposes
+`auto_sync_items_created_total{provider}` on every scrape, including zero before
+the first creation. It counts committed auto-sync additions and persists across
+restarts and deletions; historical imports are not backfilled. For `increase()`
+alerts, scrape one stable API target per database and record a baseline first.
+Do not sum replica copies. Monitor scrape failures separately.
 
-Detach, event insertion, association recheck and conditional managed-token deletion commit together. Attach and detach share the token row lock; a fresh statement snapshot detects another configuration's committed attachment. The existing observation fence also retains inventory rediscovered by a newer scan before import. Manual scan cleanup rechecks associations after acquiring the token lock. Inventory is deleted automatically only if it remains managed and has zero active configuration associations.
+Migration 80 also exposes `auto_sync_run_outcomes_total{provider,status}` for
+committed `success`, `partial`, `failed`, and `superseded` run outcomes. Each run
+counts once when it first leaves `running`, including lease recovery and API
+supersession. Existing history is not backfilled; totals survive history deletion.
+The separate name distinguishes this durable counter from the worker's
+process-local `auto_sync_runs_total`.
 
-## History and public errors
+`auto_sync_last_attempt_timestamp_seconds{provider}` records the latest run start;
+`auto_sync_last_success_timestamp_seconds{provider}` records the latest fully
+successful completion. Both are Unix seconds, persist after restart/deletion,
+and expose zero until observed. Partial and failed runs never refresh success.
+For freshness alerts, require a timestamp greater than zero before comparing
+`time() - auto_sync_last_success_timestamp_seconds` with your expected schedule;
+handle never-successful providers separately. Provider aggregates describe the
+installation, so one healthy configuration can hide another configuration's
+failure; use configuration run history to investigate individual connections.
 
-`GET /api/v1/workspaces/:id/auto-sync/:configId/runs` returns run ID, trigger, generation, scan version, timestamps, status, settings snapshot and separate discovered/created/updated/detached/deleted/error counts. Pages use an opaque cursor over the unique generation, avoiding timestamp precision loss. `limit` is an integer from 1 to 100. Import tokens offers **Earlier runs**; Control Center opens the selected configuration by ID.
+`auto_sync_enabled_configurations{provider}` is the current number of enabled
+connections. Scope freshness and failure alerts to values greater than zero so
+unused providers and disabled or deleted connections do not page operators.
+Apply the opt-in `deploy/helm/examples/values-auto-sync-alerts.yaml` after your
+normal values. For standalone Prometheus, extract its
+`monitoring.prometheusRules.groups` into a rule file under the top-level `groups`
+key. Use a unique `installation` label per database, shared by its replicas;
+match Prometheus Operator selectors and check target discovery/rule loading.
 
-Scan and credential-validation errors appear directly below each integration connection form, before scan filters and results. File import errors remain in the file import flow. GitLab must establish a valid user identity before scanning inventory; failed authentication, redirects, rate limits, server failures, and non-GitLab responses fail that connection check immediately. Redirect feedback asks for the canonical HTTPS instance URL; credentialed redirects remain disabled. Scope errors after successful authentication still follow the partial-scan rules.
+The creation alert detects rolling 15-minute activity, not one notification per
+asset. `increase()` can extrapolate fractional values. The failure alert requires
+three observed failures in three hours and no persisted full success in that
+window. It excludes counter resets and deduplicates replicas without extrapolation;
+scrape gaps, resets and replacement targets can undercount. Tune the 25-hour
+freshness/grace periods for your longest schedule. Alertmanager controls delivery.
+Collector errors can return HTTP 500; connection failures may terminate the API.
+Both cause scrape failures, not evidence of zero activity.
 
-Token and certificate details show the Auto-sync section only for managed inventory, active configuration associations, or recorded association history. Ordinary manual and legacy inventory without auto-sync provenance has no section. The section groups ownership and configuration names with their full internal configuration IDs. Show history expands the association events; Earlier history loads another page from `GET /api/tokens/:id/auto-sync-provenance`. `next_before` is the event ID cursor. Deleted configurations remain identifiable in events, and retained inventory keeps its deletion explanation visible while history is collapsed. Reads use the normal token membership authorization, including viewer access.
+### Optional configuration and asset labels
 
-Provider error bodies, raw exception messages and import item names are not persisted as public auto-sync errors. Controlled categories retain HTTP status, timeouts or import/completeness outcomes; credential-like JSON, header values and multiline secrets cannot enter run history, audit or incident notifications through these messages. Credentials never enter settings snapshots; the allowlist contains scope/filter metadata and sanitized source instance/account identity.
+- Apply migrations 81–82 with matching API/dashboard code; aggregate counters stay unchanged.
+- System Settings → Auto-sync independently overrides metrics/labels and monitoring group, locking integration controls. Otherwise, integrations retain their choices.
+- Environment wins: `AUTO_SYNC_METRICS_ENABLED=true/false`, optional `AUTO_SYNC_METRICS_LABELS` (CSV or `none`), and independent `AUTO_SYNC_METRICS_MONITORING_GROUP`. Empty restores saved values; `AUTO_SYNC_METRICS_EXTRA_LABELS` optionally restricts asset labels.
+- Helm: `monitoring.metrics.autoSyncEnabled`, `autoSyncLabels`, `autoSyncMonitoringGroup` (under `tokentimer` in Enterprise). Available labels are listed beside these settings.
+- **Warning:** label combinations multiply detailed series and expose metadata. Names/scopes cover future creations; old samples remain until retention expires.
 
-## Activation and rollback
+## Cleanup and removal
 
-For a production Compose walkthrough, populate both CertOps encryption keys before starting the candidate API: Compose enables CertOps by default, and startup requires each key to contain 64 hex characters. Generate them independently with `openssl rand -hex 32` and retain them securely; see `deploy/compose/.env.example` and `docs/CONFIGURATION.md`. Inventory-only use does not bypass this startup requirement.
+Enable destructive cleanup only when it matches your retention policy. Partial, truncated, rate-limited or inaccessible scans must not be treated as proof that an asset disappeared. Complete scans reconcile only the scope actually covered.
 
-Migration leaves the persisted activation flag off. PostgreSQL also rejects a second configuration before activation, including inserts from an old API node after the first config was renamed. Deploy the new API fleet, drain every old worker, deploy and verify the fencing-aware worker image, then activate as a system administrator from **System settings** or with `POST /api/v1/admin/auto-sync/activation` and `{"workers_drained":true,"worker_image_verified":true}`. The System settings card is shown only until activation. These attestations are an operator requirement; the API cannot inspect an external worker fleet. GET reports persisted state.
+**Disable auto-sync** deletes the selected configuration and detaches its associations; it does not blanket-delete inventory. Retained or manually adopted assets stay visible. Other configurations continue to protect their associated records. Inspect run/provenance history before deleting anything manually.
 
-Before activation, legacy worker imports can update inventory but the new API suppresses their unfenced destructive cleanup. From activation onward, legacy worker scans/imports lacking fenced run context fail closed on the new API. Older API or worker versions are unsupported after activation and must never rejoin a multi-configuration installation. Roll forward or restore a pre-activation backup; do not merely downgrade images. Cloud has no auto-sync worker or management UI and requires no issue-specific implementation PR.
+## Deployment activation and rollback
 
-## Verification
+For an installation upgrading to multiple configurations, migration leaves activation off. As a system administrator:
 
-Unit tests cover fences, ownership, partial scans, settings normalization and controlled errors. The real PostgreSQL gate uses actual models/routes and concurrent connections for discovery, attach/detach, manual cleanup, expired leases, edit invalidation, coalescing, deletion, activation and microsecond history pagination.
+1. Deploy the new API fleet, drain every old worker, then deploy and verify the fencing-aware worker image.
+2. Activate from **System settings**, or `POST /api/v1/admin/auto-sync/activation` with `{"workers_drained":true,"worker_image_verified":true}`. These are operator attestations; the API cannot inspect your external fleet. The activation card disappears afterward.
+3. After activation, never return old API/worker versions to the installation. Roll forward or restore a pre-activation backup; changing image tags back is insufficient.
 
-Create a disposable PostgreSQL database with a name ending in `_issue71_test`, set `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` if required, and `DB_NAME`, then run `node apps/api/migrations/migrate.js` and `pnpm test:auto-sync:postgres`. The name guard prevents running the fixture against ordinary databases. No provider credentials or live provider account are needed. The process exits after test hooks because importing the API starts operational timers. Drop the entire disposable database afterward; audit fixture users are intentionally retained because audit rows are immutable.
+Before starting a standard Compose installation, populate both CertOps encryption keys as described in [Configuration](CONFIGURATION.md). Compose enables CertOps by default; an inventory-only first task does not bypass startup requirements. Keep the configured keys with protected backups.

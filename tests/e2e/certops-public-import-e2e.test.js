@@ -11,7 +11,7 @@
  *
  * Runner and report settings: `CERTOPS_PUBLIC_IMPORT_REPORT`.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Supporting API/PostgreSQL qualification: public certificate import parsing, refusal and identity conservation.
@@ -32,7 +32,7 @@ const { createHostGate } = require("../../packages/agent/scripts/host-gate");
 test("public certificate import parsing, refusal and identity conservation", { timeout: 120000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires disposable API PostgreSQL and OpenSSL
+    // skip-reason: prerequisite - requires disposable API PostgreSQL and OpenSSL
     t.skip("Disposable API URL required"); return;
   }
   assert.ok(baseUrl); const fixture = await createApiFixture(baseUrl);

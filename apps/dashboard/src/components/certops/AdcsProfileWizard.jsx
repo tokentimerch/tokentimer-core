@@ -30,7 +30,7 @@ import { listAgents } from './certopsAgentsApi';
 import { listCertificates, replaceManagingSource } from './certopsApi';
 import { createAdcsRenewalProfile } from './certopsRenewalApi';
 import { sourceLabel } from './certopsFormat.js';
-import AdcsDocsLink from './AdcsDocsLink.jsx';
+import LearnMorePanel from '../LearnMorePanel.jsx';
 import { ADCS_DOCS } from '../../utils/docsUrls.js';
 import { showSuccess } from '../../utils/toast.js';
 
@@ -494,10 +494,16 @@ export default function AdcsProfileWizard({
                     template stays on that issuer. This profile does not choose
                     a new one.
                   </FormHelperText>
-                  <AdcsDocsLink href={ADCS_DOCS.renewalProfile}>
-                    What a renewal profile records
-                  </AdcsDocsLink>
                 </FormControl>
+                <LearnMorePanel
+                  variant='compact'
+                  links={[
+                    {
+                      label: 'What a renewal profile records',
+                      url: ADCS_DOCS.renewalProfile,
+                    },
+                  ]}
+                />
               </Stack>
             ) : null}
             {step === 1 ? (
@@ -517,9 +523,6 @@ export default function AdcsProfileWizard({
                     the renewal sweep skips it and does not create an
                     enrollment.
                   </FormHelperText>
-                  <AdcsDocsLink href={ADCS_DOCS.renewalProfile}>
-                    Renewal profile
-                  </AdcsDocsLink>
                 </FormControl>
                 <FormControl>
                   <FormLabel {...modal.labelProps}>Extra DNS names</FormLabel>
@@ -618,6 +621,12 @@ export default function AdcsProfileWizard({
                     />
                   </FormControl>
                 </SimpleGrid>
+                <LearnMorePanel
+                  variant='compact'
+                  links={[
+                    { label: 'Renewal profile', url: ADCS_DOCS.renewalProfile },
+                  ]}
+                />
               </Stack>
             ) : null}
             {step === 2 ? (
@@ -683,7 +692,7 @@ export default function AdcsProfileWizard({
                   <Alert status='warning' borderRadius='md'>
                     <AlertIcon />
                     <AlertDescription fontSize='sm'>
-                      No certificate in inventory uses {dnsName}. This wizard
+                      No certificate in inventory uses {dnsName}. This dialog
                       does not create one. Open Certificates later, open that
                       certificate, and start managing it again with this
                       profile. Do not attach a different certificate. That

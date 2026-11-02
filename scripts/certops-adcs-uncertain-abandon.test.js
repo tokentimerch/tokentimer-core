@@ -7,7 +7,7 @@
  * forest journey lives in tests/e2e/helpers/certops-adcs-uncertain-abandon.js; local contracts do
  * not replace it or claim native execution.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 
 const test = require("node:test");

@@ -10,7 +10,7 @@
  * installs on member+CA. Input labels cannot qualify environments or independent root/CA OS
  * cross-products; protected native runs remain required.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 // Environment inventory and actual workflow contract only; no lab execution.
 const test = require("node:test");

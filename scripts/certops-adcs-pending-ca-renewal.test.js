@@ -12,7 +12,7 @@
  * until parent drainage/cleanup. No CMC/key rotation/offline-parent/timer; hierarchy/elapsed
  * exclude.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Pure pending/CA-renewal source/proof controls. No CA, CNG or service executes. */
 const test=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),h=require("../tests/e2e/helpers/certops-adcs-pending-ca-renewal");
@@ -33,7 +33,7 @@ test("pending CSR/key/native request exist before sole real CA renewal and exact
 
 test("pending CA guard precedes every broad native deletion and durable-state cleanup",()=>{
  const source=fs.readFileSync(path.resolve(__dirname,"../tests/e2e/certops-adcs-real-e2e.test.js"),"utf8");
- assert.ok(source.includes('nativeCleanupGuard.run(()=>{assertPendingCaResolved();return action();})'));
+ assert.ok(source.includes('nativeCleanupGuard.run(()=>{assertPendingCaResolved();return retryNativeCommand(action);})'));
  assert.ok(source.includes('for(const ownedBinding of ownedNativeBindings)await clean(async()=>{assertPendingCaResolved();'));
  assert.ok(source.includes('for (const site of ownedSites) await clean(async()=>{assertPendingCaResolved();'));
  assert.ok(source.includes('const assertNativeStateReleased=()=>{assertPendingCaResolved();'));

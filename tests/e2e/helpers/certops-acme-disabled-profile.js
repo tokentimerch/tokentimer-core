@@ -15,7 +15,7 @@
  * acme-disabled-profile-proof.json binds second bulk item and generation. No scheduler
  * zero-job, archived-profile or concurrency claim.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Actual owned native manual renewal while automatic renewal is disabled.
  * Only the production SQL-NOW selector is invoked; no scheduler/worker claim. */

@@ -105,6 +105,10 @@ function createAgentLogger({
     error(message, details) {
       sink(formatAgentLogMessage(message, details));
     },
+    // Recoverable conditions an operator should see (stderr, same scrubbing).
+    warn(message, details) {
+      sink(formatAgentLogMessage(message, details));
+    },
     // Non-error progress logging (claim/step-start/finish). Routed through
     // the same scrubbing as error() but to its own sink (stdout by default)
     // so operators can follow a job's progress without every line reading

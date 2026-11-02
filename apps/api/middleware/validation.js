@@ -1,5 +1,15 @@
 const { body, validationResult } = require("express-validator");
 const { logger } = require("../utils/logger");
+const {
+  TOKEN_TYPES,
+  TOKEN_CATEGORIES,
+  INVALID_TYPE_MESSAGE,
+  INVALID_CATEGORY_MESSAGE,
+  TYPE_CATEGORY_MISMATCH_MESSAGE,
+  isKnownType,
+  isKnownCategory,
+  isTypeAllowedForCategory,
+} = require("../utils/tokenClassification");
 
 /**
  * Express-validator error handler. Returns 400 with validation details.
@@ -51,30 +61,18 @@ const validateToken = [
     .withMessage("Token name must be between 1 and 255 characters")
     .matches(/^[^<>]*$/)
     .withMessage("Token name cannot contain HTML tags (< or >)"),
-  body("type")
-    .isIn([
-      "ssl_cert",
-      "tls_cert",
-      "code_signing",
-      "client_cert",
-      "api_key",
-      "secret",
-      "password",
-      "encryption_key",
-      "oauth_token",
-      "jwt_token",
-      "ssh_key",
-      "software_license",
-      "service_subscription",
-      "domain_registration",
-      "other",
-      "document",
-      "membership",
-    ])
-    .withMessage("Invalid token type"),
+  body("type").isIn(TOKEN_TYPES).withMessage(INVALID_TYPE_MESSAGE),
   body("category")
-    .isIn(["cert", "key_secret", "license", "general"])
-    .withMessage("Invalid category"),
+    .isIn(TOKEN_CATEGORIES)
+    .withMessage(INVALID_CATEGORY_MESSAGE),
+  body("type")
+    .custom((type, { req }) => {
+      const category = req.body?.category;
+      // Unknown values already fail the checks above.
+      if (!isKnownType(type) || !isKnownCategory(category)) return true;
+      return isTypeAllowedForCategory(type, category);
+    })
+    .withMessage(TYPE_CATEGORY_MISMATCH_MESSAGE),
   body("expiresAt")
     .optional()
     .custom((value) => {

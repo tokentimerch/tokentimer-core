@@ -7,7 +7,7 @@
  * its separate closed scope. Local integration checks execute no forest and cannot count absent
  * native capability as a pass.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 
 const test = require("node:test");

@@ -23,8 +23,17 @@ function run(args, options = {}) {
     maxBuffer: 16 * 1024 * 1024,
     ...options,
   });
-  if (r.status !== 0 || r.error)
-    throw new Error("Owned Vault qualification command failed");
+  if (r.status !== 0 || r.error) {
+    // Fixture-only output; keep a short tail so a CI failure is diagnosable.
+    const tail = (s) =>
+      String(s || "").trim().split("\n").slice(-15).map((l) => l.slice(0, 200)).join("\n");
+    // Report a fixed subcommand label, never a value derived from the argument list or the environment.
+    const subcommand =
+      ["build", "run", "exec", "inspect", "rm"].find((name) => name === args[0]) || "other";
+    throw new Error(
+      `Owned Vault qualification command failed: docker ${subcommand} exit=${Number(r.status)} signal=${r.signal ? "set" : "none"} code=${r.error ? "set" : "none"}\n${tail(r.stderr)}\n${tail(r.stdout)}`,
+    );
+  }
   return r.stdout;
 }
 async function main() {
@@ -80,6 +89,7 @@ async function main() {
     ]);
     created = true;
     let ready = false;
+    let lastProbe = null;
     for (let i = 0; i < 60; i++) {
       const probe = spawnSync(
         "docker",
@@ -93,13 +103,33 @@ async function main() {
         ],
         { encoding: "utf8", windowsHide: true, timeout: 10000 },
       );
+      lastProbe = {
+        exitCode: probe.status,
+        timedOut: probe.error?.code === "ETIMEDOUT",
+      };
       if (probe.status === 0) {
         ready = true;
         break;
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    if (!ready) throw new Error("Owned Vault never became ready");
+    if (!ready) {
+      // Keep only nonsecret execution state from this exact owned container.
+      // Do not emit its environment, dev token, command line or server logs.
+      summary.readiness = {
+        probes: 60,
+        lastProbe,
+      };
+      summary.readiness.container = JSON.parse(run([
+        "inspect",
+        "--format",
+        '{"running":{{.State.Running}},"status":{{json .State.Status}},"exitCode":{{.State.ExitCode}},"oomKilled":{{.State.OOMKilled}},"restartCount":{{.RestartCount}}}',
+        name,
+      ]));
+      throw new Error(
+        "Owned Vault never became ready: " + JSON.stringify(summary.readiness),
+      );
+    }
     const file = "packages/agent/src/material-store/material-store.test.js",
       report =
         "qualification-results/" + path.basename(output) + "/adapter.jsonl";
@@ -177,9 +207,10 @@ async function main() {
   }
 }
 if (require.main === module)
-  main().catch(() => {
+  main().catch((error) => {
     console.error(
       "Owned Vault qualification failed; inspect its bounded execution report",
     );
+    console.error(String((error && error.message) || error).slice(0, 4000));
     process.exitCode = 1;
   });

@@ -27,7 +27,7 @@ import { formatExpirationDate, isNeverExpires } from '../utils/dateUtils';
 
 /**
  * Reusable component for displaying integration import tables
- * Used by all integrations (Vault, GitLab, GitHub, AWS, Azure, Azure AD, GCP)
+ * Used by all integrations (Vault, GitLab, GitHub, AWS, Azure, Microsoft Entra ID, GCP)
  */
 export default function IntegrationImportTable({
   items = [],

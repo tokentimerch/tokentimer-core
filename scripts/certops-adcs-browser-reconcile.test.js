@@ -14,7 +14,7 @@
  * default; observeNativeCompletion only after complete native proof/fault restoration.
  * Root/hierarchy source/cell binding remains required.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 // Controlled HTTP/native-proof adversaries only; no browser, CA, certificate,
 // service or enrollment operation occurs, and no native qualification is claimed.

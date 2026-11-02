@@ -6,7 +6,7 @@ function validate(root = path.resolve(__dirname, "..")) {
   const errors = [],
     matrix = require("./certops-qualification-manifest").expand(JSON.parse(
       fs.readFileSync(
-        path.join(root, "docs/certops/qualification-suites.json"),
+        path.join(root, ".github/maintainers/certops/qualification-suites.json"),
       ),
     ));
   const {

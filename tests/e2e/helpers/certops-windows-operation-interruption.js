@@ -1,6 +1,6 @@
 /*
  * Qualification notes: operation-interruption
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Record keygen/submit/install/bind point then restart same owned service/image after exact PID
  * interruption; never delete in-use key. This host-integration proof/integration suite does not
  * qualify native execution,power loss or real reboot; all flags false. Missing host fails; catalog

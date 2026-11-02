@@ -13,7 +13,7 @@
  * only. Parent owns unresolved CA/custody/process/site, no blind revoke while acceptance unknown.
  * Deliberate operator ambiguity is not deterministic lost successful-submit response.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Synthetic bounded report refusals; no native CA/key/service action runs. */
 const test = require("node:test"), assert = require("node:assert/strict");

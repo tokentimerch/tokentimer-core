@@ -275,7 +275,8 @@ function createBrowserJobApprovalActor(context) {
         ...context,
         fixture: { ...approver, workspaceId: fixture.workspaceId },
       },
-      async (page, { origin }) => {
+      async (page, { origin, markStage }) => {
+        markStage("approval-job-navigation");
         const expected = {
           origin,
           pathname: `/api/v1/workspaces/${fixture.workspaceId}/certops/jobs/${jobId}/${decision}`,
@@ -318,19 +319,28 @@ function createBrowserJobApprovalActor(context) {
           );
         });
         await page.goto(destination.href);
+        markStage("approval-job-list-response");
         const list = await listPromise;
-        assert.equal(list.status(), 200);
+        if (list.status() !== 200) {
+          const error = new Error("Job list HTTP status rejected");
+          error.nativeBrowserStatus = list.status();
+          throw error;
+        }
+        markStage("approval-job-list-body");
         const body = await list.json();
         assert.equal(body.items.length, 1);
         assert.equal(body.items[0].id, jobId);
         const button = page.getByRole("button", { name: label, exact: true });
+        markStage("approval-decision-button");
         await button.waitFor();
         assert.equal(await button.count(), 1);
+        markStage("approval-job-details");
         await page
           .getByRole("button", { name: "Job details", exact: true })
           .click();
         await page.getByText(jobId, { exact: true }).first().waitFor();
         await page.keyboard.press("Escape");
+        markStage("approval-cancel-dialog");
         await button.click();
         let dialog = page.getByRole("dialog");
         await dialog.getByText(`${label} job`, { exact: true }).waitFor();
@@ -338,12 +348,14 @@ function createBrowserJobApprovalActor(context) {
           .getByRole("button", { name: "Cancel", exact: true })
           .click();
         await dialog.waitFor({ state: "hidden" });
+        markStage("approval-cancel-oracle");
         assert.equal(writes.length, 0);
         assert.ok(
           isDeepStrictEqual(await row(jobId, enrollmentId), before),
           "Cancelling the decision dialog changed the owned job",
         );
         assert.equal((await decisions(jobId)).length, 0);
+        markStage("approval-confirm-dialog");
         await button.click();
         dialog = page.getByRole("dialog");
         await dialog.getByText(`${label} job`, { exact: true }).waitFor();
@@ -361,7 +373,14 @@ function createBrowserJobApprovalActor(context) {
           );
         });
         await dialog.getByRole("button", { name: label, exact: true }).click();
-        assert.equal((await responsePromise).status(), 200);
+        markStage("approval-decision-response");
+        const response = await responsePromise;
+        if (response.status() !== 200) {
+          const error = new Error("Job decision HTTP status rejected");
+          error.nativeBrowserStatus = response.status();
+          throw error;
+        }
+        markStage("approval-decision-complete");
         await dialog.waitFor({ state: "hidden" });
         assert.deepEqual(writes, [true]);
       },

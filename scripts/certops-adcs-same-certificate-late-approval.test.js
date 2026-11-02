@@ -12,7 +12,7 @@
  * acceptance/cleanup retains guard. Distinct-identity prior proof stays separate; no elapsed
  * claim.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 // Public identities exercise closed lineage/proof contracts only. No CA work.
 const test = require("node:test"),

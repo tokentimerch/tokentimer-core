@@ -1,4 +1,4 @@
-FROM node:22.23.2-alpine3.23
+FROM node:22.23.4-alpine3.23
 
 # Explicit minimums stop stale build-cache layers from keeping older packages.
 RUN apk update && apk upgrade --no-cache \
@@ -10,7 +10,7 @@ WORKDIR /app
 RUN addgroup -g 1001 -S tokentimer \
     && adduser -u 1001 -S tokentimer -G tokentimer \
     && corepack enable \
-    && corepack prepare pnpm@11.13.0 --activate
+    && corepack prepare pnpm@11.28.8 --activate
 
 ENV NODE_ENV=production
 

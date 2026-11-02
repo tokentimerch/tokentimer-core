@@ -1,6 +1,6 @@
 /*
  * Qualification notes: native-cng-unreadable-journal
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Create owned machine CNG fixture and actual journal access denial; independently confirm native
  * read/list failure before production orphan reconciliation must conservatively preserve key. Restore
  * exact original ACL/identity/bytes and demonstrate reader recovery before any owned deletion.

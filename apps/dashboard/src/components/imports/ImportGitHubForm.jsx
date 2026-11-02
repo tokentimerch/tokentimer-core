@@ -1,4 +1,5 @@
 import React from 'react';
+import { useScanVerification } from '../../hooks/useScanVerification.js';
 import {
   Box,
   VStack,
@@ -11,12 +12,12 @@ import {
   InputGroup,
   InputRightElement,
   IconButton,
-  Link as ChakraLink,
 } from '@chakra-ui/react';
 import { FiEye, FiEyeOff } from 'react-icons/fi';
 import { githubAPI, integrationAPI, formatDate } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 import { IMPORT_DOCS } from '../../utils/docsUrls';
+import LearnMorePanel from '../LearnMorePanel';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 import {
@@ -93,8 +94,11 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
     onError,
     errorContent,
     onScanSuccess,
+    onScanInvalidated,
+    scanContext,
     borderColor,
     helpTextColor,
+    hideDocs = false,
     autoSyncTokenPlaceholder,
     updateQuotaFromResponse,
     refreshIntegrationQuota,
@@ -103,6 +107,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
     extractQuotaFromError,
     contactGroups,
     onSelectionChange,
+    afterFilterRules = null,
     autoSyncManageMode = false,
     initialScanParams = null,
     initialFilterRules = null,
@@ -174,6 +179,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
   }, [selectedRowsGithub.size, onSelectionChange]);
 
   const doGithubScan = async () => {
+    const scanTicket = beginScanVerification();
     if (!workspaceId) {
       onError && onError('Please select a workspace first.');
       return;
@@ -211,9 +217,6 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
       setGithubSummary(Array.isArray(res?.summary) ? res.summary : []);
       setFilterSummary(res?.filterSummary || null);
       setLastScanId(res?.scan_id || null);
-      if (items.length > 0) {
-        onScanSuccess && onScanSuccess('github');
-      }
       try {
         localStorage.setItem('tt_github_baseurl', githubBaseUrl);
       } catch (_) {}
@@ -224,6 +227,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
 
       const dups = await checkDuplicatesForItems(items, workspaceId);
       setGithubDuplicates(dups);
+      completeScanVerification(scanTicket);
     } catch (e) {
       setGithubItems([]);
       setGithubSummary([]);
@@ -320,26 +324,41 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
     }
   };
 
+  const getCredentials = () => ({
+    credentials: {
+      baseUrl: githubBaseUrl || 'https://api.github.com',
+      token: githubToken,
+    },
+    scanParams: {
+      baseUrl: githubBaseUrl || 'https://api.github.com',
+      include: {
+        tokens: githubIncludeTokens,
+        sshKeys: githubIncludeSSHKeys,
+        deployKeys: githubIncludeDeployKeys,
+        secrets: githubIncludeSecrets,
+      },
+      filterRules: sanitizeFilterRules(filterRules),
+      cleanupObsolete,
+    },
+  });
+  const { beginScanVerification, completeScanVerification } =
+    useScanVerification({
+      identity: {
+        workspaceId,
+        scanContext,
+        payload: getCredentials(),
+        rawBaseUrl: githubBaseUrl,
+      },
+      provider: 'github',
+      onScanSuccess,
+      onScanInvalidated,
+    });
+
   React.useImperativeHandle(ref, () => ({
     importSelected: importGithubSelected,
     getSelectedCount: () => selectedRowsGithub.size,
-    getCredentials: () => ({
-      credentials: {
-        baseUrl: githubBaseUrl || 'https://api.github.com',
-        token: githubToken,
-      },
-      scanParams: {
-        baseUrl: githubBaseUrl || 'https://api.github.com',
-        include: {
-          tokens: githubIncludeTokens,
-          sshKeys: githubIncludeSSHKeys,
-          deployKeys: githubIncludeDeployKeys,
-          secrets: githubIncludeSecrets,
-        },
-        filterRules: sanitizeFilterRules(filterRules),
-        cleanupObsolete,
-      },
-    }),
+    getContactGroupIds: () => bulkContactGroupIds,
+    getCredentials,
   }));
 
   return (
@@ -351,16 +370,15 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
             read-only PAT is used for scanning and stored encrypted if auto-sync
             is enabled.
           </Text>
-          <Text fontSize='sm' mt={1}>
-            <ChakraLink
-              href={IMPORT_DOCS.github}
-              color='blue.500'
-              textDecoration='underline'
-              isExternal
-            >
-              Learn more about importing from GitHub →
-            </ChakraLink>
-          </Text>
+          {hideDocs ? null : (
+            <LearnMorePanel
+              variant='compact'
+              mt={2}
+              links={[
+                { label: 'Importing from GitHub', url: IMPORT_DOCS.github },
+              ]}
+            />
+          )}
         </Box>
       ) : null}
       <HStack spacing={3} align='flex-end' flexWrap='wrap'>
@@ -480,6 +498,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
         borderColor={borderColor}
         helpTextColor={helpTextColor}
       />
+      {afterFilterRules}
       {!autoSyncManageMode && filterSummary ? (
         <HStack spacing={2}>
           <Badge colorScheme='green'>

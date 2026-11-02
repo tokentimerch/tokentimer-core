@@ -9,7 +9,7 @@
  * drain failure preserves cert/key/site/state; outer lab teardown separate. Controlled emitters
  * here start no PowerShell and do not prove deterministic native timing/recovery.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Controlled child/stdio lifecycle regressions. These tests launch no native
  * process and never qualify response-loss timing or native AD CS recovery. */

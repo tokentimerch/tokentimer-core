@@ -16,7 +16,7 @@ Defaults and precedence vary by setting. Consult the [complete variable referenc
 
 ## Set up email first
 
-Configure `SMTP_HOST`, `SMTP_PORT`, the server's authentication requirements (`SMTP_USER` and `SMTP_PASS` when required), and sender identity (`FROM_EMAIL`, `FROM_EMAIL_NAME`). Match `SMTP_SECURE` and TLS requirements to your mail server; do not guess encryption from a copied port number.
+Configure `SMTP_HOST`, `SMTP_PORT`, the server's authentication requirements (`SMTP_USER` and `SMTP_PASS` when required), and sender identity (`FROM_EMAIL`, `FROM_EMAIL_NAME`). Match `SMTP_SECURE` and TLS requirements to your mail server; do not guess encryption from a copied port number. `SMTP_REQUIRE_TLS` defaults to `true`: the connection must upgrade with STARTTLS. A relay or test server without TLS (for example Mailpit) fails with a generic "Failed to send email". For a server without encryption, set `SMTP_REQUIRE_TLS=false` and leave `SMTP_SECURE=false`, or turn off **Require STARTTLS upgrade** (and leave **Force SSL/TLS (SMTPS)** off) in System Settings. Use this only on a trusted network.
 
 Use the System Settings SMTP test and check the receiving inbox. Then follow [First asset and alert check](FIRST_ASSET.md) to verify recipients, thresholds, scheduling, and delivery. SMTP transport alone does not prove asset routing.
 

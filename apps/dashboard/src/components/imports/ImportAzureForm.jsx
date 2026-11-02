@@ -1,4 +1,5 @@
 import React from 'react';
+import { useScanVerification } from '../../hooks/useScanVerification.js';
 import {
   Box,
   VStack,
@@ -8,11 +9,11 @@ import {
   Button,
   Badge,
   Checkbox,
-  Link as ChakraLink,
 } from '@chakra-ui/react';
 import { azureAPI, integrationAPI } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 import { IMPORT_DOCS } from '../../utils/docsUrls';
+import LearnMorePanel from '../LearnMorePanel';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 import {
@@ -82,8 +83,11 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
     onError,
     errorContent,
     onScanSuccess,
+    onScanInvalidated,
+    scanContext,
     borderColor,
     helpTextColor,
+    hideDocs = false,
     autoSyncTokenPlaceholder,
     autoSyncManageMode = false,
     initialVaultUrl = '',
@@ -137,6 +141,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
   }, [initialVaultUrl, autoSyncManageMode, replacingCredentials]);
 
   const doAzureScan = async () => {
+    const scanTicket = beginScanVerification();
     if (!workspaceId) {
       onError && onError('Please select a workspace first.');
       return;
@@ -178,9 +183,6 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
       setAzureItems(items);
       setAzureSummary(Array.isArray(res?.summary) ? res.summary : []);
       setLastScanId(res?.scan_id || null);
-      if (items.length > 0) {
-        onScanSuccess && onScanSuccess('azure');
-      }
 
       if (updateQuotaFromResponse && !updateQuotaFromResponse(res)) {
         if (refreshIntegrationQuota) await refreshIntegrationQuota();
@@ -188,6 +190,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
 
       const dups = await checkDuplicatesForItems(items, workspaceId);
       setAzureDuplicates(dups);
+      completeScanVerification(scanTicket);
     } catch (e) {
       setAzureItems([]);
       setAzureSummary([]);
@@ -258,6 +261,37 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
     setAzureAuthMethod('token');
   };
 
+  const getCredentials = () => {
+    const scanParams = {
+      vaultUrl: azureVaultUrl,
+      include: { secrets: true, certificates: true, keys: true },
+    };
+    if (autoSyncManageMode && !replacingCredentials) {
+      return { credentials: {}, scanParams };
+    }
+    const credentials = buildAzureInventoryCredentials({
+      vaultUrl: azureVaultUrl,
+      authMethod: azureAuthMethod,
+      token: azureToken,
+      tenantId: azureTenantId,
+      clientId: azureClientId,
+      clientSecret: azureClientSecret,
+    });
+    return { credentials, scanParams };
+  };
+  const { beginScanVerification, completeScanVerification } =
+    useScanVerification({
+      identity: {
+        workspaceId,
+        scanContext,
+        payload: getCredentials(),
+        cleanupObsolete,
+      },
+      provider: 'azure',
+      onScanSuccess,
+      onScanInvalidated,
+    });
+
   React.useImperativeHandle(ref, () => ({
     importSelected: importAzureSelected,
     getSelectedCount: () => selectedRowsAzure.size,
@@ -277,24 +311,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
       setPersistedAzureVaultUrl(azureVaultUrl);
       clearAzureAuthFields();
     },
-    getCredentials: () => {
-      const scanParams = {
-        vaultUrl: azureVaultUrl,
-        include: { secrets: true, certificates: true, keys: true },
-      };
-      if (autoSyncManageMode && !replacingCredentials) {
-        return { credentials: {}, scanParams };
-      }
-      const credentials = buildAzureInventoryCredentials({
-        vaultUrl: azureVaultUrl,
-        authMethod: azureAuthMethod,
-        token: azureToken,
-        tenantId: azureTenantId,
-        clientId: azureClientId,
-        clientSecret: azureClientSecret,
-      });
-      return { credentials, scanParams };
-    },
+    getCredentials,
   }));
 
   return (
@@ -307,16 +324,18 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
             tokens and Entra app client credentials are stored encrypted if
             auto-sync is enabled.
           </Text>
-          <Text fontSize='sm' mt={1}>
-            <ChakraLink
-              href={IMPORT_DOCS.azureKeyVault}
-              color='blue.500'
-              textDecoration='underline'
-              isExternal
-            >
-              Learn more about importing from Azure Key Vault →
-            </ChakraLink>
-          </Text>
+          {hideDocs ? null : (
+            <LearnMorePanel
+              variant='compact'
+              mt={2}
+              links={[
+                {
+                  label: 'Importing from Azure Key Vault',
+                  url: IMPORT_DOCS.azureKeyVault,
+                },
+              ]}
+            />
+          )}
         </Box>
       ) : null}
       <HStack spacing={3} align='flex-end' flexWrap='wrap'>

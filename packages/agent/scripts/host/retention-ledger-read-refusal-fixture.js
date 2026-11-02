@@ -1,6 +1,6 @@
 /*
  * Qualification notes: retention-ledger-access-refusal
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Create real production ledger with explicit local prerequisites,no cert/key/service/CA. Suspended
  * current-token retained-Job holder opens exact volume/file identity with
  * READ_CONTROL/WRITE_DAC/metadata and no delete share,refusing reparse. Deny and restore via same

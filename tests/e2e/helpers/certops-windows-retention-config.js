@@ -1,6 +1,6 @@
 /*
  * Qualification notes: retention-configuration-refusals
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Production accepts integer retentionHours24..720 and positive integer sweepIntervalMs. Fault
  * only23,721hours and0interval in unchanged original UTF8 config. Stopped SYSTEM retained-file startup
  * with recovery disabled must fail each exact reader validation and drain child while

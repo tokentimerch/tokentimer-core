@@ -1,6 +1,6 @@
 /*
  * Qualification notes: acme-csr-key-binding
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Return a genuinely CA-issued predecessor leaf for a different freshly generated CNG CSR. Require
  * ACME_CERTIFICATE_KEY_MISMATCH before acceptance/IIS mutation and deletion of only the new unaccepted
  * key; preserve predecessor association/export policy, trusted TLS, profile, protected credential and

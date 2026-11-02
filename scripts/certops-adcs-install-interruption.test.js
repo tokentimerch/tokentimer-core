@@ -7,7 +7,7 @@
  * proves no real reboot, power-loss durability or native execution; absent lab fails closed, and
  * the manual failed report is not a release artifact.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 
 const test = require("node:test");

@@ -6,7 +6,7 @@
  * identities; public endpoints create every job, approval and retirement. No job, observation, expiry
  * or claim timestamp is seeded.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Approval/retirement race qualification through real public API and registered claims.
@@ -42,7 +42,7 @@ test(
   async (t) => {
     const baseUrl = process.env.CERTOPS_CSR_API_URL;
     if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-      // skip-reason: no-host - requires disposable authenticated API PostgreSQL OpenSSL and registered protocol claims
+      // skip-reason: prerequisite - requires disposable authenticated API PostgreSQL OpenSSL and registered protocol claims
       t.skip("Disposable API fixture required");
       return;
     }

@@ -1,6 +1,6 @@
 /*
  * Qualification notes: installed-signing-pin-refusal
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Corrupt present pin with malformed JSON and invalid required fields; real stopped/drained SYSTEM
  * startup must expose specific reader error without unsigned startup or replacement identity. Retained
  * original descriptor owns exact writes/repair; preserve config/credential/service

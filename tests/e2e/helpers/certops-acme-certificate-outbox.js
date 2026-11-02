@@ -18,7 +18,7 @@
  * unknown ownership preserves private root/public rows. Proof excludes private state,
  * credentials, signatures, envelopes; benign controls cannot qualify native execution.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Genuine completed certificate mutation, transient result delivery outage,
  * exact original agent restart and production outbox retry. No clock rewrites. */

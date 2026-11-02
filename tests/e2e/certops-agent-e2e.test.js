@@ -455,7 +455,7 @@ describe("CertOps agent surface E2E", () => {
   const state = {};
 
   it("happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack", async (t) => {
-    // skip-reason: no-host
+    // skip-reason: prerequisite
     if (!dbAvailable) return t.skip(skipReason);
 
     const agentId = `e2e-agent-${RUN_ID}-happy`;
@@ -571,7 +571,7 @@ describe("CertOps agent surface E2E", () => {
   });
 
   it("tamper: mutating a signed field fails agent-side verification", async (t) => {
-    // skip-reason: no-host
+    // skip-reason: prerequisite
     if (!dbAvailable) return t.skip(skipReason);
     const tampered = { ...state.signedJob, action: "revoke" };
     const verdict = services.signing.verifyJobSignature({
@@ -585,7 +585,7 @@ describe("CertOps agent surface E2E", () => {
   });
 
   it("bootstrap token reuse is rejected with 401", async (t) => {
-    // skip-reason: no-host
+    // skip-reason: prerequisite
     if (!dbAvailable) return t.skip(skipReason);
     const reuse = await postAgent(
       "register",
@@ -603,7 +603,7 @@ describe("CertOps agent surface E2E", () => {
   });
 
   it("bad agent credential is rejected with 401", async (t) => {
-    // skip-reason: no-host
+    // skip-reason: prerequisite
     if (!dbAvailable) return t.skip(skipReason);
     const bogus = `ttagent_${crypto.randomBytes(16).toString("hex")}${crypto
       .randomBytes(16)
@@ -619,7 +619,7 @@ describe("CertOps agent surface E2E", () => {
   });
 
   it("retired agent gets 410 on heartbeat, claim, and results", async (t) => {
-    // skip-reason: no-host
+    // skip-reason: prerequisite
     if (!dbAvailable) return t.skip(skipReason);
     const agentId = `e2e-agent-${RUN_ID}-retired`;
     const reg = await registerAgent(agentId);
@@ -654,7 +654,7 @@ describe("CertOps agent surface E2E", () => {
   });
 
   it("workspace kill switch blocks claims with 409", async (t) => {
-    // skip-reason: no-host
+    // skip-reason: prerequisite
     if (!dbAvailable) return t.skip(skipReason);
     await pool.query(
       `UPDATE workspaces SET certops_paused = TRUE WHERE id = $1`,
@@ -677,7 +677,7 @@ describe("CertOps agent surface E2E", () => {
   });
 
   it("evidence is accepted; private key material is rejected with 422", async (t) => {
-    // skip-reason: no-host
+    // skip-reason: prerequisite
     if (!dbAvailable) return t.skip(skipReason);
     const jobId = state.signedJob.jobId;
     const evidence = await postAgent(
@@ -719,7 +719,7 @@ describe("CertOps agent surface E2E", () => {
   });
 
   it("second claim returns no jobs while the lease is held", async (t) => {
-    // skip-reason: no-host
+    // skip-reason: prerequisite
     if (!dbAvailable) return t.skip(skipReason);
     await createRenewJob();
     const first = await postAgent(
@@ -741,7 +741,7 @@ describe("CertOps agent surface E2E", () => {
   });
 
   it("lease reaper defers, then requeues once the claiming agent goes silent", async (t) => {
-    // skip-reason: no-host
+    // skip-reason: prerequisite
     if (!dbAvailable) return t.skip(skipReason);
     const jobId = state.leasedJob.jobId;
     await pool.query(
@@ -803,7 +803,7 @@ describe("CertOps agent surface E2E", () => {
   });
 
   it("lease reaper fails an expired job with exhausted retry budget", async (t) => {
-    // skip-reason: no-host
+    // skip-reason: prerequisite
     if (!dbAvailable) return t.skip(skipReason);
     const jobId = state.requeuedJobId;
     // The reaper set next_attempt_at into the future (backoff); clear it so
@@ -858,7 +858,7 @@ describe("CertOps agent surface E2E", () => {
   });
 
   it("sequence enforcement: monotonic accepted, regression 409, re-register resets the generation, sequence-less accepted", async (t) => {
-    // skip-reason: no-host
+    // skip-reason: prerequisite
     if (!dbAvailable) return t.skip(skipReason);
 
     const agentId = `e2e-agent-${RUN_ID}-seq`;

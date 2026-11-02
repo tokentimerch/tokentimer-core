@@ -1,6 +1,6 @@
 /*
  * Qualification notes: journal-read-refusals
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Deny actual native read/list access to owned journal prerequisites, independently require
  * EACCES/EPERM before asserting production refusal, and preserve bytes/native file identity/key
  * custody. Retained identity-bound ACL holder restores exact original DACL before reader recovery and

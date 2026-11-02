@@ -5,7 +5,7 @@
  * claims, evidence and result requests exercise the production renewal completion path. Complete
  * execution-profile and key-mode rows are explicit fixture prerequisites.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Real API/PostgreSQL renewal evidence cannot retain predecessor public-key facts.
  * Uses actual OpenSSL certificates and registered signed-claim/evidence/result
@@ -47,7 +47,7 @@ test(
   async (t) => {
     const base = process.env.CERTOPS_CSR_API_URL;
     if (!base && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-      // skip-reason: no-host - requires disposable authenticated API PostgreSQL OpenSSL and signed agent claims
+      // skip-reason: prerequisite - requires disposable authenticated API PostgreSQL OpenSSL and signed agent claims
       t.skip("Disposable certificate API required");
       return;
     }

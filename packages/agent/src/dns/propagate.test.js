@@ -340,6 +340,16 @@ test("filterServersByUsableAddressFamily keeps the original set when every disco
   assert.deepEqual(filtered, onlyV6);
 });
 
+test("filterServersByUsableAddressFamily keeps every server when the interface list is unavailable", () => {
+  const servers = ["203.0.113.1", "2606:4700:4700::1111"];
+  const filtered = filterServersByUsableAddressFamily(servers, {
+    networkInterfaces: () => {
+      throw new Error("uv_interface_addresses returned Unknown system error 97");
+    },
+  });
+  assert.deepEqual(filtered, servers);
+});
+
 test("isVerificationPolicySatisfied ignores skipped servers but still requires reachable ones under all", () => {
   assert.equal(
     isVerificationPolicySatisfied(

@@ -6,7 +6,7 @@
  *
  * Runner and report settings: `CERTOPS_BROWSER_CONSOLE_REPORT`.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Qualification notes: Completed console authorization
@@ -16,7 +16,7 @@
  * once, and unmounting cancels polling. Foreground qualification permits a 30-second observation
  * bound, not instantaneous revocation.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Exercise the real dashboard console against authenticated API/PostgreSQL fixtures.

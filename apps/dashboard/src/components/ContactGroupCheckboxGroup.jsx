@@ -1,6 +1,8 @@
 import { Box } from '@chakra-ui/react';
+import { useId, useRef } from 'react';
 import SelectMenu from './SelectMenu.jsx';
 import { useContactGroupPluralWrites } from '../utils/contactGroupPluralWrites.jsx';
+import { useContactGroupCreation } from '../utils/ContactGroupCreationContext.jsx';
 
 /**
  * Contact-group picker. Empty selection means workspace default.
@@ -19,9 +21,20 @@ export default function ContactGroupCheckboxGroup({
   allowMultiple,
 }) {
   const pluralWritesEnabled = useContactGroupPluralWrites();
+  const creation = useContactGroupCreation();
+  const editorOwnerId = useId();
+  const latestSelection = useRef(value);
+  latestSelection.current = value;
   const canSelectMultiple =
     allowMultiple === undefined ? pluralWritesEnabled : allowMultiple === true;
-  const groups = Array.isArray(contactGroups) ? contactGroups : [];
+  const groups = [
+    ...new Map(
+      [
+        ...(Array.isArray(contactGroups) ? contactGroups : []),
+        ...(creation?.groups || []),
+      ].map(group => [String(group.id), group])
+    ).values(),
+  ];
   const options = groups.map(group => {
     const id = String(group.id);
     const isDefault =
@@ -38,6 +51,28 @@ export default function ContactGroupCheckboxGroup({
         options={options}
         value={value}
         onChange={onChange}
+        actionLabel={creation?.canCreate ? 'Add new group' : undefined}
+        onAction={trigger =>
+          creation.open(
+            group => {
+              const id = String(group.id);
+              onChange?.(
+                canSelectMultiple
+                  ? [
+                      ...new Set([
+                        ...(Array.isArray(latestSelection.current)
+                          ? latestSelection.current.map(String)
+                          : []),
+                        id,
+                      ]),
+                    ]
+                  : [id]
+              );
+            },
+            trigger,
+            editorOwnerId
+          )
+        }
         multiple={canSelectMultiple}
         isDisabled={isDisabled}
         emptyText={emptyText}
@@ -53,6 +88,7 @@ export default function ContactGroupCheckboxGroup({
         maxMenuH={maxH}
         aria-label='Contact groups'
       />
+      {creation?.renderEditor(editorOwnerId)}
     </Box>
   );
 }

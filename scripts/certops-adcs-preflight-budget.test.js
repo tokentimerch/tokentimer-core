@@ -9,7 +9,7 @@
  * mechanical support proves no ADCS/installed service. Keep primary budget 18, roll idle cohort at
  * actual 45min before one-hour deadline; drain old job before local-rule rewrite/new CLI.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Source budget audit, not native execution. Count the actual descriptor sets
  * and pin every primary dispatch/cache boundary so adding a new caller requires

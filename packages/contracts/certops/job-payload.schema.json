@@ -109,7 +109,11 @@
         },
         "terminalState": {
           "type": "string",
-          "enum": ["expired", "cancelled", "abandoned"],
+          "enum": [
+            "expired",
+            "cancelled",
+            "abandoned"
+          ],
           "description": "Control-plane-only signed directive to free an uninstalled enrollment key in a continuation. Derived from the current durable enrollment state; never supplied by a job request."
         },
         "reconcileRequestId": {
@@ -622,30 +626,92 @@
   "allOf": [
     {
       "description": "Windows CNG renewal cannot reuse an existing private key; omission retains fresh-key behavior.",
-      "if": { "required": ["action", "keyMode", "target"], "properties": { "action": { "const": "renew" }, "keyMode": { "const": "os-store-managed" }, "target": { "required": ["type"], "properties": { "type": { "const": "windows-iis" } } } } },
-      "then": { "properties": { "keyRotation": { "const": true } } }
-    },
-    {
       "if": {
-        "required": ["enrollment"],
-        "properties": { "enrollment": { "required": ["reconcileRequestId"] } }
+        "required": [
+          "action",
+          "keyMode",
+          "target"
+        ],
+        "properties": {
+          "action": {
+            "const": "renew"
+          },
+          "keyMode": {
+            "const": "os-store-managed"
+          },
+          "target": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "windows-iis"
+              }
+            }
+          }
+        }
       },
       "then": {
-        "required": ["action"],
         "properties": {
-          "action": { "const": "continue-enrollment" },
-          "enrollment": { "not": { "required": ["terminalState"] } }
+          "keyRotation": {
+            "const": true
+          }
         }
       }
     },
     {
       "if": {
-        "required": ["enrollment"],
-        "properties": { "enrollment": { "required": ["terminalState"] } }
+        "required": [
+          "enrollment"
+        ],
+        "properties": {
+          "enrollment": {
+            "required": [
+              "reconcileRequestId"
+            ]
+          }
+        }
       },
       "then": {
-        "required": ["action"],
-        "properties": { "action": { "const": "continue-enrollment" } }
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "const": "continue-enrollment"
+          },
+          "enrollment": {
+            "not": {
+              "required": [
+                "terminalState"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "enrollment"
+        ],
+        "properties": {
+          "enrollment": {
+            "required": [
+              "terminalState"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "const": "continue-enrollment"
+          }
+        }
       }
     },
     {
@@ -1010,6 +1076,7 @@
         },
         "verificationPolicy": {
           "enum": [
+            "installed",
             "served",
             "trust"
           ]
@@ -1195,6 +1262,7 @@
         },
         "verificationPolicy": {
           "enum": [
+            "installed",
             "served",
             "trust"
           ]

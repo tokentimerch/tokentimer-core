@@ -350,7 +350,7 @@ export function buildOperationalIncidentEmail({
       gitlab: "GitLab",
       aws: "AWS",
       azure: "Azure",
-      "azure-ad": "Azure AD",
+      "azure-ad": "Microsoft Entra ID",
       gcp: "GCP",
       vault: "Vault",
     };

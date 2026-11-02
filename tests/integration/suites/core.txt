@@ -23,6 +23,9 @@ tests/integration/token-renewal-audit.test.js
 
 # Workspaces and contacts
 tests/integration/contacts-crud.test.js
+tests/integration/onboarding-sessions.test.js
+tests/integration/onboarding-first-value.test.js
+tests/integration/onboarding-notifications-certops.test.js
 tests/integration/contact-groups-settings.test.js
 tests/integration/workspaces-lifecycle.integration.test.js
 tests/integration/workspace-transfer-tokens.test.js
@@ -94,6 +97,7 @@ tests/integration/audit-system-admin-org-scope.test.js
 
 # Schema and utilities
 tests/integration/certops-migration.test.js
+tests/integration/certops-manager-access.test.js
 tests/integration/operational-notification-migration-history.test.js
 tests/integration/certops-migrations-37-38-upgrade.test.js
 tests/integration/contact-groups-migrations-52-54-upgrade.test.js

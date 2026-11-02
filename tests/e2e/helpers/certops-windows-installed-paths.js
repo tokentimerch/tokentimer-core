@@ -1,6 +1,6 @@
 /*
  * Qualification notes: installed-unicode-paths
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Run genuine public signed ACME/CNG/IIS journey under exclusive root with spaces,é,[literal]; adapter
  * changes only installer root. Independently decode SCM/live child via CommandLineToArgvW; require
  * exact host/Node/entry/state/SYSTEM ancestry and candidate bytes. Node retains external path. Bound

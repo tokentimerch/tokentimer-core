@@ -15,7 +15,7 @@
  * API/service admission or uninterrupted serving. Local hashes/private bytes stay out of
  * reports.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Real native filesystem qualification for an explicit backup directory alias.
  * Called only by the disposable filesystem host harness with genuine matching

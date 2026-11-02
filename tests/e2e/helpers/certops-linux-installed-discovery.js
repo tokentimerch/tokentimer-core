@@ -27,7 +27,7 @@
  * python scripts/certops-linux-installed-discovery-collector.test.py
  * Configuration, keys, backups, credentials and raw process output are not artifacts.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Installed-systemd discovery qualification. Private configuration stays on the
  * disposable VM. Retained descriptors refuse replacement instead of adopting a

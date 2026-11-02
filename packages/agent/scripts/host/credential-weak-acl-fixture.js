@@ -1,6 +1,6 @@
 /*
  * Qualification notes: native-credential-weak-acl
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Use actual protected credential reader against owned public temporary control files with real weak
  * Windows ACLs. Independently observe inappropriate access, require exact production refusal instead
  * of accepting unreadable/weak state, restore original DACL/bytes/native identity and reader recovery.

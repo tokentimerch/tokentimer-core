@@ -15,7 +15,7 @@
  * cleanup. The separate noop pin-adoption suite does not qualify this certificate
  * execution composition; source/proof checks cannot establish native runs.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Manual Azure-free Ubuntu one-agent rotation producer. A passed artifact is
  * written only after the real native child, strict public projection and owned

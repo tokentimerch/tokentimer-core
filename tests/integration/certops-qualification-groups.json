@@ -9,7 +9,11 @@
       {
         "file": "certops-adcs-enrollments.test.js",
         "names": [
+          "survivor fixture uses the insert-trigger management period and creates eligible enrollment work",
+          "WebHosting fixture opens exactly one trigger-created period and its real enrollment job is claimable",
+          "claims the continuation of a first enrollment that has no certificate identity yet",
           "decodes a BIGINT RequestId and schedules reconciliation",
+          "stops uncertain retrieval at the frozen deadline without a cleanup job",
           "rolls back the enrollment when creating the first job fails",
           "lets only one of two scheduler connections claim a due enrollment",
           "leaves a due enrollment alone while another transaction holds its row lock",
@@ -19,13 +23,9 @@
           "keeps concurrent preflights inside the hourly limit and stores the agent result",
           "keeps the latest dispatched preflight when an older job finishes later",
           "orders preflight results by the locked sequence when transaction time is reversed",
-          "survivor fixture uses the insert-trigger management period and creates eligible enrollment work",
-          "WebHosting fixture opens exactly one trigger-created period and its real enrollment job is claimable",
-          "stops uncertain retrieval at the frozen deadline without a cleanup job",
           "blocks install continuation and deploy-from-store after retirement while cleanup still claims",
           "fences recovery and claims of every non-terminal continuation after retirement",
-          "retirement covers running and queued install-capable work and spares key cleanup",
-          "claims the continuation of a first enrollment that has no certificate identity yet"
+          "retirement covers running and queued install-capable work and spares key cleanup"
         ]
       },
       {
@@ -309,6 +309,14 @@
           "database lifecycle rejects retired reactivation and revoked downgrade",
           "stop/re-add creates a new admitted period and old periods stay immutable",
           "replace-management refuses another certificate's period and leaves both sources managed",
+          "(a) no open period and no periodId starts a new period",
+          "(b) open period and no periodId: 409 code kept, body names the open period",
+          "(c) a stale periodId is refused with the current open period",
+          "(c) another certificate's periodId is a mismatch that still names this certificate's period",
+          "(c) an unknown periodId stays a not-found refusal without details",
+          "(d) the correct open periodId ends it and starts the replacement",
+          "does not disclose another workspace's periods, even by id",
+          "plain re-add of a managed certificate reports the open period too",
           "replace-management rolls back the stop when the re-attach is refused",
           "a re-added provisional source reports its actual new management start time",
           "quota admission does not serialize lifecycle or unchanged source captures",
@@ -380,15 +388,7 @@
           "source detail retains every historical period beyond the list summary limit",
           "identity and legacy retirement helpers preserve a caller-owned PostgreSQL transaction",
           "fingerprint-only instance changes create normalized identities without moving management",
-          "v63 reruns after workspace erasure without attributing orphaned audit fingerprints",
-          "(a) no open period and no periodId starts a new period",
-          "(b) open period and no periodId: 409 code kept, body names the open period",
-          "(c) a stale periodId is refused with the current open period",
-          "(c) another certificate's periodId is a mismatch that still names this certificate's period",
-          "(c) an unknown periodId stays a not-found refusal without details",
-          "(d) the correct open periodId ends it and starts the replacement",
-          "does not disclose another workspace's periods, even by id",
-          "plain re-add of a managed certificate reports the open period too"
+          "v63 reruns after workspace erasure without attributing orphaned audit fingerprints"
         ]
       },
       {
@@ -414,6 +414,9 @@
       {
         "file": "certops-identity-token-details.test.js",
         "names": [
+          "shows the canonical asset groups without merging another asset on the same fingerprint",
+          "does not copy live groups into an old fingerprint after the linked token rotates",
+          "drops the editable link if rotation happens between the inventory and detail reads",
           "keeps full token and X.509 details after closing the final management period",
           "keeps original public history without exposing moved token or destination edits",
           "retains read-only public fields after token deletion and excludes arbitrary/private metadata",

@@ -1,6 +1,6 @@
 # Build context must be the repo root.
 # Prefer deploy/compose/Dockerfile.dashboard for production Compose/CI images.
-FROM node:22.23.2-slim AS build
+FROM node:22.23.4-slim AS build
 
 ARG VITE_API_URL=
 ARG API_URL=
@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-RUN corepack enable && corepack prepare pnpm@11.13.0 --activate
+RUN corepack enable && corepack prepare pnpm@11.28.8 --activate
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 COPY apps/dashboard/package.json ./apps/dashboard/

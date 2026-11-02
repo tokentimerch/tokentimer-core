@@ -12,7 +12,7 @@ const { createHostGate } = require("../../packages/agent/scripts/host-gate");
 test("observe-only polling preserves queued work until explicit execution advertisement", { timeout: 120000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires disposable API and PostgreSQL signing configuration
+    // skip-reason: prerequisite - requires disposable API and PostgreSQL signing configuration
     t.skip("Disposable API URL required"); return;
   }
   assert.ok(baseUrl); const fixture = await createApiFixture(baseUrl); let ready = false, primaryError;

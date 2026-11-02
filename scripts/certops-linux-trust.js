@@ -24,7 +24,7 @@
  * Direct native executor tests do not qualify signed API authorization/dispatch or
  * services.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 // Native executor qualification; signed dispatch and control-plane authorization
 // are separate suites. No filesystem, platform or command implementations are mocked.

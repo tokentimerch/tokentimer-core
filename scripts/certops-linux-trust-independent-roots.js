@@ -15,7 +15,7 @@
  * serialization or signed API/service dispatch; all Ubuntu/Alma slots need native closed
  * proof/current source fingerprints.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Native source only: selective receipt-owned root removal must preserve an
  * independently installed root and its actual default OS-derived leaf trust.

@@ -7,7 +7,7 @@
  * missing lab fails closed. This is integration semantics, not implemented same-key native CMC
  * renewal. Supported ADCS renewal uses fresh key/CSR under ADR-0014.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 
 const test = require("node:test");

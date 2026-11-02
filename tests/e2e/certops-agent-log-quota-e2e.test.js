@@ -7,7 +7,7 @@
  *
  * Runner and report settings: `CERTOPS_LOG_QUOTA_REPORT`.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Supporting fleet-log quota integration against actual PostgreSQL and registered API claims.
@@ -28,7 +28,7 @@ const scenarios = ["fleet-log-quota-concurrent-streams", "fleet-log-quota-replay
 test("production fleet-log quota concurrency and workspace isolation", { timeout: 120000 }, async t => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires disposable API and PostgreSQL
+    // skip-reason: prerequisite - requires disposable API and PostgreSQL
     t.skip("Disposable API URL required"); return;
   }
   assert.ok(baseUrl);

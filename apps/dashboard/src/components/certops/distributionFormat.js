@@ -1,6 +1,14 @@
 export const deploymentStates = {
   verified: { label: 'Verified and current', scheme: 'green' },
-  partial: { label: 'Partially verified', scheme: 'orange' },
+  installed: {
+    label: 'Files installed; live use not checked',
+    scheme: 'green',
+  },
+  completed: {
+    label: 'Delivery complete; live verification varies',
+    scheme: 'green',
+  },
+  partial: { label: 'Partially complete', scheme: 'orange' },
   failed: { label: 'Deployment failed', scheme: 'red' },
   uncertain: { label: 'Deployment outcome uncertain', scheme: 'orange' },
   stale: { label: 'Verification outdated', scheme: 'orange' },
@@ -23,6 +31,7 @@ export function combineDeploymentSummaries(groups) {
     {
       total: 0,
       verified: 0,
+      installed: 0,
       failed: 0,
       uncertain: 0,
       stale: 0,
@@ -38,11 +47,16 @@ export function combineDeploymentSummaries(groups) {
         ? 'stale'
         : counts.total && counts.verified === counts.total
           ? 'verified'
-          : counts.verified
-            ? 'partial'
-            : !counts.total || counts.not_deployed === counts.total
-              ? 'not_deployed'
-              : 'pending';
+          : counts.total && counts.installed === counts.total
+            ? 'installed'
+            : counts.total &&
+                counts.verified + counts.installed === counts.total
+              ? 'completed'
+              : counts.verified || counts.installed
+                ? 'partial'
+                : !counts.total || counts.not_deployed === counts.total
+                  ? 'not_deployed'
+                  : 'pending';
   return { ...counts, status };
 }
 
@@ -89,7 +103,10 @@ export function consumerDeploymentStatus(consumer, now = Date.now()) {
   const deadline = verificationDeadline(consumer);
   if (deadline !== null && now >= deadline && consumer.observed_at)
     return 'stale';
-  if (consumer.converged === true) return 'verified';
+  if (consumer.converged === true)
+    return consumer.verification_policy === 'installed'
+      ? 'installed'
+      : 'verified';
   if (consumer.stale) return 'stale';
   return consumer.desired_material_version_id ? 'pending' : 'not_deployed';
 }
@@ -106,6 +123,7 @@ export const verificationStages = {
 };
 
 export const verificationMethods = {
+  installed: 'Certificate and key checked on disk; no live service check',
   served: 'Certificate served and fingerprint verified',
   trust: 'Certificate and TLS trust verified',
 };

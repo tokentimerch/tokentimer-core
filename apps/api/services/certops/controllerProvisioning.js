@@ -500,6 +500,7 @@ async function takeNextControllerProvisioningCommand({
     // cluster cannot steal a command mid-delivery.
     const selected = await client.query(
       `SELECT j.id, j.payload, j.subject_type, j.subject_id, j.status,
+              j.operation, j.management_period_id, j.certificate_identity_id,
               j.claimed_by_controller_cluster_id, j.claim_id, j.lease_expires_at,
               d.started_at, d.completed_at, d.failed_at, d.delivered_at
          FROM certificate_jobs j
@@ -509,6 +510,19 @@ async function takeNextControllerProvisioningCommand({
           AND j.source = '${CONTROLLER_PROVISIONING_JOB_SOURCE}'
           AND j.operation = 'deploy'
           AND j.status IN ('pending', 'claimed', 'running')
+          -- Period closure skips a job already locked by another poll. Keep
+          -- that stale pending row out of LIMIT 1 so this cluster's next
+          -- command can progress; started commands retain their redelivery.
+          AND (
+            j.status IN ('claimed', 'running')
+            OR j.management_period_id IS NULL
+            OR EXISTS (
+              SELECT 1 FROM certops_management_periods p
+               WHERE p.workspace_id = j.workspace_id
+                 AND p.id = j.management_period_id
+                 AND p.ended_at IS NULL
+            )
+          )
           AND j.payload->>'kind' = 'cert_manager_provision'
           AND j.payload #>> '{desiredCertificate,clusterId}' = $2
           AND (
@@ -603,6 +617,15 @@ async function takeNextControllerProvisioningCommand({
           WHERE id = $1`,
         [row.id, INVALID_COMMAND_ERROR_CODE],
       );
+      await client.query("COMMIT");
+      return null;
+    }
+
+    // Started commands retain their reconciliation/redelivery path after a
+    // period closes. Only a new claim needs the nonblocking admission locks.
+    if (row.status === "pending" && !await require("./managementClaim").lockManagedJobForClaim({
+      client, job: row, workspaceId: apiToken.workspaceId,
+    })) {
       await client.query("COMMIT");
       return null;
     }

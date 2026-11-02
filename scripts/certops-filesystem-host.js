@@ -18,7 +18,7 @@
  * prove absence. Only sanitized named JSON uploads; no private bytes/hashes, replay
  * inputs, native command output or backup files.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 /**
  * Qualify the production filesystem certificate coordinator on an explicitly disposable host.
  * certops-filesystem-qualification.yml selects the native distribution. This harness

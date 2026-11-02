@@ -7,7 +7,7 @@
  * liveDnsQualified false. The real-host suite stays pending without a live provider;
  * catalog mappings are annotations, not native execution evidence.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 
 /** Local DNS cancellation and interrupted-cleanup contract. Propagation is

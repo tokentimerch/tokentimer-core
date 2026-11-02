@@ -151,6 +151,10 @@ const {
   validateRenewalManualOverrides,
 } = require("../services/certops/renewalProfile");
 const {
+  CERTOPS_PROFILE_ISSUER_INCOMPATIBLE,
+  validateAdcsRenewalProfile,
+} = require("../services/certops/adcsRenewalRules");
+const {
   CERTOPS_PROFILE_FIELD_IMMUTABLE,
   CERTOPS_PROFILE_INVALID,
   CERTOPS_PROFILE_NOT_FOUND,
@@ -290,6 +294,7 @@ function redactIdentityLocationsForViewers(req, items) {
   return items.map((item) => ({ ...item,
     keyReference: undefined,
     sources: item.sources.map((source) => ({ ...source, sourceRef: undefined })),
+    restartableSources: (item.restartableSources || []).map((source) => ({ ...source, sourceRef: undefined })),
     locations: item.locations.map((location) => ({ ...location,
       sourceRef: undefined, deploymentReference: undefined })),
   }));
@@ -460,6 +465,7 @@ function handleCertOpsError(res, err) {
     });
   }
   if (err?.code === CERTOPS_CERTIFICATE_NOT_RENEWABLE ||
+      err?.code === "CERTOPS_CERTIFICATE_PATH_IN_USE" ||
       err?.code === "CERTOPS_CERTIFICATE_RETIRED" ||
       err?.code === "CERTOPS_MUTATION_RUNNING" ||
       err?.code === "CERTOPS_LIFECYCLE_DOWNGRADE") {
@@ -906,10 +912,10 @@ function handleCertOpsError(res, err) {
     });
   }
 
-  if (err?.code === CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED) {
+  if (err?.code === CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED || err?.code === "CERTOPS_ENROLLMENT_OPEN") {
     return res.status(409).json({
       error: err.message || "Per-CA renewal capacity exceeded",
-      code: CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
+      code: err.code,
     });
   }
 
@@ -3193,10 +3199,10 @@ function renewalWindowStart(notAfter, renewBeforeDays) {
  * Derives the renewal state for one managed_certificates row joined with its
  * certificate_profiles row (same column names the scheduler selects).
  *
- * Profile completeness is answered by resolveRenewalProfileSnapshot, the
- * function the scheduler itself admits on, so the badge can never claim
- * "auto" for a certificate the sweep would refuse. `renewsFrom` is when the
- * sweep starts picking the certificate up (not_after minus the effective lead
+ * Profile completeness uses the scheduler's validator for the issuer kind:
+ * native AD CS profiles do not contain ACME account or DNS-provider settings.
+ * The badge must not report those valid profiles as incomplete. `renewsFrom`
+ * is when the sweep starts picking the certificate up (not_after minus the effective lead
  * time), not a promise of the exact renewal moment.
  *
  * `workspacePaused` answers a different question than `state`: `state` is
@@ -3271,11 +3277,17 @@ function deriveCertificateRenewalState(
 
   let incompleteReason = null;
   try {
-    resolveRenewalProfileSnapshot(row);
+    if (row?.profile_issuer_kind === "adcs" && row?.profile_issuer_id) {
+      validateAdcsRenewalProfile(row.profile_public_metadata?.renewalProfile);
+    } else {
+      resolveRenewalProfileSnapshot(row);
+    }
   } catch (error) {
     if (
       error?.code !== CERTOPS_RENEWAL_PROFILE_INCOMPLETE &&
-      error?.code !== CERTOPS_RENEWAL_PROFILE_INVALID
+      error?.code !== CERTOPS_RENEWAL_PROFILE_INVALID &&
+      error?.code !== CERTOPS_PROFILE_INVALID &&
+      error?.code !== CERTOPS_PROFILE_ISSUER_INCOMPATIBLE
     ) {
       throw error;
     }
@@ -3720,7 +3732,7 @@ router.post(
 // manager-scoped too, so this keeps the API and the UI enforcing the same line
 // instead of relying on the client to hide the surface.
 //
-// The single mutating route is admin-gated via
+// Profile mutations are manager-or-owner gated via
 // authorize("certops.renewal_profile.manage") because a profile edit changes
 // what a host-privileged agent executes at the next renewal; see
 // services/certops/renewalProfileAdmin.js for the editable-field boundary.
@@ -4380,7 +4392,7 @@ router.put("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumer
 router.post("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollouts", ...distributionWriteGuards,
   requireWorkspaceCertOpsActive,
   csrRoute(async (req) => ({ statusCode:201,body:await distribution.requestRollout({ workspaceId:req.workspace.id,
-    groupId:req.params.groupId,materialVersionId:req.body?.materialVersionId,maxParallel:req.body?.maxParallel,verificationOnly:req.body?.verificationOnly,
+    groupId:req.params.groupId,materialVersionId:req.body?.materialVersionId,maxParallel:req.body?.maxParallel,verificationOnly:req.body?.verificationOnly,requiresApproval:req.body?.requiresApproval,
     actorUserId:req.user?.id,idempotencyKey:req.get("Idempotency-Key") }) })));
 router.post("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollouts/:rolloutId/state", ...distributionWriteGuards,
   (req, res, next) => req.body?.state === "deploying" ? requireWorkspaceCertOpsActive(req, res, next) : next(),

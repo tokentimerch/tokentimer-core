@@ -79,3 +79,26 @@ test("journey helpers are guarded only in continue mode and keep their results",
   state.continueOnFailure = false;
   await assert.rejects(exported.qualifyThing("bad"), /bad/);
 });
+
+test("a scenario whose journey failure was swallowed by the guard is reported as failed", async () => {
+  const gate = await gateWith({ continueOnFailure: true });
+  await gate.scenario("outer", async () => {
+    await gate.scenario("inner", async () => {
+      await gate.guard("journey.qualifyThing", async () => { throw new Error("timed out"); });
+    });
+  });
+  await gate.scenario("clean", async () => {});
+  assert.deepEqual(gate.report.scenarios.map((row) => row.status), ["failed", "failed", "passed"]);
+  assert.equal(gate.report.scenarios[1].failure.errorClass, "Error");
+  assert.equal(gate.report.status, "failed");
+});
+
+test("a hung scenario fails by id after its timeout and later scenarios still run", async () => {
+  const gate = await gateWith({ continueOnFailure: true, scenarioTimeoutMs: 50 });
+  await gate.scenario("hung", () => new Promise(() => {}));
+  await gate.scenario("after", async () => {});
+  assert.deepEqual(gate.report.scenarios.map((row) => row.status), ["failed", "passed"]);
+  assert.equal(gate.report.scenarios[0].failure.errorCode, "CERTOPS_SCENARIO_TIMEOUT");
+  assert.equal(gate.report.status, "failed");
+  await assert.rejects(gateWith({ scenarioTimeoutMs: -1 }), /Invalid scenario timeout/);
+});

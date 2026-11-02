@@ -41,6 +41,34 @@ func mockAgentPath(t *testing.T) string {
 	return abs
 }
 
+// A process handle proves creation, not that Node has installed its signal
+// handlers. Cold Windows runners can spend seconds starting Node. The fixture
+// publishes readiness only after registering SIGBREAK, so shutdown assertions
+// below still measure the actual handler/timeout paths rather than startup.
+func readyChildEnvironment(t *testing.T) ([]string, string) {
+	t.Helper()
+	ready := filepath.Join(t.TempDir(), "signal-handler-ready")
+	return append(os.Environ(), "TOKENTIMER_HOST_TEST_READY_FILE="+ready), ready
+}
+
+func waitForChildReady(t *testing.T, host *agentHost, ready string) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if value, err := os.ReadFile(ready); err == nil && string(value) == "ready\n" {
+			return
+		}
+		select {
+		case <-host.exited:
+			t.Fatalf("child exited before installing its signal handler: %v", host.wait())
+		default:
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	_ = host.stopGracefully(time.Second)
+	t.Fatal("child did not publish signal-handler readiness within 15 seconds")
+}
+
 func newTestLogger(t *testing.T) *hostLogger {
 	t.Helper()
 	return &hostLogger{out: &testWriter{t: t}}
@@ -85,7 +113,8 @@ func TestAgentHostGracefulStop(t *testing.T) {
 	node := nodeExe(t)
 	entry := mockAgentPath(t)
 	log := newTestLogger(t)
-	host := newAgentHost(node, []string{entry}, os.Environ(), log)
+	env, ready := readyChildEnvironment(t)
+	host := newAgentHost(node, []string{entry}, env, log)
 
 	if err := host.start(); err != nil {
 		t.Fatalf("start: %v", err)
@@ -95,10 +124,7 @@ func TestAgentHostGracefulStop(t *testing.T) {
 		t.Fatal("expected a non-zero child pid after start")
 	}
 
-	// Give the child a moment to install its SIGBREAK handler before
-	// signaling it, matching how a real agent would already be past
-	// startup by the time SCM ever asks it to stop.
-	time.Sleep(500 * time.Millisecond)
+	waitForChildReady(t, host, ready)
 
 	stopStart := time.Now()
 	if err := host.stopGracefully(5 * time.Second); err != nil {
@@ -119,6 +145,9 @@ func TestAgentHostGracefulStop(t *testing.T) {
 	if elapsed > 4*time.Second {
 		t.Fatalf("stopGracefully took %s, suspiciously close to the 5s timeout; likely fell through to force-kill", elapsed)
 	}
+	if err := host.wait(); err != nil {
+		t.Fatalf("child did not exit cleanly after its graceful handler: %v", err)
+	}
 
 	select {
 	case <-host.exited:
@@ -133,8 +162,8 @@ func TestAgentHostGracefulStop(t *testing.T) {
 func TestAgentHostForceKillOnTimeout(t *testing.T) {
 	node := nodeExe(t)
 	log := newTestLogger(t)
-	// This script ignores SIGBREAK entirely (no handler registered) and
-	// just runs forever, standing in for an agent that failed to drain.
+	// This script consumes SIGBREAK without exiting and keeps running,
+	// standing in for an agent that failed to drain.
 	stubbornScript := filepath.Join(t.TempDir(), "stubborn.js")
 	// Node's default action for an unhandled CTRL_BREAK_EVENT is to let
 	// Windows terminate the process outright, which would trivially
@@ -143,15 +172,16 @@ func TestAgentHostForceKillOnTimeout(t *testing.T) {
 	// that does nothing suppresses that default action while still never
 	// calling process.exit(), which is what actually exercises the
 	// timeout-then-force-kill path this test targets.
-	stubbornSrc := "process.on('SIGBREAK', () => {}); setInterval(() => {}, 1000);\n"
+	stubbornSrc := "process.on('SIGBREAK', () => {}); require('node:fs').writeFileSync(process.env.TOKENTIMER_HOST_TEST_READY_FILE, 'ready\\n'); setInterval(() => {}, 1000);\n"
 	if err := os.WriteFile(stubbornScript, []byte(stubbornSrc), 0o600); err != nil {
 		t.Fatalf("write stubborn script: %v", err)
 	}
-	host := newAgentHost(node, []string{stubbornScript}, os.Environ(), log)
+	env, ready := readyChildEnvironment(t)
+	host := newAgentHost(node, []string{stubbornScript}, env, log)
 	if err := host.start(); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	time.Sleep(300 * time.Millisecond)
+	waitForChildReady(t, host, ready)
 
 	stopStart := time.Now()
 	if err := host.stopGracefully(1 * time.Second); err != nil {

@@ -1,6 +1,7 @@
 "use strict";
 /** Paid domain infrastructure is an explicit repository opt-in. Scheduled jobs
  * may only finish/clean an already owned manual campaign, never create a lab. */
+const KEYVAULT_CLEANUP = "certops-azure-keyvault-janitor.yml";
 const PROVISION = Object.freeze([
   "certops-native-issuer-reassignment.yml",
   "certops-enterprise-adcs-qualification.yml",
@@ -13,6 +14,7 @@ const PROVISION = Object.freeze([
   "certops-retention-cadence-prepare.yml",
 ]);
 const LIFECYCLE = Object.freeze([
+  KEYVAULT_CLEANUP,
   "certops-adcs-lab-janitor.yml",
   "certops-retention24h-finalize.yml",
   "certops-retention24h-janitor.yml",
@@ -30,6 +32,8 @@ function allowedCondition(name, value) {
     : LIFECYCLE.includes(name) && value === LIFECYCLE_IF;
 }
 function validate(name, workflow) {
+  if (name === KEYVAULT_CLEANUP)
+    return require("./certops-keyvault-bootstrap-policy").validate(workflow);
   const errors = [];
   const known = PROVISION.includes(name) || LIFECYCLE.includes(name);
   const runs = Object.values(workflow.jobs || {}).flatMap((job) =>

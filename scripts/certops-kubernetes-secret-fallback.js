@@ -11,7 +11,7 @@
  * tokens or raw errors. This host case does not prove full API publication, external
  * issuers or every fallback-policy combination; parser checks are not cluster evidence.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 // Run inside the production controller image with its scoped mounted identity;
 // verify the bounded public-only Secret reader and real native RBAC refusals.

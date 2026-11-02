@@ -1,6 +1,6 @@
 /*
  * Qualification notes: public-idle-retirement
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Exercise real public retirement with zero leased jobs: anonymous401,owned viewer role refusal,then
  * manager success with correct actor,one append-only audit,force=false; repeat keeps terminal row
  * without another audit. Require new native retirement86 log,SCM exit0,original host/Node absence

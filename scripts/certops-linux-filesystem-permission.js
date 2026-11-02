@@ -19,7 +19,7 @@
  * artifacts. Failed permission restoration preserves private root; pure checks do not
  * qualify signed API, installed service, daemon reload or serving cutover.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Direct production deployer qualification on a disposable root-owned Linux
  * host. Drops to an independently resolved nonroot account with no effective

@@ -10,7 +10,7 @@ const test = require("node:test"),
 const { spawnSync } = require("node:child_process");
 test(
   "actual installer filesystem branches preserve literal brackets and wildcard siblings",
-  // skip-reason: no-host
+  // skip-reason: platform
   { skip: process.platform !== "win32" },
   () => {
     const parent = fs.mkdtempSync(

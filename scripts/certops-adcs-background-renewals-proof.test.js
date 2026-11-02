@@ -11,7 +11,7 @@
  * ownership before admission/new IDs before waits; require empty Job/exact process absence, never
  * numeric-PID kill. Unknown acceptance/drain preserves root/journals/keys; not retention.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /* Supporting evidence-contract checks only. The real CA, CNG, IIS and scheduler
  * observations must come from the protected disposable Windows forest. */

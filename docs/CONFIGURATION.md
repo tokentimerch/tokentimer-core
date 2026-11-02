@@ -12,6 +12,12 @@ Defaults come from code fallbacks in `apps/*` and `packages/config/*`, then from
 
 ## Core runtime and bootstrap
 
+API error messages in the dashboard show a **Reference** when the response
+includes a valid server-generated `X-Request-Id`. Include it when contacting
+support or your operator; it matches `correlationId` in API logs. This is enabled
+by default. Network failures and older servers or proxies that omit the header
+have no reference. Queued worker jobs do not yet inherit the request ID.
+
 | Variable                  | Description                              | Default value                  | Scope                  |
 | ------------------------- | ---------------------------------------- | ------------------------------ | ---------------------- |
 | `TT_MODE`                 | Core variant mode                        | `oss`                          | App mode               |
@@ -90,7 +96,6 @@ the origins users and integrations actually use in the browser.
 | `DB_NAME`               | PostgreSQL database name                | `tokentimer`                                 | API, worker |
 | `DB_USER`               | PostgreSQL user                         | `tokentimer`                                 | API, worker |
 | `DB_PASSWORD`           | PostgreSQL password                     | `password` (dev fallback), `required` (prod) | API, worker |
-| `DATABASE_URL`          | Full PostgreSQL connection URL override | `unset`                                      | API, worker |
 | `DB_SSL`                | DB SSL mode (`require` or `verify`)     | `unset (disabled)`                           | API, worker |
 | `PGSSLROOTCERT`         | Path to CA cert for DB SSL verify mode  | `unset`                                      | API, worker |
 | `DB_POOL_MAX`           | Max DB pool connections                 | `10`                                         | API, worker |
@@ -191,6 +196,7 @@ an incomplete configuration and SMTP is reported as not configured. With no
 | `WEBHOOK_ENFORCE_PRIVATE_IP_CHECK`        | Force the private-IP check even when `NODE_ENV=test` (test infrastructure)  | `false`                               | Webhook security     |
 | `WEBHOOK_PROVIDER_HOSTS`                  | Legacy alias for `WEBHOOK_EXTRA_PROVIDER_HOSTS`. Both variables are parsed and unioned together (not a fallback -- if both are set, hosts from either are allowed). Neither variable replaces the built-in provider allowlist (Slack, Discord, Teams incl. legacy `office.com`/`office365.com`, PagerDuty, and Power Automate/Logic Apps `*.logic.azure.com` / `*.environment.api.powerplatform.com`), which is always allowed in addition to whatever these add. Prefer `WEBHOOK_EXTRA_PROVIDER_HOSTS` for new entries. | `empty (built-in list still allowed)` | Webhook security     |
 | `WEBHOOK_EXTRA_PROVIDER_HOSTS`            | Additional allowed hosts, unioned with the built-in provider allowlist above and with `WEBHOOK_PROVIDER_HOSTS` if both are set (comma-separated) | `empty`                               | Webhook security     |
+| `INTEGRATION_ALLOW_PRIVATE_IPS`           | Allow Vault, GitLab, GitHub and Azure Key Vault scans to connect to private or loopback base URLs when `true` (self-hosted). Helm: `config.integrationAllowPrivateIps` | `false`                               | Integration security |
 | `VAULT_ADDRESS_ALLOWLIST`                 | Vault integration host allowlist                                            | `empty (no host restriction)`         | Integration security |
 | `AZURE_VAULT_ADDRESS_ALLOWLIST`           | Azure Key Vault host allowlist                                              | `empty (no host restriction)`         | Integration security |
 | `GITHUB_ADDRESS_ALLOWLIST`                | GitHub host allowlist                                                       | `empty (no host restriction)`         | Integration security |
@@ -200,6 +206,14 @@ an incomplete configuration and SMTP is reported as not configured. With no
 | `DOMAIN_CHECKER_IMPORT_LIMITS`            | Domain checker import request cap map (`plan:value`)                        | `oss:50000`                           | Domain checker       |
 | `DOMAIN_CHECKER_MAX_RESULTS`              | Direct override for discovery results, capped internally at 25,000,000      | `unset`                               | Domain checker       |
 | `DOMAIN_CHECKER_IMPORT_MAX_CERTIFICATES`  | Direct override for import certificates per request, capped at 200,000      | `unset`                               | Domain checker       |
+| `SUBFINDER_BIN` | Path to the `subfinder` binary. The API image bundles it; an API run directly on a host needs it on `PATH` or here, otherwise lookups fail with `503 DOMAIN_CHECKER_TOOL_MISSING` | `subfinder` (from `PATH`) | Domain checker |
+| `DOMAIN_CHECKER_TOOL_TIMEOUT_MS` | Time limit for one discovery tool run | `300000` | Domain checker |
+| `DOMAIN_CHECKER_OVERALL_TIMEOUT_MS` | Time limit for a whole lookup; on expiry `504 DOMAIN_CHECKER_TIMEOUT` | `300000` | Domain checker |
+| `DOMAIN_CHECKER_LOOKUP_RATE_LIMIT_MAX` | Lookups allowed per user and workspace in each window; over it `429 DOMAIN_CHECKER_RATE_LIMITED` | `1` | Domain checker |
+| `DOMAIN_CHECKER_LOOKUP_RATE_LIMIT_WINDOW_MS` | Length of that window | `60000` | Domain checker |
+| `DOMAIN_CHECKER_TLS_TIMEOUT_MS` | Time limit for one TLS certificate fetch during a lookup (minimum `1000`) | `5000` | Domain checker |
+| `DOMAIN_CHECKER_IMPORT_SOCKET_TIMEOUT_MS` | Socket timeout for a long certificate import request; unset or `0` means no socket timeout | `unset` | Domain checker |
+| `DOMAIN_CHECKER_TOOL_TMPDIR` | Writable parent directory for discovery tool scratch space | system temp directory | Domain checker |
 | `CONTACT_GROUP_PLURAL_WRITES`             | Allow two-or-more contact groups per asset via `contact_group_ids` / `contactGroupIds`. Unset or empty = **on**. Set `false` only to 400 two-or-more `contact_group_ids` on a 0.16.0 replica. It does **not** make 0.15.0 write join tables. Do not mix 0.15.0 + 0.16.0 API/worker. Migrations 52-54 add the join tables; rolling a 0.15.0 binary onto a post-54 database is unsupported. Dashboard exposes the flag on `GET /api/auth/features` as `contactGroupPluralWrites`. | `unset` (on) | API, dashboard |
 | `CONTACT_GROUP_LIMITS`                    | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Contact groups       |
 | `CONTACT_GROUP_MEMBER_LIMITS`             | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Contact groups       |
@@ -297,6 +311,10 @@ posture.
 
 Kubernetes auth is out of scope unless operators confirm AppRole is
 insufficient.
+
+## Integration base URLs
+
+The Vault, GitLab, GitHub and Azure Key Vault inventory scans connect to an address the user types in. By default the API refuses base URLs that point at private, loopback, link-local or other reserved addresses (including hostnames that resolve to them) and answers with 400 `INTEGRATION_PRIVATE_ADDRESS_BLOCKED`. A self-hosted GitLab, GitHub Enterprise or Vault on your own network is a legitimate target: set `INTEGRATION_ALLOW_PRIVATE_IPS=true` (Helm `config.integrationAllowPrivateIps`) on the API to allow it. The `*_ADDRESS_ALLOWLIST` host lists still apply on top. This is separate from `WEBHOOK_ALLOW_PRIVATE_IPS`, which only covers webhooks.
 
 ## Proxy
 
@@ -436,6 +454,14 @@ must supply the expected certificate identity; incompatible requests fail
 without mutation. Reverting images does not undo migrations; recovery needs a
 matching backup or an explicitly supported migration path.
 
+Retiring a certificate closes its current source management periods and disables
+their automation while retaining source and observation history. Seeing a fresh
+replacement fingerprint does not resume management. After verifying that fresh
+certificate, select **Re-add management** and choose its renewal configuration
+explicitly. The retired fingerprint remains terminal and cannot be re-added.
+Bound terminal AD CS key cleanup can still finish; retirement does not classify
+read-only or dry-run work as an uncertain installation.
+
 Cloud applies the corresponding schema as migrations 80–84. Enterprise must
 ship the Core runtime containing these changes alongside its overlays. Promote
 the final Core pin, contract digests, matching image/chart versions and release
@@ -484,6 +510,29 @@ request that sets both together applies them as one transaction, so a
 failure partway through leaves neither changed. Enabling or disabling it is
 audited (`CERTOPS_WORKSPACE_APPROVAL_POLICY_ENABLED` /
 `CERTOPS_WORKSPACE_APPROVAL_POLICY_DISABLED`).
+
+Leave **Job approval off** for unattended scheduled renewals. Enabling it also
+gates automation-created jobs: scheduling still happens, but execution waits
+for a different authorized user's approval. Vault rollout requests and their
+consumer deployment jobs follow the same workspace policy. A rollout can
+individually opt in with `requiresApproval: true`; `false` cannot override an
+enabled workspace policy. Turning the setting off affects new jobs and does
+not silently release existing jobs already waiting for approval.
+
+**Operator guidance for upgrades from 0.18.0:** if a Vault rollout is already
+waiting for approval and you want to proceed alone, cancel that pending job,
+leave workspace Job approval off, and submit a new rollout with a new
+`Idempotency-Key`. Reusing the old key returns the original gated request.
+
+Vault publication and rollout are separate operations. A scheduled renewal can
+publish a new version, but publication alone does not request a rollout to
+consumers. Request that rollout explicitly; approval-off execution does not
+add an automatic distribution schedule.
+
+This setting governs TokenTimer jobs. Approving an issuer or trust anchor, or
+a CA's own enrollment-approval policy, are separate controls. Turning Job
+approval off does not approve a CA, change an AD CS template, or release a
+request awaiting the CA's decision.
 
 ### CertOps maintenance sweeps (worker)
 
@@ -544,6 +593,11 @@ TokenTimer stores only public certificate material (fingerprints, serials, issue
 | `ENABLE_METRICS`     | Enable `/metrics` and metric push attempts when `true`     | `false`       | API, worker    |
 | `PUSHGATEWAY_URL`    | Prometheus Pushgateway endpoint                            | `unset`       | Worker metrics |
 | `ENVIRONMENT_SUFFIX` | Metrics environment label (if you have multiple instances) | `unset`       | Worker metrics |
+
+API `/metrics` exposes `auto_sync_items_created_total{provider}` when
+`ENABLE_METRICS=true`, along with durable run outcomes and last-attempt and
+last-success timestamps; no Pushgateway is required. See
+[auto-sync monitoring](AUTO_SYNC.md#new-inventory-metrics).
 
 ## WhatsApp (Twilio)
 
@@ -647,22 +701,4 @@ Variables sent by TokenTimer for endpoint WhatsApp alerts:
 | `RATE_LIMIT_WINDOW` | Config package generic rate-limit window (ms)                               | `60000`       | Shared config consumers |
 | `RATE_LIMIT_MAX`    | Config package generic rate-limit max requests                              | `100`         | Shared config consumers |
 
-## Test, CI, and local orchestration
-
-| Variable                    | Description                               | Default value           | Scope              |
-| --------------------------- | ----------------------------------------- | ----------------------- | ------------------ |
-| `CI`                        | Standard CI marker                        | `unset`                 | CI pipelines       |
-| `CONTRACT_API_REQUIRED`     | Fail contract tests if API is unavailable | `unset`                 | Contract tests     |
-| `TEST_API_URL`              | Integration test API endpoint             | `http://localhost:4000` | Integration tests  |
-| `TEST_MODE`                 | Test behavior switch                      | `unset`                 | Tests              |
-| `NODE_V8_COVERAGE`          | V8 coverage output path                   | `unset`                 | Coverage           |
-| `TT_ALLOW_FORCE_INSTALL`    | Permit force install in test bootstrap    | `unset`                 | Tests              |
-| `TT_AUTO_INSTALL_TEST_DEPS` | Auto install missing test deps            | `unset`                 | Tests              |
-| `TT_FORCE_INSTALL`          | Force dependency install in tests         | `unset`                 | Tests              |
-| `TT_IMAGE_TAG`              | Docker image tag for tests                | `unset`                 | Test orchestration |
-| `TT_SKIP_COMPOSE_BUILD`     | Skip docker compose build step            | `unset`                 | Test orchestration |
-| `TT_TEST_API_PORT`          | API port used by test compose             | `4000`                  | Test compose       |
-| `TT_TEST_DB_PORT`           | DB port used by test compose              | `5432`                  | Test compose       |
-| `TT_TEST_MAILHOG_SMTP_PORT` | MailHog SMTP port in tests                | `1025`                  | Test compose       |
-| `TT_TEST_MAILHOG_UI_PORT`   | MailHog UI port in tests                  | `8025`                  | Test compose       |
-| `TT_TEST_SUITE`             | Select subset of test suites              | `unset`                 | Test selection     |
+For test and CI variables, see [Local development](../DEVELOPMENT.md#test-ci-and-local-orchestration).

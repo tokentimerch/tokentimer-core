@@ -94,6 +94,43 @@ function assertNoPrivateKeyMaterial(tarballPath) {
   }
 }
 
+/** Entries operators run directly after extracting the tarball. */
+const EXECUTABLE_TARBALL_ENTRIES = Object.freeze([
+  "package/scripts/install-agent.sh",
+]);
+
+/**
+ * Fails when an operator-run script lost its executable bit. npm pack keeps
+ * the on-disk mode, so this catches a git mode of 100644. Windows checkouts
+ * carry no mode bits, so the check only means something off win32 (release
+ * packs on Linux).
+ * @param {string} tarballPath
+ * @param {{ platform?: string }} [options]
+ */
+function assertExecutableEntries(tarballPath, { platform = process.platform } = {}) {
+  if (platform === "win32") return;
+  const list = spawnSync("tar", ["-tvzf", tarballPath], { encoding: "utf8" });
+  if (list.status !== 0) {
+    throw new Error(
+      `pack-release: could not list tarball modes (tar exited ${list.status}): ${list.stderr || ""}`,
+    );
+  }
+  const lines = list.stdout.split(/\r?\n/);
+  const missing = [];
+  for (const entry of EXECUTABLE_TARBALL_ENTRIES) {
+    const line = lines.find((candidate) => candidate.endsWith(` ${entry}`));
+    // Owner execute bit is the 4th character of the mode string.
+    if (!line || line[3] !== "x") missing.push(entry);
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      "pack-release: operator-run scripts must be executable in the tarball " +
+        "(git mode 100755):\n" +
+        missing.map((entry) => `  - ${entry}`).join("\n"),
+    );
+  }
+}
+
 function parseArgs(argv) {
   let outDir = path.join(packageRoot, "dist");
   for (let i = 0; i < argv.length; i += 1) {
@@ -176,6 +213,7 @@ function main(argv = process.argv.slice(2)) {
   }
 
   assertNoPrivateKeyMaterial(tarballPath);
+  assertExecutableEntries(tarballPath);
 
   const digest = sha256File(tarballPath);
   const checksumName = `${tarballName}.sha256`;
@@ -197,7 +235,12 @@ function main(argv = process.argv.slice(2)) {
   return { tarballPath, checksumPath, digest, version: pkg.version };
 }
 
-module.exports = { main, sha256File, assertNoPrivateKeyMaterial };
+module.exports = {
+  main,
+  sha256File,
+  assertNoPrivateKeyMaterial,
+  assertExecutableEntries,
+};
 
 if (require.main === module) {
   try {

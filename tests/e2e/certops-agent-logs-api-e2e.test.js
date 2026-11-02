@@ -13,7 +13,7 @@ const { createHostGate } = require("../../packages/agent/scripts/host-gate");
 test("registered agent log redaction and replay through real API", { timeout: 120000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires isolated API, PostgreSQL and signing configuration
+    // skip-reason: prerequisite - requires isolated API, PostgreSQL and signing configuration
     t.skip("Disposable API URL required"); return;
   }
   assert.ok(baseUrl); const fixture = await createApiFixture(baseUrl);

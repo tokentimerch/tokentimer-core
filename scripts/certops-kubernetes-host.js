@@ -30,7 +30,7 @@
  * facts. External issuers, HTTP-01 and full renewal timing require their separate native
  * lanes.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 // Qualify production controller adapters against one disposable kind cluster;
 // each scenario owns only its random namespace and emits strict public evidence.

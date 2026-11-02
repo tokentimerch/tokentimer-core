@@ -13,7 +13,7 @@
  * predecessors/keys/receipts retained. Register IDs/thumbprints before waits, parent cleans. Sweep
  * execution not worker interval/retention24h; fresh-key ADR-0014 not CMC.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /* Supporting evidence-contract checks only. The real CA, CNG, IIS and scheduler
  * observations must come from the protected disposable Windows forest. */

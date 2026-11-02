@@ -9,42 +9,73 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Target: **0.18.0**.
+### Added
+
+- **Global auto-sync overrides.** System Settings can force metric exposure/labels and the monitoring group independently across all integrations. Managed controls prevent local changes; a Configured badge identifies active overrides. Otherwise, connections keep their saved choices. Import forms use consistent typography and structured run history. Environment values retain priority; extra asset labels default off and increase series/alert cardinality. Names/scopes cover future creations; existing provider counters stay unchanged. **Operator action:** apply migrations 81–82 with matching API/dashboard code.
+
+- **API request correlation.** Responses include a generated `X-Request-Id` that matches `correlationId` in request-scoped API logs and completion records. Use it when reporting API failures; incoming request IDs are replaced to prevent forged or sensitive values from entering logs. Dashboard API errors display the matching request reference when available. Worker propagation remains follow-up work.
+
+## [0.18.2] - 2026-10-27
 
 ### Added
 
-- **Decommissioning a certificate that an endpoint checker still sees now says where and offers the fix.** The still-serving refusal lists the monitored URLs, and the retire dialog can remove the endpoint checker and continue in one step (workspace managers). Locations that are not endpoint checkers must stop serving the certificate first. **Operator action:** none.
-
-- **Shared certificate distribution through customer Vault.** Publish immutable certificate versions to assigned Linux consumers, including ordinary, SAN and wildcard certificates. Private keys and credentials remain customer-local. Management is API-first, with status on Renewals. The agent build in this release advertises the distribution and AD CS capabilities; Vault distribution runs on Linux consumers and AD CS enrollment on Windows/IIS hosts, as independent paths.
-- **Agent output console.** Managers and admins can follow secret-filtered job output; viewers see stream status only. Console failures do not change job results. **Operator action:** apply migration 69 and keep the `certops` worker scheduled for log cleanup. Configure retention and quotas with `CERTOPS_AGENT_LOG_RETENTION_DAYS` (default `30`; `0` disables storage) and `CERTOPS_AGENT_LOG_DAILY_BYTES` (default `0`, unlimited). `TT_AGENT_LOG_STREAM=off` disables streaming per agent. See [configuration](docs/CONFIGURATION.md#certops-maintenance-sweeps-worker).
-
-### Changed
-
-- `replace-management` and `readd` now explain a `409 CERTOPS_MANAGEMENT_ALREADY_OPEN`: the body gives `reason` and the open `currentPeriod` (id, start, mode, renewal profile). The AD CS profile wizard shows the message and can replace the named period on request. **Operator guidance:** to attach a profile to an already-managed certificate, pass the open `periodId` ([details](docs/certops/certificate-details.md)).
-- **AD CS enrollment.** Where enabled, Windows agents enroll and renew IIS certificates only under explicit local CA, template, DNS and algorithm permissions. Unsafe configurations are refused. **Operator action:** upgrade API and agents together and configure `dnsScopes` and `keyAlgorithms` before enabling enrollment. `adcs.validationTimeoutSeconds` accepts 300–86400 seconds (default 24 hours); restarts cannot extend pending validation. Issuers without renewal capacity return `409 CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED`. Domain controllers, Windows Server 2016 and earlier, and offline-root hierarchies are outside the qualified scope ([AD CS guide](docs/certops/agent/adcs.md#qualification-scope)).
-- **Windows ACME requires fresh keys.** Explicit key reuse fails with `WINDOWS_ACME_KEY_REUSE_UNSUPPORTED`, including dry runs. **Operator action:** set `keyRotationPolicy.rotateOnRenew=true` on existing Windows profiles. Linux key reuse remains supported.
-- Agents refresh executable capabilities on heartbeat and stop ACME client processes after lease loss, expiry or timeout. **Operator action:** upgrade the API before these agents; older APIs reject the new heartbeat fields.
-- Revoked and decommissioned certificates remain visible when observed, but are excluded from active counts and renewal. Retirement does not revoke at the CA or remove installed copies. Manual renewal returns `409 CERTOPS_CERTIFICATE_NOT_RENEWABLE`. A retired certificate's AD CS enrollment can no longer be recovered or continued toward installation from any state, and decommissioning is refused with `CERTOPS_MUTATION_RUNNING` while an install-capable AD CS or store deployment job is running; key cleanup is unaffected.
-- Renewals now separates CA-capacity waits from job status and shows each profile's issuer. AD CS issuers are managed on the Renewals tab.
-- IIS renewal preserves binding settings or refuses the change with `UNSUPPORTED_BINDING_SETTINGS`. **Operator guidance:** remove the named unsupported setting or rebind manually.
+- **Auto-sync metrics survive restarts and cleanup.** API `/metrics` exposes durable creation and run-outcome totals, last-attempt and last-success timestamps, and enabled-connection counts by provider. Opt-in alerts cover creations, failed runs and stale activity. **Operator guidance:** apply migrations 79–80, establish a Prometheus baseline, and scrape one stable API target per database; do not sum replica copies. Historical activity is not backfilled.
 
 ### Fixed
 
-- **Windows agent reliability:** graceful service shutdown drains pending output; startup failures exit cleanly; installation handles literal brackets in paths. Retention preserves keys still referenced by installed certificates, and ACME refuses certificate/key mismatches with `ACME_CERTIFICATE_KEY_MISMATCH`.
-- **Certificate backups:** concurrent deployments retain distinct rollback copies and prune only their own backups. **Operator guidance:** review historical timestamp-only backups manually; they are retained because their destination cannot be safely identified.
-- **Certificate lifecycle and alerts:** renewals and discovery keep token fingerprints and expiry windows current without reusing stale certificate details. **Operator action:** pause old workers, apply migration 73, deploy matching API/worker images, then resume. Historical alerts with uncertain associations remain discarded.
-- Malformed DNS lookup and Google certificate-inventory responses no longer cause destructive cleanup or removal of imported certificates.
-- Workspace invitations preserve existing admin and owner access. Certificate job links open their history, multi-certificate tokens support targeted retirement, and Control Center asset lists populate correctly.
-- Distribution permits authorized pause and retirement while execution is blocked; resume remains gated. Publishing claim IDs remain private.
-- **Non-English Windows hosts:** certificate discovery, IIS deployment and retention no longer depend on localized command output. **Operator action:** upgrade affected agents, ensure Windows PowerShell 5.1 is available, and review TLS settings on previously renewed IIS bindings with `netsh http show sslcert` ([#327](https://github.com/tokentimerch/tokentimer-core/issues/327), [#330](https://github.com/tokentimerch/tokentimer-core/issues/330)).
+- **Certificate retirement and renewal remain safe.** Retirement closes management periods while allowing the bound terminal key cleanup to finish. Discovered certificates with typed DNS names renew without duplicate SANs. **Operator action:** after observing a replacement for a retired certificate, use **Re-add management** to select its renewal configuration.
+- **Vault setup supports consumer registration and recovery.** Create a bootstrap token for each new consumer and resume paused rollouts in the guide. Progress follows the selected group and current version, including active consumers assigned outside the guide; file-only completion confirms installation without claiming live verification. Retrying a deployment refreshes its timeline and agent output; certificate-trust and network failures retain their diagnostic classifications.
+- **Workspace managers can complete AD CS setup and manage renewal profiles.** Disabled setup goals explain the required role; workspace members also appear on initial load without switching workspaces.
+- **Linux agent reload and trust maintenance are more reliable.** The installer rejects legacy polkit backends that cannot enforce scoped service grants before changing an installation. Debian trust-anchor revoke uses the configured `--fresh` profile. **Operator guidance:** service reload requires a host with polkit 0.106 or later and JavaScript-rule support; use a compatible host or file-only delivery, and update affected agents.
+- **GitHub and GitLab connections can be enabled after a successful scan**, including an empty result. Changing credentials or scope requires a fresh scan; failed or late scans cannot reuse prior approval.
+- **Expiry dates remain consistent across timezones and daylight-saving changes.** Date-only values retain their stated calendar date, and relative labels, sorting and filters count calendar days.
 
 ### Security
 
-- Certificate backups cannot escape allowed paths through symlinks or junctions. Windows installation rejects linked staging paths and invalid native helpers. **Operator guidance:** unpack releases into an ordinary directory.
-- Windows private-key deployment protects staging, backup and custody files with restricted ACLs. **Operator action:** redeploy existing filesystem certificate/key pairs to repair permissions and review older private-key backups.
-- Windows installation preserves Error Reporting policy; crash-dump containment remains unqualified. **Operator guidance:** review older `LocalDumps\node.exe` settings: `DumpType=0` selects a custom dump, not suppression.
-- DNS errors redact reflected credentials. **Operator guidance:** upgrade agents using Azure DNS, Google Cloud DNS, Route53, OVH or Exoscale and review retained provider-error logs.
-- The API image's `subfinder` dependencies address Critical/High HTTP/2 vulnerabilities, including [GO-2026-6612](https://pkg.go.dev/vuln/GO-2026-6612) / CVE-2026-78663. **Operator action:** rebuild the API image.
+- **Dashboard images include patched curl packages** for CVE-2026-92392. **Operator action:** upgrade and redeploy the dashboard image; rebuild custom images.
+
+## [0.18.1] - 2026-10-26
+
+### Added
+
+- **Vault setup stays in the guide, with file-only delivery.** Send signed agent checks, assign consumers, copy their returned configuration revisions, and deploy a published version from the setup guide without running TokenTimer API commands in a terminal. Choose file distribution alone or also reload NGINX, Apache or HAProxy; file-only completion confirms installation and does not claim live TLS verification. The guide shows each deployment's evidence, and starting over creates a fresh publication attempt while keeping existing records. **Operator action:** apply migration 78 and deploy matching API/worker and consumer agents before using file-only delivery; older agents reject that policy before any change is made.
+
+### Fixed
+
+- **Restarted setup guides can run a new signed test.** A fresh setup no longer reuses another attempt's job request. New steps open at their heading, and background status refreshes keep your reading position.
+- **AD CS setup stays in the guide after CA pinning.** Run the fresh CA/template check on the selected Windows agent inline; renewal setup waits for the post-pin check instead of sending you to Renewals.
+- **Vault rollouts honor Job approval.** With workspace approval off, a single operator can start a rollout and its consumer deployments without a second account. Explicit per-request approval remains available; workspace-forced approval still requires another authorized user. Existing pending approvals are preserved. Settings and operator guidance clarify that enabling Job approval also holds scheduled renewal jobs, and that publishing a renewed certificate does not automatically request a consumer rollout.
+
+## [0.18.0] - 2026-10-25
+
+### Added
+
+- **Guided setup at `/onboarding`.** A setup guide from the welcome modal, banner or Preferences covers website monitoring, assets, imports, alerts, and CertOps observe/automate (Linux, Windows, Kubernetes, AD CS, Vault). CertOps settings show a quickstart card. Progress is stored in `onboarding_sessions` (migration 77). The automate DNS step lists every production agent DNS-01 provider with credential examples. Subdomain discovery needs `subfinder` (bundled in the API image; otherwise `SUBFINDER_BIN` / `PATH`, or `503 DOMAIN_CHECKER_TOOL_MISSING`). Compose forwards the `DOMAIN_CHECKER_*` settings to the API.
+- **Shared certificate distribution through customer Vault.** Publish immutable certificate versions to assigned Linux consumers (ordinary, SAN and wildcard). Private keys stay customer-local. Status is on Renewals; AD CS enrollment is a separate Windows/IIS path.
+- **AD CS enrollment for Windows/IIS.** Agents enroll and renew only under explicit local CA, template, DNS and algorithm permissions. Issuers and profiles are managed on Renewals. Inventory renewal status recognizes native AD CS profiles (no ACME fields required). One open enrollment per certificate (`409 CERTOPS_ENROLLMENT_OPEN` on conflict). **Operator action:** upgrade API and agents together; configure `dnsScopes` and `keyAlgorithms` before enabling. Outside qualified scope: domain controllers, Windows Server 2016 and earlier, offline-root hierarchies ([AD CS guide](docs/certops/agent/adcs.md#qualification-scope)).
+- **Agent output console.** Managers and admins can follow secret-filtered job output. **Operator action:** migration 69; keep the `certops` worker scheduled for log cleanup. `CERTOPS_AGENT_LOG_RETENTION_DAYS` (default `30`; `0` disables), `CERTOPS_AGENT_LOG_DAILY_BYTES` (default unlimited), `TT_AGENT_LOG_STREAM=off` per agent. See [configuration](docs/CONFIGURATION.md#certops-maintenance-sweeps-worker).
+- **Alert groups on auto-sync.** `scan_params.contactGroupIds` assigns groups to assets a sync creates; existing assets keep their groups.
+
+### Changed
+
+- **Windows ACME requires fresh keys.** Explicit reuse fails with `WINDOWS_ACME_KEY_REUSE_UNSUPPORTED`. **Operator action:** set `keyRotationPolicy.rotateOnRenew=true` on existing Windows profiles. Linux key reuse is unchanged.
+- **Upgrade API before agents that advertise executable capabilities on heartbeat.** Older APIs reject the new heartbeat fields. Agents also stop ACME clients after lease loss, expiry or timeout.
+- **Revoked and decommissioned certificates** stay visible when observed but leave active counts and renewal. Retirement does not revoke at the CA or remove installed copies. Decommissioning is refused (`CERTOPS_MUTATION_RUNNING`) while an install-capable job is running. Retiring a certificate that an endpoint checker still serves lists those URLs and can remove the checker in one step.
+
+### Fixed
+
+- **A failed first issuance no longer locks its certificate path.** A later retry with a new idempotency key can reuse the abandoned order; competing retries that wait on the path lock recheck abandonment before admitting another job. A path still in use returns `409 CERTOPS_CERTIFICATE_PATH_IN_USE`.
+- **Linux DNS-01 under the packaged systemd unit.** Propagation checks keep configured resolvers when the unit blocks interface listing. **Operator action:** upgrade Linux agents that use DNS-01.
+- **Non-English Windows hosts.** Discovery, IIS deployment and retention no longer depend on localized command output. **Operator action:** upgrade affected agents; ensure Windows PowerShell 5.1; review TLS on previously renewed IIS bindings with `netsh http show sslcert`.
+- **Certificate alerts after renewals and discovery.** Fingerprints and expiry windows stay current. **Operator action:** pause old workers, apply migration 73, deploy matching API/worker images, then resume.
+- **`install-agent.sh` is executable in the release tarball again.** Re-running with `--reload-service` merges polkit grants instead of dropping them (`--replace-reload-services` for an authoritative list).
+
+### Security
+
+- **Integration base URLs refuse private addresses** (`400 INTEGRATION_PRIVATE_ADDRESS_BLOCKED`) for Vault, GitLab, GitHub and Azure Key Vault. **Operator action:** for a self-hosted instance on a private network, set `INTEGRATION_ALLOW_PRIVATE_IPS=true` (Helm `config.integrationAllowPrivateIps`).
+- Windows private-key staging, backup and custody use restricted ACLs; certificate backups cannot escape allowed paths through symlinks or junctions. **Operator action:** redeploy existing filesystem certificate/key pairs to repair permissions; unpack releases into an ordinary directory.
+- DNS provider errors redact reflected credentials. **Operator guidance:** upgrade agents using Azure DNS, Google Cloud DNS, Route 53, OVH or Exoscale and review retained provider-error logs.
+- API image `subfinder` dependencies address Critical/High HTTP/2 findings, including [GO-2026-6612](https://pkg.go.dev/vuln/GO-2026-6612). **Operator action:** rebuild the API image.
 
 ## [0.17.3] - 2026-10-08
 
@@ -193,7 +224,7 @@ Target: **0.18.0**.
 
 ### Added
 
-- `docs/certops/CONTEXT.md` documents the previously-undocumented `GET /api/v1/workspaces/:id/certops/trust-anchors/:anchorId/installations` endpoint.
+- `.github/maintainers/certops/CONTEXT.md` documents the previously-undocumented `GET /api/v1/workspaces/:id/certops/trust-anchors/:anchorId/installations` endpoint.
 - `docs/certops/agent.md` documents `PrivateTmp=true` in the shipped systemd unit: without it, `ProtectSystem=strict` leaves `/tmp` read-only, and `update-ca-certificates`/`update-ca-trust extract` both fail at `mktemp` before ever touching the anchors directory - easy to mistake for the anchors-directory grant itself being missing.
 
 ## [0.14.1] - 2026-09-01

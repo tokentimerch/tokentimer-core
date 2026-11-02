@@ -1,6 +1,6 @@
 /*
  * Qualification notes: alive-agent-default-hard-grace
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Use the separate Azure-free Server2022/2025 RSA2048 lane. Hold the exact successful signed renewal
  * result behind HTTP503 before forwarding, with claim polling held and healthy authenticated
  * heartbeats; do not alter ACME results or clocks. A genuine pre-ACME command barrier follows CNG

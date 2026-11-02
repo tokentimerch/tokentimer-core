@@ -10,7 +10,7 @@
  * before exact trust removal, refuse later reused receipts. Full root/hierarchy require proof;
  * elapsed lane separate. Pure controls execute no Chromium/native abandonment.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Bounded proof, native-observation refusal and retained-owner lifecycle only.
  * These checks never launch Chromium, mutate trust or execute native AD CS. */

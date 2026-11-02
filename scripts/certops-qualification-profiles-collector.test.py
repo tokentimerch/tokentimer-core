@@ -15,7 +15,7 @@ class ProfileTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("adcs_profile_collector", ROOT / "scripts/certops-release-collector.py")
         collector = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(collector)
-        matrix = qualification_manifest.load(ROOT / "docs/certops/qualification-suites.json")
+        matrix = qualification_manifest.load(ROOT / ".github/maintainers/certops/qualification-suites.json")
         selected = profiles.select_profile(matrix, "adcs-native")
         self.assertEqual({row["suite"] for row in selected["specification"]["slots"]}, profiles.ADCS_NATIVE)
         candidate, coverage = "a" * 40, {"implementationStatus": "incomplete"}
@@ -29,7 +29,7 @@ class ProfileTests(unittest.TestCase):
     def test_actual_collector_rejects_scoped_promotion_and_omission_forgery(self):
         spec=importlib.util.spec_from_file_location("profile_collector",ROOT/"scripts/certops-release-collector.py")
         collector=importlib.util.module_from_spec(spec);spec.loader.exec_module(collector)
-        matrix=qualification_manifest.load(ROOT/"docs/certops/qualification-suites.json")
+        matrix=qualification_manifest.load(ROOT/".github/maintainers/certops/qualification-suites.json")
         selected=profiles.select_profile(matrix,"standard-hosted")
         candidate="a"*40;coverage={"implementationStatus":"incomplete"}
         summary={"schemaVersion":1,"status":"passed","candidateSha":candidate,"mandatoryEnvironments":len(selected["selectedSlotIds"]),"allFeaturesQualified":False,"catalogCoverage":coverage,**profiles.summary_fields(selected,True)}
@@ -41,7 +41,7 @@ class ProfileTests(unittest.TestCase):
             with self.assertRaises(ValueError):collector.validate_matrix_summary({**summary,**patch},candidate,len(selected["selectedSlotIds"]),coverage,selected)
 
     def test_committed_javascript_python_scope_parity(self):
-        matrix=qualification_manifest.load(ROOT/"docs/certops/qualification-suites.json")
+        matrix=qualification_manifest.load(ROOT/".github/maintainers/certops/qualification-suites.json")
         for profile in profiles.PROFILES:
             expected=profiles.select_profile(matrix,profile)
             result=subprocess.run(["node","-e","const p=require('./scripts/certops-qualification-profiles'),m=require('./scripts/certops-qualification-manifest');const s=p.selectProfile(m,process.argv[1]);console.log(JSON.stringify(p.summaryFields(s,true)));",profile],cwd=ROOT,capture_output=True,text=True,check=True,timeout=30)

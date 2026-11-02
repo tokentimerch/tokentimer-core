@@ -1,6 +1,6 @@
 /*
  * Qualification notes: ipv6-sni-shadow-rollback
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Use actual IPv6 loopback/SNI and independently trusted TLS to exercise concrete-IP shadow
  * precedence, failed verification and rollback. Preserve exact native binding/certificate/private-key
  * association and unrelated endpoint, record real supported IPv6 prerequisites rather than relabel

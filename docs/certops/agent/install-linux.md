@@ -2,15 +2,21 @@
 
 Install on the host that holds the certificate keys. Use Node.js 22 or 24 and a systemd Linux host with outbound HTTPS to the TokenTimer API. Enable CertOps and provide its signing/registration encryption keys on the control plane first.
 
-1. In the workspace's Agent fleet panel, create a bootstrap token and copy the generated deployment command. Tokens are single-use and shown once.
+For service reload, install polkit with JavaScript-rule support (0.106 or newer; Ubuntu 24.04 is a suitable example). Ubuntu 22.04's default polkit 0.105 cannot enforce the agent's scoped reload grant. The installer rejects that backend before changing the installation; it does not add a broad sudo or legacy `.pkla` permission. Discovery and file-only delivery do not need reload authorization.
+
+1. In the workspace's Agent fleet panel, create a bootstrap token and copy the generated deployment command. Tokens are single-use and shown once. A token expires 24 hours after creation by default (maximum 30 days); create a new one if it expires.
 2. Download the matching released agent package and verify its checksum against the release before extracting it. Use the package installer, not an unreviewed copy of a script.
 3. Run the generated command as root. Prefer the hidden bootstrap-token prompt. Keep initial execution disabled while you configure [local policy](configuration.md).
 4. Check `systemctl status tokentimer-agent` and `journalctl -u tokentimer-agent -n 50 --no-pager`. Confirm registration and a fresh heartbeat in the fleet panel.
-5. Prepare the command, path, CA, and DNS allowlists before requesting work. Set `execution.enabled: true` with `execution.dryRun: true`, restart, and verify a signed job with `mode: "dry_run"`. Its signed payload must retain `dry_run` and its terminal status must be `dry_run_complete`, never `succeeded`. The local `dryRun` switch refuses real jobs; it does not convert them into previews. After checking its plan, set `execution.dryRun: false` and restart to allow real work. The complete [public Linux walkthrough](https://tokentimer.ch/docs/self-hosted/runbooks/certops-agent-install) includes package and policy examples.
+5. Prepare the command, path, CA, and DNS allowlists before requesting work. Set `execution.enabled: true` with `execution.dryRun: true`, restart, and verify a signed job with `mode: "dry_run"`. Its signed payload must retain `dry_run` and its terminal status must be `dry_run_complete`, never `succeeded`. The local `dryRun` switch refuses real mutating jobs; it does not convert them into previews. A signed no-op checks dispatch/reporting, not later DNS, deployment or reload permissions. For AD CS, keep local dry-run enabled through the [read-only check, trusted pin and fresh post-pin check](adcs.md#operator-sequence); switch it off and restart before enrollment. For other mutating work, review the intended operation's local policy and destinations before switching it off. The complete [public Linux walkthrough](https://tokentimer.ch/docs/self-hosted/runbooks/certops-agent-install) includes package and policy examples.
 
 For a private API CA, configure `caBundlePath` (or install with `--ca-bundle`). This configures API trust only. If the ACME server uses a private CA, configure the host or ACME client trust store before starting certbot; do not disable TLS verification.
 
-For an API-created preview, list `GET /api/v1/workspaces/{workspaceId}/certops/agents`, match `items[].agentId` to the local configuration's `agentId`, and use that row's `items[].id` as `assignedAgentId`. Send `POST /api/v1/workspaces/{workspaceId}/certops/jobs` with `{"operation":"noop","mode":"dry_run","assignedAgentId":"REPLACE_WITH_FLEET_AGENT_ROW_UUID"}`; approve it if required by workspace policy, then poll its job endpoint for `dry_run_complete`.
+Write your policy first, then run the installer: it keeps an existing `config.json` and only creates one when absent. Command profile names and target selectors are read when the agent starts, so prepare them before the first registration. With a loopback `http` API address, also add `"allowInsecureLocalHttp": true` to a hand-written `config.json`. For ACME hosts install `certbot` (at `/usr/bin/certbot`) first.
+
+On an upgrade the installer still asks for a token. A registered agent keeps its credential and does not use it, so paste any value that starts with `ttboot_` or set `TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_unused`.
+
+For an API-created no-op smoke test, list `GET /api/v1/workspaces/{workspaceId}/certops/agents`, match `items[].agentId` to the local configuration's `agentId`, and use that row's `items[].id` as `assignedAgentId`. Send `POST /api/v1/workspaces/{workspaceId}/certops/jobs` with `{"operation":"noop","mode":"dry_run","assignedAgentId":"REPLACE_WITH_FLEET_AGENT_ROW_UUID"}`; approve it if required by workspace policy, then poll its job endpoint for `dry_run_complete`.
 
 The flags below explain what the installer changes. State/enrollment details live in [Configuration](configuration.md); upgrades and removal live in [Operations](operations.md).
 
@@ -50,6 +56,8 @@ that the dashboard's Deploy-an-agent panel generates a command for. It:
 
 `--dry-run` prints every action without touching the system.
 
+Run the installer as `sudo bash ./scripts/install-agent.sh`. The `bash` form works whether or not the tarball kept the script's executable bit. The 0.17.3 and earlier release tarballs ship it without that bit, so `sudo ./scripts/install-agent.sh` fails with `Permission denied` there.
+
 <a id="installer-flags"></a>
 
 #### Installer flags
@@ -68,7 +76,8 @@ the same surface with the operator-relevant caveats.
 | `--write-paths-file F` | no | One absolute path per line (`#` comments and blank lines allowed), merged with `--write-path`. |
 | `--trust-store` | no | Linux: require the OS trust-store grant (the default is to apply it automatically on Debian/Ubuntu and RHEL/AlmaLinux when `update-ca-certificates` or `update-ca-trust` is present). Windows: accepted for flag parity; LocalSystem already has `LocalMachine\Root` and `LocalMachine\CA`. |
 | `--no-trust-store` | no | Linux: skip the OS trust-store sandbox/ACL grant. Windows: accepted, no effect (the service still runs as LocalSystem). |
-| `--reload-service NAME` | no | Allows `systemctl reload NAME` through a generated polkit rule. Repeatable. Allowlist: `nginx`, `apache`/`apache2`, `httpd`, `haproxy`. Polkit rather than sudoers because the unit keeps `NoNewPrivileges=true`, under which sudo cannot escalate at all. On Windows this flag is accepted for parity and does not install a polkit rule. |
+| `--reload-service NAME` | no | Allows `systemctl reload NAME` through a generated polkit rule. Repeatable. Allowlist: `nginx`, `apache`/`apache2`, `httpd`, `haproxy`. Polkit rather than sudoers because the unit keeps `NoNewPrivileges=true`, under which sudo cannot escalate at all. On Windows this flag is accepted for parity and does not install a polkit rule. A re-run merges with the reload grants already on the host, so adding one service never drops another. |
+| `--replace-reload-services` | no | Makes the `--reload-service` list authoritative: grants not listed are removed and the installer prints each dropped unit. With no `--reload-service` it removes the polkit rule. Linux only. |
 | `--allow-insecure-local-http` | no | Development only. Permits plain `http://` for loopback hosts only, and writes `allowInsecureLocalHttp=true` into `config.json`. |
 | `--dry-run` | no | Print every action, execute nothing. Also valid with `--uninstall`. |
 | `--uninstall` | no | See [Operations](operations.md#upgrade-and-uninstall). |
@@ -78,6 +87,42 @@ the systemd sandbox *reach* the directory; the `tokentimer-agent` user must
 still be able to write there, for example
 `setfacl -m u:tokentimer-agent:rwx /etc/nginx/certs`. Without that, deploy
 jobs fail with a permission error even though the path is allowlisted.
+
+The installer creates every `--write-path` directory, gives it to
+`tokentimer-agent` and sets mode 0750. Files you place there yourself must also
+belong to that user, or deploys cannot replace them.
+
+<a id="nginx-reload"></a>
+
+#### nginx reload
+
+`nginx -t` fails for the unprivileged agent user (it cannot open `/run/nginx.pid`),
+so the agent cannot validate nginx itself. Use these two profiles instead, with
+`--reload-service nginx` on the installer:
+
+```json
+"allowedCommands": {
+  "nginx-validate": { "argv": ["/usr/bin/systemctl", "is-active", "--quiet", "nginx"] },
+  "nginx-reload": { "argv": ["/usr/bin/systemctl", "reload", "nginx"] }
+}
+```
+
+The validate profile only checks that the unit is running. The stock nginx unit
+reloads without testing the configuration, so add a one-time drop-in that tests
+it as root first (and pauses one second so the new workers serve before a
+served-certificate check):
+
+```sh
+sudo mkdir -p /etc/systemd/system/nginx.service.d
+sudo tee /etc/systemd/system/nginx.service.d/tokentimer-reload.conf <<'EOF'
+[Service]
+ExecReload=
+ExecReload=/usr/sbin/nginx -t -q -g "daemon on; master_process on;"
+ExecReload=/usr/sbin/nginx -g "daemon on; master_process on;" -s reload
+ExecReload=/usr/bin/sleep 1
+EOF
+sudo systemctl daemon-reload
+```
 
 `--trust-store` is applied automatically on every tested Linux family when
 the OS trust-store tools are present: Ubuntu 22.04/24.04/26.04
@@ -100,6 +145,19 @@ write `LocalMachine\Root` and `LocalMachine\CA`. `--trust-store` is
 accepted so a Linux install command pasted into PowerShell does not fail.
 
 The installer is POSIX shell and needs root (or sudo) for a real install. Create a bootstrap token, run the generated command, then verify registration and a fresh heartbeat in the dashboard. For removal, see [Upgrade and uninstall](operations.md#upgrade-and-uninstall).
+
+#### Reload Apache or HAProxy
+
+A configuration test run as the unprivileged agent user fails as soon as the configuration loads a key or PEM that only root can read (for example Debian's `default-ssl` site or a PEM folder under `/etc/haproxy`). The validate command therefore only checks that the unit is running, and the unit's own reload tests the configuration as root and refuses a broken one. Install with `--reload-service apache2` or `--reload-service haproxy` and add the matching pair to `policy.allowedCommands`:
+
+```json
+"apache2-validate": { "argv": ["/usr/bin/systemctl", "is-active", "--quiet", "apache2"] },
+"apache2-reload": { "argv": ["/usr/bin/systemctl", "reload", "apache2"] },
+"haproxy-validate": { "argv": ["/usr/bin/systemctl", "is-active", "--quiet", "haproxy"] },
+"haproxy-reload": { "argv": ["/usr/bin/systemctl", "reload", "haproxy"] }
+```
+
+The issue request's `target.keyPath` decides where the private key is written; keep it in a `--write-path` folder. HAProxy loads `<crt>.key` by itself when the file in `bind ... ssl crt` holds no key (HAProxy 2.8).
 
 ## Related
 

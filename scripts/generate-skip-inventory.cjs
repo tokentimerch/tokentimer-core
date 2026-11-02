@@ -8,7 +8,8 @@
 // (tolerating a short run of explanatory comment lines above the tag
 // itself), where `<tag>` is exactly one of:
 //
-//   no-host       needs real hardware/OS/IIS not available in CI
+//   platform      runs on its supported OS in an owning CI job
+//   prerequisite  needs an explicitly provisioned CI fixture or privilege
 //   unimplemented the feature the test targets does not exist yet
 //
 // This module owns the scan/classify/render logic and is required by
@@ -18,7 +19,7 @@
 // counts as a skip.
 //
 // This is a line-oriented heuristic scan, not a JS parser. It recognizes the
-// skip syntaxes actually used in this codebase today (see docs/certops/ for
+// skip syntaxes actually used in this codebase today (see .github/maintainers/certops/ for
 // the generated inventory): mocha's `describe.skip(...)` / `it.skip(...)`
 // (a statically-named skip), mocha's `this.skip()` / node:test's
 // `t.skip(...)` (a dynamic, conditional skip inside a test body, attributed
@@ -40,12 +41,13 @@ const path = require("node:path");
 const repoRoot = path.resolve(__dirname, "..");
 const OUTPUT_PATH = path.join(
   repoRoot,
-  "docs",
+  ".github",
+  "maintainers",
   "certops",
   "skip-inventory.generated.md",
 );
 
-const VALID_REASONS = new Set(["no-host", "unimplemented"]);
+const VALID_REASONS = new Set(["platform", "prerequisite", "unimplemented"]);
 
 // Directories searched for *.test.js / *.spec.js files. These are the three
 // locations this codebase's own conventions put tests in (see package.json's
@@ -253,9 +255,9 @@ function renderMarkdown(skips) {
   );
   lines.push("");
   lines.push(
-    "- `no-host`: skipped because it needs real hardware/OS/IIS not " +
-      "available in CI",
+    "- `platform`: runs on its supported OS in the owning CI job",
   );
+  lines.push("- `prerequisite`: needs the fixture or privilege supplied by its owning CI job");
   lines.push(
     "- `unimplemented`: skipped because the feature does not exist yet",
   );

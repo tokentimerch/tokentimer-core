@@ -1,6 +1,6 @@
 /*
  * Qualification notes: arm64-packaged-scm
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * On fresh elevated Windows11 ARM64 with native Node/PowerShell, require canonical service/registry
  * absent and verify actual candidate archive checksum/PE/digests. Run the packaged SYSTEM host with
  * controlled mock child: start/stop/fresh restart, exit17 recovery and exit86 no-respawn for>=5

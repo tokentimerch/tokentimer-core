@@ -1,6 +1,6 @@
 /*
  * Qualification notes: reregister-custody
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Re-registration contract starts same owned service and preserves same CNG container/in-use key.
  * Different/multiple/ambiguous container selectors fail closed without deletion; missing custody host
  * fails. nativeExecutionQualified=false,blanket reset refused,no reregister catalog promotion.

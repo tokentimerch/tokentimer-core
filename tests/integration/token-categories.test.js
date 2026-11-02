@@ -640,9 +640,15 @@ describe("Token Categories Integration Tests", () => {
       const validCategories = ["cert", "key_secret", "license", "general"];
 
       for (const validCategory of validCategories) {
+        const typeByCategory = {
+          cert: "tls_cert",
+          key_secret: "api_key",
+          license: "software_license",
+          general: "other",
+        };
         const tokenData = {
           name: `Valid Category Test - ${validCategory}`,
-          type: "api_key",
+          type: typeByCategory[validCategory],
           category: validCategory,
           expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
             .toISOString()
@@ -651,7 +657,6 @@ describe("Token Categories Integration Tests", () => {
 
         // Add required fields based on category
         if (validCategory === "cert") {
-          tokenData.type = "tls_cert";
           tokenData.domains = ["test.example.com"];
           tokenData.issuer = "Test CA";
         } else if (validCategory === "license") {

@@ -14,9 +14,10 @@ export default function DashboardDetailsSection({
   contentBorder = true,
   propertyValueRows = false,
   icon: SectionIcon,
+  footer,
 }) {
   const visibleChildren = Children.toArray(children).filter(Boolean);
-  if (visibleChildren.length === 0) return null;
+  if (visibleChildren.length === 0 && !footer) return null;
   const usesTwoColumns = columns === 2;
   const renderedChildren =
     compactValues || enclosed
@@ -31,56 +32,70 @@ export default function DashboardDetailsSection({
         )
       : visibleChildren;
 
-  const detailsGrid = (
-    <Grid
-      data-detail-columns={columns}
-      data-section-enclosed={String(enclosed)}
-      templateColumns='minmax(0, 1fr)'
-      position='relative'
+  const detailsGrid =
+    visibleChildren.length === 0 ? null : (
+      <Grid
+        data-detail-columns={columns}
+        data-section-enclosed={String(enclosed)}
+        templateColumns='minmax(0, 1fr)'
+        position='relative'
+        mx={enclosed ? 3 : 0}
+        border={contentBorder ? '1px solid' : 0}
+        borderWidth={enclosed ? 0 : undefined}
+        borderLeftWidth={enclosed ? 0 : undefined}
+        borderRightWidth={enclosed ? 0 : undefined}
+        borderColor='dashboard.modal.border'
+        _before={
+          usesTwoColumns
+            ? {
+                content: '""',
+                display: { base: 'none', md: 'block' },
+                position: 'absolute',
+                top: propertyValueRows ? 2 : 0,
+                bottom: propertyValueRows ? 2 : 0,
+                left: '50%',
+                width: '1px',
+                bg: 'dashboard.modal.border',
+                pointerEvents: 'none',
+              }
+            : undefined
+        }
+        sx={{
+          '& > [data-detail-row]:last-of-type': { borderBottom: 0 },
+          ...(usesTwoColumns
+            ? {
+                '@media screen and (min-width: 48em)': {
+                  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                  '& > [data-detail-row]:nth-of-type(odd)': {
+                    paddingRight: enclosed ? '16px' : '20px',
+                  },
+                  '& > [data-detail-row]:nth-of-type(even)': {
+                    paddingLeft: enclosed ? '16px' : '20px',
+                  },
+                  '& > [data-detail-row]:nth-last-of-type(-n + 2)': {
+                    borderBottom: 0,
+                  },
+                },
+              }
+            : {}),
+        }}
+      >
+        {renderedChildren}
+      </Grid>
+    );
+
+  // Disclosure rendered below the rows, outside the column grid.
+  const footerContent = footer ? (
+    <Box
+      data-section-footer
       mx={enclosed ? 3 : 0}
-      border={contentBorder ? '1px solid' : 0}
-      borderWidth={enclosed ? 0 : undefined}
-      borderLeftWidth={enclosed ? 0 : undefined}
-      borderRightWidth={enclosed ? 0 : undefined}
+      mt={enclosed ? 0 : 2}
+      borderTop={enclosed && detailsGrid ? '1px solid' : 0}
       borderColor='dashboard.modal.border'
-      _before={
-        usesTwoColumns
-          ? {
-              content: '""',
-              display: { base: 'none', md: 'block' },
-              position: 'absolute',
-              top: propertyValueRows ? 2 : 0,
-              bottom: propertyValueRows ? 2 : 0,
-              left: '50%',
-              width: '1px',
-              bg: 'dashboard.modal.border',
-              pointerEvents: 'none',
-            }
-          : undefined
-      }
-      sx={{
-        '& > [data-detail-row]:last-of-type': { borderBottom: 0 },
-        ...(usesTwoColumns
-          ? {
-              '@media screen and (min-width: 48em)': {
-                gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-                '& > [data-detail-row]:nth-of-type(odd)': {
-                  paddingRight: enclosed ? '16px' : '20px',
-                },
-                '& > [data-detail-row]:nth-of-type(even)': {
-                  paddingLeft: enclosed ? '16px' : '20px',
-                },
-                '& > [data-detail-row]:nth-last-of-type(-n + 2)': {
-                  borderBottom: 0,
-                },
-              },
-            }
-          : {}),
-      }}
     >
-      {renderedChildren}
-    </Grid>
-  );
+      {footer}
+    </Box>
+  ) : null;
 
   if (enclosed) {
     return (
@@ -131,6 +146,7 @@ export default function DashboardDetailsSection({
           {headerAction}
         </HStack>
         {detailsGrid}
+        {footerContent}
       </Box>
     );
   }
@@ -163,6 +179,7 @@ export default function DashboardDetailsSection({
         ) : null}
       </Box>
       {detailsGrid}
+      {footerContent}
     </Box>
   );
 }

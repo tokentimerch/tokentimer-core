@@ -1,7 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const suites = require("../docs/certops/qualification-suites.json");
+const suites = require("./certops-qualification-manifest");
 const { SHARD_NAMES, createShard, phaseOf } = require("../tests/e2e/helpers/certops-adcs-shards");
 const { verifyShardReport } = require("./certops-adcs-shard-report");
 
@@ -63,6 +63,16 @@ test("an unexecuted, failed or foreign scenario fails the shard", () => {
   assert.ok(verifyShardReport(report("renewals"), "all").length);
 });
 
+test("a shard cannot hide a missing native scenario by narrowing its own requirement list", () => {
+  const narrowed = report("issuance");
+  narrowed.requiredScenarios = narrowed.requiredScenarios.slice(0, -1);
+  narrowed.scenarios.pop();
+  assert.ok(verifyShardReport(narrowed, "issuance").length);
+  const duplicate = report("renewals");
+  duplicate.scenarios.push(duplicate.scenarios[0]);
+  assert.ok(verifyShardReport(duplicate, "renewals").length);
+});
+
 test("the workflow matrix keeps release evidence serial and shards parallel with valid group names", () => {
   const { plan } = require("./certops-adcs-shard-plan");
   assert.deepEqual(plan({ attempt: "2" }), [{ shard: "all", suffix: "2", artifactSuffix: "" }]);
@@ -74,4 +84,17 @@ test("the workflow matrix keeps release evidence serial and shards parallel with
   assert.throws(() => plan({ shard: "renewals", scope: "operator-acceptance" }), /plain comprehensive/);
   assert.throws(() => plan({ shard: "parallel", fault: "issued" }), /plain comprehensive/);
   assert.throws(() => plan({ shard: "bogus" }), /Unknown shard/);
+});
+
+test("the 15 minute lease fixtures are split so no shard holds more than two (60 minute run-command window)", () => {
+  const { phaseOf, createShard } = require("../tests/e2e/helpers/certops-adcs-shards");
+  const waits = { "adcs-real-uncertain-zero-request-acknowledged-recovery": "uncertain", "adcs-real-uncertain-single-candidate-auto-installs": "recovery", "adcs-real-uncertain-operator-created-ambiguity-refuses-attachment": "recovery" };
+  for (const [id, phase] of Object.entries(waits)) assert.equal(phaseOf(id), phase, id);
+  for (const id of ["adcs-real-uncertain-public-explicit-request-recovers", "adcs-real-uncertain-unused-operator-request-revoked", "adcs-real-public-reconcile-foreign-spki-refused", "adcs-real-browser-owned-requestid-reconcile"]) assert.equal(phaseOf(id), "recovery", id);
+  assert.equal(phaseOf("adcs-real-browser-uncertain-abandon-confirmation"), "uncertain");
+  const recovery = createShard("uncertain-recovery");
+  assert.equal(recovery.runs("recovery"), true);
+  assert.equal(recovery.runs("uncertain"), false);
+  assert.equal(createShard("templates-and-uncertain").runs("recovery"), false);
+  assert.equal(createShard("all").runs("recovery"), true);
 });

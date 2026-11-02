@@ -7,7 +7,7 @@
  * and acknowledges the new pin. Restarted agents must retain credentials and execute a new-key signed
  * job exactly once.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Exercise signing-key rotation with real agent processes and a disposable API database.
@@ -74,7 +74,7 @@ test(
   async (t) => {
     const baseUrl = process.env.CERTOPS_SIGNING_ROTATION_API_URL;
     if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-      // skip-reason: no-host - requires separate empty signing database and real Linux agents
+      // skip-reason: prerequisite - requires separate empty signing database and real Linux agents
       t.skip("Separate disposable signing rotation stack required");
       return;
     }

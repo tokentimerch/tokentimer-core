@@ -5,7 +5,7 @@
  * linked renewal profiles and agent-local admission metadata seeded as explicit prerequisites. No CA
  * or native agent executes these jobs.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Supporting API/PostgreSQL qualification: mixed eligible bulk renewal shares issuance capacity and conserves replay.
@@ -18,7 +18,7 @@ const {createApiFixture}=require("./helpers/certops-api-fixture"),{createHostGat
 const scenarios=["bulk-eligible-dry-run","bulk-eligible-mixed-capacity","bulk-eligible-replay","bulk-eligible-rejection-releases","bulk-eligible-live-profile-frozen","bulk-eligible-cleanup"];
 test("mixed eligible bulk renewal shares issuance capacity and conserves replay",{timeout:120000},async(t)=>{
  if (!process.env.CERTOPS_CSR_API_URL && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-  // skip-reason: no-host - requires disposable API PostgreSQL and OpenSSL qualification fixture
+  // skip-reason: prerequisite - requires disposable API PostgreSQL and OpenSSL qualification fixture
   t.skip("Required disposable qualification fixture unavailable"); return;
  }
  assert.ok(process.env.CERTOPS_CSR_API_URL);const fixture=await createApiFixture(process.env.CERTOPS_CSR_API_URL),directory=fs.mkdtempSync(path.join(os.tmpdir(),"certops-bulk-eligible-"));let ready=false,failure;const gate=createHostGate({suite:"bulk-eligible-api",strict:true,evidenceLevel:"integration",reportPath:process.env.CERTOPS_BULK_ELIGIBLE_REPORT,requiredCapabilities:["api","postgres","openssl"],fixtureSource:{file:"tests/e2e/certops-bulk-eligible-e2e.test.js",sha256:crypto.createHash("sha256").update(fs.readFileSync(__filename)).digest("hex")},probeCapabilities:()=>({api:{available:true},postgres:{available:true},openssl:{available:spawnSync("openssl",["version"]).status===0}})});gate.report.fixturePrerequisite="Real public imports with seeded complete linked profile/agent-local metadata; genuine public admission only, no CA/native execution or successful renewal claim";

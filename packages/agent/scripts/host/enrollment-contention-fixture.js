@@ -1,6 +1,6 @@
 /*
  * Qualification notes: enrollment-contention-qualification
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Opt into disposable elevated Server2022/2025 host with CNG, PowerShell/OpenSSL; no CA/IIS needed.
  * Three actual contained children share state/enrollmentUUID: winner holds production lock after
  * RSA2048 CSR; loser gets ENROLLMENT_LOCKED with zero native commands; released retry acquires lock

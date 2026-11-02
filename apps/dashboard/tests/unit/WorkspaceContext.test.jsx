@@ -80,6 +80,16 @@ describe('WorkspaceProvider last-workspace restore', () => {
     );
   });
 
+  it('remembers a URL workspace so a later bare navigation does not snap back', async () => {
+    writeLastWorkspaceId('user-a', 'ws-b');
+    renderProvider({ path: '/dashboard?workspace=ws-a' });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('ws').textContent).toBe('ws-a')
+    );
+    expect(localStorage.getItem(LAST_WORKSPACE_LEGACY_KEY)).toBe('ws-a');
+  });
+
   it('falls back to another accessible workspace when last is gone or frozen', async () => {
     writeLastWorkspaceId('user-a', 'ws-frozen');
     renderProvider({ path: '/dashboard' });

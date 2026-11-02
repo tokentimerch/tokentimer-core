@@ -23,7 +23,7 @@
  * sanitized execution/writepath reports, never tokens, state, environment/raw journals.
  * This lifecycle lane does not qualify certificates, browser, released package or ARM64.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 /**
  * Installed Linux agent journey, invoked through certops-linux-systemd.js on an owned VM.
  * Exercise the shipped installer, actual systemd identity/sandbox, restart recovery and

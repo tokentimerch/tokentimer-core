@@ -13,7 +13,7 @@ const { createHostGate } = require("../../packages/agent/scripts/host-gate");
 test("real TLS CSR observation defers changed names then promotes through acknowledgement", { timeout: 120000 }, async (t) => {
   const url = process.env.CERTOPS_CSR_API_URL;
   if (!url && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires disposable API PostgreSQL and actual TLS endpoint
+    // skip-reason: prerequisite - requires disposable API PostgreSQL and actual TLS endpoint
     t.skip("Disposable API URL required"); return;
   }
   assert.ok(url); const fixture = await createApiFixture(url);

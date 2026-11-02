@@ -1,4 +1,5 @@
 import React from 'react';
+import { useScanVerification } from '../../hooks/useScanVerification.js';
 import {
   Box,
   VStack,
@@ -11,12 +12,12 @@ import {
   InputGroup,
   InputRightElement,
   IconButton,
-  Link as ChakraLink,
 } from '@chakra-ui/react';
 import { FiEye, FiEyeOff } from 'react-icons/fi';
 import { gitlabAPI, integrationAPI, formatDate } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 import { IMPORT_DOCS } from '../../utils/docsUrls';
+import LearnMorePanel from '../LearnMorePanel';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 import {
@@ -88,8 +89,11 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
     onError,
     errorContent,
     onScanSuccess,
+    onScanInvalidated,
+    scanContext,
     borderColor,
     helpTextColor,
+    hideDocs = false,
     autoSyncTokenPlaceholder,
     updateQuotaFromResponse,
     refreshIntegrationQuota,
@@ -98,6 +102,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
     extractQuotaFromError,
     contactGroups,
     onSelectionChange,
+    afterFilterRules = null,
     autoSyncManageMode = false,
     initialScanParams = null,
     initialFilterRules = null,
@@ -193,6 +198,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
   }, [selectedRowsGitlab.size, onSelectionChange]);
 
   const doGitlabScan = async () => {
+    const scanTicket = beginScanVerification();
     if (!workspaceId) {
       onError && onError('Please select a workspace first.');
       return;
@@ -236,9 +242,6 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
       setGitlabSummary(Array.isArray(res?.summary) ? res.summary : []);
       setFilterSummary(res?.filterSummary || null);
       setLastScanId(res?.scan_id || null);
-      if (items.length > 0) {
-        onScanSuccess && onScanSuccess('gitlab');
-      }
       try {
         localStorage.setItem('tt_gitlab_baseurl', gitlabBaseUrl);
       } catch (_) {}
@@ -249,6 +252,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
 
       const dups = await checkDuplicatesForItems(items, workspaceId);
       setGitlabDuplicates(dups);
+      completeScanVerification(scanTicket);
     } catch (e) {
       setGitlabItems([]);
       setGitlabSummary([]);
@@ -345,32 +349,47 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
     }
   };
 
+  const getCredentials = () => ({
+    credentials: {
+      baseUrl: gitlabBaseUrl || 'https://gitlab.com',
+      token: gitlabToken,
+    },
+    scanParams: {
+      baseUrl: gitlabBaseUrl || 'https://gitlab.com',
+      include: { tokens: true, keys: true },
+      filters: {
+        includePATs: gitlabIncludePATs,
+        includeProjectTokens: gitlabIncludeProjectTokens,
+        includeGroupTokens: gitlabIncludeGroupTokens,
+        includeDeployTokens: gitlabIncludeDeployTokens,
+        includeTriggerTokens: gitlabIncludeTriggerTokens,
+        includeSSHKeys: gitlabIncludeSSHKeys,
+        excludeUserPATs: gitlabExcludeUserPATs,
+        includeExpired: gitlabIncludeExpired,
+        includeRevoked: gitlabIncludeRevoked,
+      },
+      filterRules: sanitizeFilterRules(filterRules),
+      cleanupObsolete,
+    },
+  });
+  const { beginScanVerification, completeScanVerification } =
+    useScanVerification({
+      identity: {
+        workspaceId,
+        scanContext,
+        payload: getCredentials(),
+        rawBaseUrl: gitlabBaseUrl,
+      },
+      provider: 'gitlab',
+      onScanSuccess,
+      onScanInvalidated,
+    });
+
   React.useImperativeHandle(ref, () => ({
     importSelected: importGitlabSelected,
     getSelectedCount: () => selectedRowsGitlab.size,
-    getCredentials: () => ({
-      credentials: {
-        baseUrl: gitlabBaseUrl || 'https://gitlab.com',
-        token: gitlabToken,
-      },
-      scanParams: {
-        baseUrl: gitlabBaseUrl || 'https://gitlab.com',
-        include: { tokens: true, keys: true },
-        filters: {
-          includePATs: gitlabIncludePATs,
-          includeProjectTokens: gitlabIncludeProjectTokens,
-          includeGroupTokens: gitlabIncludeGroupTokens,
-          includeDeployTokens: gitlabIncludeDeployTokens,
-          includeTriggerTokens: gitlabIncludeTriggerTokens,
-          includeSSHKeys: gitlabIncludeSSHKeys,
-          excludeUserPATs: gitlabExcludeUserPATs,
-          includeExpired: gitlabIncludeExpired,
-          includeRevoked: gitlabIncludeRevoked,
-        },
-        filterRules: sanitizeFilterRules(filterRules),
-        cleanupObsolete,
-      },
-    }),
+    getContactGroupIds: () => bulkContactGroupIds,
+    getCredentials,
   }));
 
   return (
@@ -382,16 +401,15 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
             Deploy Tokens, and SSH Keys. Token is used for scanning and stored
             encrypted if auto-sync is enabled.
           </Text>
-          <Text fontSize='sm' mt={1}>
-            <ChakraLink
-              href={IMPORT_DOCS.gitlab}
-              color='blue.500'
-              textDecoration='underline'
-              isExternal
-            >
-              Learn more about importing from GitLab →
-            </ChakraLink>
-          </Text>
+          {hideDocs ? null : (
+            <LearnMorePanel
+              variant='compact'
+              mt={2}
+              links={[
+                { label: 'Importing from GitLab', url: IMPORT_DOCS.gitlab },
+              ]}
+            />
+          )}
         </Box>
       ) : null}
       <HStack spacing={3} align='flex-end' flexWrap='wrap'>
@@ -572,6 +590,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
         borderColor={borderColor}
         helpTextColor={helpTextColor}
       />
+      {afterFilterRules}
       {!autoSyncManageMode && filterSummary ? (
         <HStack spacing={2}>
           <Badge colorScheme='green'>

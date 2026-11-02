@@ -1,6 +1,6 @@
 /*
  * Qualification notes: installed-failed-rollback
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Separate certops-windows-failed-rollback.yml Server2022/2025 RSA2048 lane requires real installed
  * issue/trusted TLS/sibling. Suspended retained-Job SYSTEM holder keeps predecessor cert context and
  * nonexportable key, signs challenge and removes only public My entry; exact concrete-IP

@@ -1,6 +1,6 @@
 /*
  * Qualification notes: installed-public-verify-rollback
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * With real public manual renewal/installed SYSTEM agent, own concrete127.0.0.1 IP selector on primary
  * port using predecessor plus separate-port sibling. Refuse foreign selectors; native tuple/file
  * identity/AppID gates exact removal. Renewal must persist current-claim iis-bind VERIFY_FAILED

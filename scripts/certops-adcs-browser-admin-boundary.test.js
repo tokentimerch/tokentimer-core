@@ -11,7 +11,7 @@
  * identities first, restore original memberships in finally; separate positive admin Abandon
  * follows.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Proof/authorization-observation contract only. No public request, browser,
  * role mutation, native certificate operation or hosted resource is executed. */
@@ -25,7 +25,7 @@ function proof() {
   return {
     scope: h.SCOPE,
     enrollmentId: id,
-    forbiddenMutations: 4,
+    forbiddenMutations: 2,
     roleChanges: 2,
     adminDemotions: 0,
     mountedAdminWithdrawalQualified: false,
@@ -35,7 +35,8 @@ function proof() {
 function observations() {
   return {
     roles: ["workspace_manager", "viewer", "workspace_manager"],
-    forbiddenStatuses: [403, 403, 403, 403],
+    forbiddenStatuses: [403, 403],
+    managerReadStatuses: [200, 200],
     adminDemotionStatus: 403,
     ownerRole: "admin",
     actorGlobalAdmin: false,
@@ -67,7 +68,7 @@ test("role boundary cannot claim public admin withdrawal or omit measured refusa
     assert.throws(() => h.verifyProof(value));
   }
 });
-test("actual role observations require non-global-admin principals and all four403s", () => {
+test("actual role observations require non-global-admin principals and manager access and both viewer403s", () => {
   assert.equal(h.verifyRoleObservations(observations()), true);
   for (const mutate of [
     (o) => (o.roles = ["admin", "viewer", "admin"]),
@@ -77,6 +78,8 @@ test("actual role observations require non-global-admin principals and all four4
     (o) => (o.adminDemotionStatus = 200),
     (o) => (o.forbiddenStatuses[0] = 204),
     (o) => o.forbiddenStatuses.pop(),
+    (o) => (o.managerReadStatuses[0] = 403),
+    (o) => o.managerReadStatuses.pop(),
   ]) {
     const value = observations();
     mutate(value);
@@ -97,6 +100,6 @@ test("critical sources expose actual supported role and enrollment boundaries", 
     path.resolve(__dirname, "../apps/api/services/rbac.js"),
     "utf8",
   );
-  assert.ok(rbac.includes('"certops.issuer.manage": "admin"'));
+  assert.ok(rbac.includes('"certops.issuer.manage": "workspace_manager"'));
   assert.equal(h.REQUIRED_SCENARIOS.length, 2);
 });

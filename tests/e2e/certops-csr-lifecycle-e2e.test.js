@@ -21,7 +21,7 @@ test("CSR authenticated API lifecycle", { timeout: 120000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   const strict = process.env.CERTOPS_E2E_REQUIRED === "1";
   if (!baseUrl && !strict) {
-    // skip-reason: no-host - requires isolated real feature-enabled API stack
+    // skip-reason: prerequisite - requires isolated real feature-enabled API stack
     t.skip("CERTOPS_CSR_API_URL is required"); return;
   }
   assert.ok(baseUrl, "Strict CSR qualification requires CERTOPS_CSR_API_URL");

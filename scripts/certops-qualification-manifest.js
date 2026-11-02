@@ -124,7 +124,7 @@ function expand(input) {
   }
   return manifest;
 }
-module.exports = expand(require("../docs/certops/qualification-suites.json"));
+module.exports = expand(require("../.github/maintainers/certops/qualification-suites.json"));
 // Non-enumerable so serializing or comparing the materialized contract retains
 // its existing schema. Tests also exercise malformed and legacy flat manifests.
 Object.defineProperty(module.exports, "expand", { value: expand });

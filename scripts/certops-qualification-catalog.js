@@ -23,7 +23,7 @@ function validateCatalog(catalog) {
 module.exports = { validateCatalog };
 if (require.main === module) {
   try {
-    const file = process.argv[2] || require("node:path").join(__dirname, "../docs/certops/qualification-suites.json");
+    const file = process.argv[2] || require("node:path").join(__dirname, "../.github/maintainers/certops/qualification-suites.json");
     const catalog = JSON.parse(require("node:fs").readFileSync(file, "utf8"));
     const errors = validateCatalog(catalog);
     if (errors.length) { console.error(errors.join("\n")); process.exitCode = 1; }

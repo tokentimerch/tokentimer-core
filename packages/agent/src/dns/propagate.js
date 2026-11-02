@@ -105,8 +105,15 @@ function isAddressFamilyUnreachableError(err) {
  * @returns {{ 4: boolean, 6: boolean }}
  */
 function usableAddressFamilies(networkInterfaces = os.networkInterfaces) {
-  const ifaces =
-    typeof networkInterfaces === "function" ? networkInterfaces() : networkInterfaces;
+  let ifaces;
+  try {
+    ifaces =
+      typeof networkInterfaces === "function" ? networkInterfaces() : networkInterfaces;
+  } catch {
+    // The hardened service unit blocks netlink, so listing interfaces throws
+    // there. With no answer, do not filter anything out.
+    return { 4: true, 6: true };
+  }
   const families = { 4: false, 6: false };
   for (const addrs of Object.values(ifaces || {})) {
     for (const addr of addrs || []) {

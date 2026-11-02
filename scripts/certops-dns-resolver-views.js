@@ -16,7 +16,7 @@
  * the parent directory. Public evidence is bounded flags/counts, not DNS packets, record
  * values or argv. Parser checks do not qualify the mandatory native lane.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Actual production DNS-hook all/quorum qualification against two owned DNS
  * views. Each loopback forwarder passes native challtestsrv datagrams unchanged;

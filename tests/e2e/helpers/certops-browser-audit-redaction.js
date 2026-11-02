@@ -7,7 +7,7 @@
  * authorization and label fixtures leave browserQualified false, missing browsers fail
  * closed, and catalog mappings remain supporting annotations.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 
 /** Local browser, audit, and diagnostic contract. Secrets are removed before

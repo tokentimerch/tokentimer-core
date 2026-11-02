@@ -5,7 +5,7 @@
  * API/PostgreSQL stack. The `certificate-transfer-api` report requires every committed named scenario
  * and the current test source digest. It is supporting control-plane integration evidence.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Supporting API/PostgreSQL qualification: public token transfer preserves certificate/CSR lineage, target association, immutable audit history and workspace authority.
@@ -21,7 +21,7 @@ const { createHostGate } = require("../../packages/agent/scripts/host-gate");
 test("public certificate token transfer preserves workspace authority and atomic identity conflicts", { timeout: 120000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires disposable API PostgreSQL and OpenSSL
+    // skip-reason: prerequisite - requires disposable API PostgreSQL and OpenSSL
     t.skip("Disposable API URL required"); return;
   }
   assert.ok(baseUrl); const fixture = await createApiFixture(baseUrl); let destination, ready = false, primaryError;

@@ -1,4 +1,4 @@
-// Azure AD (and similar) scans emit one summary row per cleanup sourceKind,
+// Microsoft Entra ID (and similar) scans emit one summary row per cleanup sourceKind,
 // so the same Graph type appears twice. Collapse by `type` for display.
 // Secrets/certs take the max across rows so duplicated kind counts from
 // older API payloads are not added twice. FOUND is extracted credentials,

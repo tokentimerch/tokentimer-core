@@ -1,6 +1,6 @@
 /*
  * Qualification notes: crash-dump
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Crash containment remains explicitly unqualified: rejectReport must reject
  * crashDumpContainmentQualified=true even otherwise closed proof. nativeExecutionQualified=false;
  * missing host/dispatch reports failure. No crash-recovery catalog promotion.

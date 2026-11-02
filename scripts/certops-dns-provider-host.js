@@ -26,7 +26,7 @@
  * uncertain committed-mutation recovery or multi-host RRset coordination; it creates no
  * VM lab.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /**
  * Qualifies one explicitly configured isolated DNS provider zone using production solvers and

@@ -18,7 +18,7 @@
  * Upload linux-systemd-published-upgrade.json only; receipt-bound teardown always runs.
  * No certificate custody/renewal, schema-upgrade or automatic version-rollback claim.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /* Install/execute an immutable public Linux predecessor, then upgrade the owned
  * service with the candidate's real release archive. Production job creation and

@@ -1,0 +1,47 @@
+name: "CertOps / Expired owned Key Vault lab cleanup"
+on:
+  schedule:
+    - cron: "43 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: certops-azure-keyvault-cleanup
+  cancel-in-progress: false
+jobs:
+  cleanup:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: certops-azure-keyvault-cleanup
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Fetch only the reviewed cleanup helpers at an immutable signed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 1d5515a9d83b3ff5799dfb4e34dbb9679c5d18ea
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /infra/certops-azure-keyvault/
+            /infra/certops-adcs/login-oidc.ps1
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: "24"
+      - name: Authenticate separate cleanup identity with an isolated OIDC cache
+        shell: pwsh
+        run: ./infra/certops-azure-keyvault/login-oidc.ps1
+      - name: Delete only expired owned groups after GitHub owner and inventory checks
+        run: node infra/certops-azure-keyvault/lab.js janitor
+      - name: Remove the validated private cache even after failure
+        if: always()
+        run: |-
+          node -e 'const fs = require("node:fs"), lab = require("./infra/certops-azure-keyvault/lab"); fs.rmSync(lab.privateRoot(), { recursive: true, force: true });'

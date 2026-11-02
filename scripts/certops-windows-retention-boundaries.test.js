@@ -1,6 +1,6 @@
 /*
  * Qualification notes: retention-replacement-lineage
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * ForA->B->C keep immutableA->B row/expiry/cutover/references; sweep follows<=64 valid same-store
  * owned chronological links to currently bound trusted-TLS descendant.
  * Missing/malformed/cyclic/future/unrelated/overlong history fails closed; filename/thumbprint

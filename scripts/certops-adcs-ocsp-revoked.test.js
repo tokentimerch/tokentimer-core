@@ -12,7 +12,7 @@
  * in-memory/collector proof executes no native revoke/responder; catalog/matrix projection is
  * separate from local proof scope.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 // Proves fixture parsing, revoked OCSP response shape, and separation from
 // signed-good availability. Native lab execution is still pending. No
@@ -231,9 +231,7 @@ test("delegated revoked response shape requires an independent revoked verdict",
           seq(Buffer.from("06082b06010505070309", "hex")),
         ),
       );
-      extensions.push(
-        extension("06092b0601050507300105", Buffer.from([5, 0])),
-      );
+      extensions.push(extension("06092b0601050507300105", Buffer.from([5, 0])));
     }
     return signed(
       seq(
@@ -272,10 +270,7 @@ test("delegated revoked response shape requires an independent revoked verdict",
     const id = seq(
       Buffer.from("300906052b0e03021a0500", "hex"),
       der(4, crypto.createHash("sha1").update(issuerParts.subject).digest()),
-      der(
-        4,
-        crypto.createHash("sha1").update(issuerParts.publicBits).digest(),
-      ),
+      der(4, crypto.createHash("sha1").update(issuerParts.publicBits).digest()),
       der(2, Buffer.from([3])),
     );
     const state =
@@ -291,9 +286,7 @@ test("delegated revoked response shape requires an independent revoked verdict",
     const data = seq(
       der(0xa2, der(4, crypto.createHash("sha1").update(signerBits).digest())),
       time(now - 1000),
-      seq(
-        seq(id, state, time(now - 30000), der(0xa0, time(now + 3600000))),
-      ),
+      seq(seq(id, state, time(now - 30000), der(0xa0, time(now + 3600000)))),
     );
     const basic = seq(
       data,
@@ -320,9 +313,13 @@ test("delegated revoked response shape requires an independent revoked verdict",
   );
   assert.equal(admitted.status, "revoked");
   assert.equal(admitted.serialNumber, "3");
-  assert.match(admitted.revocationTime, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+  assert.match(
+    admitted.revocationTime,
+    /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/,
+  );
   assert.equal(
-    subject.verifyRevokedResponse(ocsp("revoked", 1), options, "revoked").status,
+    subject.verifyRevokedResponse(ocsp("revoked", 1), options, "revoked")
+      .status,
     "revoked",
   );
   assert.throws(() =>
@@ -372,8 +369,20 @@ test("actual managed native-provider fingerprint preserves ordering, variant typ
   const root = path.resolve(__dirname, ".."),
     file = path.join(root, "infra/certops-adcs/ocsp-revoked-fixture.ps1");
   const source = fs.readFileSync(file, "utf8");
-  assert.ok(source.includes("$after=$before.Clone()"));
-  assert.ok(source.includes("$entry.ProviderProperties=$after"));
+  // Identical-property rewrites never reload the CRL: the entry is recreated.
+  assert.ok(source.includes("$collection.DeleteCAConfiguration($identifier)"));
+  assert.ok(source.includes("$collection.CreateCAConfiguration($identifier,"));
+  // A recreated entry alone keeps serving the IIS worker's cached good answer.
+  assert.match(source, /function Invoke-OwnedOcspWorkerRecycle/);
+  assert.ok(
+    source.includes("Restart-WebAppPool -Name $actual.applicationPool"),
+  );
+  assert.match(
+    source,
+    /SetConfiguration\('tt-ca\.lab\.certops\.test',\$false\)\r?\n(?:.*\r?\n){1,8}? Invoke-OwnedOcspWorkerRecycle \$Owner/,
+  );
+  assert.ok(!/Stop-Service|Restart-Service/.test(source));
+  assert.ok(!source.includes("$after=$before.Clone()"));
   const script = `$ErrorActionPreference='Stop';$file='${file.replace(/'/g, "''")}';$tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($file,[ref]$tokens,[ref]$errors);if($errors.Count){throw 'Invalid managed policy source'};$functions=@($ast.FindAll({param($n) $n-is[Management.Automation.Language.FunctionDefinitionAst]-and$n.Name-ceq'Get-OwnedOcspProviderFingerprint'},$true));if($functions.Count-ne 1){throw 'Exact managed policy required'};. ([scriptblock]::Create($functions[0].Extent.Text));$p=[Array]::CreateInstance([object],3,2);$p[0,0]='BaseCrl';$p[0,1]=[byte[]]@(1,2,3);$p[1,0]='RevocationErrorCode';$p[1,1]=[int]0;$p[2,0]='BaseCrlUrls';$p[2,1]=[string[]]@('http://PUBLIC.invalid/owned');$a=Get-OwnedOcspProviderFingerprint $p;$copy=$p.Clone();$copy[0,1]=[byte[]]@(4,5,6);$b=Get-OwnedOcspProviderFingerprint $copy;if($a-eq$b-or$a-cne(Get-OwnedOcspProviderFingerprint $p)){throw 'Actual clone did not preserve original snapshot'};$copy=$p.Clone();$copy[1,1]=[uint32]0;if($a-ceq(Get-OwnedOcspProviderFingerprint $copy)){throw 'Native variant kind was lost'};$copy=$p.Clone();$copy[2,1]=[string[]]@('http://PUBLIC.invalid/foreign');if($a-ceq(Get-OwnedOcspProviderFingerprint $copy)){throw 'Native unrelated URL was lost'};'passed'`;
   const result = spawnSync(
     process.platform === "win32" ? "powershell.exe" : "pwsh",
@@ -387,4 +396,71 @@ test("actual managed native-provider fingerprint preserves ordering, variant typ
     "Managed provider policy must execute without native constructors",
   );
   assert.equal(result.stdout.trim(), "passed");
+});
+test("revoked signed-status timeout code names what the responder kept answering", () => {
+  const code = subject.revokedTimeoutCode;
+  const pattern = /^[A-Z0-9_]{1,64}$/;
+  assert.equal(
+    code(undefined),
+    "CERTOPS_OCSP_REVOKED_SIGNED_TIMEOUT_NO_ANSWER",
+  );
+  assert.equal(
+    code({ status: "good", responseSha256: "a" }, ["a"]),
+    "CERTOPS_OCSP_REVOKED_SIGNED_TIMEOUT_STALE_GOOD",
+  );
+  assert.equal(
+    code({ status: "good", responseSha256: "b" }, ["a"]),
+    "CERTOPS_OCSP_REVOKED_SIGNED_TIMEOUT_FRESH_GOOD",
+  );
+  assert.equal(
+    code({ status: "unknown" }, []),
+    "CERTOPS_OCSP_REVOKED_SIGNED_TIMEOUT_UNKNOWN",
+  );
+  for (const status of ["good", "unknown", "x".repeat(200), "???"])
+    assert.match(code({ status, responseSha256: "z" }, []), pattern);
+});
+
+test("native revoked probe maps only the exact CryptoAPI revoked outcome to revoked", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../tests/e2e/helpers/certops-adcs-ocsp.js"),
+    "utf8",
+  );
+  // The chain helper has no "revoked" verdict; the harness names the exact
+  // invalid + CERT_TRUST_IS_REVOKED + fixed-error outcome and nothing else.
+  assert.match(source, /\.then\(classifyNativeRevoked\)/);
+  const body = source.slice(source.indexOf("function classifyNativeRevoked"));
+  assert.match(body, /outcome\.verdict === "invalid"/);
+  assert.match(body, /native\.trustStatus & 0x4\) !== 0/);
+  assert.match(body, /native\.error === "certificate is revoked"/);
+  assert.match(body, /verdict: "revoked"/);
+});
+
+// Runs the real inventory script against mocked IIS cmdlets so the binding rules are exercised
+// by PowerShell itself, not by matching source text.
+test("IIS inventory skips certificate-less HTTPS bindings but still refuses incomplete or central ones", {
+  skip: process.platform !== "win32",
+}, () => {
+  const run = (bindings) => {
+    const mock = [
+      "function Get-Website { $script:sites }",
+      "function Get-WebBinding { param($Name,$Protocol) @($script:bindings | Where-Object { $_.site -eq $Name }) }",
+      "$script:sites = @([pscustomobject]@{Name='s1';Id=1},[pscustomobject]@{Name='s2';Id=2})",
+      `$script:bindings = @(${bindings})`,
+    ].join(";");
+    const script = subject.iisInventoryScript().replace("Import-Module WebAdministration;", "");
+    return spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `$ErrorActionPreference='Stop';${mock};${script}`], { encoding: "utf8" });
+  };
+  const binding = (site, hash, store, flags = 1) =>
+    `[pscustomobject]@{site='${site}';certificateHash=${hash};certificateStoreName='${store}';sslFlags=${flags};bindingInformation='*:${site === "s1" ? 8443 : 8444}:h'}`;
+  const thumb = "A".repeat(40);
+  // A refused enrollment's site has an HTTPS binding and no certificate: skipped, not fatal.
+  const ok = run([binding("s1", `'${thumb}'`, "My"), binding("s2", "$null", "")].join(","));
+  assert.equal(ok.status, 0, ok.stderr);
+  const rows = JSON.parse(ok.stdout);
+  assert.deepEqual(rows.map((row) => [row.site, row.thumbprint]), [["s1", thumb]]);
+  // An assigned but malformed or foreign-store certificate still fails closed.
+  assert.notEqual(run(binding("s1", "'ZZ'", "My")).status, 0);
+  assert.notEqual(run(binding("s1", `'${thumb}'`, "Root")).status, 0);
+  // Central-certificate bindings are still refused even without a hash.
+  assert.notEqual(run(binding("s1", "$null", "", 3)).status, 0);
 });

@@ -52,6 +52,7 @@ import {
   useCertOpsForToken,
   useCertOpsCanManage,
   useCertOpsIsWorkspaceAdmin,
+  useCertOpsManagementState,
   useCertOpsWorkspaceKillSwitch,
   invalidateWorkspaceRoleCache,
 } from '../../src/components/certops/useCertOps.js';
@@ -445,5 +446,48 @@ describe('useCertOpsWorkspaceKillSwitch', () => {
     });
     await waitFor(() => expect(result.current.certOpsPaused).toBe(true));
     expect(result.current.certOpsActive).toBe(false);
+  });
+});
+
+describe('useCertOpsManagementState', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invalidateWorkspaceRoleCache();
+    useWorkspaceMock.mockReturnValue({ workspaceId: 'ws-setup' });
+  });
+
+  it.each(['workspace_manager', 'admin'])(
+    'allows %s without granting the owner-only controls',
+    async role => {
+      workspaceAPIGetMock.mockResolvedValue({ role });
+      const { result } = renderHook(() => ({
+        management: useCertOpsManagementState(),
+        owner: useCertOpsIsWorkspaceAdmin(),
+      }));
+      await waitFor(() =>
+        expect(result.current.management.status).toBe('ready')
+      );
+      expect(result.current.management.canManage).toBe(true);
+      expect(result.current.owner).toBe(role === 'admin');
+    }
+  );
+
+  it('denies a viewer', async () => {
+    workspaceAPIGetMock.mockResolvedValue({ role: 'viewer' });
+    const { result } = renderHook(() => useCertOpsManagementState());
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    expect(result.current.canManage).toBe(false);
+  });
+
+  it('keeps a failed role lookup closed and permits retry', async () => {
+    workspaceAPIGetMock
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({ role: 'workspace_manager' });
+    const { result } = renderHook(() => useCertOpsManagementState());
+    await waitFor(() => expect(result.current.status).toBe('error'));
+    expect(result.current.canManage).toBe(false);
+    act(() => result.current.retry());
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    expect(result.current.canManage).toBe(true);
   });
 });

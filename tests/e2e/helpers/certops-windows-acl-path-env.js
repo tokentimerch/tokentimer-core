@@ -1,6 +1,6 @@
 /*
  * Qualification notes: acl-path-env
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Script refusals cover Everyone-read/unprotected DACL,unquoted spaced binary path and missing
  * LocalSystem environment. Each proof remains
  * nativeExecutionQualified=false/hostCapabilityAbsentIsPass=false; missing host fails. Spaces in owned

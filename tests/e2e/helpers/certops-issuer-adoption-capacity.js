@@ -6,7 +6,7 @@
  * nativeCell remains pending; native-adcs-issuer-reassignment is the separate forest
  * journey, and these catalog annotations cannot qualify that native cell.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 
 /** Adoption and capacity remainder for issuer switch. The native forest

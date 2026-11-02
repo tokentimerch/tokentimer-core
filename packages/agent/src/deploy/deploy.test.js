@@ -11,6 +11,7 @@ const {
   deployCertificate,
   deployCertificateAndKey,
   resolveAgentCustodyKey,
+  restoreCustodyKey,
   discardDeployBackups,
   removeDeployedArtifacts,
   parseDeployFileMode,
@@ -558,7 +559,7 @@ describe("deployCertificate", () => {
 
   it(
     "rejects a symlinked destination escaping the allowed root (realpath re-check)",
-    // skip-reason: no-host - symlink creation on win32 needs Developer
+    // skip-reason: platform - symlink creation on win32 needs Developer
     // Mode or elevated privileges, not reliably available in CI.
     { skip: SYMLINK_SKIP },
     async () => {
@@ -587,7 +588,7 @@ describe("deployCertificate", () => {
 
   it(
     "rejects a symlinked parent directory escaping the allowed root",
-    // skip-reason: no-host - symlink creation on win32 needs Developer
+    // skip-reason: platform - symlink creation on win32 needs Developer
     // Mode or elevated privileges, not reliably available in CI.
     { skip: SYMLINK_SKIP },
     async () => {
@@ -860,6 +861,7 @@ describe("deployCertificateAndKey", () => {
     assert.equal(fs.existsSync(stagingKeyPath), false);
     assert.equal(fs.readFileSync(prodKeyPath, "utf8"), MATCHING_KEY_PEM);
     assert.equal(fs.readFileSync(custodyKeyPath, "utf8"), MATCHING_KEY_PEM);
+    assert.equal(result.custodyKeyPath, custodyKeyPath);
   });
 
   it("keeps the rotation staging key when custody promotion fails", async () => {
@@ -902,6 +904,7 @@ describe("deployCertificateAndKey", () => {
 
     assert.equal(result.deployed, true);
     assert.equal(result.custodyPromotionFailed, true);
+    assert.equal(result.custodyKeyPath, undefined, "an unknown outcome must not be offered for restore");
     assert.equal(fs.existsSync(stagingKeyPath), true);
     assert.equal(fs.readFileSync(stagingKeyPath, "utf8"), MATCHING_KEY_PEM);
     assert.equal(fs.readFileSync(prodKeyPath, "utf8"), MATCHING_KEY_PEM);
@@ -1395,5 +1398,71 @@ describe("deploy modes, ownership metadata, and first-deploy removal", () => {
     });
     assert.equal(result.deployed, true);
     assert.doesNotMatch(JSON.stringify(result), /BEGIN [A-Z0-9 ]*PRIVATE KEY/);
+  });
+});
+
+describe("restoreCustodyKey", () => {
+  function setup() {
+    const dir = makeTempDir();
+    const custodyKeyPath = path.join(dir, "cert-1.key.pem");
+    const keyPath = path.join(dir, "server.key");
+    fs.writeFileSync(custodyKeyPath, OTHER_KEY_PEM, { mode: 0o600 });
+    return { custodyKeyPath, keyPath };
+  }
+
+  it("copies the previous key into custody when it matches the certificate", async () => {
+    const { custodyKeyPath, keyPath } = setup();
+    fs.writeFileSync(keyPath, MATCHING_KEY_PEM, { mode: 0o600 });
+
+    const result = await restoreCustodyKey({
+      custodyKeyPath,
+      keyPath,
+      certificatePem: CERT_PEM,
+    });
+
+    assert.deepEqual(result, { restored: true });
+    assert.equal(fs.readFileSync(custodyKeyPath, "utf8"), MATCHING_KEY_PEM);
+  });
+
+  it("leaves custody untouched when the key does not match the certificate", async () => {
+    const { custodyKeyPath, keyPath } = setup();
+    fs.writeFileSync(keyPath, OTHER_KEY_PEM, { mode: 0o600 });
+
+    const result = await restoreCustodyKey({
+      custodyKeyPath,
+      keyPath,
+      certificatePem: CERT_PEM,
+    });
+
+    assert.equal(result.restored, false);
+    assert.equal(fs.readFileSync(custodyKeyPath, "utf8"), OTHER_KEY_PEM);
+  });
+
+  it("refuses a file that is not a private key", async () => {
+    const { custodyKeyPath, keyPath } = setup();
+    fs.writeFileSync(keyPath, CERT_PEM, { mode: 0o600 });
+
+    const result = await restoreCustodyKey({
+      custodyKeyPath,
+      keyPath,
+      certificatePem: CERT_PEM,
+    });
+
+    assert.equal(result.restored, false);
+    assert.equal(fs.readFileSync(custodyKeyPath, "utf8"), OTHER_KEY_PEM);
+  });
+
+  it("reports a failed write instead of throwing", async () => {
+    const { custodyKeyPath, keyPath } = setup();
+    fs.writeFileSync(keyPath, MATCHING_KEY_PEM, { mode: 0o600 });
+
+    const result = await restoreCustodyKey(
+      { custodyKeyPath, keyPath, certificatePem: CERT_PEM },
+      { _fsOverrides: { rename: () => Promise.reject(new Error("injected rename failure")) } },
+    );
+
+    assert.equal(result.restored, false);
+    assert.match(result.reason, /injected rename failure/);
+    assert.equal(fs.readFileSync(custodyKeyPath, "utf8"), OTHER_KEY_PEM);
   });
 });

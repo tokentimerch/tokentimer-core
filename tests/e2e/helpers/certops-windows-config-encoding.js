@@ -1,6 +1,6 @@
 /*
  * Qualification notes: configuration-encoding-refusals
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Encode unchanged valid operator configuration as UTF8-BOM, UTF16LE-BOM and UTF16BE-BOM; require the
  * actual production UTF8 JSON reader parse error, unchanged bytes/state and successful repair.
  * Installed lane disables SCM recovery and requires fresh startup failure+drained child for each,

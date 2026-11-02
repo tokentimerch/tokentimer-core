@@ -7,7 +7,7 @@
  *
  * Scopes: `first-issuance-admission-api`, `pause-ingestion-api`, `derivation-failure-api`.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Supporting API/PostgreSQL qualification: public first issuance retains period and fresh execution admission fences.
@@ -26,7 +26,7 @@ const scenarios = ["first-issue-public-provisioning", "first-issue-binding-capab
 test("public first issuance retains period and fresh execution admission fences", { timeout: 120000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires disposable authenticated API PostgreSQL and signing keys
+    // skip-reason: prerequisite - requires disposable authenticated API PostgreSQL and signing keys
     t.skip("Disposable API and signing configuration required"); return;
   }
   assert.ok(baseUrl); const fixture = await createApiFixture(baseUrl);

@@ -3,7 +3,7 @@ const PROVIDER_LABELS = {
   gitlab: 'GitLab',
   aws: 'AWS',
   azure: 'Azure KV',
-  'azure-ad': 'Azure AD',
+  'azure-ad': 'Microsoft Entra ID',
   gcp: 'GCP',
   vault: 'HashiCorp Vault',
 };

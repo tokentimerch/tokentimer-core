@@ -4808,6 +4808,58 @@ const migrations = [
     name: "certops_distribution_transfer",
     sql: fs.readFileSync(require("path").join(__dirname, "076-certops-distribution-transfer.sql"), "utf8"),
   },
+  {
+    version: 77,
+    name: "onboarding_sessions",
+    sql: `
+      CREATE TABLE IF NOT EXISTS onboarding_sessions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        flow TEXT NOT NULL CHECK (flow IN ('mega', 'certops')),
+        schema_version INTEGER NOT NULL DEFAULT 1,
+        planner_version INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL DEFAULT 'in_progress'
+          CHECK (status IN ('in_progress', 'completed', 'dismissed')),
+        intent JSONB NOT NULL DEFAULT '{}'::jsonb,
+        progress JSONB NOT NULL DEFAULT '{}'::jsonb,
+        operation_refs JSONB NOT NULL DEFAULT '{}'::jsonb,
+        revision INTEGER NOT NULL DEFAULT 1,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at TIMESTAMPTZ NULL,
+        CONSTRAINT uq_onboarding_sessions_user_ws_flow
+          UNIQUE (user_id, workspace_id, flow)
+      );
+      CREATE INDEX IF NOT EXISTS idx_onboarding_sessions_workspace
+        ON onboarding_sessions(workspace_id);
+    `,
+  },
+  {
+    version: 78,
+    name: "certops_installed_file_distribution",
+    sql: fs.readFileSync(require("path").join(__dirname, "078-certops-installed-file-distribution.sql"), "utf8"),
+  },
+  {
+    version: 79,
+    name: "auto_sync_provider_stats",
+    sql: fs.readFileSync(require("path").join(__dirname, "079-auto-sync-provider-stats.sql"), "utf8"),
+  },
+  {
+    version: 80,
+    name: "auto_sync_run_metrics",
+    sql: fs.readFileSync(require("path").join(__dirname, "080-auto-sync-run-metrics.sql"), "utf8"),
+  },
+  {
+    version: 81,
+    name: "auto_sync_metric_labels",
+    sql: fs.readFileSync(require("path").join(__dirname, "081-auto-sync-metric-labels.sql"), "utf8"),
+  },
+  {
+    version: 82,
+    name: "auto_sync_system_metrics",
+    sql: fs.readFileSync(require("path").join(__dirname, "082-auto-sync-system-metrics.sql"), "utf8"),
+  },
 ];
 
 

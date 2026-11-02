@@ -20,7 +20,7 @@
  * producers before placeholder removal; no journal/date/response substitution. Deliberate same-CSR
  * ambiguity remains separate even after real response-loss timing becomes proven.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Controlled proof and cleanup refusal checks only. Native supporting execution
  * is a separate explicit command and never runs from these tooling regressions. */

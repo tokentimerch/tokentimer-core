@@ -44,6 +44,14 @@ A maintainer may use `workflow_dispatch` for a validation run only when the sele
 
 After a change is merged, the push CI run on `main` remains the authoritative post-merge validation and must be green before a release.
 
+### Maintainer documentation
+
+Repository maintenance workflows live under
+[.github/maintainers/](.github/maintainers/README.md), separate from the
+installation, configuration and operations guides in `docs/`.
+See the [roadmap maintenance guide](.github/maintainers/roadmap.md) for
+release reconciliation and the read-only consistency check.
+
 ## Code Style
 
 - Follow existing patterns in the codebase

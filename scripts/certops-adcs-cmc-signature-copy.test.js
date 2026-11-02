@@ -10,7 +10,7 @@
  * CA submit/accept/custody or request signer. ADR-0014 fresh-key/CSR renewal supported, signed
  * same-key CMC renewal outside product contract.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 // Supporting DER-copy mechanics against genuine committed CA response fixtures.
 // Native signature refusal is measured separately by the protected AD CS lane.

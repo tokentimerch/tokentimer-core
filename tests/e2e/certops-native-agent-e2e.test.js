@@ -45,7 +45,7 @@
  * children/temp/workspace and always destroy stack. Local baseline runs/pure checks
  * cannot qualify hosted release cells.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 /**
  * Run the production Linux agent against the real API/PostgreSQL disposable stack.
  * certops-native-agent-qualification.yml supplies an isolated runtime. Actual child restart, lease
@@ -77,7 +77,7 @@ async function wait(check, timeout = 30000) {
 test("real native agent signed gates durable outbox restart and observe-only behavior", { timeout: 300000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires disposable real API PostgreSQL and Linux agent process
+    // skip-reason: prerequisite - requires disposable real API PostgreSQL and Linux agent process
     t.skip("Disposable real API and PostgreSQL required"); return;
   }
   assert.ok(baseUrl); assert.equal(process.platform, "linux"); assert.equal(process.env.CERTOPS_NATIVE_AGENT_DISPOSABLE_STACK, "1");

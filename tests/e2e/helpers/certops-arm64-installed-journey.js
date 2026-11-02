@@ -1,6 +1,6 @@
 /*
  * Qualification notes: arm64-installed-agent-api
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * PostgreSQL records originalroot/marker beforedownload;listener must belong to captured native root
  * andSQL report exactowned datadir. Always-run stop/drain retainsDB files after incomplete
  * journey;only successfulcurrent-candidate nativecleanup permitsdeletion. Exactservice

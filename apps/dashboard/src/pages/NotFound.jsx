@@ -1,6 +1,7 @@
 import { Box, Heading, Text, Button, VStack } from '@chakra-ui/react';
 import { Link as RouterLink } from 'react-router';
 import SEO from '../components/SEO.jsx';
+import { SELF_HOSTED_DOCS_BASE } from '../utils/docsUrls';
 
 export default function NotFound() {
   const canonical = '/404';
@@ -37,7 +38,7 @@ export default function NotFound() {
           </Button>
           <Button
             as='a'
-            href='https://tokentimer.ch/docs/self-hosted'
+            href={SELF_HOSTED_DOCS_BASE}
             target='_blank'
             rel='noopener noreferrer'
             variant='ghost'

@@ -11,7 +11,7 @@
  * fixed request count/successor TLS. Unresolved guard preserves cleanup. Successor identity
  * differs; same-certificate is separate.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 // Supporting public-proof/ownership controls. Software CSR material stays in
 // memory; no native certificate, key, service, IIS, CA or browser is operated.

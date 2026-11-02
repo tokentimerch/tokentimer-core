@@ -46,6 +46,22 @@ function dbOf(client) {
 const CERTIFICATE_ID_UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// A job can be terminal while its CA enrollment remains in progress.
+const OPEN_ENROLLMENT_STATES = Object.freeze([
+  "requested", "prepared", "submitting", "pending_issuance", "submission_uncertain",
+  "issued", "validation_deferred", "validated", "installing", "install_failed",
+]);
+
+async function findOpenEnrollment(db, workspaceId, certificateId) {
+  const result = await db.query(
+    `SELECT id FROM certificate_enrollments
+      WHERE workspace_id = $1 AND certificate_id = $2 AND state = ANY($3::text[])
+      LIMIT 1`,
+    [workspaceId, certificateId, OPEN_ENROLLMENT_STATES],
+  );
+  return result.rows[0] || null;
+}
+
 async function identityRetired(client, workspaceId, certificateId) {
   if (!CERTIFICATE_ID_UUID.test(String(certificateId || ""))) return false;
   const result = await client.query(
@@ -341,6 +357,21 @@ function createEnrollment({
         workspaceId,
         env,
       });
+    }
+    // Every creator uses the same certificate-scoped transaction lock before
+    // reading enrollment state, including manual and racing scheduler calls.
+    if (CERTIFICATE_ID_UUID.test(String(certificateId || ""))) {
+      await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))", [
+        `certops-enrollment:${String(workspaceId).toLowerCase()}:${String(certificateId).toLowerCase()}`,
+      ]);
+      if (await findOpenEnrollment(tx, workspaceId, certificateId)) {
+        const error = serviceError(
+          "This certificate already has an enrollment in progress. Wait for it, or cancel or abandon it first.",
+          "CERTOPS_ENROLLMENT_OPEN",
+        );
+        error.statusCode = 409;
+        throw error;
+      }
     }
     let resolvedIssuerId = issuerId;
     if (profileId) {
@@ -1261,6 +1292,8 @@ async function listEnrollments({ client, workspaceId, limit = 50, offset = 0 }) 
 }
 
 module.exports = {
+  OPEN_ENROLLMENT_STATES,
+  findOpenEnrollment,
   abandonEnrollment,
   cancelEnrollment,
   attachEnrollmentDispatch,

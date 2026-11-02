@@ -15,7 +15,7 @@
  * keys/private hashes/receipt paths never enter public proof. Ubuntu 22.04/24.04 and
  * Windows Server 2022/2025 require their own native report/current source fingerprints.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Native direct-deployer concurrency qualification. Two real same-process calls
  * target one certificate/key/chain set, using the unmodified default backup directory alongside the target.

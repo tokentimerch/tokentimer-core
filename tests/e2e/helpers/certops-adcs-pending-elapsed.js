@@ -1,6 +1,6 @@
 /*
  * Qualification notes: adcs-pending-elapsed
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Use the main-only Enterprise AD CS actual-one-hour-pending workflow, protected certops-adcs-lab
  * Azure OIDC, fresh Server2022/en-US domain lab, four-hour resource expiry, 180-minute job and
  * independent janitor. After real installed SYSTEM RSA2048 issuance/IIS deployment, create a public

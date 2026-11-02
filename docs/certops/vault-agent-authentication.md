@@ -2,11 +2,28 @@
 
 This Linux walkthrough provisions one issuer and one consumer with separate
 AppRoles. Repeat the consumer procedure with a distinct role for each host.
-It does not qualify an agent build or enable its experimental capabilities.
+It does not qualify your own Vault, host or agent configuration; test them before you rely on them.
 Use your own HTTPS Vault, trusted CA, KV v2 mount and real workspace/group UUIDs.
 The operator needs the Vault CLI and `jq`. Never send these credentials to
 TokenTimer's API, database, job payloads, dashboards or logs.
 
+Complete the agents' signed no-op smoke checks **before** creating the first
+publication; see [First Vault distribution](vault-first-distribution.md).
+For a new group, allocate the first publication and read its real
+`job.payload.publication.groupId`. If job approval is required, keep it
+unapproved while preparing the hosts. If approval is off, stop only the issuing
+TokenTimer agent service before allocation and keep it stopped until the
+returned group is applied to Vault policy and local stores; submission alone
+does not hold the job. Do not stop the control plane or another agent. When
+ready, restart the issuing service with
+execution enabled and local `dryRun: false` directly. Enabling polling with
+`dryRun: true` at this point can claim and block the queued real publication.
+Use that group ID and the same workspace ID in `PREFIX` and `materialStores`.
+Job approval is optional: if your workspace requires it or you explicitly
+request it for this job, a different authorized user must approve execution too.
+
+The TokenTimer agent has no AppRole login of its own. It reads only the token
+file named by `materialStores.<ref>.tokenFile`, which Vault Agent keeps fresh.
 ## 1. Create narrowly scoped roles as a Vault administrator
 
 Run these commands with an administrative Vault identity on your management

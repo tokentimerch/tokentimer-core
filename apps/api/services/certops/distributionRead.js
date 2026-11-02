@@ -17,32 +17,38 @@ function consumerStatus(row) {
   if (row.binding_state !== "active") return "inactive";
   if (row.latest_deployment?.stage === "orphaned_unknown_effect") return "uncertain";
   if (row.latest_deployment?.stage === "failed") return "failed";
-  if (row.converged === true) return "verified";
+  if (row.converged === true) return row.verification_policy === "installed" ? "installed" : "verified";
   if (row.stale === true) return "stale";
   if (!row.desired_material_version_id) return "not_deployed";
   return "pending";
 }
 
 function summarizeConsumers(rows, active = true) {
-  const counts = { total: 0, verified: 0, failed: 0, uncertain: 0, stale: 0, pending: 0, not_deployed: 0 };
+  const counts = { total: 0, verified: 0, installed: 0, failed: 0, uncertain: 0, stale: 0, pending: 0, not_deployed: 0 };
   const expirations = [];
+  const installations = [];
   for (const row of rows) {
     const status = consumerStatus(row);
     if (status === "inactive") continue;
     counts.total++;
     counts[status]++;
-    if (status === "verified") {
+    if (status === "verified" || status === "installed") {
       const freshness = new Date(row.observed_at).getTime() + Number(row.freshness_seconds) * 1000;
       const expiry = new Date(row.observed_valid_to).getTime();
-      if (Number.isFinite(freshness) && Number.isFinite(expiry)) expirations.push(Math.min(freshness, expiry));
+      if (Number.isFinite(freshness) && Number.isFinite(expiry)) (status === "installed" ? installations : expirations).push(Math.min(freshness, expiry));
     }
   }
-  if (!active) return { ...counts, verified: 0, status: "inactive" };
+  if (!active) return { ...counts, verified: 0, installed: 0, status: "inactive" };
   const status = counts.uncertain ? "uncertain" : counts.failed ? "failed" : counts.stale ? "stale"
-    : counts.total && counts.verified === counts.total ? "verified" : counts.verified ? "partial"
+    : counts.total && counts.verified === counts.total ? "verified"
+      : counts.total && counts.installed === counts.total ? "installed"
+        : counts.total && counts.verified + counts.installed === counts.total ? "completed"
+          : counts.verified + counts.installed ? "partial"
       : !counts.total || counts.not_deployed === counts.total ? "not_deployed" : "pending";
   // Only deadlines, no consumer IDs or evidence. Allows cached counts to expire without granting convergence.
-  return { ...counts, status, ...(expirations.length === counts.verified ? { verification_expirations: expirations.sort((a, b) => a - b) } : {}) };
+  return { ...counts, status,
+    ...(expirations.length === counts.verified ? { verification_expirations: expirations.sort((a, b) => a - b) } : {}),
+    ...(installations.length === counts.installed ? { installation_expirations: installations.sort((a, b) => a - b) } : {}) };
 }
 
 /** Bounded batch metadata read; two queries regardless of certificate/consumer count. */

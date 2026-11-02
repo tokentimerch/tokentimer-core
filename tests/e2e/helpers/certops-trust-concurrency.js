@@ -7,7 +7,7 @@
  * publicSignedTrustQualified false: bundle/recovery annotations do not qualify the
  * separate public signed-trust lifecycle.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 
 /** Local trust-store concurrency and partial-write recovery. Two writers

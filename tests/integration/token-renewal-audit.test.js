@@ -35,7 +35,7 @@ describe("Token Renewal - update and audit changes", function () {
       .send({
         name: `Renew Test ${Date.now()}`,
         type: "api_key",
-        category: "general",
+        category: "key_secret",
         expiresAt: future.toISOString().slice(0, 10),
         workspace_id: workspaceId,
       })

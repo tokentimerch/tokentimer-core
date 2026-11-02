@@ -11,7 +11,7 @@
  * fallback withdraws only exact unclaimed approval via API but cannot produce browser pass; parent
  * native ownership/browser-trust drainage stays.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 // Supporting request/proof checks only. No browser, native key or CA is run.
 const { test } = require("node:test");

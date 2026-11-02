@@ -15,7 +15,7 @@ class ManifestTests(unittest.TestCase):
 
     def test_committed_python_and_node_slots_are_identical(self):
         result = subprocess.run(["node", "-e", "console.log(JSON.stringify(require('./scripts/certops-qualification-manifest')))"], cwd=ROOT, capture_output=True, text=True, check=True, timeout=30)
-        self.assertEqual(load(ROOT / "docs/certops/qualification-suites.json"), json.loads(result.stdout))
+        self.assertEqual(load(ROOT / ".github/maintainers/certops/qualification-suites.json"), json.loads(result.stdout))
 
     def test_missing_conflicting_and_malformed_sources_fail_closed(self):
         for value in [

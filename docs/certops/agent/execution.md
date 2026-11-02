@@ -85,7 +85,7 @@ Terminal outcomes clear the journal entry when reporting completes.
 Supported actions: `renew`, `deploy`, `reload`, `noop`, `distribute-trust`,
 `revoke-trust`. `revoke` (managed-certificate revocation, distinct from
 `revoke-trust`) is always `blocked` (out of scope for this agent build).
-`deploy` without a `certificatePem` field is `blocked` (see [Job contracts](protocol.md)).
+`deploy` without a `certificatePem` field is `blocked` (see [Job contracts](../../../.github/maintainers/certops/agent/protocol.md)).
 
 The control plane additionally has an `issue` job operation, used for
 first-time issuance of a certificate that has no inventory row yet. It is a
@@ -94,6 +94,15 @@ control-plane-only concept: at dispatch the control plane translates it to
 `issue`, the wire-level action list above is unchanged, and there is no
 protocol `schemaVersion` bump. Agents already deployed in the field execute
 `issue` jobs with no upgrade, byte-identically to a renew.
+
+An issue request names a `certPath` on one agent. A first order that fails
+leaves a `provisioning` entry with no fingerprint, which cannot be retired but
+does not block a retry: requesting the same `certPath` on the same agent again,
+with a new idempotency key, reuses the entry once every earlier issue job has
+failed, been cancelled or been rejected. A path held by a live certificate, or
+by an issue job that is still running or ended with an unknown outcome, returns
+`409 CERTOPS_CERTIFICATE_PATH_IN_USE`. Retire that certificate in the
+inventory, or choose a different `certPath`.
 
 For `renew` (`executeRenewJob`):
 
@@ -213,14 +222,18 @@ jobs run step 5 only; `noop` reports a `validation.passed` evidence item and
 succeeds.
 
 Dry-run mode is driven by the signed job's immutable `mode` field (see
-"Dry-run and reconciliation statuses" in [Protocol](protocol.md)). When `mode` is
+"Dry-run and reconciliation statuses" in [Protocol](../../../.github/maintainers/certops/agent/protocol.md)). For supported mutating actions with `mode`
 `dry_run`, all trust gates still run, then instead of executing the agent
 reports one `policy.checked` evidence item per step the action would run
 (with `dryRun: true` metadata) and returns `dry_run_complete` with
 `keyRotated` null. Zero filesystem or exec side effects; the
 keys/acme/deploy/reload/verify modules are never called. Local
 `execution.dryRun` (default true) remains a safety refusal for
-`mode:"real"` jobs only — it reports `blocked`, never a silent success.
+real mutating jobs — it reports `blocked`, never a silent success.
+Read-only AD CS preflight is dispatched separately and can run with local
+dry-run enabled; a signed preflight in dry-run mode is blocked. A `noop` is
+also handled separately: its completion proves signed dispatch/reporting,
+not the action-specific policy plan or result of later issuance.
 
 ## Related
 

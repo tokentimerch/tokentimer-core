@@ -1,6 +1,6 @@
 /*
  * Qualification notes: cng-export-refusal-qualification
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Require windows-cng-private-export-refusal on Server2022/2025 for all10 owned accepted
  * RSA2048/3072/4096 and ECP256/P384 certificates in My/WebHosting. Reopen exact
  * provider/container/size/machine identity and None export policy; verify fresh nonce signatures

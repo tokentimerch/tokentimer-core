@@ -165,11 +165,28 @@ async function extend(c) {
   await externalProof(current);
   // Change membership through the actual admin route; the same authenticated
   // manager session must immediately lose mutation/approval rights as a viewer.
+  // The default workspace policy must allow unattended execution. Exercise
+  // the real API, enrolled agents and both listeners without an approval call.
+  const policy = await owner.request(api() + "/settings");
+  assert.equal(policy.certOpsRequireApprovalAlways, false);
+  const unattended = await rollout("qualified-approval-off", current.id, { requiresApproval: false });
+  assert.equal(unattended.status, "succeeded");
+  assert.equal(unattended.approvedByUserId, null);
+  await converge();
+  await externalProof(current);
+  check("approval-off rollout and both enrolled consumers complete without a second user; fresh strict TLS matches the selected version");
+
   const session = await approver.request("/api/session");
   const member =
     "/api/v1/workspaces/" + state.workspaceId + "/members/" + session.user.id;
   await owner.request(member, "PATCH", { role: "viewer" });
   try {
+    await approver.request(
+      api() + "/certificates/" + state.certificateId + "/renewal-profile/repair",
+      "POST",
+      {},
+      403,
+    );
     await approver.request(group() + "/versions", "GET", undefined, 403);
     await approver.request(
       group() + "/consumers/" + state.bindings[0].id,
@@ -193,7 +210,7 @@ async function extend(c) {
     await owner.request(member, "PATCH", { role: "workspace_manager" });
   }
   check(
-    "viewer cannot read operator distribution versions, mutate bindings, request rollouts or retry jobs; admin restores manager rights",
+    "viewer cannot repair renewal profiles, read operator distribution versions, mutate bindings, request rollouts or retry jobs; admin restores manager rights",
   );
   // Real same-key retries concurrently resolve one approval and frozen intent.
   const concurrent = await Promise.all(
@@ -358,10 +375,9 @@ async function extend(c) {
   assert.equal((await job(rollback.id)).status, "pending_approval");
   await approve(rollback.id);
   await terminal(rollback.id);
-  // The matrix reports `converged` only for the managed period's current
-  // identity. A rollback to the retained pre-renewal identity is observed and
-  // accepted by every consumer but is deliberately not "converged", so wait
-  // for the observed rollback proof instead.
+  // An explicitly approved retained version remains eligible while its
+  // fingerprint is active, even after the source rotates. Require both the
+  // accepted generation/version and fresh convergence evidence for the rollback.
   await wait("consumers accept and observe the rolled-back version", async () => {
     const rows = await matrix();
     return state.bindings.every((b) => {
@@ -376,10 +392,7 @@ async function extend(c) {
       ? rows
       : false;
   });
-  assert.ok(
-    (await matrix()).every((row) => row.converged !== true),
-    "a rolled-back retired identity must not report converged",
-  );
+  await converge();
   await externalProof(initial);
   assert.deepEqual(
     immutable((await versions()).find((v) => v.id === initial.id)),

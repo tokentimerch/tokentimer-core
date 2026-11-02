@@ -4,6 +4,8 @@ const { pool } = require("../db/database");
 const { claimScanForCleanup, getScan } = require("./integrationScans");
 const { buildDimensionFilterSql } = require("./importCleanup");
 
+const { metricSettingsError, recordCreationMetrics } = require("./autoSyncMetricLabels");
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const AUTO_SYNC_MULTI_CONFIG_HREF = "/system-settings#auto-sync-multi-config";
@@ -47,6 +49,9 @@ function validateAutoSyncSettings(body) {
   }
   for (const key of ["enabled", "cleanup_obsolete"]) if (body[key] !== undefined && typeof body[key] !== "boolean") return `Invalid ${key}`;
   if (body.scan_params !== undefined && (!body.scan_params || typeof body.scan_params !== "object" || Array.isArray(body.scan_params))) return "Invalid scan parameters";
+  const groups = body.scan_params?.contactGroupIds;
+  if (groups !== undefined && (!Array.isArray(groups) || groups.length > 50 || groups.some((id) => typeof id !== "string" || !id || id.length > 255))) return "Invalid contact groups";
+  if (body.metrics_settings !== undefined) return metricSettingsError(body.metrics_settings);
   return null;
 }
 
@@ -59,9 +64,15 @@ function canonicalJson(value) {
   return value;
 }
 
+// Which groups new assets get does not change what a scan covers, so changing
+// it must not restart the running scan or bump the scan version.
 function scanSettingsEqual(left, right) {
-  return JSON.stringify(canonicalJson(left || {})) ===
-    JSON.stringify(canonicalJson(right || {}));
+  const scanOnly = (value) => {
+    const { contactGroupIds: _ignored, ...rest } = value || {};
+    return rest;
+  };
+  return JSON.stringify(canonicalJson(scanOnly(left))) ===
+    JSON.stringify(canonicalJson(scanOnly(right)));
 }
 
 // Public errors are controlled messages, never provider response bodies or item names.
@@ -75,7 +86,8 @@ function sanitizePublicAutoSyncError(value) {
 async function assertRunFence(db, context) {
   const { rows } = await db.query(
     `SELECT c.id, c.workspace_id, c.provider, c.connection_key, c.run_generation,
-            c.scan_version, c.active_run_id, c.lease_owner, c.lease_until,
+            c.scan_version, c.active_run_id, c.lease_owner, c.lease_until, c.metrics_settings,
+            (SELECT auto_sync_metrics FROM system_settings WHERE id = 1) AS system_metric_policy,
             r.run_id, r.status
        FROM auto_sync_configs c
        JOIN auto_sync_runs r ON r.run_id = c.active_run_id
@@ -156,8 +168,8 @@ async function withFencedImport(context, work) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    if (context) await assertRunFence(client, context);
-    const result = await work(client);
+    const config = context ? await assertRunFence(client, context) : null;
+    const result = await work(client, config);
     await client.query("COMMIT");
     return result;
   } catch (error) {
@@ -170,7 +182,7 @@ async function withFencedImport(context, work) {
 
 async function upsertImportedToken({ context, payload, workspaceId, userId, manual, assignMembership }) {
   const Token = require("../db/models/Token");
-  return withFencedImport(context, async (client) => {
+  return withFencedImport(context, async (client, config) => {
     if (context && !payload.source_object_id) throw new Error("Auto-sync item is not part of its persisted scan");
     const keys = [JSON.stringify([workspaceId, "name", payload.name, payload.location])];
     if (payload.source_object_id) keys.push(JSON.stringify([workspaceId, "source",
@@ -193,6 +205,20 @@ async function upsertImportedToken({ context, payload, workspaceId, userId, manu
     }, { client }) : await Token.create({ ...payload, userId, workspaceId,
       created_by: userId, imported_at: new Date() }, { client });
     if (context) await attachObservedToken(context, token.id, !existing, { client });
+    if (context && !existing) {
+      await recordCreationMetrics(client, context, payload, config?.metrics_settings, config?.system_metric_policy);
+      // Commit the historical total with the new inventory row. Updates,
+      // retries and adoption do not count; a later worker failure cannot lose
+      // an already committed creation. Keep this write last to minimize the
+      // time concurrent imports hold the provider counter's row lock.
+      await client.query(
+        `INSERT INTO auto_sync_provider_stats (provider, items_created_total)
+         VALUES ($1, 1)
+         ON CONFLICT (provider) DO UPDATE
+           SET items_created_total = auto_sync_provider_stats.items_created_total + 1`,
+        [context.provider],
+      );
+    }
     return { token, created: !existing };
   });
 }

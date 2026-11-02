@@ -1,6 +1,6 @@
 /*
  * Qualification notes: resident-domain-retention24h
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Dedicated Server2022 domain campaign uses real public AD CS A->B cutover and six-day template so24h
  * retention wins. Stop/drain agent; one SYSTEM task/resident Node/boot invokes real-clock production
  * sweep with native custody/TLS. Require>=86400000 monotonic ms,sweep gaps<=65min,predeadline retained

@@ -1,6 +1,6 @@
 /*
  * Qualification notes: installer-pe-preflight
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Separate native PE preflight reads selected host and store-survivor helper before installed changes
  * and rereads staged copies before renames. Both architectures require bounded DOS/COFF/PE32+
  * executable non-DLL headers,sections/alignment/nonoverlap,file-backed code entry;

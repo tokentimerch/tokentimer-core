@@ -265,14 +265,14 @@ class AuthenticationTests(unittest.TestCase):
             with tempfile.TemporaryDirectory(prefix="ttl-owner-main-") as directory:
                 root = Path(directory)
                 (root / "docs/certops").mkdir(parents=True)
-                (root / "docs/certops/qualification-suites.json").write_bytes(encode({"slots": [{"id": "owned-elapsed-fixture", "kind": "host", "suite": auth.SUITE, "source": report["fixtureSource"]["file"], "requiredSources": [row["file"] for row in report["fixtureSources"]]}]}))
+                (root / ".github/maintainers/certops/qualification-suites.json").write_bytes(encode({"slots": [{"id": "owned-elapsed-fixture", "kind": "host", "suite": auth.SUITE, "source": report["fixtureSource"]["file"], "requiredSources": [row["file"] for row in report["fixtureSources"]]}]}))
                 (root / "tests/integration").mkdir(parents=True)
                 (root / "tests/integration/certops-qualification-groups.json").write_bytes((ROOT / "tests/integration/certops-qualification-groups.json").read_bytes())
-                contract = qualification_manifest.load(ROOT / "docs/certops/qualification-suites.json")
-                contract["slots"] = qualification_manifest.load(root / "docs/certops/qualification-suites.json")["slots"]
+                contract = qualification_manifest.load(ROOT / ".github/maintainers/certops/qualification-suites.json")
+                contract["slots"] = qualification_manifest.load(root / ".github/maintainers/certops/qualification-suites.json")["slots"]
                 contract["suites"][auth.SUITE] = []
                 contract["requiredCapabilities"][auth.SUITE] = []
-                (root / "docs/certops/qualification-suites.json").write_bytes(encode(contract))
+                (root / ".github/maintainers/certops/qualification-suites.json").write_bytes(encode(contract))
                 environment = dict(CERTOPS_QUALIFICATION_PROFILE="full", CERTOPS_RELEASE_CANDIDATE=value["candidate"], CERTOPS_RELEASE_RUN_IDS="[456]", GITHUB_REPOSITORY=value["repository"], GITHUB_TOKEN="synthetic-no-network", GITHUB_SHA=value["run"]["head_sha"])
                 # Actual archive/parser/authentication/projection run together.
                 # The final whole-matrix execution is outside this owner test.

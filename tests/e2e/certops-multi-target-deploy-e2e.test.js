@@ -6,7 +6,7 @@
  * authenticated API ingestion under that claim; the fixture adapter assigns evidence identifiers and
  * does not replace filesystem operations or return fabricated API responses.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Supporting API/PostgreSQL qualification: production multi-target coordinator preserves files and exposes uncertain rollback.
@@ -27,7 +27,7 @@ const scenarios = ["multi-deploy-owned-context", "multi-deploy-real-destinations
 test("production multi-target coordinator preserves files and exposes uncertain rollback", { timeout: 120000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires disposable API PostgreSQL OpenSSL and native temporary filesystem
+    // skip-reason: prerequisite - requires disposable API PostgreSQL OpenSSL and native temporary filesystem
     t.skip("Disposable API and OpenSSL required"); return;
   }
   assert.ok(baseUrl);

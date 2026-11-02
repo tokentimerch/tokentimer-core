@@ -10,7 +10,7 @@
  * restore exact bytes and recheck. nativeLocalRulePairs is exactly three cases/eight booleans, no
  * added preflight; pure matcher/adversary tests run no native service.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Offline exact-pair/proof checks. Native installed-agent refusal remains host gated. */
 const {test}=require("node:test"),assert=require("node:assert/strict");

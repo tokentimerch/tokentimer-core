@@ -1,4 +1,5 @@
 import React from 'react';
+import { useScanVerification } from '../../hooks/useScanVerification.js';
 import {
   Box,
   VStack,
@@ -18,7 +19,6 @@ import {
   InputRightElement,
   IconButton,
   Tooltip,
-  Link as ChakraLink,
   Spinner,
   Radio,
   RadioGroup,
@@ -27,6 +27,7 @@ import { FiEye, FiEyeOff, FiHelpCircle, FiRefreshCw } from 'react-icons/fi';
 import { vaultAPI, integrationAPI } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 import { IMPORT_DOCS } from '../../utils/docsUrls';
+import LearnMorePanel from '../LearnMorePanel';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 import {
@@ -127,8 +128,11 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
     onError,
     errorContent,
     onScanSuccess,
+    onScanInvalidated,
+    scanContext,
     borderColor,
     helpTextColor,
+    hideDocs = false,
     autoSyncTokenPlaceholder,
     updateQuotaFromResponse,
     refreshIntegrationQuota,
@@ -297,6 +301,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   };
 
   const doVaultScan = async () => {
+    const scanTicket = beginScanVerification();
     if (!workspaceId) {
       onError && onError('Please select a workspace first.');
       return;
@@ -338,9 +343,6 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       setSummary(Array.isArray(res?.summary) ? res.summary : []);
       setFilterSummary(res?.filterSummary || null);
       setLastScanId(res?.scan_id || null);
-      if (items.length > 0) {
-        onScanSuccess && onScanSuccess('vault');
-      }
 
       if (updateQuotaFromResponse && !updateQuotaFromResponse(res)) {
         if (refreshIntegrationQuota) await refreshIntegrationQuota();
@@ -348,6 +350,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
 
       const dups = await checkDuplicatesForItems(items, workspaceId);
       setVaultDuplicates(dups);
+      completeScanVerification(scanTicket);
     } catch (e) {
       setVaultItems([]);
       setSummary([]);
@@ -421,21 +424,35 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
     }
   };
 
+  const getCredentials = () => ({
+    credentials: { address: vaultAddress, ...vaultAuthPayload() },
+    scanParams: {
+      address: vaultAddress,
+      include: { kv: includeKV, pki: includePKI },
+      pathPrefix: pathPrefix || '',
+      maxItemsPerMount,
+      mounts: mountsFilterForScan(),
+      categories: Array.from(selectedCategories),
+      filterRules: sanitizeFilterRules(filterRules),
+    },
+  });
+  const { beginScanVerification, completeScanVerification } =
+    useScanVerification({
+      identity: {
+        workspaceId,
+        scanContext,
+        payload: getCredentials(),
+        cleanupObsolete,
+      },
+      provider: 'vault',
+      onScanSuccess,
+      onScanInvalidated,
+    });
+
   React.useImperativeHandle(ref, () => ({
     importSelected: importVaultSelected,
     getSelectedCount: () => selectedRowsVault.size,
-    getCredentials: () => ({
-      credentials: { address: vaultAddress, ...vaultAuthPayload() },
-      scanParams: {
-        address: vaultAddress,
-        include: { kv: includeKV, pki: includePKI },
-        pathPrefix: pathPrefix || '',
-        maxItemsPerMount,
-        mounts: mountsFilterForScan(),
-        categories: Array.from(selectedCategories),
-        filterRules: sanitizeFilterRules(filterRules),
-      },
-    }),
+    getCredentials,
   }));
 
   return (
@@ -448,16 +465,18 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
           rotate those credentials. The Vault host must have a valid TLS
           certificate for the import to work.
         </Text>
-        <Text fontSize='sm' mt={1}>
-          <ChakraLink
-            href={IMPORT_DOCS.vault}
-            color='blue.500'
-            textDecoration='underline'
-            isExternal
-          >
-            Learn more about importing from HashiCorp Vault →
-          </ChakraLink>
-        </Text>
+        {hideDocs ? null : (
+          <LearnMorePanel
+            variant='compact'
+            mt={2}
+            links={[
+              {
+                label: 'Importing from HashiCorp Vault',
+                url: IMPORT_DOCS.vault,
+              },
+            ]}
+          />
+        )}
       </Box>
       <VStack align='stretch' spacing={3}>
         <HStack spacing={3} align='flex-end' flexWrap='wrap'>

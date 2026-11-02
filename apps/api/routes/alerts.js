@@ -267,7 +267,7 @@ router.put(
               { strictKeys: true },
             );
           } catch (jsonErr) {
-            if (jsonErr.code === "JSON_COLUMN_UNKNOWN_KEYS") {
+            if (["JSON_COLUMN_UNKNOWN_KEYS", "JSON_COLUMN_INVALID_VALUE"].includes(jsonErr.code)) {
               return res.status(400).json({
                 error: jsonErr.message,
                 code: jsonErr.code,

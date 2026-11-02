@@ -47,7 +47,7 @@
  * the 12-minute journey inside 14 minutes process bound; extended certbot/noEAB bulk
  * lane has its separately declared bounds.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 /**
  * Full agent/API/filesystem certificate journey against the owned Pebble ACME CA.
  * scripts/certops-real-acme.js provisions the local CA/challenge server and selected

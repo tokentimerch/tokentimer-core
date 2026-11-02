@@ -1,6 +1,6 @@
 /*
  * Qualification notes: published-upgrade
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Published0.17.2/0.17.3 archives lack amd64/arm64service hosts; refuse any supplied member pretending
  * those existed,never synthesize current binary or successful migration.
  * publishedPackageMigrationQualified/upgradeSynthesized/nativeExecutionQualified=false,missing archive

@@ -5,7 +5,7 @@
  * Invalid group/contact edits fail atomically. OpenSSL and real API/PostgreSQL persistence support
  * these controls; provider delivery and native host concurrency are not qualified.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Supporting API/PostgreSQL qualification: public reimport preserves operator contacts and group assignments.
@@ -18,7 +18,7 @@ const {createApiFixture}=require("./helpers/certops-api-fixture"),{createHostGat
 const scenarios=["import-metadata-public-assignment","import-metadata-repeat-preserves","import-metadata-invalid-group-atomic","import-metadata-concurrent-preserves","import-metadata-cleanup"];
 test("public reimport preserves operator contacts and group assignments",{timeout:120000},async(t)=>{
  if (!process.env.CERTOPS_CSR_API_URL && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-  // skip-reason: no-host - requires disposable API PostgreSQL and OpenSSL qualification fixture
+  // skip-reason: prerequisite - requires disposable API PostgreSQL and OpenSSL qualification fixture
   t.skip("Required disposable qualification fixture unavailable"); return;
  }
  assert.ok(process.env.CERTOPS_CSR_API_URL,"Disposable API required");const fixture=await createApiFixture(process.env.CERTOPS_CSR_API_URL),directory=fs.mkdtempSync(path.join(os.tmpdir(),"certops-import-metadata-"));let ready=false,primary;

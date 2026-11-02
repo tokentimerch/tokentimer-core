@@ -237,25 +237,29 @@ export function useCertOpsIsWorkspaceAdmin() {
 }
 
 /**
- * Same admin check, plus whether the role request has finished.
+ * Manager-or-owner check, plus whether the role request has finished.
  * An empty role means the workspace lookup failed, not a viewer.
  */
-export function useCertOpsWorkspaceAdminState() {
+export function useCertOpsManagementState() {
   const { workspaceId } = useWorkspace();
   const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState({ status: 'loading', isAdmin: false });
+  const [state, setState] = useState({ status: 'loading', canManage: false });
 
   useEffect(() => {
     if (!workspaceId) {
-      setState({ status: 'ready', isAdmin: false });
+      setState({ status: 'ready', canManage: false });
       return undefined;
     }
     let cancelled = false;
-    setState(current => ({ status: 'loading', isAdmin: current.isAdmin }));
+    setState(current => ({ status: 'loading', canManage: current.canManage }));
     resolveWorkspaceRole(workspaceId).then(role => {
       if (cancelled) return;
-      if (!role) setState({ status: 'error', isAdmin: false });
-      else setState({ status: 'ready', isAdmin: role === 'admin' });
+      if (!role) setState({ status: 'error', canManage: false });
+      else
+        setState({
+          status: 'ready',
+          canManage: role === 'admin' || role === 'workspace_manager',
+        });
     });
     return () => {
       cancelled = true;

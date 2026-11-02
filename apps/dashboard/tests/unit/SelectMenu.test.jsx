@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import {
   ChakraProvider,
@@ -35,6 +35,48 @@ function renderMenu(props) {
 }
 
 describe('SelectMenu', () => {
+  it('closes on Escape without closing the modal around it', async () => {
+    const onClose = vi.fn();
+    render(
+      <ChakraProvider>
+        <Modal isOpen onClose={onClose}>
+          <ModalOverlay />
+          <ModalContent>
+            <ModalBody>
+              <SelectMenu
+                options={[{ value: 'a', label: 'Alpha' }]}
+                value={[]}
+                onChange={vi.fn()}
+                placeholder='Pick one'
+              />
+            </ModalBody>
+          </ModalContent>
+        </Modal>
+      </ChakraProvider>
+    );
+    const trigger = screen.getByRole('button', { name: 'Pick one' });
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.keyDown(trigger, { key: 'Escape' });
+    await waitFor(() =>
+      expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('supports arrow navigation and keyboard option activation', async () => {
+    const onChange = vi.fn();
+    renderMenu({ onChange, placeholder: 'Pick with keyboard' });
+    fireEvent.click(screen.getByRole('button', { name: 'Pick with keyboard' }));
+    const list = await screen.findByRole('listbox');
+    fireEvent.keyDown(list, { key: 'Home' });
+    expect(screen.getByRole('option', { name: 'None' })).toHaveFocus();
+    fireEvent.keyDown(list, { key: 'ArrowDown' });
+    const alpha = screen.getByRole('option', { name: 'Alpha' });
+    expect(alpha).toHaveFocus();
+    fireEvent.click(alpha, { detail: 0 });
+    expect(onChange).toHaveBeenLastCalledWith(['a']);
+  });
   it('selects a single option from the dropdown', () => {
     const onChange = vi.fn();
     renderMenu({ multiple: false, onChange, placeholder: 'Pick one' });
@@ -55,9 +97,7 @@ describe('SelectMenu', () => {
       placeholder: 'Workspace default',
     });
 
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Workspace default' })
-    );
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace default' }));
     fireEvent.pointerDown(screen.getByText('Alpha'));
     expect(onChange).toHaveBeenLastCalledWith(['a']);
   });
@@ -88,9 +128,7 @@ describe('SelectMenu', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Contact groups' }));
-    fireEvent.pointerDown(
-      screen.getByText('Ops (workspace default group)')
-    );
+    fireEvent.pointerDown(screen.getByText('Ops (workspace default group)'));
     expect(onChange).toHaveBeenLastCalledWith(['1']);
   });
 

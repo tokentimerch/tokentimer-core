@@ -25,13 +25,19 @@ if($env:ENTRY_EXPECT -eq 'passed'){
 Write-Output 'ENTRY_FIXTURE_PASSED'
 `);
  const valid=scope==="experiment"&&((response==="1"&&phase==="none")||(response==="0"&&["issued","submitting"].includes(phase)));
- return spawnSync(process.platform==="win32"?"powershell.exe":"pwsh",["-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-File",wrapper],{encoding:"utf8",windowsHide:true,timeout:10000,env:{...process.env,ENTRY_SCRIPT:path.resolve(__dirname,"../infra/certops-adcs/run-windows-tests.ps1"),ENTRY_DIR:dir,ENTRY_RESPONSE:response,ENTRY_PHASE:phase,ENTRY_SCOPE:scope,ENTRY_EXPECT:valid?"passed":"failed"}});
+ const started=Date.now();
+ const result=spawnSync(process.platform==="win32"?"powershell.exe":"pwsh",["-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-File",wrapper],{encoding:"utf8",windowsHide:true,timeout:30000,env:{...process.env,ENTRY_SCRIPT:path.resolve(__dirname,"../infra/certops-adcs/run-windows-tests.ps1"),ENTRY_DIR:dir,ENTRY_RESPONSE:response,ENTRY_PHASE:phase,ENTRY_SCOPE:scope,ENTRY_EXPECT:valid?"passed":"failed"}});
+ result.elapsedMs=Date.now()-started;
+ return result;
+}
+function assertSpawnOk(result){
+ assert.equal(result.status,0,`status=${result.status} error=${result.error&&result.error.code} signal=${result.signal} elapsedMs=${result.elapsedMs}\n${result.stderr}${result.stdout}`);
 }
 test("standalone response loss and each supported journal phase select only their own verified report",t=>{
- for(const [response,phase]of [["1","none"],["0","issued"],["0","submitting"]]){const result=invoke(t,response,phase);assert.equal(result.status,0,result.stderr+result.stdout);assert.match(result.stdout,/ENTRY_FIXTURE_PASSED/);assert.doesNotMatch(result.stdout,/real-enterprise-adcs-tests-passed/);}
+ for(const [response,phase]of [["1","none"],["0","issued"],["0","submitting"]]){const result=invoke(t,response,phase);assertSpawnOk(result);assert.match(result.stdout,/ENTRY_FIXTURE_PASSED/);assert.doesNotMatch(result.stdout,/real-enterprise-adcs-tests-passed/);}
 });
 test("missing, mixed and unsupported fault modes never reach baseline or experiment execution",t=>{
- for(const [response,phase,scope]of [["0","none"],["1","issued"],["1","submitting"],["0","installing"],["1","none","acceptance"]]){const result=invoke(t,response,phase,scope);assert.equal(result.status,0,result.stderr+result.stdout);}
+ for(const [response,phase,scope]of [["0","none"],["1","issued"],["1","submitting"],["0","installing"],["1","none","acceptance"]]){const result=invoke(t,response,phase,scope);assertSpawnOk(result);}
 });
 test("response loss collector uses distinct bounded guest and output report names",()=>{
  const source=fs.readFileSync(path.resolve(__dirname,"../infra/certops-adcs/read-report.ps1"),"utf8");

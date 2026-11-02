@@ -206,7 +206,7 @@ async function fixture({ ordinary = false, published = true, neverStarted = fals
       .send({ from_workspace_id: workspaceId, token_ids: [tokenId] });
   }
   async function rollout() {
-    const job = await operations.requestRollout({
+    const job = await requestApprovedRollout({
       workspaceId,
       groupId,
       materialVersionId,
@@ -336,7 +336,7 @@ async function assertMoved(f) {
       0,
     );
     await assert.rejects(
-      operations.requestRollout({
+      requestApprovedRollout({
         workspaceId: f.destination,
         groupId: f.groupId,
         materialVersionId: f.materialVersionId,
@@ -780,3 +780,7 @@ test("destination authorization denial and quota failure roll back inventory and
     0,
   );
 });
+
+function requestApprovedRollout(options) {
+  return operations.requestRollout({ ...options, requiresApproval: true });
+}

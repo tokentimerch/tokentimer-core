@@ -7,7 +7,7 @@
  * explicit. Validate workflow semantics with checksum-pinned Actionlint 1.7.12, including the
  * committed input schema.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 "use strict";
 // Select only the trusted push's affected qualification lanes. This never

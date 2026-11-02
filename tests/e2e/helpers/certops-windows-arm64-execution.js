@@ -1,6 +1,6 @@
 /*
  * Qualification notes: arm64-execution
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Require both actual arm64 process and real native probe; other architecture/missing host fails,never
  * capability-absent pass. This script contract keeps
  * nativeArm64ExecutionQualified/nativeExecutionQualified/hostCapabilityAbsentIsPass=false until actual

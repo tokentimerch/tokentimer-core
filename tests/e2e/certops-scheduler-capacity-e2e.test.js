@@ -14,7 +14,7 @@
  * its fixture. Seven mandatory supporting integration scenarios use actual public certificate imports,
  * public profile edits, real PostgreSQL and production SQL-NOW scheduler/admission code:
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Supporting scheduler/admission qualification against an isolated API/PostgreSQL stack.
@@ -27,7 +27,7 @@ const {createApiFixture}=require("./helpers/certops-api-fixture"),{createHostGat
 const scenarios=["scheduler-capacity-full-refusal","scheduler-capacity-concurrent-release","scheduler-capacity-bulk-shared","scheduler-capacity-paused-release","scheduler-capacity-resume","scheduler-capacity-cleanup"];
 test("SQL clock scheduler shares public issuance capacity and pause fences",{timeout:120000},async(t)=>{
  if ((!process.env.CERTOPS_CSR_API_URL || process.env.CERTOPS_SCHEDULER_EXCLUSIVE_STACK !== "1") && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-  // skip-reason: no-host - requires exclusive disposable API PostgreSQL and OpenSSL qualification fixture
+  // skip-reason: prerequisite - requires exclusive disposable API PostgreSQL and OpenSSL qualification fixture
   t.skip("Required disposable qualification fixture unavailable"); return;
  }
  assert.equal(process.env.CERTOPS_SCHEDULER_EXCLUSIVE_STACK,"1","Global scheduler requires exclusive disposable stack");assert.ok(process.env.CERTOPS_CSR_API_URL);const fixture=await createApiFixture(process.env.CERTOPS_CSR_API_URL),directory=fs.mkdtempSync(path.join(os.tmpdir(),"certops-bulk-eligible-"));let ready=false,failure;const gate=createHostGate({suite:"scheduler-capacity-api",strict:true,evidenceLevel:"integration",reportPath:process.env.CERTOPS_SCHEDULER_CAPACITY_REPORT,requiredCapabilities:["api","postgres","openssl"],fixtureSource:{file:"tests/e2e/certops-scheduler-capacity-e2e.test.js",sha256:crypto.createHash("sha256").update(fs.readFileSync(__filename)).digest("hex")},probeCapabilities:()=>({api:{available:true},postgres:{available:true},openssl:{available:spawnSync("openssl",["version"]).status===0}})});gate.report.fixturePrerequisite="Real public imports with seeded complete linked profile/agent-local metadata; genuine public admission only, no CA/native execution or successful renewal claim";

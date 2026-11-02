@@ -8,7 +8,7 @@
  * original profile digest. A subsequent request uses the edited RSA 4096 policy without changing the
  * first job.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Supporting API/PostgreSQL qualification: public queued renewal freezes profile across operator edits approval and signed claim.
@@ -21,7 +21,7 @@ const {createApiFixture}=require("./helpers/certops-api-fixture"),{createRegiste
 const scenarios=["snapshot-public-queued-contract","snapshot-public-live-edit","snapshot-public-approval-freeze","snapshot-signed-claim-original","snapshot-public-new-job-updated","snapshot-public-cleanup"];
 test("public queued renewal freezes profile across operator edits approval and signed claim",{timeout:120000},async t=>{
  const baseUrl=process.env.CERTOPS_CSR_API_URL;if(!baseUrl&&process.env.CERTOPS_E2E_REQUIRED!=="1"){
-  // skip-reason: no-host - requires disposable API PostgreSQL and OpenSSL
+  // skip-reason: prerequisite - requires disposable API PostgreSQL and OpenSSL
   t.skip("Disposable API/PostgreSQL required");return;
  }
  assert.ok(baseUrl);const fixture=await createApiFixture(baseUrl),root=fs.mkdtempSync(path.join(os.tmpdir(),"certops-profile-snapshot-"));let approver,ready=false,failure;

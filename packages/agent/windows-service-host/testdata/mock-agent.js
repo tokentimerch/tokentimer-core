@@ -12,6 +12,9 @@ process.on("SIGBREAK", () => {
     process.exit(0);
   }, 500);
 });
+if (process.env.TOKENTIMER_HOST_TEST_READY_FILE) {
+  fs.writeFileSync(process.env.TOKENTIMER_HOST_TEST_READY_FILE, "ready\n");
+}
 setInterval(() => {
   if (stateDir) {
     const trigger = path.join(stateDir, "fixture-exit-code.txt");

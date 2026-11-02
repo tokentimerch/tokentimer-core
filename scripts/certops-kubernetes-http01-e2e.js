@@ -17,7 +17,7 @@
  * kind and Compose volumes; incomplete cleanup fails. Artifact only bounded named
  * results/public cert facts, never keys, pod logs or service-account credentials.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 // Qualify real cert-manager HTTP01 through the public API and owned ingress;
 // observed native challenges, served TLS and cleanup are mandatory evidence.

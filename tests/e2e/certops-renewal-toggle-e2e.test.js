@@ -13,7 +13,7 @@ const scenarios=["renew-toggle-public-disable","renew-toggle-automatic-admission
 module.exports={scenarios};
 test("disabled automatic renewal preserves manual admission and SQL batch fairness",{timeout:120000},async t=>{
  if((!process.env.CERTOPS_CSR_API_URL||process.env.CERTOPS_SCHEDULER_EXCLUSIVE_STACK!=="1")&&process.env.CERTOPS_E2E_REQUIRED!=="1"){
-  // skip-reason: no-host - requires exclusive disposable API PostgreSQL and OpenSSL scheduler fixture
+  // skip-reason: prerequisite - requires exclusive disposable API PostgreSQL and OpenSSL scheduler fixture
   t.skip("Exclusive disposable scheduler fixture required");return;
  }
  assert.equal(process.env.CERTOPS_SCHEDULER_EXCLUSIVE_STACK,"1");assert.ok(process.env.CERTOPS_CSR_API_URL);

@@ -33,6 +33,7 @@ const {
   assertValidBinding,
   resolveVerificationTarget,
   formatIpPort,
+  formatBindingSelector,
   generateAppId,
   normalizeThumbprint,
   canonicalSelectorValue,
@@ -236,6 +237,11 @@ describe("resolveVerificationTarget", () => {
 describe("formatIpPort", () => {
   it("joins address and port with a colon", () => {
     assert.equal(formatIpPort({ address: "10.0.0.5", port: 443 }), "10.0.0.5:443");
+  });
+
+  it("writes the IIS wildcard as 0.0.0.0 because netsh rejects an asterisk", () => {
+    assert.equal(formatIpPort({ address: "*", port: 8443 }), "0.0.0.0:8443");
+    assert.equal(formatBindingSelector({ address: "*", port: 8443 }), "ipport=0.0.0.0:8443");
   });
 });
 

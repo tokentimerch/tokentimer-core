@@ -1,6 +1,6 @@
 /*
  * Qualification notes: installed-bind-failure
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Script contract plans owned BIND_FAILED injection and predecessor restoration on exact primary
  * selector, preserving sibling. Manifest names two run-specific sites/hostnameport selectors with
  * distinct run-derived ports. Cleanup accepts only exact netsh http delete sslcert selector and site

@@ -1,6 +1,6 @@
 /*
  * Qualification notes: http-sys-client-policy
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Independently read native IP-binding registry:
  * NO_REVOCATION=1,CACHED_CLIENT_CERT_ONLY=2,FRESHNESS_TIME=4,NO_USAGE_CHECK=0x10000. Two owned
  * combinations include nonzero freshness/retrieval timers. Deploy A->B, prove missing requested

@@ -1,6 +1,6 @@
 /*
  * Qualification notes: installer-first-rename-refusal
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * RSA2048 Server2022/2025 only: native no-delete-share directory holder forces actual candidate
  * installer first rename refusal and exact stage removal. Preserve installed
  * hashes/config/credential,service PID,new authenticated heartbeat and trusted IIS leaf. Twelve public

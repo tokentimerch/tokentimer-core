@@ -32,6 +32,7 @@ const {
   adoptSigningKeyRotation,
   executeJob,
   executeDeployJob,
+  runDeployReloadVerifyForTargets,
   renewJobLeaseOrAbort,
   createLeaseState,
   startPeriodicLeaseRenewal,
@@ -62,6 +63,7 @@ const {
   clearJournalOnTerminal,
 } = require("./job-journal");
 const { listOutboxEntries, drainOutbox } = require("./outbox");
+const { resolveAgentCustodyKey } = require("./deploy");
 const { readLedgerRow, createLedgerRow } = require("./windows-retention");
 const {
   recordIssuedContainer,
@@ -95,7 +97,7 @@ const {
   AGENT_PROTOCOL_ERROR_CODES,
   AgentProtocolError,
 } = require("./protocol");
-const { trustStoreCommandRefForFamily } = require("./trust-store");
+const { trustStoreCommandRefForFamily, resolveConcreteStore } = require("./trust-store");
 const { readReceipt } = require("./trust-store/receipt");
 
 function makeTempConfigDir() {
@@ -3748,6 +3750,129 @@ describe("lease fail-closed + side-effect journal + multi-target transaction", (
   });
 });
 
+describe("agent custody key after a rolled-back rotation", () => {
+  const CERTIFICATE_ID = "cert-1";
+  let workDir;
+
+  beforeEach(() => {
+    workDir = makeTempConfigDir();
+  });
+
+  afterEach(() => {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  });
+
+  function readFixture(name) {
+    return fs.readFileSync(
+      path.join(__dirname, "verify", "fixtures", name),
+      "utf8",
+    );
+  }
+
+  // Previous pair (wrong-san) is live in prod and custody; the rotated pair
+  // (leaf) is staged next to custody, as keys.generateKeyPairToFile leaves it.
+  function seedRotation() {
+    const keysDir = path.join(workDir, "keys");
+    const tlsDir = path.join(workDir, "tls");
+    fs.mkdirSync(keysDir, { recursive: true });
+    fs.mkdirSync(tlsDir, { recursive: true });
+    const paths = {
+      keysDir,
+      certPath: path.join(tlsDir, "server.crt"),
+      prodKeyPath: path.join(tlsDir, "server.key"),
+      custodyPath: path.join(keysDir, `${CERTIFICATE_ID}.key.pem`),
+      stagingPath: path.join(
+        keysDir,
+        `.${CERTIFICATE_ID}.key.pem.staging-1-abcdef`,
+      ),
+    };
+    const previousCert = readFixture("wrong-san.crt.pem");
+    const previousKey = readFixture("wrong-san.key.pem");
+    fs.writeFileSync(paths.certPath, previousCert);
+    fs.writeFileSync(paths.prodKeyPath, previousKey, { mode: 0o600 });
+    fs.writeFileSync(paths.custodyPath, previousKey, { mode: 0o600 });
+    fs.writeFileSync(paths.stagingPath, readFixture("leaf.key.pem"), {
+      mode: 0o600,
+    });
+    return { ...paths, previousCert, previousKey };
+  }
+
+  function rotate(seed, targetOverrides = {}) {
+    return runDeployReloadVerifyForTargets({
+      job: {
+        certificateId: CERTIFICATE_ID,
+        target: { type: "domain", reference: "valid.example.com" },
+      },
+      jobId: "job-rotation-rollback",
+      policyEngine: engineWith(
+        { allowedPaths: [workDir] },
+        { declaredTargetSelectors: ["valid.example.com"] },
+      ),
+      client: createRecordingClient(),
+      certificatePem: readFixture("leaf.crt.pem"),
+      deployTargets: [
+        {
+          type: "endpoint",
+          reference: "nginx",
+          certPath: seed.certPath,
+          keyPath: seed.prodKeyPath,
+          // No reloadCommandRefs on the job: the reload step fails after the
+          // pair is installed and custody was promoted.
+          reloadService: "nginx",
+          ...targetOverrides,
+        },
+      ],
+      keyPath: seed.custodyPath,
+      stagedKeyPath: seed.stagingPath,
+      keyRotated: true,
+      requestedSans: ["valid.example.com"],
+      log: silentLog,
+    });
+  }
+
+  it("keeps the path renewable: a clean rollback puts the previous key back into custody", async () => {
+    const seed = seedRotation();
+    const outcome = await rotate(seed);
+
+    assert.equal(outcome.status, "failed");
+    assert.match(outcome.errorMessage, /rolled back to the previous certificate/);
+    assert.equal(fs.readFileSync(seed.certPath, "utf8"), seed.previousCert);
+    assert.equal(fs.readFileSync(seed.prodKeyPath, "utf8"), seed.previousKey);
+
+    const next = resolveAgentCustodyKey(seed.keysDir, CERTIFICATE_ID, fs, {
+      certificatePem: fs.readFileSync(seed.certPath, "utf8"),
+    });
+    assert.deepEqual(
+      { path: next.path, quarantined: next.quarantined },
+      { path: seed.custodyPath, quarantined: false },
+    );
+    assert.equal(fs.readFileSync(seed.custodyPath, "utf8"), seed.previousKey);
+    assert.equal(fs.existsSync(seed.stagingPath), false);
+    assert.equal(fs.existsSync(`${seed.custodyPath}.custody-quarantine`), false);
+  });
+
+  it("does not put a key into custody that fails to match the restored certificate", async () => {
+    const seed = seedRotation();
+    // A production key that does not belong to the previous certificate must
+    // never be copied into custody on the strength of a rollback.
+    fs.writeFileSync(seed.prodKeyPath, readFixture("mismatch.key.pem"), {
+      mode: 0o600,
+    });
+    const outcome = await rotate(seed);
+
+    assert.equal(outcome.status, "failed");
+    const next = resolveAgentCustodyKey(seed.keysDir, CERTIFICATE_ID, fs, {
+      certificatePem: fs.readFileSync(seed.certPath, "utf8"),
+    });
+    assert.equal(next.path, null);
+    assert.equal(next.quarantined, true);
+    assert.equal(
+      fs.readFileSync(seed.custodyPath, "utf8"),
+      readFixture("leaf.key.pem"),
+    );
+  });
+});
+
 describe("renew chain deployment", () => {
   const CERTIFICATE_ID = "certificate-chain";
   const RENEW_JOB_ID = "job-chain";
@@ -3908,6 +4033,56 @@ describe("renew chain deployment", () => {
       .filter((entry) => entry !== `${CERTIFICATE_ID}.key.pem`);
   }
 
+  describe("custody key that cannot be used", () => {
+    function seedDeployedCertificate(name) {
+      const certPath = path.join(workDir, "deployed", "chain.crt.pem");
+      fs.mkdirSync(path.dirname(certPath), { recursive: true });
+      fs.writeFileSync(certPath, readFixture(name));
+    }
+
+    it("stays quarantined after a failed promotion and names the recovery step", async () => {
+      seedLiveKey();
+      seedDeployedCertificate("chain-leaf.crt.pem");
+      const livePath = path.join(keysDir(), `${CERTIFICATE_ID}.key.pem`);
+      fs.writeFileSync(`${livePath}.custody-quarantine`, "custody promotion failed\n");
+      const stub = makeCertbotStub();
+
+      const { outcome } = await runRenew({ job: makeJob(), acmeExecFileImpl: stub });
+
+      assert.equal(outcome.status, "failed");
+      assert.match(outcome.errorMessage, /quarantined after a failed promotion/);
+      assert.ok(outcome.errorMessage.includes(`delete ${livePath}`));
+      assert.ok(outcome.errorMessage.includes(`${livePath}.custody-quarantine`));
+      assert.equal(stub.calls.length, 0, "no issuance may run on a quarantined key");
+    });
+
+    it("reports a key/certificate mismatch without claiming a failed promotion", async () => {
+      seedLiveKey();
+      seedDeployedCertificate("wrong-san.crt.pem");
+      const stub = makeCertbotStub();
+
+      const { outcome } = await runRenew({ job: makeJob(), acmeExecFileImpl: stub });
+
+      assert.equal(outcome.status, "failed");
+      assert.match(outcome.errorMessage, /does not match the deployed certificate/);
+      assert.doesNotMatch(outcome.errorMessage, /failed promotion/);
+      assert.match(outcome.errorMessage, /Recovery: delete /);
+      assert.equal(stub.calls.length, 0);
+    });
+
+    it("renews again once the unusable custody key is deleted", async () => {
+      seedLiveKey();
+      seedDeployedCertificate("wrong-san.crt.pem");
+      const livePath = path.join(keysDir(), `${CERTIFICATE_ID}.key.pem`);
+      fs.rmSync(livePath);
+      const stub = makeCertbotStub();
+
+      const { outcome } = await runRenew({ job: makeJob(), acmeExecFileImpl: stub });
+
+      assert.doesNotMatch(outcome.errorMessage || "", /custody key/);
+      assert.equal(stub.calls.length, 1, "issuance runs with a freshly minted key");
+    });
+  });
   it("deploys the fullchain to certPath by default, intermediate included", async () => {
     seedLiveKey();
     const job = makeJob();
@@ -4032,7 +4207,7 @@ describe("renew chain deployment", () => {
     assert.equal(client.calls.reportEvidence.length, 0);
   });
 
-  // skip-reason: no-host - Linux declares the material capabilities, so this refusal only applies to other hosts.
+  // skip-reason: platform - Linux declares the material capabilities, so this refusal only applies to other hosts.
   it("refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities", { skip: process.platform === "linux" }, async () => {
     const shared = {
       jobId: "job-material",
@@ -6215,7 +6390,7 @@ describe("executeTrustJob / executeJob dispatch wiring for distribute-trust/revo
     // dispatch path wires receiptDir consistently end to end.
     const persisted = readReceipt(
       path.join(workDir, "trust-receipts"),
-      outcome.trustResult.store,
+      resolveConcreteStore(family, "root"),
       CA_FINGERPRINT,
     );
     assert.equal(persisted.row.state, "installed");
@@ -6341,6 +6516,45 @@ describe("executeTrustJob / executeJob dispatch wiring for distribute-trust/revo
     assert.equal(outcome.status, "failed");
     assert.match(outcome.errorMessage, /no agent state directory/);
     assert.equal(client.calls.reportEvidence.length, 0);
+  });
+
+  it("executeTrustJob runs the allowlisted --fresh argv on a Debian revoke, with no fallback warning", async () => {
+    if (!AGENT_TRUST_STORE_PREREQUISITES.candidate) return;
+    if (AGENT_TRUST_STORE_PREREQUISITES.family !== "debian") return; // --fresh only exists on Debian-family
+    const freshArgv = ["/usr/sbin/update-ca-certificates", "--fresh"];
+    const commands = {
+      [trustStoreCommandRefForFamily("debian")]: { argv: ["update-ca-certificates"] },
+      "trust-store:update-ca-certificates-fresh": { argv: freshArgv },
+    };
+    const policyEngine = createPolicyEngine(loadPolicyConfig({ allowedCommands: commands }));
+    const executionContext = makeExecutionContext();
+    const seams = fakeSeamsForCurrentFamily();
+    const run = (job, action) =>
+      executeTrustJob({
+        job,
+        jobId: "job-trust-1",
+        action,
+        jobMode: "real",
+        policyEngine,
+        client: createRecordingClient(),
+        log: silentLog,
+        executionContext,
+        trustStoreSeams: seams,
+      });
+
+    const installed = await run(distributeTrustJob(), "distribute-trust");
+    assert.equal(installed.status, "succeeded");
+    const revokeJob = distributeTrustJob({ action: "revoke-trust" });
+    delete revokeJob.pem;
+    const revoked = await run(revokeJob, "revoke-trust");
+
+    assert.equal(revoked.status, "succeeded");
+    assert.deepEqual(seams.execFileImpl.calls.at(-1), freshArgv, "revoke must refresh the store with --fresh");
+    assert.equal(
+      revoked.trustResult.metadata?.some((entry) => entry.name === "debian_fresh_command_ref_missing"),
+      undefined,
+      "no fallback warning when the fresh profile is configured",
+    );
   });
 
   it("executeJob routes revoke-trust to executeTrustJob and reports a receipt-missing failure for an unowned anchor (seam-injected, no real mutation)", async () => {

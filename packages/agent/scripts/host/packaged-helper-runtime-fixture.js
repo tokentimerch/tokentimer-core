@@ -1,6 +1,6 @@
 /*
  * Qualification notes: packaged-chain-runtime
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Copy actual candidate package to owned spaces/Unicode/bracket path and independently verify helper
  * digests against fresh builds. Production resolver/metadata-only survivor bridge must return complete
  * machine-store metadata+zero matches for random nonexistent container without creating key. Replace

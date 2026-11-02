@@ -136,6 +136,10 @@ export function WorkspaceProvider({ children, accountId = null }) {
         const inUrl = searchParamsRef.current.get('workspace');
         if (idsEqual(inUrl, chosen)) {
           setWorkspaceId(chosen);
+          // Banner/deep links set the URL without going through selectWorkspace.
+          // Persist them so a later navigation that omits ?workspace= does not
+          // snap back to an older last-workspace (e.g. Platform Operations).
+          writeLastWorkspaceId(accountId, chosen);
           if (idsEqual(pendingIdRef.current, chosen)) {
             pendingIdRef.current = null;
           }

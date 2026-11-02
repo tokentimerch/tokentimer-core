@@ -17,6 +17,8 @@ import {
 import { deploymentStates } from './distributionFormat.js';
 
 const icons = {
+  installed: CheckCircle2,
+  completed: CheckCircle2,
   verified: CheckCircle2,
   partial: ShieldAlert,
   failed: XCircle,
@@ -42,12 +44,16 @@ export default function DeploymentBadge({
     stale || error ? 'unavailable' : summary?.status || 'not_distributed';
   const descriptor =
     deploymentStates[status] || deploymentStates.not_distributed;
+  const fileCompletion = ['installed', 'completed'].includes(status);
+  const completedCount = fileCompletion
+    ? Number(summary?.installed || 0) + Number(summary?.verified || 0)
+    : summary?.verified;
   const count = summary?.total
-    ? `${status === 'unavailable' && !stale ? '—' : summary.verified}/${summary.total}`
+    ? `${status === 'unavailable' && !stale ? '—' : completedCount}/${summary.total}`
     : '—';
   const label = certificateCount
     ? `${certificateCount} certs`
-    : `${count}${showVerified && summary?.total ? ' verified' : ''}`;
+    : `${count}${showVerified && summary?.total ? (status === 'completed' ? ' complete' : fileCompletion ? ' installed' : ' verified') : ''}`;
   const description = certificateCount
     ? `${certificateCount} distributed certificates. Select a certificate in details.${error ? ' Refresh unavailable. Current state is unconfirmed.' : ''}`
     : stale
@@ -58,7 +64,7 @@ export default function DeploymentBadge({
           ? 'Loading deployment status'
           : status === 'unavailable'
             ? `${descriptor.label}. ${summary?.total ? `Last known: ${summary.verified}/${summary.total} verified. ` : ''}Current state is unconfirmed.`
-            : `${summary?.total ? `${summary.verified}/${summary.total} verified. ` : ''}${descriptor.label}`;
+            : `${summary?.total ? (summary.installed ? `${summary.verified}/${summary.total} live verified; ${summary.installed} file-only installations. ` : `${summary.verified}/${summary.total} verified. `) : ''}${descriptor.label}`;
   const Icon = certificateCount
     ? Layers
     : loading && !summary

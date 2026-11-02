@@ -1,4 +1,5 @@
 import React from 'react';
+import { useScanVerification } from '../../hooks/useScanVerification.js';
 import {
   Box,
   VStack,
@@ -12,12 +13,12 @@ import {
   InputRightElement,
   IconButton,
   Code,
-  Link as ChakraLink,
 } from '@chakra-ui/react';
 import { FiEye, FiEyeOff } from 'react-icons/fi';
 import { gcpAPI, integrationAPI } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 import { IMPORT_DOCS } from '../../utils/docsUrls';
+import LearnMorePanel from '../LearnMorePanel';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 import {
@@ -95,8 +96,11 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
     onError,
     errorContent,
     onScanSuccess,
+    onScanInvalidated,
+    scanContext,
     borderColor,
     helpTextColor,
+    hideDocs = false,
     autoSyncTokenPlaceholder,
     updateQuotaFromResponse,
     refreshIntegrationQuota,
@@ -129,6 +133,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
   }, [selectedRowsGcp.size, onSelectionChange]);
 
   const doGcpScan = async () => {
+    const scanTicket = beginScanVerification();
     if (!workspaceId) {
       onError && onError('Please select a workspace first.');
       return;
@@ -162,9 +167,6 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
       setGcpItems(items);
       setGcpSummary(Array.isArray(res?.summary) ? res.summary : []);
       setLastScanId(res?.scan_id || null);
-      if (items.length > 0) {
-        onScanSuccess && onScanSuccess('gcp');
-      }
 
       if (updateQuotaFromResponse && !updateQuotaFromResponse(res)) {
         if (refreshIntegrationQuota) await refreshIntegrationQuota();
@@ -172,6 +174,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
 
       const dups = await checkDuplicatesForItems(items, workspaceId);
       setGcpDuplicates(dups);
+      completeScanVerification(scanTicket);
     } catch (e) {
       setGcpItems([]);
       setGcpSummary([]);
@@ -234,16 +237,30 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
     }
   };
 
+  const getCredentials = () => ({
+    credentials: { projectId: gcpProjectId, accessToken: gcpAccessToken },
+    scanParams: {
+      projectId: gcpProjectId,
+      include: { secrets: scanSecrets, certificates: scanCertificates },
+    },
+  });
+  const { beginScanVerification, completeScanVerification } =
+    useScanVerification({
+      identity: {
+        workspaceId,
+        scanContext,
+        payload: getCredentials(),
+        cleanupObsolete,
+      },
+      provider: 'gcp',
+      onScanSuccess,
+      onScanInvalidated,
+    });
+
   React.useImperativeHandle(ref, () => ({
     importSelected: importGcpSelected,
     getSelectedCount: () => selectedRowsGcp.size,
-    getCredentials: () => ({
-      credentials: { projectId: gcpProjectId, accessToken: gcpAccessToken },
-      scanParams: {
-        projectId: gcpProjectId,
-        include: { secrets: scanSecrets, certificates: scanCertificates },
-      },
-    }),
+    getCredentials,
   }));
 
   return (
@@ -264,16 +281,13 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
           </Code>
           ).
         </Text>
-        <Text fontSize='sm' mt={1}>
-          <ChakraLink
-            href={IMPORT_DOCS.gcp}
-            color='blue.500'
-            textDecoration='underline'
-            isExternal
-          >
-            Learn more about importing from GCP →
-          </ChakraLink>
-        </Text>
+        {hideDocs ? null : (
+          <LearnMorePanel
+            variant='compact'
+            mt={2}
+            links={[{ label: 'Importing from GCP', url: IMPORT_DOCS.gcp }]}
+          />
+        )}
       </Box>
       <HStack spacing={3} align='flex-end' flexWrap='wrap'>
         <Box minW='240px'>

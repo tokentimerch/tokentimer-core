@@ -227,7 +227,7 @@ async function rollout(
   return owner.request(
     group() + "/rollouts",
     "POST",
-    { materialVersionId: version, maxParallel: 1, ...extra },
+    { materialVersionId: version, maxParallel: 1, requiresApproval: true, ...extra },
     expected,
     { "Idempotency-Key": state.runId + "-" + key },
   );
@@ -434,10 +434,12 @@ async function publish() {
   const repair = await owner.request(repairRoute, "POST", {});
   assert.equal(repair.created, false);
   assert.equal(repair.profileId, detail.certificate.profileId);
-  await approver.request(repairRoute, "POST", {}, 403);
+  const managerRepair = await approver.request(repairRoute, "POST", {});
+  assert.equal(managerRepair.created, false);
+  assert.equal(managerRepair.profileId, detail.certificate.profileId);
   await owner.request(repairRoute, "POST", { keyRotation: false }, 422);
   check(
-    "SAN-only publication automatically configures renewal; repair preserves profile and enforces admin/input boundaries",
+    "SAN-only publication automatically configures renewal; owner and manager repair preserve the profile and reject invalid input",
   );
 }
 async function bindings() {
@@ -1085,7 +1087,10 @@ async function main() {
       qualification: () => qualification.extend({state,owner,approver,api,group,versions,matrix,rollout,approve,terminal,job,customer,wait,converge,check,save,root}),
       security: () => require("./adversarial.cjs").security(module.exports.context),
       "runtime-controls": () => require("./adversarial.cjs").runtimeControls(module.exports.context),
-      browser: () => require("./browser.cjs").inspect({state,owner,base,matrix,root}),
+      browser: async () => {
+        await require("./browser.cjs").inspect({state,owner,base,matrix,root});
+        gate.report.onboardingRedoEvidence = await require("./onboarding-redo.cjs").inspect({ ...module.exports.context, base });
+      },
       privacy: async () => { require("../../../scripts/certops-distribution-privacy").audit(process.env.TT_UX_PROJECT, path.join(root,"privacy.json"), (await versions()).filter(v=>v.state==="published").map(v=>v.id)); if(gate)gate.report.privacyEvidence={file:"privacy.json",sha256:crypto.createHash("sha256").update(fs.readFileSync(path.join(root,"privacy.json"))).digest("hex")}; },
     } : {}),
     transfer,

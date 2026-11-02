@@ -257,7 +257,7 @@ function scanText(relPath, text, violations) {
   const lines = text.split("\n");
   const excludedLines = computeAllowedLineExclusions(lines);
   for (const pattern of PATTERNS) {
-    if (pattern.documentationOnly && !(/\.md$/i.test(relPath) || /^docs\/.*\.json$/i.test(relPath))) continue;
+    if (pattern.documentationOnly && !(/\.md$/i.test(relPath) || /^(?:docs|\.github\/maintainers)\/.*\.json$/i.test(relPath))) continue;
     if (
       pattern.id.startsWith("milestone-code") &&
       MILESTONE_CODE_FALSE_POSITIVE_EXTENSIONS.has(path.extname(relPath).toLowerCase())

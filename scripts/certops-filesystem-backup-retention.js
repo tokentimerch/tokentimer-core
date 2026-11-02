@@ -15,7 +15,7 @@
  * host slots require strict proof/current critical sources; pure temporary-file/proof
  * checks are not protected native execution.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Native source for bounded destination-scoped backup retention. Called by a
  * disposable host harness with three genuine matching certificate/key fixtures.

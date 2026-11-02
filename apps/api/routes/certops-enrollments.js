@@ -39,7 +39,7 @@ function fail(res, err) {
   if (code === "CERTOPS_PREFLIGHT_RATE_LIMITED") {
     return res.status(429).json({ error: err.message, code });
   }
-  if (code === "CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED") {
+  if (code === "CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED" || code === "CERTOPS_ENROLLMENT_OPEN") {
     return res.status(409).json({ error: err.message, code });
   }
   if (String(code).startsWith("CERTOPS_")) {

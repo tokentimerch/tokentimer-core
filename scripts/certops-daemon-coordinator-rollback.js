@@ -15,7 +15,7 @@
  * require closed proof/current critical sources; this direct coordinator recorder does
  * not qualify signed dispatch/API ingestion.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Native consuming-daemon rollback source. A read-only local evidence recorder
  * observes the production coordinator; native validate/reload implementations

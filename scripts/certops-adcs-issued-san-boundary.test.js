@@ -15,7 +15,7 @@
  * original. Same-byte foreign replacement preserved. Benign certutil-hash Windows controls prove
  * file mechanics only, no CA/store/key/service operations.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Supporting contracts only: these checks never issue or mutate certificates. */
 const { test } = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path");

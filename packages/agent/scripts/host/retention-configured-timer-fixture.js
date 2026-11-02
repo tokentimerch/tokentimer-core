@@ -1,6 +1,6 @@
 /*
  * Qualification notes: installed-default-retention-timer
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Hosted supporting case checks actual omitted defaults168hours/21600000ms then runs production poll
  * loop at explicit100ms, real jitter, immediate plus2 delayed collector callbacks against owned empty
  * ledger; drain cancellation. This cannot qualify installed service default6hour passage/deletion.

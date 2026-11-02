@@ -16,7 +16,7 @@
  * nativeCell pending until catalog registration; API cases alone do not qualify. Parent retains
  * unresolved ownership/lab; reverse migration/rollback/second cycle/timer not covered.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 // Pure proof refusals and the closed manual report. These checks do not
 // qualify native CA, CNG, or IIS observations.

@@ -10,7 +10,7 @@
  * public IDs/digests+ eight booleans only. Read-only candidate check neither creates uncertainty
  * nor completes public recovery; deterministic lost-response journey remains separate.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Offline foreign-SPKI contract checks; native CA execution remains protected and pending. */
 const {test}=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),crypto=require("node:crypto");

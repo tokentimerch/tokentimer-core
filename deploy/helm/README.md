@@ -130,6 +130,15 @@ Any env var not exposed as a dedicated values key can be passed through:
 - `api.extraVolumes` / `api.extraVolumeMounts` for the API
 - `worker.extraVolumes` / `worker.extraVolumeMounts` for all workers
 
+The domain checker settings (`DOMAIN_CHECKER_*`, `SUBFINDER_BIN`; see `docs/CONFIGURATION.md`) have no dedicated values keys. Set them on the API only, for example:
+
+```yaml
+api:
+  env:
+    DOMAIN_CHECKER_TOOL_TIMEOUT_MS: "600000"
+    DOMAIN_CHECKER_OVERALL_TIMEOUT_MS: "600000"
+```
+
 Example -- setting delivery window and DB SSL cert for an **external** PostgreSQL instance on workers (not needed for the default in-cluster CloudNativePG database, whose CA is mounted automatically):
 
 ```yaml

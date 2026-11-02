@@ -12,7 +12,7 @@
  * allFeaturesQualified=false. The collector verifies evidence only and never enables a production
  * capability.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 "use strict";
 /**

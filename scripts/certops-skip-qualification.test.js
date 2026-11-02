@@ -11,13 +11,34 @@ const {
   check,
   environmentFor,
 } = require("./certops-skip-qualification");
+test("every conditional skip has an owning workflow and an available CI prerequisite", () => {
+  const current = generate();
+  assert.ok(current.sites.length > 0);
+  for (const site of current.sites) {
+    assert.ok(!["no-host", "no_host"].includes(site.reason), `${site.file}: obsolete missing-host classification`);
+    assert.ok(site.workflow && site.workflowJob, `${site.file}: no executable owning job`);
+    assert.equal(site.workflowStatus, "file-selected-not-qualified", site.file);
+    assert.equal(site.executionStatus, "not-qualified");
+    assert.ok(current.environments[site.environment].capabilities.length > 0, site.file);
+  }
+});
+test("missing CI ownership and obsolete missing-host tags fail the inventory gates", () => {
+  const { validateRouting } = require("./certops-skip-qualification");
+  const current = generate();
+  assert.deepEqual(validateRouting(current), []);
+  current.sites[0].workflowJob = null;
+  assert.ok(validateRouting(current).length);
+  for (const reason of ["no-host", "no_host"]) {
+    assert.ok(require("./generate-skip-inventory.cjs").validateReasons([{...current.sites[0], reason}]).length);
+  }
+});
 test("new or changed skip prerequisites require mapping regeneration", () => {
   const site = {
     file: "tests/fixture.test.js",
     line: 1,
     name: "fixture",
     kind: "dynamic",
-    reason: "no-host",
+    reason: "prerequisite",
   };
   const current = generate([site]);
   assert.deepEqual(check(current, generate([site])), []);
@@ -71,7 +92,7 @@ test("shared scheduler mutations route only to the exclusive manual stack", () =
       line: 1,
       name: "exclusive scheduler fixture",
       kind: "dynamic",
-      reason: "no-host",
+      reason: "prerequisite",
     })),
   );
   for (const site of result.sites) {
@@ -92,7 +113,7 @@ test("shared scheduler mutations route only to the exclusive manual stack", () =
 });
 test("committed ownership mapping matches actual scanner sites", () => {
   assert.deepEqual(
-    check(require("../docs/certops/skip-qualification.generated.json")),
+    check(require("../.github/maintainers/certops/skip-qualification.generated.json")),
     [],
   );
 });
@@ -104,7 +125,7 @@ test("every registered API suite has explicit skip ownership without qualifying 
       line: 1,
       name: "inventory fixture",
       kind: "dynamic",
-      reason: "no-host",
+      reason: "prerequisite",
     }),
   );
   for (const site of generate(sites).sites) {
@@ -116,7 +137,7 @@ test("every registered API suite has explicit skip ownership without qualifying 
     environmentFor({
       file: "tests/e2e/unregistered-fixture.test.js",
       name: "unknown fixture",
-      reason: "no-host",
+      reason: "prerequisite",
     }),
     "prerequisite-review",
   );
@@ -132,7 +153,7 @@ test("literal installer filesystem prerequisite routes to actual Windows support
     line: 1,
     name: "actual installer filesystem branches preserve literal brackets and wildcard siblings",
     kind: "dynamic",
-    reason: "no-host",
+    reason: "prerequisite",
   };
   const result = generate([site]).sites[0];
   assert.equal(result.environment, "windows-powershell-filesystem");
@@ -147,7 +168,7 @@ test("native benign containment prerequisite routes to its actual Windows regres
     line: 1,
     name: "real owned JobObject preserves suspended identity and drains an actual descendant",
     kind: "dynamic",
-    reason: "no-host",
+    reason: "prerequisite",
   };
   const result = generate([site]).sites[0];
   assert.equal(result.environment, "windows-native-process-containment");
@@ -159,7 +180,7 @@ test("stored skip defaults preserve all facts and cannot conceal routing or qual
   const {compact, expand} = require("./certops-skip-qualification");
   const current = generate(); const stored = compact(current);
   assert.deepEqual(expand(stored), current); assert.deepEqual(check(stored, current), []);
-  assert.equal(current.sites[0].reason, "no-host");
+  assert.equal(current.sites[0].reason, "platform");
   for (const field of ["reason", "workflow", "workflowStatus", "executionStatus", "classificationStatus"]) {
     const changed = structuredClone(stored); changed.siteDefaults[field] = "changed";
     assert.ok(check(changed, current).length);

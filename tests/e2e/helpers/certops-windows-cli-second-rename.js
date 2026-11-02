@@ -1,6 +1,6 @@
 /*
  * Qualification notes: installer-cli-second-rename
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Canonical-root Server2022/2025 lane requires
  * windows-cli-second-rename-owned-fixture,preserves-installed-service,owned-cleanup. Original packed
  * CLI runs byte-identically: measured same-process launcher waits for holder acknowledgment; real

@@ -14,7 +14,7 @@ const { createHostGate } = require("../../packages/agent/scripts/host-gate");
 test("actual agent telemetry ordering, conflict and final closure", { timeout: 120000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires disposable API and PostgreSQL
+    // skip-reason: prerequisite - requires disposable API and PostgreSQL
     t.skip("Disposable API URL required"); return;
   }
   assert.ok(baseUrl); const fixture = await createApiFixture(baseUrl);

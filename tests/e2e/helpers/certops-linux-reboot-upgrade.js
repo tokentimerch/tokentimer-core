@@ -7,7 +7,7 @@
  * hostCapabilityAbsentIsPass remain false; service/reboot catalog mappings are
  * annotations rather than native reboot or installer qualification.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 
 /** Local Linux unit upgrade contract. Reboot is not claimed. Rollback restores

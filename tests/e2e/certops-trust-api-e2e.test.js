@@ -16,7 +16,7 @@ const { createHostGate } = require("../../packages/agent/scripts/host-gate");
 test("trust approval and workspace pause through real API", { timeout: 120000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires isolated authenticated feature-enabled API
+    // skip-reason: prerequisite - requires isolated authenticated feature-enabled API
     t.skip("Disposable API URL required"); return;
   }
   assert.ok(baseUrl); const fixture = await createApiFixture(baseUrl);

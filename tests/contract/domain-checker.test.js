@@ -89,6 +89,48 @@ test("lookupDomain fails when all discovery tools fail", async () => {
   );
 });
 
+test("lookupDomain maps a missing binary to a dedicated tool-missing error", async () => {
+  const runBinary = async () => {
+    throw Object.assign(new Error("spawn subfinder ENOENT"), {
+      code: "DOMAIN_CHECKER_TOOL_MISSING",
+    });
+  };
+
+  await assert.rejects(
+    lookupDomain("example.com", {
+      workspaceId: "test-tool-missing",
+      runBinary,
+    }),
+    (error) => {
+      assert.equal(error.code, "DOMAIN_CHECKER_TOOL_MISSING");
+      assert.equal(error.status, 503);
+      assert.equal(error.toolErrors.length, 1);
+      assert.equal(error.toolErrors[0].code, "DOMAIN_CHECKER_TOOL_MISSING");
+      return true;
+    },
+  );
+});
+
+test("lookupDomain keeps the generic failure code for other tool errors", async () => {
+  const runBinary = async () => {
+    throw Object.assign(new Error("exit 1"), {
+      code: "DOMAIN_CHECKER_BINARY_FAILED",
+    });
+  };
+
+  await assert.rejects(
+    lookupDomain("example.com", {
+      workspaceId: "test-generic-failure",
+      runBinary,
+    }),
+    (error) => {
+      assert.equal(error.code, "DOMAIN_CHECKER_FAILED");
+      assert.equal(error.status, 503);
+      return true;
+    },
+  );
+});
+
 test("lookupDomain enforces one active lookup per workspace and domain", async () => {
   const releases = [];
   const runBinary = () =>

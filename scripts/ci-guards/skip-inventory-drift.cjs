@@ -2,7 +2,7 @@
 "use strict";
 
 // Guard: keeps the auto-generated skip inventory from drifting silently.
-// Regenerates docs/certops/skip-inventory.generated.md from the
+// Regenerates .github/maintainers/certops/skip-inventory.generated.md from the
 // real test suite (scripts/generate-skip-inventory.cjs owns the scan/
 // classify/render logic, required here so the two can never disagree about
 // what counts as a skip) and fails if the committed copy differs, so the
@@ -10,7 +10,7 @@
 // running the generator, or a reason tag edited by hand, is caught here.
 //
 // Also fails if any discovered skip is missing its required
-// `// skip-reason: no-host|unimplemented` tag, even in the hypothetical case
+// `// skip-reason: platform|prerequisite|unimplemented` tag, even in the hypothetical case
 // where the committed file already (incorrectly) reflects that gap.
 
 const fs = require("node:fs");

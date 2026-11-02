@@ -16,7 +16,7 @@
  * publication/acceptance/drain preserves guard. Direct probe and
  * installedAgentFaultRecoveryQualified signed recovery separate, no OCSP/CMC/resident timer.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 // Real in-memory software signatures validate public DER safety only. These
 // fixtures are not native AD CS requests, Windows CRL observations or CA proof.

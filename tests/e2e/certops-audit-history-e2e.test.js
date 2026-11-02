@@ -4,7 +4,7 @@
  * and PostgreSQL. The central API qualification runner includes it automatically;
  * `CERTOPS_AUDIT_REPORT` selects its sanitized report.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Supporting API/PostgreSQL qualification: certificate profile audit history remains searchable scoped and role restricted.
@@ -18,7 +18,7 @@ const {createApiFixture}=require("./helpers/certops-api-fixture"),{createHostGat
 const scenarios=["audit-profile-public-events","audit-action-and-reference-search","audit-literal-search-boundary","audit-pagination-history","audit-workspace-fence","audit-role-fence","audit-owned-cleanup","audit-windows-job-target"];
 test("certificate profile audit history remains searchable scoped and role restricted",{timeout:120000},async t=>{
  const base=process.env.CERTOPS_CSR_API_URL;if(!base&&process.env.CERTOPS_E2E_REQUIRED!=="1"){
-  // skip-reason: no-host - requires disposable authenticated API and PostgreSQL
+  // skip-reason: prerequisite - requires disposable authenticated API and PostgreSQL
   t.skip("Disposable authenticated API required");return;
  }
  assert.ok(base);const fixture=await createApiFixture(base);let foreign,ready=false,primary,created,other;

@@ -24,7 +24,7 @@
  * profile flag does not itself establish native reuse: its executor may generate a new
  * CNG CSR/container regardless. Keep that policy boundary separate.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Real Linux CSR-based ACME key reuse. Run after rotation controls and before
  * agent retirement. The parent owns the agent, TLS listener, jobs and all local

@@ -26,6 +26,7 @@ const {
   TransferAssociationConflictError,
   transferTokenAssociations,
 } = require("../services/workspaceTokenTransfer");
+const { deleteWorkspaces } = require("../services/workspaceDeletion");
 
 const router = require("express").Router();
 
@@ -480,7 +481,17 @@ router.delete(
           error: _err.message,
         });
       }
-      await pool.query("DELETE FROM workspaces WHERE id=$1", [ws.id]);
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await deleteWorkspaces(client, [ws.id]);
+        await client.query("COMMIT");
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
       return res.status(204).send();
     } catch (e) {
       logger.error("Delete workspace failed", {

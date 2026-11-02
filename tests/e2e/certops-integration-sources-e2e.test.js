@@ -13,7 +13,7 @@
  *
  * Run prerequisites: `CERTOPS_CSR_DISPOSABLE_STACK=1`, `DB_*`, `CERTOPS_E2E_REQUIRED=1`.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Supporting API/PostgreSQL qualification: certificate-producing integration source provenance survives authenticated import and replay.
@@ -35,7 +35,7 @@ const scenarios = inventory.sources.map(source => `integration-source-${source.s
 test("certificate-producing integration source provenance survives authenticated import and replay", { timeout: 150000 }, async t => {
   const base = process.env.CERTOPS_CSR_API_URL;
   if (!base && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires disposable authenticated API and PostgreSQL
+    // skip-reason: prerequisite - requires disposable authenticated API and PostgreSQL
     t.skip("Disposable authenticated API required"); return;
   }
   assert.ok(base);

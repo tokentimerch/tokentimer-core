@@ -1,6 +1,6 @@
 /*
  * Qualification notes: windows-real-journey
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Run node scripts/certops-windows-e2e.js only on disposable elevated Windows with
  * CERTOPS_WINDOWS_BASH/CERTOPS_WINDOWS_ACMESH,loopback native PostgreSQL migrations,pinned
  * Pebble2.8.0/acme.sh3.1.2/DNS and checked candidate native helpers. certops-windows-e2e.yml uses

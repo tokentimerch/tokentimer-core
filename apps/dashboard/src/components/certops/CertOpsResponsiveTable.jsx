@@ -18,7 +18,13 @@ const SORT_HEADER_BUTTON_PROPS = {
   },
 };
 
-export function CertOpsSortableHeader({ label, sortKey, sort, onSort }) {
+export function CertOpsSortableHeader({
+  label,
+  sortKey,
+  sort,
+  onSort,
+  compact = false,
+}) {
   const isActive = sort?.key === sortKey;
   return (
     <Th
@@ -32,23 +38,32 @@ export function CertOpsSortableHeader({ label, sortKey, sort, onSort }) {
     >
       <Button
         {...SORT_HEADER_BUTTON_PROPS}
+        {...(compact
+          ? { whiteSpace: 'normal', maxW: '100%', h: 'auto', flexWrap: 'wrap' }
+          : {})}
         onClick={() => onSort(sortKey)}
         aria-label={`Sort by ${label}`}
       >
         {label}
         <Text
           as='span'
-          display='inline-block'
-          minW='30px'
-          ml={2}
+          minW={compact ? '0' : '30px'}
+          ml={compact ? 1 : 2}
           fontSize='10px'
           lineHeight='1'
           textAlign='left'
           color='rgba(147, 197, 253, 0.96)'
           visibility={isActive ? 'visible' : 'hidden'}
+          display={compact && !isActive ? 'none' : 'inline-block'}
           aria-hidden={!isActive}
         >
-          {isActive && sort.direction === 'desc' ? 'Desc' : 'Asc'}
+          {compact
+            ? sort?.direction === 'desc'
+              ? '↓'
+              : '↑'
+            : isActive && sort.direction === 'desc'
+              ? 'Desc'
+              : 'Asc'}
         </Text>
       </Button>
     </Th>
@@ -63,10 +78,14 @@ export function nextCertOpsTableSort(current, key) {
   };
 }
 
-export function CertOpsMobileFieldLabel({ children, color }) {
+export function CertOpsMobileFieldLabel({
+  children,
+  color,
+  desktopBreakpoint = 'lg',
+}) {
   return (
     <Text
-      display={{ base: 'block', lg: 'none' }}
+      display={{ base: 'block', [desktopBreakpoint]: 'none' }}
       mb={1}
       fontSize='2xs'
       fontWeight='bold'
@@ -98,7 +117,9 @@ export function CertOpsTruncatedText({ value, maxLength = 40, ...textProps }) {
   );
 }
 
-export function useCertOpsResponsiveTableStyles() {
+export function useCertOpsResponsiveTableStyles({
+  desktopBreakpoint = 'lg',
+} = {}) {
   const rowHoverBg = useColorModeValue('gray.50', 'rgba(30, 41, 59, 0.45)');
   const tableHeadBg = useColorModeValue('gray.50', 'rgba(8, 13, 22, 0.84)');
   const tableHeadColor = useColorModeValue(
@@ -125,13 +146,13 @@ export function useCertOpsResponsiveTableStyles() {
 
   return {
     tableContainerProps: {
-      overflowX: { base: 'visible', lg: 'auto' },
-      whiteSpace: { base: 'normal', lg: 'nowrap' },
+      overflowX: { base: 'visible', [desktopBreakpoint]: 'auto' },
+      whiteSpace: { base: 'normal', [desktopBreakpoint]: 'nowrap' },
     },
     tableProps: {
       size: 'sm',
       variant: 'simple',
-      display: { base: 'block', lg: 'table' },
+      display: { base: 'block', [desktopBreakpoint]: 'table' },
       sx: {
         'thead th': {
           color: tableHeadColor,
@@ -149,51 +170,55 @@ export function useCertOpsResponsiveTableStyles() {
     theadProps: {
       display: 'table-header-group',
       sx: {
-        '@media screen and (max-width: 61.99em)': { display: 'none' },
+        [`@media screen and (max-width: ${desktopBreakpoint === 'xl' ? '79.99em' : '61.99em'})`]:
+          { display: 'none' },
       },
     },
     tbodyProps: {
-      display: { base: 'grid', lg: 'table-row-group' },
-      gap: { base: 3, lg: 0 },
+      display: { base: 'grid', [desktopBreakpoint]: 'table-row-group' },
+      gap: { base: 3, [desktopBreakpoint]: 0 },
     },
     rowProps: {
-      display: { base: 'grid', lg: 'table-row' },
+      display: { base: 'grid', [desktopBreakpoint]: 'table-row' },
       gridTemplateColumns: { base: 'repeat(2, minmax(0, 1fr))' },
-      bg: { base: mobileCardBg, lg: 'transparent' },
-      borderWidth: { base: '1px', lg: 0 },
+      bg: { base: mobileCardBg, [desktopBreakpoint]: 'transparent' },
+      borderWidth: { base: '1px', [desktopBreakpoint]: 0 },
       borderStyle: 'solid',
       borderColor: mobileCardBorder,
-      borderRadius: { base: 'md', lg: 0 },
+      borderRadius: { base: 'md', [desktopBreakpoint]: 0 },
       overflow: 'hidden',
-      boxShadow: { base: '0 14px 32px rgba(0, 0, 0, 0.18)', lg: 'none' },
+      boxShadow: {
+        base: '0 14px 32px rgba(0, 0, 0, 0.18)',
+        [desktopBreakpoint]: 'none',
+      },
       _hover: { bg: rowHoverBg },
     },
     primaryCellProps: {
-      gridColumn: { base: '1 / -1', lg: 'auto' },
-      px: { base: 3.5, lg: 4 },
-      py: { base: 3.5, lg: '0.55rem' },
+      gridColumn: { base: '1 / -1', [desktopBreakpoint]: 'auto' },
+      px: { base: 3.5, [desktopBreakpoint]: 4 },
+      py: { base: 3.5, [desktopBreakpoint]: '0.55rem' },
       borderBottomWidth: '1px',
       borderColor: mobileActionBorder,
     },
     cellProps: {
-      px: { base: 3.5, lg: 4 },
-      py: { base: 2.5, lg: '0.55rem' },
-      bg: { base: mobileMetaBg, lg: 'transparent' },
-      borderBottomWidth: { base: 0, lg: '1px' },
+      px: { base: 3.5, [desktopBreakpoint]: 4 },
+      py: { base: 2.5, [desktopBreakpoint]: '0.55rem' },
+      bg: { base: mobileMetaBg, [desktopBreakpoint]: 'transparent' },
+      borderBottomWidth: { base: 0, [desktopBreakpoint]: '1px' },
     },
     fullWidthCellProps: {
-      gridColumn: { base: '1 / -1', lg: 'auto' },
-      px: { base: 3.5, lg: 4 },
-      py: { base: 2.5, lg: '0.55rem' },
-      bg: { base: mobileMetaBg, lg: 'transparent' },
-      borderBottomWidth: { base: 0, lg: '1px' },
+      gridColumn: { base: '1 / -1', [desktopBreakpoint]: 'auto' },
+      px: { base: 3.5, [desktopBreakpoint]: 4 },
+      py: { base: 2.5, [desktopBreakpoint]: '0.55rem' },
+      bg: { base: mobileMetaBg, [desktopBreakpoint]: 'transparent' },
+      borderBottomWidth: { base: 0, [desktopBreakpoint]: '1px' },
     },
     actionCellProps: {
-      gridColumn: { base: '1 / -1', lg: 'auto' },
-      px: { base: 3.5, lg: 4 },
-      py: { base: 2.5, lg: '0.55rem' },
-      borderTopWidth: { base: '1px', lg: 0 },
-      borderBottomWidth: { base: 0, lg: '1px' },
+      gridColumn: { base: '1 / -1', [desktopBreakpoint]: 'auto' },
+      px: { base: 3.5, [desktopBreakpoint]: 4 },
+      py: { base: 2.5, [desktopBreakpoint]: '0.55rem' },
+      borderTopWidth: { base: '1px', [desktopBreakpoint]: 0 },
+      borderBottomWidth: { base: 0, [desktopBreakpoint]: '1px' },
       borderColor: mobileActionBorder,
     },
   };

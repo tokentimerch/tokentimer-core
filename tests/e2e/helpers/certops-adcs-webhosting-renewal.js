@@ -282,7 +282,7 @@ function assertDrainAbsent(drain, current) {
   }
   return true;
 }
-function cleanupRegisteredStore({ receipts, configDir, ps, drain }, capacity) {
+function cleanupRegisteredStore({ receipts, configDir, ps, drain, ownedThumbprints }, capacity) {
   const validate = capacity === "issuer-switch" ? issuerSwitchCleanupPlan : capacity === "background" ? backgroundCleanupPlan : capacity ? capacityCleanupPlan : cleanupPlan;
   const store = capacity ? "My" : "WebHosting",
     otherStore = capacity ? "WebHosting" : "My";
@@ -300,12 +300,19 @@ function cleanupRegisteredStore({ receipts, configDir, ps, drain }, capacity) {
   assertDrainAbsent(drain, current.processes);
   for (const receipt of receipts) {
     validate(receipt, [], () => null);
+    // Scenarios keep issuing under the same subject but a different certificate identity
+    // (issuance vs. discovered source). Those exact public leaves are removed by the separate
+    // exact-thumbprint step; this receipt defers only entries that are observed owned
+    // thumbprints AND not bound to its own enrollment containers. Any other leaf still fails.
+    const ownContainers = new Set(receipt.enrollmentIds.map((id) => buildEnrollmentContainerName(id)));
+    const independentlyOwned = new Set([...(ownedThumbprints ?? [])].map((value) => String(value).toUpperCase()));
+    const isDeferredForeign = (entry) => independentlyOwned.has(entry.thumbprint.toUpperCase()) && !ownContainers.has(entry.containerName);
     const enumerate = () =>
       JSON.parse(
         ps(
           `$domain='${receipt.domain}';if(@(Get-ChildItem Cert:\\LocalMachine\\${otherStore}|Where-Object Subject -eq "CN=$domain").Count){throw 'Unexpected cross-store copy preserved'};@{entries=@(Get-ChildItem Cert:\\LocalMachine\\${store}|Where-Object Subject -eq "CN=$domain"|ForEach-Object {$c=$_;$k=$null;try{$k=[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c);if(!$k){throw 'Missing exact owned CNG association'};@{thumbprint=$c.Thumbprint;containerName=$k.Key.KeyName}}finally{if($k){$k.Dispose()};$c.Dispose()}})}|ConvertTo-Json -Depth 4 -Compress`,
         ),
-      ).entries;
+      ).entries.filter((entry) => !isDeferredForeign(entry));
     const readRecord = (containerName) =>
       readIssuedContainerRecord({ stateDir: configDir, containerName });
     const plan = validate(receipt, enumerate(), readRecord);

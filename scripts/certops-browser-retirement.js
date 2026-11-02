@@ -10,7 +10,7 @@
  *
  * Run prerequisites: `CERTOPS_CSR_DISPOSABLE_STACK=1`.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Real Chromium retirement filters and factual observation details.
  * Invoked by the manual dashboard qualification lane against disposable API/PG.

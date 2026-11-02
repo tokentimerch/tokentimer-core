@@ -1,7 +1,7 @@
 # Certificate material distribution candidate
 
 Customer issuer → existing native ACME DNS-01 → customer Vault KV v2 →
-explicitly assigned Linux consumers → concrete TLS listeners → public receipts.
+explicitly assigned Linux consumers → installed files, optionally live TLS listeners → public receipts.
 The API, workers, inventory scanners, dashboards and queues never receive the
 private key or Vault/DNS credentials. Publishing is a separate outcome from
 deploying to every consumer. The same certificate may be an ordinary, SAN, or
@@ -33,17 +33,16 @@ Appliance models, firmware, service binding and HA coverage are unknown. No
 firewall adapter, Windows shared-key import or Kubernetes bundle bridge is
 advertised. Existing Windows and Kubernetes execution paths remain separate.
 
-Three new capabilities are gated: `material-store-vault-kv2-v1`,
-`certificate-publication-v1`, and `deploy-from-store-v1`. They are deliberately
-absent from the shipped `src/capabilities/qualified-capabilities.json` build
-input. The execution functions and control-plane dispatch are tested, but a
-complete enrolled, networked agent build still needs qualification before these
-capabilities are added to that input and compiled with
-`node packages/agent/scripts/build-qualified-capabilities.js`. There is no
-runtime environment-variable bypass. Registering target labels or declaring
-capabilities in a test database does not qualify a release artifact.
+The three distribution capabilities (`material-store-vault-kv2-v1`,
+`certificate-publication-v1`, and `deploy-from-store-v1`) are listed in the
+shipped `src/capabilities/qualified-capabilities.json` build input and are
+declared by the 0.18.0 agent. Your own Vault authentication, DNS provider, host
+filesystem and TLS listeners are still customer-owned and must be tested before
+you rely on this path. There is no runtime environment-variable bypass.
+Registering target labels or declaring capabilities in a test database does not
+qualify a release artifact.
 
-Before enabling a customer build, run signed enrollment/heartbeat/claim/lease/
+Before relying on a customer build, run signed enrollment/heartbeat/claim/lease/
 result transport through a real API, the real DNS provider, production Vault
 authentication/rotation, the exact service configuration and host filesystem.
 Test agent and host crashes, token expiry, revoked agent credentials, Vault
@@ -54,8 +53,8 @@ ownership, restrictive permissions, parent-directory and symlink defenses,
 crash/restart durability, uncertain writes and token replacement on the exact
 proposed artifact. The isolated API/Vault/ACME/NGINX/HAProxy lab is supporting
 evidence, not release qualification. Windows AD CS has its own real-host CA,
-template, CNG, pending-approval and continuation matrix; its `adcs-enroll-v1`
-capability also stays unqualified. Appliance HA and multi-listener configurations
+template, CNG, pending-approval and continuation matrix, which qualifies
+`adcs-enroll-v1` separately from this one. Appliance HA and multi-listener configurations
 need explicit coverage before claiming support.
 
 ## Customer-local configuration
@@ -79,9 +78,41 @@ Each local store entry grants one explicit workspace/group, exact SAN set and
 key algorithm. Issuer entries also bind wire agent ID, issuance profile/revision,
 CA endpoint and DNS provider/zone. Each consumer entry binds wire agent ID,
 group/store, deployment profile/revision, authorization revision, destination,
-reload and all dial address/port/SNI probes. Changing a server binding increments
+delivery policy, and (for service delivery) reload and all dial address/port/SNI probes. Changing a server binding increments
 its authorization revision; update and review the matching local policy before
 creating a new approved rollout. No implicit path or alias fallback exists.
+
+Create each consumer deploy folder with the installer (`--write-path`) or with
+`sudo install -d -o tokentimer-agent -g tokentimer-agent -m 0750 <folder>`. Any
+placeholder `fullchain.pem` and `privkey.pem` must also belong to the agent user
+(create them with `sudo -u tokentimer-agent`). With root-owned files the first
+rollout failed with `material_install_failed`, and the retry then reported
+`material_binding_uncertain`.
+
+The agent reads the issuer's private key from `execution.keysDir`, so that
+folder must also be listed in `policy.allowedPaths`. On the Linux installer layout
+use `/opt/tokentimer-agent/state/keys`: the hardened service unit only writes
+under `/opt/tokentimer-agent/state`, and other locations fail with
+`mkdir ... job-journal`. The agent also routes jobs by what it declares, not by
+what the policy allows: set `declaredTargetSelectors` (issuer: the SANs;
+consumer: the binding ID) and, for the issuer, `declaredCommandProfileNames`.
+Without them the agent registers but never claims work.
+
+The examples ship `"dryRun": true`. Before allocating the first publication,
+complete signed no-op smoke checks with execution enabled and local dry-run
+protection on. They prove dispatch/reporting, not later external effects.
+If ordinary approval is off, then disable issuer polling and restart before
+allocation. Prepare the returned group, Vault policy and host bindings while
+polling is off; once ready, restart with `"enabled": true` and `"dryRun": false`
+directly. A dry-run polling phase after allocation can claim and block the queued
+real publication. With approval on, keep that publication unapproved until ready.
+For the nginx
+consumer, `nginx -t` fails for the unprivileged agent user, so the example
+validates with `systemctl is-active` and reloads through `systemctl reload nginx`
+with a one-time systemd drop-in that tests the configuration as root; see
+[nginx reload](agent/install-linux.md#nginx-reload). The certbot argv carries
+`--agree-tos` and `--register-unsafely-without-email`; use `--email <address>`
+instead if you want expiry notices from the CA.
 
 The example Vault policies separate issuer create/read, consumer read and
 scanner denial. Substitute the actual mount and workspace/group prefix. Do not
@@ -92,17 +123,15 @@ issuer or consumer credentials. Protect Vault backups as private keys.
 
 ## Public workflow
 
-Distribution administration is API-first. The Renewals dashboard presents
-groups and consumer status alongside renewal profiles and AD CS issuer
-management. Creating publication jobs, editing consumer bindings, requesting
-and approving rollouts, containment, retry and verification-only checks use the
-API below and the existing job approval endpoints. A complete distribution
-creation/editing wizard is outside this candidate's UI scope.
+Start with [First Vault distribution](vault-first-distribution.md). The setup guide sends signed checks, creates the publication job, assigns one or more consumers and requests the chosen version's rollout. It displays returned configuration revisions, job timelines, read-only output and consumer verification. No terminal TokenTimer API calls are needed for that first distribution. Inspect later status in **Certificates → certificate → Deployments**; **Renewals** contains profiles and AD CS issuers. The API below remains the reference for automation, advanced binding changes, containment and verification-only checks. Approval review uses the existing Jobs surface when workspace policy requires it.
 
 1. Create an existing `issue` job with `assignedAgentId` set to the issuer's
    database row ID. Its payload includes the existing target/SANs/CA/DNS/key
    settings and `publicationDestination` containing only `materialStoreRef`,
-   `issuanceProfileRef`, `profileRevision`. Supply the existing issuance
+   `issuanceProfileRef`, `profileRevision`. The payload must include
+   `keyAlgorithm`; the agent refuses the job without it. A tested combination
+   is `ecdsa` with `keySize: 256` in the job and `"keyAlgorithm": "ec"` in the
+   local group entry. Supply the existing issuance
    idempotency key. Filesystem/reload/probe destinations are forbidden here.
    `issue` is the stored control-plane operation; signed agent dispatch uses
    the existing `renew` wire action for initial issuance as well as renewal.
@@ -122,22 +151,36 @@ creation/editing wizard is outside this candidate's UI scope.
    canary; subsequent waves wait for earlier required consumers. Optional
    failures remain visible and do not count as verified consumers.
 5. `POST .../{groupId}/rollouts` with an `Idempotency-Key` header and body
-   `{ "materialVersionId": "UUID", "maxParallel": 1 }` creates a pending
-   approval job. A different authorized user approves it using the existing job
-   approval endpoint. The worker freezes membership, policy revisions,
+   `{ "materialVersionId": "UUID", "maxParallel": 1 }` follows workspace
+   **Job approval**, which is off by default. With approval off, the request
+   freezes the rollout and queues it without a second user. With approval on,
+   or an explicit `"requiresApproval": true` in this request, a different
+   authorized user approves the job using the existing approval endpoint.
+   A rollout's authorization freezes membership, policy revisions,
    verification policy, material version, provider version, fingerprint,
-   generation and concurrency. Any change before expansion invalidates approval.
+   generation and concurrency. Any change before approved expansion invalidates approval.
+   Consumer deployment jobs also follow workspace Job approval; the rollout's
+   approval does not release separately gated children. Keep the workspace
+   setting off for unattended execution. Publication of a renewed version does
+   not automatically request a rollout: submit the new version explicitly.
 6. Children are signed `deploy-from-store` jobs assigned to one agent/binding.
+   `installed` is the explicit file-only verification policy: install and read
+   back the certificate/key pair (and a configured chain), without reload or TLS
+   probes. Local bindings for this policy must not contain reload commands or
+   listener probes. Its receipt has `installed: true`, with `bound`,
+   `servedVerified` and `trustValidated` false. A completed rollout containing
+   any file-only consumer has state `installed`, never `verified`.
    Fetch, pair/identity validation, installation, reload, served verification
    and trust validation have separate receipt fields. `served` verifies the
    requested fingerprint; `trust` also requires hostname/SNI and CA trust.
-   Every locally configured listener must pass. A certificate renewed at the
+   For `served`/`trust`, every locally configured listener must pass. These
+   policies still reject a receipt that only proves file installation. A certificate renewed at the
    source does not mark an offline consumer current.
 
-The consumer matrix at `GET .../{groupId}/consumers` and in the Renewals page
+The consumer matrix at `GET .../{groupId}/consumers` and **Certificates → Deployments**
 shows desired/observed logical versions, generation, fingerprint, deployed
 expiry, verification method/time and latest deployment failure. Convergence
-requires a fresh, unexpired proof for the current binding revision and active
+requires a fresh, unexpired proof of the selected delivery policy for the current binding revision and active
 identity. It is never inferred from publication alone.
 An optional consumer whose authorization changed makes a completed rollout
 `degraded`, even if a successful historical receipt remains available.
@@ -163,7 +206,7 @@ retry fetches the same pinned provider version. A changed intent needs a new
 approval. Cloud admission rejects new effects for frozen or unpaid workspaces;
 claim-bound continuing results remain accepted.
 
-After an uncertain consumer deployment, repair and reconcile the local service,
+After an uncertain consumer deployment, repair and reconcile the local files and, when selected, service,
 then retry the original job and resume its rollout. Only an accepted, fresh
 receipt for the current authorized deployment clears that job's server-side
 reconciliation flag. Local reconciliation alone, stale historical evidence and
@@ -171,7 +214,7 @@ an invalid receipt leave the flag in place.
 
 For a read-only drift check, request another approved rollout of the desired
 version with `verificationOnly: true`. It advances generation, fetches/validates
-the pinned bundle, compares the installed pair and probes the listeners, without
+the pinned bundle, compares the installed pair and (for service policies) probes the listeners, without
 installation or reload. Failure reports `material_drift_detected`; previous
 verified state remains historical and the matrix becomes unconverged. Schedule
 these checks through the existing authorized workflow if periodic checks are
@@ -197,11 +240,22 @@ Consumer state is under `material-bindings/<bindingId>.json`. A protected
 uncertain marker is durable before the first mutation. Reload failure, lost
 lease or failed service proof after mutation yields `orphaned_unknown_effect`;
 no automatic compensation or inferred success occurs. Fix the actual binding
-and listeners locally, then run `certops-reconcile-binding <bindingId>` as the
-agent account with its normal configuration directory. This command only reads
+and listeners locally, then run the reconcile script as the agent account with
+its normal configuration directory (the installer does not put
+`certops-reconcile-binding` on `PATH`; the script is `bin/reconcile-material-binding.js`
+in the installed app):
+
+```sh
+sudo -u tokentimer-agent env TOKENTIMER_AGENT_CONFIG_DIR=/opt/tokentimer-agent/state \
+  node /opt/tokentimer-agent/app/bin/reconcile-material-binding.js <bindingId>
+```
+
+It takes the binding UUID, reads the protected record under
+`material-bindings/` in the state directory (the parent of `execution.keysDir`) and
+prints only a short `material_*` error code and exits 1 on failure. This command only reads
 the installed pair, verifies all configured listeners and clears the local
-uncertain marker. It does not promote server state. Request the original signed
-retry afterward, with a fresh live claim.
+uncertain marker. It prints a one-line JSON result and does not promote server state.
+Request the original signed retry afterward, with a fresh live claim.
 
 Per-group issuer and per-binding consumer locks use exclusive files under
 `material-locks` and never expire by TTL. After a crash, stop the corresponding

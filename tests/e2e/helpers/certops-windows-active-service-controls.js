@@ -1,6 +1,6 @@
 /*
  * Qualification notes: active-certificate-service-controls
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Hold the real automatic renewal at its actual DNS POST barrier after CNG creation and durable
  * journaling; independently check SYSTEM command/output-wrapper argv and ancestry. Interrogate and
  * unsupported Pause/Continue must preserve exact claim/attempt, journal bytes/identity, key custody,

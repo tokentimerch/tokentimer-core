@@ -42,7 +42,7 @@ jobs:
           exit 1
       - name: Execute actual operator rotation and native fleet acknowledgements
         run: |
-          node --test tests/e2e/certops-signing-rotation-e2e.test.js
+          node --test tests/e2e/certops-signing-rotation-native-e2e.test.js
           node scripts/certops-qualification-report.js qualification-results/signing-rotation.json
       - name: Destroy isolated stack
         if: always()

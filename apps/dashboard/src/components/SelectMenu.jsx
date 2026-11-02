@@ -42,6 +42,8 @@ export default function SelectMenu({
   matchWidth = true,
   buttonProps = {},
   menuListProps = {},
+  actionLabel,
+  onAction,
   'aria-label': ariaLabel,
 }) {
   const { isOpen, onOpen, onClose } = useDisclosure();
@@ -115,7 +117,7 @@ export default function SelectMenu({
     onClose();
   };
 
-  if (items.length === 0) {
+  if (items.length === 0 && !actionLabel) {
     return (
       <Text fontSize='xs' color={helperColor}>
         {emptyText}
@@ -153,6 +155,15 @@ export default function SelectMenu({
             borderColor={buttonBorder}
             px={3}
             type='button'
+            onKeyDown={event => {
+              // Focus stays on the trigger while the list is open (options keep
+              // it there on purpose), so Escape has to be handled here. Stopping
+              // it keeps an enclosing modal open.
+              if (isOpen && event.key === 'Escape') {
+                event.stopPropagation();
+                onClose();
+              }
+            }}
             aria-label={ariaLabel || placeholder}
             aria-expanded={isOpen}
             aria-haspopup='listbox'
@@ -202,7 +213,33 @@ export default function SelectMenu({
           _focus={{ boxShadow: 'none' }}
           {...menuListProps}
         >
-          <PopoverBody p={1} maxH={maxMenuH} overflowY='auto' role='listbox'>
+          <PopoverBody
+            p={1}
+            maxH={maxMenuH}
+            overflowY='auto'
+            role='listbox'
+            aria-multiselectable={multiple || undefined}
+            onKeyDown={event => {
+              if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key))
+                return;
+              event.preventDefault();
+              const buttons = [
+                ...event.currentTarget.querySelectorAll(
+                  'button:not(:disabled)'
+                ),
+              ];
+              const current = buttons.indexOf(document.activeElement);
+              const next =
+                event.key === 'Home'
+                  ? 0
+                  : event.key === 'End'
+                    ? buttons.length - 1
+                    : event.key === 'ArrowDown'
+                      ? (current + 1) % buttons.length
+                      : (current <= 0 ? buttons.length : current) - 1;
+              buttons[next]?.focus();
+            }}
+          >
             {allowEmpty ? (
               <Box
                 as='button'
@@ -219,6 +256,11 @@ export default function SelectMenu({
                 bg='transparent'
                 _hover={{ bg: hoverBg }}
                 onPointerDown={chooseEmpty}
+                onClick={event => {
+                  if (event.detail === 0) chooseEmpty(event);
+                }}
+                role='option'
+                aria-selected={selected.length === 0}
               >
                 <Box w='0.85em' flexShrink={0}>
                   {selected.length === 0 ? (
@@ -249,6 +291,10 @@ export default function SelectMenu({
                   bg='transparent'
                   _hover={{ bg: hoverBg }}
                   onPointerDown={event => toggleValue(event, item.value)}
+                  onClick={event => {
+                    if (event.detail === 0) toggleValue(event, item.value);
+                  }}
+                  role='option'
                   aria-selected={isSelected}
                 >
                   <Box w='0.85em' flexShrink={0}>
@@ -262,6 +308,21 @@ export default function SelectMenu({
                 </Box>
               );
             })}
+            {actionLabel ? (
+              <Button
+                type='button'
+                variant='ghost'
+                size={size}
+                w='100%'
+                justifyContent='flex-start'
+                onClick={() => {
+                  onClose();
+                  onAction?.(triggerRef.current);
+                }}
+              >
+                {actionLabel}
+              </Button>
+            ) : null}
           </PopoverBody>
         </PopoverContent>
       </Popover>

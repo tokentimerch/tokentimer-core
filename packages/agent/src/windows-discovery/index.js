@@ -277,9 +277,11 @@ function buildPowerShellEnv() {
 }
 
 function decodeCodeUnits(value) {
+  if (typeof value === "string") return value.length > 0 ? value : null;
   if (!Array.isArray(value) || value.length === 0) return null;
   if (!value.every((unit) => Number.isInteger(unit) && unit >= 0 && unit <= 0xffff)) return null;
-  return String.fromCharCode(...value);
+  const decoded = String.fromCharCode(...value);
+  return decoded.length > 0 ? decoded : null;
 }
 
 // Windows PowerShell 5.1 serializes DateTime as "/Date(<epoch ms>)/".

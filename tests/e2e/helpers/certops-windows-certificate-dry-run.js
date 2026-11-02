@@ -1,6 +1,6 @@
 /*
  * Qualification notes: certificate-dry-run
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * After genuine installed CNG/IIS issuance and trusted TLS, require signed deploy and renew
  * dry_run_complete with respectively3 and6 persisted authenticated plan steps. Generic public jobs
  * cannot select execution mode: explicitly use production createCertificateJob(mode="dry_run"),

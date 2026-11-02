@@ -1,6 +1,6 @@
 /*
  * Qualification notes: stopped-offline-renewal-recovery
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Separate Azure-free certops-windows-stop-offline.yml Server2022/2025 RSA2048 lane holds real public
  * renewal DNS after signed claim/CNG/journal; owned result gateway may hold exact outcome before API
  * forwarding. Stop installed service; actual persisted900s lease+600s offline threshold must pass with

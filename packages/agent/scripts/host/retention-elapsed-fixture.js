@@ -1,6 +1,6 @@
 /*
  * Qualification notes: retention-two-cutover-expiry-grace
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * windows-retention-real-expiry-grace owns short-lived nonexportableA/B and long-livedC,actual IIS
  * cutoversA->B->C,immutable rows and independent native/TLS checks. First default-clock sweep
  * preserves both; one genuine wait reaches later expiry+300s with>=300s monotonic elapsed,unchanged24h

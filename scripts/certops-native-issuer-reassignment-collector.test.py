@@ -30,8 +30,8 @@ def fixture():
     p["nativeRequests"] = [dict(caConfig=config, caKeySha256=p["originCaKeySha256" if i == 0 else "destinationCaKeySha256"],
                                requestId="17", disposition=20, subjectRequestCount=1, fingerprintSha256=p["fingerprints"][i])
                            for i, config in enumerate(proof.CONFIGS)]
-    contract = qualification_manifest.load(ROOT / "docs/certops/qualification-suites.json")
-    slot = next(x for x in qualification_manifest.load(ROOT / "docs/certops/qualification-suites.json")["slots"] if x["suite"] == proof.SUITE)
+    contract = qualification_manifest.load(ROOT / ".github/maintainers/certops/qualification-suites.json")
+    slot = next(x for x in qualification_manifest.load(ROOT / ".github/maintainers/certops/qualification-suites.json")["slots"] if x["suite"] == proof.SUITE)
     digest = lambda file: dict(file=file, sha256=hashlib.sha256((ROOT / file).read_bytes()).hexdigest())
     stamp = "2026-10-18T00:00:00.000Z"
     return dict(schemaVersion=1, suite=proof.SUITE, candidateSha="a" * 40, status="passed", strict=True, evidenceLevel="real-host",

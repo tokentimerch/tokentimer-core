@@ -1,6 +1,6 @@
 /*
  * Qualification notes: retention-ledger-atomic-replace
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * windows-retention-atomic-replace-refusal uses owned synthetic public ledger only. Independently
  * measured PowerShell5.1 child holds actual row no-delete-share; atomic receipt matches
  * PID/creation,nonce and fileID. Production writeLedgerRow must fail specifically at rename,

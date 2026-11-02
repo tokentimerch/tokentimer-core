@@ -267,6 +267,9 @@ CSRF_TOKEN_RATE_LIMIT_MAX: {{ .Values.config.csrfTokenRateLimitMax | int64 | quo
 {{- if .Values.config.webhookAllowPrivateIps }}
 WEBHOOK_ALLOW_PRIVATE_IPS: "true"
 {{- end }}
+{{- if .Values.config.integrationAllowPrivateIps }}
+INTEGRATION_ALLOW_PRIVATE_IPS: "true"
+{{- end }}
 {{- if .Values.config.webhookProviderHosts }}
 WEBHOOK_PROVIDER_HOSTS: {{ .Values.config.webhookProviderHosts | quote }}
 {{- end }}
@@ -285,6 +288,10 @@ NODE_OPTIONS: "--disable-warning=UNDICI-EHPA"
 {{- if .Values.monitoring.metrics.enabled }}
 ENABLE_METRICS: "true"
 {{- end }}
+AUTO_SYNC_METRICS_ENABLED: {{ .Values.monitoring.metrics.autoSyncEnabled | toString | quote }}
+AUTO_SYNC_METRICS_LABELS: {{ .Values.monitoring.metrics.autoSyncLabels | default (list) | join "," | quote }}
+AUTO_SYNC_METRICS_MONITORING_GROUP: {{ .Values.monitoring.metrics.autoSyncMonitoringGroup | quote }}
+AUTO_SYNC_METRICS_EXTRA_LABELS: {{ .Values.monitoring.metrics.extraLabels | default (list) | join "," | quote }}
 {{- if .Values.monitoring.metrics.pushgatewayUrl }}
 PUSHGATEWAY_URL: {{ .Values.monitoring.metrics.pushgatewayUrl | quote }}
 {{- end }}

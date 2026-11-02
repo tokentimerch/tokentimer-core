@@ -18,7 +18,7 @@
  * unknown mutation/ownership/drain preserves private and public state. Private-key
  * material AND hashes never enter closed proof.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Mandatory native source; actual protected host execution remains pending.
  * Real public renewal

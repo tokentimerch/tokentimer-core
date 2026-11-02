@@ -98,3 +98,6 @@ reports/
 __pycache__/
 
 *.pyc
+
+# Default config files the domain discovery tool writes when it runs
+/subfinder/

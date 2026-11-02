@@ -16,7 +16,7 @@
  * Register separate approver fixture before manager membership, clean users after primary
  * workspace. No cross-issuer physical-CA, pending-continuation occupancy or worker-timer claim.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 // Pure proof refusals only. Actual API/CA/CNG/IIS execution belongs to the
 // disposable native helper; these checks do not qualify those observations.

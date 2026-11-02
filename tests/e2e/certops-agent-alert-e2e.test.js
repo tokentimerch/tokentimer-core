@@ -12,7 +12,7 @@ const { createHostGate } = require("../../packages/agent/scripts/host-gate");
 test("agent alert governance persists policy and rejects foreign groups and unauthorized roles", { timeout: 120000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires disposable API PostgreSQL and registration signing
+    // skip-reason: prerequisite - requires disposable API PostgreSQL and registration signing
     t.skip("Disposable API URL required"); return;
   }
   assert.ok(baseUrl); const fixture = await createApiFixture(baseUrl); let viewer, ready = false, primaryError;

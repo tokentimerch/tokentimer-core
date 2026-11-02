@@ -38,19 +38,29 @@ function enqueueDistributionEvent(client, workspaceId, eventType, dedupeKey, pay
   return require("./outbox").enqueueOutboxEvent({ client,workspaceId,eventType,dedupeKey,payload });
 }
 
-async function lockGroup(client, workspaceId, groupId, { allowInactive = false } = {}) {
+async function lockGroup(client, workspaceId, groupId, { allowInactive = false, forClaim = false } = {}) {
   groupId = normalizeDistributionId(groupId);
   const group = (await client.query(`SELECT g.*, p.ended_at FROM certops_distribution_groups g
     JOIN certops_management_periods p ON p.workspace_id=g.workspace_id AND p.id=g.management_period_id
-    WHERE g.workspace_id=$1 AND g.id=$2 FOR UPDATE OF g,p`, [workspaceId, groupId])).rows[0];
+    WHERE g.workspace_id=$1 AND g.id=$2 FOR UPDATE OF g,p${forClaim ? " SKIP LOCKED" : ""}`, [workspaceId, groupId])).rows[0];
+  if (!group && forClaim) {
+    // Dispatch already owns a job and a shared period lock. Never wait for a
+    // group editor or another claim to upgrade that period: yield this job and
+    // retry on the next poll. The unlocked probe only distinguishes contention
+    // from absence; authorization below always uses the successfully locked row.
+    const existing = await client.query(`SELECT 1 FROM certops_distribution_groups g
+      JOIN certops_management_periods p ON p.workspace_id=g.workspace_id AND p.id=g.management_period_id
+      WHERE g.workspace_id=$1 AND g.id=$2`, [workspaceId, groupId]);
+    if (existing.rowCount) fail("CERTOPS_DISTRIBUTION_BUSY");
+  }
   if (!group) fail("CERTOPS_DISTRIBUTION_NOT_FOUND", 404);
   if (!allowInactive && (group.state !== "active" || group.ended_at)) fail("CERTOPS_DISTRIBUTION_INACTIVE");
   return group;
 }
 
-async function resolveDistributionJobDefaults({ client, workspaceId, operation, subjectId, payload, assignedAgentId, jobId }) {
+async function resolveDistributionJobDefaults({ client, workspaceId, operation, subjectId, payload, assignedAgentId, jobId, forClaim = false }) {
   const intent = validateDistributionContract(payload.publication ? "publication" : "materialDeployment", payload.publication || payload.materialDeployment);
-  const group = await lockGroup(client, workspaceId, intent.groupId);
+  const group = await lockGroup(client, workspaceId, intent.groupId, { forClaim });
   // Manual renewals may omit routing. Publication always belongs to this
   // group's issuer; an explicitly different agent remains forbidden.
   if (payload.publication && !assignedAgentId) assignedAgentId = group.issuer_agent_id;
@@ -197,7 +207,7 @@ async function assertDeployableVersion(client, workspaceId, groupId, materialVer
   if (!version.rowCount) fail("CERTOPS_ROLLOUT_VERSION_INVALID");
 }
 
-async function createRolloutSnapshot({ client, workspaceId, groupId, materialVersionId, approvalJobId, approvedIntentHash, maxParallel = 1, verificationOnly = false }) {
+async function createRolloutSnapshot({ client, workspaceId, groupId, materialVersionId, approvalJobId, approvedIntentHash, maxParallel = 1, verificationOnly = false, approvalRequired = true }) {
   const existing = (await client.query(`SELECT id FROM certops_distribution_rollouts WHERE workspace_id=$1 AND approval_job_id=$2`, [workspaceId, approvalJobId])).rows[0];
   if (existing) return { rolloutId: existing.id, duplicate: true };
   const { bindings, intent } = await buildRolloutIntent({ client, workspaceId, groupId, materialVersionId, maxParallel, verificationOnly });
@@ -206,9 +216,18 @@ async function createRolloutSnapshot({ client, workspaceId, groupId, materialVer
   const approval = (await client.query(`SELECT approved_canonical_intent_hash, approved_payload_hash, status, payload
     FROM certificate_jobs WHERE workspace_id=$1 AND id=$2 FOR SHARE`, [workspaceId, approvalJobId])).rows[0];
   const { computeJobPayloadApprovalHash } = require("./jobApprovals");
-  if (!approval || approval.status !== "pending" || !approval.approved_payload_hash ||
-    computeJobPayloadApprovalHash(approval.payload) !== approval.approved_payload_hash ||
+  if (!approval || approval.status !== "pending" ||
     hashIntent(approval.payload.distributionRollout) !== approvedIntentHash) fail("CERTOPS_ROLLOUT_APPROVAL_REQUIRED");
+  if (approvalRequired) {
+    if (!approval.approved_payload_hash ||
+      computeJobPayloadApprovalHash(approval.payload) !== approval.approved_payload_hash) fail("CERTOPS_ROLLOUT_APPROVAL_REQUIRED");
+  } else {
+    // The opt-out is internal and applies only to a new, ungated request while
+    // the authoritative workspace policy is off. Keep the workspace locked
+    // through the snapshot; a concurrent policy change cannot bypass it.
+    const workspace = (await client.query("SELECT certops_require_approval_always FROM workspaces WHERE id=$1 FOR SHARE",[workspaceId])).rows[0];
+    if (!workspace || workspace.certops_require_approval_always !== false || approval.approved_payload_hash) fail("CERTOPS_ROLLOUT_APPROVAL_REQUIRED");
+  }
   const rolloutId = crypto.randomUUID();
   await client.query(`INSERT INTO certops_distribution_rollouts(id,workspace_id,group_id,material_version_id,
     generation,approved_intent_hash,approval_job_id,max_parallel,verification_only) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
@@ -246,10 +265,17 @@ async function acceptDeploymentReceipt({ client, workspaceId, agentId, job, rece
   if (!row || row.job_id !== job.id || row.assigned_agent_id !== agentId ||
     job.claimed_by_agent_id !== agentId || receipt.workspaceId !== workspaceId || receipt.groupId !== row.group_id ||
     receipt.bindingId !== row.binding_id || receipt.materialVersionId !== row.material_version_id ||
+    intent.verificationPolicy !== row.verification_policy ||
+    intent.authorizationRevision !== row.authorization_revision ||
+    intent.deploymentProfileRef !== row.deployment_profile_ref || intent.profileRevision !== row.profile_revision ||
     receipt.generation !== Number(row.generation) || receipt.fingerprintSha256 !== row.fingerprint_sha256 ||
     receipt.validTo !== new Date(row.valid_to).toISOString()) fail("CERTOPS_DEPLOYMENT_RECEIPT_MISMATCH");
   if (receipt.trustValidated && !receipt.servedVerified || receipt.servedVerified && !receipt.bound || receipt.bound && !receipt.installed || receipt.installed && !receipt.fetched) fail("CERTOPS_DEPLOYMENT_STAGES_INVALID", 422);
-  if (jobStatus === "succeeded" && (!receipt.servedVerified || (row.verification_policy === "trust" && !receipt.trustValidated))) fail("CERTOPS_DEPLOYMENT_ASSURANCE_MISSING", 422);
+  const filesOnly = row.verification_policy === "installed";
+  if (filesOnly && (receipt.bound || receipt.servedVerified || receipt.trustValidated)) fail("CERTOPS_DEPLOYMENT_ASSURANCE_MISMATCH", 422);
+  const assurance = filesOnly ? receipt.installed
+    : receipt.servedVerified && (row.verification_policy !== "trust" || receipt.trustValidated);
+  if (jobStatus === "succeeded" && !assurance) fail("CERTOPS_DEPLOYMENT_ASSURANCE_MISSING", 422);
   const lease = await client.query(`SELECT 1 FROM certificate_jobs WHERE workspace_id=$1 AND id=$2 AND claim_id=$3 AND lease_expires_at>clock_timestamp()`, [workspaceId, job.id, job.claim_id]);
   if (!lease.rowCount) fail("CERTOPS_DEPLOYMENT_CLAIM_EXPIRED");
   const age = Date.now() - Date.parse(receipt.observedAt);
@@ -268,12 +294,12 @@ async function acceptDeploymentReceipt({ client, workspaceId, agentId, job, rece
   const identityActive = identity?.rows[0]?.lifecycle_status === "active";
   const current = identityActive && row.binding_state === "active" && row.current_authorization_revision === row.authorization_revision &&
     Number(row.desired_generation) === receipt.generation && row.desired_material_version_id === receipt.materialVersionId &&
-    ["pending","deploying"].includes(row.rollout_state) && jobStatus === "succeeded" && receipt.servedVerified && (row.verification_policy !== "trust" || receipt.trustValidated);
+    ["pending","deploying"].includes(row.rollout_state) && jobStatus === "succeeded" && assurance;
   if (current) await client.query(`UPDATE certops_consumer_current_state SET accepted_generation=$3,
     observed_material_version_id=$4,observed_fingerprint_sha256=$5,observed_valid_to=$6,verification_method=$7,observed_at=$8
     WHERE workspace_id=$1 AND binding_id=$2 AND accepted_generation<=$3`, [workspaceId, intent.bindingId,
     receipt.generation, receipt.materialVersionId, receipt.fingerprintSha256, receipt.validTo,
-    receipt.trustValidated ? "trust" : "served", receipt.observedAt]);
+    filesOnly ? "installed" : receipt.trustValidated ? "trust" : "served", receipt.observedAt]);
   await enqueueDistributionEvent(client, workspaceId, "distribution_rollout_requested", `${intent.rolloutId}:${job.id}:${job.claim_id}`, { groupId: intent.groupId, rolloutId: intent.rolloutId });
   return { historicalOnly: !current, retirementConflict: !identityActive, stage };
 }
@@ -300,11 +326,16 @@ async function consumerMatrix({ client, workspaceId, groupId, groupIds }) {
         WHERE proof.workspace_id=b.workspace_id AND proof.binding_id=b.id AND rollout.generation=s.accepted_generation
           AND proof.authorization_revision=b.authorization_revision AND identity.lifecycle_status='active'
           AND current_group.state='active' AND period.ended_at IS NULL
-          AND material.id=s.observed_material_version_id AND material.certificate_identity_id=period.current_identity_id
-          AND proof.stage IN ('served_verified','trust_validated'))
+          AND material.id=s.observed_material_version_id
+          AND proof.verification_policy=b.verification_policy
+          AND ((b.verification_policy='installed' AND proof.stage='installed' AND s.verification_method='installed')
+            OR (b.verification_policy='served' AND proof.stage IN ('served_verified','trust_validated') AND s.verification_method IN ('served','trust'))
+            OR (b.verification_policy='trust' AND proof.stage='trust_validated' AND s.verification_method='trust')))
       AND s.observed_at>clock_timestamp()-b.freshness_seconds*interval '1 second') AS converged,
-    (SELECT jsonb_build_object('stage',d.stage,'failureCode',d.failure_code,'jobId',d.job_id)
+    (SELECT jsonb_build_object('stage',d.stage,'failureCode',COALESCE(d.failure_code,j.error_code),'jobId',d.job_id,
+      'rolloutId',r.id,'rolloutState',r.state,'rolloutRequestJobId',r.approval_job_id)
       FROM certops_consumer_deployments d JOIN certops_distribution_rollouts r ON r.workspace_id=d.workspace_id AND r.id=d.rollout_id
+      LEFT JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=d.job_id
       WHERE d.workspace_id=b.workspace_id AND d.binding_id=b.id ORDER BY r.generation DESC LIMIT 1) AS latest_deployment
     FROM certops_consumer_bindings b LEFT JOIN certops_consumer_current_state s
     ON s.workspace_id=b.workspace_id AND s.binding_id=b.id
@@ -312,7 +343,10 @@ async function consumerMatrix({ client, workspaceId, groupId, groupIds }) {
     LEFT JOIN certops_material_versions desired ON desired.workspace_id=s.workspace_id AND desired.id=s.desired_material_version_id
     LEFT JOIN certops_material_versions observed ON observed.workspace_id=s.workspace_id AND observed.id=s.observed_material_version_id
     WHERE b.workspace_id=$1 AND b.group_id=ANY($2::uuid[]) ORDER BY b.id`,
-  [workspaceId, ids])).rows;
+  [workspaceId, ids])).rows.map(row => ({ ...row,
+    files_installed: row.converged === true && row.verification_policy === "installed",
+    live_verified: row.converged === true && ["served", "trust"].includes(row.verification_policy),
+  }));
 }
 
 module.exports = { validateDistributionContract, normalizeDistributionId, hashIntent, enqueueDistributionEvent, buildRolloutIntent, lockGroup, resolveDistributionJobDefaults, createGroupForSource, allocateMaterialVersion,

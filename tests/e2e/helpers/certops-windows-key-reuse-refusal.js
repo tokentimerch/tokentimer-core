@@ -1,6 +1,6 @@
 /*
  * Qualification notes: acme-key-rotation-policy
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Windows ACME requires rotateOnRenew=true; omitted inventory-derived policy defaults true, while
  * explicit false remains refused with WINDOWS_ACME_KEY_REUSE_UNSUPPORTED until an operator edits it.
  * Signed keyRotation=false is rejected before native work/CA allocation even for dry runs; legacy

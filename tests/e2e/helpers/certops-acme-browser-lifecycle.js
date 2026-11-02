@@ -17,7 +17,7 @@
  * scans/public inventory; this foreground lane does not qualify installed discovery.
  * Strict source-bound report only, no screenshots/intercepts/fake executor outcomes.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Source-only native ACME UI actor. The disposable parent owns the real agent,
  * CA, files and TLS service; this actor independently observes their identities.

@@ -11,7 +11,7 @@
  * blocks teardown. Hierarchy-only nativeHttpIntermediateCrl cannot be replaced by root suite or
  * claim leaf HTTP/OCSP/signed deferred continuation.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 // Supporting protocol and bounded-file tests; no native chain, firewall or CA.
 const test = require("node:test");

@@ -17,7 +17,7 @@
  * configs, backups/native logs stay local; named sanitized results only. No API/systemd,
  * released-package, multi-target transaction or failed-rollback claim.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 /**
  * Qualify real certificate deployment/reload in the selected native consuming server.
  * certops-nginx-qualification.yml provisions the disposable nginx/Apache/HAProxy host.

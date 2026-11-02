@@ -23,7 +23,7 @@ test("ambiguous missing and malformed groups cannot hide source obligations", ()
   ]) assert.throws(() => expand({...compact(), ...patch}));
 });
 test("every expanded committed slot retains a bounded unique source list", () => {
-  const raw = require("../docs/certops/qualification-suites.json");
+  const raw = require("../.github/maintainers/certops/qualification-suites.json");
   assert.equal(manifest.slots.length, raw.slots.reduce((count, slot) => count + (slot.environmentVariants ? Object.keys(slot.environmentVariants).length : 1), 0));
   assert.deepEqual(manifest.scenarios, raw.scenarios);
   for (const slot of manifest.slots) {

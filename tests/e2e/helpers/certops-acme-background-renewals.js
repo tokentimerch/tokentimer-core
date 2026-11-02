@@ -15,7 +15,7 @@
  * Both clients need their own native execution; direct sweeps and pure observer checks
  * do not qualify unattended worker timing.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Two actual CA renewals admitted by the unmodified production worker's
  * default minute cron. No scheduler call, clock override, inventory-date write

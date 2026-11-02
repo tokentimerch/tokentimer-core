@@ -10,8 +10,7 @@ Status values: Proposed, Accepted, Superseded, Deprecated. Date each status chan
 CertOps is maintained as a living architecture baseline until GA. The baseline is
 stable enough for parallel Core, Cloud, Enterprise, and Agent implementation, but
 it is not immutable. Domain vocabulary for the program lives in
-[`docs/certops/CONTEXT.md`](../certops/CONTEXT.md) (purgeable when CertOps
-graduates).
+[`.github/maintainers/certops/CONTEXT.md`](../../.github/maintainers/certops/CONTEXT.md).
 
 We distinguish:
 

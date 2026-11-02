@@ -1,6 +1,6 @@
 /*
  * Qualification notes: protected-recovery
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Orphan journal,weak ACL and unreadable journal fail closed. Query only owned service;
  * protectedKeyDeleted/inUseKeyDeleted/nativeExecutionQualified remain false. Missing journal host
  * fails,blanket netsh reset refused; no retention/journal catalog promotion.

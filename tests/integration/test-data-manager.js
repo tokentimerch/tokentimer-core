@@ -402,6 +402,7 @@ class TestDataManager {
       case "general":
       default:
         categorySpecificData = {
+          type: "other",
           location: "Test Location",
           used_by: "Test Application",
         };

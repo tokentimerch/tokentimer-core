@@ -1,6 +1,6 @@
 /*
  * Qualification notes: native-orphan-journal-protection
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Three real CNG RSA controls use explicit owned local job/prepared-enrollment prerequisites, never
  * synthetic signed claims/CA requests. Unaccepted orphan must disappear; open-enrollment key and
  * untracked control must retain verified private possession. Malformed journal defers cleanup,

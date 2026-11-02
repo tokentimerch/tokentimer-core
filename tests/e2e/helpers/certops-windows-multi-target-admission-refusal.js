@@ -1,6 +1,6 @@
 /*
  * Qualification notes: multi-target-admission-refusal
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * Against genuine installed CNG/IIS certificate submit public multi-target renewal/profile request and
  * require specific unsupported admission refusal before job/CA allocation. Independently preserve
  * profile, job inventory, certificate/key identity/export policy, bindings/trusted TLS and protected

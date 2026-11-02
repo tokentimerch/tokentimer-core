@@ -5,7 +5,7 @@
  * private keys. An independent TLS client trusts only those fixture certificates and verifies the
  * exact served fingerprint before each rotation.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Supporting API/PostgreSQL qualification: fresh TLS observation cannot reactivate a retired identity.
@@ -27,7 +27,7 @@ const { createHostGate } = require("../../packages/agent/scripts/host-gate");
 test("fresh TLS observation cannot reactivate a retired identity", { timeout: 120000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires real TLS endpoint and disposable authenticated API
+    // skip-reason: prerequisite - requires real TLS endpoint and disposable authenticated API
     t.skip("Disposable API URL required"); return;
   }
   assert.ok(baseUrl); const fixture = await createApiFixture(baseUrl);

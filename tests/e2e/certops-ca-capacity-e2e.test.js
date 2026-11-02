@@ -7,7 +7,7 @@
  * actual requester rejection releases capacity for another request. Failed reservations preserve job,
  * certificate and outbox counts.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Supporting API/PostgreSQL qualification: public issuance shares race-safe CA admission and terminal release.
@@ -20,7 +20,7 @@ const {createApiFixture}=require("./helpers/certops-api-fixture"),{createHostGat
 const scenarios=["capacity-public-concurrent-reservation","capacity-public-idempotency-at-cap","capacity-public-refusal-atomic","capacity-public-distinct-ca","capacity-public-rejection-releases","capacity-public-cleanup"];
 test("public issuance shares race-safe CA admission and terminal release",{timeout:120000},async t=>{
  const baseUrl=process.env.CERTOPS_CSR_API_URL;if(!baseUrl&&process.env.CERTOPS_E2E_REQUIRED!=="1"){
-  // skip-reason: no-host - requires disposable API PostgreSQL with default per-CA cap five
+  // skip-reason: prerequisite - requires disposable API PostgreSQL with default per-CA cap five
   t.skip("Disposable API and PostgreSQL required");return;
  }
  assert.ok(baseUrl);const fixture=await createApiFixture(baseUrl);let ready=false,failure;const gate=createHostGate({suite:"ca-capacity-api",evidenceLevel:"integration",strict:true,reportPath:process.env.CERTOPS_CA_CAPACITY_REPORT,requiredCapabilities:["api","postgres"],fixtureSource:{file:"tests/e2e/certops-ca-capacity-e2e.test.js",sha256:crypto.createHash("sha256").update(fs.readFileSync(__filename)).digest("hex")},probeCapabilities:()=>({api:{available:true},postgres:{available:true}})});gate.report.executionScope="Actual public pending-approval issuance admission under default cap five; no CA requests, native execution, fake terminal results or scheduler capacity claims";

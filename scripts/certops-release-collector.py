@@ -121,7 +121,7 @@ def validate_run_ids(run_ids, limits):
 
 
 def catalog_coverage():
-    catalog = qualification_manifest.load(ROOT / "docs/certops/qualification-suites.json")
+    catalog = qualification_manifest.load(ROOT / ".github/maintainers/certops/qualification-suites.json")
     rows = catalog.get("scenarios")
     if catalog.get("schemaVersion") != 1 or not isinstance(rows, list) or not rows:
         raise ValueError("Invalid committed scenario catalog")
@@ -208,7 +208,7 @@ def validate_report_workflow(report, workflow):
         raise ValueError('Normal CI may supply only AD CS API qualification reports')
 
 def declared_sources():
-    slots = qualification_manifest.load(ROOT / "docs/certops/qualification-suites.json")["slots"]
+    slots = qualification_manifest.load(ROOT / ".github/maintainers/certops/qualification-suites.json")["slots"]
     declared = {source for slot in slots for source in slot.get("requiredSources", [])}
     declared.update(slot["source"] for slot in slots if "source" in slot)
     groups = qualification_manifest.load_groups(ROOT / "tests/integration/certops-qualification-groups.json")
@@ -1328,7 +1328,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             if not isinstance(cleanup, dict) or cleanup.get("status") not in ("passed", "failed", "not-run"):
                 raise ValueError("Invalid owned cleanup evidence")
             result["cleanup"] = {"status": cleanup["status"]}
-        contract = qualification_manifest.load(ROOT / "docs/certops/qualification-suites.json")
+        contract = qualification_manifest.load(ROOT / ".github/maintainers/certops/qualification-suites.json")
         known_ids = contract["suites"].get(value["suite"], [])
         known_caps = contract["requiredCapabilities"].get(value["suite"], [])
         for key, known in (("requiredScenarios", known_ids), ("missingScenarios", known_ids), ("requiredCapabilities", known_caps), ("missingCapabilities", known_caps)):
@@ -2089,7 +2089,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
 
 
 def committed_case_names(scope, kind):
-    slots = qualification_manifest.load(ROOT / "docs/certops/qualification-suites.json")["slots"]
+    slots = qualification_manifest.load(ROOT / ".github/maintainers/certops/qualification-suites.json")["slots"]
     matching = [slot for slot in slots if slot["kind"] == kind and slot["suite"] == scope]
     if kind == "database":
         groups = qualification_manifest.load_groups(ROOT / "tests/integration/certops-qualification-groups.json")
@@ -2282,7 +2282,7 @@ def main(arguments=()):
     run_ids = json.loads(os.environ.get("CERTOPS_RELEASE_RUN_IDS", "[]"))
     if not re.fullmatch(r"[a-f0-9]{40}", candidate) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository) or not token:
         raise ValueError("Explicit candidate, repository and read-only workflow token required")
-    matrix = qualification_manifest.load(ROOT / "docs/certops/qualification-suites.json")
+    matrix = qualification_manifest.load(ROOT / ".github/maintainers/certops/qualification-suites.json")
     selection=qualification_profiles.select_profile(matrix,profile)
     selected_matrix=selection["specification"]
     limits = collection_limits(len(selected_matrix["slots"]))
@@ -2395,7 +2395,7 @@ def failed_profile_summary(arguments, environment, root=ROOT):
     try:
         profile=qualification_profiles.requested_profile(arguments,environment)
         result["qualificationProfile"]=profile
-        matrix=qualification_manifest.load(root / "docs/certops/qualification-suites.json")
+        matrix=qualification_manifest.load(root / ".github/maintainers/certops/qualification-suites.json")
         selected=qualification_profiles.select_profile(matrix,profile)
         result.update(qualification_profiles.summary_fields(selected))
         result["mandatoryEnvironments"]=len(selected["selectedSlotIds"])

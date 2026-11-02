@@ -12,7 +12,7 @@
  * under later finalizer; independently prove resource-group absence/cleanup. Hash/timing alone is
  * not proof.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Actual release verifier over parsed synthetic reports, not native execution. */
 const test=require("node:test"),assert=require("node:assert/strict"),{artifact,candidateSha}=require("./test-support/adcs-ttl24h-artifact.cjs"),h=require("./certops-adcs-ttl24h-proof"),{verifyMatrix}=require("./certops-release-qualification");

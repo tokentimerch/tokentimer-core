@@ -16,7 +16,7 @@
  * receipt refusal only: no native Node 24 certificate, agent, CA, service or network
  * execution is implied, nor atomic process-tree containment.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 
 /** External observer for an actual production-launched, still-armed command.

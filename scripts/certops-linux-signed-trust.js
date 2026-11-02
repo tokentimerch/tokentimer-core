@@ -28,7 +28,7 @@
  * installed-service/background or automated reconciliation claim; pure
  * route/proof/directory tests are supporting.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Public signed Ubuntu trust jobs. Manual workflow_dispatch on a disposable host only. */
 const assert = require("node:assert/strict"),

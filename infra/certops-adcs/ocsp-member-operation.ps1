@@ -13,6 +13,24 @@ param(
 )
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
+# The caller drops stderr, so leave one bounded, redacted failure line beside the
+# private output for it to report. Best effort: never mask the original failure.
+trap {
+ try {
+  $detail=[string]$_.Exception.Message+' | '+(([string]$_.ScriptStackTrace -split "`n"|Select-Object -First 3) -join ' ; ')
+  if($env:CERTOPS_ADCS_OFFICER_PASSWORD){ $detail=$detail.Replace($env:CERTOPS_ADCS_OFFICER_PASSWORD,'[redacted]') }
+  $detail=([regex]::Replace($detail,'[^\x20-\x7e]+',' ')).Trim()
+  if($detail.Length -gt 1024){ $detail=$detail.Substring(0,1024) }
+  $acl=[Security.AccessControl.FileSecurity]::new();$acl.SetAccessRuleProtection($true,$false)
+  foreach($sid in @('S-1-5-18','S-1-5-32-544')) {
+   $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($sid),[Security.AccessControl.FileSystemRights]::FullControl,[Security.AccessControl.AccessControlType]::Allow))
+  }
+  $bytes=[Text.UTF8Encoding]::new($false).GetBytes($detail)
+  $stream=[IO.FileStream]::new($OutputPath+'.error',[IO.FileMode]::CreateNew,[Security.AccessControl.FileSystemRights]'Write,ChangePermissions',[IO.FileShare]::None,4096,[IO.FileOptions]::None,$acl)
+  try { $stream.Write($bytes,0,$bytes.Length) } finally { $stream.Dispose() }
+ } catch {}
+ break
+}
 if($env:CERTOPS_ADCS_DISPOSABLE_LAB -cne '1' -or
    (Get-CimInstance Win32_ComputerSystem).Domain -ine 'lab.certops.test' -or
    [Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne 'S-1-5-18' -or

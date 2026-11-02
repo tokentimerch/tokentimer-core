@@ -9,7 +9,7 @@ const {spawnSync}=require("node:child_process"),{createApiFixture}=require("./he
 test("independent public trust anchors remain scoped through concurrent approval and retirement",{timeout:120000},async t=>{
  const baseUrl=process.env.CERTOPS_CSR_API_URL;
  if(!baseUrl&&process.env.CERTOPS_E2E_REQUIRED!=="1"){
-  // skip-reason: no-host - requires disposable API PostgreSQL and real public CA certificates
+  // skip-reason: prerequisite - requires disposable API PostgreSQL and real public CA certificates
   t.skip("Disposable API URL required");return;
  }
  assert.ok(baseUrl);const fixture=await createApiFixture(baseUrl),root=fs.mkdtempSync(path.join(os.tmpdir(),"trust-multi-"));let ready=false,failure;

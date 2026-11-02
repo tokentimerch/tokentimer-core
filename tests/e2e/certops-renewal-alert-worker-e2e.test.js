@@ -9,7 +9,7 @@
  * first-issuance failure, requester approval rejection and a completed dry run must leave one owned
  * renewal alert.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /**
  * Qualify genuine renewal outbox processing and captured SMTP delivery in a disposable stack.
@@ -24,7 +24,7 @@ function decodeSubject(value){assert.ok(String(value).length<=2048);return Strin
 async function wait(check){for(let i=0;i<80;i++){if(await check())return;await new Promise(resolve=>setTimeout(resolve,250));}throw new Error("Owned renewal alert observation exceeded bound");}
 test("owned renewal failure outbox reaches actual delivery worker SMTP receipt",{timeout:180000},async t=>{
  const baseUrl=process.env.CERTOPS_RENEWAL_ALERT_API_URL;if(!baseUrl&&process.env.CERTOPS_E2E_REQUIRED!=="1"){
-  // skip-reason: no-host - requires separate empty disposable API PostgreSQL and MailHog
+  // skip-reason: prerequisite - requires separate empty disposable API PostgreSQL and MailHog
   t.skip("Separate renewal alert API/PostgreSQL/MailHog required");return;
  }
  assert.equal(process.env.CERTOPS_RENEWAL_ALERT_DISPOSABLE_STACK,"1");assert.ok(baseUrl);const endpoint=new URL(baseUrl);assert.equal(endpoint.protocol,"http:");assert.ok(["localhost","127.0.0.1"].includes(endpoint.hostname));assert.ok(["localhost","127.0.0.1"].includes(process.env.DB_HOST));assert.ok(Number.isSafeInteger(Number(process.env.DB_PORT))&&Number(process.env.DB_PORT)>0&&Number(process.env.DB_PORT)<=65535);assert.ok(Number.isSafeInteger(Number(process.env.CERTOPS_RENEWAL_ALERT_SMTP_PORT))&&Number(process.env.CERTOPS_RENEWAL_ALERT_SMTP_PORT)>1024&&Number(process.env.CERTOPS_RENEWAL_ALERT_SMTP_PORT)<=65535);const mail=new URL(process.env.CERTOPS_RENEWAL_ALERT_MAILHOG_URL);assert.equal(mail.protocol,"http:");assert.ok(["localhost","127.0.0.1"].includes(mail.hostname));const fixture=await createApiFixture(baseUrl),root=fs.mkdtempSync(path.join(os.tmpdir(),"certops-renewal-mail-"));let ready=false,failure;

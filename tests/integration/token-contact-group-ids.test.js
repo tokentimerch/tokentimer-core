@@ -64,7 +64,7 @@ describe("Token contact_group_ids HTTP round-trip", function () {
       .send({
         name: `Plural Groups ${Date.now()}`,
         type: "api_key",
-        category: "general",
+        category: "key_secret",
         expiresAt: soon.toISOString().slice(0, 10),
         workspace_id: ws,
         contact_group_ids: ["zeta", "alpha"],

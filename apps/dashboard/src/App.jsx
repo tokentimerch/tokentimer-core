@@ -59,6 +59,7 @@ import {
 import toast, { Toaster } from 'react-hot-toast';
 import { HelmetProvider } from 'react-helmet-async';
 import { trackEvent } from './utils/analytics.js';
+import { isTourCompleted, markTourCompleted } from './utils/tourStorage.js';
 import { FiTrash2, FiPlus, FiX } from 'react-icons/fi';
 import {
   Activity as ActivityIcon,
@@ -74,6 +75,7 @@ import SEO from './components/SEO.jsx';
 import Footer from './components/Footer';
 import ErrorBoundary from './components/ErrorBoundary';
 import WelcomeModal from './components/WelcomeModal';
+import SetupNudge from './components/onboarding/SetupNudge.jsx';
 import ProductTour from './components/ProductTour';
 import { AccessibleSpinner } from './components/Accessibility';
 import ImportTokensModal from './components/ImportTokensModal.jsx';
@@ -140,7 +142,10 @@ import apiClient, {
   showSuccessMessage,
 } from './utils/apiClient';
 
-import { isNeverExpires, NEVER_EXPIRES_DATE_VALUE } from './utils/dateUtils';
+import {
+  getDaysUntilExpiration as calendarDaysUntilExpiration,
+  NEVER_EXPIRES_DATE_VALUE,
+} from './utils/dateUtils';
 import { ContactGroupPluralWritesProvider } from './utils/contactGroupPluralWrites.jsx';
 import {
   TOUR_MOCK_TOKENS,
@@ -159,10 +164,15 @@ const AlertPreferences = lazy(() => import('./pages/AlertPreferences'));
 const UserPreferences = lazy(() => import('./pages/UserPreferences'));
 const ControlCenter = lazy(() => import('./pages/ControlCenter'));
 const CertOpsRoutes = lazy(() => import('./pages/certops/CertOpsRoutes.jsx'));
+const OnboardingRoutes = lazy(
+  () => import('./components/onboarding/OnboardingRoutes.jsx')
+);
 const Audit = lazy(() => import('./pages/Audit'));
 const Workspaces = lazy(() => import('./pages/Workspaces.jsx'));
 const SystemSettings = lazy(() => import('./pages/SystemSettings.jsx'));
-import { WorkspaceProvider, useWorkspace } from './utils/WorkspaceContext.jsx';
+import { useWorkspace } from './utils/WorkspaceContext.jsx';
+import { onboardingPath } from './utils/onboardingPath.js';
+import { ContactGroupWorkspaceProvider } from './utils/ContactGroupCreationContext.jsx';
 import {
   pickAccessibleWorkspace,
   readLastWorkspaceId,
@@ -225,7 +235,6 @@ function buildAccountPathFromDashboardSearch(search) {
 // Now uses centralized color system from styles/colors.js
 const _getSectionColorScheme = getColorFromString;
 
-const MS_PER_DAY = 1000 * 60 * 60 * 24;
 const PRODUCT_TOUR_MOBILE_BREAKPOINT_PX = 992;
 const INTRODUCTION_VIDEO_URL = 'https://tokentimer.ch/blog/video-introduction';
 
@@ -263,14 +272,7 @@ function useProductTourMobileViewport() {
 }
 
 function getDaysUntilExpiration(expiry) {
-  if (!expiry || isNeverExpires(expiry)) return Number.POSITIVE_INFINITY;
-  const expirationDate = new Date(expiry);
-  if (Number.isNaN(expirationDate.getTime())) return Number.POSITIVE_INFINITY;
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  expirationDate.setHours(0, 0, 0, 0);
-  return Math.ceil((expirationDate.getTime() - today.getTime()) / MS_PER_DAY);
+  return calendarDaysUntilExpiration(expiry) ?? Number.POSITIVE_INFINITY;
 }
 
 function getDashboardStatusMeta(expiry) {
@@ -2453,7 +2455,7 @@ function App() {
                       />
                     </div>
                   ) : (
-                    <WorkspaceProvider accountId={session?.id}>
+                    <ContactGroupWorkspaceProvider accountId={session?.id}>
                       <Suspense
                         fallback={
                           <Flex align='center' justify='center' minH='60vh'>
@@ -2630,6 +2632,21 @@ function App() {
                           <Route
                             path='/usage'
                             element={<Navigate to='/control-center' replace />}
+                          />
+                          <Route
+                            path='/onboarding/*'
+                            element={
+                              <RequireManagerRoute
+                                session={session}
+                                scope='active-workspace'
+                              >
+                                <OnboardingRoutes
+                                  session={session}
+                                  onLogout={handleLogout}
+                                  onAccountClick={handleHelpAccountClick}
+                                />
+                              </RequireManagerRoute>
+                            }
                           />
                           <Route
                             path='/certops/*'
@@ -2809,7 +2826,7 @@ function App() {
                           <Route path='*' element={<NotFound />} />
                         </Routes>
                       </Suspense>
-                    </WorkspaceProvider>
+                    </ContactGroupWorkspaceProvider>
                   )}
                 </Box>
                 <Footer />
@@ -2927,6 +2944,10 @@ function DashboardWrapper({
   createTokenNotesFlushRef,
 }) {
   const { pageBg } = useDashboardTheme();
+  const navigateToOnboarding = useNavigate();
+  const { workspaceId: nudgeWorkspaceId } = useWorkspace();
+  const openOnboarding = () =>
+    navigateToOnboarding(onboardingPath({ workspaceId: nudgeWorkspaceId }));
 
   // Restore product tour after hard navigation back from /workspace-preferences
   useEffect(() => {
@@ -3037,6 +3058,18 @@ function DashboardWrapper({
           }}
         >
           <DashboardView
+            setupNudge={
+              <SetupNudge
+                workspaceId={nudgeWorkspaceId}
+                isViewer={isViewer}
+                suppress={
+                  showWelcomeModal ||
+                  _showProductTour ||
+                  location.pathname !== '/dashboard'
+                }
+                onStart={openOnboarding}
+              />
+            }
             _session={session}
             tokens={tokens}
             tokensLoading={tokensLoading}
@@ -3109,18 +3142,16 @@ function DashboardWrapper({
           try {
             const isNewUser = welcomeData?.isNewUser;
             if (isNewUser && window.location.pathname === '/dashboard') {
-              const hasCompletedTour = localStorage.getItem(
-                'tt_tour_dashboard_v1'
-              );
+              const hasCompletedTour = isTourCompleted('dashboard');
               if (!hasCompletedTour) {
                 // Mark as completed/skipped so tour doesn't auto-start
-                localStorage.setItem('tt_tour_dashboard_v1', 'true');
+                markTourCompleted('dashboard');
               }
             }
           } catch (_) {}
         }}
-        onStartTour={
-          isViewer || isProductTourMobile
+        onStartSetup={
+          isViewer
             ? undefined
             : () => {
                 setShowWelcomeModal(false);
@@ -3136,16 +3167,8 @@ function DashboardWrapper({
                 } catch (_) {}
                 try {
                   localStorage.removeItem('tt_welcome_pending');
-                  localStorage.removeItem('tt_tour_dashboard_v1');
                 } catch (_) {}
-
-                if (window.location.pathname === '/dashboard') {
-                  setForceRunTour(true);
-                  setTimeout(() => {
-                    setTourType('dashboard');
-                    setShowProductTour(true);
-                  }, 500);
-                }
+                openOnboarding();
               }
         }
         introductionVideoUrl={
@@ -3304,6 +3327,7 @@ function DashboardView({
   onLogout,
   selectedToken,
   handleCloseTokenModal,
+  setupNudge = null,
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -5037,6 +5061,7 @@ function DashboardView({
         pageTitle='Asset Inventory'
       >
         <Box px={{ base: 4, lg: 4, '2xl': 5 }} py={{ base: 5, lg: 3 }}>
+          {setupNudge}
           {/* Token creation actions (hidden for viewers) */}
           {!isViewer && (
             <>

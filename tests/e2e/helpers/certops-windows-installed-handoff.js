@@ -1,6 +1,6 @@
 /*
  * Qualification notes: installed-state-handoff
- * Shared setup, dispatch and evidence rules: docs/certops/e2e-qualification.md.
+ * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
  * CLI registers only without credential; existing credential wins over bootstrap and installer
  * preserves state. After real retirement/SCM stop preserve original bytes, copy allowlisted
  * keys/receipts/retention/trust/completed journals/replay/pin to new protected owned state, refusing

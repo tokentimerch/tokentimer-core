@@ -10,7 +10,7 @@
  * actual installed generations/CNG/IIS/TLS/DB/journal. Browser/trust must drain; pure decision
  * controls execute no browser/CA/agent.
  *
- * Shared setup, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
  */
 /** Pure browser-job proof/decision controls; no browser, API, role change,
  * approval, CA, machine key or installed agent executes in this test. */

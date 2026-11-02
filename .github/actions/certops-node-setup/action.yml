@@ -3,9 +3,9 @@ description: Shared pinned Node and pnpm installation for Linux qualification jo
 runs:
   using: composite
   steps:
-    - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+    - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
       with:
-        version: '11.13.0'
+        version: '11.28.8'
     - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
       with:
         node-version: '24'

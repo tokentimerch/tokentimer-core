@@ -87,6 +87,20 @@ const resolveOpenApiSpecPath = () => {
   );
 };
 const app = express();
+const { requestCorrelation } = require("./utils/request-context");
+app.use(requestCorrelation);
+app.use((req, res, next) => {
+  res.once("finish", () => {
+    logger.info("HTTP request completed", {
+      correlationId: req.correlationId,
+      method: req.method,
+      statusCode: res.statusCode,
+      // Never copy raw URLs: paths and query strings can contain credentials.
+      route: typeof req.route?.path === "string" ? req.route.path : "unmatched",
+    });
+  });
+  next();
+});
 
 // Prometheus metrics (shared module ensures counters are registered once)
 const {
@@ -100,6 +114,7 @@ const metricsEnabled = process.env.ENABLE_METRICS === "true";
 
 // Metrics endpoint (Prometheus scrape)
 if (metricsEnabled) {
+  require("./services/autoSyncMetrics").registerAutoSyncMetrics(client.register);
   app.get("/metrics", async (_req, res) => {
     try {
       res.set("Content-Type", client.register.contentType);
@@ -225,6 +240,7 @@ app.use(
 
 // 2. CORS with strict configuration (include API_URL for split-host dashboard → API)
 const corsOptions = {
+  exposedHeaders: ["X-Request-Id"],
   origin: buildCorsOrigins(process.env),
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -656,6 +672,8 @@ app.use(require("./routes/usage"));
 app.use(require("./routes/controlCenter"));
 // --- ALERTS (extracted to routes/alerts.js) ---
 app.use(require("./routes/alerts"));
+// --- ONBOARDING (extracted to routes/onboarding.js) ---
+app.use(require("./routes/onboarding"));
 // --- ACCOUNT (extracted to routes/account.js) ---
 app.use(require("./routes/account"));
 // --- INTEGRATIONS (extracted to routes/integrations.js) ---

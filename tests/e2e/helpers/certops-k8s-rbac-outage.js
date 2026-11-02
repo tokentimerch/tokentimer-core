@@ -6,7 +6,7 @@
  * pending until a live cluster executes; absent capabilities are not passes and
  * controller catalog mappings remain annotations.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 
 /** Local Kubernetes outage, watch, and RBAC contract. Each fault fails

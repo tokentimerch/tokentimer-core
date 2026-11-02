@@ -49,7 +49,7 @@ import { showSuccess } from '../../utils/toast.js';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { listIssuers } from './certopsEnrollmentsApi';
 import { listAllIssuers } from './certopsFormat.js';
-import { useCertOpsIsWorkspaceAdmin } from './useCertOps.js';
+import { useCertOpsCanManage } from './useCertOps.js';
 import {
   useCertOpsRenewalProfiles,
   useUpdateRenewalProfile,
@@ -422,7 +422,7 @@ function LeadTimeEditor({ profile, onSave, saving, disabled }) {
 }
 
 export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
-  const isAdmin = useCertOpsIsWorkspaceAdmin();
+  const canManage = useCertOpsCanManage();
   const { workspaceId } = useWorkspace();
   const {
     certificates: boundCertificates,
@@ -445,7 +445,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
     });
   const { savingIds, errors: saveErrors, save } = useUpdateRenewalProfile();
   useEffect(() => {
-    if (!isAdmin || !workspaceId) return undefined;
+    if (!canManage || !workspaceId) return undefined;
     let cancelled = false;
     listAllIssuers(listIssuers, workspaceId, { includeUnconfigured: false })
       .then(items => {
@@ -457,7 +457,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
     return () => {
       cancelled = true;
     };
-  }, [isAdmin, workspaceId, profileWizardOpen]);
+  }, [canManage, workspaceId, profileWizardOpen]);
 
   const [disableTarget, setDisableTarget] = useState(null);
   const [detailsTarget, setDetailsTarget] = useState(null);
@@ -542,9 +542,9 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
         issuers={issuers}
         onCreated={refresh}
       />
-      {isAdmin || (!loading && profiles.length > 0 && pagination) ? (
+      {canManage || (!loading && profiles.length > 0 && pagination) ? (
         <Flex align='center' justify='flex-end' gap={3} mb={4} wrap='wrap'>
-          {isAdmin ? (
+          {canManage ? (
             <Button
               size='sm'
               colorScheme='blue'
@@ -686,7 +686,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                         <CertOpsMobileFieldLabel color={muted}>
                           Issuer
                         </CertOpsMobileFieldLabel>
-                        {isAdmin && !archived ? (
+                        {canManage && !archived ? (
                           <IssuerChoice
                             profile={profile}
                             issuers={issuers}
@@ -730,7 +730,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                         <LeadTimeEditor
                           profile={profile}
                           saving={rowSaving}
-                          disabled={!isAdmin || archived}
+                          disabled={!canManage || archived}
                           onSave={days =>
                             applyChange(
                               profile,
@@ -764,7 +764,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                               onClick={() => setDetailsTarget(profile)}
                             />
                           </Tooltip>
-                          {isAdmin ? (
+                          {canManage ? (
                             archived ? (
                               <Text fontSize='xs' color={muted}>
                                 Archived
@@ -804,9 +804,9 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
               </Tbody>
             </Table>
           </TableContainer>
-          {!isAdmin ? (
+          {!canManage ? (
             <Text fontSize='xs' color={muted} mt={2}>
-              Only workspace admins can change renewal settings.
+              Only workspace managers and owners can change renewal settings.
             </Text>
           ) : null}
         </>

@@ -22,7 +22,7 @@
  * secret-injection or uninterrupted-delivery claim; other ACME/Alpine lanes gain no
  * browser prerequisite.
  */
-// Shared execution, evidence and cleanup policy: docs/certops/e2e-qualification.md.
+// Shared execution, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
 "use strict";
 /** Read-only dashboard observation of one real foreground Linux agent job.
  * The existing external command wrapper pauses the actual ACME client after

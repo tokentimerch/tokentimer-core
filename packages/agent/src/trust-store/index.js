@@ -139,6 +139,28 @@ function trustStoreCommandRefForFamily(family) {
   throw buildError(`trustStoreCommandRefForFamily: unsupported family ${JSON.stringify(family)}`);
 }
 
+/**
+ * The policy-allowlisted `--fresh` update argv for a Debian-family revoke, or
+ * undefined when it does not apply or is not configured. Only a Debian revoke
+ * ever uses it (see resolveRevokeUpdateCommandArgv); distribute and every other
+ * family return undefined. An absent or non-allowlisted profile is not an
+ * error: revokeTrust then falls back to the ordinary update argv and records
+ * the non-fatal `debian_fresh_command_ref_missing` warning, exactly as before.
+ * @param {"debian"|"rhel"|"windows"} family
+ * @param {"distribute-trust"|"revoke-trust"} action
+ * @param {{ checkCommandRef: (ref: string) => { allowed: boolean, argv?: string[] } }} policyEngine
+ * @returns {string[]|undefined}
+ */
+function freshUpdateCommandArgvForRevoke(family, action, policyEngine) {
+  if (family !== "debian" || action !== "revoke-trust") return undefined;
+  const verdict = policyEngine.checkCommandRef(
+    TRUST_STORE_COMMAND_REFS.DEBIAN_UPDATE_CA_CERTIFICATES_FRESH,
+  );
+  return verdict.allowed && Array.isArray(verdict.argv) && verdict.argv.length > 0
+    ? verdict.argv
+    : undefined;
+}
+
 function buildError(message, code) {
   const error = new Error(`tokentimer-agent trust-store: ${message}`);
   if (code) error.code = code;
@@ -1921,6 +1943,7 @@ module.exports = {
   ANCHOR_FILENAME_PREFIX,
   TRUST_STORE_COMMAND_REFS,
   trustStoreCommandRefForFamily,
+  freshUpdateCommandArgvForRevoke,
   isSingleCertificatePem,
   verifyAnchorPem,
   deterministicAnchorFilename,

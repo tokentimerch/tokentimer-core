@@ -5,7 +5,7 @@
  * executors, partial/all-location outage forecasts, retired agents, missing target/profile/custody,
  * disabled profiles, retired certificates and dependency counts. No SQL query or resolver is mocked.
  *
- * Shared execution and evidence policy: docs/certops/e2e-qualification.md.
+ * Shared execution and evidence policy: .github/maintainers/certops/e2e-qualification.md.
  */
 "use strict";
 
