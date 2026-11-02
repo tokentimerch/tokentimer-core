@@ -14,6 +14,7 @@ import AlertStateDisplay, {
   AlertUpcomingSection,
 } from './AlertStateDisplay.jsx';
 import AlertLifecycleTimeline from './AlertLifecycleTimeline.jsx';
+import PagerDutyIncidentActions from './PagerDutyIncidentActions.jsx';
 
 export default function AlertingDetails({
   token,
@@ -112,6 +113,10 @@ export default function AlertingDetails({
                 compact
               />
               <AlertUpcomingSection alertState={token?.alert_state} />
+              <PagerDutyIncidentActions
+                tokenId={token?.id}
+                enabled={enabled && expanded}
+              />
               <Box
                 role='region'
                 aria-label='History'
