@@ -13,7 +13,7 @@ const { createHostGate } = require("../../packages/agent/scripts/host-gate");
 test("unqualified AD CS onboarding and dispatch gates through real API", { timeout: 120000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
-    // skip-reason: no-host - requires isolated real API and PostgreSQL
+    // skip-reason: prerequisite - requires isolated real API and PostgreSQL
     t.skip("Disposable API URL required"); return;
   }
   assert.ok(baseUrl); const fixture = await createApiFixture(baseUrl);
@@ -65,7 +65,7 @@ test("unqualified AD CS onboarding and dispatch gates through real API", { timeo
     }, { oracle: "Public manual job route cannot inject private service-only dispatch privileges" });
   } catch (error) { primaryError = error; throw error; }
   finally {
-    try { if (ready) { await gate.scenario("adcs-api-gate-cleanup", fixture.cleanup); await gate.finish({ requiredScenarios: require("../../.github/maintainers/certops/qualification-suites.json").suites["adcs-api-release-gates"] }); } else await fixture.cleanup(); }
+    try { if (ready) { await gate.scenario("adcs-api-gate-cleanup", fixture.cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["adcs-api-release-gates"] }); } else await fixture.cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "AD CS API gates and finalization failed"); throw error; }
   }
 });

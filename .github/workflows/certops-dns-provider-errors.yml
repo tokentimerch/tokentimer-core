@@ -1,0 +1,27 @@
+name: "CertOps / CertOps DNS provider error qualification"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  qualify:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/certops-node-setup
+      - name: Check mandatory adapter inventory
+        run: node scripts/certops-dns-provider-errors-report.js --check-inventory
+      - name: Execute production adapter faults and owned loopback transports
+        run: node scripts/certops-dns-provider-errors.js
+      - name: Independently verify every required scenario and adapter contract
+        run: node scripts/certops-dns-provider-errors-report.js qualification-results/dns-provider-errors.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: certops-dns-provider-errors
+          path: qualification-results/dns-provider-errors.json
+          if-no-files-found: error

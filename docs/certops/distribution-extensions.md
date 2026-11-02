@@ -208,8 +208,9 @@ configuration uses the existing binding/profile authorization fields plus:
 Place this inside the binding UUID under `materialBindings`, together with
 `workspaceId`, `groupId`, `agentId`, `materialStoreRef`, `deploymentProfileRef`,
 `profileRevision`, `authorizationRevision` and `verificationPolicy` from the
-existing consumer example. `target.reference` must be allowed by local target
-policy. `store` is the machine personal store (`My` or `WebHosting`, for example),
+existing consumer example. Append both the binding UUID and `target.reference`
+to the top-level `declaredTargetSelectors`; a `policy.allowedTargetSelectors`
+entry alone does not authorize either target. Preserve other selectors. `store` is the machine personal store (`My` or `WebHosting`, for example),
 not a trusted-root store. Repeat this binding configuration on each authorized
 consumer; no additional CA order is needed.
 
@@ -235,6 +236,9 @@ have the binding's port and SNI and an IP dial address; its hostname must match
 the published SANs. Use `verificationPolicy: "trust"` and a local `trustCaFile`
 on each probe for chain/hostname validation in addition to fingerprint pinning.
 Successful store import alone never means the listener deployment succeeded.
+Provision the [Windows machine chain](windows-maintenance.md#keep-private-ca-trust-paths-separate)
+before activation: approved roots in `LocalMachine\Root`, intermediates in
+`LocalMachine\CA`. A probe's CA file does not populate these stores.
 
 Each consumer has its own desired/observed version and freshness proof in
 certificate details → **Deployments**. Provider, Windows/Linux platform and safe

@@ -10,7 +10,7 @@ const { writeProtectedFile } = require("../material-store");
 
 test(
   "Windows CryptoAPI parses encrypted PKCS#12 and proves private-key association without persisting a key",
-  // skip-reason: no-host — non-persisting native PKCS#12 parsing needs Windows.
+  // skip-reason: platform — non-persisting native PKCS#12 parsing needs Windows.
   { skip: process.platform !== "win32" },
   (t) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tt-pkcs12-"));

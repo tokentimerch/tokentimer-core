@@ -27,7 +27,7 @@ export function materialContext(provider = 'vault-kv2') {
     claimEvidenceFresh: true,
     livenessState: 'live',
     commandProfiles: ['certbot'],
-    supportedOperations: ['issue', 'deploy-from-store'],
+    supportedOperations: ['noop', 'renew', 'deploy-from-store'],
   };
   const ctx = {
     workspaceId: WS,

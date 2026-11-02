@@ -95,8 +95,8 @@ async function loadDistributionReality(
             publication.id AS material_version_id, publication.published_at, publication.valid_to,
             latest.generation AS latest_generation, latest.state AS latest_rollout_state,
             latest.verification_only,
-            CASE WHEN latest.state='verified' AND latest.verification_only=false THEN latest.observed_at END AS last_verified_at,
-            CASE WHEN latest.state IN ('installed','verified') AND latest.verification_only=false THEN latest.observed_at END AS last_completed_at
+            CASE WHEN latest.state='verified' THEN latest.observed_at END AS last_verified_at,
+            CASE WHEN latest.state IN ('installed','verified') THEN latest.observed_at END AS last_completed_at
        FROM certops_distribution_groups g
        JOIN certops_management_periods period ON period.workspace_id=g.workspace_id AND period.id=g.management_period_id
        LEFT JOIN LATERAL (
@@ -121,7 +121,10 @@ async function loadDistributionReality(
   const consumers = items.rows.length ? await consumerMatrix({ client: pool, workspaceId, groupIds: items.rows.map(g => g.id) }) : [];
   const facts = items.rows.map((g) => {
       const bindings = consumers.filter(c => c.group_id === g.id && c.binding_state === "active");
-      const completed = g.active !== false && ["installed", "verified"].includes(g.latest_rollout_state) && g.verification_only === false &&
+      // A read-only verification can prove the already installed version.
+      // Current consumer evidence, rather than whether work mutated the host,
+      // determines completion; a coordinator result alone is insufficient.
+      const completed = g.active !== false && ["installed", "verified"].includes(g.latest_rollout_state) &&
         bindings.length > 0 && bindings.every(c => c.converged === true && Number(c.desired_generation) === Number(g.latest_generation) &&
           !["failed", "orphaned_unknown_effect"].includes(c.latest_deployment?.stage));
       const verified = completed && g.latest_rollout_state === "verified" && bindings.every(c => c.live_verified === true);

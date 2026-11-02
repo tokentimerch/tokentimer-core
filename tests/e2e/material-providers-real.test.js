@@ -76,7 +76,7 @@ function fixture(t, provider, address) {
 
 test(
   "real KV v2: AppRole, ACLs, rotation, exact versions, CAS and uncertain writes",
-  // skip-reason: no-host — explicitly gated real, isolated OpenBao/Vault fixture.
+  // skip-reason: prerequisite — explicitly gated real, isolated OpenBao/Vault fixture.
   { skip: process.env.TT_REAL_KV !== "1", timeout: 180000 },
   async (t) => {
     const provider = process.env.TT_REAL_KV_PROVIDER || "openbao-kv2";
@@ -240,7 +240,7 @@ test(
 
 test(
   "real Azure Key Vault Secrets: publication, recovery and exact immutable retrieval",
-  // skip-reason: no-host — customer-local Azure identity and dedicated vault only.
+  // skip-reason: prerequisite — customer-local Azure identity and dedicated vault only.
   { skip: process.env.TT_REAL_AZURE !== "1", timeout: 180000 },
   async (t) => {
     try {

@@ -6,8 +6,8 @@
 // jobSigning.js / registrationCredentialCrypto.js, which reject the FIRST
 // agent registration/job-dispatch after boot with CERTOPS_SIGNING_ENCRYPTION_
 // KEY_MISSING / CERTOPS_REGISTRATION_ENCRYPTION_KEY_MISSING rather than
-// refusing to boot). apps/api/index.js's validateStartupConfig() now mirrors
-// tokentimer-cloud's own gate (apps/saas/index.js): in production, with
+// refusing to boot). apps/api/index.js validates startup configuration: in
+// production, with
 // CertOps enabled, a missing or malformed wrap key is a deploy-time mistake
 // caught immediately instead of a broken agent surface discovered later.
 //

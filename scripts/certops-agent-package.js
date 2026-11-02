@@ -101,22 +101,23 @@ function inventory(root) {
 function extractVerified({ tarball, expectedSha256, destination }) {
   tarball = path.resolve(tarball);
   destination = path.resolve(destination);
-  // GNU tar interprets a Windows drive colon as a remote archive separator.
-  const archiveName = path.basename(tarball), archiveOptions = { cwd: path.dirname(tarball) };
+  // Inspect and extract one immutable verified buffer. Stdin also avoids
+  // Windows drive/path interpretation differences between BSD and GNU tar.
+  const archiveBytes = fs.readFileSync(tarball), archiveOptions = { input: archiveBytes };
   assert.match(expectedSha256 || "", /^[a-f0-9]{64}$/);
-  assert.equal(digest(tarball), expectedSha256, "Agent archive checksum mismatch");
-  const entries = run("tar", ["-tzf", archiveName], archiveOptions).trim().split(/\r?\n/);
+  assert.equal(crypto.createHash("sha256").update(archiveBytes).digest("hex"), expectedSha256, "Agent archive checksum mismatch");
+  const entries = run("tar", ["-tzf", "-"], archiveOptions).trim().split(/\r?\n/);
   assert.ok(entries.length > 0);
   for (const entry of entries) {
     assert.ok(entry.startsWith("package/") && !entry.includes("\\") && !entry.includes(":"), "Invalid package path");
     assert.ok(!entry.split("/").includes(".."), "Package traversal refused");
   }
   // Reject links before extraction, rather than discovering an escaped link later.
-  for (const line of run("tar", ["-tvzf", archiveName], archiveOptions).trim().split(/\r?\n/)) {
+  for (const line of run("tar", ["-tvzf", "-"], archiveOptions).trim().split(/\r?\n/)) {
     assert.ok(line[0] === "-" || line[0] === "d", "Package links and special files refused");
   }
   fs.mkdirSync(destination);
-  run("tar", ["-xzf", archiveName, "-C", destination], archiveOptions);
+  run("tar", ["-xzf", "-"], { ...archiveOptions, cwd: destination });
   const root = path.join(destination, "package");
   const files = inventory(root);
   for (const required of ["bin/tokentimer-agent.js", "scripts/install-agent.ps1", "scripts/install-agent.sh", "package.json"]) {

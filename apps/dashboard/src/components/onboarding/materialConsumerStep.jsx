@@ -13,6 +13,7 @@ import { DashboardActionButton } from '../DashboardPrimitives';
 import PrimaryButton from './PrimaryButton.jsx';
 import { CopyBlock } from './blocks.jsx';
 import { DetailsSection, StatusPanel } from './panels.jsx';
+import ConsumerBootstrapToken from './ConsumerBootstrapToken.jsx';
 import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
 import {
   assignConsumer,
@@ -332,6 +333,7 @@ function IisBindingGuide({ ctx, setup, agents, enabled }) {
     binding.deployment_profile_ref === profile;
   const config = bindingMatches
     ? {
+        declaredTargetSelectors: [id, profile],
         materialBindings: {
           [id]: {
             workspaceId: ctx.workspaceId,
@@ -391,7 +393,9 @@ function IisBindingGuide({ ctx, setup, agents, enabled }) {
         Certificate Store are unsupported. The connector requires non-exportable
         machine CNG keys, exact protected ACLs and signing association before
         reuse. Resolve service-account SIDs locally; never grant Everyone or
-        Users.
+        Users. Before activation, provision approved roots in LocalMachine\Root
+        and intermediates in LocalMachine\CA. The probe CA file does not
+        configure Windows trust stores.
       </Text>
       <FormControl>
         <FormLabel>Windows consumer agent</FormLabel>
@@ -441,6 +445,13 @@ function IisBindingGuide({ ctx, setup, agents, enabled }) {
         Authorize IIS binding
       </PrimaryButton>
       {config && (
+        <Text fontSize='sm'>
+          Merge both declared target selectors into the existing allowlist and
+          add this binding without replacing other authorized targets. Restart
+          the consumer after saving its protected configuration.
+        </Text>
+      )}
+      {config && (
         <CopyBlock
           label='Typed IIS binding to merge locally'
           text={JSON.stringify(config, null, 2)}
@@ -482,6 +493,7 @@ function MaterialConsumerForm({ ctx }) {
   const [address, setAddress] = useState(''),
     [mount, setMount] = useState('secret');
   const [caFile, setCaFile] = useState('');
+  const [firstPick, setFirstPick] = useState(saved.vaultConsumerAgentId || '');
   const [assurance, setAssurance] = useState(
     saved.materialConsumerPolicy ||
       (saved.vaultConsumerDeliveryMode === 'service' ? 'trust' : 'installed')
@@ -511,6 +523,11 @@ function MaterialConsumerForm({ ctx }) {
   // Authorize metadata first so discovery-only agents can obtain the exact
   // local configuration. Execution still requires current capabilities.
   const configurable = consumers.filter(a => Boolean(a.wireAgentId));
+  const firstAgentId =
+    configurable.find(a => a.id === firstPick)?.id ||
+    configurable.find(a => a.id === saved.vaultConsumerAgentId)?.id ||
+    configurable[0]?.id ||
+    '';
   const config = {
     provider: setup.provider,
     materialStoreRef: setup.materialStoreRef,
@@ -536,7 +553,15 @@ function MaterialConsumerForm({ ctx }) {
       title='Connect and validate consumers'
       kind='verify'
       description='Authorize each destination, check its local configuration and verify the exact published certificate through existing signed jobs.'
-      docs={ctx.docs('certops.vault', 'Distribution and recovery runbook')}
+      docs={[
+        ...ctx.docs('certops.vault', 'Distribution and recovery runbook'),
+        ...ctx.docs(
+          platform === 'win32'
+            ? 'certops.installWindows'
+            : 'certops.installLinux',
+          'Install a consumer agent'
+        ),
+      ]}
     >
       <VStack align='stretch' spacing={4}>
         {!manager && (
@@ -568,6 +593,20 @@ function MaterialConsumerForm({ ctx }) {
             refresh.
           </StatusPanel>
         )}
+        {ready && (
+          <DetailsSection
+            summary='Register a new consumer'
+            defaultOpen={!consumers.length}
+          >
+            <Text fontSize='sm'>
+              Install a separate agent in this workspace using the linked
+              installation guide. Keep execution disabled until its binding is
+              authorized below, then merge the generated configuration while
+              retaining its enrolled identity.
+            </Text>
+            <ConsumerBootstrapToken workspaceId={ctx.workspaceId} />
+          </DetailsSection>
+        )}
         {consumers.map(a => (
           <Text key={a.id} fontSize='sm'>
             {a.name || a.id}:{' '}
@@ -577,6 +616,36 @@ function MaterialConsumerForm({ ctx }) {
         ))}
         {platform === 'linux' ? (
           <>
+            {configurable.length > 0 && (
+              <FormControl>
+                <FormLabel>First consumer</FormLabel>
+                <Select
+                  value={firstAgentId}
+                  isDisabled={
+                    !ready ||
+                    Boolean(
+                      saved.vaultConsumers?.length ||
+                      saved.vaultRolloutRequestKey
+                    )
+                  }
+                  onChange={async e => {
+                    const id = e.target.value;
+                    try {
+                      await saveCertops(ctx, { vaultConsumerAgentId: id });
+                      setFirstPick(id);
+                    } catch (err) {
+                      setError(materialActionError(err));
+                    }
+                  }}
+                >
+                  {configurable.map(a => (
+                    <option key={a.id} value={a.id}>
+                      {a.name || a.hostname || a.wireAgentId}
+                    </option>
+                  ))}
+                </Select>
+              </FormControl>
+            )}
             <Text fontSize='sm'>
               The installer/service account needs only the configured write
               paths and reload grants. Keep the existing agent identity and
@@ -666,14 +735,10 @@ function MaterialConsumerForm({ ctx }) {
             />
             {ready && local.ok && configurable.length > 0 ? (
               <VaultRolloutGuide
-                key={`${ctx.workspaceId}/${setup.groupId}/${assurance}`}
+                key={`${ctx.workspaceId}/${setup.groupId}/${assurance}/${firstAgentId}`}
                 ctx={ctx}
                 groupId={setup.groupId}
-                firstAgentId={
-                  configurable.some(a => a.id === saved.vaultConsumerAgentId)
-                    ? saved.vaultConsumerAgentId
-                    : configurable[0].id
-                }
+                firstAgentId={firstAgentId}
                 firstBindingId={firstBindingId}
                 agents={configurable}
                 canDeployTo={agent =>
