@@ -14,7 +14,7 @@ describe("Core distribution and lifecycle migration histories", function () {
     'certops_distribution_lifecycle', 'certops_distribution_incident_delivery',
     'certops_stable_consumer_discovery', 'certops_material_cleanup',
     'certops_consumer_verification_failures', 'certops_distribution_resolution_delivery',
-    'pagerduty_incident_lifecycle',
+    'pagerduty_incident_lifecycle', 'pagerduty_resolution_reason',
   ];
   const migrations = require('../../apps/api/migrations/migrate').migrations;
   const companions = companionNames.filter(name => migrations.some(m => m.name === name));
@@ -243,7 +243,10 @@ describe("Core distribution and lifecycle migration histories", function () {
         ];
         const mainlineOrder = history === "distribution-first" ? [canonical[4],canonical[5],canonical[6],canonical[0],canonical[1],canonical[2],canonical[3]] : history === "enrollment-first" ? [canonical[0],canonical[4],canonical[5],canonical[6],canonical[1],canonical[2],canonical[3]] : history === "previous-distribution" ? [canonical[0],canonical[1],canonical[2],canonical[4],canonical[5],canonical[6],canonical[3]] : canonical;
         // Both assurance and provider changes follow every supported history.
-        const expected = [
+        const expected = history === "provider-preview-through-pagerduty"
+          ? [...mainlineOrder, "onboarding_sessions", ...extensionHistories[history],
+            ...companions.filter(name => !extensionHistories[history].includes(name))]
+          : [
           ...mainlineOrder,
           "onboarding_sessions",
           ...(history.startsWith("provider-preview-78")
@@ -256,7 +259,6 @@ describe("Core distribution and lifecycle migration histories", function () {
                   ? ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "certops_material_providers", "auto_sync_system_metrics"]
                   : ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "auto_sync_system_metrics", "certops_material_providers"]),
           ...companions,
-          "pagerduty_resolution_reason",
         ];
         assert.deepEqual(
           after.filter((row) => row.version >= 70).map((row) => row.name),
