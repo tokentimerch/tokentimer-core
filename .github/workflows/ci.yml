@@ -490,6 +490,7 @@ jobs:
               await client.query('CREATE DATABASE wildcard_candidate_ci_test');
               await client.query('CREATE DATABASE pr329_issuance_path_reuse_ci_test');
               await client.query('CREATE DATABASE pr329_workspace_delete_ci_test');
+              await client.query('CREATE DATABASE recipient_delivery_worker_ci_test');
             } finally {
               await client.end();
             }
@@ -497,6 +498,14 @@ jobs:
           main().catch(error => { console.error(error.message); process.exitCode = 1; });
           NODE
           node --test --test-force-exit tests/postgres/distribution-migration-upgrade.test.js
+      - name: Verify recipient delivery retries and ledger outcomes
+        env:
+          DELIVERY_WORKER_DB_HOST: ${{ env.DB_HOST }}
+          DELIVERY_WORKER_DB_PORT: ${{ env.DB_PORT }}
+          DELIVERY_WORKER_DB_NAME: recipient_delivery_worker_ci_test
+          DELIVERY_WORKER_DB_USER: ${{ env.DB_USER }}
+          DELIVERY_WORKER_DB_PASSWORD: ${{ env.DB_PASSWORD }}
+        run: node --test --test-force-exit tests/postgres/delivery-worker-ledger.test.js
       - name: Prove abandoned certificate-path reuse on isolated PostgreSQL
         env:
           DB_NAME: pr329_issuance_path_reuse_ci_test

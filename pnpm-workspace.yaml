@@ -3,6 +3,7 @@ packages:
   - "packages/*"
 
 overrides:
+  "glob@>=9 <14.0.2": 14.0.2
   tar: 7.5.7
   fast-xml-builder: 1.2.0
   fast-xml-parser: 5.7.3
