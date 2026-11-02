@@ -986,7 +986,7 @@ class CollectorTests(unittest.TestCase):
             return b"{}"
         with tempfile.TemporaryDirectory(prefix="certops-collector-budget-") as directory:
             root = Path(directory)
-            (root / "docs/certops").mkdir(parents=True)
+            (root / ".github/maintainers/certops").mkdir(parents=True)
             (root / ".github/maintainers/certops/qualification-suites.json").write_text(json.dumps(fixture_matrix))
             with patch.object(collector, "ROOT", root), patch.dict(collector.os.environ, {"CERTOPS_RELEASE_CANDIDATE": candidate, "CERTOPS_RELEASE_RUN_IDS": json.dumps(run_ids), "GITHUB_REPOSITORY": "owner/repo", "GITHUB_TOKEN": "offline-fixture"}), patch.object(collector, "download", side_effect=download), patch.object(collector, "validate_run"), patch.object(collector, "catalog_coverage", return_value=coverage), patch.object(collector, "extract_reports", return_value=[(".json", {"suite": "fixture"})]), patch.object(collector.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout=json.dumps(summary))) as verifier:
                 output = io.StringIO()

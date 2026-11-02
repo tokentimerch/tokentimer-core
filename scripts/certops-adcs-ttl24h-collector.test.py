@@ -264,7 +264,7 @@ class AuthenticationTests(unittest.TestCase):
                 return item if isinstance(item, bytes) else encode(item)
             with tempfile.TemporaryDirectory(prefix="ttl-owner-main-") as directory:
                 root = Path(directory)
-                (root / "docs/certops").mkdir(parents=True)
+                (root / ".github/maintainers/certops").mkdir(parents=True)
                 (root / ".github/maintainers/certops/qualification-suites.json").write_bytes(encode({"slots": [{"id": "owned-elapsed-fixture", "kind": "host", "suite": auth.SUITE, "source": report["fixtureSource"]["file"], "requiredSources": [row["file"] for row in report["fixtureSources"]]}]}))
                 (root / "tests/integration").mkdir(parents=True)
                 (root / "tests/integration/certops-qualification-groups.json").write_bytes((ROOT / "tests/integration/certops-qualification-groups.json").read_bytes())

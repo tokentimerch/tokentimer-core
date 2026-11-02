@@ -23,10 +23,10 @@ Ordinary hosted Windows/Linux, API/PostgreSQL, browser, local ACME/DNS and kind 
 
 - [API suite runner](../../../scripts/certops-api-qualification.js): maps suites to the actual E2E tests and report settings. Each test describes its own prerequisites and assertions.
 - [Supporting database runner](../../../scripts/certops-integration-qualification.js): exact named integration groups and bounded reporting.
-- [Windows qualification sources](../../packages/agent/scripts/host) and [E2E helpers](../../tests/e2e/helpers): host fixtures, safety boundaries and cleanup.
-- [Native and browser E2E tests](../../tests/e2e): public API, installed agents, independent TLS and UI journeys.
+- [Windows qualification sources](../../../packages/agent/scripts/host) and [E2E helpers](../../../tests/e2e/helpers): host fixtures, safety boundaries and cleanup.
+- [Native and browser E2E tests](../../../tests/e2e): public API, installed agents, independent TLS and UI journeys.
 - [Distribution guide](qualification/distribution/README.md): shared disposable lab operation; scenario details are beside its tests.
-- [AD CS lab guide](../../infra/certops-adcs/README.md): protected environment setup, ownership and independent TTL cleanup.
+- [AD CS lab guide](../../../infra/certops-adcs/README.md): protected environment setup, ownership and independent TTL cleanup.
 - [Release collector](../../../scripts/certops-release-qualification.js) and [skip mapper](../../../scripts/certops-skip-qualification.js): evidence validation and inventory maintenance.
 
 ## Disposable execution and cleanup

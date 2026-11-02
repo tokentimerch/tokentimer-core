@@ -270,7 +270,7 @@ class RetentionOwnerTests(unittest.TestCase):
                 return item if isinstance(item, bytes) else json.dumps(item).encode()
             with tempfile.TemporaryDirectory(prefix="certops-retention-owner-") as directory:
                 root = Path(directory)
-                (root / "docs/certops").mkdir(parents=True)
+                (root / ".github/maintainers/certops").mkdir(parents=True)
                 (root / ".github/maintainers/certops/qualification-suites.json").write_text(json.dumps({"slots": [{"id": "owned-elapsed-fixture", "kind": "host", "suite": auth.SUITE}]}))
                 environment = {"CERTOPS_QUALIFICATION_PROFILE": "full", "CERTOPS_RELEASE_CANDIDATE": value["candidate"], "CERTOPS_RELEASE_RUN_IDS": "[200]", "GITHUB_REPOSITORY": value["repository"], "GITHUB_TOKEN": "controlled-no-network", "GITHUB_SHA": value["run"]["head_sha"]}
                 collector_extract = collector.extract_reports
