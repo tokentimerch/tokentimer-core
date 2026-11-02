@@ -37,6 +37,9 @@ const dedicatedSuites = {
 };
 function environmentFor(site) {
   if (site.reason === "unimplemented") return "unsupported-feature";
+  if (["tests/e2e/windows-material-real.test.js", "tests/e2e/windows-material-custody-real.test.js"].includes(site.file)) return "windows-material-iis";
+  if (site.file === "packages/agent/src/windows-material/pkcs12.test.js") return "windows-elevated";
+  if (site.file === "tests/e2e/material-providers-real.test.js") return site.name.startsWith("real Azure") ? "distribution-azure-live" : "distribution-kv-live";
   if (dedicatedSuites[site.file]) return dedicatedSuites[site.file][0];
   if (["packages/agent/scripts/install-agent-sh.test.js", "packages/agent/scripts/pack-release.test.js", "packages/agent/src/material-preflight.test.js"].includes(site.file)) return "linux-filesystem";
   if (site.file === "packages/agent/src/index.test.js") return "windows-elevated";
@@ -61,6 +64,9 @@ function environmentFor(site) {
   return "prerequisite-review";
 }
 const environments = {
+  "windows-material-iis": {capabilities:["windows-server","iis","machine-cng","disposable-store"],owner:"Native shared material qualification",workflow:".github/workflows/ci.yml",status:"candidate-environment-not-qualified"},
+  "distribution-kv-live": {capabilities:["linux","disposable-vault-kv2","synthetic-credentials"],owner:"Live material provider compatibility",workflow:".github/workflows/ci.yml",status:"candidate-environment-not-qualified"},
+  "distribution-azure-live": {capabilities:["azure-keyvault","oidc","protected-environment","disposable-vault"],owner:"Protected Azure material qualification",workflow:".github/workflows/certops-azure-keyvault-qualification.yml",status:"candidate-environment-not-qualified"},
   "distribution-vault-adapter": {capabilities:["linux","disposable-vault-kv2","synthetic-credentials"],owner:"Certificate distribution qualification",workflow:".github/workflows/certops-distribution-qualification.yml",status:"candidate-environment-not-qualified"},
   "windows-native-process-containment": {capabilities:["windows","powershell","cim","native-job-object"],owner:"Owned benign process containment regression",workflow:windowsPathWorkflow,status:"candidate-environment-not-qualified"},
   "windows-powershell-filesystem": { capabilities: ["windows", "powershell", "owned-temporary-filesystem"], owner: "Windows installer path supporting controls", workflow: windowsPathWorkflow, status: "candidate-environment-not-qualified" },
@@ -79,6 +85,9 @@ for (const [name, file] of Object.values(dedicatedSuites)) {
 }
 function routeFor(site, environment) {
   const direct = (workflow, job, command = `node --test ${site.file}`) => ({workflow, job, command});
+  if (environment === "windows-material-iis") return direct(".github/workflows/ci.yml", "windows_material_qualification", site.file);
+  if (environment === "distribution-kv-live") return direct(".github/workflows/ci.yml", "material_store_compatibility");
+  if (environment === "distribution-azure-live") return direct(".github/workflows/certops-azure-keyvault-qualification.yml", "lab");
   if (dedicatedSuites[site.file]) {
     const [, file, job] = dedicatedSuites[site.file];
     return direct(`.github/workflows/${file}`, job);
