@@ -401,6 +401,15 @@ export function VaultRolloutGuide({
     setBusy(target.bindingId);
     setError('');
     try {
+      // Save the exact binding intent before authorization can take effect.
+      // Closing the guide or losing the response must not allocate a new ID.
+      await persistTargets(
+        targets.map(t =>
+          t.bindingId === target.bindingId
+            ? { ...t, confirmedRevision: null }
+            : t
+        )
+      );
       const result = await assignConsumer(
         ctx.workspaceId,
         groupId,
@@ -436,13 +445,6 @@ export function VaultRolloutGuide({
           observed,
         ],
       }));
-      await persistTargets(
-        targets.map(t =>
-          t.bindingId === target.bindingId
-            ? { ...t, confirmedRevision: null }
-            : t
-        )
-      );
       // Do not infer completion from the PUT. The returned revision is copied
       // to the host; later convergence is independently read back below.
     } catch (e) {
