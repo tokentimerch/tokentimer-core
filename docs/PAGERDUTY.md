@@ -34,6 +34,15 @@ host validation, SSRF protection, redirect restrictions and timeouts. See
 
 ## What counts as recovery
 
+Confirmed managed-certificate revocation or decommissioning also resolves an
+accepted expiration incident. Both the asset lifecycle and linked managed
+certificate inventory must confirm retirement; pending, failed or inconsistent
+actions leave it open. The resolve event and local delivery history include
+`certificate_revoked` or `certificate_decommissioned` as the reason. This clears
+the expiration incident only; it does not assert that a revoked certificate is
+no longer deployed. PagerDuty Notes comments require separate REST credentials;
+this routing-key integration supplies an explanatory resolve-event payload.
+
 An expiry change alone is insufficient. The new date must be later than the
 episode's original expiration and outside the entire effective threshold window
 for that destination. TokenTimer uses the wider of the window recorded during
@@ -144,7 +153,7 @@ their claim, and recheck on the normal five-minute lifecycle cadence with
 
 Validated **resolve events bypass quiet hours** for already accepted incidents.
 They clear obsolete risk instead of opening a new incident. Recovery still needs
-the original destination, accepted trigger and verified expiry evidence; unknown
+the original destination, accepted trigger and verified expiry or retirement evidence; unknown
 acceptance never gets a speculative resolve. ACK remains in PagerDuty.
 
 The existing delivery schedule drains at most 100 due lifecycle records per
@@ -247,7 +256,7 @@ recovery even when Events API accepts the request. See
 
 This implementation is Core agnostic and adds no plan conditionals or schema
 changes to webhook configuration. Cloud/Enterprise rebases must carry migration
-92, the new worker modules, delivery-worker's lifecycle dispatch/drain hooks,
+92 and 93, the new worker modules, delivery-worker's lifecycle dispatch/drain hooks,
 the shared legacy-workspace and delivery-evidence helpers, operational notification
 reconciliation, and alertQueue's scoped retry CTEs into any overridden counterparts.
 Apply API migrations before upgraded workers start. Preserve edition-owned entitlement,
@@ -257,6 +266,8 @@ automatically update independently pinned edition repositories.
 ## Migration 92 and preview-version compatibility
 
 PagerDuty uses `apps/api/migrations/092-pagerduty-incident-lifecycle.sql`.
+Migration 93 adds the durable resolution reason; apply both before starting
+updated workers. Existing episodes retain their original correlation keys.
 Released migration 79 is `auto_sync_provider_stats`; migration 80 is
 `auto_sync_run_metrics`; released migration 81 is `auto_sync_metric_labels`; migration 82 is
 `auto_sync_system_metrics`.

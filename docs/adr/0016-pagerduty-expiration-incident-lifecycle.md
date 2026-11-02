@@ -41,11 +41,16 @@ them. Expiration writes originate in multiple APIs and workers.
    the ordinary queue is empty. Re-read committed facts and configuration before
    dispatch. Retry bounded transient failures with exponential backoff; park
    permanent/exhausted failures and allow existing authorized requeue to retry.
-5. Recovery requires a later valid expiration outside the wider of the recorded
+5. Expiration recovery requires a later valid expiration outside the wider of the recorded
    and current destination windows. Preserve provider/certificate/monitor fact
    ownership. Do not treat edits remaining inside the window, disabled alerts,
    missing groups, deleted assets or missing evidence as renewal. An immutable
    resolve intent can only reference a successfully accepted trigger.
+   Confirmed revocation or decommissioning is a separate recovery reason: the
+   asset and its linked managed certificate inventory must agree on retirement.
+   Pending, rolled-back and inconsistent facts cannot resolve an incident.
+   Migration 93 persists that reason across retries; resolve-event payloads and
+   delivery history include it without requiring PagerDuty REST credentials.
 6. Find credentials by exact original destination fingerprint in current
    workspace configuration. Renames work; removed/rotated integrations remain
    unresolved and observable. Never resolve a replacement integration.

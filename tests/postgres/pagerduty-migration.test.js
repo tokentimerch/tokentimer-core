@@ -23,7 +23,7 @@ after(() => pool.end());
 
 it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, async () => {
   assert.ok(
-    ["78", "80", "81", "82", "legacy79", "legacy81"].includes(upgradeFrom),
+    ["78", "80", "81", "82", "92", "legacy79", "legacy81"].includes(upgradeFrom),
   );
   assert.match(
     process.env.DB_NAME || "",
@@ -90,6 +90,9 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
     )
   ).rows[0].id;
   let originalIncident;
+  const originalExpirationSnapshot = upgradeFrom === "92" ? (await pool.query(
+    "SELECT expiration_snapshot::text FROM alert_queue WHERE id=$1", [alertId],
+  )).rows[0]?.expiration_snapshot : null;
   let functionIds;
   let legacyExecutedAt;
   if (legacy) {
@@ -294,6 +297,7 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
     { version: 81, name: "auto_sync_metric_labels" },
     { version: 82, name: "auto_sync_system_metrics" },
     { version: 92, name: "pagerduty_incident_lifecycle" },
+    { version: 93, name: "pagerduty_resolution_reason" },
   ]);
   assert.equal(
     (
@@ -319,7 +323,7 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
           originalIncident.id,
         ])
       ).rows[0],
-      originalIncident,
+      { ...originalIncident, resolution_reason: null },
     );
     assert.equal(
       (
@@ -340,12 +344,12 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
   assert.equal(
     (
       await pool.query(
-        "SELECT expiration_snapshot FROM alert_queue WHERE id=$1",
+        "SELECT expiration_snapshot::text FROM alert_queue WHERE id=$1",
         [alertId],
       )
     ).rows[0].expiration_snapshot,
-    null,
-    "Historical sent rows must not acquire an invented source-date snapshot",
+    originalExpirationSnapshot,
+    "Migration must preserve the existing source-date snapshot",
   );
   assert.equal(
     (await pool.query("SELECT 1 FROM alert_delivery_log WHERE id=$1", [logId]))

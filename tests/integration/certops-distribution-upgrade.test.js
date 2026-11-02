@@ -254,6 +254,7 @@ describe("Core distribution and lifecycle migration histories", function () {
                   ? ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "certops_material_providers", "auto_sync_system_metrics"]
                   : ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "auto_sync_system_metrics", "certops_material_providers"]),
           ...companions,
+          "pagerduty_resolution_reason",
         ];
         assert.deepEqual(
           after.filter((row) => row.version >= 70).map((row) => row.name),

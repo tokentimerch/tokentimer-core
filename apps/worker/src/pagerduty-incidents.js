@@ -76,6 +76,15 @@ function authorityFor(context) {
   return "manual";
 }
 
+export function pagerDutyRetirementReason(context) {
+  const status = context?.cert_lifecycle_status;
+  return context?.token_id &&
+    ["revoked", "decommissioned"].includes(status) &&
+    context.managed_retirement_status === status
+    ? `certificate_${status}`
+    : null;
+}
+
 export function hasPagerDutyExpiryEvidence(incident, context) {
   if (
     !context?.token_id ||
@@ -140,6 +149,10 @@ async function loadContext(client, workspaceId, tokenId) {
             COALESCE(groups.ids, ARRAY[]::text[]) AS assigned_ids,
             EXISTS (SELECT 1 FROM managed_certificates mc
               WHERE mc.workspace_id = w.id AND mc.token_id = t.id) AS managed_backed,
+            (SELECT CASE WHEN bool_and(mc.status = 'revoked') THEN 'revoked'
+                         WHEN bool_and(mc.status = 'decommissioned') THEN 'decommissioned' END
+               FROM managed_certificates mc
+              WHERE mc.workspace_id = w.id AND mc.token_id = t.id) AS managed_retirement_status,
             EXISTS (SELECT 1 FROM managed_certificates mc
               WHERE mc.workspace_id = w.id AND mc.token_id = t.id
                 AND (mc.not_after AT TIME ZONE 'UTC')::date = t.expiration
@@ -185,6 +198,13 @@ function snapshotCondition(start) {
       AND settings.delivery_window_start IS NOT DISTINCT FROM ${p(11)}::text
       AND settings.delivery_window_end IS NOT DISTINCT FROM ${p(12)}::text
       AND settings.delivery_window_tz IS NOT DISTINCT FROM ${p(13)}::text
+      AND (SELECT CASE WHEN count(*) <> (SELECT count(*) FROM managed_certificates
+                           WHERE workspace_id = ${p(0)} AND token_id = live.id) THEN 'contended'
+                       WHEN bool_and(mc.status = 'revoked') THEN 'revoked'
+                       WHEN bool_and(mc.status = 'decommissioned') THEN 'decommissioned' END
+             FROM (SELECT status FROM managed_certificates
+                    WHERE workspace_id = ${p(0)} AND token_id = live.id
+                    FOR SHARE SKIP LOCKED) mc) IS NOT DISTINCT FROM ${p(14)}::text
     FOR SHARE OF live SKIP LOCKED
   )`;
 }
@@ -209,6 +229,7 @@ function snapshotValues(incident, context) {
     context.delivery_window_start,
     context.delivery_window_end,
     context.delivery_window_tz,
+    context.managed_retirement_status,
   ];
 }
 
@@ -582,7 +603,7 @@ export async function reconcilePagerDutyParentAlert(
          attempts_email=CASE WHEN $4 THEN 0 ELSE attempts_email END,
          attempts_whatsapp=CASE WHEN $5 THEN 0 ELSE attempts_whatsapp END,
          error_message=CASE WHEN $2 = 'sent' THEN NULL ELSE error_message END,
-         next_attempt_at=CASE WHEN $2 IN ('sent','blocked') OR $23 THEN NULL ELSE next_attempt_at END,
+         next_attempt_at=CASE WHEN $2 IN ('sent','blocked') OR $24 THEN NULL ELSE next_attempt_at END,
          updated_at=NOW()
        WHERE id=$1 AND delivery_claim_id IS NULL AND status=$7 AND alert_key=$8
          AND ${snapshotCondition(9)} RETURNING id`,
@@ -744,7 +765,8 @@ export async function processPagerDutyIncident(
       incident.destination_id,
     );
     if (incident.state !== "resolve_pending") {
-      if (!hasPagerDutyExpiryEvidence(incident, context)) {
+      const retirementReason = pagerDutyRetirementReason(context);
+      if (!retirementReason && !hasPagerDutyExpiryEvidence(incident, context)) {
         return await postpone(
           client,
           incident,
@@ -752,7 +774,7 @@ export async function processPagerDutyIncident(
           "expiry_evidence_unavailable",
         );
       }
-      if (isPagerDutyRecovery(incident, context, threshold)) {
+      if (retirementReason || isPagerDutyRecovery(incident, context, threshold)) {
         if (!incident.trigger_accepted_at) {
           // A timeout or send/commit crash can mean acceptance is unknown.
           // Do not fabricate acceptance, send a stale trigger, or claim a
@@ -772,6 +794,7 @@ export async function processPagerDutyIncident(
         }
         const transition = await client.query(
           `UPDATE pagerduty_incidents SET state = 'resolve_pending', recovery_expiration = $3,
+             resolution_reason = $19,
              resolve_requested_at = NOW(), retry_exhausted = FALSE, action_attempts = 0,
              last_error = NULL, updated_at = NOW()
            WHERE id = $1 AND claim_id = $2 AND ${snapshotCondition(4)} RETURNING *`,
@@ -780,6 +803,7 @@ export async function processPagerDutyIncident(
             claimId,
             context.expiration,
             ...snapshotValues(incident, context),
+            retirementReason || "expiration_extended",
           ],
         );
         if (!transition.rowCount)
@@ -883,6 +907,17 @@ export async function processPagerDutyIncident(
           routing_key: String(webhook.routingKey).trim(),
           event_action: "resolve",
           dedup_key: incident.dedup_key,
+          payload: {
+            summary: `TokenTimer resolved expiration alert: ${incident.resolution_reason || "expiration_extended"}.`,
+            source: "TokenTimer",
+            severity: "info",
+            custom_details: {
+              resolution_reason: incident.resolution_reason || "expiration_extended",
+              token_id: incident.token_id_snapshot,
+              original_expiration: alertEligibility.formatCalendarDay(incident.original_expiration),
+              recovery_expiration: alertEligibility.formatCalendarDay(incident.recovery_expiration),
+            },
+          },
         }
       : triggerPayload(incident, context, webhook);
     const attemptColumn = resolving ? "resolve_attempts" : "trigger_attempts";
@@ -990,6 +1025,7 @@ export async function processPagerDutyIncident(
               kind: "pagerduty",
               payload_type: "token_expiry",
               event_action: resolving ? "resolve" : "trigger",
+              ...(resolving ? { resolution_reason: incident.resolution_reason || "expiration_extended" } : {}),
               incident_id: incident.id,
               destination_id: incident.destination_id,
               dedup_key: incident.dedup_key,

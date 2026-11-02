@@ -114,6 +114,18 @@ describe("PagerDuty destination and episode identity", () => {
 });
 
 describe("PagerDuty expiration recovery", () => {
+  it("resolves only confirmed managed certificate retirement", () => {
+    for (const status of ["revoked", "decommissioned"]) {
+      assert.equal(lifecycle.pagerDutyRetirementReason({
+        token_id: 1, cert_lifecycle_status: status, managed_retirement_status: status,
+      }), `certificate_${status}`);
+      for (const managed of [null, "active", "pending", "failed"]) {
+        assert.equal(lifecycle.pagerDutyRetirementReason({
+          token_id: 1, cert_lifecycle_status: status, managed_retirement_status: managed,
+        }), null);
+      }
+    }
+  });
   const now = new Date("2026-10-27T12:00:00Z");
   const incident = {
     original_expiration: "2026-10-28",

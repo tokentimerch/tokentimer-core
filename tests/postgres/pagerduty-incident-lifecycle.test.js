@@ -1551,6 +1551,7 @@ describe(
       assert.deepEqual(Object.keys(events[1].body).sort(), [
         "dedup_key",
         "event_action",
+        "payload",
         "routing_key",
       ]);
       assert.equal((await incidentRows())[0].state, "resolved");
@@ -1641,6 +1642,84 @@ describe(
       await reconcile();
       assert.equal(events.length, 1);
       assert.equal((await incidentRows())[0].state, "open");
+    });
+
+    it("resolves confirmed retirement with an explanation on the original PagerDuty episode", async () => {
+      for (const status of ["revoked", "decommissioned"]) {
+        const managed = await certificate();
+        const { incident } = await trigger();
+        await pool.query("UPDATE managed_certificates SET status=$2 WHERE id=$1", [managed.id, status]);
+        await pool.query("UPDATE tokens SET cert_lifecycle_status=$2 WHERE id=$1", [tokenId, status]);
+        await due(incident.id);
+        await reconcile();
+        const row = (await incidentRows()).find(r => r.id === incident.id);
+        assert.equal(row.state, "resolved");
+        assert.equal(row.resolution_reason, `certificate_${status}`);
+        const event = events.at(-1).body;
+        assert.equal(event.event_action, "resolve");
+        assert.equal(event.dedup_key, incident.dedup_key);
+        assert.match(event.payload.summary, new RegExp(status));
+        const history = await pool.query("SELECT metadata FROM alert_delivery_log WHERE metadata->>'incident_id'=$1 AND metadata->>'event_action'='resolve'", [incident.id]);
+        assert.equal(history.rows[0].metadata.resolution_reason, `certificate_${status}`);
+        await pool.query("DELETE FROM managed_certificates WHERE id=$1", [managed.id]);
+        await pool.query("UPDATE tokens SET cert_lifecycle_status='active' WHERE id=$1", [tokenId]);
+      }
+    });
+
+    it("retries retirement resolution with the original reason and correlation key", async () => {
+      const managed = await certificate();
+      const { incident } = await trigger();
+      await pool.query("UPDATE managed_certificates SET status='revoked' WHERE id=$1", [managed.id]);
+      await pool.query("UPDATE tokens SET cert_lifecycle_status='revoked' WHERE id=$1", [tokenId]);
+      await due(incident.id);
+      const attempts = [];
+      await reconcile(async (_url, body) => {
+        attempts.push(body);
+        return { success: false, status: 503 };
+      });
+      assert.equal((await incidentRows())[0].state, "resolve_pending");
+      await due(incident.id);
+      await reconcile(async (_url, body) => {
+        attempts.push(body);
+        return accepted;
+      });
+      assert.deepEqual(attempts[1], attempts[0]);
+      assert.equal(attempts[1].dedup_key, incident.dedup_key);
+      assert.equal(attempts[1].payload.custom_details.resolution_reason, "certificate_revoked");
+      const row = (await incidentRows())[0];
+      assert.equal(row.state, "resolved");
+      assert.equal(row.resolve_attempts, 2);
+    });
+
+    it("keeps incidents open while retirement is pending, failed, or inconsistent", async () => {
+      const managed = await certificate();
+      const { incident } = await trigger();
+      const retirement = await pool.connect();
+      try {
+        await retirement.query("BEGIN");
+        await retirement.query("UPDATE managed_certificates SET status='revoked' WHERE id=$1", [managed.id]);
+        await retirement.query("UPDATE tokens SET cert_lifecycle_status='revoked' WHERE id=$1", [tokenId]);
+        // Uncommitted retirement is pending, not confirmed recovery.
+        await due(incident.id);
+        await reconcile();
+        assert.equal((await incidentRows())[0].state, "open");
+        assert.equal(events.length, 1);
+        await retirement.query("ROLLBACK");
+      } finally {
+        await retirement.query("ROLLBACK");
+        retirement.release();
+      }
+      // A failed operation rolls back retirement and must keep the incident open.
+      await due(incident.id);
+      await reconcile();
+      assert.equal((await incidentRows())[0].state, "open");
+      assert.equal(events.length, 1);
+      await pool.query("UPDATE tokens SET cert_lifecycle_status='revoked' WHERE id=$1", [tokenId]);
+      await due(incident.id);
+      await reconcile();
+      assert.equal((await incidentRows())[0].state, "open");
+      assert.equal(events.length, 1);
+      assert.equal((await pool.query("SELECT status FROM managed_certificates WHERE id=$1", [managed.id])).rows[0].status, "active");
     });
 
     it("requires managed-certificate facts to match before accepting a verified CertOps renewal", async () => {
