@@ -117,7 +117,7 @@ describe("ensureConfigDir", () => {
     assert.ok(fs.existsSync(dir));
   });
 
-  // skip-reason: no-host - POSIX file mode bits are not meaningful on win32.
+  // skip-reason: platform - POSIX file mode bits are not meaningful on win32.
   it("sets 0700 permissions on non-win32 platforms", { skip: IS_WIN32 }, () => {
     const dir = makeTempConfigDir();
     ensureConfigDir(dir);
@@ -125,7 +125,7 @@ describe("ensureConfigDir", () => {
     assert.equal(mode, 0o700);
   });
 
-  // skip-reason: no-host - POSIX file mode bits are not meaningful on win32.
+  // skip-reason: platform - POSIX file mode bits are not meaningful on win32.
   it("re-asserts 0700 on every call even if the mode was loosened", { skip: IS_WIN32 }, () => {
     const dir = makeTempConfigDir();
     ensureConfigDir(dir);
@@ -135,7 +135,7 @@ describe("ensureConfigDir", () => {
     assert.equal(mode, 0o700);
   });
 
-  // skip-reason: no-host - requires a real Windows filesystem ACL
+  // skip-reason: platform - requires a real Windows filesystem ACL
   it("applies a real restricted ACL on win32", { skip: !IS_WIN32 }, () => {
     const dir = makeTempConfigDir();
     ensureConfigDir(dir);
@@ -144,7 +144,7 @@ describe("ensureConfigDir", () => {
     assertRestrictivePermissionsOnDir(dir);
   });
 
-  // skip-reason: no-host - requires a real Windows filesystem ACL
+  // skip-reason: platform - requires a real Windows filesystem ACL
   it("re-asserts the ACL when a foreign principal was granted (win32)", { skip: !IS_WIN32 }, () => {
     const dir = makeTempConfigDir();
     ensureConfigDir(dir);
@@ -942,7 +942,7 @@ describe("signing key pin round trip", () => {
     });
   });
 
-  // skip-reason: no-host - POSIX file mode bits are not meaningful on win32.
+  // skip-reason: platform - POSIX file mode bits are not meaningful on win32.
   it("sets 0600 permissions on the pin file on non-win32 platforms", { skip: IS_WIN32 }, () => {
     const dir = makeTempConfigDir();
     writeSigningKeyPin(dir, {
@@ -1038,7 +1038,7 @@ describe("signing key pin round trip", () => {
     assert.equal(readSigningKeyPin(dir).signingKeyId, "signing-key-2");
   });
 
-  // skip-reason: no-host - symlink creation on win32 needs Developer Mode
+  // skip-reason: platform - symlink creation on win32 needs Developer Mode
   // or elevated privileges, not reliably available in CI.
   it("refuses to write the pin through a symlink", { skip: IS_WIN32 }, () => {
     const dir = makeTempConfigDir();
@@ -1136,7 +1136,7 @@ describe("credential file round trip", () => {
     assert.equal(readBack, credential);
   });
 
-  // skip-reason: no-host - POSIX file mode bits are not meaningful on win32.
+  // skip-reason: platform - POSIX file mode bits are not meaningful on win32.
   it("sets 0600 permissions on the credential file on non-win32 platforms", { skip: IS_WIN32 }, () => {
     const dir = makeTempConfigDir();
     writeCredential(dir, "ttagent_agent-01_0123456789abcdef");
@@ -1193,7 +1193,7 @@ describe("credential file round trip", () => {
     assert.equal(readCredential(dir), "ttagent_agent-01_0123456789abcdef");
   });
 
-  // skip-reason: no-host - requires a real Windows filesystem ACL.
+  // skip-reason: platform - requires a real Windows filesystem ACL.
   // Live-repro'd on a real Windows Server 2025 host: before this fix,
   // readCredential() read the file with no ownership/ACL check at all, the
   // one credential-shaped path in this module that skipped it.
@@ -1205,7 +1205,7 @@ describe("credential file round trip", () => {
     assert.throws(() => readCredential(dir), /grants access to S-1-1-0/);
   });
 
-  // skip-reason: no-host - requires a real Windows filesystem ACL
+  // skip-reason: platform - requires a real Windows filesystem ACL
   // and, per Windows' own rules, either SeRestorePrivilege (a real admin
   // token, e.g. CI's windows-latest runner or a deployed service host) or
   // ownership already vested in one of the caller's own token groups.
@@ -1222,11 +1222,11 @@ describe("credential file round trip", () => {
       encoding: "utf8",
     });
     if (setOwner.status !== 0) {
-      // skip-reason: no-host - this process's token cannot reassign file
+      // skip-reason: platform - this process's token cannot reassign file
       // ownership to an unrelated SID without a real admin token (CI's
       // windows-latest runner or a deployed service host).
       t.skip(
-        "no-host: this process's token cannot reassign file ownership to an " +
+        "missing prerequisite: this process's token cannot reassign file ownership to an " +
           `unrelated SID (icacls: ${(setOwner.stderr || "").trim()}); needs a real ` +
           "admin token (CI runner or deployed service host)",
       );
@@ -1537,7 +1537,7 @@ describe("readDnsCredentialsFile", () => {
     );
   });
 
-  // skip-reason: no-host - POSIX permission bits are not meaningful on
+  // skip-reason: platform - POSIX permission bits are not meaningful on
   // win32.
   it("refuses a group/other-readable credentials file (POSIX)", { skip: IS_WIN32 }, () => {
     const credentialsPath = writeCredentialsFile('{"apiToken":"cf-token"}');
@@ -1548,7 +1548,7 @@ describe("readDnsCredentialsFile", () => {
     );
   });
 
-  // skip-reason: no-host - requires a real Windows filesystem ACL
+  // skip-reason: platform - requires a real Windows filesystem ACL
   it("refuses a credentials file whose ACL grants Everyone (win32)", { skip: !IS_WIN32 }, () => {
     const credentialsPath = writeCredentialsFile('{"apiToken":"cf-token"}');
     applyRestrictivePermissions(credentialsPath);
@@ -1559,7 +1559,7 @@ describe("readDnsCredentialsFile", () => {
     );
   });
 
-  // skip-reason: no-host - requires a real Windows filesystem ACL
+  // skip-reason: platform - requires a real Windows filesystem ACL
   it("accepts a credentials file restricted to the agent and SYSTEM (win32)", { skip: !IS_WIN32 }, () => {
     const credentialsPath = writeCredentialsFile('{"apiToken":"cf-token"}');
     applyRestrictivePermissions(credentialsPath);
@@ -1634,7 +1634,7 @@ describe("resolveAcmeAccountCredentials", () => {
     );
   });
 
-  // skip-reason: no-host - POSIX permission bits are not meaningful on
+  // skip-reason: platform - POSIX permission bits are not meaningful on
   // win32.
   it("refuses a group/other-readable credentials file (POSIX)", { skip: IS_WIN32 }, () => {
     const credentialsPath = writeEabFile(
@@ -1647,7 +1647,7 @@ describe("resolveAcmeAccountCredentials", () => {
     );
   });
 
-  // skip-reason: no-host - requires a real Windows filesystem ACL
+  // skip-reason: platform - requires a real Windows filesystem ACL
   it("refuses an ACL granting Everyone and never falls back to a skip (win32)", { skip: !IS_WIN32 }, () => {
     const credentialsPath = writeEabFile(
       JSON.stringify({ eabKid: "kid-1", eabHmacKey: "hmac-1" }),
@@ -1660,7 +1660,7 @@ describe("resolveAcmeAccountCredentials", () => {
     );
   });
 
-  // skip-reason: no-host - requires a real Windows filesystem ACL
+  // skip-reason: platform - requires a real Windows filesystem ACL
   it("fails closed when the ACL cannot be inspected at all (win32)", { skip: !IS_WIN32 }, () => {
     const credentialsPath = writeEabFile(
       JSON.stringify({ eabKid: "kid-1", eabHmacKey: "hmac-1" }),

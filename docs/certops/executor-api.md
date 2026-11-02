@@ -327,8 +327,8 @@ links where available. See
 A job sitting at `pending_approval` shows inline **Approve**/**Reject**
 buttons on its row (manager/admin only, via `ApprovalDecisionModal.jsx` inside
 `apps/dashboard/src/pages/certops/CertOpsJobs.jsx`); see the
-"Approval gates" runbook in `tokentimer-cloud`'s docs for the non-requester
-rule and what each decision does.
+approval policy enforced by the API: the requester cannot approve their own
+request; approval releases eligible work and rejection prevents execution.
 
 ## 9. Kubernetes controller routes
 

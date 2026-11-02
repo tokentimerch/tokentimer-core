@@ -91,7 +91,7 @@ async function updateVault(ctx, change) {
   await ctx.refresh();
 }
 
-function useObservedJob(workspaceId, jobId, refreshIndex = 0) {
+export function useObservedJob(workspaceId, jobId, refreshIndex = 0) {
   const [state, setState] = useState({ job: null, error: '' });
   useEffect(() => {
     setState({ job: null, error: '' });
@@ -251,6 +251,8 @@ export function VaultRolloutGuide({
   agents,
   config,
   approvalRequired,
+  buildLocalConfig = buildVaultConfigs,
+  canDeployTo = () => true,
 }) {
   const { border, muted, dashboard } = useDashboardTheme();
   const sectionId = useId();
@@ -258,6 +260,8 @@ export function VaultRolloutGuide({
   const saved = certopsProgress(ctx);
   const scope = `${ctx.workspaceId}/${groupId}`;
   const filesOnly = config.consumerDeliveryMode === 'files';
+  const assurance =
+    config.verificationPolicy || (filesOnly ? 'installed' : 'trust');
   const defaultProfile = filesOnly
     ? 'certificate-files'
     : `${config.consumerReloadService || 'nginx'}-public`;
@@ -391,8 +395,7 @@ export function VaultRolloutGuide({
         c.binding_id === target.bindingId &&
         c.assigned_agent_id === target.agentId &&
         c.binding_state === 'active' &&
-        (c.verification_policy || 'trust') ===
-          (filesOnly ? 'installed' : 'trust')
+        (c.verification_policy || 'trust') === assurance
     );
   const assign = async (target, index) => {
     setBusy(target.bindingId);
@@ -408,6 +411,7 @@ export function VaultRolloutGuide({
             deploymentProfileRef: target.deploymentProfileRef || defaultProfile,
             consumerDeliveryMode: filesOnly ? 'files' : 'service',
           }),
+          verificationPolicy: assurance,
           wave: index,
         }
       );
@@ -418,8 +422,7 @@ export function VaultRolloutGuide({
         row.assigned_agent_id !== target.agentId ||
         row.deployment_profile_ref !==
           (target.deploymentProfileRef || defaultProfile) ||
-        (row.verification_policy || 'trust') !==
-          (filesOnly ? 'installed' : 'trust') ||
+        (row.verification_policy || 'trust') !== assurance ||
         !Number.isInteger(row.authorization_revision)
       )
         throw new Error(
@@ -470,6 +473,7 @@ export function VaultRolloutGuide({
       return (
         b &&
         agents.some(a => a.id === t.agentId && a.wireAgentId) &&
+        canDeployTo(agents.find(a => a.id === t.agentId)) &&
         t.confirmedRevision === b.authorization_revision
       );
     });
@@ -870,7 +874,7 @@ export function VaultRolloutGuide({
           const [statusTone, statusLabel] = consumerStatus(target);
           const local =
             binding &&
-            buildVaultConfigs({
+            buildLocalConfig({
               ...config,
               consumerAgentId: agent?.wireAgentId,
               consumerBindingId: target.bindingId,

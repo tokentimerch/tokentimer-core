@@ -246,7 +246,7 @@ test("buildDnsHookCommand quotes and prefixes the node executable on win32", () 
   );
 });
 
-// skip-reason: no-host - requires a POSIX shell; Linux CI executes the real hook
+// skip-reason: platform - requires a POSIX shell; Linux CI executes the real hook
 test("POSIX hook executes non-executable archive bytes with spaces and quotes in the path", { skip: process.platform === "win32" }, t => {
   const { spawnSync } = require("node:child_process");
   const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "certops hook '"));

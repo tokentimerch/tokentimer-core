@@ -10,7 +10,7 @@
 // running the generator, or a reason tag edited by hand, is caught here.
 //
 // Also fails if any discovered skip is missing its required
-// `// skip-reason: no-host|unimplemented` tag, even in the hypothetical case
+// `// skip-reason: platform|prerequisite|unimplemented` tag, even in the hypothetical case
 // where the committed file already (incorrectly) reflects that gap.
 
 const fs = require("node:fs");

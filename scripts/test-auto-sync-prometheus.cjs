@@ -100,7 +100,8 @@ async function main() {
   ({ pool: workerPool } = await import(pathToFileURL(path.join(root, "apps/worker/src/db.js")).href));
   runs = await import(pathToFileURL(path.join(root, "apps/worker/src/shared/autoSyncRuns.js")).href);
   servers.push(await bootstrap(), await bootstrap());
-  const rules = yaml.load(fs.readFileSync(path.join(root, "deploy/prometheus/auto-sync.rules.yaml"), "utf8"));
+  const values = yaml.load(fs.readFileSync(path.join(root, "deploy/helm/examples/values-auto-sync-alerts.yaml"), "utf8"));
+  const rules = { groups: values.monitoring.prometheusRules.groups };
   // Accelerate only time windows/grace periods; promtool separately tests the
   // unmodified shipped 15-minute, 3-hour and 25-hour examples.
   for (const group of rules.groups) for (const rule of group.rules) {

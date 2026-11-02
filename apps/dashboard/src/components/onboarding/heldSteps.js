@@ -13,6 +13,8 @@ const WAITING_STEPS = new Set([
   'certops_first',
   'certops_adcs',
   'certops_vault',
+  'certops_material_store',
+  'certops_consumers',
 ]);
 
 // These render their own Continue (it is disabled until the step is done).

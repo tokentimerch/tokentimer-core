@@ -24,6 +24,10 @@ import {
 import { recipientsSatisfied } from './groupAttachment.js';
 import { issuerNeedsRecheck, scopeAdcs } from './adcsModel.js';
 import { scopeDistribution } from './distributionModel.js';
+import {
+  materialStoreSatisfied,
+  materialConsumersSatisfied,
+} from './materialSetupModel.js';
 import { scopeCertops } from './certopsScope.js';
 import { GUIDED_IMPORT_STEPS } from './importFlow.js';
 
@@ -164,7 +168,7 @@ function agentStepDone(certops, saved, objective) {
   // publication; this does not mark the agent live or the distribution ready.
   const preparingVault =
     objective === 'vault' &&
-    Boolean(saved.vaultPublishJobId) &&
+    Boolean(saved.vaultPublishJobId || saved.vaultPublishRequestKey) &&
     Boolean(saved.vaultIssuerAgentId) &&
     (!saved.chosenAgentId ||
       (saved.chosenAgentConfirmed === saved.chosenAgentId &&
@@ -196,6 +200,10 @@ function certopsDone(stepId, { reality, progress, objective }) {
   // Only progress saved for this goal's objective counts.
   const saved = scopeCertops(progress?.certops, objective);
   switch (stepId) {
+    case 'certops_material_store':
+      return materialStoreSatisfied(reality, saved);
+    case 'certops_consumers':
+      return materialConsumersSatisfied(reality, saved);
     case 'certops_objective':
       return (
         Boolean(saved.objective) &&

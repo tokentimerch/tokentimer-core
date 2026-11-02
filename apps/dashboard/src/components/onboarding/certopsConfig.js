@@ -1029,6 +1029,10 @@ export function buildControllerSecretCommand({ namespace = 'tokentimer' }) {
  * Vault Agent.
  */
 export function buildVaultConfigs({
+  provider = 'vault-kv2',
+  materialStoreRef = 'customer',
+  issuanceProfileRef = 'wildcard',
+  issuerProfileRevision = 1,
   vaultAddress,
   mount = 'secret',
   namespace,
@@ -1141,15 +1145,16 @@ export function buildVaultConfigs({
       zoneProviderMap: { [zone]: dnsProvider },
     },
     materialStores: {
-      customer: {
+      [materialStoreRef]: {
         ...store,
+        ...(provider !== 'vault-kv2' ? { provider } : {}),
         tokenFile: '/run/tokentimer-vault/issuer-token',
         groups: {
           [groupId]: {
             ...group,
             issuerAgentId: issuerAgentId || 'REPLACE_WITH_ISSUER_WIRE_ID',
-            issuanceProfileRef: 'wildcard',
-            profileRevision: 1,
+            issuanceProfileRef,
+            profileRevision: issuerProfileRevision,
             caEndpoint,
             dnsProvider,
             dnsZone: zone,
@@ -1175,8 +1180,9 @@ export function buildVaultConfigs({
       },
     },
     materialStores: {
-      customer: {
+      [materialStoreRef]: {
         ...store,
+        ...(provider !== 'vault-kv2' ? { provider } : {}),
         tokenFile: '/run/tokentimer-vault/consumer-token',
         groups: { [groupId]: group },
       },
@@ -1186,7 +1192,7 @@ export function buildVaultConfigs({
         workspaceId,
         groupId,
         agentId: consumerAgentId || 'REPLACE_WITH_CONSUMER_WIRE_ID',
-        materialStoreRef: 'customer',
+        materialStoreRef,
         deploymentProfileRef: deploymentProfile,
         profileRevision: consumerProfileRevision,
         authorizationRevision: consumerAuthorizationRevision,
@@ -1232,6 +1238,7 @@ export function buildVaultConfigs({
  * when the workspace requires approval for every job.
  */
 export function buildVaultPublishJob({
+  provider = 'vault-kv2',
   names,
   zone,
   dnsProvider,
@@ -1258,6 +1265,7 @@ export function buildVaultPublishJob({
       keyAlgorithm: 'ecdsa',
       keySize: 256,
       publicationDestination: {
+        ...(provider !== 'vault-kv2' ? { type: provider } : {}),
         materialStoreRef,
         issuanceProfileRef,
         profileRevision,

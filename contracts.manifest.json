@@ -65,14 +65,14 @@
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "c824f79ae5d0039a2a4fa70b1ec45633b2b3b2273887a6a0e744c1a3ce9473da"
+          "sha256": "ec5f6c9585e78d52b2a229763643880bbbfe23be3abd8704363f7a4459b331fe"
         },
         {
           "id": "integration-openapi-spec",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "c824f79ae5d0039a2a4fa70b1ec45633b2b3b2273887a6a0e744c1a3ce9473da"
+          "sha256": "ec5f6c9585e78d52b2a229763643880bbbfe23be3abd8704363f7a4459b331fe"
         },
         {
           "id": "auth-route-compat-contract",
@@ -273,6 +273,12 @@
           "id": "certops-adcs-preflight-freshness-module",
           "kind": "module",
           "path": "packages/contracts/certops/adcs-preflight-freshness.cjs",
+          "status": "existing"
+        },
+        {
+          "id": "certops-material-provider-module",
+          "kind": "module",
+          "path": "packages/contracts/certops/material-provider.cjs",
           "status": "existing"
         },
         {

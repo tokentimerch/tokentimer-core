@@ -6,7 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { executeJob } = require("./index");
 
-// skip-reason: no-host - Material distribution is qualified only on Linux.
+// skip-reason: platform - Material distribution is qualified only on Linux.
 test("a local material policy refusal has no uncertain side effect", { skip: process.platform !== "linux" }, async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "material-preflight-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

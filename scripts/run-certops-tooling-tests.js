@@ -1,5 +1,5 @@
 "use strict";
-// Discover the retained AD CS/Vault report and ownership tests. Bounded workers avoid
+// Discover the entire report/ownership/security inventory. Bounded workers avoid
 // multiplying source hashing and filesystem contention on Windows worktrees.
 const fs = require("node:fs");
 const path = require("node:path");
@@ -14,7 +14,7 @@ function discover(root = path.resolve(__dirname, "..")) {
     .filter(file => /^certops-.*\.test\.js$/.test(file))
     .map(file => `scripts/${file}`).sort();
   assert.ok(files.length > 0, "No qualification framework tests discovered");
-  return files;
+  return ["packages/agent/scripts/host-gate.test.js", ...files];
 }
 function concurrency(value = process.env.TEST_CONCURRENCY) {
   if (value === undefined || value === "") return Math.min(4, os.availableParallelism());
@@ -25,6 +25,9 @@ function run({ files = discover(), workers = concurrency(), timeoutMs = TOOLING_
   assert.ok(files.length > 0, "Empty tooling inventory is not a successful run");
   console.log(`CertOps tooling: ${files.length} files, ${workers} workers, ${timeoutMs / 1000}s limit`);
   const env = { ...process.env, NODE_ENV: "test" };
+  // Hosted Windows exposes TEMP through an 8.3 alias. Owned fixture paths must
+  // start with its real name so strict anti-alias checks retain their meaning.
+  if (process.platform === "win32") env.TEMP = env.TMP = fs.realpathSync.native(os.tmpdir());
   // A nested test runner must start its own inventory, not inherit the parent's
   // worker context (which makes Node ignore --test and can report false success).
   delete env.NODE_TEST_CONTEXT;

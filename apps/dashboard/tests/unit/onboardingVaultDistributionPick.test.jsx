@@ -153,7 +153,7 @@ describe('Share a certificate through Vault in the planner', () => {
       },
       reality: reality([old()]),
     });
-    expect(plan.steps.find(s => s.id === 'certops_vault').status).not.toBe(
+    expect(plan.steps.find(s => s.id === 'certops_consumers').status).not.toBe(
       'done'
     );
   });

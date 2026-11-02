@@ -37,6 +37,11 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 74).name, "certops_material_distribution");
     assert.equal(migrations.find((entry) => entry.version === 75).name, "certops_distribution_review");
     assert.equal(migrations.find((entry) => entry.version === 76).name, "certops_distribution_transfer");
+    assert.equal(migrations.find(entry => entry.version === 78).name, "certops_installed_file_distribution");
+    assert.equal(migrations.find(entry => entry.version === 79).name, "auto_sync_provider_stats");
+    assert.equal(migrations.find(entry => entry.version === 80).name, "auto_sync_run_metrics");
+    assert.equal(migrations.find(entry => entry.version === 81).name, "auto_sync_metric_labels");
+    assert.equal(migrations.find(entry => entry.version === 82).name, "auto_sync_system_metrics");
     assert.equal(
       migrations.find((entry) => entry.version === 78).name,
       "certops_installed_file_distribution",
@@ -51,7 +56,7 @@ describe("operational notifications migration", () => {
     assert.match(migrations.find(entry => entry.version === 72).sql, /fk_certificate_profiles_issuer/);
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      [...Array.from({ length: 82 }, (_, index) => index + 1), 84, 85],
+      Array.from({ length: 85 }, (_, index) => index + 1),
     );
     assert.equal(migrations.find(entry => entry.version === 73).name, "certops_job_alert_context");
     assert.match(migrations.find(entry => entry.version === 72).sql, /ON DELETE SET NULL \(issuer_id\)/);

@@ -1,0 +1,65 @@
+name: "CertOps / CertOps controller HTTP-01 qualification"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  controller-host:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      CERTOPS_KUBE_CONTEXT: kind-certops-qualification-${{ github.run_id }}
+      CERTOPS_KUBE_HOST_TESTS: '1'
+      CERTOPS_QUALIFICATION_STRICT: '1'
+      CERTOPS_QUALIFICATION_REPORT: qualification-results/kubernetes-http01.json
+      CERTOPS_CSR_API_URL: http://127.0.0.1:4000
+      CERTOPS_CSR_DISPOSABLE_STACK: '1'
+      NODE_ENV: test
+      CERTOPS_ENABLED: 'true'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/certops-node-setup
+      - name: Install client matching the pinned native API server
+        run: bash scripts/certops-kubernetes-tools.sh
+      - name: Provision disposable cluster and issuer infrastructure
+        run: |
+          kind create cluster --name certops-qualification-${{ github.run_id }} --image kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f --wait 180s
+          helm install cert-manager oci://quay.io/jetstack/charts/cert-manager --version v1.20.4 --namespace cert-manager --create-namespace --set crds.enabled=true --wait --timeout 5m
+      - name: Build candidate production controller image
+        run: |
+          docker build -f apps/k8s-controller/Dockerfile -t certops-controller:qualification .
+          kind load docker-image certops-controller:qualification --name certops-qualification-${{ github.run_id }}
+      - name: Install pinned ACME test CA binaries
+        run: |
+          go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.8.0
+          go install github.com/letsencrypt/pebble/v2/cmd/pebble-challtestsrv@v2.8.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Start real migrated API and PostgreSQL
+        run: |
+          docker compose -f deploy/compose/docker-compose.test.yml up -d --build postgres api
+          for i in $(seq 1 60); do
+            if curl -fsS "$CERTOPS_CSR_API_URL/" >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - name: Actual API controller certificate journey
+        env:
+          CERTOPS_QUALIFICATION_REPORT: qualification-results/kubernetes-http01.json
+        run: |
+          node scripts/certops-kubernetes-http01-e2e.js
+          node scripts/certops-qualification-report.js qualification-results/kubernetes-http01.json
+      - name: Destroy API stack
+        if: always()
+        run: docker compose -f deploy/compose/docker-compose.test.yml down -v --remove-orphans
+      - name: Destroy cluster
+        if: always()
+        run: kind delete cluster --name certops-qualification-${{ github.run_id }}
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certops-kubernetes-http01
+          path: qualification-results/kubernetes-http01.json
+          if-no-files-found: error

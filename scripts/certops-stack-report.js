@@ -5,7 +5,7 @@
  * foreign-scope events fail. A protocol-only fixture cannot prove optional native certificate work.
  */
 const fs = require("node:fs");
-const manifest = {requiredTests:[],scope:""};
+const manifest = require("../tests/e2e/agent-protocol-required-tests.json");
 function verify(text, required = manifest.requiredTests, sourceFile = "certops-agent-e2e.test.js", scope = manifest.scope, expectedSha = process.env.GITHUB_SHA) {
   const events = text.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
   if (!required.length || new Set(required).size !== required.length) throw new Error("Invalid mandatory test inventory");

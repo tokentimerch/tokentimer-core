@@ -1,0 +1,62 @@
+# Manual Ubuntu 24.04 public signed trust lifecycle.
+# workflow_dispatch only. This file does not claim native qualification.
+name: "CertOps / Public signed Linux trust lifecycle"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: certops-linux-signed-trust-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  signed-trust:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CERTOPS_ENABLED: "true"
+      CERTOPS_CSR_DISPOSABLE_STACK: "1"
+      CERTOPS_LINUX_SIGNED_TRUST_DISPOSABLE_HOST: "1"
+      CERTOPS_CSR_API_URL: http://127.0.0.1:4000
+      CERTOPS_QUALIFICATION_REPORT: qualification-results/linux-signed-trust.json
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_USER: tokentimer
+      DB_PASSWORD: password
+      DB_NAME: tokentimer
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/certops-node-setup
+      - run: docker compose -f deploy/compose/docker-compose.test.yml up -d --build
+      - name: Wait for migrated disposable API
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:4000/ >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - name: Run actual signed jobs and native OS trust oracles
+        run: |
+          node_path="$(command -v node)"
+          test "${node_path#/}" != "$node_path"
+          sudo env PATH="$PATH" GITHUB_ACTIONS=true RUNNER_ENVIRONMENT=github-hosted GITHUB_SHA="$GITHUB_SHA" CERTOPS_LINUX_SIGNED_TRUST_DISPOSABLE_HOST=1 CERTOPS_CSR_DISPOSABLE_STACK=1 CERTOPS_CSR_API_URL=http://127.0.0.1:4000 CERTOPS_QUALIFICATION_REPORT=qualification-results/linux-signed-trust.json DB_HOST=localhost DB_PORT=5432 DB_USER=tokentimer DB_PASSWORD=password DB_NAME=tokentimer "$node_path" scripts/certops-linux-signed-trust.js
+      - name: Independently verify every mandatory scenario
+        run: node scripts/certops-qualification-report.js qualification-results/linux-signed-trust.json
+      - name: Require closed Ubuntu signed-trust proof
+        run: |
+          node -e "const fs=require('node:fs');const h=require('./scripts/certops-linux-signed-trust-proof');const report=JSON.parse(fs.readFileSync('qualification-results/linux-signed-trust.json','utf8'));h.verifyProof(report[h.FIELD]);"
+          python3 -c "import json,runpy; proof=runpy.run_path('scripts/certops_linux_signed_trust_proof.py'); proof['project_report'](json.load(open('qualification-results/linux-signed-trust.json',encoding='utf-8')))"
+      - name: Preserve uncertain native recovery state before stack teardown
+        if: always()
+        run: |
+          node -e "const fs=require('fs'),p=JSON.parse(fs.readFileSync('qualification-results/linux-signed-trust.json'));if(p.cleanup?.status!=='passed'||p.status!=='passed')process.exit(1)"
+          docker compose -f deploy/compose/docker-compose.test.yml down -v --remove-orphans
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certops-linux-public-signed-trust
+          path: qualification-results/linux-signed-trust.json
+          if-no-files-found: error
+          retention-days: 14
