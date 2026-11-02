@@ -6,7 +6,7 @@ runs:
     - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
       with:
         version: '11.28.8'
-    - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
       with:
         node-version: '24'
         cache: pnpm
