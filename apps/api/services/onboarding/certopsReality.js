@@ -7,6 +7,7 @@
 
 const { listAgents } = require("../certops/agentRegistry");
 const { consumerMatrix } = require("../certops/materialDistribution");
+const { hasFreshCapability } = require("../certops/agentJobEligibility");
 const {
   CONTINUATION_STATES,
   DEFAULT_POLL_INTERVAL_SECONDS,
@@ -57,6 +58,8 @@ function summarizeAgents(items, { now = Date.now(), since = null } = {}) {
       clockDriftState: a.clockDriftState,
       ntpSynced: a.ntpSynced,
       declaredCapabilities: a.declaredCapabilities || [],
+      claimEvidenceFresh: hasFreshCapability({ declaredCapabilities: a.declaredCapabilities,
+        capabilitiesUpdatedAt: a.capabilitiesUpdatedAt, capability: "evidence-claim-binding-v1", now }),
       supportedOperations: a.supportedOperations || [],
       targetSelectors: a.targetSelectors || [],
       commandProfiles: a.commandProfiles || [],
@@ -75,9 +78,10 @@ function summarizeAgents(items, { now = Date.now(), since = null } = {}) {
 async function loadDistributionReality(
   pool,
   workspaceId,
-  { now = Date.now(), since = null } = {},
+  { now = Date.now(), since = null, groupId = null } = {},
 ) {
   const sinceMs = since ? new Date(since).getTime() : null;
+  const selectedId = typeof groupId === "string" && UUID_PATTERN.test(groupId) ? groupId : null;
   const { rows } = await pool.query(
     `SELECT (SELECT COUNT(*)::int FROM certops_distribution_groups WHERE workspace_id = $1) AS groups,
             (SELECT COUNT(*)::int FROM certops_consumer_bindings WHERE workspace_id = $1) AS bindings`,
@@ -85,12 +89,23 @@ async function loadDistributionReality(
   );
   const row = rows[0] || {};
   const items = await pool.query(
-    `SELECT g.id, g.material_store_ref, g.created_at,
+    `SELECT g.id, g.material_store_ref, g.created_at, g.material_store_provider,
+            g.issuer_agent_id, g.issuance_profile_ref, g.profile_revision,
+            (g.state='active' AND period.ended_at IS NULL) AS active,
+            publication.id AS material_version_id, publication.published_at, publication.valid_to,
             latest.generation AS latest_generation, latest.state AS latest_rollout_state,
             latest.verification_only,
             CASE WHEN latest.state='verified' AND latest.verification_only=false THEN latest.observed_at END AS last_verified_at,
             CASE WHEN latest.state IN ('installed','verified') AND latest.verification_only=false THEN latest.observed_at END AS last_completed_at
        FROM certops_distribution_groups g
+       JOIN certops_management_periods period ON period.workspace_id=g.workspace_id AND period.id=g.management_period_id
+       LEFT JOIN LATERAL (
+         SELECT v.id,v.published_at,v.valid_to FROM certops_material_versions v
+         JOIN certops_certificate_identities identity ON identity.workspace_id=v.workspace_id AND identity.id=v.certificate_identity_id
+         WHERE v.workspace_id=g.workspace_id AND v.group_id=g.id AND v.management_period_id=period.id
+           AND v.state='published' AND identity.lifecycle_status='active' AND v.valid_to>clock_timestamp()
+         ORDER BY v.published_at DESC,v.id DESC LIMIT 1
+       ) publication ON true
        LEFT JOIN LATERAL (
          SELECT r.generation,r.state,r.verification_only,
            COALESCE((SELECT MAX(d.observed_at) FROM certops_consumer_deployments d
@@ -99,14 +114,14 @@ async function loadDistributionReality(
          ORDER BY r.generation DESC,r.created_at DESC,r.id DESC LIMIT 1
        ) latest ON true
       WHERE g.workspace_id = $1
-      ORDER BY g.created_at DESC
+      ORDER BY ${selectedId ? "(g.id=$2::uuid) DESC," : ""} g.created_at DESC
       LIMIT 20`,
-    [workspaceId],
+    selectedId ? [workspaceId, selectedId] : [workspaceId],
   );
   const consumers = items.rows.length ? await consumerMatrix({ client: pool, workspaceId, groupIds: items.rows.map(g => g.id) }) : [];
   const facts = items.rows.map((g) => {
       const bindings = consumers.filter(c => c.group_id === g.id && c.binding_state === "active");
-      const completed = ["installed", "verified"].includes(g.latest_rollout_state) && g.verification_only === false &&
+      const completed = g.active !== false && ["installed", "verified"].includes(g.latest_rollout_state) && g.verification_only === false &&
         bindings.length > 0 && bindings.every(c => c.converged === true && Number(c.desired_generation) === Number(g.latest_generation) &&
           !["failed", "orphaned_unknown_effect"].includes(c.latest_deployment?.stage));
       const verified = completed && g.latest_rollout_state === "verified" && bindings.every(c => c.live_verified === true);
@@ -127,6 +142,16 @@ async function loadDistributionReality(
       return {
         id: g.id,
         materialStoreRef: g.material_store_ref,
+        provider: g.material_store_provider || "vault-kv2",
+        issuerAgentId: g.issuer_agent_id,
+        issuanceProfileRef: g.issuance_profile_ref,
+        profileRevision: g.profile_revision,
+        active: g.active === true,
+        publication: g.active === true && g.material_version_id && g.published_at ? {
+          materialVersionId: g.material_version_id,
+          publishedAt: new Date(g.published_at).toISOString(),
+          validTo: new Date(g.valid_to).toISOString(),
+        } : null,
         createdAt:
           createdMs === null ? null : new Date(createdMs).toISOString(),
         verified,
@@ -551,6 +576,7 @@ async function loadCertopsReality(
     chosenAgentId,
     adcsIssuerId,
     clusterId,
+    distributionGroupId,
   },
 ) {
   if (enabled !== true) return null;
@@ -570,6 +596,7 @@ async function loadCertopsReality(
   );
   const distribution = await loadDistributionReality(pool, workspaceId, {
     since,
+    groupId: distributionGroupId,
   });
   const dryRun = await loadJobStatus(pool, workspaceId, dryRunJobId);
   const issueJob = await loadJobStatus(pool, workspaceId, issueJobId);

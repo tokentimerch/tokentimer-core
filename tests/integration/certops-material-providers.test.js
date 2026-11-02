@@ -201,6 +201,14 @@ describe("CertOps material provider references on PostgreSQL", function () {
           .groups;
         assert.equal(groups[0].material_store_provider, provider);
         assert.equal(groups[0].provider_version, providerVersion);
+        const reality = await require("../../apps/api/services/onboarding/certopsReality").loadDistributionReality(client, workspaceId, { groupId: group.id });
+        assert.equal(reality.items[0].id, group.id);
+        assert.equal(reality.items[0].provider, provider);
+        assert.equal(reality.items[0].active, true);
+        assert.equal(reality.items[0].publication.materialVersionId, materialVersionId);
+        assert.equal(reality.items[0].completed, false, "Publication alone never completes consumer onboarding");
+        const otherWorkspaceReality = await require("../../apps/api/services/onboarding/certopsReality").loadDistributionReality(client, crypto.randomUUID(), { groupId: group.id });
+        assert.deepEqual(otherWorkspaceReality.items, [], "A selected group cannot cross workspace scope");
         await resolveDistributionJobDefaults({
           client,
           workspaceId,
