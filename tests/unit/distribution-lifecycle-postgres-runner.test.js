@@ -52,7 +52,18 @@ test("the real controller accepts PostgreSQL startup beyond fifteen seconds", as
   const { calls, errors, elapsed } = await runController(32000);
   assert.deepEqual(errors, []);
   assert.ok(elapsed >= 32000);
-  assert.equal(calls.filter(call => call.command === process.execPath).length, 4);
+  const campaigns = calls.filter(call => call.command === process.execPath);
+  for (const file of [
+    "apps/api/migrations/migrate.js",
+    "tests/postgres/distribution-lifecycle.test.js",
+    "tests/postgres/distribution-migration-upgrade.test.js",
+    "tests/integration/certops-distribution-upgrade.test.js",
+    "tests/postgres/pagerduty-incident-lifecycle.test.js",
+  ]) assert.ok(campaigns.some(call => call.args.includes(file)), `required campaign: ${file}`);
+  const histories = campaigns.filter(call => call.args.includes("tests/postgres/pagerduty-migration.test.js"));
+  assert.deepEqual(histories.map(call => call.options.env.PAGERDUTY_UPGRADE_FROM),
+    ["78", "80", "81", "82", "92", "legacy79", "legacy81"]);
+  assert.ok(campaigns.every(call => call.options.env.DB_PORT === "54321"), "all campaigns use the ready owned database");
   const lifecycle = calls.find(call => call.args.includes("tests/postgres/distribution-lifecycle.test.js"));
   assert.ok(lifecycle.args.includes("--test-concurrency=1"), "shared-database files must not overlap their lock fixtures");
   const probes = calls.filter(call => call.args.includes("pg_isready"));

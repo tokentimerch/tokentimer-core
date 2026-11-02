@@ -1,24 +1,16 @@
 # Distribution lifecycle integration and migration compatibility
 
-PR #498 integrates main through `d2f7dbd4` and compares these unmerged sources:
-
-| PR | Inspected head | Shared boundary |
-| --- | --- | --- |
-| #460 | `66f94086eb01b6cdd81727899defb300eedf4319` | Provider identity, version pins, provider schema and its two earlier preview orders |
-| #461 | `b8c506425e30017ea6470665cd34460e7347a07c` | Recipient-verification and digest-claim schemas at independent 81/82 |
-| #496 | `99101c108fcc8f71950103379255d71d13c9d391` | PagerDuty schema at independent 81 and earlier preview 79 |
-
-Only additive compatibility SQL and #460's shared public provider helper are
-imported. This does not merge those PRs' runtime features, environment policies,
-trust exceptions or production capabilities. Their runtime integration must use
-the shared registry by migration name instead of registering duplicate numbers.
+PR #498 integrates the merged provider (#460), recipient-verification (#461)
+and PagerDuty (#496) runtimes. Their earlier preview databases retain their applied
+migration identities. Normal feature capability gates remain authoritative; no
+temporary qualification trust exception is imported.
 
 ## Migration ordering
 
 Use the normal migration runner. SQL filenames from earlier previews are retained;
 the composed plan determines numbers. Fresh installations preserve main 79–82,
 then use provider 83, recipient/digest 84–85, lifecycle 86–90, recovery delivery 91
-and PagerDuty 92. Independent registered tails may leave reservations absent;
+and PagerDuty 92–93. Independent registered tails may leave reservations absent;
 never fill them with no-op SQL. Applied version/name/timestamp rows and their SQL
 remain unchanged. Recognized previews retain their original assignments, while
 missing definitions are placed without collisions. Use the normal runner and
@@ -34,8 +26,7 @@ history validation. Deploy matching API/workers only after migration completion.
 The isolated PostgreSQL runner executes the historical SQL, preserves original
 ledger timestamps and counters, upgrades released, independent and historical extension layouts, tests two
 concurrent runners and repeats migration execution. It also replays the existing
-six histories and tests verification/recovery backfills. Compatibility DDL alone
-does not enable recipient enforcement or PagerDuty expiration reconciliation.
+six histories and tests verification/recovery backfills. Recipient enforcement and PagerDuty reconciliation use their normal runtime settings.
 
 ## Cleanup operation and provider contract
 
@@ -81,5 +72,5 @@ The release manifest still omits `material-cleanup-vault-kv2-v1`; this integrati
 does not enable it. Exact-version Vault soft deletion does not authorize data
 reads, destroy, metadata/all-version deletion, purge or Azure individual-version
 deletion. Full real-fleet/operator acceptance and protected artifact qualification
-remain outstanding. #460's production Windows/Azure gates and administrator-owned
-environment cleanup remain its separate release/merge requirements.
+remain outstanding. Azure and shared Windows/IIS retain their separate protected
+artifact qualification requirements; OpenBao distribution is supported.
