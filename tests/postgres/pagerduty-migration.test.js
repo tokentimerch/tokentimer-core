@@ -5,7 +5,6 @@ const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const path = require("node:path");
-const fs = require("node:fs");
 const { pool } = require("../../apps/api/db/database");
 const {
   migrations,
@@ -296,6 +295,15 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
     { version: 80, name: "auto_sync_run_metrics" },
     { version: 81, name: "auto_sync_metric_labels" },
     { version: 82, name: "auto_sync_system_metrics" },
+    { version: 83, name: "certops_material_providers" },
+    { version: 84, name: "recipient_channel_verification" },
+    { version: 85, name: "weekly_digest_recipient_claim_token" },
+    { version: 86, name: "certops_distribution_lifecycle" },
+    { version: 87, name: "certops_distribution_incident_delivery" },
+    { version: 88, name: "certops_stable_consumer_discovery" },
+    { version: 89, name: "certops_material_cleanup" },
+    { version: 90, name: "certops_consumer_verification_failures" },
+    { version: 91, name: "certops_distribution_resolution_delivery" },
     { version: 92, name: "pagerduty_incident_lifecycle" },
     { version: 93, name: "pagerduty_resolution_reason" },
   ]);
@@ -313,8 +321,8 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
         "SELECT 1 FROM migrations WHERE version BETWEEN 83 AND 91",
       )
     ).rowCount,
-    0,
-    "Unmerged companions must not receive placeholder history",
+    9,
+    "Only integrated companion schemas receive migration history",
   );
   if (legacy) {
     assert.deepEqual(
@@ -389,72 +397,17 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
     1,
   );
   if (upgradeFrom === "81" && process.env.PAGERDUTY_COMPANION_ROOT) {
-    // Rehearse the later merge of an unapplied #461 schema definition into a
-    // free lower slot. Existing main/PagerDuty rows must never be renumbered.
-    const {
-      composeMigrations,
-    } = require("../../apps/api/migrations/compose-migrations");
-    const recorded = (
-      await pool.query("SELECT * FROM migrations ORDER BY version")
-    ).rows;
-    const incidents = (
-      await pool.query("SELECT * FROM pagerduty_incidents ORDER BY id")
-    ).rows;
-    const original = migrations.slice();
-    const pending = {
-      version: 83,
-      name: "recipient_channel_verification",
-      sql: fs.readFileSync(
-        path.join(
-          process.env.PAGERDUTY_COMPANION_ROOT,
-          "packages/recipient-verification/migration.sql",
-        ),
-        "utf8",
-      ),
-    };
-    const plan = composeMigrations(
-      [...original, pending].sort((a, b) => a.version - b.version),
-      recorded,
-    );
-    migrations.splice(0, migrations.length, ...plan);
-    try {
-      await runMigrations();
-      assert.deepEqual(
-        (
-          await pool.query(
-            "SELECT * FROM migrations WHERE version<>83 ORDER BY version",
-          )
-        ).rows,
-        recorded,
-      );
-      assert.equal(
-        (await pool.query("SELECT name FROM migrations WHERE version=83"))
-          .rows[0].name,
-        pending.name,
-      );
-      assert.ok(
-        (
-          await pool.query(
-            "SELECT to_regclass('public.contact_channel_verifications') AS name",
-          )
-        ).rows[0].name,
-      );
-      assert.deepEqual(
-        (await pool.query("SELECT * FROM pagerduty_incidents ORDER BY id"))
-          .rows,
-        incidents,
-      );
-      await runMigrations();
-      assert.deepEqual(
-        (
-          await pool.query(
-            "SELECT * FROM migrations WHERE version<>83 ORDER BY version",
-          )
-        ).rows,
-        recorded,
-      );
-    } finally {
-      migrations.splice(0, migrations.length, ...original);
-    }
+    // With recipient verification integrated, composition and replay must
+    // preserve every ledger timestamp and incident rather than inject a second
+    // copy into a formerly free slot.
+    const { composeMigrations } = require("../../apps/api/migrations/compose-migrations");
+    const recorded = (await pool.query("SELECT * FROM migrations ORDER BY version")).rows;
+    const incidents = (await pool.query("SELECT * FROM pagerduty_incidents ORDER BY id")).rows;
+    assert.equal(recorded.find(row => row.version === 84)?.name, "recipient_channel_verification");
+    assert.deepEqual(composeMigrations(migrations, recorded), migrations);
+    assert.ok((await pool.query("SELECT to_regclass('public.contact_channel_verifications') AS name")).rows[0].name);
+    await runMigrations();
+    assert.deepEqual((await pool.query("SELECT * FROM migrations ORDER BY version")).rows, recorded);
+    assert.deepEqual((await pool.query("SELECT * FROM pagerduty_incidents ORDER BY id")).rows, incidents);
   }
 });

@@ -176,8 +176,29 @@ test("cross-PR reservations reject collisions and compose without changing suppo
       .map((name, i) => ({ version: 78 + i, name }))]);
   const composed = composeMigrations(registry, before);
   assert.deepEqual(composed.slice(0, before.length), before);
-  assert.deepEqual(composed.slice(before.length), future);
+  assert.deepEqual(composed.slice(before.length).map(({ name, sql }) => ({ name, sql })),
+    future.map(({ name, sql }) => ({ name, sql })));
+  assert.ok(composed.slice(before.length).every(row => row.version > Math.max(...before.map(prior => prior.version))),
+    "unapplied companions append after the immutable preview tail");
   assert.deepEqual(composeMigrations(registry, composed), composed);
+});
+
+test("a provider preview upgraded through recipient and PagerDuty retains its ledger when lifecycle arrives", () => {
+  const { migrations } = require("../../apps/api/migrations/migrate");
+  const earlier = migrations.filter(row => row.version < 86 || row.version > 91);
+  const recorded = [...ledger(canonical), { version: 77, name: "onboarding_sessions" },
+    ...["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "certops_material_providers"]
+      .map((name, index) => ({ version: 78 + index, name }))];
+  const before = composeMigrations(earlier, recorded);
+  const after = composeMigrations(migrations, before);
+  for (const row of before) {
+    assert.deepEqual(after.find(entry => entry.version === row.version), row);
+  }
+  assert.deepEqual(composeMigrations(migrations, after), after);
+  assert.equal(after.length, migrations.length);
+  const malformed = before.map(row => row.name === "auto_sync_metric_labels"
+    ? { ...row, name: "certops_distribution_lifecycle" } : row);
+  assert.throws(() => composeMigrations(migrations, malformed), /Unsupported Core migration history/);
 });
 
 test("all 72 legacy distribution-first definitions retain their immutable historical SQL", () => {

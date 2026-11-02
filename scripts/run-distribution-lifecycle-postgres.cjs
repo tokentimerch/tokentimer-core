@@ -29,6 +29,14 @@ async function main(){let created=false;try{
   const upgradeDatabase=`pr329_distribution_upgrade_${nonce}_test`;run("docker",["exec",container,"createdb","-U","postgres",upgradeDatabase]);
   process.stdout.write(run(process.execPath,["--test","--test-force-exit","tests/postgres/distribution-migration-upgrade.test.js"],{...env,DB_NAME:upgradeDatabase},"upgrade-tests.log"));
   process.stdout.write(run(process.execPath,["node_modules/mocha/bin/mocha.js","--no-config","tests/integration/certops-distribution-upgrade.test.js","tests/integration/certops-distribution-compatibility.test.js","--timeout","120000","--exit"],env,"migration-histories.log"));
+  for(const history of ["78","80","81","82","92","legacy79","legacy81"]){
+    const database=`pd_${history}_${nonce}_migration_issue364_test`;run("docker",["exec",container,"createdb","-U","postgres",database]);
+    process.stdout.write(run(process.execPath,["--test","--test-force-exit","tests/postgres/pagerduty-migration.test.js"],{...env,DB_NAME:database,PAGERDUTY_UPGRADE_FROM:history,PAGERDUTY_COMPANION_ROOT:root},`pagerduty-history-${history}.log`));
+  }
+  const pagerdutyDatabase=`pagerduty_${nonce}_issue364_test`;run("docker",["exec",container,"createdb","-U","postgres",pagerdutyDatabase]);
+  const pagerdutyEnv={...env,DB_NAME:pagerdutyDatabase,PAGERDUTY_COMPANION_ROOT:root};
+  run(process.execPath,["apps/api/migrations/migrate.js"],pagerdutyEnv,"pagerduty-migration.log");
+  process.stdout.write(run(process.execPath,["--test","--test-force-exit","tests/postgres/pagerduty-incident-lifecycle.test.js"],pagerdutyEnv,"pagerduty-lifecycle.log"));
   console.log(`Real PostgreSQL lifecycle integration passed. Logs: ${output}`);
 }finally{if(created)run("docker",["rm","--force","--volumes",container]);}}
 main().catch(error=>{console.error(error.message);process.exitCode=1;});

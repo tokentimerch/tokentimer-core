@@ -29,6 +29,7 @@ describe("Core distribution and lifecycle migration histories", function () {
     "provider-preview-78": ["certops_material_providers"],
     "provider-preview-79": ["certops_installed_file_distribution", "certops_material_providers"],
     "provider-preview-78-installed-79": ["certops_material_providers", "certops_installed_file_distribution"],
+    "provider-preview-through-pagerduty": ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "certops_material_providers", "auto_sync_metric_labels", "auto_sync_system_metrics", "recipient_channel_verification", "weekly_digest_recipient_claim_token", "pagerduty_incident_lifecycle", "pagerduty_resolution_reason"],
   };
 
   for (const history of [
@@ -48,6 +49,7 @@ describe("Core distribution and lifecycle migration histories", function () {
     "provider-preview-82",
     "provider-preview-79",
     "provider-preview-78-installed-79",
+    "provider-preview-through-pagerduty",
   ]) {
     it(`upgrades ${history} through the actual composed executor`, async () => {
       const root = path.resolve(__dirname, "../..");
