@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-28 against main 01d23da3 (v0.18.2). Other
+Last reviewed: 2026-11-02 against main 01d23da3 (v0.18.2). Other
 certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
 
 This page is the repository milestone index: what Core takes next, what must
@@ -126,6 +126,7 @@ does not promise a version or add a v1.0.0 gate.
   owner/backup thresholds, acknowledgement, delivery fallback and external
   incident lifecycle are distinct outcomes.
   PagerDuty expiration incidents ([PR #496](https://github.com/tokentimerch/tokentimer-core/pull/496))
+  include resolution after verified renewal or confirmed certificate retirement,
   and distribution incidents ([PR #498](https://github.com/tokentimerch/tokentimer-core/pull/498))
   are active increments, not completion of the entire umbrella.
 - **Windows service certificates beyond IIS**

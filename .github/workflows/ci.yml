@@ -542,7 +542,7 @@ jobs:
         env:
           PAGERDUTY_COMPANION_ROOT: ${{ github.workspace }}/.test-deps/recipient-companion
         run: |
-          for history in 78 80 81 82 legacy79 legacy81; do
+          for history in 78 80 81 82 92 legacy79 legacy81; do
             DB_NAME="pd_${history}_migration_issue364_test" PAGERDUTY_UPGRADE_FROM="$history" \
               node --test --test-force-exit tests/postgres/pagerduty-migration.test.js
           done

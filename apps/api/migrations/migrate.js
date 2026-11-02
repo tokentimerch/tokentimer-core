@@ -4866,6 +4866,11 @@ const migrations = [
     name: "pagerduty_incident_lifecycle",
     sql: fs.readFileSync(require("path").join(__dirname, "092-pagerduty-incident-lifecycle.sql"), "utf8"),
   },
+  {
+    version: 93,
+    name: "pagerduty_resolution_reason",
+    sql: fs.readFileSync(require("path").join(__dirname, "093-pagerduty-resolution-reason.sql"), "utf8"),
+  },
 ];
 
 
