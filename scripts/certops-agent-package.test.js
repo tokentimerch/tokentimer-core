@@ -75,6 +75,35 @@ test("acceptance verifies archive checksum and all installed bytes, refusing tam
   fs.appendFileSync(path.join(installed, "bin/tokentimer-agent.js"), "tampered");
   assert.throws(() => verifyInstalled(extracted.files, installed));
 });
+
+test("archive replacement after checksum verification cannot change the extracted package", t => {
+  const { root, archive } = fixture(t), expectedSha256 = digest(archive);
+  fs.writeFileSync(path.join(root, "package/unverified.js"), "foreign fixture bytes");
+  const foreign = path.join(root, "foreign.tgz");
+  assert.equal(spawnSync("tar", ["-czf", "foreign.tgz", "package"], { cwd: root }).status, 0);
+  const childProcess = require("node:child_process"), originalSpawn = childProcess.spawnSync;
+  const modulePath = require.resolve("./certops-agent-package"), cached = require.cache[modulePath];
+  let replaced = false;
+  t.mock.method(childProcess, "spawnSync", (file, args, options) => {
+    const result = originalSpawn(file, args, options);
+    if (file === "tar" && args.includes("-tzf") && !replaced) {
+      fs.copyFileSync(foreign, archive);
+      replaced = true;
+    }
+    return result;
+  });
+  delete require.cache[modulePath];
+  try {
+    const fresh = require("./certops-agent-package");
+    const extracted = fresh.extractVerified({ tarball: archive, expectedSha256, destination: path.join(root, "verified") });
+    assert.equal(replaced, true);
+    assert.notEqual(digest(archive), expectedSha256);
+    assert.equal(Object.hasOwn(extracted.files, "unverified.js"), false);
+  } finally {
+    require.cache[modulePath] = cached;
+    t.mock.restoreAll();
+  }
+});
 test("acceptance refuses reused extraction roots and incomplete packages", t => {
   const { root, archive } = fixture(t), destination = path.join(root, "existing");
   fs.mkdirSync(destination);

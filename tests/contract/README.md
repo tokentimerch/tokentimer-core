@@ -1,6 +1,6 @@
 # Contract Tests
 
-Contract tests verify that `tokentimer-enterprise` and `tokentimer-cloud` remain compatible with `tokentimer-core` as they evolve independently.
+Contract tests verify the public Core interfaces used by independently evolving downstream compositions.
 
 ## Purpose
 
@@ -120,8 +120,7 @@ Verifies that:
 These tests run in CI for:
 
 - `tokentimer-core` - Via `check:contracts`, `check:contracts:integrity`, `test:contracts` (static mode), and dedicated runtime API contract checks with `CONTRACT_API_REQUIRED=1`
-- `tokentimer-enterprise` - Before release (verify core compatibility)
-- `tokentimer-cloud` - Before deployment (verify core compatibility)
+Downstream deployments should run the same compatibility checks before adopting a new Core version.
 
 ## Adding New Contract Tests
 
