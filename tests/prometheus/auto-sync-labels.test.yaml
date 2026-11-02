@@ -1,6 +1,6 @@
 {
   "rule_files": [
-    "../../deploy/prometheus/auto-sync.rules.yaml"
+    "../../.build/auto-sync-alert-evidence/rules.yaml"
   ],
   "evaluation_interval": "1m",
   "tests": [

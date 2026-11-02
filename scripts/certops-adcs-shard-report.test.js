@@ -1,7 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const suites = require("../.github/maintainers/certops/qualification-suites.json");
+const suites = require("./certops-qualification-manifest");
 const { SHARD_NAMES, createShard, phaseOf } = require("../tests/e2e/helpers/certops-adcs-shards");
 const { verifyShardReport } = require("./certops-adcs-shard-report");
 
@@ -61,6 +61,16 @@ test("an unexecuted, failed or foreign scenario fails the shard", () => {
   foreign.requiredScenarios.push(createShard("issuance").select(REQUIRED).find((id) => !createShard("renewals").owns(id)));
   assert.ok(verifyShardReport(foreign, "renewals").some((e) => /outside the shard/.test(e)));
   assert.ok(verifyShardReport(report("renewals"), "all").length);
+});
+
+test("a shard cannot hide a missing native scenario by narrowing its own requirement list", () => {
+  const narrowed = report("issuance");
+  narrowed.requiredScenarios = narrowed.requiredScenarios.slice(0, -1);
+  narrowed.scenarios.pop();
+  assert.ok(verifyShardReport(narrowed, "issuance").length);
+  const duplicate = report("renewals");
+  duplicate.scenarios.push(duplicate.scenarios[0]);
+  assert.ok(verifyShardReport(duplicate, "renewals").length);
 });
 
 test("the workflow matrix keeps release evidence serial and shards parallel with valid group names", () => {

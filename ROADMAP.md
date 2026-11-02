@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-28 against main 01d23da3 (v0.18.2). Other
+Last reviewed: 2026-11-02 against main 5bc9b519 (v0.18.2). Other
 certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
 
 This page is the repository milestone index: what Core takes next, what must
@@ -78,6 +78,16 @@ called stable while they are open.
 Accepted work that ships in 0.x stages on its own schedule. v1.0.0 can be
 called stable while it is open.
 
+- **Verifiable certificate lifecycle and real-host qualification**
+  ([#354](https://github.com/tokentimerch/tokentimer-core/issues/354)).
+  Cover Windows installation, services, CNG, certificate stores and IIS,
+  enterprise AD CS enrollment and recovery, ACME, Linux destinations and
+  edition integration. Use disposable hosted Windows runners and isolated
+  on-demand domain labs, with independent cleanup safeguards. Mandatory
+  execution reports must fail on missing prerequisites or skipped tests.
+  Implementation and focused local evidence are separate from hosted
+  execution and release qualification; see
+  [the qualification guide](.github/maintainers/certops/e2e-qualification.md).
 - **MCP operator interface**
   ([#502](https://github.com/tokentimerch/tokentimer-core/issues/502),
   implementation [PR #406](https://github.com/tokentimerch/tokentimer-core/pull/406)).

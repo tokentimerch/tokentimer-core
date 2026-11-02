@@ -29,7 +29,7 @@ test(
   process.env.TT_WINDOWS_MATERIAL_KEY_ALGORITHM === "ec-p521"
     ? "real Windows/IIS: P-521 is rejected before key import or binding mutation"
     : "real Windows/IIS: shared import, service ACL, exact SNI consumers, interruption, reconciliation and retained rollback",
-  // skip-reason: no-host — requires an elevated, disposable Windows Server/IIS VM.
+  // skip-reason: platform — requires an elevated, disposable Windows Server/IIS VM.
   { skip: !nativeWindowsLab, timeout: 900000 },
   async (t) => {
     assert.equal(process.platform, "win32");

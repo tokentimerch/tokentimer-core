@@ -68,7 +68,7 @@ test("complete supporting report remains explicitly unqualified for native relea
     nativeQualification: "not-qualified",
   });
   const slot =
-    require("../.github/maintainers/certops/qualification-suites.json").slots.find(
+    require("./certops-qualification-manifest").slots.find(
       (s) => s.suite === r.suite,
     );
   r.qualificationEnvironment = {

@@ -32,7 +32,7 @@ function dryRun(extraArgs, env = {}) {
 
 describe(
   "install-agent.sh polkit grants on re-run",
-  // skip-reason: no-host - install-agent.sh is POSIX shell and only runs on Linux/macOS
+  // skip-reason: platform - install-agent.sh is POSIX shell and only runs on Linux/macOS
   { skip: !supported },
   () => {
     it("refuses the legacy backend before claiming a reload rule was installed", () => {

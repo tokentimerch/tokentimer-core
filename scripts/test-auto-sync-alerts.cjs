@@ -15,11 +15,10 @@ const args = process.argv.slice(2);
 const evidence = args.includes("--evidence") ? path.resolve(args[args.indexOf("--evidence") + 1])
   : path.join(root, ".build", "auto-sync-alert-evidence");
 fs.mkdirSync(evidence, { recursive: true });
-const rulePath = path.join(root, "deploy/prometheus/auto-sync.rules.yaml");
-const rules = yaml.load(fs.readFileSync(rulePath, "utf8"));
+const rulePath = path.join(root, "deploy/helm/examples/values-auto-sync-alerts.yaml");
+const rules = { groups: yaml.load(fs.readFileSync(rulePath, "utf8")).monitoring.prometheusRules.groups };
 const group = rules.groups[0];
-const sources = [rulePath, path.join(root, "deploy/helm/examples/values-full-test.yaml"),
-  path.join(root, "deploy/helm/examples/values-auto-sync-alerts.yaml")];
+const sources = [rulePath, path.join(root, "deploy/helm/examples/values-full-test.yaml")];
 for (let i = 0; i < args.length; i++) if (args[i] === "--values") sources.push(path.resolve(args[++i]));
 for (const file of sources.slice(1)) {
   const values = yaml.load(fs.readFileSync(file, "utf8"));
@@ -28,6 +27,10 @@ for (const file of sources.slice(1)) {
   const groups = values.kind === "PrometheusRule" ? values.spec.groups : monitoring.prometheusRules.groups;
   assert.deepEqual(groups.find(g => g.name === group.name), group, `${file}: example drift`);
 }
+const labelTestPath = path.join(root, "tests/prometheus/auto-sync-labels.test.yaml");
+sources.push(labelTestPath);
+const labelTests = yaml.load(fs.readFileSync(labelTestPath, "utf8"));
+labelTests.rule_files = ["/work/rules.yaml"];
 const defaults = { installation: "lab", job: "tokentimer-api", provider: "gitlab" };
 function series(name, values, labels = {}) {
   const all = Object.entries({ ...defaults, ...labels }).filter(([, value]) => value !== undefined);
@@ -118,14 +121,16 @@ scenario("sustained scrape outage alerts", [series("up", "0+0x5", { provider: un
   { TokenTimerAPIDown: [{ provider: undefined, instance: "api-a" }] });
 fs.writeFileSync(path.join(evidence, "rules.yaml"), yaml.dump(rules, { lineWidth: -1 }));
 fs.writeFileSync(path.join(evidence, "tests.yaml"), yaml.dump({ rule_files: ["/work/rules.yaml"], evaluation_interval: "1m", tests }, { lineWidth: -1 }));
+fs.writeFileSync(path.join(evidence, "label-tests.yaml"), yaml.dump(labelTests, { lineWidth: -1 }));
 fs.writeFileSync(path.join(evidence, "sources.json"), JSON.stringify({ at: new Date().toISOString(), image,
   sources: sources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex") })),
   scenarios: tests.map(test => test.name), assertions: tests.length * allNames.length }, null, 2));
 const result = spawnSync("docker", ["run", "--rm", "--network=none", "--entrypoint", "/bin/promtool", "-v", `${evidence}:/work:ro`, image,
-  "test", "rules", "/work/tests.yaml"], { encoding: "utf8" });
+  "test", "rules", "/work/tests.yaml", "/work/label-tests.yaml"], { encoding: "utf8" });
 const log = `${result.stdout || ""}${result.stderr || ""}`;
 fs.writeFileSync(path.join(evidence, "promtool.log"), log);
 process.stdout.write(log);
 if (result.error) throw result.error;
 assert.equal(result.status, 0, "promtool rule scenarios failed; see saved evidence");
-console.log(`${tests.length} scenarios, ${tests.length * allNames.length} alert-state assertions passed; evidence: ${evidence}`);
+const labelAssertions = labelTests.tests.reduce((count, test) => count + test.alert_rule_test.length, 0);
+console.log(`${tests.length + labelTests.tests.length} scenarios, ${tests.length * allNames.length + labelAssertions} alert-state assertions passed; evidence: ${evidence}`);

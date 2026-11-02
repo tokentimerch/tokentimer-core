@@ -554,7 +554,7 @@ describe("trust-store/receipt: readReceiptById guards (startup-sweep hardening a
     try {
       fs.symlinkSync(targetPath, linkPath, "file");
     } catch (err) {
-      // skip-reason: no-host - symlink creation is unavailable on this host
+      // skip-reason: platform - symlink creation is unavailable on this host
       // (commonly Windows without Developer Mode / elevated privileges).
       t.skip(`symlink creation is unavailable: ${err.code || err.message}`);
       return;
