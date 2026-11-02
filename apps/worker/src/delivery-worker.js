@@ -2071,7 +2071,6 @@ export async function deliveryWorkerJob({
             if (channel === "email") {
               // Build recipients: group emails only; no fallback
               let recipients = [];
-              let emailContacts = [];
               const groupIdUsed = contactGroupId;
               try {
                 const emailIds = unionContactIds(
@@ -2083,7 +2082,6 @@ export async function deliveryWorkerJob({
                     `SELECT id, details FROM workspace_contacts WHERE workspace_id = $1 AND id = ANY($2::uuid[])`,
                     [alert.workspace_id, emailIds],
                   );
-                  emailContacts = contactsRes.rows;
                   recipients = contactsRes.rows
                     .map((r) => {
                       try {

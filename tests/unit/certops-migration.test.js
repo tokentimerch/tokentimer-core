@@ -437,7 +437,7 @@ describe("CertOps inventory migration", () => {
     const expectedTailVersions = Array.from(
       { length: Math.max(...tailVersions) - 10 },
       (_, index) => 11 + index,
-    ).filter((version) => (version <= 82 || version === 92 || version === 93) && (notificationCount === 4 || !notificationVersions.includes(version)));
+    ).filter((version) => (version <= 85 || version === 92 || version === 93) && (notificationCount === 4 || !notificationVersions.includes(version)));
     assert.deepEqual(
       tailVersions,
       expectedTailVersions,

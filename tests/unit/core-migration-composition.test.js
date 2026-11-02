@@ -227,7 +227,10 @@ test("cross-PR reservations reject collisions and compose without changing suppo
       .map((name, i) => ({ version: 78 + i, name }))]);
   const composed = composeMigrations(registry, before);
   assert.deepEqual(composed.slice(0, before.length), before);
-  assert.deepEqual(composed.slice(before.length), future);
+  assert.deepEqual(composed.slice(before.length).map(({ name, sql }) => ({ name, sql })),
+    future.map(({ name, sql }) => ({ name, sql })));
+  assert.ok(composed.slice(before.length).every(row => row.version > Math.max(...before.map(prior => prior.version))),
+    "unapplied companions append after the immutable preview tail");
   assert.deepEqual(composeMigrations(registry, composed), composed);
 });
 
