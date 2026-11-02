@@ -139,6 +139,7 @@ function composeMigrations(migrations, recorded = []) {
       // The provider preview can receive recipient and PagerDuty schemas before
       // lifecycle is integrated. Its committed append order remains immutable.
       [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason"],
+      [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason", "pagerduty_operator_actions", "remove_pagerduty_rest_lookup"],
     ];
     const recognized = seeds.some((seed) => {
       const names = [

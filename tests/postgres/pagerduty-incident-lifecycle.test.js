@@ -289,6 +289,7 @@ describe(
         next();
       });
       app.use(require("../../apps/api/routes/tokens"));
+      app.use(require("../../apps/api/routes/incidentActions"));
     });
     beforeEach(async () => {
       process.env.TT_DEPLOYMENT = "self-hosted";
@@ -338,6 +339,118 @@ describe(
       client?.release();
       await workerPool?.end();
       await pool.end();
+    });
+
+    it("renames a webhook atomically without losing group routing or incident correlation", async () => {
+      const { incident } = await trigger();
+      await request(app).post(`/api/v1/workspaces/${workspaceId}/webhooks/rename`)
+        .send({ previousName: "pd", name: "Renamed PagerDuty" }).expect(200);
+      const stored = (await pool.query("SELECT webhook_urls,contact_groups FROM workspace_settings WHERE workspace_id=$1", [workspaceId])).rows[0];
+      assert.equal(stored.webhook_urls[0].name, "Renamed PagerDuty");
+      assert.deepEqual(stored.contact_groups[0].webhook_names, ["Renamed PagerDuty"]);
+      assert.equal((await incidentRows())[0].dedup_key, incident.dedup_key);
+      const result = await lifecycle.deliverPagerDutyExpiration(client, { alert: await queue(0), webhook: stored.webhook_urls[0], send });
+      assert.equal(result.success, true);
+      assert.equal(events.length, 1);
+    });
+
+    it("queues audited ACK and requires a confirmed reason for manual resolution", async () => {
+      const { incident } = await trigger();
+      const url = `/api/v1/workspaces/${workspaceId}/pagerduty-incidents/${incident.id}`;
+      await request(app).post(`${url}/actions`).send({ action: "acknowledge" }).expect(202);
+      await reconcile(send);
+      assert.equal(events.at(-1).body.event_action, "acknowledge");
+      assert.equal(events.at(-1).body.dedup_key, incident.dedup_key);
+      await request(app).post(`${url}/actions`).send({ action: "resolve", reason: "Handled by operations" }).expect(400);
+      await request(app).post(`${url}/actions`).send({ action: "resolve", confirmed: true, reason: "Handled by operations" }).expect(202);
+      await reconcile(send);
+      const resolved = (await incidentRows())[0];
+      assert.equal(resolved.state, "resolved");
+      assert.equal(resolved.resolution_reason, "manual_resolve");
+      assert.equal(events.at(-1).body.payload.custom_details.operator_reason, "Handled by operations");
+      await lifecycle.deliverPagerDutyExpiration(client, { alert: await queue(0), webhook: pd, send });
+      assert.equal(events.length, 3, "manual closure suppresses later thresholds in the same expiry cycle");
+      const audits = await pool.query("SELECT action FROM audit_events WHERE workspace_id=$1 AND action LIKE 'PAGERDUTY_%'", [workspaceId]);
+      assert.ok(audits.rows.some(r => r.action === "PAGERDUTY_ACKNOWLEDGE_REQUESTED"));
+      assert.ok(audits.rows.some(r => r.action === "PAGERDUTY_RESOLVE_REQUESTED"));
+      await pool.query("DELETE FROM alert_queue WHERE id=$1", [incident.trigger_alert_queue_id]);
+      await lifecycle.deliverPagerDutyExpiration(client, { alert: await queue(0), webhook: pd, send });
+      assert.equal(events.length,3,"queue retention must not reopen a manually closed incident");
+      await pool.query("UPDATE tokens SET expiration=$2 WHERE id=$1", [tokenId,day(2)]);
+      await lifecycle.deliverPagerDutyExpiration(client, { alert: await queue(7), webhook: pd, send });
+      assert.equal(events.length,4,"a changed expiration starts a fresh episode");
+      assert.notEqual(events.at(-1).body.dedup_key,incident.dedup_key);
+    });
+
+    it("rolls back conflicting renames and preserves legacy group selections", async () => {
+      await settings([pd,{...pd,name:"Other",routingKey:keyB}], [{...group,webhook_name:"pd",email_contact_ids:[17],thresholds:[7]}]);
+      const url=`/api/v1/workspaces/${workspaceId}/webhooks/rename`;
+      await request(app).post(url).send({previousName:"pd",name:"Other"}).expect(409);
+      let saved=(await pool.query("SELECT webhook_urls,contact_groups FROM workspace_settings WHERE workspace_id=$1",[workspaceId])).rows[0];
+      assert.equal(saved.webhook_urls[0].name,"pd");
+      await request(app).post(url).send({previousName:"pd",name:"New"}).expect(200);
+      saved=(await pool.query("SELECT contact_groups FROM workspace_settings WHERE workspace_id=$1",[workspaceId])).rows[0];
+      assert.equal(saved.contact_groups[0].webhook_name,"New");
+      assert.deepEqual(saved.contact_groups[0].email_contact_ids,[17]);
+      assert.deepEqual(saved.contact_groups[0].thresholds,[7]);
+    });
+
+    it("keeps failed manual actions retryable and denies viewers and foreign workspaces", async () => {
+      const { incident } = await trigger();
+      const url = `/api/v1/workspaces/${workspaceId}/pagerduty-incidents/${incident.id}/actions`;
+      await pool.query("UPDATE workspace_memberships SET role='viewer' WHERE workspace_id=$1 AND user_id=$2", [workspaceId,userId]);
+      await request(app).post(url).send({ action: "acknowledge" }).expect(403);
+      await request(app).post(url).send({ action: "resolve",confirmed:true,reason:"Operations resolved" }).expect(403);
+      await pool.query("UPDATE workspace_memberships SET role='admin' WHERE workspace_id=$1 AND user_id=$2", [workspaceId,userId]);
+      await request(app).post(url.replace(incident.id,crypto.randomUUID())).send({ action:"acknowledge" }).expect(404);
+      await request(app).post(url).send({ action:"acknowledge" }).expect(202);
+      await request(app).post(url).send({ action:"acknowledge" }).expect(202);
+      await reconcile(async () => ({ success:false,status:503 }));
+      assert.equal((await incidentRows())[0].state,"open");
+      await pool.query("UPDATE pagerduty_ack_requests SET next_attempt_at=NOW() WHERE incident_id=$1", [incident.id]);
+      await reconcile(send);
+      assert.equal(events.filter(e => e.body.event_action === "acknowledge").length,1);
+      await request(app).post(url).send({ action:"resolve",confirmed:true,reason:"Operations resolved" }).expect(202);
+      await reconcile(async () => ({ success:false,status:503 }));
+      assert.equal((await incidentRows())[0].state,"resolve_pending");
+      assert.equal((await incidentRows())[0].resolved_at,null);
+      await due(incident.id); await reconcile(send);
+      assert.equal((await incidentRows())[0].state,"resolved");
+      const list = await request(app).get(`/api/v1/workspaces/${workspaceId}/tokens/${tokenId}/pagerduty-incidents`).expect(200);
+      assert.equal(list.body.canManage,true);
+      assert.equal(JSON.stringify(list.body).includes(keyA),false);
+      assert.equal(JSON.stringify(list.body).includes(incident.dedup_key),false);
+    });
+
+    it("allows an audited retry after an ACK exhausts its bounded budget", async () => {
+      const { incident } = await trigger();
+      const url = `/api/v1/workspaces/${workspaceId}/pagerduty-incidents/${incident.id}/actions`;
+      await request(app).post(url).send({ action: "acknowledge" }).expect(202);
+      for (let attempt = 0; attempt < lifecycle.MAX_PAGERDUTY_ATTEMPTS; attempt++) {
+        await pool.query("UPDATE pagerduty_ack_requests SET next_attempt_at=NOW() WHERE incident_id=$1", [incident.id]);
+        await reconcile(async () => ({ success: false, status: 503 }));
+      }
+      assert.equal((await pool.query("SELECT exhausted FROM pagerduty_ack_requests WHERE incident_id=$1", [incident.id])).rows[0].exhausted, true);
+      await request(app).post(url).send({ action: "acknowledge" }).expect(202);
+      await reconcile(send);
+      assert.equal(events.at(-1).body.event_action, "acknowledge");
+      assert.equal(events.at(-1).body.dedup_key, incident.dedup_key);
+      assert.equal((await pool.query("SELECT COUNT(*)::int AS c FROM audit_events WHERE workspace_id=$1 AND action='PAGERDUTY_ACKNOWLEDGE_REQUESTED'", [workspaceId])).rows[0].c, 2);
+      assert.equal((await pool.query("SELECT COUNT(*)::int AS c FROM alert_delivery_log WHERE metadata->>'incident_id'=$1 AND metadata->>'event_action'='acknowledge'", [incident.id])).rows[0].c, lifecycle.MAX_PAGERDUTY_ATTEMPTS + 1);
+      await request(app).post(url).send({ action: "acknowledge" }).expect(202);
+      await reconcile(send);
+      assert.equal(events.filter(event => event.body.event_action === "acknowledge").length, 1);
+    });
+
+    it("does not expose REST credential storage or incident lookup endpoints", async () => {
+      const { incident } = await trigger();
+      const root=`/api/v1/workspaces/${workspaceId}/pagerduty-incidents/${incident.id}`;
+      await request(app).put(`${root}/lookup-credentials`).send({token:"synthetic-disallowed-rest-token",region:"eu"}).expect(404);
+      await request(app).post(`${root}/refresh`).expect(404);
+      const list=await request(app).get(`/api/v1/workspaces/${workspaceId}/tokens/${tokenId}/pagerduty-incidents`).expect(200);
+      assert.equal(Object.hasOwn(list.body.incidents[0],"lookup_configured"),false);
+      assert.equal(Object.hasOwn(list.body.incidents[0],"remote_incident_url"),false);
+      assert.equal((await pool.query("SELECT to_regclass('pagerduty_lookup_credentials') AS name")).rows[0].name,null);
     });
 
     it("defers unaccepted triggers and retries across quiet-hour boundaries without spending attempts", async () => {

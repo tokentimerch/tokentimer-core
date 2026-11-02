@@ -2130,6 +2130,16 @@ export default function AlertPreferences({
 
   function updateWebhookDraft(field, value) {
     if (isViewer || testingWebhookDraft || savingWebhookEditor) return;
+    if (field === 'name') {
+      setWebhookDraft(prev => ({
+        ...prev,
+        name: value,
+        _verifiedSnapshot: prev._verifiedSnapshot
+          ? { ...prev._verifiedSnapshot, name: value.trim() }
+          : null,
+      }));
+      return;
+    }
     setWebhookDraft(prev => ({
       ...prev,
       [field]: value,
@@ -2268,6 +2278,30 @@ export default function AlertPreferences({
           ...new Set([...previous, saved.name]),
         ]);
         showSuccess('Webhook saved and selected for this group');
+      } else if (
+        editingWebhookIndex >= 0 &&
+        webhookUrls[editingWebhookIndex].name !== built.name
+      ) {
+        const previousName = webhookUrls[editingWebhookIndex].name;
+        await apiClient.post(
+          `/api/v1/workspaces/${workspaceId}/webhooks/rename`,
+          {
+            previousName,
+            name: built.name,
+            webhook: webhookPayloadForSave(built),
+          }
+        );
+        const confirmed = await workspaceAPI.getAlertSettings(workspaceId);
+        setWebhookUrls(
+          (confirmed.webhook_urls || []).map(w =>
+            withWebhookPersistedState(w, true)
+          )
+        );
+        setContactGroups(confirmed.contact_groups || []);
+        setGroupWebhookNames(names =>
+          names.map(n => (n === previousName ? built.name : n))
+        );
+        showSuccess('Webhook renamed and contact groups updated');
       } else await persistWebhooksList(nextList);
       resetWebhookEditor();
       onWebhookEditorClose();
@@ -4102,6 +4136,10 @@ export default function AlertPreferences({
                       const options = (webhookUrls || []).filter(
                         w => (w.name || '').trim() && w.verified
                       );
+                      for (const name of groupWebhookNames) {
+                        if (!options.some(w => w.name === name))
+                          options.push({ name, unavailable: true });
+                      }
                       if (options.length === 0) {
                         return (
                           <Text fontSize='xs' color={bodySecondary}>
@@ -4130,6 +4168,9 @@ export default function AlertPreferences({
                                 py={{ base: 1, md: 0 }}
                               >
                                 {w.name}
+                                {w.unavailable
+                                  ? ' (unavailable — uncheck to remove)'
+                                  : ''}
                               </Checkbox>
                             ))}
                           </VStack>

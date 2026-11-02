@@ -22,6 +22,8 @@ const tail = [
   [91, "certops_distribution_resolution_delivery"],
   [92, "pagerduty_incident_lifecycle"],
   [93, "pagerduty_resolution_reason"],
+  [94, "pagerduty_operator_actions"],
+  [95, "remove_pagerduty_rest_lookup"],
 ];
 const names = new Set(migrations.map((row) => row.name));
 const combined = [

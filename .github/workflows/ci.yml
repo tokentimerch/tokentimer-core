@@ -515,7 +515,7 @@ jobs:
               await client.query('CREATE DATABASE pr329_issuance_path_reuse_ci_test');
               await client.query('CREATE DATABASE pr329_workspace_delete_ci_test');
               await client.query('CREATE DATABASE pagerduty_ci_issue364_test');
-              for (const history of ['78','80','81','82','92','legacy79','legacy81']) {
+              for (const history of ['78','80','81','82','92','94','legacy79','legacy81']) {
                 await client.query(`CREATE DATABASE pd_${history}_migration_issue364_test`);
               }
               await client.query('CREATE DATABASE recipient_delivery_worker_ci_test');
@@ -537,7 +537,7 @@ jobs:
         env:
           PAGERDUTY_COMPANION_ROOT: ${{ github.workspace }}
         run: |
-          for history in 78 80 81 82 92 legacy79 legacy81; do
+          for history in 78 80 81 82 92 94 legacy79 legacy81; do
             DB_NAME="pd_${history}_migration_issue364_test" PAGERDUTY_UPGRADE_FROM="$history" \
               node --test --test-force-exit tests/postgres/pagerduty-migration.test.js
           done
