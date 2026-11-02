@@ -325,12 +325,17 @@ describe('Dashboard page smoke tests', () => {
 
     await waitFor(() => expectTextPresent('Audit events'));
     await waitFor(() => expectTextPresent(longAction));
-    const actionBadge = screen.getAllByText(longAction)[0];
-    expect(actionBadge).toHaveAttribute('title', longAction);
-    expect(actionBadge).toHaveStyle({
-      whiteSpace: 'normal',
-      overflowWrap: 'anywhere',
-    });
+    for (const actionBadge of screen.getAllByText(longAction)) {
+      expect(actionBadge).toHaveTextContent(longAction);
+      expect(actionBadge).toHaveAttribute('title', longAction);
+      expect(actionBadge).toHaveStyle({
+        maxWidth: '100%',
+        whiteSpace: 'normal',
+        overflowWrap: 'anywhere',
+      });
+      expect(actionBadge).not.toHaveStyle({ overflow: 'hidden' });
+      expect(actionBadge).not.toHaveStyle({ textOverflow: 'ellipsis' });
+    }
   });
 
   it.each([

@@ -15,6 +15,7 @@ An agent with `execution.enabled: false` registers, heartbeats, and can report c
 - [DNS and ACME](agent/dns-and-acme.md): provider credentials, zone routing, DNS-01, and the external HTTP-01 workflow.
 - [Microsoft AD CS](agent/adcs.md): domain-joined Windows enrollment from an enterprise CA. The agent contacts a CA only when a local enrollment rule names that CA and template. Linux and non-domain hosts do not enroll over DCOM. Use a domain-joined Windows agent, or an ACME gateway.
 - [Vault publication and distribution](vault-first-distribution.md): publish once, approve two consumers and verify each listener.
+- [Distribution extensions](distribution-extensions.md): OpenBao compatibility, Azure Key Vault Secrets and Windows/IIS shared consumers, with separate qualification gates.
 - [Verify the live certificate](verify-live-service.md): compare the actual served identity after installation or renewal.
 - [Windows configuration maintenance](windows-maintenance.md): preserve enrolled identity, protected state and private-CA trust.
 - [Trust and signing-key rotation](agent/trust-and-key-rotation.md): CA distribution/revocation and signing-key changes.

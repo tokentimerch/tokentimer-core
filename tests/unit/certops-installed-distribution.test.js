@@ -50,6 +50,43 @@ test("installation-only evidence cannot satisfy served or trust policies", async
   await assert.rejects(f.run(), { code: "CERTOPS_DEPLOYMENT_ASSURANCE_MISMATCH" });
 });
 
+test("Windows receipts cannot downgrade IIS assurance to installed-only", async () => {
+  const rejected = fixture("installed", { agent_platform: "win32" });
+  await assert.rejects(rejected.run(), { code: "CERTOPS_DEPLOYMENT_ASSURANCE_MISMATCH" });
+  assert.equal(rejected.promotion(), null);
+  for (const policy of ["served", "trust"]) {
+    const accepted = fixture(policy, { agent_platform: "win32" });
+    Object.assign(accepted.receipt, { bound: true, servedVerified: true, trustValidated: policy === "trust" });
+    assert.equal((await accepted.run()).historicalOnly, false);
+  }
+});
+
+test("Windows binding admission rejects installed-only assurance without writing authorization", async t => {
+  const material = require("../../apps/api/services/certops/materialDistribution");
+  const policy = require("../../apps/api/services/certops/distributionPolicy");
+  const database = require("../../apps/api/db/database");
+  const { putBinding } = require("../../apps/api/services/certops/distributionOperations");
+  const statements = [];
+  t.mock.method(material, "lockGroup", async () => ({ state: "active" }));
+  // The exported policy function was captured by distributionOperations when
+  // loaded, so supply its real read prerequisites rather than replace it.
+  assert.equal(typeof policy.assertDistributionPolicy, "function");
+  const client = { async query(sql) {
+    statements.push(sql);
+    if (sql.includes("FROM workspaces")) return { rows: [{ id: randomUUID(), certops_paused: false }] };
+    if (sql.includes("FROM system_settings")) return { rows: [{ certops_settings: { enabled: true } }] };
+    if (sql.includes("SELECT platform FROM certops_agents")) return { rows: [{ platform: "win32" }] };
+    return { rows: [], rowCount: 0 };
+  }, release() {} };
+  t.mock.method(database.pool, "connect", async () => client);
+  await assert.rejects(putBinding({ workspaceId: randomUUID(), groupId: randomUUID(), bindingId: randomUUID(),
+    binding: { agentId: randomUUID(), deploymentProfileRef: "iis", profileRevision: 1,
+      required: true, wave: 0, verificationPolicy: "installed", freshnessSeconds: 300, state: "active" },
+  }), { code: "CERTOPS_DEPLOYMENT_ASSURANCE_MISMATCH" });
+  assert.equal(statements.some(sql => /(?:INSERT INTO|UPDATE) certops_consumer_bindings/.test(sql)), false);
+  assert.equal(statements.at(-1), "ROLLBACK");
+});
+
 test("files-only receipts remain historical after reassignment, generation change, retirement or rollout completion", async () => {
   for (const changes of [{ current_authorization_revision: 2 }, { desired_generation: 2 }, { binding_state: "removed" },
     { identityRetired: true }, { rollout_state: "installed" }]) {

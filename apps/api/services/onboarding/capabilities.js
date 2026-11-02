@@ -21,6 +21,8 @@ const FACTS = Object.freeze([
 const QUALIFIED_FEATURES = Object.freeze({
   // Qualified in 0.18.0 (agent qualified-capabilities manifest). Add an id here
   // with false for a feature that ships ahead of its real-host qualification.
+  "certops.material_store_azure_key_vault": false,
+  "certops.windows_material_iis": false,
 });
 
 const BASE_CAPABILITIES = Object.freeze([
@@ -49,6 +51,8 @@ const BASE_CAPABILITIES = Object.freeze([
   { id: "certops.core", group: "certops", minRole: "workspace_manager", needs: "certops" },
   { id: "certops.adcs", group: "certops", minRole: "workspace_manager", needs: "certops" },
   { id: "certops.vault_distribution", group: "certops", minRole: "workspace_manager", needs: "certops" },
+  ...["material_store_vault_kv2", "material_store_openbao_kv2", "material_store_azure_key_vault", "windows_material_iis"]
+    .map(name => ({ id: `certops.${name}`, group: "certops", minRole: "workspace_manager", needs: "certops" })),
 ]);
 
 const overrides = new Map();

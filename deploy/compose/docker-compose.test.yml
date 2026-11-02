@@ -124,6 +124,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      api:
+        condition: service_healthy
     networks:
       - tokentimer-test
     restart: "no"
@@ -155,7 +157,7 @@ services:
       postgres:
         condition: service_healthy
       api:
-        condition: service_started
+        condition: service_healthy
     networks:
       - tokentimer-test
     restart: "no"
@@ -194,7 +196,7 @@ services:
       postgres:
         condition: service_healthy
       api:
-        condition: service_started
+        condition: service_healthy
     networks:
       - tokentimer-test
     restart: "no"
