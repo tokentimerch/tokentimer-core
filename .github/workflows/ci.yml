@@ -466,13 +466,6 @@ jobs:
           NODE
       - name: Migrate dedicated empty test database
         run: node apps/api/migrations/migrate.js
-      - name: Check out the tested recipient runtime for cross-feature delivery regressions
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: tokentimerch/tokentimer-core
-          ref: b7eea693a4703e98f90d206838c0351599b8d6ad
-          path: .test-deps/recipient-companion
-          persist-credentials: false
       - name: Exercise manual and fenced auto-sync cleanup through HTTP routes
         run: node --test tests/postgres/vault-material-cleanup.test.js
       - name: Preserve provider-owned expiration under concurrent manual edits
