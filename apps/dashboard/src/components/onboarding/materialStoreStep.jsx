@@ -423,7 +423,7 @@ function MaterialStoreForm({ ctx }) {
         )}
         <DetailsSection
           summary='Prepare a real publication'
-          defaultOpen={!setup.groupId}
+          defaultOpen={!setup.groupId || Boolean(jobId && !done)}
         >
           <VStack align='stretch' spacing={3}>
             <Text fontSize='sm'>
@@ -582,9 +582,9 @@ function MaterialStoreForm({ ctx }) {
             )}
             <Text fontSize='sm'>
               For an uncertain publication, preserve the local checkpoint and
-              retry the original signed job through Certificate Management.
-              Azure never blindly retries a write. Do not delete a pinned object
-              or create a new order to hide uncertainty.
+              complete the runbook reconciliation before choosing Retry original
+              publication above. Azure never blindly retries a write. Do not
+              delete a pinned object or create a new order to hide uncertainty.
             </Text>
           </VStack>
         </DetailsSection>

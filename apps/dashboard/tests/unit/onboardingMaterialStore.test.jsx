@@ -59,6 +59,13 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe('Configure material store', () => {
+  it('keeps an unfinished publication visible after reopening the guide', async () => {
+    const ctx = materialContext();
+    ctx.session.progress.certops.vaultPublishJobId = 'publication-a';
+    ctx.summary.certops.distribution.items[0].publication = null;
+    show(ctx);
+    expect(await screen.findByText('Publication job')).toBeVisible();
+  });
   it.each([
     ['viewer', 'openbao-kv2', 1],
     ['admin', 'openbao-kv2', 3],
