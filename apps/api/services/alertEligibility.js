@@ -20,17 +20,14 @@ const DEFAULT_THRESHOLDS = (process.env.ALERT_THRESHOLDS || "30,14,7,1,0")
   .filter((value) => Number.isFinite(value));
 
 function parseChannels(value) {
-  if (Array.isArray(value)) return value;
-  if (typeof value !== "string") return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (_) {
-    return value
-      .split(/[,\s]+/)
-      .map((channel) => channel.trim())
-      .filter(Boolean);
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed && !trimmed.startsWith("[") && !trimmed.startsWith("{")) {
+      return trimmed.split(/[,\s]+/).map((channel) => channel.trim()).filter(Boolean);
+    }
   }
+  const recipientVerification = require("../../../packages/recipient-verification");
+  return recipientVerification.publicDeliveryChannels(value).map((row) => row.channel);
 }
 
 function deliveryReason(row) {

@@ -294,9 +294,9 @@ describe("opNotifications helpers (worker, ESM)", () => {
           return { rows: creatorEmail ? [{ email: creatorEmail }] : [] };
         }
         if (sql.includes("JOIN users u ON u.id = t.user_id")) {
-          expect(sql).to.include("t.workspace_id = $2");
+          expect(sql).to.include("COALESCE(t.workspace_id, CASE");
           expect(sql).to.include("JOIN workspace_memberships wm");
-          expect(sql).to.include("wm.workspace_id = t.workspace_id");
+          expect(sql).to.include("wm.workspace_id = $2");
           expect(sql).to.include("wm.user_id = t.user_id");
           expect(sql).to.include("u.email IS NOT NULL");
           return {
@@ -564,7 +564,7 @@ describe("opNotifications helpers (worker, ESM)", () => {
   });
 
   describe("retryPendingOperationalIncidentEmails", () => {
-    it("resolves recovered or missing delivery rows instead of sending, while retaining active and auto-sync retries", async () => {
+    it("resolves recovered delivery rows and leaves unknown ownership for the stale sweep, while retaining active retries", async () => {
       const mod = await importFresh(
         "apps/worker/src/shared/opNotifications.js",
       );
@@ -623,7 +623,7 @@ describe("opNotifications helpers (worker, ESM)", () => {
         if (sql.includes("SELECT aq.status FROM alert_queue")) {
           expect(sql).to.include("LEFT JOIN certops_agents ca");
           expect(sql).to.include(
-            "COALESCE(t.workspace_id, ca.workspace_id) = $2",
+            "COALESCE(t.workspace_id, ca.workspace_id, COALESCE(t.workspace_id, CASE",
           );
           return {
             rows:
@@ -632,8 +632,11 @@ describe("opNotifications helpers (worker, ESM)", () => {
                 : [{ status: values[0] === 1 ? "sent" : "blocked" }],
           };
         }
-        if (sql.includes("SET resolved_at = NOW()")) {
-          resolved.push(values[1]);
+        if (sql.includes("SET resolved_at=NOW()")) {
+          expect(sql).to.include("NOT EXISTS (SELECT 1 FROM alert_queue aq");
+          expect(sql).to.include("aq.status IN ('blocked','failed','partial','limit_exceeded')");
+          expect(values).to.deep.equal(["recovered", "ws-1", 1]);
+          resolved.push(values[0]);
           return { rowCount: 1 };
         }
         if (
@@ -658,10 +661,8 @@ describe("opNotifications helpers (worker, ESM)", () => {
           return { success: true };
         },
       );
-      expect(resolved).to.deep.equal([
-        "delivery_blocked:1",
-        "delivery_blocked:2",
-      ]);
+      expect(resolved).to.deep.equal(["recovered"]);
+      expect(client.calls.some(call => call.sql.includes("SET resolved_at") && call.params[0] === "missing")).to.equal(false);
       expect(sent).to.deep.equal(["Blocked", "Agent blocked", "Sync"]);
     });
   });

@@ -25,6 +25,15 @@ import {
 } from "./shared/contactGroups.js";
 import { shouldSkipRetiredCertificateAlert } from "./shared/retiredCertificateAlerts.js";
 import alertEligibility from "@tokentimer/alert-eligibility";
+import recipientVerification from "../../../packages/recipient-verification/index.js";
+
+function storedChannelsInput(value) {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+  if (trimmed.startsWith("[") || trimmed.startsWith("{")) return trimmed;
+  return trimmed.split(/[,\s]+/).map((part) => part.trim()).filter(Boolean);
+}
 
 const DEFAULT_THRESHOLDS = (process.env.ALERT_THRESHOLDS || "30,14,7,1,0")
   .split(",")
@@ -343,73 +352,62 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
       if (existingRes.rows.length > 0) {
         const existing = existingRes.rows[0];
         // Update channels if they changed (added webhooks, contacts, etc.)
-        if (existing.status === "pending" || existing.status === "failed") {
-          // Respect remaining failed channels to avoid resending successes in a loop
-          let nextChannels = channels;
-          let stored = null;
-          try {
-            if (Array.isArray(existing.channels)) stored = existing.channels;
-            else if (typeof existing.channels === "string") {
-              try {
-                const parsed = JSON.parse(existing.channels);
-                if (Array.isArray(parsed)) stored = parsed;
-              } catch (_) {
-                // Fallback: comma/whitespace separated string like "email,webhooks"
-                stored = String(existing.channels)
-                  .split(/[,\s]+/)
-                  .map((s) => s.trim())
-                  .filter(Boolean);
-              }
-            }
-            if (Array.isArray(stored) && stored.length > 0) {
-              nextChannels = channels.filter((c) => stored.includes(c));
-              if (nextChannels.length === 0) nextChannels = stored; // fallback to stored remaining
-            }
-          } catch (_err) {
-            logger.debug("Non-critical operation failed", {
-              error: _err.message,
-            });
-          }
-          // Only persist + audit when channels actually changed. Discovery runs
-          // frequently; an unconditional UPDATE/audit here re-emits
-          // ALERT_CHANNELS_UPDATED every pass for every pending/failed alert.
-          const sameChannels =
-            Array.isArray(stored) &&
-            JSON.stringify([...stored].sort()) ===
-              JSON.stringify([...nextChannels].sort());
-          if (sameChannels) {
+        if (
+          existing.status === "pending"
+          || existing.status === "failed"
+          || existing.status === "partial"
+        ) {
+          // Preserve a versioned delivery ledger. A legacy array stays an array
+          // and still means "channels left to try", so a success is not added back.
+          const reconciled = recipientVerification.reconcileDeliveryChannels(
+            storedChannelsInput(existing.channels),
+            channels,
+          );
+          if (!reconciled.changed) {
             skipped++;
           } else {
-            await client.query(
-              `UPDATE alert_queue 
-             SET channels = $1, updated_at = NOW()
-             WHERE id = $2`,
-              [JSON.stringify(nextChannels), existing.id],
+            const write = await client.query(
+              `UPDATE alert_queue
+                 SET channels = $1, updated_at = NOW()
+               WHERE id = $2
+                 AND status = ANY($3::text[])
+                 AND delivery_claim_id IS NULL
+                 AND channels = $4`,
+              [
+                JSON.stringify(reconciled.channels),
+                existing.id,
+                ["pending", "failed", "partial"],
+                JSON.stringify(existing.channels),
+              ],
             );
-            try {
-              await writeAudit(client, {
-                subjectUserId: t.user_id,
-                action: "ALERT_CHANNELS_UPDATED",
-                targetId: t.token_id,
-                workspaceId: t.workspace_id,
-                metadata: {
-                  alert_id: existing.id,
-                  alert_key: alertKey,
-                  alertKey,
-                  from: stored,
-                  to: nextChannels,
-                  workspace_name: t.workspace_name,
-                  token_name: t.token_name,
-                  contact_group_id: contactGroupId,
-                  contact_group_name: contactGroupName,
-                },
-              });
-            } catch (_err) {
-              logger.debug("Non-critical operation failed", {
-                error: _err.message,
-              });
+            if (write.rowCount === 0) {
+              skipped++;
+            } else {
+              try {
+                await writeAudit(client, {
+                  subjectUserId: t.user_id,
+                  action: "ALERT_CHANNELS_UPDATED",
+                  targetId: t.token_id,
+                  workspaceId: t.workspace_id,
+                  metadata: {
+                    alert_id: existing.id,
+                    alert_key: alertKey,
+                    alertKey,
+                    from: existing.channels,
+                    to: reconciled.channels,
+                    workspace_name: t.workspace_name,
+                    token_name: t.token_name,
+                    contact_group_id: contactGroupId,
+                    contact_group_name: contactGroupName,
+                  },
+                });
+              } catch (_err) {
+                logger.debug("Non-critical operation failed", {
+                  error: _err.message,
+                });
+              }
+              updated++;
             }
-            updated++;
           }
         } else if (existing.status === "sent") {
           // Alert was already sent successfully - skip to prevent duplicates

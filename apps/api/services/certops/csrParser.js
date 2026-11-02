@@ -8,7 +8,8 @@ const { containsPrivateKeyMaterial } = require("../../utils/secretMaterial");
 const { assertSafeDnsIdentity, assertSafeIpIdentity } = require("./identitySafety");
 
 const MAX_CSR_BYTES = 64 * 1024;
-const CSR_PEM = /^\s*-----BEGIN CERTIFICATE REQUEST-----\s*([A-Za-z0-9+/=\s]+?)\s*-----END CERTIFICATE REQUEST-----\s*$/;
+const CSR_BEGIN = "-----BEGIN CERTIFICATE REQUEST-----";
+const CSR_END = "-----END CERTIFICATE REQUEST-----";
 const EXTENSION_REQUEST_OID = "1.2.840.113549.1.9.14";
 const SUBJECT_ALT_NAME_OID = "2.5.29.17";
 const COMMON_NAME_OID = "2.5.4.3";
@@ -40,9 +41,13 @@ function strictDerFromPem(input) {
     error.status = 422;
     throw error;
   }
-  const match = CSR_PEM.exec(input);
-  if (!match) throw new CsrParseError();
-  const encoded = match[1].replace(/\s+/g, "");
+  // Separate framing from the body so whitespace cannot be partitioned among
+  // overlapping quantifiers (quadratic/cubic backtracking on invalid PEM).
+  const pem = input.trim();
+  if (!pem.startsWith(CSR_BEGIN) || !pem.endsWith(CSR_END)) throw new CsrParseError();
+  const body = pem.slice(CSR_BEGIN.length, -CSR_END.length);
+  if (!/^[A-Za-z0-9+/=\s]+$/.test(body)) throw new CsrParseError();
+  const encoded = body.replace(/\s/g, "");
   const der = Buffer.from(encoded, "base64");
   if (!der.length || der.toString("base64") !== encoded) throw new CsrParseError();
   const decoded = asn1js.fromBER(der);

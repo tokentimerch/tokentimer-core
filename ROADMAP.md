@@ -139,6 +139,7 @@ does not promise a version or add a v1.0.0 gate.
   owner/backup thresholds, acknowledgement, delivery fallback and external
   incident lifecycle are distinct outcomes.
   PagerDuty expiration incidents ([PR #496](https://github.com/tokentimerch/tokentimer-core/pull/496))
+  include resolution after verified renewal or confirmed certificate retirement,
   and distribution incidents ([PR #498](https://github.com/tokentimerch/tokentimer-core/pull/498))
   are active increments, not completion of the entire umbrella.
 - **Windows service certificates beyond IIS**

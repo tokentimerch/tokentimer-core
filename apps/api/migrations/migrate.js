@@ -4860,6 +4860,17 @@ const migrations = [
     name: "auto_sync_system_metrics",
     sql: fs.readFileSync(require("path").join(__dirname, "082-auto-sync-system-metrics.sql"), "utf8"),
   },
+  {
+    // Companion migration plans extend through 91; leave unapplied slots unregistered.
+    version: 92,
+    name: "pagerduty_incident_lifecycle",
+    sql: fs.readFileSync(require("path").join(__dirname, "092-pagerduty-incident-lifecycle.sql"), "utf8"),
+  },
+  {
+    version: 93,
+    name: "pagerduty_resolution_reason",
+    sql: fs.readFileSync(require("path").join(__dirname, "093-pagerduty-resolution-reason.sql"), "utf8"),
+  },
 ];
 
 
@@ -4886,6 +4897,10 @@ const historicalMigrationAliases = new Map([
 ]);
 
 function validateMigrationHistory(rows) {
+  const preview = rows.find(row => [79,81].includes(row.version) && row.name === "pagerduty_incident_lifecycle");
+  if (preview) {
+    throw new Error(`PagerDuty preview migration ${preview.version} conflicts with released auto-sync history; stop and follow the explicit recovery procedure in docs/PAGERDUTY.md#migration-92-and-preview-version-compatibility`);
+  }
   const planned = resolveMigrationPlan(rows);
   for (const { version, name } of rows) {
     const current = planned.find(
@@ -5155,6 +5170,39 @@ migrations.push({
     CREATE TRIGGER trg_auto_sync_link_event_immutable BEFORE UPDATE OR DELETE
       ON auto_sync_token_link_events FOR EACH ROW EXECUTE FUNCTION auto_sync_link_event_immutable();
 
+  `,
+});
+
+// Main owns 81 auto_sync_metric_labels. Versions 84+ stay free for the
+// open CertOps distribution and PagerDuty branches (#460, #496, #498).
+// A database that already applied this preview as 81/82 keeps those rows.
+// compose-migrations applies metric labels as 83 on that ledger only.
+migrations.push({
+  version: 84,
+  name: "recipient_channel_verification",
+  sql: fs.readFileSync(
+    require("path").join(__dirname, "../../../packages/recipient-verification/migration.sql"),
+    "utf8",
+  ),
+});
+
+migrations.push({
+  version: 85,
+  name: "weekly_digest_recipient_claim_token",
+  sql: `
+    ALTER TABLE weekly_digest_recipient_log
+      ADD COLUMN IF NOT EXISTS claim_token TEXT;
+    ALTER TABLE weekly_digest_recipient_log
+      ADD COLUMN IF NOT EXISTS provider_accepted_at TIMESTAMPTZ;
+    ALTER TABLE weekly_digest_recipient_log
+      ADD COLUMN IF NOT EXISTS delivery_state TEXT;
+    ALTER TABLE weekly_digest_recipient_log
+      ADD COLUMN IF NOT EXISTS retry_after TIMESTAMPTZ;
+    ALTER TABLE weekly_digest_recipient_log
+      DROP CONSTRAINT IF EXISTS weekly_digest_recipient_delivery_state_check;
+    ALTER TABLE weekly_digest_recipient_log
+      ADD CONSTRAINT weekly_digest_recipient_delivery_state_check
+      CHECK (delivery_state IS NULL OR delivery_state IN ('in_progress', 'accepted', 'rejected', 'uncertain'));
   `,
 });
 

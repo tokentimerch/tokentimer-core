@@ -115,6 +115,59 @@ test("malformed pinned migration registries cannot be composed", () => {
     /inconsistent pinned Core migration/,
   );
 });
+test("recipient preview ledgers keep applied rows and leave room for the other open migrations", () => {
+  const names = [
+    ...canonical,
+    "onboarding_sessions",
+    "certops_installed_file_distribution",
+    "auto_sync_provider_stats",
+    "auto_sync_run_metrics",
+    "auto_sync_metric_labels",
+    "recipient_channel_verification",
+    "weekly_digest_recipient_claim_token",
+  ];
+  const migrations = [
+    { version: 69, name: "prior", sql: "prior" },
+    ...names.map((name, index) => ({ version: 70 + index, name, sql: name })),
+  ];
+  const fresh = composeMigrations(migrations, names.slice(0, 12).map((name, index) => ({ version: 70 + index, name })));
+  assert.equal(fresh.find((entry) => entry.version === 81).name, "auto_sync_metric_labels");
+  assert.equal(fresh.find((entry) => entry.version === 82).name, "recipient_channel_verification");
+  assert.equal(fresh.find((entry) => entry.version === 83).name, "weekly_digest_recipient_claim_token");
+  const previewNames = names.slice(0, 11).concat([
+    "recipient_channel_verification",
+    "weekly_digest_recipient_claim_token",
+  ]);
+  const preview = composeMigrations(
+    migrations,
+    previewNames.map((name, index) => ({ version: 70 + index, name })),
+  );
+  assert.equal(preview.find((entry) => entry.version === 81).name, "recipient_channel_verification");
+  assert.equal(preview.find((entry) => entry.version === 82).name, "weekly_digest_recipient_claim_token");
+  assert.equal(preview.find((entry) => entry.version === 83).name, "auto_sync_metric_labels");
+  assert.equal(preview.filter((entry) => entry.version === 83).length, 1);
+  assert.throws(
+    () => composeMigrations(migrations, [
+      ...names.slice(0, 11).map((name, index) => ({ version: 70 + index, name })),
+      { version: 81, name: "pagerduty_incident_lifecycle" },
+    ]),
+    /pagerduty_incident_lifecycle/,
+  );
+  assert.throws(
+    () => composeMigrations(migrations, [
+      ...names.slice(0, 11).map((name, index) => ({ version: 70 + index, name })),
+      { version: 81, name: "certops_material_providers" },
+    ]),
+    /certops_material_providers/,
+  );
+  assert.throws(
+    () => composeMigrations(migrations, [
+      ...names.slice(0, 11).map((name, index) => ({ version: 70 + index, name })),
+      { version: 81, name: "certops_distribution_lifecycle" },
+    ]),
+    /certops_distribution_lifecycle/,
+  );
+});
 
 test("main 78 and provider-preview 78 retain their recorded definitions and append only the missing extension", () => {
   const installed = { version: 78, name: "certops_installed_file_distribution", sql: "installed-assurance" };
@@ -174,7 +227,10 @@ test("cross-PR reservations reject collisions and compose without changing suppo
       .map((name, i) => ({ version: 78 + i, name }))]);
   const composed = composeMigrations(registry, before);
   assert.deepEqual(composed.slice(0, before.length), before);
-  assert.deepEqual(composed.slice(before.length), future);
+  assert.deepEqual(composed.slice(before.length).map(({ name, sql }) => ({ name, sql })),
+    future.map(({ name, sql }) => ({ name, sql })));
+  assert.ok(composed.slice(before.length).every(row => row.version > Math.max(...before.map(prior => prior.version))),
+    "unapplied companions append after the immutable preview tail");
   assert.deepEqual(composeMigrations(registry, composed), composed);
 });
 
@@ -207,4 +263,37 @@ test("all 73 enrollment-first preview definitions retain their immutable histori
     crypto.createHash("sha256").update(JSON.stringify(previous)).digest("hex"),
     "c5c3d63c224fedc59fb37d8f1de99fb84b2d02dbbd86e2800ae9de7564be9099",
   );
+});
+
+test("PagerDuty's independent slot preserves applied history while companion migrations arrive later", () => {
+  const registered = require("../../apps/api/migrations/migrate").migrations;
+  const migrations = registered.filter(row => row.version <= 82 || ["pagerduty_incident_lifecycle", "pagerduty_resolution_reason"].includes(row.name));
+  const applied = migrations.map(({ version, name }) => ({ version, name, executed_at: "unchanged" }));
+  const snapshot = JSON.stringify(applied);
+  const companions = [
+    [83, "certops_material_providers"], [84, "recipient_channel_verification"],
+    [85, "weekly_digest_recipient_claim_token"], [86, "certops_distribution_lifecycle"],
+    [87, "certops_distribution_incident_delivery"], [88, "certops_stable_consumer_discovery"],
+    [89, "certops_material_cleanup"], [90, "certops_consumer_verification_failures"],
+    [91, "certops_distribution_resolution_delivery"],
+  ].map(([version, name]) => registered.find(row => row.name === name) || ({ version, name, sql: "SELECT 1" }));
+  const integrated = [...migrations, ...companions].sort((a,b) => a.version-b.version);
+  for (let length = 0; length <= companions.length; length++) {
+    const recorded = [...applied, ...companions.slice(0,length)].sort((a,b) => a.version-b.version);
+    const plan = composeMigrations(integrated, recorded);
+    assert.equal(plan.find(entry => entry.name === "pagerduty_incident_lifecycle").version, 92);
+    assert.deepEqual(plan.map(entry => entry.version), integrated.map(entry => entry.version));
+  }
+  assert.equal(JSON.stringify(applied), snapshot);
+  // This PR's earlier 1-81 + 92 candidate must accept main's later migration82
+  // without rewriting its already applied PagerDuty identity or timestamp.
+  const previousPagerDutyCandidate = applied.filter(row => row.version !== 82);
+  const laterMainPlan = composeMigrations(migrations, previousPagerDutyCandidate);
+  assert.equal(laterMainPlan.find(row => row.name === "auto_sync_system_metrics").version, 82);
+  assert.equal(JSON.stringify(previousPagerDutyCandidate), JSON.stringify(applied.filter(row => row.version !== 82)));
+  for (const name of ["recipient_channel_verification", "certops_material_providers", "certops_distribution_lifecycle"]) {
+    const incompatible = [...applied.filter(row => row.version !== 81), { version: 81, name }];
+    assert.throws(() => composeMigrations(integrated, incompatible), /Unsupported Core migration history/);
+  }
+  assert.throws(() => composeMigrations(integrated, [{ version: 92, name: "pagerduty_incident_lifecycle" }]), /Unsupported Core migration history/);
 });
