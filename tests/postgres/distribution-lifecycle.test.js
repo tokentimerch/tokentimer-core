@@ -357,6 +357,8 @@ test("required recurring verification recovers automatically with fresh installe
     assert.equal((await verificationRollout(f)).state,"degraded");
     const oldJob=(await pool.query("SELECT * FROM certificate_jobs WHERE id=$1",[failed.child.job_id])).rows[0];
     const oldChild=(await pool.query("SELECT * FROM certops_consumer_deployments WHERE job_id=$1",[failed.child.job_id])).rows[0];
+    await assert.rejects(operations.retryDistributionJob({workspaceId:f.workspaceId,jobId:failed.child.job_id,actorUserId:f.actor}),
+      {code:"CERTOPS_MATERIAL_RETRY_AUTHORIZATION_STALE"},"completed recurring cycles keep their scheduler/backoff semantics");
     await verificationDue(f);
     assert.equal((await verificationTick(f)).reason,"verification_backoff");
     const backedOff=await verificationSchedule(f);assert.equal(backedOff.failures,1);assert.equal(backedOff.last_job_id,null);

@@ -308,21 +308,24 @@ async function retryDistributionJob({ workspaceId,jobId,actorUserId }) {
     const intent=job.payload.publication||job.payload.materialDeployment||job.payload.materialCleanup;
     const group=await material.lockGroup(client,workspaceId,intent.groupId);
     if(!["failed","blocked","orphaned_unknown_effect"].includes(job.status) || job.attempt_count>=3)fail("CERTOPS_MATERIAL_RETRY_UNAVAILABLE");
+    let degradedRolloutId=null;
     if(job.payload.materialDeployment){
       const current=(await client.query(`SELECT d.authorization_revision,b.authorization_revision AS current_revision,
         d.assigned_agent_id,b.assigned_agent_id AS current_agent,b.state AS binding_state,r.generation,r.material_version_id,
-        r.state AS rollout_state,r.approval_job_id,s.desired_generation,s.desired_material_version_id
+        r.id AS rollout_id,r.state AS rollout_state,r.verification_only,r.approval_job_id,s.desired_generation,s.desired_material_version_id
         FROM certops_consumer_deployments d JOIN certops_consumer_bindings b ON b.workspace_id=d.workspace_id AND b.id=d.binding_id
         JOIN certops_distribution_rollouts r ON r.workspace_id=d.workspace_id AND r.id=d.rollout_id
         JOIN certops_consumer_current_state s ON s.workspace_id=d.workspace_id AND s.binding_id=d.binding_id
         WHERE d.workspace_id=$1 AND (d.job_id=$2 OR d.staging_job_id=$2) FOR SHARE OF d,b,r,s`,[workspaceId,jobId])).rows[0];
+      const degradedDeployment=current?.rollout_state==="degraded" && current.verification_only===false;
       if(!current || current.binding_state!=="active" || current.current_revision!==current.authorization_revision ||
         current.assigned_agent_id!==current.current_agent || current.assigned_agent_id!==job.assigned_agent_id ||
-        !["pending","deploying","paused"].includes(current.rollout_state) || Number(current.generation)!==Number(group.generation) ||
+        (!["pending","deploying","paused"].includes(current.rollout_state) && !degradedDeployment) || Number(current.generation)!==Number(group.generation) ||
         Number(current.generation)!==Number(current.desired_generation) || current.material_version_id!==intent.materialVersionId ||
         current.desired_material_version_id!==intent.materialVersionId)fail("CERTOPS_MATERIAL_RETRY_AUTHORIZATION_STALE");
       await material.assertDeployableVersion(client,workspaceId,intent.groupId,intent.materialVersionId);
       await require("./distributionLifecycle").assertAutomaticRolloutAuthorized(client,workspaceId,group,current.approval_job_id);
+      if(degradedDeployment)degradedRolloutId=current.rollout_id;
     }else if(job.payload.materialCleanup){
       await require("./materialCleanup").resolveCleanupDefaults({client,workspaceId,operation:job.operation,subjectId:job.subject_id,payload:job.payload,assignedAgentId:job.assigned_agent_id,jobId:job.id});
     }else{
@@ -330,6 +333,11 @@ async function retryDistributionJob({ workspaceId,jobId,actorUserId }) {
         assignedAgentId:job.assigned_agent_id,payload:job.payload,jobId:job.id});
     }
     if(job.approved_payload_hash && require("./jobApprovals").computeJobPayloadApprovalHash(job.payload)!==job.approved_payload_hash)fail("CERTOPS_MATERIAL_RETRY_AUTHORIZATION_STALE");
+    // An optional failure may have completed the rollout as degraded. Keep the
+    // retry fenced until explicit resume, just like recovery of a required
+    // failure. Do not reopen scheduler-owned verification cycles or alter proof.
+    if(degradedRolloutId)await client.query(`UPDATE certops_distribution_rollouts SET state='paused'
+      WHERE workspace_id=$1 AND id=$2 AND state='degraded' AND verification_only=false`,[workspaceId,degradedRolloutId]);
     // The payload/version/approval/consumer membership remain unchanged.
     // An uncertain local deployment still needs read-only reconciliation.
     const workspace=(await client.query(`SELECT certops_require_approval_always FROM workspaces WHERE id=$1 FOR SHARE`,[workspaceId])).rows[0];

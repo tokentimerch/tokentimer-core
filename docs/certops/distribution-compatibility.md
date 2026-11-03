@@ -5,6 +5,10 @@ and PagerDuty (#496) runtimes. Their earlier preview databases retain their appl
 migration identities. Normal feature capability gates remain authoritative; no
 temporary qualification trust exception is imported.
 
+The [PR #498 scope and merge matrix](pr498-merge-readiness-20261103.md) records
+supported behavior separately from optional capability promotion. No production
+manifest gate is opened by migration composition or by the finalization work.
+
 ## Migration ordering
 
 Use the normal migration runner. SQL filenames from earlier previews are retained;

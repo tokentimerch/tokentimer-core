@@ -136,6 +136,12 @@ Preflight reads the exact store version, verifies local scope/revisions and the 
 
 Retry preserves the original signed payload/version/generation and independently rechecks current membership, desired generation, exact version, approvals and automatic policy authority. The server keeps an uncertain deployment visibly uncertain while retry is pending. Neither local reconciliation nor retry request alone promotes deployment status; a fresh claim-bound receipt is required.
 
+If an optional consumer failed after all required consumers completed, the rollout
+can be `degraded`. Retrying that current deployment puts the rollout in `paused`
+without redeploying successful consumers. Use **Resume** after local reconciliation;
+normal current-authority, version/generation and maintenance checks still apply.
+This does not reopen completed recurring verification cycles or stale rollouts.
+
 ## Retention and provider limitations
 
 Retention configuration controls minimum duration, minimum published-version count and rollback preservation. Preview explains protection for latest material, desired/observed consumer references, in-flight/pending approvals, resumable/paused rollouts and failed/uncertain/reconcilable work. Public version, approval, job and incident history remains intact.

@@ -49,10 +49,19 @@ source tests and UI settings cannot add a compiled capability.
 
 ## Findings and disposition
 
-**A — must fix before merge:** final candidate validation is in progress. A failed
+**A — must fix before merge:** the first enrolled-agent campaign found a genuine
+optional-consumer recovery defect: a rollout completed as `degraded`, then retry
+returned `CERTOPS_MATERIAL_RETRY_AUTHORIZATION_STALE` despite unchanged current
+generation, version, consumer and independent authority. Retry now accepts that
+current deployment only after all existing fences pass and atomically changes
+the rollout to `paused`. Explicit Resume is still required; successful siblings,
+the original payload/job and uncertain proof remain intact. Completed recurring
+verification cycles retain scheduler/backoff semantics. New PostgreSQL regressions
+failed before the fix; the full review suite passes **38/38** afterward, including
+changed-binding and revoked-reviewer rejection. A fresh full enrolled-agent run
+and final-head CI must validate the fix before readiness. Any remaining failed
 required check, supported-flow regression, unsafe migration or security defect
-blocks readiness. No additional supported-scope defect has been confirmed during
-this focused review. Review covers exact-scope/current-authority checks at
+blocks readiness. Focused review also covers exact-scope/current-authority checks at
 expansion, claim, renewal and retry; workspace/group locking; permanent cleanup
 reference fences; atomic receipt/nonce/audit completion; staging versus assurance;
 and disabled unsupported UI operations. It is not a new production qualification.
@@ -73,7 +82,9 @@ restart/refresh stay under #376 and #366. Appliance connectors,
 additional providers and full MSP ITSM integration are outside this PR; MSP evidence integration remains in the existing downstream backlog. None is a new #498 gate.
 
 **D — wider/customer acceptance:** broader fleet/outage/browser and live outbound
-provider campaigns remain explicit follow-ups under #354 and #248. A
+provider campaigns remain explicit follow-ups under #248 and specific capability
+issues. Already-closed #354 supplies the existing host-qualification infrastructure;
+its completed work is not reopened by this PR. A
 source-mounted isolated lab is supporting functional evidence, not a production
 native artifact or a customer-host acceptance claim.
 
@@ -105,10 +116,16 @@ Fresh local checks on reconciled product source `1c844f68`:
 | API/worker lint; `check:contracts`, `check:contracts:integrity`, `check:lockfile-overrides`, `check:secret-logging`, `check:certops-keygen-ban` | All passed; **52** contract files verified |
 | `CONTRACT_API_REQUIRED=0 pnpm run test:contracts` | **47/47**, no skips |
 | `pnpm audit --prod --audit-level=moderate` | Passed; one low advisory |
+| `pnpm --filter @tokentimer/dashboard exec vitest run tests/unit/CertOpsDistribution.test.jsx tests/unit/CertOpsDistribution.workspace.test.jsx tests/unit/ApprovalDecisionModal.test.jsx tests/unit/EvidenceTimeline.test.jsx tests/unit/ExecutorJobsPanel.test.jsx` | **112/112**, five files passed |
+| `node --test packages/agent/src/material-store/lifecycle.test.js packages/agent/src/material-store/cleanup.test.js packages/agent/src/material-store/cleanup-provider-compatibility.test.js packages/agent/src/material-store/platform-policy.test.js packages/agent/src/windows-discovery/windows-discovery.test.js packages/agent/src/capabilities/capabilities.test.js` | **171/171**, no skips; source/fixture evidence, not a Server qualification campaign |
 
-Additional focused agent/dashboard tests and the complete enrolled-agent journey
-are in progress. Their actual counts/provenance will be recorded before the final
-decision. Full trusted `ci.yml` must run on the pushed final head;
+The initial complete enrolled-agent journey on `3021793e` reached genuine
+issuance, two trusted consumers, renewal/offline recovery and canary progression,
+then failed at optional-consumer retry. It is retained as failed evidence, not
+reported as a pass. The corrected candidate requires a fresh complete journey;
+actual counts/provenance will be recorded before the final decision.
+[Full CI 41652216212](https://github.com/tokentimerch/tokentimer-core/actions/runs/41652216212)
+tests `3021793e` before the recovery fix. Full trusted `ci.yml` must run on the pushed final head;
 retain the exact SHA/run link in the PR description and final acceptance report.
 No earlier green workflow substitutes for it.
 

@@ -1507,6 +1507,57 @@ test("a required failure inside a wave pauses the rollout without disturbing its
   assert.deepEqual(await lab.failedJobIds(), [deployments["canary-b"].job_id]);
 });
 
+test("a degraded optional deployment retries its original job and waits for explicit resume", async () => {
+  const f = await fixture();
+  const lab = await waveLab(f, [{ name: "required", wave: 0 }, { name: "optional", wave: 0, required: false }]);
+  await lab.advance();
+  await lab.run("required", "succeeded");
+  await lab.run("optional", "failed");
+  assert.equal(await lab.rolloutState(), "degraded");
+  const before = await lab.snapshotOf(["required"]);
+  const failedId = (await lab.deployments()).optional.job_id;
+  const original = (await pool.query("SELECT payload FROM certificate_jobs WHERE id=$1", [failedId])).rows[0].payload;
+  // Public DB fixture for an uncertain result; the enrolled-agent journey
+  // independently exercises the real reload failure and local reconciliation.
+  await pool.query("UPDATE certificate_jobs SET status='orphaned_unknown_effect',needs_operator_reconciliation=true WHERE id=$1", [failedId]);
+  await pool.query("UPDATE certops_consumer_deployments SET stage='orphaned_unknown_effect' WHERE job_id=$1", [failedId]);
+  await operations.retryDistributionJob({ workspaceId: f.workspaceId, jobId: failedId, actorUserId: f.actor });
+  assert.equal(await lab.rolloutState(), "paused", "retry must not activate a completed degraded rollout implicitly");
+  const retried = (await pool.query("SELECT payload,status,needs_operator_reconciliation FROM certificate_jobs WHERE id=$1", [failedId])).rows[0];
+  assert.deepEqual(retried.payload, original);
+  assert.equal(retried.status, "pending");
+  assert.equal(retried.needs_operator_reconciliation, true);
+  assert.equal((await lab.deployments()).optional.stage, "orphaned_unknown_effect");
+  assert.equal(await lab.claim("optional"), null, "explicit rollout resume is required before a fresh signed claim");
+  assert.deepEqual(await lab.snapshotOf(["required"]), before);
+  await operations.setRolloutState({ workspaceId: f.workspaceId, groupId: f.groupId, rolloutId: lab.rolloutId, state: "deploying", actorUserId: f.actor });
+  await lab.advance();
+  await lab.run("optional", "succeeded");
+  assert.equal(await lab.rolloutState(), "verified");
+  assert.equal((await lab.deployments()).optional.job_id, failedId);
+  assert.equal(await lab.deployJobCount(), 2, "the successful required consumer is never redeployed");
+  assert.deepEqual(await lab.snapshotOf(["required"]), before);
+});
+
+test("degraded optional retry retains current binding and independent-review authority fences", async (t) => {
+  for (const change of ["binding", "reviewer"]) await t.test(change, async () => {
+    const f = await fixture();
+    const lab = await waveLab(f, [{ name: "required", wave: 0 }, { name: "optional", wave: 0, required: false }]);
+    await lab.advance();
+    await lab.run("required", "succeeded");
+    await lab.run("optional", "failed");
+    const failedId = (await lab.deployments()).optional.job_id;
+    if (change === "binding") await operations.putBinding({ workspaceId: f.workspaceId, groupId: f.groupId,
+      bindingId: lab.nodes.optional.bindingId, actorUserId: f.actor,
+      binding: { ...f.binding, agentId: lab.nodes.optional.agentId, required: false, wave: 1 } });
+    else await pool.query("DELETE FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2", [f.workspaceId, f.approver]);
+    await assert.rejects(operations.retryDistributionJob({ workspaceId: f.workspaceId, jobId: failedId, actorUserId: f.actor }),
+      { code: change === "binding" ? "CERTOPS_MATERIAL_RETRY_AUTHORIZATION_STALE" : "CERTOPS_DISTRIBUTION_POLICY_STALE" });
+    assert.equal(await lab.rolloutState(), "degraded");
+    assert.equal((await lab.deployments()).optional.job_status, "failed");
+  });
+});
+
 test("an optional destination failure never blocks the rollout, a required one does", async (t) => {
   await t.test("optional canary failure: later required waves still deploy and the rollout ends degraded", async () => {
     const f = await fixture();

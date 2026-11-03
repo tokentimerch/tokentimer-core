@@ -21,6 +21,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Optional distribution destinations can recover after partial success.** Retrying the original failed job from a current degraded rollout now pauses it for explicit Resume while preserving successful consumer proof and uncertain evidence. Current version/generation, binding and independent-review checks remain required; completed recurring verification cycles retain their scheduler behavior.
+
 - **AD CS on localized Windows agents.** Issuer preflight now returns the CA certificates needed for key confirmation on German and French hosts. **Operator action:** update affected Windows agents.
 
 - **Alert dates and times stay correct on non-UTC API hosts.** The alert queue and asset delivery state preserve calendar due dates and the actual update, retry and delivery-attempt timestamps.
