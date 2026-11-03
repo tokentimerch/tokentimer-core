@@ -402,6 +402,9 @@ test("Windows real-host discovery and service-host qualification", { timeout: 24
         fs.writeFileSync(path.join(workDir, `${id}.log`), JSON.stringify(report));
       }, { evidenceLevel: "unit", oracle: "Go test assertions; not domain or SCM E2E evidence" });
     }
+  } catch (error) {
+    await gate.recordFailure(error);
+    throw error;
   } finally {
     await gate.scenario("windows-host-cleanup", async () => {
       require("./iis-public-only-fixture").assertCleanupSafe(workDir);

@@ -125,6 +125,11 @@ function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = 
   }
   return {
     report,
+    async recordFailure(error) {
+      const detail = noteFailure(error);
+      report.failure ??= detail;
+      await save();
+    },
     async preflight() {
       if (ready) throw new Error("Preflight already completed");
       try {
