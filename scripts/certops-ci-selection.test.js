@@ -91,6 +91,8 @@ test("installer swap regression runs under Windows PowerShell 5.1 in the selecti
  const ordinary=ci.jobs.certops_tooling.steps.find(item=>item.name==="Exercise installer activation using owned temporary files");
  assert.ok(ordinary);assert.equal(ordinary.shell,"powershell");assert.equal(ordinary.if,"runner.os == 'Windows'");assert.notEqual(ordinary["continue-on-error"],true);
  assert.match(ordinary.run,/& \.\/scripts\/certops-installer-swap\.test\.ps1/);
+ assert.match(ordinary.run,/PSExecutionPolicyPreference = 'Restricted'/);assert.match(ordinary.run,/node scripts\/certops-installer-second-rename-support\.js/);assert.match(ordinary.run,/LASTEXITCODE -ne 0/);
+ assert.deepEqual(ci.jobs.certops_tooling.strategy.matrix.os,["ubuntu-24.04","windows-2022","windows-2025"]);
 });
 
 test("benign response barrier changes select the existing Windows lane and execute supporting controls",()=>{

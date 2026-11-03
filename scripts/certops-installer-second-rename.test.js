@@ -185,6 +185,7 @@ test("supporting activation failures expose bounded phases without private messa
       code: "ENOENT",
       activationPhase: "closed-receipt",
       nativeRootExitCode: 1,
+      nativeStartupPhase: "suspended-observation",
       privatePath: "private-path",
     },
   );
@@ -197,6 +198,7 @@ test("supporting activation failures expose bounded phases without private messa
         code: "ENOENT",
         phase: "closed-receipt",
         nativeRootExitCode: 1,
+        nativeStartupPhase: "suspended-observation",
       },
     ],
   });

@@ -23,6 +23,17 @@ function failureSummary(error, depth = 0) {
   };
   if (
     [
+      "wrapper-ready",
+      "wrapper-identity",
+      "native-started",
+      "suspended-observation",
+      "native-running",
+      "running-observation",
+    ].includes(error?.nativeStartupPhase)
+  )
+    result.nativeStartupPhase = error.nativeStartupPhase;
+  if (
+    [
       "ERR_ASSERTION",
       "ENOENT",
       "EEXIST",
@@ -107,8 +118,9 @@ function failureSummary(error, depth = 0) {
 }
 async function main() {
   assert.equal(process.platform, "win32");
+  const temporaryParent = fs.realpathSync.native(os.tmpdir());
   const root = fs.mkdtempSync(
-    path.join(os.tmpdir(), "certops-second-rename-support-"),
+    path.join(temporaryParent, "certops-second-rename-support-"),
   );
   const app = path.join(root, "app"),
     pkg = path.join(root, "candidate");
@@ -149,7 +161,7 @@ async function main() {
     // The protocol helper throws on uncertain process drainage. Retain its exact
     // temporary root for diagnostics rather than recursively deleting live state.
     if (drained) {
-      assert.equal(path.dirname(root), path.resolve(os.tmpdir()));
+      assert.equal(path.dirname(root), temporaryParent);
       assert.match(path.basename(root), /^certops-second-rename-support-/);
       fs.rmSync(root, { recursive: true, force: true });
       assert.equal(fs.existsSync(root), false);

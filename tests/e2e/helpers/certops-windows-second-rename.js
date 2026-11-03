@@ -68,8 +68,7 @@ const factFields = [
   "ownedChildDrained",
 ];
 function verifyProof(facts) {
-  if (facts && facts.scope === "full-installer-second-rename-failure")
-    return verifyLocalContract(facts);
+  if (facts && facts.scope === "full-installer-second-rename-failure") return verifyLocalContract(facts);
   if (facts && typeof facts === "object") {
     for (const key of [
       "nativeExecutionQualified",
@@ -79,15 +78,9 @@ function verifyProof(facts) {
       "inUseKeyDeleted",
       "blanketNetshReset",
     ]) {
-      if (Object.prototype.hasOwnProperty.call(facts, key))
-        assert.equal(facts[key], false, key);
+      if (Object.prototype.hasOwnProperty.call(facts, key)) assert.equal(facts[key], false, key);
     }
-    if (
-      Object.prototype.hasOwnProperty.call(
-        facts,
-        "crashDumpContainmentQualified",
-      )
-    ) {
+    if (Object.prototype.hasOwnProperty.call(facts, "crashDumpContainmentQualified")) {
       assert.equal(facts.crashDumpContainmentQualified, false);
     }
   }
@@ -661,8 +654,7 @@ const LOCAL_EVIDENCE_LEVEL = "script";
 const LOCAL_SUITE_ID = "windows-full-installer-second-rename-contract";
 const LOCAL_SUITE_LEVEL = "integration";
 const LOCAL_REPORT_FIELD = "fullInstallerSecondRename";
-const LOCAL_WORKFLOW =
-  ".github/workflows/certops-windows-coverage-variants.yml";
+const LOCAL_WORKFLOW = ".github/workflows/certops-windows-coverage-variants.yml";
 const LOCAL_REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-windows-second-rename.js",
   "scripts/certops-windows-second-rename.js",
@@ -701,20 +693,9 @@ function localRunId(runId) {
 function localRoot(root, runId) {
   const normalized = String(root).replaceAll("/", "\\").replace(/\\+$/, "");
   assert.ok(normalized.includes(runId), "run root must contain the run id");
-  assert.ok(
-    normalized.split("\\").length >= 3,
-    "run root must be a nested directory",
-  );
-  assert.equal(
-    /^C:\\Windows(\\|$)/i.test(normalized),
-    false,
-    "refusing a Windows directory",
-  );
-  assert.equal(
-    /^C:\\inetpub\\wwwroot(\\|$)/i.test(normalized),
-    false,
-    "refusing the shared IIS content root",
-  );
+  assert.ok(normalized.split("\\").length >= 3, "run root must be a nested directory");
+  assert.equal(/^C:\\Windows(\\|$)/i.test(normalized), false, "refusing a Windows directory");
+  assert.equal(/^C:\\inetpub\\wwwroot(\\|$)/i.test(normalized), false, "refusing the shared IIS content root");
   return normalized;
 }
 
@@ -758,11 +739,7 @@ function assertLocalManifest(manifest) {
   assert.equal(manifest.originalName, `tt-ren-${manifest.runId}`);
   assert.equal(manifest.key.inUse, true);
   assert.equal(manifest.key.container, manifest.originalName);
-  assert.ok(
-    manifest.binary.endsWith(
-      `\\${manifest.originalName}\\tokentimer-agent-host-amd64.exe`,
-    ),
-  );
+  assert.ok(manifest.binary.endsWith(`\\${manifest.originalName}\\tokentimer-agent-host-amd64.exe`));
   assert.equal(manifest.site.binding.address, "127.0.0.1");
   assert.equal(
     manifest.site.binding.selector,
@@ -774,13 +751,8 @@ function assertNoInUseDeletion(manifest, commands) {
   assert.equal(manifest.key.inUse, true);
   for (const command of commands) {
     const joined = [command.file, ...(command.args || [])].join(" ");
-    if (LOCAL_DENIED.test(joined))
-      throw new Error("Refusing to delete an in-use key");
-    if (
-      /delete|remove-item/i.test(joined) &&
-      (joined.includes(manifest.key.container) ||
-        joined.includes(manifest.binary))
-    ) {
+    if (LOCAL_DENIED.test(joined)) throw new Error("Refusing to delete an in-use key");
+    if (/delete|remove-item/i.test(joined) && (joined.includes(manifest.key.container) || joined.includes(manifest.binary))) {
       throw new Error("Refusing to delete an in-use key");
     }
     if (command.file === "netsh.exe") {
@@ -797,11 +769,7 @@ function applySecondRenameFailure(manifest) {
   const secondRenameFailed = true;
   assert.equal(secondRenameFailed, true);
   liveName = manifest.originalName;
-  assert.equal(
-    liveName,
-    manifest.originalName,
-    "second rename failure must leave the original name",
-  );
+  assert.equal(liveName, manifest.originalName, "second rename failure must leave the original name");
   const commands = [
     {
       step: "second-rename",
@@ -816,16 +784,8 @@ function applySecondRenameFailure(manifest) {
     },
   ];
   assertNoInUseDeletion(manifest, commands);
-  assert.equal(
-    commands.some(
-      (command) => command.step === "second-rename" && command.failed === true,
-    ),
-    true,
-  );
-  assert.equal(
-    commands.some((command) => command.args.includes(manifest.binary)),
-    false,
-  );
+  assert.equal(commands.some((command) => command.step === "second-rename" && command.failed === true), true);
+  assert.equal(commands.some((command) => command.args.includes(manifest.binary)), false);
   const proof = {
     scope: LOCAL_SCOPE,
     evidenceLevel: LOCAL_EVIDENCE_LEVEL,
@@ -855,53 +815,26 @@ function applySecondRenameFailure(manifest) {
 function assessLocalHost(probe) {
   const required = ["windows", "installer", "ownedTarget"];
   if (!probe || typeof probe !== "object" || Array.isArray(probe)) {
-    return {
-      available: false,
-      missing: required,
-      nativeQualified: false,
-      passed: false,
-    };
+    return { available: false, missing: required, nativeQualified: false, passed: false };
   }
   const missing = required.filter((name) => probe[name] !== true);
-  return {
-    available: missing.length === 0,
-    missing,
-    nativeQualified: false,
-    passed: false,
-  };
+  return { available: missing.length === 0, missing, nativeQualified: false, passed: false };
 }
 
 function probeLocalHost() {
-  return {
-    windows: process.platform === "win32",
-    installer: false,
-    ownedTarget: false,
-  };
+  return { windows: process.platform === "win32", installer: false, ownedTarget: false };
 }
 
 function runLocal({ probe, execute, manifest } = {}) {
   const gate = assessLocalHost(probe);
   if (!gate.available) {
-    return {
-      passed: false,
-      nativeQualified: false,
-      reason: "host capability absent",
-      missing: gate.missing,
-    };
+    return { passed: false, nativeQualified: false, reason: "host capability absent", missing: gate.missing };
   }
   if (execute !== true) {
-    return {
-      passed: false,
-      nativeQualified: false,
-      reason: "host execution not requested",
-    };
+    return { passed: false, nativeQualified: false, reason: "host execution not requested" };
   }
   if (!manifest) {
-    return {
-      passed: false,
-      nativeQualified: false,
-      reason: "owned rename manifest absent",
-    };
+    return { passed: false, nativeQualified: false, reason: "owned rename manifest absent" };
   }
   const result = applySecondRenameFailure(manifest);
   return {
@@ -915,14 +848,10 @@ function runLocal({ probe, execute, manifest } = {}) {
 
 function verifyLocalContract(value) {
   assert.ok(value && typeof value === "object" && !Array.isArray(value));
-  if (
-    Object.prototype.hasOwnProperty.call(value, "crashDumpContainmentQualified")
-  ) {
+  if (Object.prototype.hasOwnProperty.call(value, "crashDumpContainmentQualified")) {
     assert.equal(value.crashDumpContainmentQualified, false);
   }
-  const comparable = Object.keys(value).filter(
-    (key) => key !== "crashDumpContainmentQualified",
-  );
+  const comparable = Object.keys(value).filter((key) => key !== "crashDumpContainmentQualified");
   assert.deepEqual(comparable.sort(), [...LOCAL_PROOF_KEYS].sort());
   assert.equal(value.scope, LOCAL_SCOPE);
   assert.equal(value.evidenceLevel, LOCAL_EVIDENCE_LEVEL);
