@@ -142,6 +142,8 @@ function nativeSuspendedObservation(processId) {
     [
       "-NoProfile",
       "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
       "-File",
       path.join(__dirname, "certops-windows-contained-process.ps1"),
       "-ObserveProcessId",
@@ -302,6 +304,7 @@ async function startContainedNativeProcess({
     released = false,
     closePromise,
     closeResult,
+    startupPhase = "wrapper-ready",
     runIssued = false;
   const entries = registry.get(root) || new Set();
   registry.set(root, entries);
@@ -484,9 +487,13 @@ async function startContainedNativeProcess({
   });
   const startup = async () => {
     if (onCreated) onCreated(resource);
+    // Cold Server runners compile the native helper and measure the owner before
+    // readiness. Give that preparation its own finite budget; run/resume gates
+    // and all native identity, lifetime and drainage checks retain their limits.
     ready = await wait(
       () =>
         fs.existsSync(path.join(directory, "ready.json")) && read("ready.json"),
+      90000,
     );
     exact(ready, [
       "token",
@@ -501,6 +508,7 @@ async function startContainedNativeProcess({
     assert.equal(ready.ownerPid, process.pid);
     assert.equal(ready.sid, sid);
     assert.equal(ready.ownerCreationTime, owner.creationTime);
+    startupPhase = "wrapper-identity";
     const observed = nativeObservation(child.pid);
     assert.equal(observed.parentPid, process.pid);
     assert.equal(observed.creationTime, ready.creationTime);
@@ -528,6 +536,7 @@ async function startContainedNativeProcess({
     );
     signal("run");
     runIssued = true;
+    startupPhase = "native-started";
     started = await wait(
       () =>
         fs.existsSync(path.join(directory, "started.json")) &&
@@ -541,6 +550,7 @@ async function startContainedNativeProcess({
       executable,
       commandLine: cmd,
     });
+    startupPhase = "suspended-observation";
     const native = nativeSuspendedObservation(started.pid);
     for (const field of ["pid", "creationTime", "executablePath", "sid"])
       assert.ok(
@@ -548,6 +558,7 @@ async function startContainedNativeProcess({
         "Independent suspended native identity differs",
       );
     signal("resume");
+    startupPhase = "native-running";
     const running = await wait(
       () =>
         fs.existsSync(path.join(directory, "running.json")) &&
@@ -560,6 +571,7 @@ async function startContainedNativeProcess({
     // CIM may omit a suspended executable image. Native handle observations
     // establish image/time/SID before resume; exact actual argv is observed only
     // after resume, while the process is already contained by its retained job.
+    startupPhase = "running-observation";
     const actual = await wait(() => {
       try {
         return nativeObservation(started.pid);
@@ -591,6 +603,7 @@ async function startContainedNativeProcess({
   try {
     return await resource.ready;
   } catch (error) {
+    error.nativeStartupPhase = startupPhase;
     try {
       await resource.stopAndDrain();
     } catch (cleanup) {
