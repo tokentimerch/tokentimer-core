@@ -53,6 +53,52 @@ function failureSummary(error, depth = 0) {
     error.nativeRootExitCode <= 0xffffffff
   )
     result.nativeRootExitCode = error.nativeRootExitCode;
+  const reasons = new Map([
+    [
+      "Contained wrapper closed before required native phase",
+      "native-wrapper-closed",
+    ],
+    [
+      "Contained native phase exceeded bounded deadline",
+      "native-startup-deadline",
+    ],
+    ["Owned activation protocol deadline exceeded", "activation-deadline"],
+  ]);
+  if (reasons.has(error?.message)) result.reason = reasons.get(error.message);
+  const native =
+    /^Contained native failure at ([a-z-]+): System\.[A-Za-z0-9_.]{1,160} \((-?\d+), native (null|\d+)\)$/.exec(
+      error?.message || "",
+    );
+  if (
+    native &&
+    [
+      "wait-run",
+      "launch-manifest",
+      "executable-lock",
+      "command-render",
+      "launch-ancestry",
+      "native-create",
+      "suspended-identity",
+      "publish-started",
+      "wait-resume",
+      "native-resume",
+      "native-drain",
+    ].includes(native[1])
+  ) {
+    const hresult = Number(native[2]);
+    const nativeErrorCode = native[3] === "null" ? null : Number(native[3]);
+    if (
+      Number.isInteger(hresult) &&
+      hresult >= -2147483648 &&
+      hresult <= 2147483647 &&
+      (nativeErrorCode === null ||
+        (Number.isInteger(nativeErrorCode) &&
+          nativeErrorCode >= 0 &&
+          nativeErrorCode <= 2147483647))
+    ) {
+      result.nativeFailure = { stage: native[1], hresult, nativeErrorCode };
+    }
+  }
   if (Array.isArray(error?.errors))
     result.causes = error.errors
       .slice(0, 4)

@@ -212,3 +212,36 @@ test("supporting activation failures expose bounded phases without private messa
   aggregate.errors.push(aggregate);
   assert.ok(JSON.stringify(failureSummary(aggregate)).length < 2000);
 });
+
+test("startup diagnostics retain only known native stages and numeric error codes", () => {
+  const {
+    failureSummary,
+  } = require("./certops-installer-second-rename-support");
+  assert.deepEqual(
+    failureSummary(
+      new Error(
+        "Contained native failure at native-create: System.ComponentModel.Win32Exception (-2147467259, native 5)",
+      ),
+    ),
+    {
+      name: "Error",
+      nativeFailure: {
+        stage: "native-create",
+        hresult: -2147467259,
+        nativeErrorCode: 5,
+      },
+    },
+  );
+  assert.deepEqual(
+    failureSummary(
+      new Error("Contained native phase exceeded bounded deadline"),
+    ),
+    { name: "Error", reason: "native-startup-deadline" },
+  );
+  for (const message of [
+    "Contained native failure at private-stage: System.Private (-1, native 5)",
+    "Contained native failure at native-create: System.Private (-999999999999, native 5)",
+    "Contained native failure at native-create: System.Private (-1, native 5) private suffix",
+  ])
+    assert.deepEqual(failureSummary(new Error(message)), { name: "Error" });
+});
