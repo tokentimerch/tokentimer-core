@@ -22,7 +22,7 @@ async function executeMaterialCleanup({job,stores,stateDir,checkLease,onBeforeMu
     let mutated=false;
     try{
       await store.softDeleteVersion(intent.providerVersion,{checkLease,beforeDelete:async()=>{
-        await checkLease();onBeforeMutation();
+        await checkLease();onBeforeMutation("material_cleanup_soft_delete");
         writeProtectedJson(record,{intentHash:hash,cleanupId:intent.cleanupId,materialVersionId:intent.materialVersionId,uncertain:true});mutated=true;
       }});
       await checkLease();
