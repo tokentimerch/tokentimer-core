@@ -12,26 +12,33 @@ $ErrorActionPreference='Stop'
 if((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test'){throw 'Issued request observation requires the isolated qualification forest'}
 if(-not $env:CERTOPS_ADCS_OFFICER_PASSWORD){throw 'Isolated officer credential absent'}
 $credential=[PSCredential]::new('TTQUAL\tt-lab-admin',(ConvertTo-SecureString $env:CERTOPS_ADCS_OFFICER_PASSWORD -AsPlainText -Force))
-Invoke-Command -ComputerName ($CaConfig.Split('\')[0]) -Credential $credential -ArgumentList $CommonName,$FingerprintSha256,$CaConfig -ScriptBlock {
+try { Invoke-Command -ComputerName ($CaConfig.Split('\')[0]) -Credential $credential -ArgumentList $CommonName,$FingerprintSha256,$CaConfig -ScriptBlock {
   param([string]$CommonName,[string]$FingerprintSha256,[string]$CaConfig)
   $ErrorActionPreference='Stop'
   $view=New-Object -ComObject CertificateAuthority.View
   $hash=[Security.Cryptography.SHA256]::Create()
+  $stage='connection'
   try {
     $null=$view.OpenConnection($CaConfig)
+    $stage='columns'
     $names=@('RequestID','CommonName','RequesterName','Disposition','RawCertificate')
     $view.SetResultColumnCount($names.Count)
     foreach($name in $names){$view.SetResultColumn($view.GetColumnIndex($false,$name))}
+    $stage='restriction'
     $view.SetRestriction($view.GetColumnIndex($false,'CommonName'),1,0,$CommonName)
+    $stage='enumeration'
     $rows=$view.OpenView();$count=0;$matched=@()
     while($rows.Next() -ne -1){
+      $stage='enumeration'
       $columns=$rows.EnumCertViewColumn();$values=@()
       # CV_OUT_BASE64 (1) returns only the public DER certificate for the
       # binary column; scalar columns retain their native value types.
       while($columns.Next() -ne -1){$values+=,$columns.GetValue($(if($values.Count -eq 4){1}else{0}))}
+      $stage='row-validation'
       if($values.Count -ne 5 -or $values[1] -ne $CommonName -or $values[2] -ine 'TTQUAL\tt-agent$'){throw 'Foreign or malformed native issued request observation'}
       $count++;if($count -gt 64){throw 'Owned request observation exceeded its bounded fixture scope'}
       if([int]$values[3] -ne 20 -or -not $values[4]){continue}
+      $stage='certificate-decode'
       $raw=[Convert]::FromBase64String([string]$values[4])
       $fingerprint=([BitConverter]::ToString($hash.ComputeHash($raw))).Replace('-','').ToLowerInvariant()
       if($fingerprint -ne $FingerprintSha256){continue}
@@ -39,8 +46,10 @@ Invoke-Command -ComputerName ($CaConfig.Split('\')[0]) -Credential $credential -
       try {$matched+=@{requestId=[long]$values[0];disposition=[int]$values[3];fingerprintSha256=$fingerprint;serialNumber=$certificate.SerialNumber}}
       finally {$certificate.Dispose()}
     }
+    $stage='match'
     if($matched.Count -ne 1 -or $matched[0].requestId -lt 1){throw 'Expected exactly one owned issued CA request with the independently observed leaf fingerprint'}
     $matched[0].subjectRequestCount=$count
     $matched[0]|ConvertTo-Json -Compress
-  } finally {if($hash){$hash.Dispose()};if($view){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)}}
-}
+  } catch { Write-Output "CERTOPS_ISSUED_FAILURE=$stage"; throw }
+  finally {if($hash){$hash.Dispose()};if($view){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)}}
+} } catch { Write-Output 'CERTOPS_ISSUED_FAILURE=remoting'; throw }

@@ -98,6 +98,37 @@ function currentBrowserSource(inventory, { certificateId, fingerprint }) {
   assert.match(sources[0].periodId, /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i);
   return { id: certificateId, periodId: sources[0].periodId };
 }
+function currentIisBrowserSource(inventory, { certificateIds, fingerprint, openCertificateIds = [] }) {
+  assert.ok(Array.isArray(certificateIds) && certificateIds.length <= 64);
+  assert.match(fingerprint, /^[a-f0-9]{64}$/);
+  assert.equal(new Set(certificateIds).size, certificateIds.length);
+  assert.ok(Array.isArray(openCertificateIds) && openCertificateIds.length <= 64);
+  for (const id of openCertificateIds) assert.ok(certificateIds.includes(id));
+  const blocked = new Set(openCertificateIds);
+  const candidates = certificateIds.map(certificateId => {
+    assert.match(certificateId, /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i);
+    return blocked.has(certificateId) ? null : currentBrowserSource(inventory, { certificateId, fingerprint });
+  }).filter(Boolean);
+  assert.ok(candidates.length <= 1, "Current owned IIS browser source is ambiguous");
+  return candidates[0] || null;
+}
+async function loadCurrentIisBrowserSource({ fixture, api, site, port, domain, fingerprint }) {
+  assert.ok(Number.isInteger(port) && port > 0 && port <= 65535);
+  assert.match(fingerprint, /^[a-f0-9]{64}$/);
+  const inventory = await fixture.request(`${api}/certificate-identities?limit=100&q=${fingerprint}`);
+  assert.equal(inventory.status, 200);
+  const observed = await fixture.pool.query(
+    "SELECT DISTINCT mc.id FROM managed_certificates mc JOIN certificate_instances ci ON ci.workspace_id=mc.workspace_id AND ci.managed_certificate_id=mc.id JOIN certificate_targets ct ON ct.workspace_id=ci.workspace_id AND ct.id=ci.target_id WHERE mc.workspace_id=$1 AND ci.observed_fingerprint_sha256=$2 AND ct.windows_site=$3 AND ct.windows_port=$4 AND ct.windows_sni_host=$5 AND ct.windows_store='My' AND mc.source='agent_windows'",
+    [fixture.workspaceId, fingerprint, site, port, domain],
+  );
+  assert.ok(observed.rows.length <= 64);
+  const certificateIds = observed.rows.map(row => row.id), openCertificateIds = [];
+  const { findOpenEnrollment } = require("../../../apps/api/services/certops/certificateEnrollments");
+  for (const id of certificateIds) {
+    if (await findOpenEnrollment(fixture.pool, fixture.workspaceId, id)) openCertificateIds.push(id);
+  }
+  return currentIisBrowserSource(inventory.body, { certificateIds, fingerprint, openCertificateIds });
+}
 function verifyProof(proof, { workerDriven = false } = {}) {
   assert.ok(proof && typeof proof === "object" && !Array.isArray(proof));
   assert.deepEqual(
@@ -592,19 +623,10 @@ async function qualifyAdcsBrowserJourney(context) {
       REQUIRED_SCENARIOS[2],
       async () => {
         stage = "browser-profile-attachment";
-        // Observed IIS rows can retain historical registrations for this leaf.
-        // Select only the original owned registration currently offered by the
-        // public inventory, the same source of truth as the profile picker.
-        selectedSource = await until(async () => {
-          const inventory = await fixture.request(
-            `${api}/certificate-identities?limit=100&q=${initial.fingerprint}`,
-          );
-          assert.equal(inventory.status, 200);
-          return currentBrowserSource(inventory.body, {
-            certificateId: renewalFixture.certificateId,
-            fingerprint: initial.fingerprint,
-          });
-        });
+        // Earlier fault cases can retain open enrollments on the original
+        // registration. Use the current owned IIS observation, intersected with
+        // the public picker and the production open-enrollment gate.
+        selectedSource = await until(() => loadCurrentIisBrowserSource({ fixture, api, site, port, domain: item.domain, fingerprint: initial.fingerprint }));
         await openDisclosure("certops-renewal-profiles");
         await page
           .getByRole("button", { name: "New AD CS profile", exact: true })
@@ -700,6 +722,10 @@ async function qualifyAdcsBrowserJourney(context) {
               value.id === selectedSource.id,
           ),
         );
+        const selectedDue = due.find(value => value.workspace_id === fixture.workspaceId && value.id === selectedSource.id);
+        assert.equal(selectedDue.profile_id, profileId);
+        assert.equal(selectedDue.profile_issuer_id, issuerId);
+        assert.equal(await require("../../../apps/api/services/certops/certificateEnrollments").findOpenEnrollment(fixture.pool, fixture.workspaceId, selectedSource.id), null);
         const expiry = (
           await query(
             "SELECT not_after FROM managed_certificates WHERE workspace_id=$1 AND id=$2",
@@ -720,6 +746,12 @@ async function qualifyAdcsBrowserJourney(context) {
           dbPool: fixture.pool,
           env: process.env,
         });
+        gate.report.nativeBrowserSchedulerSweep = Object.fromEntries(
+          ["perCaCap", "scanned", "created", "replayed", "skippedPaused", "skippedByCaCap", "skippedIncompleteProfile", "skippedNotAgentDeployable", "skippedAdcsAgentNotPrepared"].map(field => {
+            assert.ok(Number.isSafeInteger(sweep[field]) && sweep[field] >= 0 && sweep[field] <= 100000);
+            return [field, sweep[field]];
+          }),
+        );
         assert.equal(sweep.lockAcquired, true);
         assert.equal(sweep.created, 1);
         assert.deepEqual(sweep.errors, []);
@@ -991,6 +1023,8 @@ module.exports = {
   verifyProof,
   createOwnedBrowserResource,
   currentBrowserSource,
+  currentIisBrowserSource,
+  loadCurrentIisBrowserSource,
   currentAuthorityGroup,
   qualifyAdcsBrowserJourney,
 };
