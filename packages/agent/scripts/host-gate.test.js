@@ -36,6 +36,17 @@ test("an outside-scenario failure survives finish without exposing private detai
   assert.equal(JSON.stringify(gate.report).includes("private-fixture"), false);
   assert.equal(JSON.stringify(gate.report).includes("C:\\private"), false);
 });
+test("fail-fast scenarios retain the original bounded failure before cleanup", async () => {
+  const run = createHostGate({ suite: "fixture", strict: true, reportPath: null });
+  await run.preflight();
+  const error = Object.assign(new Error("private-fixture-value"), { code: "ERR_ASSERTION" });
+  error.stack = "Error: private-fixture-value\n    at check (C:\\private\\orphan-journal-fixture.js:317:7)";
+  await assert.rejects(run.scenario("owned-key-check", async () => { throw error; }));
+  assert.deepEqual(run.report.scenarios[0].failure, { errorClass: "Error", errorCode: "ERR_ASSERTION", sourceFrame: "orphan-journal-fixture.js:317" });
+  await run.recordFailure(new AggregateError([error], "private fixture state"));
+  assert.equal(JSON.stringify(run.report).includes("private-fixture-value"), false);
+  assert.equal(JSON.stringify(run.report).includes("C:\\private"), false);
+});
 const gate = () => createHostGate({ suite: "fixture", candidateSha: "a".repeat(40), strict: true, requiredCapabilities: ["native"], probeCapabilities: async () => ({ native: { available: true } }) });
 test("shared Windows build numbers require native server product type", () => {
   for (const [build, server] of [["17763", "2019"], ["20348", "2022"], ["26100", "2025"]]) {

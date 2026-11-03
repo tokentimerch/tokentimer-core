@@ -8,6 +8,14 @@ const test = require("node:test"),
   os = require("node:os"),
   path = require("node:path");
 const helper = require("../packages/agent/scripts/host/orphan-journal-fixture");
+test("orphan failure classification does not expose native details", () => {
+  const result = (reason) => ({ skipped: [{ containerName: "owned", reason }] });
+  assert.equal(helper.orphanFailureCode(result("global machine-store inventory unavailable"), "owned"), "CERTOPS_ORPHAN_INVENTORY_UNAVAILABLE");
+  assert.equal(helper.orphanFailureCode(result("store My query failed: private details"), "owned"), "CERTOPS_ORPHAN_STORE_QUERY_FAILED");
+  assert.equal(helper.orphanFailureCode(result("store locked: private details"), "owned"), "CERTOPS_ORPHAN_STORE_LOCKED");
+  assert.equal(helper.orphanFailureCode(result("private details"), "owned"), "CERTOPS_ORPHAN_NOT_FREED");
+  assert.equal(helper.orphanFailureCode(result("global machine-store inventory unavailable"), "other"), "CERTOPS_ORPHAN_NOT_FREED");
+});
 function proof() {
   return {
     scope: helper.scope,
