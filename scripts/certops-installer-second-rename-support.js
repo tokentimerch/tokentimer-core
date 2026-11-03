@@ -7,6 +7,58 @@ const assert = require("node:assert/strict"),
   fs = require("node:fs"),
   path = require("node:path"),
   os = require("node:os");
+function failureSummary(error, depth = 0) {
+  if (depth >= 4) return { name: "Truncated" };
+  const result = {
+    name: [
+      "Error",
+      "AssertionError",
+      "AggregateError",
+      "TypeError",
+      "SyntaxError",
+      "RangeError",
+    ].includes(error?.name)
+      ? error.name
+      : "UnknownError",
+  };
+  if (
+    [
+      "ERR_ASSERTION",
+      "ENOENT",
+      "EEXIST",
+      "EACCES",
+      "EPERM",
+      "ETIMEDOUT",
+    ].includes(error?.code)
+  )
+    result.code = error.code;
+  if (
+    [
+      "launch",
+      "identity",
+      "publish-go",
+      "restoration",
+      "verify-restoration",
+      "host-oracles",
+      "publish-release",
+      "wait-wrapper",
+      "closed-receipt",
+      "native-drain",
+    ].includes(error?.activationPhase)
+  )
+    result.phase = error.activationPhase;
+  if (
+    Number.isSafeInteger(error?.nativeRootExitCode) &&
+    error.nativeRootExitCode >= 0 &&
+    error.nativeRootExitCode <= 0xffffffff
+  )
+    result.nativeRootExitCode = error.nativeRootExitCode;
+  if (Array.isArray(error?.errors))
+    result.causes = error.errors
+      .slice(0, 4)
+      .map((cause) => failureSummary(cause, depth + 1));
+  return result;
+}
 async function main() {
   assert.equal(process.platform, "win32");
   const root = fs.mkdtempSync(
@@ -60,7 +112,10 @@ async function main() {
 }
 if (require.main === module)
   main().catch((error) => {
-    console.error(error.message);
+    console.error(
+      "Second-rename supporting regression failed: " +
+        JSON.stringify(failureSummary(error)),
+    );
     process.exitCode = 1;
   });
-module.exports = { main };
+module.exports = { main, failureSummary };

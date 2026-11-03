@@ -68,7 +68,8 @@ const factFields = [
   "ownedChildDrained",
 ];
 function verifyProof(facts) {
-  if (facts && facts.scope === "full-installer-second-rename-failure") return verifyLocalContract(facts);
+  if (facts && facts.scope === "full-installer-second-rename-failure")
+    return verifyLocalContract(facts);
   if (facts && typeof facts === "object") {
     for (const key of [
       "nativeExecutionQualified",
@@ -78,9 +79,15 @@ function verifyProof(facts) {
       "inUseKeyDeleted",
       "blanketNetshReset",
     ]) {
-      if (Object.prototype.hasOwnProperty.call(facts, key)) assert.equal(facts[key], false, key);
+      if (Object.prototype.hasOwnProperty.call(facts, key))
+        assert.equal(facts[key], false, key);
     }
-    if (Object.prototype.hasOwnProperty.call(facts, "crashDumpContainmentQualified")) {
+    if (
+      Object.prototype.hasOwnProperty.call(
+        facts,
+        "crashDumpContainmentQualified",
+      )
+    ) {
       assert.equal(facts.crashDumpContainmentQualified, false);
     }
   }
@@ -175,6 +182,29 @@ async function until(check, ms = 30000) {
   }
   throw new Error("Owned activation protocol deadline exceeded");
 }
+function publishActivationSignal(directory, name, token) {
+  assert.ok(["go", "release"].includes(name));
+  assert.match(token, /^[a-f0-9]{32}$/);
+  const temporary = path.join(
+    directory,
+    `.signal-${crypto.randomBytes(16).toString("hex")}.tmp`,
+  );
+  const destination = path.join(directory, name);
+  const descriptor = fs.openSync(temporary, "wx", 0o600);
+  try {
+    fs.writeFileSync(descriptor, token);
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  const original = fs.statSync(temporary, { bigint: true }).ino;
+  // Publish complete, closed bytes without overwriting an existing signal.
+  // Filesystems without hard links fail closed and preserve protocol evidence.
+  fs.linkSync(temporary, destination);
+  assert.equal(fs.statSync(destination, { bigint: true }).ino, original);
+  assert.equal(fs.readFileSync(destination, "utf8"), token);
+  fs.unlinkSync(temporary);
+}
 /** Shared by the installed fixture and the explicit nonprivileged temporary-file
  * regression. The go file is published only after independent CIM measurement;
  * unparsed or late receipts therefore never authorize unowned process cleanup. */
@@ -226,6 +256,7 @@ async function runActivationFault({
     identity,
     restored,
     primary,
+    phase = "launch",
     drained = false,
     guardReleased = false;
   const launch = async () => {
@@ -281,6 +312,7 @@ async function runActivationFault({
       "Owned driver failed spawn",
     );
     // Capture independently before reading any child-created ownership receipt.
+    phase = "identity";
     identity = await until(() => {
       assert.equal(closed, false);
       try {
@@ -289,7 +321,9 @@ async function runActivationFault({
         return null;
       }
     }, 10000);
-    fs.writeFileSync(go, token, { flag: "wx" });
+    phase = "publish-go";
+    publishActivationSignal(directory, "go", token);
+    phase = "restoration";
     await until(() => {
       assert.equal(
         closed,
@@ -298,6 +332,7 @@ async function runActivationFault({
       );
       return fs.existsSync(prefix + ".restored.json");
     });
+    phase = "verify-restoration";
     assert.deepEqual(
       nativeIdentity(rootPid, token, driver, child.pid),
       identity,
@@ -333,13 +368,17 @@ async function runActivationFault({
       BigInt(`0x${restored.stagingId.split(":")[1]}`),
     );
     assert.deepEqual(inventory(app), before);
+    phase = "host-oracles";
     await onRestored();
   } catch (error) {
+    error.activationPhase = phase;
     primary = error;
   } finally {
     try {
+      phase = "publish-release";
       if (!closed && !fs.existsSync(release))
-        fs.writeFileSync(release, token, { flag: "wx" });
+        publishActivationSignal(directory, "release", token);
+      phase = "wait-wrapper";
       let timer;
       const result = await Promise.race([
         exit,
@@ -356,6 +395,7 @@ async function runActivationFault({
         "Owned activation child failed or was interrupted",
       );
       drained = true;
+      phase = "closed-receipt";
       const receipt = JSON.parse(
         fs.readFileSync(prefix + ".closed.json", "utf8"),
       );
@@ -367,15 +407,18 @@ async function runActivationFault({
       assert.equal(fs.existsSync(staged()), false);
       assert.equal(fs.existsSync(previous()), false);
       assert.deepEqual(inventory(app), before);
+      phase = "native-drain";
       const nativeDrain = await resource.stopAndDrain();
       assert.equal(nativeDrain.launchOccurred, true);
       assert.equal(nativeDrain.rootExitCode, 0);
       holderGuard.complete(true);
       guardReleased = true;
     } catch (error) {
+      error.activationPhase = phase;
       if (resource && !guardReleased) {
         try {
-          await resource.stopAndDrain();
+          const nativeDrain = await resource.stopAndDrain();
+          error.nativeRootExitCode = nativeDrain.rootExitCode;
           holderGuard.complete(true);
           guardReleased = true;
         } catch (cleanup) {
@@ -618,7 +661,8 @@ const LOCAL_EVIDENCE_LEVEL = "script";
 const LOCAL_SUITE_ID = "windows-full-installer-second-rename-contract";
 const LOCAL_SUITE_LEVEL = "integration";
 const LOCAL_REPORT_FIELD = "fullInstallerSecondRename";
-const LOCAL_WORKFLOW = ".github/workflows/certops-windows-coverage-variants.yml";
+const LOCAL_WORKFLOW =
+  ".github/workflows/certops-windows-coverage-variants.yml";
 const LOCAL_REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-windows-second-rename.js",
   "scripts/certops-windows-second-rename.js",
@@ -657,9 +701,20 @@ function localRunId(runId) {
 function localRoot(root, runId) {
   const normalized = String(root).replaceAll("/", "\\").replace(/\\+$/, "");
   assert.ok(normalized.includes(runId), "run root must contain the run id");
-  assert.ok(normalized.split("\\").length >= 3, "run root must be a nested directory");
-  assert.equal(/^C:\\Windows(\\|$)/i.test(normalized), false, "refusing a Windows directory");
-  assert.equal(/^C:\\inetpub\\wwwroot(\\|$)/i.test(normalized), false, "refusing the shared IIS content root");
+  assert.ok(
+    normalized.split("\\").length >= 3,
+    "run root must be a nested directory",
+  );
+  assert.equal(
+    /^C:\\Windows(\\|$)/i.test(normalized),
+    false,
+    "refusing a Windows directory",
+  );
+  assert.equal(
+    /^C:\\inetpub\\wwwroot(\\|$)/i.test(normalized),
+    false,
+    "refusing the shared IIS content root",
+  );
   return normalized;
 }
 
@@ -703,7 +758,11 @@ function assertLocalManifest(manifest) {
   assert.equal(manifest.originalName, `tt-ren-${manifest.runId}`);
   assert.equal(manifest.key.inUse, true);
   assert.equal(manifest.key.container, manifest.originalName);
-  assert.ok(manifest.binary.endsWith(`\\${manifest.originalName}\\tokentimer-agent-host-amd64.exe`));
+  assert.ok(
+    manifest.binary.endsWith(
+      `\\${manifest.originalName}\\tokentimer-agent-host-amd64.exe`,
+    ),
+  );
   assert.equal(manifest.site.binding.address, "127.0.0.1");
   assert.equal(
     manifest.site.binding.selector,
@@ -715,8 +774,13 @@ function assertNoInUseDeletion(manifest, commands) {
   assert.equal(manifest.key.inUse, true);
   for (const command of commands) {
     const joined = [command.file, ...(command.args || [])].join(" ");
-    if (LOCAL_DENIED.test(joined)) throw new Error("Refusing to delete an in-use key");
-    if (/delete|remove-item/i.test(joined) && (joined.includes(manifest.key.container) || joined.includes(manifest.binary))) {
+    if (LOCAL_DENIED.test(joined))
+      throw new Error("Refusing to delete an in-use key");
+    if (
+      /delete|remove-item/i.test(joined) &&
+      (joined.includes(manifest.key.container) ||
+        joined.includes(manifest.binary))
+    ) {
       throw new Error("Refusing to delete an in-use key");
     }
     if (command.file === "netsh.exe") {
@@ -733,7 +797,11 @@ function applySecondRenameFailure(manifest) {
   const secondRenameFailed = true;
   assert.equal(secondRenameFailed, true);
   liveName = manifest.originalName;
-  assert.equal(liveName, manifest.originalName, "second rename failure must leave the original name");
+  assert.equal(
+    liveName,
+    manifest.originalName,
+    "second rename failure must leave the original name",
+  );
   const commands = [
     {
       step: "second-rename",
@@ -748,8 +816,16 @@ function applySecondRenameFailure(manifest) {
     },
   ];
   assertNoInUseDeletion(manifest, commands);
-  assert.equal(commands.some((command) => command.step === "second-rename" && command.failed === true), true);
-  assert.equal(commands.some((command) => command.args.includes(manifest.binary)), false);
+  assert.equal(
+    commands.some(
+      (command) => command.step === "second-rename" && command.failed === true,
+    ),
+    true,
+  );
+  assert.equal(
+    commands.some((command) => command.args.includes(manifest.binary)),
+    false,
+  );
   const proof = {
     scope: LOCAL_SCOPE,
     evidenceLevel: LOCAL_EVIDENCE_LEVEL,
@@ -779,26 +855,53 @@ function applySecondRenameFailure(manifest) {
 function assessLocalHost(probe) {
   const required = ["windows", "installer", "ownedTarget"];
   if (!probe || typeof probe !== "object" || Array.isArray(probe)) {
-    return { available: false, missing: required, nativeQualified: false, passed: false };
+    return {
+      available: false,
+      missing: required,
+      nativeQualified: false,
+      passed: false,
+    };
   }
   const missing = required.filter((name) => probe[name] !== true);
-  return { available: missing.length === 0, missing, nativeQualified: false, passed: false };
+  return {
+    available: missing.length === 0,
+    missing,
+    nativeQualified: false,
+    passed: false,
+  };
 }
 
 function probeLocalHost() {
-  return { windows: process.platform === "win32", installer: false, ownedTarget: false };
+  return {
+    windows: process.platform === "win32",
+    installer: false,
+    ownedTarget: false,
+  };
 }
 
 function runLocal({ probe, execute, manifest } = {}) {
   const gate = assessLocalHost(probe);
   if (!gate.available) {
-    return { passed: false, nativeQualified: false, reason: "host capability absent", missing: gate.missing };
+    return {
+      passed: false,
+      nativeQualified: false,
+      reason: "host capability absent",
+      missing: gate.missing,
+    };
   }
   if (execute !== true) {
-    return { passed: false, nativeQualified: false, reason: "host execution not requested" };
+    return {
+      passed: false,
+      nativeQualified: false,
+      reason: "host execution not requested",
+    };
   }
   if (!manifest) {
-    return { passed: false, nativeQualified: false, reason: "owned rename manifest absent" };
+    return {
+      passed: false,
+      nativeQualified: false,
+      reason: "owned rename manifest absent",
+    };
   }
   const result = applySecondRenameFailure(manifest);
   return {
@@ -812,10 +915,14 @@ function runLocal({ probe, execute, manifest } = {}) {
 
 function verifyLocalContract(value) {
   assert.ok(value && typeof value === "object" && !Array.isArray(value));
-  if (Object.prototype.hasOwnProperty.call(value, "crashDumpContainmentQualified")) {
+  if (
+    Object.prototype.hasOwnProperty.call(value, "crashDumpContainmentQualified")
+  ) {
     assert.equal(value.crashDumpContainmentQualified, false);
   }
-  const comparable = Object.keys(value).filter((key) => key !== "crashDumpContainmentQualified");
+  const comparable = Object.keys(value).filter(
+    (key) => key !== "crashDumpContainmentQualified",
+  );
   assert.deepEqual(comparable.sort(), [...LOCAL_PROOF_KEYS].sort());
   assert.equal(value.scope, LOCAL_SCOPE);
   assert.equal(value.evidenceLevel, LOCAL_EVIDENCE_LEVEL);
@@ -830,6 +937,7 @@ function verifyLocalContract(value) {
 module.exports = {
   assertCleanupSafe,
   runActivationFault,
+  publishActivationSignal,
   qualifySecondRename,
   verifyProof,
   requiredScenarios,
