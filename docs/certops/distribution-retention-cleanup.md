@@ -2,7 +2,7 @@
 
 Retention preview never authorizes deletion. The optional `cleanup-from-store` job implements **Vault/OpenBao KV v2 exact-version soft deletion** on a customer agent, after a separate human approval. The providers have separate capability gates. It does not destroy versions, remove metadata/all versions, purge objects or implement Azure deletion. Public material, job, approval and incident history remains.
 
-Existing workspaces retain manual/report-only defaults: minimum 30 days, three versions and seven days of rollback preservation. Cleanup is disabled. The current release manifest does **not** qualify `material-cleanup-vault-kv2-v1`; runtime settings cannot enable that capability in an unqualified binary.
+Existing workspaces retain manual/report-only defaults: minimum 30 days, three versions and seven days of rollback preservation. Cleanup is disabled. The current release manifest qualifies **neither** `material-cleanup-vault-kv2-v1` **nor** `material-cleanup-openbao-kv2-v1`; runtime settings cannot enable either capability in an unqualified binary.
 
 ## Operator workflow
 
@@ -116,5 +116,8 @@ rejections never imply that provider deletion was undone. Preserve the journal
 and permanent fence and follow original-intent reconciliation. See the
 [acceptance record](pr498-completion-20261103.md) for the reproduced HTTP error
 mapping defect and the unresolved provenance of the earlier reported incident.
+That historical limitation does not establish a current valid-receipt failure.
+Current real-provider functional evidence and the separate closed qualification
+gates are classified in the [merge-readiness matrix](pr498-merge-readiness-20261103.md).
 
 Run the normal migration plan before starting updated API/worker/agents. See the [lifecycle guide](distribution-lifecycle.md) and [current implementation/qualification matrix](distribution-lifecycle-status.md). Real isolated Vault metadata/delete ACL tests, PostgreSQL reference races, signed claims/nonces, retained-count concurrency, uncertain retry and fresh re-review are functional support evidence; they do not promote a shipped native capability.

@@ -1,5 +1,12 @@
 # CertOps completion and acceptance record — 2026-11-03
 
+**Current disposition:** see the [scope freeze and merge-readiness matrix](pr498-merge-readiness-20261103.md).
+The attempts and combined release verdicts below are historical. Finalization
+separates merge validation of supported behavior from optional capability
+promotion and broader customer acceptance. PR #498 does not add future connectors
+or enable unqualified capabilities. The old inaccessible cleanup exception remains
+historically unconfirmed; it is not a new reproducible current-flow failure.
+
 Core product changes: `8a8cb8cd545d0473eace90058956466765978fd5`, on the existing
 `feat/certops-distribution-lifecycle` branch. The three pre-existing unpublished
 commits and authorized worktree changes were preserved. Published starting head:
@@ -174,7 +181,7 @@ remain in protected ignored `.tmp` files outside exports. Default provider runs
 remove only their own containers. CI uploads sanitized provider artifacts. Neither
 fixture execution nor UI settings promote a compiled production capability.
 
-## F. Remaining blockers
+## F. Historical qualification and acceptance gaps
 
 - Original valid-receipt cleanup exception unavailable: historical causal closure
   unconfirmed. Production qualification remains blocked.
@@ -190,7 +197,7 @@ fixture execution nor UI settings promote a compiled production capability.
 - Any failing/pending final workflow/build remains a blocker until its actual
   result is recorded in the PR; failed attempts remain available.
 
-## G. Verdicts
+## G. Historical verdicts before scope freeze
 
 **Core:** preview fixes and regression evidence available; complete acceptance and
 production qualification **BLOCKED**.

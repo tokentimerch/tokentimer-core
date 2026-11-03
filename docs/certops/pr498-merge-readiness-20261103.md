@@ -1,0 +1,144 @@
+# PR #498 scope freeze and merge review — 2026-11-03
+
+This is the current disposition for [PR #498](https://github.com/tokentimerch/tokentimer-core/pull/498).
+The [earlier completion record](pr498-completion-20261103.md) retains historical
+attempts and evidence. Its earlier combined release/qualification verdict does
+not mean that every optional connector must be implemented before this PR merges.
+
+## Frozen scope
+
+Finish the existing distribution lifecycle. No additional connector, generic
+command execution, service restart strategy or edition-only feature belongs in
+this PR. Baseline customer Vault publication and Linux distribution shipped in
+0.18.x. Provider PR #460, recipient-verification PR #461 and PagerDuty PR #496
+are merged dependencies. PR #498 integrates their runtime and migration histories;
+its own changes remain unreleased.
+
+The review candidate preserves `e4ea87ffb1aae104c9f306ce9c5bbecafe51ca7b` and
+merges `main` at `ece47164344a6908a29820909c634e5b2d451b67`. That merge is
+`1c844f6824c8a551aea952c4ae01be8b9161c0f2`. No existing commit was rewritten.
+The unrelated workstation checkout and its uncommitted work were preserved.
+
+## Completion matrix
+
+“Enabled” below means allowed by the committed production capability manifest,
+subject to normal workspace, role, local-policy and runtime settings. It does not
+mean this unmerged PR has shipped or that a new release artifact is qualified.
+The authority is `packages/agent/src/capabilities/qualified-capabilities.json`;
+source tests and UI settings cannot add a compiled capability.
+
+| Feature | Implemented | Tested / evidence | Production-enabled | Remaining limitation |
+| --- | --- | --- | --- | --- |
+| Issuance/publication, immutable exact material versions | Yes; released baseline retained | Canonical unit; provider compatibility; enrolled-agent journey | Vault/OpenBao publication and Linux deployment capabilities present | Customer credentials and private material stay local; publication is not installation |
+| Manual, approval-request and reviewed automatic distribution | Yes | `distribution-lifecycle.test.js`, `pr329-review.test.cjs`, provider-pin CI | Yes, explicit policy; manual default | Standing review expires and is invalidated by scope/authority changes |
+| Consumer administration, required/optional destinations, waves/concurrency, pause/resume, partial failure, retained rollback | Yes | Real PostgreSQL lifecycle/claim locks; dashboard distribution suites; enrolled-agent journey | Yes for qualified destinations | Required failure pauses; rollback requires a retained unfenced version and explicit review |
+| Independent exact-scope review, current membership, expiry and revocation | Yes | Real PG reviewer removal/restoration and transfer; signed claim/retry regressions | Yes | Migration 97 requires fresh review of existing authorizations |
+| Workspace isolation, signed dispatch, generation/policy fencing, key custody | Yes | RBAC/unit, PG approval/claim, contracts, privacy guards; enrolled-agent journey | Yes | No remotely supplied commands, secrets or private keys in public control-plane data |
+| Maintenance calendar, timezone/DST, blackouts, emergency exception | Yes | API/agent calendar regressions and real PG staging cohort | Yes with `maintenance-calendar-v1` and matching versions | Deliberate per-consumer configuration; only supported activation methods |
+| Linux installation/reload and installed/served/trust verification | Yes; baseline retained | Linux agent tests; real nginx/HAProxy journey and independent TLS probes | Yes | Allowlisted local reload profiles; manual activation is read-only verification |
+| IIS shared-material rebind integration | Yes; merged #460 retained | Native fixture cohorts on Server 2022/2025; source/contract regressions | **No**: `windows-material-iis-v1` omitted | Exact production artifact/native matrix is separate from baseline IIS support |
+| Independent Linux preparation and later activation | Yes | `distribution-staging.test.js`; agent staging/calendar/integrity tests | **No**: `material-consumer-staging-v1` omitted | Server/local opt-ins and independent qualification; Windows staging unavailable |
+| Verification-only and recurring jobs, drift/offline/stale incidents | Yes | Real PG lifecycle and monitoring tests | Yes, verification/alerts initially disabled | Fresh current-version consumer proof is required; source renewal cannot resolve an incident |
+| Durable notification/recovery delivery and PagerDuty | Yes; merged #496 integrated | Real PG PagerDuty lifecycle and seven migration histories; full CI | Yes with configured channels/consent | New live external-provider delivery is not inferred from fixture or queue tests |
+| Retention preview and protection of referenced/uncertain versions | Yes | Real PG cleanup, concurrency and retained-count tests; dashboard tests | Yes, report-only default | Eligibility is not deletion authority; at least two versions remain protected |
+| Independently approved exact-version cleanup, permanent fences, receipts/reconciliation | Yes for Vault and OpenBao | Real provider ACL denial/recovery, signed source executor, lost acknowledgement/API restart, exact duplicate and contradictory receipt tests | **No**: both `material-cleanup-*-kv2-v1` capabilities omitted | Soft deletion only; no destroy, purge, metadata/all-version or Azure cleanup |
+| OpenBao / Azure material providers | Yes; merged #460 | Real Vault/OpenBao compatibility and cleanup; historical Azure development campaign and current fixture CI | OpenBao **yes**; Azure **no** | `material-store-azure-key-vault-v1` omitted; historical Azure run is not final artifact qualification |
+| Management UI, approvals, policy, maintenance, job/incident details, preflight/recovery/retention | Yes | Dashboard distribution/workspace/approval regressions, build/typecheck, genuine browser fixture evidence | Yes for supported operations | Unsupported restart/refresh choices disabled; gated operations require qualified agents |
+| Stable IIS/HTTP.sys discovery and uncertainty | Yes | Agent discovery regressions and PG stable-consumer tests | Existing read-only discovery retained | Store presence is not consumption or served/trust proof; broader services remain backlog |
+| Migration composition through 97 | Yes | Real PG upgrade, historical-ledger preservation, concurrent runners and seven PagerDuty histories | Apply before matching API/workers | Never rewrite deployed identities or timestamps; retain a restorable backup |
+
+## Findings and disposition
+
+**A — must fix before merge:** final candidate validation is in progress. A failed
+required check, supported-flow regression, unsafe migration or security defect
+blocks readiness. No additional supported-scope defect has been confirmed during
+this focused review. Review covers exact-scope/current-authority checks at
+expansion, claim, renewal and retry; workspace/group locking; permanent cleanup
+reference fences; atomic receipt/nonce/audit completion; staging versus assurance;
+and disabled unsupported UI operations. It is not a new production qualification.
+
+**B — implemented, qualification-gated:** Azure material storage, shared Windows/IIS
+material deployment, Linux independent staging, and Vault/OpenBao cleanup remain
+absent from the shipped manifest. Preserve implementation and gates. Qualification
+must follow trusted-main/protected-environment and exact-artifact evidence rules
+in [the qualification guide](../../.github/maintainers/certops/e2e-qualification.md)
+and ADR-0012/ADR-0015. This PR does not promote any capability or grant a release
+waiver. Existing enabled publication/deployment functionality must still pass.
+
+**C — future enhancement:** [#504](https://github.com/tokentimerch/tokentimer-core/issues/504)
+coordinates broader Windows work. Keep discovery/typed contracts in #369 and #366; RDP/WinRM #368, RDS #367, SQL Server
+#374, Exchange #371, NPS #372, LDAPS #375 and
+AD FS/WAP #373 remain backlog. Windows independent staging and unsupported
+restart/refresh stay under #376 and #366. Appliance connectors,
+additional providers and full MSP ITSM integration are outside this PR; MSP evidence integration remains in the existing downstream backlog. None is a new #498 gate.
+
+**D — wider/customer acceptance:** broader fleet/outage/browser and live outbound
+provider campaigns remain explicit follow-ups under #354 and #248. A
+source-mounted isolated lab is supporting functional evidence, not a production
+native artifact or a customer-host acceptance claim.
+
+The inaccessible original valid-receipt cleanup exception remains historically
+unconfirmed. Current invalid evidence maps to 409/422, valid receipts complete,
+exact duplicates survive acknowledgement loss/API restart, and real providers
+reconcile without a second delete. Do not claim a historical cause or reopen it
+as a new supported-flow blocker without a reproducible current defect. Cleanup's
+separate production qualification gate remains closed.
+
+## Validation record
+
+Historical exact head `e4ea87ff`: [CI 41641478948](https://github.com/tokentimerch/tokentimer-core/actions/runs/41641478948)
+passed all **37 jobs / 41 checks**. This does not qualify subsequent commits.
+Latest inspected main `ece47164`: [CI 41622867685](https://github.com/tokentimerch/tokentimer-core/actions/runs/41622867685)
+passed, including Docker image boot and Grype scans. The old native OpenBao matrix
+contains skipped executor steps; green jobs do not establish that native cohort.
+
+Fresh local checks on reconciled product source `1c844f68`:
+
+| Command / campaign | Actual result |
+| --- | --- |
+| `pnpm install --frozen-lockfile` | Passed; Node 24.11.1, pnpm 11.28.8 |
+| `TEST_CONCURRENCY=2 pnpm run test:unit` (PowerShell environment assignment) | **3,197 passed, zero failed/cancelled/skipped** on the isolated full rerun. Initial concurrent run: 3,196 passed, one HTTP-watch timeout/cancellation; unchanged focused retry passed 1/1. No assertion or timeout was relaxed |
+| `node scripts/run-distribution-lifecycle-postgres.cjs` | **74/74** lifecycle/cleanup/staging; **1/1** lifecycle upgrade; **30/30** migration/concurrency histories; **7/7** PagerDuty histories; **77/77** PagerDuty lifecycle; no skips, owned database removed |
+| `node scripts/run-cleanup-completion-acceptance.cjs` | Real Vault: **15/15**, no skips; owned fixtures removed |
+| `node scripts/run-cleanup-completion-acceptance.cjs --openbao` | Real OpenBao: **15/15**, no skips; owned fixtures removed |
+| Dashboard lint, `prettier --check "src/**/*.{js,jsx,css}"`, type-check and build | All passed |
+| API/worker lint; `check:contracts`, `check:contracts:integrity`, `check:lockfile-overrides`, `check:secret-logging`, `check:certops-keygen-ban` | All passed; **52** contract files verified |
+| `CONTRACT_API_REQUIRED=0 pnpm run test:contracts` | **47/47**, no skips |
+| `pnpm audit --prod --audit-level=moderate` | Passed; one low advisory |
+
+Additional focused agent/dashboard tests and the complete enrolled-agent journey
+are in progress. Their actual counts/provenance will be recorded before the final
+decision. Full trusted `ci.yml` must run on the pushed final head;
+retain the exact SHA/run link in the PR description and final acceptance report.
+No earlier green workflow substitutes for it.
+
+## Edition handoff
+
+The related Cloud PR #218 is open at `e6b5138be49d74901b299f09c04cc3e71f8af863`;
+Enterprise PR #193 is draft at `bc9bbe6142dec17060a02123f4a40463ee8cd144`.
+Both still compose Core preview `4a5dedcacf600db2406f756ca97f986cfba2cc1a`.
+Neither includes the complete current #498. These are coordination identifiers,
+not a claim that the editions have adopted this candidate.
+
+The Cloud release ancestry check correctly rejects the preview. Enterprise
+full CI run `41613282001` now passes after its retry; the old PR description's
+pending result is stale. Edition run links remain in their private PRs.
+No pin changes are authorized before a human-approved protected Core merge.
+After that merge, identify the accepted Core-main SHA, use each edition's normal
+pin/composition process, adopt migrations/contracts/API/workers/agents together,
+and run its canonical compatibility/CI skill. Preserve Cloud plan/billing/freeze/
+consent and Enterprise license/SSO/custody boundaries. No edition-only feature,
+production deployment or release is part of this finalization.
+
+## Merge decision
+
+Current disposition: **READY FOR REVIEW — final validation and independent
+maintainer review still required.** This is not permission to merge or release.
+After successful final-head CI and supported-flow acceptance, request normal
+maintainer review. Preserve all branch protections. Human approval and explicit
+human merge authorization remain required; no automatic merge is requested.
+
+Repository [pre-merge policy](../../CONTRIBUTING.md#maintainer-pre-merge-validation)
+requires relevant validation and trusted dispatch. Native promotion/release
+collection is separately governed; merging disabled optional implementation does
+not assert that the production artifact qualifies it. No policy is waived here.
