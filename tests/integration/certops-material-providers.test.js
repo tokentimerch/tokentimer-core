@@ -336,12 +336,13 @@ describe("CertOps material provider references on PostgreSQL", function () {
         assert.equal(intent.provider || "vault-kv2", provider);
         const approval = (
           await client.query(
-            `INSERT INTO certificate_jobs(workspace_id,subject_type,subject_id,operation,status,payload)
-        VALUES($1,'managed_certificate',$2,'noop','pending',$3::jsonb) RETURNING *`,
+            `INSERT INTO certificate_jobs(workspace_id,subject_type,subject_id,operation,status,payload,requested_by_user_id)
+        VALUES($1,'managed_certificate',$2,'noop','pending',$3::jsonb,$4) RETURNING *`,
             [
               workspaceId,
               source.id,
               JSON.stringify({ distributionRollout: intent }),
+              userId,
             ],
           )
         ).rows[0];

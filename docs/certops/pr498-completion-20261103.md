@@ -113,6 +113,15 @@ rollout review. The fixture now records the workspace owner and the current
 authorization revision. A disposable PostgreSQL rerun of that file passed 4/4.
 That rerun is not a new full CI result.
 
+Head `3703e7f1` workflow
+[41631331217](https://github.com/tokentimerch/tokentimer-core/actions/runs/41631331217)
+passed the claim-lock step. The provider-pin step then rejected Vault, OpenBao,
+and Azure publication with `CERTOPS_DISTRIBUTION_POLICY_STALE`. Those approval
+jobs had no current requester, and the Azure approver had no workspace role.
+The fixtures now record the workspace owner and a workspace manager. A local
+rerun of the three provider cases passed. The offline Azure bridge still
+requires Linux for its endpoint target, so that case remains a CI check.
+
 ## E. Evidence and reproduction
 
 See the [sanitized evidence index](evidence/2026-11-03/README.md), public provider
