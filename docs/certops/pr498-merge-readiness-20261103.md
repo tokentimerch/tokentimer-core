@@ -5,6 +5,14 @@ The [earlier completion record](pr498-completion-20261103.md) retains historical
 attempts and evidence. Its earlier combined release/qualification verdict does
 not mean that every optional connector must be implemented before this PR merges.
 
+The later [production qualification follow-up](pr498-production-qualification-20261103.md)
+records two fresh complete packaged-agent journeys at `037a8d2c`, one each for
+Vault and OpenBao: 15/15 strict phases and 41/41 product checks per journey,
+using byte-identical packages. This supplements the earlier composed evidence
+and preserves every failed attempt below. All five extension gates remain
+closed; normal independent review/protected merge and separate native artifact
+qualification are still outstanding.
+
 ## Frozen scope
 
 Finish the existing distribution lifecycle. No additional connector, generic

@@ -6,6 +6,14 @@ Existing workspaces retain manual/report-only defaults: minimum 30 days, three v
 
 ## Operator workflow
 
+The [2026-11-03 qualification record](pr498-production-qualification-20261103.md)
+verifies current-head hosted real-provider cleanup evidence: 15/15 cases for
+Vault and 15/15 for OpenBao, with zero skips and successful fixture teardown.
+Those signed API/source-executor cases use public setup fixtures. The separate
+fresh packaged publication/deployment journeys keep cleanup disabled and do not
+replace its missing installed-agent/API/worker release campaign. Both provider
+capability gates and cleanup's default-deny settings remain unchanged.
+
 1. Review the customer-owned group/store namespace and all known consumer references. Configure the retention duration, minimum count and rollback period in Distribution Management. Zero durations are explicit policy choices; at least two available versions remain protected. Customer-local policy can enforce a stricter duration.
 2. Keep **Report only** enabled to inspect reasons without creating work. Referenced material, pending approvals, current desired/observed versions, resumable rollouts and uncertain/reconcilable operations remain protected.
 3. After the agent operation is qualified, configure its local cleanup policy and metadata-only credential, enable `CERTOPS_MATERIAL_CLEANUP_ENABLED=true` on the API and enable cleanup requests with report-only disabled for the group.

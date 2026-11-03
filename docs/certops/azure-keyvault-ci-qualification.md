@@ -1,5 +1,13 @@
 # Real Azure Key Vault CI qualification
 
+The [2026-11-03 qualification audit](pr498-production-qualification-20261103.md)
+confirmed main-only lab/cleanup policies, independent lab review with self-review
+prevented, required UUID variable names and an active cleanup janitor. The
+repository spending opt-in was `false`; it was not changed and no new Azure
+campaign was launched. The implementation still needs independent PR review and
+trusted-main acceptance before its final-artifact campaign. Existing Azure grants
+and OIDC trust have not been revalidated by a current provisioning preflight.
+
 The [real Azure development campaign](https://github.com/tokentimerch/tokentimer-core/actions/runs/40486274037)
 passed on 2026-10-27: **18 passed, 0 failed, 0 skipped, 0 pending**, with completed
 database and owned-resource cleanup and no purge. Tested source:

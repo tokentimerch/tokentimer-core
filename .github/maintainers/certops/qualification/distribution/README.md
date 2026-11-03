@@ -6,6 +6,8 @@ independent staging and cleanup remain separately gated. Passing a
 source-mounted lab is supporting E2E evidence, not production release approval.
 Shared policy: [certificate lifecycle qualification](../../e2e-qualification.md).
 Current implemented/future scope: [PR #498 merge review](../../../../../docs/certops/pr498-merge-readiness-20261103.md).
+Current per-capability evidence and remaining approvals/native campaigns:
+[2026-11-03 qualification record](../../../../../docs/certops/pr498-production-qualification-20261103.md).
 
 Use the trusted workflow inputs to select disposable supporting runs. Core product CI remains separate.
 

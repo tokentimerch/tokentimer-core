@@ -4,6 +4,13 @@ Updated 2026-11-03 for [PR #498](https://github.com/tokentimerch/tokentimer-core
 
 ## Available behavior
 
+The [production qualification follow-up](pr498-production-qualification-20261103.md)
+records fresh complete Vault and OpenBao packaged baseline journeys at `037a8d2c`
+(15 strict phases and 41 product checks each). All five extension capabilities
+remain unqualified and absent from the manifest. Independent implementation
+review, trusted-main native campaigns and independent evidence acceptance remain
+required; Azure spending opt-in is currently false.
+
 - Manual publication is the default. Approval requests and reviewed automatic rollout require deliberate configuration and current independent authority.
 - Consumer administration, bounded waves, calendars, recurring verification, drift incidents, durable recovery delivery, discovery and preflight reuse signed jobs and public evidence. Verification and incident policies start disabled.
 - Retention is report-only by default. Exact-version Vault soft deletion requires administrator action, independent approval, runtime/group/customer opt-ins and a separately qualified cleanup artifact. Reuse fences survive uncertainty and cancellation.

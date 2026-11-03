@@ -58,7 +58,10 @@ called stable while they are open.
   deployment, independent Linux preparation/staging and exact-version Vault/OpenBao
   cleanup exist but remain absent from the production qualification manifest.
   Their exact artifact/native evidence must pass the existing protected gates
-  before promotion. Retention preview remains report-only by default; publication,
+  before promotion. The [2026-11-03 qualification record](docs/certops/pr498-production-qualification-20261103.md)
+  records two complete packaged baseline journeys and each remaining native or
+  authorization dependency; no extension capability was promoted.
+  Retention preview remains report-only by default; publication,
   staging and approval are not proof of installation or live service use.
   Broader Windows connectors and unsupported activation methods remain later
   work under #504/#366/#369/#376; they are not new merge requirements for #498.
