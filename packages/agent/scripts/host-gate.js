@@ -112,6 +112,16 @@ function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = 
       detail.command = { executable: executables.includes(command.executable) ? command.executable : "other", exitStatus: Number.isInteger(command.exitStatus) ? command.exitStatus : null };
       if (command.script === "owned-issued-request.ps1") detail.command.script = command.script;
       if (codes.includes(command.powerShellCode)) detail.command.powerShellCode = command.powerShellCode;
+      const fixedFailures = {
+        "Missing private key": "missing-private-key",
+        "Issued leaf uses a foreign native key": "foreign-native-key",
+        "Exportable key": "exportable-key",
+        "Foreign or malformed native issued request observation": "issued-row-refused",
+        "Owned request observation exceeded its bounded fixture scope": "issued-row-limit",
+        "Expected exactly one owned issued CA request with the independently observed leaf fingerprint": "issued-request-mismatch",
+        "System.Runtime.InteropServices.COMException": "com-exception",
+      };
+      if (Object.hasOwn(fixedFailures, command.powerShellCode)) detail.command.failure = fixedFailures[command.powerShellCode];
     }
     if (debugDetail) {
       detail.debug = { message: bounded(error?.message ?? error).slice(0, 512) };
