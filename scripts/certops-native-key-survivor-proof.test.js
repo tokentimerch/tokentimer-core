@@ -20,14 +20,14 @@ test("cross-store proof refuses missing, coerced and unbounded native facts", ()
   for (const slot of slots) for (const file of REQUIRED_SOURCES) assert.ok(slot.requiredSources.includes(file), file);
 });
 test("clean Windows host lanes build the current metadata helper before any host cleanup case", () => {
+  const yaml = require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
   for (const file of ["certops-qualification.yml"]) {
-    let source = fs.readFileSync(path.join(root, ".github/workflows", file), "utf8").replace(/\r\n/g, "\n");
-    if (file === "certops-qualification.yml") source = source.split("  windows:\n")[1].split("  agent-stack:")[0];
-    const setup = source.indexOf("actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff");
-    const build = source.indexOf("run: node packages/agent/scripts/build-windows-chain-helper.js");
-    const host = source.indexOf("run: node --test packages/agent/scripts/host/windows-host.test.js");
+    const steps = yaml.load(fs.readFileSync(path.join(root, ".github/workflows", file), "utf8")).jobs.windows.steps;
+    const setup = steps.findIndex(step => step.uses === "actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff");
+    const build = steps.findIndex(step => step.run === "node packages/agent/scripts/build-windows-chain-helper.js");
+    const host = steps.findIndex(step => typeof step.run === "string" && step.run.split(/\r?\n/).some(line => line.trim() === "node --test packages/agent/scripts/host/windows-host.test.js"));
     assert.ok(setup >= 0 && setup < build && build < host, file);
-    assert.ok(source.includes("go-version-file: packages/agent/windows-service-host/go.mod"), file);
+    assert.equal(steps[setup].with["go-version-file"], "packages/agent/windows-service-host/go.mod", file);
   }
 });
 

@@ -221,11 +221,17 @@ function parseCaCheck(editText, interfaceText, operatorAttested) {
 }
 
 function parseCertCount(text) {
-  const match = String(text || "").match(/(?:certificate\s+count|cert\s+count|certcount)\s*[:=]\s*(\d+)/i);
-  if (!match) return null;
-  const count = Number(match[1]);
-  if (!Number.isInteger(count) || count < 0 || count > 32) return null;
-  return count;
+  // The dedicated certcount query has one numeric answer; its caption is localized.
+  // Reject ambiguous answers rather than choosing one unrelated numeric field.
+  const counts = [];
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const match = line.trim().match(/^([^\x00-\x1f:=]{1,128})\s*[:=]\s*(0x[0-9a-f]{1,8}|[0-9]{1,10})(?:\s+\((0x[0-9a-f]{1,8}|[0-9]{1,10})\))?\s*$/i);
+    if (!match) continue;
+    const count = Number(match[2]);
+    if (/^certutil$/i.test(match[1].trim()) || !Number.isInteger(count) || count < 0 || count > 32 || (match[3] !== undefined && Number(match[3]) !== count)) return null;
+    counts.push(count);
+  }
+  return counts.length === 1 ? counts[0] : null;
 }
 
 function certificateFromDer(der) {
