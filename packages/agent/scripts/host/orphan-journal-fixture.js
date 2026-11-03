@@ -45,6 +45,13 @@ const fields = Object.freeze([
 ]);
 const scope = "native-cng-supporting-prepared-journal-orphan-protection";
 const preserveGuardName = ".preserve-native-orphan-journal.json";
+function orphanFailureCode(result, container) {
+  const reason = result.skipped.find((row) => row.containerName === container)?.reason || "";
+  return reason === "global machine-store inventory unavailable"
+    ? "CERTOPS_ORPHAN_INVENTORY_UNAVAILABLE"
+    : /^store .* query failed:/.test(reason) ? "CERTOPS_ORPHAN_STORE_QUERY_FAILED"
+      : reason.startsWith("store locked:") ? "CERTOPS_ORPHAN_STORE_LOCKED" : "CERTOPS_ORPHAN_NOT_FREED";
+}
 const requiredSources = Object.freeze([
   "packages/agent/scripts/host/orphan-journal-fixture.js",
   "packages/agent/src/index.js",
@@ -340,6 +347,9 @@ async function qualifyOrphanJournals({ gate, powershell, run, workDir }) {
       scenarios[0],
       async () => {
         const result = await sweep();
+        if (!isDeepStrictEqual(result.freed, [orphanContainer])) {
+          throw Object.assign(new Error("Owned orphan was not the only key freed"), { code: orphanFailureCode(result, orphanContainer) });
+        }
         assert.deepEqual(result.freed, [orphanContainer]);
         assert.ok(
           result.skipped.some(
@@ -510,6 +520,7 @@ async function qualifyOrphanJournals({ gate, powershell, run, workDir }) {
   }
 }
 module.exports = {
+  orphanFailureCode,
   qualifyOrphanJournals,
   fixtureContainerNames,
   parseNativeExists,
