@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { parseArgs, assertBinaryEntries, assertPeArchitecture, parseBuildInfo, EXPECTED_BINARIES, MODULE_PATHS } = require("./verify-agent-native-package");
+const { parseArgs, assertBinaryEntries, assertPackageFlavor, assertInstallerFlavor, assertPeArchitecture, parseBuildInfo, EXPECTED_BINARIES, MODULE_PATHS } = require("./verify-agent-native-package");
 const HOST_MODULE = MODULE_PATHS["tokentimer-agent-host"];
 
 const buildInfo = (version = "1.26.10", arch = "amd64", goos = "windows") =>
@@ -24,6 +24,35 @@ test("archive gate refuses missing, duplicated or unexpected executable entries"
   assert.throws(() => assertBinaryEntries([...EXPECTED_BINARIES, EXPECTED_BINARIES[0]]), /six expected/);
   assert.throws(() => assertBinaryEntries([...EXPECTED_BINARIES, "package/bin/unknown.exe"]), /six expected/);
   assert.throws(() => assertBinaryEntries([...EXPECTED_BINARIES, "package/../outside"]), /Unsafe archive/);
+});
+
+test("Windows archives require exactly the matching bundled runtime executable", () => {
+  const amd = "package/runtime/amd64/node.exe";
+  const arm = "package/runtime/arm64/node.exe";
+  assertBinaryEntries([...EXPECTED_BINARIES, amd], "amd64");
+  assertBinaryEntries([...EXPECTED_BINARIES, arm], "arm64");
+  assert.throws(() => assertBinaryEntries(EXPECTED_BINARIES, "amd64"), /approved runtime/);
+  assert.throws(() => assertBinaryEntries([...EXPECTED_BINARIES, arm], "amd64"), /approved runtime/);
+  assert.throws(() => assertBinaryEntries([...EXPECTED_BINARIES, amd, arm], "amd64"), /approved runtime/);
+  assert.throws(() => assertBinaryEntries([...EXPECTED_BINARIES, amd, amd], "amd64"), /approved runtime/);
+  assert.throws(() => assertBinaryEntries([...EXPECTED_BINARIES, amd], "unknown"), /Unsupported/);
+});
+
+test("Windows and generic artifacts declare distinct runtime flavors", () => {
+  assertPackageFlavor({ name: "agent" });
+  assertPackageFlavor({ name: "agent", windowsBundledRuntime: true }, "amd64");
+  assert.throws(() => assertPackageFlavor({ name: "agent" }, "amd64"), /must declare/);
+  assert.throws(() => assertPackageFlavor({ windowsBundledRuntime: false }, "amd64"), /must declare/);
+  assert.throws(() => assertPackageFlavor({ windowsBundledRuntime: true }), /legacy runtime behavior/);
+});
+
+test("packaged installer marker must match the selected archive flavor", () => {
+  assertInstallerFlavor("$script:RequiresBundledRuntime = $false\r\n");
+  assertInstallerFlavor("$script:RequiresBundledRuntime = $true\n", "amd64");
+  assert.throws(() => assertInstallerFlavor("$script:RequiresBundledRuntime = $false\n", "amd64"), /differs/);
+  assert.throws(() => assertInstallerFlavor("$script:RequiresBundledRuntime = $true\n"), /differs/);
+  assert.throws(() => assertInstallerFlavor("# missing\n", "amd64"), /exactly one/);
+  assert.throws(() => assertInstallerFlavor("$script:RequiresBundledRuntime = $true\n$script:RequiresBundledRuntime = $false\n", "amd64"), /exactly one/);
 });
 
 test("build metadata refuses vulnerable toolchain or mismatched target", () => {
