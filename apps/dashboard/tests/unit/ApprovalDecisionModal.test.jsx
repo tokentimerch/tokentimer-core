@@ -1,8 +1,19 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, within, waitFor, act } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 import ApprovalDecisionModal from '../../src/components/certops/ApprovalDecisionModal.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
+
+const { getJobMock } = vi.hoisted(() => ({ getJobMock: vi.fn() }));
+vi.mock('../../src/components/certops/certopsJobsApi.js', () => ({
+  getJob: getJobMock,
+}));
+vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
+  useWorkspace: () => ({ workspaceId: 'review-workspace' }),
+}));
+beforeEach(() => {
+  getJobMock.mockReset();
+});
 
 const cleanup = {
   groupId: 'cleanup-group',
@@ -50,8 +61,24 @@ const binding = {
     },
   },
 };
-function show(payload, { operation = 'noop', decision = 'approve' } = {}) {
+async function show(
+  payload,
+  { operation = 'noop', decision = 'approve', load } = {}
+) {
   const onDecide = vi.fn();
+  getJobMock.mockImplementation(
+    load ||
+      (() =>
+        Promise.resolve({
+          job: {
+            id: 'review-job',
+            workspaceId: 'review-workspace',
+            operation,
+            status: 'pending_approval',
+            payload,
+          },
+        }))
+  );
   render(
     <ChakraProvider>
       <DashboardThemeProvider>
@@ -65,12 +92,18 @@ function show(payload, { operation = 'noop', decision = 'approve' } = {}) {
       </DashboardThemeProvider>
     </ChakraProvider>
   );
-  return within(screen.getByRole('dialog'));
+  const dialog = within(screen.getByRole('dialog'));
+  await waitFor(() =>
+    expect(
+      dialog.queryByText('Loading approval scope...')
+    ).not.toBeInTheDocument()
+  );
+  return dialog;
 }
 
 describe('immutable distribution approval review', () => {
-  it('shows the exact cleanup object, provider reference and all authorization bounds before approval', () => {
-    const dialog = show(
+  it('shows the exact cleanup object, provider reference and all authorization bounds before approval', async () => {
+    const dialog = await show(
       { materialCleanup: cleanup },
       { operation: 'cleanup-from-store' }
     );
@@ -94,8 +127,8 @@ describe('immutable distribution approval review', () => {
     expect(dialog.getByRole('button', { name: 'Approve' })).toBeEnabled();
   });
 
-  it('reviews frozen rollout destinations, exact Azure version, wave zero and local activation calendars', () => {
-    const dialog = show({
+  it('reviews frozen rollout destinations, exact Azure version, wave zero and local activation calendars', async () => {
+    const dialog = await show({
       distributionRollout: {
         workspaceId: 'rollout-workspace',
         groupId: 'rollout-group',
@@ -145,8 +178,8 @@ describe('immutable distribution approval review', () => {
     );
   });
 
-  it('exposes the standing grant scope, source authority, reviewer membership and fixed failure behavior', () => {
-    const dialog = show({
+  it('exposes the standing grant scope, source authority, reviewer membership and fixed failure behavior', async () => {
+    const dialog = await show({
       distributionPolicyApproval: {
         groupId: 'standing-group',
         revision: 6,
@@ -199,8 +232,8 @@ describe('immutable distribution approval review', () => {
     }
   });
 
-  it('never dumps arbitrary job or store fields', () => {
-    const dialog = show(
+  it('never dumps arbitrary job or store fields', async () => {
+    const dialog = await show(
       {
         privateKey: 'TOP-LEVEL-SECRET',
         materialCleanup: {
@@ -220,8 +253,8 @@ describe('immutable distribution approval review', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('does not expose unrecognized destination or calendar fields in a standing grant', () => {
-    const dialog = show({
+  it('does not expose unrecognized destination or calendar fields in a standing grant', async () => {
+    const dialog = await show({
       distributionPolicyApproval: {
         groupId: 'standing-group',
         scopeHash: 'frozen-scope',
@@ -256,19 +289,110 @@ describe('immutable distribution approval review', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('refuses approval when the exact cleanup intent is unavailable, but still permits rejection', () => {
-    const dialog = show({}, { operation: 'cleanup-from-store' });
+  it('refuses approval when the exact cleanup intent is unavailable, but still permits rejection', async () => {
+    const dialog = await show({}, { operation: 'cleanup-from-store' });
     expect(dialog.getByRole('button', { name: 'Approve' })).toBeDisabled();
     expect(
       dialog.getByText(/Exact cleanup scope is unavailable/)
     ).toBeInTheDocument();
   });
 
-  it('keeps rejection available when cleanup scope is unavailable', () => {
-    const dialog = show(
+  it('keeps rejection available when cleanup scope is unavailable', async () => {
+    const dialog = await show(
       {},
       { operation: 'cleanup-from-store', decision: 'reject' }
     );
     expect(dialog.getByRole('button', { name: 'Reject' })).toBeEnabled();
   });
+
+  it('does not enable approval while detail is loading and ignores a late response for another job', async () => {
+    let resolveOld, resolveNew;
+    getJobMock.mockImplementation(
+      (workspace, id) =>
+        new Promise(resolve => {
+          if (id === 'old-job') resolveOld = resolve;
+          else resolveNew = resolve;
+        })
+    );
+    const view = id => (
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <ApprovalDecisionModal
+            isOpen
+            onClose={vi.fn()}
+            job={{ id, operation: 'cleanup-from-store' }}
+            decision='approve'
+            onDecide={vi.fn()}
+          />
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+    const rendered = render(view('old-job'));
+    expect(
+      within(screen.getByRole('dialog')).getByRole('button', {
+        name: 'Approve',
+      })
+    ).toBeDisabled();
+    rendered.rerender(view('new-job'));
+    await act(async () =>
+      resolveOld({
+        job: {
+          id: 'old-job',
+          workspaceId: 'review-workspace',
+          status: 'pending_approval',
+          payload: {
+            materialCleanup: { ...cleanup, materialVersionId: 'stale-version' },
+          },
+        },
+      })
+    );
+    expect(screen.queryByText('stale-version')).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole('dialog')).getByRole('button', {
+        name: 'Approve',
+      })
+    ).toBeDisabled();
+    await act(async () =>
+      resolveNew({
+        job: {
+          id: 'new-job',
+          workspaceId: 'review-workspace',
+          status: 'pending_approval',
+          payload: { materialCleanup: cleanup },
+        },
+      })
+    );
+    expect(screen.getByText(cleanup.materialVersionId)).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('dialog')).getByRole('button', {
+        name: 'Approve',
+      })
+    ).toBeEnabled();
+  });
+
+  it.each(['unavailable', 'wrong workspace', 'already decided'])(
+    'refuses approval when detail is %s',
+    async scenario => {
+      const load = () =>
+        scenario === 'unavailable'
+          ? Promise.reject(new Error('offline'))
+          : Promise.resolve({
+              job: {
+                id: 'review-job',
+                workspaceId:
+                  scenario === 'wrong workspace'
+                    ? 'other-workspace'
+                    : 'review-workspace',
+                status:
+                  scenario === 'already decided'
+                    ? 'rejected'
+                    : 'pending_approval',
+                payload: { materialCleanup: cleanup },
+              },
+            });
+      const dialog = await show({}, { operation: 'cleanup-from-store', load });
+      expect(dialog.getByRole('button', { name: 'Approve' })).toBeDisabled();
+      expect(dialog.getByRole('alert')).toBeInTheDocument();
+    }
+  );
 });

@@ -185,7 +185,7 @@ function reviewScope(job) {
   }
   if (payload?.distributionPolicyApproval) {
     const intent = payload.distributionPolicyApproval;
-    const scope = intent.scope;
+    const { scope } = intent;
     return {
       Operation: 'Standing distribution authorization',
       ...fields(intent, [
