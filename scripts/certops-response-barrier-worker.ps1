@@ -22,9 +22,11 @@ function Assert-Driver {
 }
 function Receipt([string]$Name,$Value) {
   $file=Join-Path $rootPath $Name
+  $temporary=$file+'.tmp'
   $bytes=[Text.Encoding]::UTF8.GetBytes(($Value|ConvertTo-Json -Depth 5 -Compress))
-  $stream=[IO.File]::Open($file,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+  $stream=[IO.File]::Open($temporary,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
   try{$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+  [IO.File]::Move($temporary,$file)
 }
 Assert-Driver
 Receipt '.worker-ready.json' @{token=$Token;pid=$PID;parentPid=$DriverPid;created=$self.CreationDate.ToUniversalTime().ToString('o');exe=$self.ExecutablePath;scriptHash=(Public-Hash $PSCommandPath)}
