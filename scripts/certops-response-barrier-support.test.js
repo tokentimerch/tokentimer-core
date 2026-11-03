@@ -27,7 +27,7 @@
  * is a separate explicit command and never runs from these tooling regressions. */
 const test = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), os = require("node:os"), crypto = require("node:crypto");
 const helper = require("./certops-response-barrier-support");
-const { spawnSync } = require("node:child_process");
+const { spawnSync, spawn } = require("node:child_process");
 const caseProof = outputIndex => ({ outputIndex, ...Object.fromEntries(helper.flags.map(flag => [flag, true])) });
 test("supporting barrier cannot become native AD CS or source-acquisition qualification", () => {
   const make = () => ({ scope: helper.scope, nativeAdcsQualified: false, sourceAcquisitionRaceQualified: false, cases: [0, 1, 2].map(caseProof) });
@@ -67,4 +67,49 @@ test("active, changed and undrained supporting receipts preserve the owned direc
     writeDrained(); fs.appendFileSync(guardFile, " "); assert.throws(() => helper.assertCleanupSafe(root, token)); assert.equal(fs.existsSync(root), true);
     fs.writeFileSync(path.join(root, ".owner"), "foreign"); assert.throws(() => helper.assertCleanupSafe(root, token));
   } finally { assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir())); for (const name of [".owner", ".active-guard.json", ".drained.json", "request.req", ...names]) fs.rmSync(path.join(root, name), { force: true }); fs.rmdirSync(root); }
+});
+
+test("both actual receipt publishers hide incomplete bytes until atomic publication", { timeout: 30000 }, async () => {
+  // Extract only the real Receipt function: this runs benign IO, no native
+  // holder, process custody, certificate operation or qualification scenario.
+  for (const source of ["certops-response-barrier-driver.ps1", "certops-response-barrier-worker.ps1"]) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "certops-receipt-publication-"));
+    const wrapper = path.join(root, "publisher.ps1"), marker = path.join(root, "writer-open"), release = path.join(root, "release"), receipt = path.join(root, ".worker-ready.json");
+    fs.writeFileSync(wrapper, `param([string]$Source,[string]$Output)
+$ErrorActionPreference='Stop'
+$tokens=$null;$errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile($Source,[ref]$tokens,[ref]$errors)
+if($errors.Count){throw 'Receipt source parse failed'}
+$function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Receipt'},$false)
+if(-not $function){throw 'Receipt function missing'}
+$rootPath=[IO.Path]::GetFullPath($Output)
+. ([scriptblock]::Create($function.Extent.Text))
+$breakpoint=Set-PSBreakpoint -Variable stream -Mode Write -Action {
+  [IO.File]::WriteAllText((Join-Path $rootPath 'writer-open'),'public-ready')
+  $until=[DateTime]::UtcNow.AddSeconds(8)
+  while(-not(Test-Path -LiteralPath (Join-Path $rootPath 'release'))){if([DateTime]::UtcNow -ge $until){throw 'Controlled publication release missing'};Start-Sleep -Milliseconds 10}
+}
+try{Receipt '.worker-ready.json' @{publicSentinel='complete-receipt'}}finally{Remove-PSBreakpoint $breakpoint}
+`);
+    const child = spawn(process.platform === "win32" ? "powershell.exe" : "pwsh", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", wrapper, "-Source", path.join(__dirname, source), "-Output", root], { windowsHide: true, timeout: 12000, stdio: ["ignore", "pipe", "pipe"] });
+    let output = ""; for (const stream of [child.stdout, child.stderr]) stream.on("data", bytes => { output = (output + bytes.toString()).slice(-4096); });
+    const closed = new Promise(resolve => { child.once("error", error => resolve({ error })); child.once("close", code => resolve({ code })); });
+    try {
+      const until = Date.now() + 10000;
+      while (!fs.existsSync(marker) && child.exitCode === null && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 10));
+      assert.equal(fs.existsSync(marker), true, `${source}: controlled publisher did not pause`);
+      const premature = fs.existsSync(receipt);
+      fs.writeFileSync(release, "public-release");
+      const result = await closed; assert.equal(result.error, undefined); assert.equal(result.code, 0, output);
+      assert.equal(premature, false, `${source}: empty receipt became visible before write completion`);
+      assert.deepEqual(JSON.parse(fs.readFileSync(receipt, "utf8")), { publicSentinel: "complete-receipt" });
+      assert.equal(fs.existsSync(receipt + ".tmp"), false);
+    } finally {
+      if (!fs.existsSync(release)) fs.writeFileSync(release, "public-release");
+      await closed;
+      assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir()));
+      for (const name of fs.readdirSync(root)) { const file = path.join(root, name); assert.equal(fs.lstatSync(file).isFile(), true); fs.unlinkSync(file); }
+      fs.rmdirSync(root);
+    }
+  }
 });
