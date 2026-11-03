@@ -122,6 +122,14 @@ The fixtures now record the workspace owner and a workspace manager. A local
 rerun of the three provider cases passed. The offline Azure bridge still
 requires Linux for its endpoint target, so that case remains a CI check.
 
+Head `465c31a4` workflow
+[41634444722](https://github.com/tokentimerch/tokentimer-core/actions/runs/41634444722)
+passed those three provider cases. The Azure bridge then reported `failed`
+for a lease loss on the pre-install admission check. That check is before the
+filesystem write, so a clean failure is correct. The bridge now interrupts on
+the following check, after the write, where the uncertain binding must be
+reconciled.
+
 ## E. Evidence and reproduction
 
 See the [sanitized evidence index](evidence/2026-11-03/README.md), public provider
