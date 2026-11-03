@@ -105,6 +105,14 @@ function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = 
     const frame = stack.match(/\(?([A-Za-z0-9_.-]+\.(?:js|cjs)):(\d{1,6}):\d{1,5}\)?/);
     if (frame) detail.sourceFrame = `${frame[1]}:${frame[2]}`;
     if (failureCount > 0) detail.afterEarlierFailure = true;
+    if (error?.code === "CERTOPS_NATIVE_COMMAND_FAILED" && error.qualificationCommand) {
+      const command = error.qualificationCommand;
+      const executables = ["powershell.exe", "certutil.exe", "certreq.exe", "sc.exe", "netsh.exe", "node.exe", "icacls.exe"];
+      const codes = ["NamedParameterNotFound", "ParameterBindingException", "ParameterArgumentValidationError", "PathNotFound", "ItemNotFoundException", "CommandNotFoundException", "PermissionDenied", "UnauthorizedAccessException", "NativeCommandError", "InvalidOperationException", "InvokeMethodOnNull", "NoMatchingEventsFound"];
+      detail.command = { executable: executables.includes(command.executable) ? command.executable : "other", exitStatus: Number.isInteger(command.exitStatus) ? command.exitStatus : null };
+      if (command.script === "owned-issued-request.ps1") detail.command.script = command.script;
+      if (codes.includes(command.powerShellCode)) detail.command.powerShellCode = command.powerShellCode;
+    }
     if (debugDetail) {
       detail.debug = { message: bounded(error?.message ?? error).slice(0, 512) };
       if (stack) detail.debug.stack = stack.split("\n").slice(0, 12).map((line) => bounded(line.trim())).filter(Boolean);

@@ -76,7 +76,9 @@ function command(file, args) {
     // Fixed script-template heads only (never output): identifies which cleanup/native step failed.
     const scriptArg=Array.isArray(args)?String(args[args.length-1]??""):"";
     const scriptHead=/^[a-z]{3,}\.exe$/i.test(path.basename(file))&&/powershell/i.test(file)?scriptArg.replace(/^\$ErrorActionPreference='Stop';\s*/,"").replace(/[^\x20-\x7e]/g," ").slice(0,90):undefined;
-    error.qualificationCommand={executable:path.basename(file).toLowerCase(),exitStatus:result.status,powerShellCode:fqid?.[1].trim(),officerStep,officerExit:officerExit===undefined?undefined:Number(officerExit),scriptHead};
+    const fileIndex=Array.isArray(args)?args.indexOf("-File"):-1;
+    const script=fileIndex>=0?path.basename(String(args[fileIndex+1]??"")):"";
+    error.qualificationCommand={executable:path.basename(file).toLowerCase(),exitStatus:result.status,powerShellCode:fqid?.[1].trim(),officerStep,officerExit:officerExit===undefined?undefined:Number(officerExit),scriptHead,script};
     throw error;
   }
   return result.stdout.trim();

@@ -8,6 +8,16 @@ const assert = require("node:assert/strict");
 const { createHostGate, classifyWindowsHost } = require("./host-gate");
 const { verifyReport } = require("../../../scripts/certops-qualification-report");
 
+test("native command failures retain only bounded diagnostic metadata", async () => {
+  const gate = createHostGate({ suite: "fixture", strict: true, reportPath: null, continueOnFailure: true });
+  await gate.preflight();
+  const error = Object.assign(new Error("private token and path"), { code: "CERTOPS_NATIVE_COMMAND_FAILED", qualificationCommand: { executable: "powershell.exe", exitStatus: 1, script: "owned-issued-request.ps1", powerShellCode: "PermissionDenied", scriptHead: "private command arguments" } });
+  await gate.scenario("owned-command", async () => { throw error; });
+  const failure = gate.report.scenarios[0].failure;
+  assert.deepEqual(failure.command, { executable: "powershell.exe", exitStatus: 1, script: "owned-issued-request.ps1", powerShellCode: "PermissionDenied" });
+  assert.equal(JSON.stringify(failure).includes("private"), false);
+});
+
 test("an outside-scenario failure survives finish without exposing private details", async () => {
   const gate = createHostGate({ suite: "fixture", strict: true, reportPath: null });
   await gate.preflight();
