@@ -41,10 +41,11 @@ const alreadyOpen = conflict({
   currentPeriod: { periodId: OPEN_PERIOD, managementMode: 'automatic' },
 });
 
-async function openAtAttachStep(sources) {
+async function openAtAttachStep(sources, expectAttach = true) {
   listCertificates.mockResolvedValue({
     items: [
       {
+        identityId: 'identity-1',
         commonName: 'app.example',
         sources,
       },
@@ -67,6 +68,13 @@ async function openAtAttachStep(sources) {
   });
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
   fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
+  if (!expectAttach) {
+    await screen.findByText(/No certificate in inventory uses app.example/);
+    expect(
+      screen.queryByRole('button', { name: 'Attach and enable automation' })
+    ).not.toBeInTheDocument();
+    return null;
+  }
   return screen.findByRole('button', { name: 'Attach and enable automation' });
 }
 
@@ -108,6 +116,64 @@ describe('AD CS wizard when the certificate is already managed', () => {
     replaceCalls.length = 0;
     replaceResults = [];
   });
+
+  it('attaches an ended period returned by the grouped certificate API', async () => {
+    replaceResults = [{ stopped: null, readded: {} }];
+    const attach = await openAtAttachStep([
+      {
+        managedCertificateId: 'mc-1',
+        source: 'agent_windows',
+        currentIdentityId: 'identity-1',
+        startedAt: '2026-09-01T00:00:00Z',
+        endedAt: '2026-09-02T00:00:00Z',
+        periodEndedAt: '2026-09-02T00:00:00Z',
+        periodId: OPEN_PERIOD,
+      },
+    ]);
+    fireEvent.click(attach);
+    await waitFor(() => expect(replaceCalls).toHaveLength(1));
+    expect(replaceCalls[0]).toEqual([
+      'ws-1',
+      'mc-1',
+      {
+        periodId: null,
+        renewalProfileId: 'profile-1',
+        automationEnabled: true,
+      },
+    ]);
+  });
+
+  it.each([
+    { endedAt: '2026-09-02T00:00:00Z', periodEndedAt: null },
+    {
+      endedAt: '2026-09-02T00:00:00Z',
+      periodEndedAt: '2026-09-02T00:00:00Z',
+      currentIdentityId: 'other-identity',
+    },
+    {
+      endedAt: '2026-09-02T00:00:00Z',
+      periodEndedAt: '2026-09-02T00:00:00Z',
+      endedReason: 'endpoint_monitor_deleted',
+    },
+  ])(
+    'does not attach a superseded, foreign or deleted source: %j',
+    async fields => {
+      await openAtAttachStep(
+        [
+          {
+            managedCertificateId: 'mc-1',
+            source: 'agent_windows',
+            currentIdentityId: 'identity-1',
+            startedAt: '2026-09-01T00:00:00Z',
+            periodId: OPEN_PERIOD,
+            ...fields,
+          },
+        ],
+        false
+      );
+      expect(replaceCalls).toHaveLength(0);
+    }
+  );
 
   it('shows the server explanation and replaces the named open period only after an explicit click', async () => {
     replaceResults = [alreadyOpen, { stopped: {}, readded: {} }];

@@ -5,7 +5,7 @@ const {test}=require("node:test"),assert=require("node:assert/strict"),fs=requir
 function producer(result){
   const source=fs.readFileSync(path.resolve(__dirname,"../tests/e2e/certops-adcs-real-e2e.test.js"),"utf8");
   const start=source.indexOf("function nativeCommandEnvironment("),end=source.indexOf("function ps(script)",start);
-  return vm.runInNewContext(source.slice(start,end)+";({command,boundedFailureMetadata,boundedJobErrorCode})",{path,spawnSync:()=>result,process:{env:{}}});
+  return vm.runInNewContext(source.slice(start,end)+";({command,boundedFailureMetadata,boundedJobErrorCode,preserveCleanupFailure})",{path,spawnSync:()=>result,process:{env:{}}});
 }
 const plain=value=>JSON.parse(JSON.stringify(value));
 test("native failure retains only approved executable, exit and PowerShell category",()=>{
@@ -75,6 +75,19 @@ test("aggregate cleanup exposes bounded sanitized command causes without recursi
   const metadata=plain(api.boundedFailureMetadata({constructor:{name:"AggregateError"},errors:[native,nested,native,native,native]},null,"cleanup"));
   assert.equal(metadata.causes.length,4);assert.equal(metadata.causes[0].command.powerShellCode,"PathNotFound");
   assert.equal(metadata.causes[1].causes,undefined);assert.doesNotMatch(JSON.stringify(metadata),/SECRET|stderr|argv/);
+});
+
+test("final report failure cannot replace the original bounded cleanup causes",()=>{
+  const api=producer({status:0,stdout:""}),report={};
+  const child=Object.assign(new Error("SECRET"),{cleanupStep:"step-3"});
+  const original=new AggregateError([child],"PRIVATE");
+  assert.equal(api.preserveCleanupFailure(original,report),original);
+  const first=plain(report.cleanupFailure);
+  api.preserveCleanupFailure(new Error("Host qualification incomplete"),report);
+  assert.deepEqual(plain(report.cleanupFailure),first);
+  assert.equal(first.errorClass,"AggregateError");
+  assert.equal(first.causes[0].cleanupStep,"step-3");
+  assert.doesNotMatch(JSON.stringify(first),/SECRET|PRIVATE|message|stack/);
 });
 
 test("enrollment error takes priority over generic agent failure without exposing result payload",()=>{

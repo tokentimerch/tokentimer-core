@@ -88,7 +88,7 @@ function certificateUsesName(certificate, dnsName) {
 }
 
 function sourceIsThisCertificate(certificate, source) {
-  if (source?.endedAt) return false;
+  if (source?.endedAt && !source.periodEndedAt) return false;
   if (!certificate?.identityId || !source?.currentIdentityId) return true;
   return source.currentIdentityId === certificate.identityId;
 }

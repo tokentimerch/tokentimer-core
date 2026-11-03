@@ -78,6 +78,26 @@ const FLAGS = Object.freeze([
   "otherProfilePoliciesRestored",
 ]);
 const SCOPE = "browser-issuer-profile-default-scheduler-native-adcs";
+function currentBrowserSource(inventory, { certificateId, fingerprint }) {
+  assert.match(certificateId, /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i);
+  assert.match(fingerprint, /^[a-f0-9]{64}$/);
+  assert.ok(Array.isArray(inventory?.items));
+  const identities = inventory.items.filter(
+    item => item.fingerprintSha256 === fingerprint && item.lifecycleStatus === "active",
+  );
+  assert.ok(identities.length <= 1, "Native browser certificate identity is ambiguous");
+  if (!identities.length) return null;
+  const identity = identities[0];
+  const sources = (identity.sources || []).filter(
+    source => source.managedCertificateId === certificateId &&
+      !source.endedAt && !source.periodEndedAt &&
+      source.currentIdentityId === identity.identityId,
+  );
+  assert.ok(sources.length <= 1, "Native browser management period is ambiguous");
+  if (!sources.length) return null;
+  assert.match(sources[0].periodId, /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i);
+  return { id: certificateId, periodId: sources[0].periodId };
+}
 function verifyProof(proof, { workerDriven = false } = {}) {
   assert.ok(proof && typeof proof === "object" && !Array.isArray(proof));
   assert.deepEqual(
@@ -572,15 +592,19 @@ async function qualifyAdcsBrowserJourney(context) {
       REQUIRED_SCENARIOS[2],
       async () => {
         stage = "browser-profile-attachment";
-        selectedSource = await until(
-          async () =>
-            (
-              await query(
-                "SELECT mc.id FROM managed_certificates mc JOIN certificate_instances ci ON ci.workspace_id=mc.workspace_id AND ci.managed_certificate_id=mc.id JOIN certificate_targets ct ON ct.workspace_id=ci.workspace_id AND ct.id=ci.target_id WHERE mc.workspace_id=$1 AND mc.source='agent_windows' AND ci.observed_fingerprint_sha256=$2 AND ct.windows_site=$3 ORDER BY ci.observed_at DESC LIMIT 1",
-                [fixture.workspaceId, initial.fingerprint, site],
-              )
-            ).rows[0],
-        );
+        // Observed IIS rows can retain historical registrations for this leaf.
+        // Select only the original owned registration currently offered by the
+        // public inventory, the same source of truth as the profile picker.
+        selectedSource = await until(async () => {
+          const inventory = await fixture.request(
+            `${api}/certificate-identities?limit=100&q=${initial.fingerprint}`,
+          );
+          assert.equal(inventory.status, 200);
+          return currentBrowserSource(inventory.body, {
+            certificateId: renewalFixture.certificateId,
+            fingerprint: initial.fingerprint,
+          });
+        });
         await openDisclosure("certops-renewal-profiles");
         await page
           .getByRole("button", { name: "New AD CS profile", exact: true })
@@ -966,6 +990,7 @@ module.exports = {
   SCOPE,
   verifyProof,
   createOwnedBrowserResource,
+  currentBrowserSource,
   currentAuthorityGroup,
   qualifyAdcsBrowserJourney,
 };
