@@ -256,12 +256,13 @@ async function loadAlertStates(tokenIds, { queryable = pool, referenceDate } = {
   const ids = normalizeTokenIds(tokenIds);
   if (ids.length === 0) return new Map();
 
+  // Match queue API date/instant projections, including legacy timestamp columns.
   const result = await queryable.query(
     `SELECT
        ${TOKEN_ELIGIBILITY_COLUMNS},
        aq.id AS alert_id,
        aq.threshold_days AS alert_threshold_days,
-       aq.due_date AS alert_due_date,
+       to_char(aq.due_date, 'YYYY-MM-DD') AS alert_due_date,
        aq.status AS alert_status,
        aq.channels AS alert_channels,
        aq.attempts AS alert_attempts,
@@ -269,10 +270,10 @@ async function loadAlertStates(tokenIds, { queryable = pool, referenceDate } = {
        aq.attempts_webhooks AS alert_attempts_webhooks,
        aq.attempts_whatsapp AS alert_attempts_whatsapp,
        aq.error_message AS alert_error_message,
-       aq.created_at AS alert_created_at,
-       aq.updated_at AS alert_updated_at,
-       aq.last_attempt,
-       aq.next_attempt_at,
+       aq.created_at::timestamptz AS alert_created_at,
+       aq.updated_at::timestamptz AS alert_updated_at,
+       aq.last_attempt::timestamptz AS last_attempt,
+       aq.next_attempt_at::timestamptz AS next_attempt_at,
        CASE WHEN aq.status = 'sent' THEN
          EXISTS (
            SELECT 1 FROM alert_delivery_log success
@@ -291,7 +292,7 @@ async function loadAlertStates(tokenIds, { queryable = pool, referenceDate } = {
        attempt.id AS delivery_attempt_id,
        attempt.channel AS delivery_attempt_channel,
        attempt.status AS delivery_attempt_status,
-       attempt.sent_at AS delivery_attempt_at,
+       attempt.sent_at::timestamptz AS delivery_attempt_at,
        attempt.error_message AS delivery_attempt_error
      ${TOKEN_SETTINGS_JOINS}
      LEFT JOIN LATERAL (
