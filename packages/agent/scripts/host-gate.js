@@ -183,7 +183,7 @@ function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = 
       }
       catch (error) {
         entry.status = "failed"; report.status = "failed";
-        if (!continueOnFailure) throw error;
+        if (!continueOnFailure) { entry.failure = describeFailure(error); throw error; }
         // Keep running so one run reports every independent failure; the suite still ends as failed.
         entry.failure = noteFailure(error);
         if (report.failureBudgetExhausted) throw error;
