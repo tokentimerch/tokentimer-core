@@ -96,6 +96,11 @@ test("installer swap regression runs under Windows PowerShell 5.1 in the selecti
  assert.match(ordinary.run,/PSExecutionPolicyPreference = 'Restricted'/);assert.match(ordinary.run,/node scripts\/certops-installer-second-rename-support\.js/);assert.match(ordinary.run,/LASTEXITCODE -ne 0/);
  assert.deepEqual(ci.jobs.certops_tooling.strategy.matrix.os,["ubuntu-24.04","windows-2022","windows-2025"]);
  assert.match(ordinary.run,/node scripts\/certops-installer-startup-support\.js/);
+ const caDiagnostic=ci.jobs.certops_tooling.steps.find(item=>item.name==="Check bounded CA observation diagnostics");
+ assert.ok(caDiagnostic);assert.equal(caDiagnostic.shell,"powershell");assert.equal(caDiagnostic.if,"runner.os == 'Windows'");assert.match(caDiagnostic.run,/certops-adcs-issued-observation\.test\.ps1/);
+ const credentialControl=ci.jobs.certops_tooling.steps.find(item=>item.name==="Exercise temporary credential ACL refusal");
+ assert.ok(credentialControl);assert.equal(credentialControl.if,"runner.os == 'Windows'");assert.equal(credentialControl.env.CERTOPS_WINDOWS_DISPOSABLE_HOST,"1");assert.match(credentialControl.run,/certops-credential-weak-acl-support\.js/);
+ assert.equal(selectFiles(["scripts/certops-credential-weak-acl-support.js"]).windows,true);
 });
 
 test("benign response barrier changes select the existing Windows lane and execute supporting controls",()=>{

@@ -353,13 +353,19 @@ function qualify({ gate, workDir, installedCredential }) {
           explicitAllowCount: 1,
           readMask: 1,
         });
-        assert.throws(
-          () => config.readCredential(credentialDirectory),
-          (error) =>
-            error.message.includes(
-              "refusing to use credential file: its ACL grants access to",
-            ) && error.message.includes("S-1-1-0"),
-        );
+        let value, refusal;
+        try { value = config.readCredential(credentialDirectory); }
+        catch (error) { refusal = error; }
+        if (!refusal) throw Object.assign(new Error("Weak credential ACL was not refused"), {
+          code: value === null ? "CERTOPS_WEAK_ACL_TREATED_AS_MISSING" : "CERTOPS_WEAK_ACL_ACCEPTED",
+        });
+        if (!(typeof refusal.message === "string" && refusal.message.includes("refusing to use credential file: its ACL grants access to") &&
+              refusal.message.includes("S-1-1-0")))
+          throw Object.assign(new Error("Weak credential ACL refusal differed"), {
+            code: typeof refusal.message === "string" && refusal.message.includes("refusing to use credential file: its ACL grants access to")
+              ? "CERTOPS_WEAK_ACL_OTHER_SID" : ["EACCES", "EPERM"].includes(refusal.code)
+                ? "CERTOPS_WEAK_ACL_PERMISSION_ERROR" : "CERTOPS_WEAK_ACL_UNEXPECTED_REFUSAL",
+          });
         if(installedCredential)await installedCredential.onWeak();
       } catch (error) {
         failure = error;
