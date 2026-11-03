@@ -175,6 +175,29 @@ async function until(check, ms = 30000) {
   }
   throw new Error("Owned activation protocol deadline exceeded");
 }
+function publishActivationSignal(directory, name, token) {
+  assert.ok(["go", "release"].includes(name));
+  assert.match(token, /^[a-f0-9]{32}$/);
+  const temporary = path.join(
+    directory,
+    `.signal-${crypto.randomBytes(16).toString("hex")}.tmp`,
+  );
+  const destination = path.join(directory, name);
+  const descriptor = fs.openSync(temporary, "wx", 0o600);
+  try {
+    fs.writeFileSync(descriptor, token);
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  const original = fs.statSync(temporary, { bigint: true }).ino;
+  // Publish complete, closed bytes without overwriting an existing signal.
+  // Filesystems without hard links fail closed and preserve protocol evidence.
+  fs.linkSync(temporary, destination);
+  assert.equal(fs.statSync(destination, { bigint: true }).ino, original);
+  assert.equal(fs.readFileSync(destination, "utf8"), token);
+  fs.unlinkSync(temporary);
+}
 /** Shared by the installed fixture and the explicit nonprivileged temporary-file
  * regression. The go file is published only after independent CIM measurement;
  * unparsed or late receipts therefore never authorize unowned process cleanup. */
@@ -226,6 +249,7 @@ async function runActivationFault({
     identity,
     restored,
     primary,
+    phase = "launch",
     drained = false,
     guardReleased = false;
   const launch = async () => {
@@ -281,6 +305,7 @@ async function runActivationFault({
       "Owned driver failed spawn",
     );
     // Capture independently before reading any child-created ownership receipt.
+    phase = "identity";
     identity = await until(() => {
       assert.equal(closed, false);
       try {
@@ -289,7 +314,9 @@ async function runActivationFault({
         return null;
       }
     }, 10000);
-    fs.writeFileSync(go, token, { flag: "wx" });
+    phase = "publish-go";
+    publishActivationSignal(directory, "go", token);
+    phase = "restoration";
     await until(() => {
       assert.equal(
         closed,
@@ -298,6 +325,7 @@ async function runActivationFault({
       );
       return fs.existsSync(prefix + ".restored.json");
     });
+    phase = "verify-restoration";
     assert.deepEqual(
       nativeIdentity(rootPid, token, driver, child.pid),
       identity,
@@ -333,13 +361,17 @@ async function runActivationFault({
       BigInt(`0x${restored.stagingId.split(":")[1]}`),
     );
     assert.deepEqual(inventory(app), before);
+    phase = "host-oracles";
     await onRestored();
   } catch (error) {
+    error.activationPhase = phase;
     primary = error;
   } finally {
     try {
+      phase = "publish-release";
       if (!closed && !fs.existsSync(release))
-        fs.writeFileSync(release, token, { flag: "wx" });
+        publishActivationSignal(directory, "release", token);
+      phase = "wait-wrapper";
       let timer;
       const result = await Promise.race([
         exit,
@@ -356,6 +388,7 @@ async function runActivationFault({
         "Owned activation child failed or was interrupted",
       );
       drained = true;
+      phase = "closed-receipt";
       const receipt = JSON.parse(
         fs.readFileSync(prefix + ".closed.json", "utf8"),
       );
@@ -367,15 +400,18 @@ async function runActivationFault({
       assert.equal(fs.existsSync(staged()), false);
       assert.equal(fs.existsSync(previous()), false);
       assert.deepEqual(inventory(app), before);
+      phase = "native-drain";
       const nativeDrain = await resource.stopAndDrain();
       assert.equal(nativeDrain.launchOccurred, true);
       assert.equal(nativeDrain.rootExitCode, 0);
       holderGuard.complete(true);
       guardReleased = true;
     } catch (error) {
+      error.activationPhase = phase;
       if (resource && !guardReleased) {
         try {
-          await resource.stopAndDrain();
+          const nativeDrain = await resource.stopAndDrain();
+          error.nativeRootExitCode = nativeDrain.rootExitCode;
           holderGuard.complete(true);
           guardReleased = true;
         } catch (cleanup) {
@@ -830,6 +866,7 @@ function verifyLocalContract(value) {
 module.exports = {
   assertCleanupSafe,
   runActivationFault,
+  publishActivationSignal,
   qualifySecondRename,
   verifyProof,
   requiredScenarios,
