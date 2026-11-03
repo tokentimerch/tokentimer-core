@@ -136,6 +136,12 @@ test(
         ).status,
         0,
       );
+      const signature = spawnSync("openssl", ["x509", "-in", cert, "-noout", "-text"], {
+        encoding: "utf8", timeout: 10000,
+      });
+      assert.equal(signature.status, 0);
+      const signatureAlgorithm = signature.stdout.match(/^\s*Signature Algorithm:\s*([A-Za-z0-9_.-]+)\s*$/m)?.[1];
+      assert.ok(signatureAlgorithm, "Owned public certificate signature is required");
       const pem = fs.readFileSync(cert, "utf8"),
         parsed = new crypto.X509Certificate(pem),
         spki = crypto
@@ -143,6 +149,7 @@ test(
           .update(parsed.publicKey.export({ type: "spki", format: "der" }))
           .digest("hex");
       return {
+        signatureAlgorithm,
         pem,
         parsed,
         spki,
@@ -169,10 +176,10 @@ test(
         value.public_key_size,
         leaf.parsed.publicKey.asymmetricKeyDetails.modulusLength || null,
       );
-      assert.equal(
-        value.signature_algorithm,
-        leaf.parsed.signatureAlgorithm || null,
-      );
+      // This optional API fact is null on Node 22; the crypto accessor was
+      // introduced in Node 24.9. A reported value must still match the real PEM.
+      if (value.signature_algorithm !== null)
+        assert.equal(value.signature_algorithm, leaf.signatureAlgorithm);
       const details = leaf.parsed.publicKey.asymmetricKeyDetails;
       if (details.namedCurve)
         assert.equal(
@@ -297,6 +304,12 @@ test(
         assert.equal(imported.status, 201);
         certificateId = imported.body.items[0].id;
         assertKnown(await facts(), oldLeaf);
+        // Seed the real predecessor signature independently of the API runtime.
+        // Same-fingerprint completion must preserve it; rotation must clear it.
+        await fixture.pool.query(
+          "UPDATE managed_certificates SET signature_algorithm=$3 WHERE workspace_id=$1 AND id=$2",
+          [fixture.workspaceId, certificateId, oldLeaf.signatureAlgorithm],
+        );
         const target = {
             type: "domain",
             reference: host,
