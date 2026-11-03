@@ -146,7 +146,9 @@ if($env:OS -eq 'Windows_NT'){
  Set-Content -LiteralPath $env:CA_CHILD -Value @'
 param($DomainPassword,$HierarchyRole,$StageTimeoutSeconds,[switch]$BootstrapWorker)
 $descendant=Start-Process powershell.exe -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 60' -NoNewWindow -PassThru
-$descendant.Id|Set-Content ($env:CA_CHILD+'.pid')
+$pidReceipt=$env:CA_CHILD+'.pid'
+[IO.File]::WriteAllText(($pidReceipt+'.tmp'),[string]$descendant.Id,[Text.UTF8Encoding]::new($false))
+[IO.File]::Move(($pidReceipt+'.tmp'),$pidReceipt)
 while(-not(Test-Path ($env:CA_CHILD+'.release'))){Start-Sleep -Milliseconds 10}
 Write-Output 'CERTOPS_STAGE=enterprise-ca-service-running'
 '@
