@@ -12,7 +12,8 @@
  * absence/input+guard hashes before releasing output holders. All 36 flags/graceful holder+
  * active-guard/registered-worker/drained private receipts required; nativeAdcsQualified and
  * sourceAcquisitionRaceQualified false. Unknown reader/receipt/live child/missed break preserves
- * root; timeout uses owned cancellation, never kill holder to force pass. Selected trusted Windows
+ * root; timeout uses owned cancellation, never kill holder to force pass. Ordinary Windows CI also
+ * exercises the actual barriers with a restrictive parent execution policy. Selected trusted Windows
  * 2022/2025 or manual windows/all runs support, no ADCS matrix slot. Microsoft level-1 oplock
  * needs ACK; directory FSCTL_REQUEST_OPLOCK notifications are advisory. Real client creates fresh
  * CSR just before launch: reliable actual input-barrier acquisition remains unimplemented, polling
@@ -43,6 +44,17 @@ test("active, changed and undrained supporting receipts preserve the owned direc
   try {
     assert.throws(() => helper.assertCleanupSafe(root, token)); fs.writeFileSync(guardFile, JSON.stringify(guard)); assert.throws(() => helper.assertCleanupSafe(root, token));
     writeDrained(); assert.equal(helper.assertCleanupSafe(root, token), true);
+    const aliasParent = fs.mkdtempSync(path.join(os.tmpdir(), "certops-response-barrier-temp-alias-")), alias = path.join(aliasParent, "temporary");
+    const temporaryEnv = Object.fromEntries(["TEMP", "TMP", "TMPDIR"].map(name => [name, process.env[name]]));
+    try {
+      fs.symlinkSync(fs.realpathSync.native(os.tmpdir()), alias, process.platform === "win32" ? "junction" : "dir");
+      process.env.TEMP = process.env.TMP = process.env.TMPDIR = alias;
+      assert.equal(helper.assertCleanupSafe(root, token), true, "Canonical owned root remains valid when TEMP is an alias");
+      assert.throws(() => helper.assertCleanupSafe(path.join(alias, path.basename(root)), token), "Aliased guard paths remain forbidden");
+    } finally {
+      for (const [name, value] of Object.entries(temporaryEnv)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
+      if (fs.existsSync(alias)) fs.unlinkSync(alias); fs.rmdirSync(aliasParent);
+    }
     for (const field of ["childExited", "childPidAbsent", "holdersReleasedAfterDrain"]) { writeDrained(); const value = JSON.parse(fs.readFileSync(drainedFile)); value[field] = false; fs.writeFileSync(drainedFile, JSON.stringify(value)); assert.throws(() => helper.assertCleanupSafe(root, token)); }
     writeDrained(); { const value = JSON.parse(fs.readFileSync(drainedFile)); value.workerPid = process.pid; fs.writeFileSync(drainedFile, JSON.stringify(value)); assert.throws(() => helper.assertCleanupSafe(root, token)); }
     writeDrained(); fs.writeFileSync(path.join(root, "issued.cer"), "unwanted output"); assert.throws(() => helper.assertCleanupSafe(root, token)); fs.truncateSync(path.join(root, "issued.cer"), 0);

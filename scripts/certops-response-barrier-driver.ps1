@@ -111,7 +111,7 @@ try {
   $workerScript=Join-Path $PSScriptRoot 'certops-response-barrier-worker.ps1'
   $workerHash=(Public-Hash $workerScript)
   $exe=(Get-Process -Id $PID).Path
-  $worker=Start-Process -FilePath $exe -ArgumentList @('-NoProfile','-NonInteractive','-File',('"'+$workerScript+'"'),'-Root',('"'+$rootPath+'"'),'-Token',$Token,'-DriverPid',"$PID",'-DriverCreated',$driverCreated,'-OutputIndex',"$OutputIndex") -WindowStyle Hidden -PassThru
+  $worker=Start-Process -FilePath $exe -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$workerScript+'"'),'-Root',('"'+$rootPath+'"'),'-Token',$Token,'-DriverPid',"$PID",'-DriverCreated',$driverCreated,'-OutputIndex',"$OutputIndex") -WindowStyle Hidden -PassThru
   $workerHandle=$worker.Handle
   $until=[DateTime]::UtcNow.AddSeconds(30)
   while(-not(Test-Path -LiteralPath (Join-Path $rootPath '.worker-ready.json'))) { Assert-Owner;if($worker.HasExited -or [DateTime]::UtcNow -ge $until){throw 'Supporting worker startup deadline'};Start-Sleep -Milliseconds 10 }
