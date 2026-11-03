@@ -1,6 +1,6 @@
 # Unified certificate distribution UI
 
-The read-only visualization described here is retained. Ongoing configuration now lives in the separate **Distribution Management** page, reached through **Manage distribution** in Deployments. See [lifecycle administration](distribution-lifecycle.md). The historical implementation notes below describe the original visualization slice.
+The read-only visualization described here is retained. Ongoing configuration now lives in the separate **Distribution Management** page, reached through **Manage distribution** in Deployments. See [lifecycle administration](../../../docs/certops/distribution-lifecycle.md). The historical implementation notes below describe the original visualization slice.
 
 Implemented on branch `feat/certops-unified-distribution-ui` from freshly fetched
 `origin/main` commit `714e6a1f8bfbb55702b1e0195315f2768d0d4b31`.

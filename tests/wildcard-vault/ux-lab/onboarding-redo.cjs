@@ -9,7 +9,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 
 const SOURCE = "tests/wildcard-vault/ux-lab/onboarding-redo.cjs";
-const VAULT_TITLE = "Share a certificate through Vault";
+const VAULT_TITLE = "Configure material store";
 const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex");
 
 async function inspect({ state, owner, base, api, versions, matrix, customer, wait, approve, job, check, root }) {
@@ -108,7 +108,7 @@ async function inspect({ state, owner, base, api, versions, matrix, customer, wa
 
     async function reachVault() {
       const goal = frame("What do you want to do first?");
-      await checkChoice(goal.getByRole("radio", { name: "Share one certificate across servers with Vault", exact: true }));
+      await checkChoice(goal.getByRole("radio", { name: "Share one certificate across servers", exact: true }));
       await goal.getByRole("button", { name: "Continue", exact: true }).click();
       const objective = frame("Where will the certificates live?");
       await checkChoice(objective.getByRole("radio", { name: /^Linux server/ }));
@@ -152,35 +152,32 @@ async function inspect({ state, owner, base, api, versions, matrix, customer, wa
       assert.equal(current.intent.goal, "certops_vault");
       assert.equal(current.progress.certops.chosenAgentConfirmed, state.agents.issuer.id);
       assert.equal(current.progress.certops.dryRunJobId, created.id);
-      assert.ok(!current.progress.certops.chosenDistributionId);
-      assert.ok(!current.progress.certops.chosenDistributionConfirmed);
+      assert.ok(!current.progress.certops.materialSetup?.groupId);
       const group = distribution(await summary());
       assert.equal(group?.verified, true, "Completion must be backed by a real verified rollout");
       assert.equal(group.existedBeforeSession, true, "Pre-existing verified work must be session-scoped");
       assert.ok(Date.parse(group.createdAt) < Date.parse(current.createdAt));
       assert.ok(Date.parse(group.lastVerifiedAt) < Date.parse(current.createdAt));
-      assert.equal(await frame(VAULT_TITLE).getByRole("checkbox", { name: "My Vault distribution is already set up", exact: true }).isChecked(), false);
-      await frame(VAULT_TITLE).getByTestId("existing-distributions-note").waitFor();
+      assert.equal(await frame(VAULT_TITLE).getByRole("combobox", { name: "Use an existing publication", exact: true }).inputValue(), "");
       return current;
     }
 
     async function chooseAndConfirm() {
       const vault = frame(VAULT_TITLE);
-      await checkChoice(vault.getByRole("checkbox", { name: "My Vault distribution is already set up", exact: true }));
-      const saved = page.waitForResponse((response) => requestFor(response, "PUT", route));
-      await vault.getByRole("combobox", { name: "Choose your distribution", exact: true }).selectOption(state.groupId);
-      assert.equal((await saved).status(), 200);
-      await wait("owner distribution choice saved before confirmation", async () => (await session()).progress.certops?.chosenDistributionId === state.groupId, 30000);
-      assert.ok(!(await session()).progress.certops.chosenDistributionConfirmed);
+      await vault.getByRole("combobox", { name: "Use an existing publication", exact: true }).selectOption(state.groupId);
+      assert.ok(!(await session()).progress.certops.materialSetup?.groupId, "Selecting local form state cannot reuse a publication before saving");
       await assertNotDone();
-      await vault.getByText("Distribution verified", { exact: true }).waitFor();
-      const confirmed = page.waitForResponse((response) => requestFor(response, "PUT", route));
-      await vault.getByTestId("vault-use-distribution").click();
-      assert.equal((await confirmed).status(), 200);
+      const saved = page.waitForResponse((response) => requestFor(response, "PUT", route));
+      await vault.getByRole("button", { name: "Save public references", exact: true }).click();
+      assert.equal((await saved).status(), 200);
+      await wait("owner material references saved explicitly", async () => (await session()).progress.certops?.materialSetup?.groupId === state.groupId, 30000);
+      await vault.getByText("Agent publication verified", { exact: true }).waitFor();
+      await page.getByTestId("step-continue").getByRole("button", { name: "Continue", exact: true }).click();
       await vaultRow().getByText("Done", { exact: true }).waitFor();
+      await page.getByRole("list", { name: "Setup steps" }).getByRole("listitem")
+        .filter({ hasText: "Connect and validate consumers" }).getByText("Done", { exact: true }).waitFor();
       const current = await session();
-      assert.equal(current.progress.certops.chosenDistributionId, state.groupId);
-      assert.equal(current.progress.certops.chosenDistributionConfirmed, state.groupId);
+      assert.equal(current.progress.certops.materialSetup.groupId, state.groupId);
       return current;
     }
 
@@ -206,13 +203,13 @@ async function inspect({ state, owner, base, api, versions, matrix, customer, wa
     await page.reload();
     await frame(VAULT_TITLE).waitFor();
     await assertNotDone();
-    assert.equal(await frame(VAULT_TITLE).getByRole("checkbox", { name: "My Vault distribution is already set up", exact: true }).isChecked(), false);
+    assert.equal(await frame(VAULT_TITLE).getByRole("combobox", { name: "Use an existing publication", exact: true }).inputValue(), "");
     const completed = await chooseAndConfirm();
     await page.reload();
     await vaultRow().getByText("Done", { exact: true }).waitFor();
     await vaultRow().getByRole("button", { name: VAULT_TITLE + ", review", exact: true }).click();
-    await frame(VAULT_TITLE).getByText("Distribution verified", { exact: true }).waitFor();
-    assert.equal(await frame(VAULT_TITLE).getByRole("combobox", { name: "Choose your distribution", exact: true }).inputValue(), state.groupId);
+    await frame(VAULT_TITLE).getByText("Agent publication verified", { exact: true }).waitFor();
+    assert.equal(await frame(VAULT_TITLE).getByRole("combobox", { name: "Use an existing publication", exact: true }).inputValue(), state.groupId);
     assert.equal(previewJobs.length, 2);
     assert.equal(new Set(previewJobs.map((row) => row.id)).size, 2);
     assert.equal(previewRequests.length, 2);
@@ -228,7 +225,7 @@ async function inspect({ state, owner, base, api, versions, matrix, customer, wa
     await page.screenshot({ path: path.join(root, screenshot) });
     const receipt = {
       schemaVersion: 1,
-      scenario: "owner-vault-start-over-explicit-reuse",
+      scenario: "owner-material-store-start-over-explicit-reuse",
       passed: true,
       coreCommit: state.coreCommit,
       runId: state.runId,
@@ -244,7 +241,7 @@ async function inspect({ state, owner, base, api, versions, matrix, customer, wa
       existingDistributionStillVerified: true,
       oldDistributionDidNotCompleteNewSession: true,
       reloadBeforeChoiceRemainedIncomplete: true,
-      choiceWithoutContinueRemainedIncomplete: true,
+      choiceWithoutSaveRemainedIncomplete: true,
       explicitReuseCompletedStep: true,
       completedChoiceSurvivedReload: true,
       distributionInventoryUnchanged: true,
@@ -266,7 +263,7 @@ async function inspect({ state, owner, base, api, versions, matrix, customer, wa
     };
     const receiptFile = path.join(root, "onboarding-redo.json");
     fs.writeFileSync(receiptFile, JSON.stringify(receipt, null, 2) + "\n");
-    check("owner Start over clears Vault onboarding completion; existing verified distribution requires explicit reuse and Continue", { evidence: "onboarding-redo.json" });
+    check("owner Start over clears material-store onboarding completion; existing verified publication requires explicit save and Continue", { evidence: "onboarding-redo.json" });
     return { file: "onboarding-redo.json", sha256: sha256(fs.readFileSync(receiptFile)) };
   } finally {
     await context.close();

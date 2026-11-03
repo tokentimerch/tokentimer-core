@@ -1,5 +1,14 @@
 # Sanitized functional acceptance evidence
 
+The [finalization functional record](pr498-final-functional.json) and
+[merge-readiness matrix](../../pr498-merge-readiness-20261103.md) supersede the
+earlier combined preview verdict. They record post-fix tests, twelve connected
+enrolled-agent phases plus focused current-provider onboarding/privacy/transfer
+acceptance, and two clean real-provider cleanup reruns. Interrupted strict
+campaigns remain failed; composed functional evidence is not a fresh strict or
+native artifact qualification pass. The screenshots below retain their original
+historical fixture provenance.
+
 See the [acceptance record](../../pr498-completion-20261103.md) for scope,
 commands, validation and blockers. No file here is native artifact qualification.
 
