@@ -23,6 +23,9 @@ import {
   subjectTypeLabel,
   truncateId,
 } from './certopsJobsFormat';
+import JobApprovalScope, {
+  cleanupScopeAvailable,
+} from './JobApprovalScope.jsx';
 
 /**
  * Confirm dialog for approving or rejecting a job at `pending_approval`.
@@ -58,6 +61,7 @@ export default function ApprovalDecisionModal({
   }, [isOpen]);
 
   const approving = decision === 'approve';
+  const scopeUnavailable = approving && !cleanupScopeAvailable(job);
 
   const handleClose = () => {
     if (submitting) return;
@@ -65,7 +69,7 @@ export default function ApprovalDecisionModal({
   };
 
   const handleConfirm = async () => {
-    if (submitting) return;
+    if (submitting || scopeUnavailable) return;
     setSubmitting(true);
     try {
       await onDecide(reason.trim() || undefined);
@@ -75,11 +79,16 @@ export default function ApprovalDecisionModal({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} isCentered>
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      isCentered
+      scrollBehavior='inside'
+    >
       <ModalOverlay {...overlayProps} />
       <DashboardModalFrame
         type={approving ? 'standard' : 'danger'}
-        maxW={{ base: 'calc(100vw - 24px)', md: '520px' }}
+        maxW={{ base: 'calc(100vw - 24px)', md: '680px' }}
       >
         <ModalHeader {...headerProps}>
           <DashboardModalTitle>
@@ -105,6 +114,7 @@ export default function ApprovalDecisionModal({
                   : ''}
               </Text>
             ) : null}
+            <JobApprovalScope job={job} />
             <Box>
               <Text fontSize='sm' mb={1}>
                 Reason (optional)
@@ -135,6 +145,7 @@ export default function ApprovalDecisionModal({
             {...(approving ? primaryButtonProps : dangerButtonProps)}
             ml={3}
             onClick={handleConfirm}
+            isDisabled={scopeUnavailable}
             isLoading={submitting}
             loadingText={approving ? 'Approving' : 'Rejecting'}
           >
