@@ -44,15 +44,45 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
     migrations.push(...pending.filter(entry=>entry.version>80 && entry.version<=89));
     await runMigrations();
     const beforeVerificationLedger=(await pool.query("SELECT * FROM migrations ORDER BY version")).rows;
-    const {fixture,proveConsumer}=require("../helpers/distribution-lifecycle-fixture.cjs");
+    const {fixture}=require("../helpers/distribution-lifecycle-fixture.cjs");
     const operations=require("../../apps/api/services/certops/distributionOperations");
     const f=await fixture();
+    // Seed historical public evidence through the pre-staging table shape.
+    // The current executor requires the completed migration plan; running it
+    // against version 89 would incorrectly require version 96's new columns.
+    async function historicalChild(rollout){
+      const d=(await pool.query("SELECT * FROM certops_consumer_deployments WHERE rollout_id=$1 AND binding_id=$2",[rollout.id,f.bindingId])).rows[0];
+      if(d.job_id)return d;
+      const group=(await pool.query("SELECT * FROM certops_distribution_groups WHERE id=$1",[f.groupId])).rows[0];
+      return operations.transaction(async client=>{
+      const job=await require("../../apps/api/services/certops/jobs").createCertificateJob({client,workspaceId:f.workspaceId,
+        operation:"deploy-from-store",source:"control-plane",subjectType:"managed_certificate",subjectId:f.certificateId,
+        assignedAgentId:f.consumer,idempotencyKey:`distribution:${rollout.id}:${f.bindingId}`,payload:{keyMode:"vault-managed",
+          target:{type:"endpoint",reference:f.bindingId},materialDeployment:{bindingId:f.bindingId,rolloutId:rollout.id,groupId:f.groupId,
+            materialVersionId:f.materialVersionId,materialStoreRef:group.material_store_ref,providerVersion:1,fingerprintSha256:f.fingerprint,
+            generation:Number(rollout.generation),deploymentProfileRef:d.deployment_profile_ref,profileRevision:d.profile_revision,
+            authorizationRevision:d.authorization_revision,verificationPolicy:d.verification_policy,
+            ...(rollout.verification_only?{verificationOnly:true}:{})}}});
+      await client.query("UPDATE certops_consumer_deployments SET job_id=$2 WHERE id=$1",[d.id,job.id]);
+      return {...d,job_id:job.id};
+      });
+    }
+    async function proveConsumer(){
+      const rollout=(await pool.query("SELECT * FROM certops_distribution_rollouts WHERE workspace_id=$1 ORDER BY generation DESC LIMIT 1",[f.workspaceId])).rows[0];
+      const d=await historicalChild(rollout),crypto=require("node:crypto");
+      const job=(await pool.query("UPDATE certificate_jobs SET status='claimed',claim_id=$2,claimed_by_agent_id=assigned_agent_id,lease_expires_at=clock_timestamp()+interval '5 minutes' WHERE id=$1 RETURNING *",[d.job_id,crypto.randomUUID()])).rows[0];
+      const version=(await pool.query("SELECT valid_to FROM certops_material_versions WHERE id=$1",[f.materialVersionId])).rows[0];
+      await operations.transaction(client=>require("../../apps/api/services/certops/materialDistribution").acceptDeploymentReceipt({client,workspaceId:f.workspaceId,agentId:f.consumer,job,jobStatus:"succeeded",receipt:{
+        schemaVersion:1,workspaceId:f.workspaceId,groupId:f.groupId,bindingId:f.bindingId,materialVersionId:f.materialVersionId,generation:Number(rollout.generation),
+        fetched:true,installed:true,bound:true,servedVerified:true,trustValidated:false,fingerprintSha256:f.fingerprint,validTo:new Date(version.valid_to).toISOString(),observedAt:new Date().toISOString()}}));
+      await pool.query("UPDATE certificate_jobs SET status='succeeded',completed_at=clock_timestamp() WHERE id=$1",[job.id]);
+      await pool.query("UPDATE certops_distribution_rollouts SET state='verified' WHERE id=$1",[rollout.id]);
+    }
     await operations.requestRollout({...f,actorUserId:f.actor});await proveConsumer(f);
     async function oldFailure(verificationOnly){
       const parent=await operations.requestRollout({...f,verificationOnly,actorUserId:f.actor});
-      const rollout=(await pool.query("SELECT id FROM certops_distribution_rollouts WHERE approval_job_id=$1",[parent.id])).rows[0];
-      await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,rollout.id));
-      const child=(await pool.query("SELECT job_id FROM certops_consumer_deployments WHERE rollout_id=$1 AND binding_id=$2",[rollout.id,f.bindingId])).rows[0];
+      const rollout=(await pool.query("SELECT * FROM certops_distribution_rollouts WHERE approval_job_id=$1",[parent.id])).rows[0];
+      const child=await historicalChild(rollout);
       await pool.query("UPDATE certificate_jobs SET status='failed',attempt_count=99,completed_at=clock_timestamp() WHERE id=$1",[child.job_id]);
       await pool.query("UPDATE certops_consumer_deployments SET stage='failed',failure_code='historical_fixture_failure' WHERE job_id=$1",[child.job_id]);
       await pool.query("INSERT INTO certificate_job_log(workspace_id,job_id,event_type,status,message) VALUES($1,$2,'job.failed','failed','Historical verification fixture')",[f.workspaceId,child.job_id]);
@@ -84,7 +114,8 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
     }
     assert.equal((await pool.query("SELECT count(*)::int AS count FROM certops_consumer_verification_outcomes WHERE workspace_id=$1",[f.workspaceId])).rows[0].count,5);
     assert.deepEqual((await pool.query("SELECT * FROM certificate_jobs WHERE workspace_id=$1 ORDER BY id",[f.workspaceId])).rows,oldJobs);
-    assert.deepEqual((await pool.query("SELECT * FROM certops_consumer_deployments WHERE workspace_id=$1 ORDER BY id",[f.workspaceId])).rows,oldDeployments);
+    assert.deepEqual((await pool.query("SELECT * FROM certops_consumer_deployments WHERE workspace_id=$1 ORDER BY id",[f.workspaceId])).rows,
+      oldDeployments.map(row=>({...row,staging_job_id:null,staging_receipt:null})));
     assert.deepEqual((await pool.query("SELECT * FROM migrations WHERE version<=72 ORDER BY version")).rows, originalLedger);
     assert.deepEqual((await pool.query("SELECT * FROM migrations WHERE version<=80 ORDER BY version")).rows, currentMainLedger);
     const upgradedLedger = (await pool.query("SELECT * FROM migrations ORDER BY version")).rows;
@@ -196,7 +227,9 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
   },
   {"version":93,"name":"pagerduty_resolution_reason"},
   {"version":94,"name":"pagerduty_operator_actions"},
-  {"version":95,"name":"remove_pagerduty_rest_lookup"}
+  {"version":95,"name":"remove_pagerduty_rest_lookup"},
+  {"version":96,"name":"certops_consumer_staging"},
+  {"version":97,"name":"certops_review_authority_epochs"}
 ]);
     const constraints =
       await pool.query(`SELECT conname, pg_get_constraintdef(oid) AS definition

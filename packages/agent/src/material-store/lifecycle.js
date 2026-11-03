@@ -180,18 +180,24 @@ function resolveBindingPolicy(job, bindings, policyEngine, { platform = process.
     if (!probe || typeof probe.dialAddress !== "string" || !probe.dialAddress || !Number.isInteger(probe.port) || probe.port < 1 || probe.port > 65535 ||
       typeof probe.sni !== "string" || !/^[a-z0-9.-]{1,253}$/i.test(probe.sni)) throw failure("material_probe_config_invalid");
   }
+  if (intent.preparationOnly === true && (intent.verificationOnly === true ||
+    intent.activationPolicy?.independentStaging !== true)) throw failure("material_staging_policy_denied");
+  if (intent.activationPolicy?.independentStaging === true &&
+    (binding.target.type !== "endpoint" || binding.independentStaging !== true)) throw failure("material_staging_policy_denied");
+  if (intent.activationPolicy) {
+    validateActivationPolicy(intent.activationPolicy);
+    const localMethod = binding.target.type === "windows-iis" ? (binding.activationMode || "rebind")
+      : binding.activationMethod || (filesOnly ? "none" : "reload");
+    const supported = binding.target.type === "windows-iis" ? ["rebind"]
+      : ["none", "reload", ...(intent.verificationOnly === true ? ["manual"] : [])];
+    if (intent.activationPolicy.method !== localMethod || !supported.includes(localMethod)) throw failure("material_activation_policy_denied");
+  }
   if (binding.target.type === "windows-iis") {
     require("../windows-material").validateWindowsBinding(binding,policyEngine);
     return { intent,binding };
   }
   if (typeof binding.target.certPath !== "string" || typeof binding.target.keyPath !== "string") throw failure("material_binding_policy_denied");
   // Destination/reload/probes all come from approved local configuration.
-  if(intent.activationPolicy){
-    validateActivationPolicy(intent.activationPolicy);
-    // A control-plane policy cannot introduce a new customer-local action.
-    const localMethod=binding.activationMethod || (filesOnly?"none":"reload");
-    if(intent.activationPolicy.method!==localMethod || !["none","reload",...(intent.verificationOnly===true?["manual"]:[])].includes(localMethod))throw failure("material_activation_policy_denied");
-  }
   for (const file of [binding.target.certPath, binding.target.keyPath, binding.target.chainPath].filter(Boolean)) {
     if (!policyEngine.checkPath(file).allowed) throw failure("material_destination_denied");
   }
@@ -234,12 +240,25 @@ function installedPairMatches(binding, policyEngine, fingerprintSha256, bundle =
   return true;
 }
 
-async function executePinnedDeployment({ job, stores, bindings, stateDir, policyEngine, checkLease, reload, recoveryOnly = false, fixtureLoopbackHttp = false, onBeforeMutation = () => {}, windowsConnector, signal: jobSignal, platform = process.platform }) {
+function deploymentIntentHash(intent) {
+  // Preparation and activation are separate signed jobs for one frozen scope.
+  // The phase alone is excluded from their customer-local generation identity.
+  const copy = { ...intent };
+  delete copy.preparationOnly;
+  return crypto.createHash("sha256").update(canonicalizeJobPayload(copy)).digest("hex");
+}
+
+async function executePinnedDeployment({ job, stores, bindings, stateDir, policyEngine, checkLease, reload, recoveryOnly = false, fixtureLoopbackHttp = false, onBeforeMutation = () => {}, windowsConnector, signal: jobSignal, platform = process.platform, now = Date.now }) {
   const { intent,binding } = resolveBindingPolicy(job,bindings,policyEngine,{platform});
   const store = createMaterialStore(stores, intent, { fixtureLoopbackHttp });
   const locks = path.join(stateDir, "material-locks");
   const record = path.join(stateDir, "material-bindings", `${intent.bindingId}.json`);
-  const hash = crypto.createHash("sha256").update(canonicalizeJobPayload(intent)).digest("hex");
+  const hash = deploymentIntentHash(intent);
+  async function activationAdmission(signal = jobSignal) {
+    await checkLease();
+    signal?.throwIfAborted();
+    if (!activationDecision(intent.activationPolicy, now()).allowed) throw failure("material_maintenance_window_closed");
+  }
   return withMaterialLock(locks, `binding:${intent.workspaceId}:${intent.bindingId}`, async () => {
     let previous = null;
     if (fs.existsSync(record)) {
@@ -248,13 +267,51 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
       if (previous.generation > intent.generation || (previous.generation === intent.generation && previous.intentHash !== hash)) throw failure("material_stale_generation");
       if (previous.uncertain) throw failure("material_binding_uncertain");
     }
-    if (recoveryOnly && !previous) throw failure("material_binding_uncertain");
-    if(intent.verificationOnly!==true && !activationDecision(intent.activationPolicy).allowed)throw failure("material_maintenance_window_closed");
+    if (recoveryOnly && !previous && intent.preparationOnly !== true) throw failure("material_binding_uncertain");
+    if(intent.verificationOnly!==true && intent.preparationOnly!==true && !activationDecision(intent.activationPolicy, now()).allowed)throw failure("material_maintenance_window_closed");
+    // Preparation may run outside a window but never outside approval validity.
+    if (intent.preparationOnly === true && intent.activationPolicy.validUntil &&
+      now() >= Date.parse(intent.activationPolicy.validUntil)) throw failure("material_activation_authorization_expired");
     await checkLease();
     const bundle = await store.fetch(intent.providerVersion);
     const facts = validateBundle(bundle, intent, store.scope);
     const certificate = new crypto.X509Certificate(bundle.certificatePem);
     if ((binding.probes || []).some(probe => !certificate.checkHost(probe.sni,{subject:"never"}))) throw failure("material_probe_identity_mismatch");
+    if (intent.activationPolicy?.independentStaging === true && intent.verificationOnly !== true) {
+      const directory = path.join(stateDir, "material-consumer-staging", intent.bindingId, String(intent.generation));
+      const stagedFile = path.join(directory, "bundle.json"), metadataFile = path.join(directory, "stage.json");
+      if (fs.existsSync(metadataFile)) {
+        const metadata = JSON.parse(readProtectedFile(metadataFile, 16384));
+        if (metadata.intentHash !== hash) throw failure("material_staging_invalid");
+        if (fs.existsSync(stagedFile)) {
+          const staged = JSON.parse(readProtectedFile(stagedFile));
+          validateBundle(staged, intent, store.scope);
+          if (canonicalizeJobPayload(staged) !== canonicalizeJobPayload(bundle)) throw failure("material_staging_invalid");
+        } else if (intent.preparationOnly !== true) throw failure("material_staging_unavailable");
+      } else if (intent.preparationOnly !== true) throw failure("material_staging_unavailable");
+      if (intent.preparationOnly === true) {
+        await checkLease();
+        jobSignal?.throwIfAborted();
+        if (intent.activationPolicy.validUntil && now() >= Date.parse(intent.activationPolicy.validUntil))
+          throw failure("material_activation_authorization_expired");
+        // No live destination or service is touched. Persist the generation
+        // fence before key-bearing preparation; retries recover this same scope.
+        const recordPreparation = !previous || previous.generation < intent.generation || previous.phase === "staged" || previous.phase === "preparing";
+        if (recordPreparation)
+          writeProtectedJson(record, { generation:intent.generation,intentHash:hash,intent,phase:"preparing",uncertain:false });
+        onBeforeMutation("material_consumer_staging");
+        writeProtectedJson(metadataFile, { intentHash:hash,materialVersionId:intent.materialVersionId,generation:intent.generation });
+        writeProtectedJson(stagedFile, bundle);
+        await checkLease();
+        jobSignal?.throwIfAborted();
+        const receipt = {schemaVersion:1,workspaceId:intent.workspaceId,groupId:intent.groupId,bindingId:intent.bindingId,
+          materialVersionId:intent.materialVersionId,generation:intent.generation,fetched:true,staged:true,installed:false,
+          bound:false,servedVerified:false,trustValidated:false,...facts,observedAt:new Date(now()).toISOString()};
+        if (recordPreparation)
+          writeProtectedJson(record, {generation:intent.generation,intentHash:hash,intent,phase:"staged",uncertain:false,receipt});
+        return {status:"succeeded",deploymentReceipt:receipt,errorMessage:null};
+      }
+    }
     if (binding.target.type === "windows-iis") {
       require("../windows-material").validateWindowsKey(certificate.publicKey);
       const connector = windowsConnector || require("../windows-material").createWindowsConnector({binding,stateDir});
@@ -274,12 +331,11 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
             onBeforeMutation("material_windows_import");
             // Native preflight and protected journal writes can be slow.
             // Renew after them, immediately before starting the import.
-            await checkLease();
-            signal?.throwIfAborted();
+            await activationAdmission(signal);
             mutated=true;
             await connector.import(bundle,signal);
             receipt.installed=true;
-            await checkLease();
+            await activationAdmission(signal);
             await connector.activate(bundle,signal);
           }
           const installed = await connector.verify(bundle,signal);
@@ -347,6 +403,7 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
       await checkLease();
       writeProtectedJson(record, { generation: intent.generation, intentHash: hash, intent, uncertain: true, certificatePem: bundle.certificatePem });
       onBeforeMutation("material_filesystem_install");
+      await activationAdmission();
       mutated = true;
       const blocks = bundle.certificatePem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g);
       const deployed = await deployCertificateAndKey({ target: binding.target,
@@ -366,7 +423,7 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
       receipt.installed = true;
       await checkLease();
       if (binding.verificationPolicy !== "installed") {
-        if(!activationDecision(intent.activationPolicy).allowed)throw failure("material_maintenance_window_closed");
+        await activationAdmission();
         if (typeof reload !== "function" || !(await reload(binding.reloadService, binding.reloadCommandRefs))) throw failure("material_reload_failed");
         receipt.bound = true;
         const probes = [];
@@ -380,6 +437,10 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
       writeProtectedJson(record, { generation: intent.generation, intentHash: hash, intent, uncertain: false, receipt, certificatePem: bundle.certificatePem });
       return { status: "succeeded", deploymentReceipt: receipt, errorMessage: null };
     } catch (error) {
+      if (!mutated) {
+        if (previous) writeProtectedJson(record, previous);
+        else fs.rmSync(record, { force:true });
+      }
       // Do not infer compensation or device state after lease/reload/probe failure.
       return { status: mutated ? "orphaned_unknown_effect" : "failed", deploymentReceipt: receipt,
         errorMessage: /^material_[a-z_]+$/.test(error.code || "") ? error.code : "material_deployment_failed" };
@@ -396,8 +457,19 @@ async function reconcilePinnedDeployment({ job,bindings,stateDir,policyEngine,wi
   return withMaterialLock(path.join(stateDir,"material-locks"),`binding:${intent.workspaceId}:${intent.bindingId}`,async()=>{
     const record=path.join(stateDir,"material-bindings",`${intent.bindingId}.json`);
     const previous=JSON.parse(readProtectedFile(record,MAX_BUNDLE_BYTES+16384));
-    const intentHash=crypto.createHash("sha256").update(canonicalizeJobPayload(intent)).digest("hex");
+    const intentHash=deploymentIntentHash(intent);
     if(previous.generation!==intent.generation || previous.intentHash!==intentHash)throw failure("material_stale_generation");
+    if (intent.preparationOnly === true) {
+      if (!["preparing","staged"].includes(previous.phase) || previous.uncertain) throw failure("material_reconciliation_mismatch");
+      const directory=path.join(stateDir,"material-consumer-staging",intent.bindingId,String(intent.generation));
+      const metadata=JSON.parse(readProtectedFile(path.join(directory,"stage.json"),16384));
+      const bundle=JSON.parse(readProtectedFile(path.join(directory,"bundle.json")));
+      if(metadata.intentHash!==intentHash || !stores)throw failure("material_reconciliation_mismatch");
+      const store=createMaterialStore(stores,intent,{fixtureLoopbackHttp});
+      validateBundle(bundle,intent,store.scope);
+      writeProtectedJson(record,{...previous,phase:"staged",reconciledAt:new Date().toISOString()});
+      return {reconciled:true,staged:true,bindingId:intent.bindingId,generation:intent.generation,fingerprintSha256:intent.fingerprintSha256};
+    }
     if(binding.target.type==="windows-iis") {
       const certificatePem=previous.certificatePem;
       let certificate;

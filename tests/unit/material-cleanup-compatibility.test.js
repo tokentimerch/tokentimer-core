@@ -14,7 +14,8 @@ test("cleanup operation and provider are independently identified by the shared 
   }
 });
 test("unknown providers, mixed discriminator meanings and missing cleanup identity fail closed",()=>{
-  for(const intent of [{},{type:"vault-kv2"},{operation:"soft-delete",provider:"azure-key-vault"},{operation:"soft-delete",provider:"openbao-kv2"},{type:"vault-kv2-soft-delete",provider:"azure-key-vault"},{type:"vault-kv2-soft-delete",operation:"soft-delete",provider:"vault-kv2"}])
+  assert.deepEqual(cleanupIdentity({operation:"soft-delete",provider:"openbao-kv2"}),{operation:"soft-delete",provider:"openbao-kv2",method:"openbao-kv2-soft-delete"});
+  for(const intent of [{},{type:"vault-kv2"},{operation:"soft-delete",provider:"azure-key-vault"},{operation:"soft-delete",provider:"unsupported"},{type:"vault-kv2-soft-delete",provider:"openbao-kv2"},{type:"vault-kv2-soft-delete",provider:"azure-key-vault"},{type:"vault-kv2-soft-delete",operation:"soft-delete",provider:"vault-kv2"}])
     assert.throws(()=>cleanupIdentity(intent),{code:"material_cleanup_intent_invalid"});
   assert.throws(()=>validateDistributionContract("materialCleanup",{}));
 });

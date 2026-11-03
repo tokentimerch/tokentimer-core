@@ -429,7 +429,7 @@
             ],
             "maxLength": 512,
             "pattern": "^(?:/|[A-Za-z]:[\\\\/]|\\\\\\\\)",
-            "description": "Absolute host destination for the matching private key PEM (POSIX, Windows drive, or UNC). Path/mode metadata only \u2014 never key content."
+            "description": "Absolute host destination for the matching private key PEM (POSIX, Windows drive, or UNC). Path/mode metadata only — never key content."
           },
           "reloadService": {
             "type": [
@@ -546,7 +546,7 @@
       "minLength": 1,
       "maxLength": 512,
       "pattern": "^(?:/|[A-Za-z]:[\\\\/]|\\\\\\\\)",
-      "description": "Optional absolute host destination for the matching private key PEM (job-level fallback when a target omits keyPath). Path only \u2014 never key content."
+      "description": "Optional absolute host destination for the matching private key PEM (job-level fallback when a target omits keyPath). Path only — never key content."
     },
     "chainPath": {
       "type": "string",
@@ -1134,9 +1134,47 @@
         },
         "activationPolicy": {
           "$ref": "#/definitions/materialDistribution_activationPolicy"
+        },
+        "preparationOnly": {
+          "const": true,
+          "description": "Signed customer-local preparation only; cannot install, activate or advance convergence. Requires independent staging policy and capability."
         }
       },
       "allOf": [
+        {
+          "if": {
+            "required": [
+              "preparationOnly"
+            ]
+          },
+          "then": {
+            "required": [
+              "activationPolicy"
+            ],
+            "properties": {
+              "activationPolicy": {
+                "required": [
+                  "independentStaging"
+                ],
+                "properties": {
+                  "independentStaging": {
+                    "const": true
+                  }
+                }
+              }
+            },
+            "not": {
+              "required": [
+                "verificationOnly"
+              ],
+              "properties": {
+                "verificationOnly": {
+                  "const": true
+                }
+              }
+            }
+          }
+        },
         {
           "if": {
             "required": [
@@ -1260,6 +1298,10 @@
         "observedAt"
       ],
       "properties": {
+        "staged": {
+          "type": "boolean",
+          "description": "Protected customer-local material is prepared; this is not installed, served or trusted proof."
+        },
         "schemaVersion": {
           "const": 1
         },
@@ -1423,6 +1465,10 @@
         "emergency"
       ],
       "properties": {
+        "independentStaging": {
+          "type": "boolean",
+          "description": "Explicitly authorize preparation outside the service activation window on a qualified connector."
+        },
         "method": {
           "enum": [
             "none",
@@ -1594,7 +1640,10 @@
           "const": "soft-delete"
         },
         "provider": {
-          "const": "vault-kv2"
+          "enum": [
+            "vault-kv2",
+            "openbao-kv2"
+          ]
         },
         "cleanupId": {
           "$ref": "#/definitions/materialDistribution_uuid"
@@ -1702,7 +1751,10 @@
           "$ref": "#/definitions/materialDistribution_revision"
         },
         "method": {
-          "const": "vault-kv2-soft-delete"
+          "enum": [
+            "vault-kv2-soft-delete",
+            "openbao-kv2-soft-delete"
+          ]
         },
         "softDeleted": {
           "const": true

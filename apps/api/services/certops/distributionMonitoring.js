@@ -145,7 +145,7 @@ async function verificationFailureCounts(client, workspaceId, groupId) {
       ON s.workspace_id=b.workspace_id AND s.binding_id=b.id
     LEFT JOIN certops_distribution_rollouts r ON r.workspace_id=s.workspace_id AND r.group_id=s.group_id AND r.generation=s.desired_generation
     LEFT JOIN certops_consumer_deployments d ON d.workspace_id=r.workspace_id AND d.rollout_id=r.id AND d.binding_id=b.id
-    LEFT JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=d.job_id
+    LEFT JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=COALESCE(d.job_id,d.staging_job_id)
     WHERE b.workspace_id=$1 AND b.group_id=$2 AND b.state='active'`,
     [workspaceId, groupId],
   );

@@ -31,6 +31,8 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
         "material-store-azure-key-vault-v1",
         "windows-material-iis-v1",
         "material-cleanup-vault-kv2-v1",
+        "material-cleanup-openbao-kv2-v1",
+        "material-consumer-staging-v1",
       ],
     );
   });
@@ -54,6 +56,8 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
     assert.equal(manifest.qualified.includes("material-store-azure-key-vault-v1"),false);
     assert.equal(manifest.qualified.includes("windows-material-iis-v1"),false);
     assert.equal(manifest.qualified.includes("material-cleanup-vault-kv2-v1"),false);
+    assert.equal(manifest.qualified.includes("material-cleanup-openbao-kv2-v1"),false);
+    assert.equal(manifest.qualified.includes("material-consumer-staging-v1"),false);
   });
 
   it("advertises all three real-host-verified gated capabilities plus any ungated candidate", () => {

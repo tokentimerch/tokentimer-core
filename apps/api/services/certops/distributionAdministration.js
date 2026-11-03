@@ -93,7 +93,11 @@ async function overview({ client = pool, workspaceId, groupId }) {
   const discoveries = (
     await client.query(
       `SELECT d.*,
-    CASE WHEN d.last_observed_at<clock_timestamp()-interval '1 hour' OR a.status<>'active' THEN 'stale' ELSE d.relationship_state END AS confidence
+    CASE WHEN d.coverage='unknown' THEN 'unknown'
+      WHEN d.last_observed_at<clock_timestamp()-interval '1 hour' OR a.status<>'active'
+        OR a.last_seen_at IS NULL OR a.last_seen_at<clock_timestamp()-interval '15 minutes' THEN 'stale'
+      ELSE d.relationship_state END AS confidence,
+    'agent_read_only_configuration' AS observation_source,false AS served_certificate_verified
     FROM certops_discovered_consumers d JOIN certops_agents a ON a.workspace_id=d.workspace_id AND a.id=d.agent_id
     WHERE d.workspace_id=$1 AND EXISTS(SELECT 1 FROM certops_material_versions v WHERE v.workspace_id=d.workspace_id AND v.group_id=$2 AND v.fingerprint_sha256=d.observed_fingerprint_sha256)
     ORDER BY d.last_observed_at DESC LIMIT 1000`,
@@ -172,6 +176,7 @@ async function preflight({
         "evidence-claim-binding-v1",
         ...(row.agent_platform === "win32" ? ["windows-material-iis-v1","windows-cert-store-v1","iis-binding-v1"] : []),
         ...(row.activation_policy ? ["maintenance-calendar-v1"] : []),
+        ...(row.activation_policy?.independentStaging === true ? ["material-consumer-staging-v1"] : []),
       ]) {
         if (
           !hasFreshCapability({
@@ -195,7 +200,7 @@ async function preflight({
           code: "CERTOPS_PINNED_VERSION_UNAVAILABLE",
           status: "blocked",
         });
-      if (!supportedActivation(row.activation_policy, row.verification_policy))
+      if (!supportedActivation(row.activation_policy, row.verification_policy, row.agent_platform || "linux"))
         diagnostics.push({
           code: "CERTOPS_ACTIVATION_CONNECTOR_UNSUPPORTED",
           status: "blocked",

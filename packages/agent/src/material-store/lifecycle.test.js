@@ -144,6 +144,85 @@ async function fixture(t, platform = "linux") {
 
 const readRecord = (file) => JSON.parse(readProtectedFile(file, 16384));
 
+function preparationOptions(f) {
+  filesOnly(f);
+  f.binding.independentStaging = true;
+  const instant = Date.now();
+  const options = f.options({intent:{preparationOnly:true,activationPolicy:{method:"none",disruptive:false,
+    requiresApproval:true,timezone:"UTC",windows:[],blackouts:[{start:new Date(instant-60000).toISOString(),end:new Date(instant+60000).toISOString()}],
+    validUntil:null,emergency:null,independentStaging:true}}});
+  options.now = () => instant;
+  return {options,instant};
+}
+
+test("independent preparation persists exact material before a closed window without installed/served/trusted proof",async t=>{
+  const f=await fixture(t),{options,instant}=preparationOptions(f);
+  const result=await executePinnedDeployment(options);
+  assert.equal(result.status,"succeeded");assert.equal(result.deploymentReceipt.staged,true);
+  for(const flag of ["installed","bound","servedVerified","trustValidated"])assert.equal(result.deploymentReceipt[flag],false);
+  assert.equal(fs.existsSync(f.target.certPath),false);assert.equal(fs.existsSync(f.target.keyPath),false);
+  assert.equal(readRecord(f.record).phase,"staged");assert.equal(readRecord(f.record).uncertain,false);
+  assert.doesNotMatch(JSON.stringify(result),/PRIVATE KEY|token|https?:/);
+  const activate={...options,job:{...options.job,materialDeployment:{...options.job.materialDeployment}}};
+  delete activate.job.materialDeployment.preparationOnly;
+  await assert.rejects(executePinnedDeployment(activate),{code:"material_maintenance_window_closed"});
+  activate.now=()=>instant+60001;
+  const installed=await executePinnedDeployment(activate);
+  assert.equal(installed.status,"succeeded");assert.equal(installed.deploymentReceipt.installed,true);
+  assert.equal(installed.deploymentReceipt.servedVerified,false);
+});
+
+test("preparation recovery preserves the original scope after lease loss and rejects changed or stale generations",async t=>{
+  const f=await fixture(t),{options}=preparationOptions(f);let checks=0;
+  options.checkLease=async()=>{if(++checks===3)throw Object.assign(new Error(),{code:"material_lease_unavailable"});};
+  await assert.rejects(executePinnedDeployment(options),{code:"material_lease_unavailable"});
+  assert.equal(fs.existsSync(f.target.certPath),false);
+  options.checkLease=async()=>{};options.recoveryOnly=true;
+  assert.equal((await executePinnedDeployment(options)).deploymentReceipt.staged,true);
+  const original=structuredClone(options.job);
+  options.job.materialDeployment.authorizationRevision=2;f.binding.authorizationRevision=2;
+  await assert.rejects(executePinnedDeployment(options),{code:"material_stale_generation"});
+  f.binding.authorizationRevision=1;options.job=structuredClone(original);options.job.materialDeployment.generation=2;
+  assert.equal((await executePinnedDeployment(options)).deploymentReceipt.staged,true);
+  assert.equal(readRecord(f.record).generation,2);
+  options.job=original;
+  await assert.rejects(executePinnedDeployment(options),{code:"material_stale_generation"});
+});
+
+test("independent preparation requires customer-local opt-in, bounded authority and a preparation-only intent",async t=>{
+  const f=await fixture(t),{options,instant}=preparationOptions(f);
+  f.binding.independentStaging=false;
+  await assert.rejects(executePinnedDeployment(options),{code:"material_staging_policy_denied"});
+  assert.equal(fs.existsSync(options.stateDir),false);
+  f.binding.independentStaging=true;options.job.materialDeployment.verificationOnly=true;
+  await assert.rejects(executePinnedDeployment(options),{code:"material_staging_policy_denied"});
+  delete options.job.materialDeployment.verificationOnly;
+  options.job.materialDeployment.activationPolicy.validUntil=new Date(instant).toISOString();
+  await assert.rejects(executePinnedDeployment(options),{code:"material_activation_authorization_expired"});
+  assert.equal(fs.existsSync(f.target.certPath),false);
+});
+
+test("a missing or replaced prepared bundle cannot authorize activation after restart",async t=>{
+  const f=await fixture(t),{options,instant}=preparationOptions(f);
+  await executePinnedDeployment(options);
+  delete options.job.materialDeployment.preparationOnly;options.now=()=>instant+60001;
+  const stagedFile=path.join(options.stateDir,"material-consumer-staging",f.bindingId,"1","bundle.json");
+  writeProtectedJson(stagedFile,{...f.bundle,materialVersionId:crypto.randomUUID()});
+  await assert.rejects(executePinnedDeployment(options));
+  fs.unlinkSync(stagedFile);
+  await assert.rejects(executePinnedDeployment(options),{code:"material_staging_unavailable"});
+  assert.equal(fs.existsSync(f.target.certPath),false);
+});
+
+test("calendar is checked after slow filesystem preparation immediately before the first live write",async t=>{
+  const f=await fixture(t);filesOnly(f);let instant=Date.now();
+  const policy={method:"none",disruptive:false,requiresApproval:true,timezone:"UTC",windows:[],blackouts:[{start:new Date(instant+1000).toISOString(),end:new Date(instant+60000).toISOString()}],validUntil:null,emergency:null};
+  const options=f.options({intent:{activationPolicy:policy},onBeforeMutation:()=>{instant+=2000;}});options.now=()=>instant;
+  const result=await executePinnedDeployment(options);
+  assert.equal(result.status,"failed");assert.equal(result.errorMessage,"material_maintenance_window_closed");
+  assert.equal(fs.existsSync(f.target.certPath),false);assert.equal(fs.existsSync(f.record),false);
+});
+
 function filesOnly(f) {
   f.binding.verificationPolicy = "installed";
   delete f.binding.reloadService;
@@ -223,8 +302,7 @@ for (const splitChain of [false, true]) {
     const f = await fixture(t);
     filesOnly(f); fullChain(f);
     if (splitChain) f.target.chainPath = path.join(f.deployDir, "chain.pem");
-    let leases = 0;
-    const interrupted = await f.deploy({ checkLease: async () => { if (++leases === 3) throw new Error("interrupted after readback"); } });
+    const interrupted = await f.deploy({ checkLease: async () => { if (fs.existsSync(f.target.certPath)) throw new Error("interrupted after readback"); } });
     assert.equal(interrupted.status, "orphaned_unknown_effect");
     assert.equal(readRecord(f.record).uncertain, true);
     const leaf = f.bundle.certificatePem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/)[0];
@@ -237,8 +315,7 @@ for (const splitChain of [false, true]) {
 
 test("legacy file-only journals use the exact provider pin to recover public chain proof", async t => {
   const f = await fixture(t); filesOnly(f); fullChain(f);
-  let leases = 0;
-  await f.deploy({ checkLease: async () => { if (++leases === 3) throw new Error("interrupted after readback"); } });
+  await f.deploy({ checkLease: async () => { if (fs.existsSync(f.target.certPath)) throw new Error("interrupted after readback"); } });
   const saved = readRecord(f.record);
   delete saved.certificatePem;
   writeProtectedJson(f.record, saved);
@@ -277,8 +354,7 @@ test("files-only rejects mismatched local policy, service hooks, and stale gener
 test("files-only reconcile proves the pair after uncertainty and recovery keeps file-only assurance", async (t) => {
   const f = await fixture(t);
   filesOnly(f);
-  let leases = 0;
-  const result = await f.deploy({ checkLease: async () => { if (++leases === 3) throw new Error("lost lease after install"); } });
+  const result = await f.deploy({ checkLease: async () => { if (fs.existsSync(f.target.certPath)) throw new Error("lost lease after install"); } });
   assert.equal(result.status, "orphaned_unknown_effect");
   assert.equal(readRecord(f.record).uncertain, true);
   await assert.rejects(f.deploy({ recoveryOnly: true }), { code: "material_binding_uncertain" });
@@ -398,6 +474,23 @@ async function windowsFixture(t) {
     verify:()=>Promise.resolve(installed&&bound)};
   return {...f,binding,connector,interrupt:()=>{interrupted=true;},repair:()=>{bound=true;interrupted=false;},get imports(){return imports;},get activations(){return activations;}};
 }
+test("IIS method policy cannot substitute a restart or reload for the typed local rebind",async t=>{
+  const f=await windowsFixture(t);
+  const policy={method:"controlled-restart",disruptive:true,requiresApproval:true,timezone:"UTC",windows:[],blackouts:[],validUntil:null,emergency:null};
+  await assert.rejects(f.deploy({windowsConnector:f.connector,intent:{activationPolicy:policy}}),{code:"material_activation_policy_denied"});
+  assert.equal(f.imports,0);assert.equal(f.activations,0);
+});
+test("IIS rechecks maintenance after preflight and between import and rebind",async t=>{
+  for(const boundary of ["preflight","import"]){
+    const f=await windowsFixture(t);let instant=Date.now();
+    const policy={method:"rebind",disruptive:false,requiresApproval:true,timezone:"UTC",windows:[],blackouts:[{start:new Date(instant+1000).toISOString(),end:new Date(instant+60000).toISOString()}],validUntil:null,emergency:null};
+    const original=f.connector[boundary];f.connector[boundary]=async(...args)=>{await original(...args);instant+=2000;};
+    const options=f.options({windowsConnector:f.connector,intent:{activationPolicy:policy}});options.now=()=>instant;
+    const result=await executePinnedDeployment(options);
+    assert.equal(result.status,boundary==="import"?"orphaned_unknown_effect":"failed");
+    assert.equal(f.imports,boundary==="import"?1:0);assert.equal(f.activations,0);
+  }
+});
 test("Windows consumer state is independent and a pinned retry verifies the actual TLS listener",async t=>{
   const f=await windowsFixture(t);let markers=0;
   const first=await f.deploy({windowsConnector:f.connector,onBeforeMutation:()=>{markers++;}});

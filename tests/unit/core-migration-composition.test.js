@@ -185,7 +185,7 @@ test("cross-PR reservations reject collisions and compose without changing suppo
 
 test("a provider preview upgraded through recipient and PagerDuty retains its ledger when lifecycle arrives", () => {
   const { migrations } = require("../../apps/api/migrations/migrate");
-  const earlier = migrations.filter(row => row.version < 86 || row.version > 91);
+  const earlier = migrations.filter(row => (row.version < 86 || row.version > 91) && !["certops_consumer_staging","certops_review_authority_epochs"].includes(row.name));
   const recorded = [...ledger(canonical), { version: 77, name: "onboarding_sessions" },
     ...["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "certops_material_providers"]
       .map((name, index) => ({ version: 78 + index, name }))];

@@ -441,7 +441,8 @@ const AGENT_DECLARED_CAPABILITIES = filterQualifiedCapabilities(
     process.platform === "win32" && filterQualifiedCapabilities(["windows-material-iis-v1"]).length === 1 ? [
     "material-store-vault-kv2-v1", "material-store-openbao-kv2-v1", "material-store-azure-key-vault-v1",
     ...(process.platform === "linux" ? ["certificate-publication-v1", "deploy-from-store-v1"] : ["deploy-from-store-v1", "windows-material-iis-v1"]),
-    ...(process.platform === "linux" ? ["maintenance-calendar-v1", "material-cleanup-vault-kv2-v1"] : []),
+    "maintenance-calendar-v1",
+    ...(process.platform === "linux" ? ["material-consumer-staging-v1", "material-cleanup-vault-kv2-v1", "material-cleanup-openbao-kv2-v1"] : []),
   ] : [])],
 );
 
@@ -2486,7 +2487,7 @@ async function executeJob({
     // not qualified material distribution.
     const requiredMaterialCapabilities = [];
     const { providerOf, providerCapability } = require("../vendor/contracts/material-provider.cjs");
-    const materialProviderCapability = providerCapability(providerOf(job.publication || job.materialDeployment));
+    const materialProviderCapability = providerCapability(providerOf(job.publication || job.materialDeployment || job.materialCleanup));
     if (job.publication) {
       requiredMaterialCapabilities.push(
         materialProviderCapability,
@@ -2499,8 +2500,11 @@ async function executeJob({
         "deploy-from-store-v1",
         ...(process.platform === "win32" ? ["windows-material-iis-v1", "windows-cert-store-v1", "iis-binding-v1"] : []),
       );
+      if (job.materialDeployment?.activationPolicy?.independentStaging === true || job.materialDeployment?.preparationOnly === true)
+        requiredMaterialCapabilities.push("material-consumer-staging-v1");
     }
-    if(action==="cleanup-from-store")requiredMaterialCapabilities.push("material-store-vault-kv2-v1","material-cleanup-vault-kv2-v1");
+    if(action==="cleanup-from-store")requiredMaterialCapabilities.push(materialProviderCapability,
+      require("../vendor/contracts/material-cleanup.cjs").cleanupCapability(providerOf(job.materialCleanup)) || "material-cleanup-unsupported");
     const missingMaterialCapability = requiredMaterialCapabilities.find(
       (capability) => !AGENT_DECLARED_CAPABILITIES.includes(capability),
     );
@@ -2559,6 +2563,7 @@ async function executeJob({
         "material_platform_unqualified", "material_windows_policy_denied", "material_probe_config_invalid",
         "material_intent_invalid", "material_scope_denied", "material_store_config_invalid",
         "material_activation_policy_denied", "material_maintenance_window_closed",
+        "material_staging_policy_denied", "material_activation_authorization_expired",
       ].includes(error.code)) {
         return { status: "blocked", errorMessage: error.code };
       }

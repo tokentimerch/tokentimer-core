@@ -452,16 +452,17 @@ async function collectWindowsDiscoveryObservations({
 
     const matchedSites = findSitesForBinding(sites, binding);
     if (matchedSites.length > 0) {
-      const siteName = matchedSites[0];
       const sniHost = binding.keyedBy === "hostnameport" ? parsed.address : null;
-      observations.push({
-        ...base,
-        locationKind: "iis_binding",
-        locationSlot: `${siteName}:${parsed.port}${sniHost ? `#${sniHost}` : ""}`,
-        siteName,
-        port: parsed.port,
-        sniHost,
-      });
+      // A single HTTP.sys certificate can back several configured IIS sites.
+      // Preserve every service, including distinct IP-keyed binding slots.
+      for (const siteName of new Set(matchedSites)) observations.push({
+          ...base,
+          locationKind: "iis_binding",
+          locationSlot: `${siteName}:${parsed.port}${sniHost ? `#${sniHost}` : `@${parsed.address}`}`,
+          siteName,
+          port: parsed.port,
+          sniHost,
+        });
     } else {
       observations.push({
         ...base,
@@ -473,7 +474,8 @@ async function collectWindowsDiscoveryObservations({
     }
   }
 
-  return observations;
+  if (observations.length > 1000) onWarning("windows discovery: observation limit reached; coverage is partial");
+  return observations.slice(0, 1000);
 }
 
 module.exports = {

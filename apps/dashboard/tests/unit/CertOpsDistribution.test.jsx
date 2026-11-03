@@ -22,6 +22,23 @@ beforeEach(()=>{vi.clearAllMocks();manage.mockReturnValue(true);admin.mockReturn
   api.preflight.mockResolvedValue({consumers:[{bindingId:'binding',diagnostics:[{code:'CERTOPS_AGENT_OFFLINE'},{code:'CERTOPS_CUSTOMER_LOCAL_PREFLIGHT_REQUIRED'}]}]});
   api.retention.mockResolvedValue({versions:[{id:latest,provider_version:2,retainedReasons:['desired_consumer_version']}]});});
 describe('Distribution Management',()=>{
+  it('keeps completed preparation separate from installed and served evidence',async()=>{
+    Object.assign(data.consumers[0],{health_status:'unknown_coverage',verification_method:null,observed_at:null,observed_valid_to:null,
+      latest_deployment:{stage:'staged',stagingReceipt:{staged:true,installed:false,servedVerified:false,observedAt:new Date().toISOString()}}});
+    page();await screen.findByText(/Material staged/);
+    expect(screen.getByText(/activation and verification remain separate/)).toBeInTheDocument();
+    expect(screen.getByText('unknown coverage',{exact:true})).toBeInTheDocument();
+    expect(screen.queryByText('installed')).not.toBeInTheDocument();
+  });
+  it('makes independent staging an explicit Linux policy choice',async()=>{
+    data.consumers[0].agent_platform='linux';page();
+    fireEvent.click(await screen.findByRole('button',{name:'Maintenance'}));
+    const staging=screen.getByRole('checkbox',{name:/Stage material before the activation window/});
+    expect(staging).not.toBeChecked();fireEvent.click(staging);
+    fireEvent.click(screen.getByRole('button',{name:'Save activation policy'}));
+    await waitFor(()=>expect(api.activation).toHaveBeenCalled());
+    expect(api.activation.mock.calls[0][3].independentStaging).toBe(true);
+  });
   it('keeps viewer permissions, coverage warnings and installed-versus-served assurance visible',async()=>{
     manage.mockReturnValue(false);admin.mockReturnValue(false);page();await screen.findByText('Consumer host · offline');
     expect(screen.getByText(/old certificate active/)).toBeInTheDocument();expect(screen.getByText('installed')).toBeInTheDocument();

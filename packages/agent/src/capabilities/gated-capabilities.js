@@ -48,6 +48,8 @@ const GATED_CAPABILITIES = Object.freeze([
   "material-store-azure-key-vault-v1",
   "windows-material-iis-v1",
   "material-cleanup-vault-kv2-v1",
+  "material-cleanup-openbao-kv2-v1",
+  "material-consumer-staging-v1",
 ]);
 
 module.exports = { GATED_CAPABILITIES };

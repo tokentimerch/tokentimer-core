@@ -69,6 +69,13 @@ test("membership changes and changed policy revisions refuse old standing author
   const second=await fixture();await configure(second,"approval_request");
   assert.equal((await publish(second,0)).reason,"policy_changed");
 });
+test("removing the independent reviewer invalidates existing standing authority before a new rollout",async()=>{
+  const f=await fixture(),policy=await configure(f,"preauthorized");await approve(f,policy.approval_job_id);
+  await pool.query("DELETE FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2",[f.workspaceId,f.approver]);
+  assert.equal((await publish(f,policy.revision)).reason,"authorization_stale");
+  assert.equal((await pool.query("SELECT 1 FROM certops_distribution_rollouts WHERE workspace_id=$1",[f.workspaceId])).rowCount,0);
+});
+
 test("policy updates use optimistic revisions and are isolated by workspace",async()=>{
   const f=await fixture();const policy=await configure(f,"manual");
   await assert.rejects(()=>lifecycle.putPolicy({...f,actorUserId:f.actor,policy:{...policy.policy,maxParallel:2},expectedRevision:0}),{code:"CERTOPS_LIFECYCLE_POLICY_REVISION_CHANGED"});

@@ -15,7 +15,7 @@ describe("Core distribution and lifecycle migration histories", function () {
     'certops_stable_consumer_discovery', 'certops_material_cleanup',
     'certops_consumer_verification_failures', 'certops_distribution_resolution_delivery',
     'pagerduty_incident_lifecycle', 'pagerduty_resolution_reason',
-    'pagerduty_operator_actions', 'remove_pagerduty_rest_lookup',
+    'pagerduty_operator_actions', 'remove_pagerduty_rest_lookup', 'certops_consumer_staging', 'certops_review_authority_epochs',
   ];
   const migrations = require('../../apps/api/migrations/migrate').migrations;
   const companions = companionNames.filter(name => migrations.some(m => m.name === name));

@@ -2444,6 +2444,9 @@ async function ingestResult({
         job.status === jobStatus &&
         job.completed_at
       ) {
+        if(job.payload?.materialCleanup && jobStatus==="succeeded"){
+          await require("./materialCleanup").assertCommittedCleanupReceipt({client,workspaceId:agent.workspaceId,job,receipt:body.cleanupReceipt});
+        }
         return {
           ok: true,
           jobId: String(job.id),
@@ -2498,7 +2501,7 @@ async function ingestResult({
     } else if (job.payload?.materialDeployment && !["succeeded","dry_run_complete"].includes(jobStatus)) {
       const intent = job.payload.materialDeployment;
       await client.query(`UPDATE certops_consumer_deployments SET stage=$3,failure_code=$4
-        WHERE workspace_id=$1 AND job_id=$2`, [agent.workspaceId,job.id,
+        WHERE workspace_id=$1 AND (job_id=$2 OR staging_job_id=$2)`, [agent.workspaceId,job.id,
         jobStatus === "orphaned_unknown_effect" ? jobStatus : "failed", require("./materialDistribution").publicFailureCode(body.errorMessage,jobStatus)]);
       await require("./materialDistribution").enqueueDistributionEvent(client,agent.workspaceId,
         "distribution_rollout_requested",`${intent.rolloutId}:${job.id}:${job.claim_id}`,

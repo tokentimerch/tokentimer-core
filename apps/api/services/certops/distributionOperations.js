@@ -28,7 +28,7 @@ async function putBinding({ workspaceId, groupId, bindingId = crypto.randomUUID(
       if (agent?.platform === "win32") fail("CERTOPS_DEPLOYMENT_ASSURANCE_MISMATCH",422);
     }
     if(old && old.assigned_agent_id!==binding.agentId){
-      const live=await client.query(`SELECT 1 FROM certops_consumer_deployments d JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=d.job_id
+      const live=await client.query(`SELECT 1 FROM certops_consumer_deployments d JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=COALESCE(d.job_id,d.staging_job_id)
         WHERE d.workspace_id=$1 AND d.binding_id=$2 AND (j.status IN ('claimed','running','orphaned_unknown_effect') OR d.stage='orphaned_unknown_effect') LIMIT 1`,[workspaceId,bindingId]);
       if(live.rowCount)fail("CERTOPS_CONSUMER_REASSIGNMENT_REQUIRES_RECONCILIATION");
     }
@@ -150,7 +150,7 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
     catch(error) {
       if(error.code!=="CERTOPS_DISTRIBUTION_POLICY_STALE") throw error;
       await client.query(`UPDATE certops_distribution_rollouts SET state='paused' WHERE workspace_id=$1 AND id=$2`,[workspaceId,rolloutId]);
-      return {queued:false,reason:"automatic_authorization_stale"};
+      return {queued:false,reason:"rollout_authorization_stale"};
     }
   }
   let stale = group.state !== "active" || !!group.ended_at || Number(group.generation)!==Number(rollout.generation);
@@ -168,9 +168,10 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
   if (rollout.state === "paused") return {queued:false,reason:"rollout_inactive"};
   const rows = (await client.query(`SELECT d.*,j.status AS job_status,j.needs_operator_reconciliation,
     j.payload->'materialDeployment'->>'verificationOnly' AS job_verification_only,
-    b.state AS binding_state,b.authorization_revision AS current_revision
-    FROM certops_consumer_deployments d LEFT JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=d.job_id
+    b.state AS binding_state,b.authorization_revision AS current_revision,a.platform AS agent_platform
+    FROM certops_consumer_deployments d LEFT JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=COALESCE(d.job_id,d.staging_job_id)
     JOIN certops_consumer_bindings b ON b.workspace_id=d.workspace_id AND b.id=d.binding_id
+    JOIN certops_agents a ON a.workspace_id=d.workspace_id AND a.id=d.assigned_agent_id
     WHERE d.workspace_id=$1 AND d.rollout_id=$2 ORDER BY d.wave,d.binding_id FOR UPDATE OF d`,[workspaceId,rolloutId])).rows;
   const done = (d) => d.verification_policy === "installed" ? d.stage === "installed"
     : d.stage === "trust_validated" || d.stage === "served_verified" && d.verification_policy === "served";
@@ -219,18 +220,21 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
     return { queued:true,reason:"rollout_completed" };
   }
   const wave = Math.min(...outstanding.map((d)=>d.wave));
-  const active = outstanding.filter((d)=>d.job_id).length;
+  const active = outstanding.filter((d)=>d.job_id || d.staging_job_id && !d.staging_receipt).length;
   let capacity = Math.max(0,rollout.max_parallel-active);
   for (const d of outstanding.filter((d)=>d.wave===wave && !d.job_id)) {
+    const preparationOnly = !rollout.verification_only && d.activation_policy?.independentStaging === true && !d.staging_receipt;
+    if (preparationOnly && d.staging_job_id) continue;
     if(!rollout.verification_only && d.activation_policy) {
       const maintenance=require("./distributionMaintenance");
-      if(!maintenance.supportedActivation(d.activation_policy,d.verification_policy))continue;
-      if(!maintenance.activationDecision(d.activation_policy).allowed)continue;
+      if(!maintenance.supportedActivation(d.activation_policy,d.verification_policy,d.agent_platform || "linux"))continue;
+      if(d.activation_policy.validUntil && Date.parse(d.activation_policy.validUntil) <= now)continue;
+      if(!preparationOnly && !maintenance.activationDecision(d.activation_policy).allowed)continue;
     }
     if (!capacity--) break;
     const job = await createCertificateJob({ client, workspaceId, operation:"deploy-from-store",source:"control-plane",
       subjectType:"managed_certificate",subjectId:group.managed_certificate_id,assignedAgentId:d.assigned_agent_id,
-      idempotencyKey:`distribution:${rolloutId}:${d.binding_id}`,payload:{ keyMode:"vault-managed",
+      idempotencyKey:`distribution:${rolloutId}:${d.binding_id}${preparationOnly ? ":stage" : ""}`,payload:{ keyMode:"vault-managed",
         target:{ type:"endpoint",reference:d.binding_id },materialDeployment:{ bindingId:d.binding_id,
           rolloutId,groupId,materialVersionId:rollout.material_version_id,materialStoreRef:group.material_store_ref,
           providerVersion:rollout.provider_version_ref ?? rollout.provider_version,
@@ -239,8 +243,10 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
           deploymentProfileRef:d.deployment_profile_ref,profileRevision:d.profile_revision,
           authorizationRevision:d.authorization_revision,verificationPolicy:d.verification_policy,
           ...(d.activation_policy?{activationPolicy:d.activation_policy}:{}),
+          ...(preparationOnly?{preparationOnly:true}:{}),
           ...(rollout.verification_only?{verificationOnly:true}:{}) } } });
-    await client.query(`UPDATE certops_consumer_deployments SET job_id=$4 WHERE workspace_id=$1 AND rollout_id=$2 AND binding_id=$3 AND job_id IS NULL`,[workspaceId,rolloutId,d.binding_id,job.id]);
+    if (preparationOnly) await client.query(`UPDATE certops_consumer_deployments SET staging_job_id=$4 WHERE workspace_id=$1 AND rollout_id=$2 AND binding_id=$3 AND staging_job_id IS NULL`,[workspaceId,rolloutId,d.binding_id,job.id]);
+    else await client.query(`UPDATE certops_consumer_deployments SET job_id=$4 WHERE workspace_id=$1 AND rollout_id=$2 AND binding_id=$3 AND job_id IS NULL`,[workspaceId,rolloutId,d.binding_id,job.id]);
   }
   await client.query(`UPDATE certops_distribution_rollouts SET state='deploying' WHERE workspace_id=$1 AND id=$2`,[workspaceId,rolloutId]);
   return { deferred:true,retryInMs:15000,reason:"waiting_for_consumers" };
@@ -309,7 +315,7 @@ async function retryDistributionJob({ workspaceId,jobId,actorUserId }) {
         FROM certops_consumer_deployments d JOIN certops_consumer_bindings b ON b.workspace_id=d.workspace_id AND b.id=d.binding_id
         JOIN certops_distribution_rollouts r ON r.workspace_id=d.workspace_id AND r.id=d.rollout_id
         JOIN certops_consumer_current_state s ON s.workspace_id=d.workspace_id AND s.binding_id=d.binding_id
-        WHERE d.workspace_id=$1 AND d.job_id=$2 FOR SHARE OF d,b,r,s`,[workspaceId,jobId])).rows[0];
+        WHERE d.workspace_id=$1 AND (d.job_id=$2 OR d.staging_job_id=$2) FOR SHARE OF d,b,r,s`,[workspaceId,jobId])).rows[0];
       if(!current || current.binding_state!=="active" || current.current_revision!==current.authorization_revision ||
         current.assigned_agent_id!==current.current_agent || current.assigned_agent_id!==job.assigned_agent_id ||
         !["pending","deploying","paused"].includes(current.rollout_state) || Number(current.generation)!==Number(group.generation) ||
@@ -332,7 +338,7 @@ async function retryDistributionJob({ workspaceId,jobId,actorUserId }) {
       lease_renewed_at=NULL,completed_at=NULL,started_at=NULL,next_attempt_at=NULL,error_code=NULL,error_message=NULL,updated_at=clock_timestamp()
       WHERE workspace_id=$1 AND id=$2`,[workspaceId,jobId,status]);
     if(job.payload.materialDeployment)await client.query(`UPDATE certops_consumer_deployments SET stage='pending',failure_code=NULL
-      WHERE workspace_id=$1 AND job_id=$2 AND stage<>'orphaned_unknown_effect'`,[workspaceId,jobId]);
+      WHERE workspace_id=$1 AND (job_id=$2 OR staging_job_id=$2) AND stage<>'orphaned_unknown_effect'`,[workspaceId,jobId]);
     await require("../audit").writeAudit({client,workspaceId,actorUserId,action:"CERTOPS_MATERIAL_JOB_RETRY_REQUESTED",targetType:"certificate_job",targetId:jobId,metadata:{materialVersionId:intent.materialVersionId,status}});
     return {jobId,status,materialVersionId:intent.materialVersionId};
   });

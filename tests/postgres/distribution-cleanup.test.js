@@ -44,8 +44,8 @@ test("provider pins stay immutable and unsupported cleanup readiness cannot crea
   const f=await setup(t);
   await assert.rejects(()=>pool.query("UPDATE certops_distribution_groups SET material_store_provider='openbao-kv2' WHERE id=$1",[f.groupId]),/authority is immutable/);
   const group=(await pool.query("SELECT * FROM certops_distribution_groups WHERE id=$1",[f.groupId])).rows[0];
-  for(const provider of ["openbao-kv2","azure-key-vault"])
-    assert.deepEqual(await cleanup.availability({client:pool,workspaceId:f.workspaceId,group:{...group,material_store_provider:provider}}),{available:false,code:"CERTOPS_MATERIAL_CLEANUP_PROVIDER_UNSUPPORTED"});
+  for(const [provider,code] of [["openbao-kv2","CERTOPS_MATERIAL_CLEANUP_NOT_QUALIFIED"],["azure-key-vault","CERTOPS_MATERIAL_CLEANUP_PROVIDER_UNSUPPORTED"]])
+    assert.deepEqual(await cleanup.availability({client:pool,workspaceId:f.workspaceId,group:{...group,material_store_provider:provider}}),{available:false,code});
   assert.equal((await pool.query("SELECT 1 FROM certops_material_cleanups WHERE workspace_id=$1",[f.workspaceId])).rowCount,0);
 });
 
@@ -143,5 +143,38 @@ test("cleanup uses real signed dispatch, claim-bound receipts and the existing s
   await dispatch.ingestResult({agent,envelope:{sequence:3},body});
   assert.equal((await jobFor(f,job.id)).status,"succeeded");
   assert.equal((await dispatch.ingestResult({agent,envelope:{sequence:4},body})).duplicate,true,"Lost result acknowledgements reuse the existing committed outcome");
+  await assert.rejects(()=>dispatch.ingestResult({agent,envelope:{sequence:5},body:{...body,cleanupReceipt:{...receipt,providerVersion:2}}}),{code:"CERTOPS_MATERIAL_CLEANUP_RECEIPT_MISMATCH"});
   await assert.rejects(()=>dispatch.ingestResult({agent,envelope:{sequence:5},body:{...body,status:"failed",cleanupReceipt:undefined}}),{code:"CERTOPS_AGENT_RESULT_NONCE_REJECTED"});
+});
+
+test("cleanup completion rolls its receipt, audit, nonce and terminal transition back together before a retry",async t=>{
+  const f=await setup(t),requested=await request(f),dispatch=require("../../apps/api/services/certops/agentDispatch"),signing=require("../../apps/api/services/certops/jobSigning");
+  await approveJob({workspaceId:f.workspaceId,jobId:requested.jobId,approverUserId:f.approver});
+  const row=(await pool.query("SELECT * FROM certops_agents WHERE id=$1",[f.issuer])).rows[0];
+  const agent={id:f.issuer,workspaceId:f.workspaceId,agentId:row.agent_id,agentVersion:row.agent_version,protocolVersion:row.protocol_version,status:"active"};
+  await signing.ensureActiveSigningKey();const pin=await signing.getActiveSigningKeyPublicInfo();
+  const claimed=await dispatch.claimJobs({agent,envelope:{sequence:1},body:{maxJobs:1,supportedActions:["cleanup-from-store"]}});
+  const verified=require("../../packages/agent/src/signing").verifyJobEnvelope({claimed:claimed.jobs[0],publicKeyPem:pin.publicKeyPem,pinnedSigningKeyId:pin.signingKeyId});
+  assert.equal(verified.allowed,true);const job=await jobFor(f,requested.jobId);
+  const receipt={schemaVersion:1,workspaceId:f.workspaceId,cleanupId:requested.cleanupId,groupId:f.groupId,materialVersionId:f.old[2],providerVersion:1,method:"vault-kv2-soft-delete",softDeleted:true,observedAt:new Date().toISOString()};
+  const body={jobId:job.id,claimId:job.claim_id,attemptId:job.claim_id,nonce:verified.job.nonce,status:"succeeded",cleanupReceipt:receipt};
+  const failedCommit=new Error("synthetic pre-commit interruption");
+  await assert.rejects(dispatch.ingestResult({agent,envelope:{sequence:2},body,deps:{logger:{debug(){throw failedCommit;}}}}),error=>error===failedCommit);
+  assert.equal((await jobFor(f,job.id)).status,"claimed");
+  assert.equal((await pool.query("SELECT state FROM certops_material_cleanups WHERE id=$1",[requested.cleanupId])).rows[0].state,"fenced");
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM audit_events WHERE workspace_id=$1 AND action='CERTOPS_MATERIAL_CLEANUP_COMPLETED'",[f.workspaceId])).rows[0].n,0);
+  assert.equal((await pool.query("SELECT consumed_at FROM certops_consumed_nonces WHERE nonce=$1",[body.nonce])).rows[0].consumed_at,null);
+  await dispatch.ingestResult({agent,envelope:{sequence:2},body});
+  assert.equal((await jobFor(f,job.id)).status,"succeeded");
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM audit_events WHERE workspace_id=$1 AND action='CERTOPS_MATERIAL_CLEANUP_COMPLETED'",[f.workspaceId])).rows[0].n,1);
+});
+
+test("expired cleanup lease refuses completion without consuming the receipt or releasing the fence",async t=>{
+  const f=await setup(t),requested=await request(f);await approveJob({workspaceId:f.workspaceId,jobId:requested.jobId,approverUserId:f.approver});
+  let job=await jobFor(f,requested.jobId);await resolve(f,job);
+  job=(await pool.query("UPDATE certificate_jobs SET status='running',claim_id=$2,claimed_by_agent_id=assigned_agent_id,lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1 RETURNING *",[job.id,crypto.randomUUID()])).rows[0];
+  const receipt={schemaVersion:1,workspaceId:f.workspaceId,cleanupId:requested.cleanupId,groupId:f.groupId,materialVersionId:f.old[2],providerVersion:1,method:"vault-kv2-soft-delete",softDeleted:true,observedAt:new Date().toISOString()};
+  await assert.rejects(operations.transaction(client=>cleanup.acceptCleanupReceipt({client,workspaceId:f.workspaceId,agentId:f.issuer,job,receipt})),{code:"CERTOPS_MATERIAL_CLEANUP_CLAIM_EXPIRED"});
+  assert.equal((await jobFor(f,job.id)).status,"running");
+  assert.equal((await pool.query("SELECT state FROM certops_material_cleanups WHERE id=$1",[requested.cleanupId])).rows[0].state,"fenced");
 });

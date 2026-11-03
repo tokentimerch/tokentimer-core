@@ -86,8 +86,11 @@ async function putConsumerPolicy({
     return { authorizationRevision: row.authorization_revision, policy };
   }, dbPool);
 }
-function supportedActivation(policy, verificationPolicy) {
+function supportedActivation(policy, verificationPolicy, platform = "linux") {
   if (!policy) return true;
+  if (policy.independentStaging === true && platform !== "linux") return false;
+  if (platform === "win32") return verificationPolicy !== "installed" && policy.method === "rebind";
+  if (platform !== "linux" && platform !== null) return false;
   return verificationPolicy === "installed"
     ? policy.method === "none"
     : policy.method === "reload";

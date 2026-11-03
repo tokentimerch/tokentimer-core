@@ -140,7 +140,7 @@ async function scheduleGroup({
   )
     return defer("required_agent_offline", true);
   const uncertain = await client.query(
-    `SELECT 1 FROM certops_consumer_deployments d JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=d.job_id
+    `SELECT 1 FROM certops_consumer_deployments d JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=COALESCE(d.job_id,d.staging_job_id)
     WHERE d.workspace_id=$1 AND d.group_id=$2 AND (d.stage='orphaned_unknown_effect' OR j.status='orphaned_unknown_effect' OR j.needs_operator_reconciliation)
       AND (j.needs_operator_reconciliation OR NOT EXISTS(SELECT 1 FROM certops_consumer_deployments later
         JOIN certops_distribution_rollouts lr ON lr.workspace_id=later.workspace_id AND lr.id=later.rollout_id

@@ -781,7 +781,7 @@ describe("registerIfNeeded", () => {
         : [
             ...(AGENT_TRUST_STORE_PREREQUISITES.candidate ? ["trust-anchor-deploy-v1"] : []),
             ...(process.platform === "linux"
-              ? ["material-store-vault-kv2-v1", "material-store-openbao-kv2-v1", "certificate-publication-v1", "deploy-from-store-v1"]
+              ? ["material-store-vault-kv2-v1", "material-store-openbao-kv2-v1", "certificate-publication-v1", "deploy-from-store-v1", "maintenance-calendar-v1"]
               : []),
           ]),
       "agent-id-binding-v1",

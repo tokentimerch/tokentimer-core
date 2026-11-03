@@ -5,6 +5,8 @@ const CONNECTORS = Object.freeze([
     id: "linux-material-files-v1",
     platform: "linux",
     target: "endpoint",
+    independentStaging: true,
+    stagingCapability: "material-consumer-staging-v1",
     activationMethods: Object.freeze(["none", "reload"]),
     operations: Object.freeze([
       "discover-configured",
@@ -26,6 +28,7 @@ const CONNECTORS = Object.freeze([
     id: "windows-material-iis-v1",
     platform: "win32",
     target: "windows-iis",
+    independentStaging: false,
     activationMethods: Object.freeze(["rebind"]),
     operations: Object.freeze([
       "discover",
@@ -37,8 +40,8 @@ const CONNECTORS = Object.freeze([
     ]),
     verificationMethods: Object.freeze(["served", "trust"]),
     requiredCapabilities: Object.freeze(["windows-material-iis-v1"]),
-    available: false,
-    qualification: "unmerged-pr-460-and-protected-real-host-campaign-required",
+    available: true,
+    qualification: "protected-production-artifact-campaign-required",
   }),
 ]);
 module.exports = { CONNECTORS };

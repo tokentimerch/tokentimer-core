@@ -15392,6 +15392,9 @@ components:
         - validUntil
         - emergency
       properties:
+        independentStaging:
+          type: boolean
+          description: Authorize preparation before activation only on a qualified connector with customer-local opt-in. Staging is not installed, served or trusted proof.
         method:
           enum: [none, reload, rebind, no-restart-refresh, controlled-restart, manual]
         disruptive:

@@ -442,7 +442,11 @@ function MaintenanceForm({
     structuredClone(
       consumer.activation_policy || {
         method:
-          consumer.verification_policy === 'installed' ? 'none' : 'reload',
+          consumer.agent_platform === 'win32'
+            ? 'rebind'
+            : consumer.verification_policy === 'installed'
+              ? 'none'
+              : 'reload',
         disruptive: false,
         requiresApproval: false,
         timezone: 'UTC',
@@ -481,11 +485,24 @@ function MaintenanceForm({
               value={policy.method}
               onChange={event => set('method', event.target.value)}
             >
-              <option value='none'>None (installed files only)</option>
-              <option value='reload'>Reload (Linux connector)</option>
+              <option
+                value='none'
+                disabled={consumer.agent_platform === 'win32'}
+              >
+                None (installed files only)
+              </option>
+              <option
+                value='reload'
+                disabled={consumer.agent_platform === 'win32'}
+              >
+                Reload (Linux connector)
+              </option>
               <option value='manual'>Manual activation</option>
-              <option value='rebind' disabled>
-                Rebind (connector unavailable)
+              <option
+                value='rebind'
+                disabled={consumer.agent_platform !== 'win32'}
+              >
+                Rebind (IIS; qualified agent required)
               </option>
               <option value='no-restart-refresh' disabled>
                 No-restart refresh (unavailable)
@@ -510,6 +527,20 @@ function MaintenanceForm({
             />
           </Field>
         </SimpleGrid>
+        <Checkbox
+          isChecked={policy.independentStaging === true}
+          isDisabled={consumer.agent_platform !== 'linux'}
+          onChange={event => set('independentStaging', event.target.checked)}
+        >
+          Stage material before the activation window (Linux; qualified agent
+          required)
+        </Checkbox>
+        <Text fontSize='sm'>
+          Staging stores a protected copy on the customer agent. It proves
+          neither installation nor service use. The agent must also explicitly
+          allow independent staging locally. Activation still requires current
+          approval and an open window.
+        </Text>
         <Checkbox
           isChecked={policy.disruptive}
           onChange={event => set('disruptive', event.target.checked)}
@@ -1065,6 +1096,15 @@ function Management({
                         Desired {consumer.desired_version || 'Unknown'} /
                         observed {consumer.observed_version || 'Unknown'}
                       </Text>
+                      {consumer.latest_deployment?.stagingReceipt?.staged ? (
+                        <Text fontSize='xs'>
+                          Material staged{' '}
+                          {formatDateTime(
+                            consumer.latest_deployment.stagingReceipt.observedAt
+                          )}
+                          ; activation and verification remain separate.
+                        </Text>
+                      ) : null}
                     </Td>
                     <Td>
                       {label(consumer.verification_method)}
@@ -1372,14 +1412,16 @@ function Management({
             <Text key={service.id} fontSize='sm'>
               {service.source_kind}: {service.service_identity} ·{' '}
               {label(service.confidence)} · last observed{' '}
-              {formatDateTime(service.last_observed_at)}
+              {formatDateTime(service.last_observed_at)} · read-only
+              configuration observation; served certificate unverified
             </Text>
           ))
         )}
         <Text mt={2} fontSize='sm'>
-          Linux file installation and allowlisted reload are supported.
-          Additional Windows shared-material connectors require their merged
-          extension and protected qualification.
+          Linux file installation and allowlisted reload are supported. IIS
+          rebind is implemented and requires a production-qualified agent. SQL
+          Server, RDP and generic Windows service restart/refresh remain
+          unsupported.
         </Text>
       </DashboardPanel>
       <DashboardPanel>

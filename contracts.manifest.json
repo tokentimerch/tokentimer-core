@@ -65,14 +65,14 @@
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "400627d7571e88aba7c1a49330eee1e5f5d5ad2ef3a0adfae36b4cf03dad58c5"
+          "sha256": "31e432363639a88f062d6a4cb63105a345e6119c3721b6b0a63116ee1b2e1802"
         },
         {
           "id": "integration-openapi-spec",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "400627d7571e88aba7c1a49330eee1e5f5d5ad2ef3a0adfae36b4cf03dad58c5"
+          "sha256": "31e432363639a88f062d6a4cb63105a345e6119c3721b6b0a63116ee1b2e1802"
         },
         {
           "id": "auth-route-compat-contract",
@@ -280,7 +280,7 @@
           "kind": "module",
           "path": "packages/contracts/certops/material-provider.cjs",
           "status": "existing",
-          "sha256": "c5d4f251e54991858c2c3b7658707251ec2bc7beb79dd2da733243146a7491ad"
+          "sha256": "eda4ced87c86af6741db27847dbad9ed56ef845fd87c1a96fe383a38f068281a"
         },
         {
           "id": "certops-enrollment-snapshot-schema",
@@ -354,7 +354,7 @@
           "kind": "module",
           "path": "packages/contracts/certops/material-cleanup.cjs",
           "status": "existing",
-          "sha256": "68293a7c6571c0e8068c8ed478e87988d42bbb24aa4fd5383414b611bf72c8f5"
+          "sha256": "b22f78f232e99a329558cc9acdd5391b9021946df19fd7206deb7c30b64f4708"
         }
       ]
     }

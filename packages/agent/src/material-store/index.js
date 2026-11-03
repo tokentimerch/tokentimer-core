@@ -6,7 +6,7 @@ const path = require("node:path");
 const https = require("node:https");
 const http = require("node:http");
 const crypto = require("node:crypto");
-const { providerOf, cleanupOperationOf, VAULT_SOFT_DELETE, validProviderVersion } = require("../../vendor/contracts/material-provider.cjs");
+const { providerOf, cleanupOperationOf, VAULT_SOFT_DELETE, OPENBAO_SOFT_DELETE, validProviderVersion } = require("../../vendor/contracts/material-provider.cjs");
 const { assertRestrictivePermissions, applyRestrictivePermissions, assertWindowsAcl } = require("../platform");
 const { fsyncDirectorySync } = require("../platform/durability");
 const { validateCertificateForDeploy, parseDnsSans, computeCertificateFingerprint } = require("../verify");
@@ -227,10 +227,11 @@ function createVaultStore(stores, intent, options = {}) {
   // It is not advertised as a production capability or wired to dispatch here.
   async function softDeleteVersion(providerVersion, { checkLease, beforeDelete } = {}) {
     const policy = scope.cleanup;
-    if (resolved.provider !== "vault-kv2" || cleanupOperationOf(intent) !== VAULT_SOFT_DELETE ||
+    const expectedMethod = resolved.provider === "openbao-kv2" ? OPENBAO_SOFT_DELETE : VAULT_SOFT_DELETE;
+    if (!["vault-kv2","openbao-kv2"].includes(resolved.provider) || cleanupOperationOf(intent) !== expectedMethod ||
       policy?.softDelete !== true || policy.profileRevision !== intent.profileRevision ||
       typeof checkLease !== "function" || typeof beforeDelete !== "function" ||
-      !validProviderVersion("vault-kv2", providerVersion) || providerVersion !== intent.providerVersion ||
+      !validProviderVersion(resolved.provider, providerVersion) || providerVersion !== intent.providerVersion ||
       !Number.isInteger(policy.minimumSeconds) || policy.minimumSeconds < 0 || policy.minimumSeconds > 315360000 ||
       !Number.isInteger(intent.retentionPolicy?.minimumSeconds) || intent.retentionPolicy.minimumSeconds < 0 ||
       intent.retentionPolicy.cleanupEnabled !== true || intent.retentionPolicy.reportOnly !== false ||
@@ -256,6 +257,10 @@ function createVaultStore(stores, intent, options = {}) {
     await checkLease();
     if (Date.parse(intent.expiresAt) <= Date.now()) throw failure("material_cleanup_authorization_expired");
     await beforeDelete();
+    // Durable journal/ACL work can outlast authority. Revalidate immediately
+    // before the provider mutation, including on an original-intent retry.
+    await checkLease();
+    if (Date.parse(intent.expiresAt) <= Date.now()) throw failure("material_cleanup_authorization_expired");
     // Never blindly retry an uncertain POST. The next attempt reads metadata
     // first; only the exact pinned version may be soft deleted. No data reads,
     // destroy, undelete, whole-object deletion, purge or redirect following.

@@ -6,12 +6,18 @@
 function cleanupIdentity(intent) {
   const legacy = intent?.type === "vault-kv2-soft-delete" && intent.operation == null;
   if ((!legacy && (intent?.type != null || intent?.operation !== "soft-delete")) ||
-    (intent?.provider ?? (legacy ? "vault-kv2" : null)) !== "vault-kv2") {
+    !["vault-kv2", "openbao-kv2"].includes(intent?.provider ?? (legacy ? "vault-kv2" : null)) ||
+    legacy && intent.provider != null && intent.provider !== "vault-kv2") {
     const error = new Error("material_cleanup_intent_invalid");
     error.code = "material_cleanup_intent_invalid";
     throw error;
   }
-  return { operation: "soft-delete", provider: "vault-kv2", method: "vault-kv2-soft-delete" };
+  const provider = legacy ? "vault-kv2" : intent.provider;
+  return { operation: "soft-delete", provider, method: `${provider}-soft-delete` };
+}
+
+function cleanupCapability(provider) {
+  return {"vault-kv2":"material-cleanup-vault-kv2-v1","openbao-kv2":"material-cleanup-openbao-kv2-v1"}[provider] || null;
 }
 
 function cleanupStoreIntent(intent, workspaceId) {
@@ -21,4 +27,4 @@ function cleanupStoreIntent(intent, workspaceId) {
   return { ...copy, operation, provider, workspaceId };
 }
 
-module.exports = { cleanupIdentity, cleanupStoreIntent };
+module.exports = { cleanupIdentity, cleanupStoreIntent, cleanupCapability };

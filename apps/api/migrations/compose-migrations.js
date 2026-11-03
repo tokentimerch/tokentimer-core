@@ -167,6 +167,8 @@ function composeMigrations(migrations, recorded = []) {
     certops_distribution_resolution_delivery: [
       "certops_distribution_incident_delivery",
     ],
+    certops_consumer_staging: ["certops_distribution_lifecycle"],
+    certops_review_authority_epochs: ["certops_distribution_lifecycle"],
   };
   const seen = new Set();
   for (const row of rows) {

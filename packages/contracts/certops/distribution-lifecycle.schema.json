@@ -185,6 +185,10 @@
         "emergency"
       ],
       "properties": {
+        "independentStaging": {
+          "type": "boolean",
+          "description": "Authorize preparation before activation only on a qualified connector with customer-local opt-in."
+        },
         "method": {
           "enum": [
             "none",

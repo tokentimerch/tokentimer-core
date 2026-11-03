@@ -6,15 +6,18 @@ const lifecycle=require("./distributionLifecycle");
 const {assertDistributionPolicy}=require("./distributionPolicy");
 const {writeAudit}=require("../audit");
 const {hasFreshCapability}=require("./agentJobEligibility");
-const {cleanupIdentity}=require("../../../../packages/contracts/certops/material-cleanup.cjs");
+const {cleanupIdentity,cleanupCapability}=require("../../../../packages/contracts/certops/material-cleanup.cjs");
+const {providerCapability}=require("../../../../packages/contracts/certops/material-provider.cjs");
 function fail(code,statusCode=409){const e=new Error(code);e.code=code;e.statusCode=statusCode;throw e;}
 const CAPABILITY="material-cleanup-vault-kv2-v1";
 async function availability({client,workspaceId,group,env=process.env}){
-  if((group.material_store_provider || "vault-kv2")!=="vault-kv2")return {available:false,code:"CERTOPS_MATERIAL_CLEANUP_PROVIDER_UNSUPPORTED"};
+  const provider=group.material_store_provider || "vault-kv2",capability=cleanupCapability(provider);
+  if(!capability)return {available:false,code:"CERTOPS_MATERIAL_CLEANUP_PROVIDER_UNSUPPORTED"};
   if(env.CERTOPS_MATERIAL_CLEANUP_ENABLED!=="true")return {available:false,code:"CERTOPS_MATERIAL_CLEANUP_DISABLED"};
   const agent=(await client.query("SELECT status,last_seen_at,declared_capabilities,capabilities_updated_at,supported_operations FROM certops_agents WHERE workspace_id=$1 AND id=$2",[workspaceId,group.issuer_agent_id])).rows[0];
   const available=agent?.status==="active" && Date.now()-new Date(agent.last_seen_at).getTime()<900000 &&
-    agent.supported_operations?.includes("cleanup-from-store") && hasFreshCapability({declaredCapabilities:agent.declared_capabilities,capabilitiesUpdatedAt:agent.capabilities_updated_at,capability:CAPABILITY});
+    agent.supported_operations?.includes("cleanup-from-store") && [capability,providerCapability(provider)].every(required=>
+      hasFreshCapability({declaredCapabilities:agent.declared_capabilities,capabilitiesUpdatedAt:agent.capabilities_updated_at,capability:required}));
   return {available:Boolean(available),code:available?null:"CERTOPS_MATERIAL_CLEANUP_NOT_QUALIFIED"};
 }
 async function context(client,workspaceId,groupId,{forClaim=false}={}){
@@ -39,7 +42,7 @@ async function requestCleanup({workspaceId,groupId,materialVersionId,actorUserId
     const candidate=preview.versions.find(v=>v.id===materialVersionId);
     if(!candidate || candidate.profile_revision!==group.profile_revision || !candidate.metadataEligible && existing?.state!=="fenced")fail("CERTOPS_MATERIAL_CLEANUP_PROTECTED");
     const id=existing?.id || crypto.randomUUID();
-    const intent={operation:"soft-delete",provider:"vault-kv2",cleanupId:id,groupId:group.id,managementPeriodId:group.management_period_id,
+    const intent={operation:"soft-delete",provider:group.material_store_provider || "vault-kv2",cleanupId:id,groupId:group.id,managementPeriodId:group.management_period_id,
       materialVersionId,materialStoreRef:group.material_store_ref,profileRevision:group.profile_revision,
       providerVersion:candidate.provider_version,policyRevision:policy.revision,scopeHash:scope.hash,
       retentionPolicy:policy.policy.retention,expiresAt:new Date(Date.now()+86400000).toISOString()};
@@ -95,13 +98,24 @@ async function acceptCleanupReceipt({client,workspaceId,agentId,job,receipt}){
   await material.lockGroup(client,workspaceId,intent.groupId,{allowInactive:true});
   const request=(await client.query("SELECT * FROM certops_material_cleanups WHERE workspace_id=$1 AND id=$2 FOR UPDATE",[workspaceId,intent.cleanupId])).rows[0];
   const live=await client.query("SELECT 1 FROM certificate_jobs WHERE workspace_id=$1 AND id=$2 AND claim_id=$3 AND lease_expires_at>clock_timestamp()",[workspaceId,job.id,job.claim_id]);
-  if(job.mode!=="real" || !request || request.job_id!==job.id || !["fenced","soft_deleted"].includes(request.state) || !live.rowCount || job.claimed_by_agent_id!==agentId || job.assigned_agent_id!==agentId ||
+  if(!live.rowCount)fail("CERTOPS_MATERIAL_CLEANUP_CLAIM_EXPIRED");
+  if(job.mode!=="real" || !request || request.job_id!==job.id || !["fenced","soft_deleted"].includes(request.state) || job.claimed_by_agent_id!==agentId || job.assigned_agent_id!==agentId ||
     receipt.workspaceId!==workspaceId || receipt.cleanupId!==request.id || receipt.groupId!==request.group_id || receipt.materialVersionId!==request.material_version_id ||
-    receipt.providerVersion!==intent.providerVersion || receipt.method!=="vault-kv2-soft-delete" || receipt.softDeleted!==true ||
+    receipt.providerVersion!==intent.providerVersion || receipt.method!==cleanupIdentity(intent).method || receipt.softDeleted!==true ||
     Date.parse(receipt.observedAt)>Date.now()+30000 || Date.now()-Date.parse(receipt.observedAt)>300000)fail("CERTOPS_MATERIAL_CLEANUP_RECEIPT_MISMATCH");
   if(request.state==="soft_deleted")return {duplicate:true};
   await client.query("UPDATE certops_material_cleanups SET state='soft_deleted',completed_at=clock_timestamp(),receipt=$3 WHERE workspace_id=$1 AND id=$2",[workspaceId,request.id,receipt]);
   await writeAudit({client,workspaceId,action:"CERTOPS_MATERIAL_CLEANUP_COMPLETED",targetType:"certops_material_cleanup",targetId:request.id,metadata:receipt});
   return {duplicate:false};
 }
-module.exports={CAPABILITY,availability,requestCleanup,resolveCleanupDefaults,acceptCleanupReceipt};
+async function assertCommittedCleanupReceipt({client,workspaceId,job,receipt}){
+  material.validateDistributionContract("cleanupReceipt",receipt);
+  const intent=job.payload.materialCleanup;
+  const request=(await client.query("SELECT job_id,state,receipt FROM certops_material_cleanups WHERE workspace_id=$1 AND id=$2",[workspaceId,intent.cleanupId])).rows[0];
+  // A committed acknowledgement survives lease expiry, API restart and old
+  // observation timestamps. Only the exact persisted receipt may be replayed;
+  // terminal status alone is not proof that a different receipt was accepted.
+  if(!request || request.job_id!==job.id || request.state!=="soft_deleted" || !request.receipt ||
+    material.hashIntent(request.receipt)!==material.hashIntent(receipt))fail("CERTOPS_MATERIAL_CLEANUP_RECEIPT_MISMATCH");
+}
+module.exports={CAPABILITY,availability,requestCleanup,resolveCleanupDefaults,acceptCleanupReceipt,assertCommittedCleanupReceipt};

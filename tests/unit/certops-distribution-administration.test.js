@@ -18,9 +18,11 @@ test("service identity survives fingerprint rotation and store-only inventory is
   assert.notEqual(serviceKey(base),serviceKey({...base,locationSlot:"site2:443"}));
   assert.equal(serviceKey({...base,locationKind:"windows_store"}),null);
 });
-test("connectors expose bounded typed actions without advertising unmerged Windows execution",()=>{
+test("connectors expose bounded typed actions and distinguish IIS implementation from protected qualification",()=>{
   assert.deepEqual(CONNECTORS.find(value=>value.available).activationMethods,["none","reload"]);
-  assert.equal(CONNECTORS.find(value=>value.id==="windows-material-iis-v1").available,false);
+  const iis=CONNECTORS.find(value=>value.id==="windows-material-iis-v1");
+  assert.equal(iis.available,true);assert.equal(iis.independentStaging,false);
+  assert.equal(iis.qualification,"protected-production-artifact-campaign-required");
   assert.ok(!JSON.stringify(CONNECTORS).includes("shell"));
 });
 test("lifecycle public schema accepts manual defaults and rejects credentials or unapproved cleanup",()=>{

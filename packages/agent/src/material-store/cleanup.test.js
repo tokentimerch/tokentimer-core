@@ -27,6 +27,7 @@ async function fixture(t){
 }
 test("cleanup capability remains absent from the unchanged released qualification manifest",()=>{
   assert.deepEqual(filterQualifiedCapabilities(["material-cleanup-vault-kv2-v1"]),[]);
+  assert.deepEqual(filterQualifiedCapabilities(["material-cleanup-openbao-kv2-v1","material-consumer-staging-v1"]),[]);
 });
 test("cleanup soft deletes only the exact version, preserves newer material, never retrieves a key and is idempotent",async t=>{
   const f=await fixture(t);assert.equal((await f.run()).status,"succeeded");assert.equal(f.state.deletes,1);assert.equal(f.metadata.versions[2].deletion_time,"");
@@ -104,4 +105,19 @@ test("new provider/operation identity and previously signed legacy intents both 
   f.options.stores.customer.provider="openbao-kv2";
   f.options.job.jobId=crypto.randomUUID();
   await assert.rejects(f.run,{code:"material_provider_mismatch"},"Another provider cannot use a Vault-only cleanup authorization");
+});
+
+test("explicit OpenBao cleanup uses its own exact-version method and cannot reuse a Vault intent",async t=>{
+  const f=await fixture(t);f.options.stores.customer.provider="openbao-kv2";
+  const intent={...f.intent,operation:"soft-delete",provider:"openbao-kv2"};delete intent.type;
+  f.options.job.materialCleanup=intent;
+  const result=await f.run();assert.equal(result.status,"succeeded");assert.equal(result.cleanupReceipt.method,"openbao-kv2-soft-delete");
+  assert.equal(f.state.deletes,1);assert.equal(f.metadata.versions[2].deletion_time,"");
+  assert.equal((await f.run()).status,"succeeded");assert.equal(f.state.deletes,1);
+});
+test("expiry while persisting the destructive journal prevents the subsequent provider delete",async t=>{
+  const f=await fixture(t);let time=Date.now();t.mock.method(Date,"now",()=>time);
+  f.options.onBeforeMutation=()=>{time=Date.parse(f.intent.expiresAt)+1;};
+  const result=await f.run();assert.equal(result.status,"orphaned_unknown_effect");
+  assert.equal(result.errorMessage,"material_cleanup_authorization_expired");assert.equal(f.state.deletes,0);
 });

@@ -169,6 +169,7 @@ function reviewScope(job) {
         : 'Deploy exact version',
       ...fields(intent, [
         ['workspaceId', 'Workspace'],
+        ['workspaceAuthorizationRevision', 'Workspace authority revision'],
         ['groupId', 'Distribution group'],
         ['managementPeriodId', 'Management period'],
         ['materialVersionId', 'Material version'],

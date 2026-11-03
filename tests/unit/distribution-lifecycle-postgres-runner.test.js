@@ -35,7 +35,7 @@ async function runController(readyAt) {
       };
       return require(name);
     },
-    process: { execPath: process.execPath, env: {}, stdout: { write() {} }, exitCode: 0 },
+    process: { execPath: process.execPath, argv: [], env: {}, stdout: { write() {} }, exitCode: 0 },
     console: { log() {}, error(message) { errors.push(message); } },
   });
   return { calls, files, errors, elapsed, result };

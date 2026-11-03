@@ -28,7 +28,7 @@ function exact(value, keys) {
     invalid();
 }
 function validateActivationPolicy(policy) {
-  exact(policy, [
+  const keys = [
     "method",
     "disruptive",
     "requiresApproval",
@@ -37,7 +37,12 @@ function validateActivationPolicy(policy) {
     "blackouts",
     "validUntil",
     "emergency",
-  ]);
+  ];
+  if (policy && Object.hasOwn(policy, "independentStaging")) {
+    keys.push("independentStaging");
+    if (typeof policy.independentStaging !== "boolean") invalid();
+  }
+  exact(policy, keys);
   if (
     !METHODS.includes(policy.method) ||
     typeof policy.disruptive !== "boolean" ||
