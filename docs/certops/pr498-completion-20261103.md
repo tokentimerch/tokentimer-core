@@ -104,6 +104,15 @@ still running and Vault was OOM-killed at 384m (exit 137). Ownership files are
 regenerated, those names are removed, and the disposable provider limit is
 1024m. This note does not treat that correction as a passing CI run.
 
+Head `325cab4e` workflow
+[41628492419](https://github.com/tokentimerch/tokentimer-core/actions/runs/41628492419)
+passed the other 40 checks, including Vault startup at 1024m. The remaining job
+failed in the claim-lock fixture: successful claims rejected
+`CERTOPS_DISTRIBUTION_POLICY_STALE` because the approval job had no current
+rollout review. The fixture now records the workspace owner and the current
+authorization revision. A disposable PostgreSQL rerun of that file passed 4/4.
+That rerun is not a new full CI result.
+
 ## E. Evidence and reproduction
 
 See the [sanitized evidence index](evidence/2026-11-03/README.md), public provider
