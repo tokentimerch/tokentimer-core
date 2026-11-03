@@ -85,7 +85,7 @@ and `expected_core_sha=4a5dedcacf600db2406f756ca97f986cfba2cc1a`.
 | Native packaging retry | Eight passed, zero failures, two explicit host/tar-mode skips; system tar resolves Git GNU tar's Windows drive-path collision |
 | Dashboard | Original three targeted files: 60 passed; updated distribution file: 15 passed including two new cases; typecheck/build/lint passed |
 | Contracts/privacy | 47 contract tests passed; 52 contract files verified; runtime OpenAPI coverage and secret-logging guard passed; moderate audit passed, one low advisory |
-| Full native agent | Initial packaging environment failures retained; targeted packaging retry passes; see PR for final full-suite outcome; workstation tests are not Server qualification |
+| Full native agent | 2,105 passed, four failures and three cancelled children from the system/Git tar PATH collision, 19 explicit skips. All affected packaging checks rerun with system tar: eight passed, two explicit host/tar-mode skips. Workstation tests are not Server qualification |
 | Cloud | 2,351 unit and 228 inherited/hosted real PG lifecycle/delivery tests passed; web lint/build/tests passed; full development image/smoke/integration campaign recorded in PR |
 | Enterprise | Local: 1,434 unit passed, one connection reset; affected suite rerun: 14 passed. Initial full CI passed unit/Vault/PG/baseline/image builds, then one import UI assertion failed under coverage. Retry preserves assertions and thresholds |
 

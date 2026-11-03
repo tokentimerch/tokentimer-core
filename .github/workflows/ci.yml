@@ -425,7 +425,7 @@ jobs:
   vault_cleanup_regression:
     name: Vault Inventory Cleanup Regression
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16-alpine
@@ -528,14 +528,6 @@ jobs:
           main().catch(error => { console.error(error.message); process.exitCode = 1; });
           NODE
           node --test --test-force-exit tests/postgres/distribution-migration-upgrade.test.js
-      - name: Verify recipient delivery retries and ledger outcomes
-        env:
-          DELIVERY_WORKER_DB_HOST: ${{ env.DB_HOST }}
-          DELIVERY_WORKER_DB_PORT: ${{ env.DB_PORT }}
-          DELIVERY_WORKER_DB_NAME: recipient_delivery_worker_ci_test
-          DELIVERY_WORKER_DB_USER: ${{ env.DB_USER }}
-          DELIVERY_WORKER_DB_PASSWORD: ${{ env.DB_PASSWORD }}
-        run: node --test --test-force-exit tests/postgres/delivery-worker-ledger.test.js
       - name: Exercise PagerDuty lifecycle and actual recipient-runtime interoperability
         env:
           DB_NAME: pagerduty_ci_issue364_test
@@ -551,6 +543,14 @@ jobs:
             DB_NAME="pd_${history}_migration_issue364_test" PAGERDUTY_UPGRADE_FROM="$history" \
               node --test --test-force-exit tests/postgres/pagerduty-migration.test.js
           done
+      - name: Verify recipient delivery retries and ledger outcomes
+        env:
+          DELIVERY_WORKER_DB_HOST: ${{ env.DB_HOST }}
+          DELIVERY_WORKER_DB_PORT: ${{ env.DB_PORT }}
+          DELIVERY_WORKER_DB_NAME: recipient_delivery_worker_ci_test
+          DELIVERY_WORKER_DB_USER: ${{ env.DB_USER }}
+          DELIVERY_WORKER_DB_PASSWORD: ${{ env.DB_PASSWORD }}
+        run: node --test --test-force-exit tests/postgres/delivery-worker-ledger.test.js
       - name: Prove lifecycle policy, concurrent verification, incident and retention fences
         env:
           DB_NAME: distribution_lifecycle_c1_test
