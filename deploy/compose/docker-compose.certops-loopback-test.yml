@@ -1,0 +1,11 @@
+# Linux qualification runners only: real TLS fixtures bind the runner's loopback.
+# Start only postgres, mailhog and api with this override; fixture-owned workers
+# run in the qualification process rather than the bridged worker containers.
+services:
+  api:
+    network_mode: host
+    networks: !reset []
+    ports: !reset []
+    environment:
+      DB_HOST: 127.0.0.1
+      SMTP_HOST: 127.0.0.1
