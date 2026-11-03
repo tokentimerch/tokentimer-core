@@ -12,7 +12,33 @@ This implementation extends the merged distribution, provider, recipient-verific
 4. Configure activation policy per consumer. Request a rollout, review the exact destination/version intent in Jobs where approval is required, and inspect each child's evidence. A request, approval, publication, file installation, live serving and trust are different outcomes.
 5. Enable recurring verification and distribution incidents deliberately. Both are disabled initially. Configure contact groups and thresholds. Existing workspace notification channels, delivery windows, recipient eligibility, quotas and retries apply.
 6. Investigate failures through the original job, run metadata preflight and customer-local preflight, reconcile uncertain local effects, retry the original signed intent and resume where allowed. Obtain fresh verification before treating the incident as resolved.
-7. Preview retention reasons. After independent native qualification and explicit local/runtime/group opt-in, administrators can request exact-version Vault soft-deletion approval. Cleanup uses the existing signed-job/lease infrastructure and a permanent reference fence. It remains disabled for the currently unqualified cleanup capability. See the [retention and cleanup protocol](distribution-retention-cleanup.md).
+7. Preview retention reasons. After independent native qualification and explicit local/runtime/group opt-in, administrators can request exact-version Vault/OpenBao soft-deletion approval. Each provider has a separate cleanup capability. Cleanup uses the existing signed-job/lease infrastructure and a permanent reference fence. It remains disabled for the currently unqualified cleanup capabilities. See the [retention and cleanup protocol](distribution-retention-cleanup.md).
+
+## Independent Linux preparation
+
+Preparation is an optional phase between publication/preflight and activation.
+Enable **Stage material before the activation window** on the consumer policy and
+set `independentStaging: true` in its existing customer-local material binding.
+The registered Linux agent must have the separately qualified
+`material-consumer-staging-v1` capability. It is absent from the shipped
+qualification manifest; a runtime setting cannot enable it in that artifact.
+
+The frozen rollout creates one preparation job and later a separate activation
+job for the same immutable version, generation and authorization revision.
+Preparation may fetch into protected customer-local staging outside a maintenance
+window, but never touches destination files or services. Its receipt has
+`staged: true` and false installed/served/trust flags. The API preserves this
+receipt without advancing current consumer proof. Activation requires its own
+live claim, unchanged requester/reviewer authority, local policy, an intact staged
+bundle and an open window, rechecked immediately before mutation. Later canary
+waves still require qualifying consumer verification.
+
+Restart/retry uses the protected local journal and exact generation. Missing or
+changed staged bytes fail closed. Cancelled or superseded jobs cannot activate
+their staged bytes; retained protected files are not evidence of service use.
+Keep local journals during recovery. Windows independent preparation, SQL Server
+connectors, controlled restarts and no-restart refresh remain unavailable here;
+they require separate typed local contracts and native qualification.
 
 ## Event flow and custody
 

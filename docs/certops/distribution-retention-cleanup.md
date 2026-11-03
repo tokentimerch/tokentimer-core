@@ -1,6 +1,6 @@
 # Customer-side retention and exact-version cleanup
 
-Retention preview never authorizes deletion. The optional `cleanup-from-store` job implements **Vault KV v2 version soft deletion** on a customer agent, after a separate human approval. It does not destroy versions, remove metadata/all versions, purge objects or implement Azure deletion. Public material, job, approval and incident history remains.
+Retention preview never authorizes deletion. The optional `cleanup-from-store` job implements **Vault/OpenBao KV v2 exact-version soft deletion** on a customer agent, after a separate human approval. The providers have separate capability gates. It does not destroy versions, remove metadata/all versions, purge objects or implement Azure deletion. Public material, job, approval and incident history remains.
 
 Existing workspaces retain manual/report-only defaults: minimum 30 days, three versions and seven days of rollback preservation. Cleanup is disabled. The current release manifest does **not** qualify `material-cleanup-vault-kv2-v1`; runtime settings cannot enable that capability in an unqualified binary.
 
@@ -36,7 +36,10 @@ The protected token file stays on the customer agent. It is separate from issuan
 New signed intents separate `operation: "soft-delete"` from `provider: "vault-kv2"`.
 Legacy `type: "vault-kv2-soft-delete"` authorizations retain their original signed
 payload and journal hash; only an adapter copy is normalized for the shared provider
-contract. Other providers are rejected before cleanup fencing. A fenced failure
+contract. OpenBao uses `provider: "openbao-kv2"`, `openbao-kv2-soft-delete` receipts
+and a separate `material-cleanup-openbao-kv2-v1` gate. Azure and unknown providers
+are rejected before cleanup fencing. A Vault legacy intent cannot be relabeled
+as OpenBao. Neither cleanup capability is qualified by source tests. A fenced failure
 can retry its original intent or obtain a fresh independent review without
 releasing the material reuse fence. See [integration compatibility](distribution-compatibility.md).
 
@@ -95,6 +98,23 @@ Restoring bytes customer-side does not make the old fenced UUID deployable again
 
 The closed request accepts no provider credentials or private material. Duplicate requests return the existing logical request. New destructive jobs always require genuine approval, including when created through the generic job service. Authorization and eligibility are rechecked at claim, not trusted from a cached preview. The control plane stores public approval scope, fences, receipts and audit events only.
 
-[Vault KV v2](https://developer.hashicorp.com/vault/api-docs/secret/kv/kv-v2#delete-secret-versions) separates soft deletion, destruction and metadata deletion. This connector implements the first operation only. OpenBao/Azure extensions remain dependent on merged implementation and qualification; arbitrary Azure individual-version deletion is unavailable. No generic delete/purge interface is exposed.
+[Vault KV v2](https://developer.hashicorp.com/vault/api-docs/secret/kv/kv-v2#delete-secret-versions) and [OpenBao KV v2](https://openbao.org/api-docs/secret/kv/kv-v2/) separate soft deletion, destruction and metadata deletion. This connector implements the first operation only, behind each provider's separate cleanup qualification gate. Arbitrary Azure individual-version deletion is unavailable. No generic delete/purge interface is exposed.
+
+## Completion and acknowledgement recovery
+
+Receipt validation, cleanup metadata, audit, nonce consumption, agent sequence and
+terminal job state commit in one transaction. Validation failure or an interrupted
+transaction leaves the job/fence intact and does not spend its result nonce. A
+fresh valid receipt can retry. A commit followed by a lost HTTP response is
+acknowledged on retry using the exact persisted receipt, even after API restart or
+lease expiry; it never initiates another provider mutation. A changed receipt is
+rejected rather than being acknowledged solely because its status says succeeded.
+
+Malformed receipts return 422; claim/identity mismatches and expired cleanup
+leases return 409. Unexpected storage/runtime exceptions remain 500. These
+rejections never imply that provider deletion was undone. Preserve the journal
+and permanent fence and follow original-intent reconciliation. See the
+[acceptance record](pr498-completion-20261103.md) for the reproduced HTTP error
+mapping defect and the unresolved provenance of the earlier reported incident.
 
 Run the normal migration plan before starting updated API/worker/agents. See the [lifecycle guide](distribution-lifecycle.md) and [current implementation/qualification matrix](distribution-lifecycle-status.md). Real isolated Vault metadata/delete ACL tests, PostgreSQL reference races, signed claims/nonces, retained-count concurrency, uncertain retry and fresh re-review are functional support evidence; they do not promote a shipped native capability.

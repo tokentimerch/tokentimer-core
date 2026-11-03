@@ -1,10 +1,12 @@
 "use strict";
 const fs = require("node:fs"), path = require("node:path"), assert = require("node:assert/strict");
 const { chromium } = require("playwright");
+const { spawnSync } = require("node:child_process");
 const { readProtectedFile } = require("../packages/agent/src/material-store/index");
 const root = path.resolve(__dirname,".."), configFile=path.resolve(process.argv[2] || "");
 if(!configFile.startsWith(path.join(root,".tmp")+path.sep))throw new Error("Expected this checkout's protected UI fixture config");
 const config=JSON.parse(readProtectedFile(configFile));
+const candidateSha=spawnSync("git",["rev-parse","HEAD"],{cwd:root,encoding:"utf8",windowsHide:true}).stdout.trim();
 for(const url of [config.apiUrl,config.dashboardUrl])assert.match(url,/^http:\/\/127\.0\.0\.1:\d+$/);
 async function main(){
   const browser=await chromium.launch({headless:true});
@@ -18,7 +20,8 @@ async function main(){
     const url=`${config.dashboardUrl}/certops/distribution?workspace=${config.workspaceId}&group=${config.groupId}`;
     const capture=async(name,expected)=>{
       const file=name+".png";await page.screenshot({path:path.join(config.evidence,file),fullPage:true});
-      scenarios.push({name,expected,actual:"Rendered by the real dashboard using the running API and PostgreSQL",status:"PASS",screenshot:file,
+      scenarios.push({name,repository:"tokentimerch/tokentimer-core",candidateSha,environment:"owned loopback API/dashboard and disposable PostgreSQL",
+        action:`Open ${name.replace(/-/g," ")} in the running application`,expected,actual:"Rendered by the real dashboard using the running API and PostgreSQL",status:"PASS",screenshot:file,
         limitation:"Disposable fixtures; this does not establish complete fleet/operator or native artifact acceptance."});
     };
     await page.goto(url);
@@ -47,11 +50,11 @@ async function main(){
     await page.getByRole("button",{name:"Confirm",exact:true}).click();
     await page.getByText("Request created. Review and approve the exact version in Jobs.",{exact:true}).waitFor();
     await capture("pending-rollout-approval","The approved-scope request is visibly pending; it is not represented as completed installation.");
-    await page.getByRole("link",{name:"Jobs",exact:true}).click();
+    await page.goto(`${config.dashboardUrl}/certops/jobs?workspace=${config.workspaceId}`);
     await page.getByRole("heading",{name:/Jobs/}).first().waitFor();
-    await page.getByText("Pending approval",{exact:true}).first().waitFor();
+    await page.locator("span").filter({hasText:/^Pending approval$/}).first().waitFor();
     await capture("jobs-cleanup-and-approval","Real completed cleanup and pending rollout jobs are shown by the application.");
-    await page.getByRole("button",{name:"Job details",exact:true}).first().click();
+    await page.getByRole("button",{name:"Approve",exact:true}).first().click();
     await page.getByText("Immutable approval scope",{exact:true}).first().waitFor();
     await capture("exact-pending-review","Fresh job detail presents the pending version, destination and activation policy for independent review.");
   }finally{

@@ -1,0 +1,31 @@
+{
+  "workspaceId": "e9315942-3648-4d4d-83c3-ccf371ae1a14",
+  "jobId": "7e552b52-a93c-40b4-ae3a-e5ecd0314a88",
+  "cleanupId": "23470ab2-4a67-4f20-a774-424ff6cec323",
+  "materialVersionId": "1748ea54-0788-4268-99d7-f800aa04e301",
+  "provider": "openbao-kv2",
+  "providerVersion": 1,
+  "providerMetadata": {
+    "current_version": 2,
+    "versions": {
+      "1": {
+        "created_time": "2026-11-03T10:53:00Z",
+        "deletion_time": "2026-11-03T10:53:22Z",
+        "destroyed": false
+      },
+      "2": {
+        "created_time": "2026-11-03T10:53:00Z",
+        "deletion_time": "",
+        "destroyed": false
+      }
+    }
+  },
+  "jobState": "succeeded",
+  "cleanupState": "soft_deleted",
+  "permanentFence": "verified",
+  "auditCount": 1,
+  "interruptedAcknowledgement": "recovered-after-api-process-restart",
+  "duplicateStatus": 200,
+  "contradictoryReceiptStatus": 409,
+  "missingReceiptStatus": 422
+}

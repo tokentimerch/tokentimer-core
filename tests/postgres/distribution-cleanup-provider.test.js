@@ -190,7 +190,10 @@ test(`real ${provider} policy denial, original-intent retry, signed dispatch and
   await assertCompleted(f);
   if (process.env.TT_CLEANUP_EVIDENCE_DIR) fs.writeFileSync(path.join(process.env.TT_CLEANUP_EVIDENCE_DIR, "provider-completion.json"),
     JSON.stringify({ workspaceId: f.workspaceId, jobId: f.jobId, cleanupId: f.cleanupId, materialVersionId: f.old[2],
-      provider, providerVersion: 1, providerMetadata: metadata, jobState: "succeeded", cleanupState: "soft_deleted",
+      provider, providerVersion: 1, providerMetadata: { current_version: metadata.current_version,
+        versions: Object.fromEntries(Object.entries(metadata.versions).map(([version, entry]) => [version, {
+          created_time: entry.created_time, deletion_time: entry.deletion_time, destroyed: entry.destroyed,
+        }])) }, jobState: "succeeded", cleanupState: "soft_deleted",
       permanentFence: "verified", auditCount: 1, interruptedAcknowledgement: "recovered-after-api-process-restart", duplicateStatus: duplicate.status,
       contradictoryReceiptStatus: contradictory.status, missingReceiptStatus: missing.status }, null, 2) + "\n");
 });

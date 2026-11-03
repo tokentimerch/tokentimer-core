@@ -10,7 +10,12 @@ temporary qualification trust exception is imported.
 Use the normal migration runner. SQL filenames from earlier previews are retained;
 the composed plan determines numbers. Fresh installations preserve main 79–82,
 then use provider 83, recipient/digest 84–85, lifecycle 86–90, recovery delivery 91
-and PagerDuty 92–93. Independent registered tails may leave reservations absent;
+and PagerDuty 92–95, followed by additive consumer preparation at 96 and durable
+review-authority epochs at 97. Migration 97 invalidates existing distribution
+authorizations once: obtain fresh independent review after upgrading. Removing
+and restoring a reviewer or changing workspace ownership cannot revive an old
+review. Stored approvals and permanent material fences remain intact.
+Independent registered tails may leave reservations absent;
 never fill them with no-op SQL. Applied version/name/timestamp rows and their SQL
 remain unchanged. Recognized previews retain their original assignments, while
 missing definitions are placed without collisions. Use the normal runner and
@@ -31,11 +36,12 @@ six histories and tests verification/recovery backfills. Recipient enforcement a
 ## Cleanup operation and provider contract
 
 New signed cleanup intents use `operation: "soft-delete"` and
-`provider: "vault-kv2"`. They have no operation-valued `type`, so #460's shared
-`providerOf` and local adapter resolve the correct provider. Only Vault KV v2 is
-accepted for this cleanup capability; OpenBao/Azure requests are rejected before
-an API cleanup fence is created. Provider version and customer scope validation
-remain required.
+`provider: "vault-kv2"` or `provider: "openbao-kv2"`. They have no operation-valued
+`type`, so the shared `providerOf` and local adapter resolve the correct provider.
+Each provider requires its own separately qualified cleanup capability and its
+matching material-store capability. Azure cleanup is rejected before an API fence
+is created. Provider version and customer scope validation remain required. The
+new OpenBao cleanup capability is absent from the released qualification manifest.
 
 Previously approved `type: "vault-kv2-soft-delete"` intents remain valid. The
 shared cleanup helper normalizes a separate adapter copy, preserving the original

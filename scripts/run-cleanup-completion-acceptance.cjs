@@ -86,6 +86,16 @@ async function main() {
     console.log(log);
   } catch (error) {
     summary.status = "failed";
+    summary.failure = error.message;
+    // Provider dev-server logs include bootstrap credentials. Export only
+    // container state so startup/resource failures are diagnosable safely.
+    summary.fixtureStates = containers.map(container => {
+      const result = spawnSync("docker", ["inspect", "--format", "{{json .State}}", container],
+        { encoding: "utf8", windowsHide: true, timeout: 10000 });
+      if (result.status !== 0) return { container, inspected: false };
+      const state = JSON.parse(result.stdout);
+      return { container, status: state.Status, oomKilled: state.OOMKilled, exitCode: state.ExitCode, error: state.Error };
+    });
     throw error;
   } finally {
     for (const container of [...containers].reverse()) {
