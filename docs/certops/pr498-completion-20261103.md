@@ -140,6 +140,18 @@ the rollout intent. A disposable PostgreSQL rerun of
 `tests/wildcard-vault/postgres.test.cjs` passed 2/2. That rerun is not a new
 full CI result.
 
+Head `7df30071` workflow
+[41638026196](https://github.com/tokentimerch/tokentimer-core/actions/runs/41638026196)
+passed that pinned-rollback step. The rollout-authorization step then paused
+rollouts whose approver had no current manager role, and it paused historical
+material retirement because the seeded approval had no current review. The
+review fixture now grants the approver that role before the intent. Historical
+retirement seeds keep a current review so material staleness still retires the
+rollout. The transfer fixture grants the same approver a manager role. A
+workspace can have only one admin, so that role is workspace manager. Disposable
+PostgreSQL reruns passed `pr329-review.test.cjs` 34/34 and `transfer.test.cjs`
+19/19. Those reruns are not a new full CI result.
+
 ## E. Evidence and reproduction
 
 See the [sanitized evidence index](evidence/2026-11-03/README.md), public provider

@@ -104,8 +104,11 @@ async function fixture({ expired = false, validFor = "1 day", required = true, r
     "INSERT INTO workspaces(id,name,created_by,plan,certops_require_approval_always) VALUES($1,'PR329 isolated review',$2,'oss',$3)",
     [workspaceId, actor, requireApproval],
   );
+  // The approver must already be a current manager. Membership changes the
+  // authorization epoch, so grant it before any rollout intent.
   for (const [id, role] of [
     [manager, "workspace_manager"],
+    [approver, "workspace_manager"],
     [viewer, "viewer"],
   ]) {
     await pool.query(
@@ -744,11 +747,18 @@ test("stale rollouts retire without queuing offline consumers or exhausting outb
       const f = await fixture({ expired: condition === "expired" });
       const approvalId = uuid(),
         rolloutId = uuid();
-      // Seed an already-expanded historical rollout, including one offline consumer.
+      const revision = (await pool.query(
+        "SELECT certops_distribution_authorization_revision AS revision FROM workspaces WHERE id=$1",
+        [f.workspaceId],
+      )).rows[0].revision;
+      // The seeded review is still current. Material staleness, not a missing
+      // reviewer, is what must retire this historical rollout.
       await pool.query(
-        `INSERT INTO certificate_jobs(id,workspace_id,operation,source,subject_type,subject_id,status,payload)
-      VALUES($1,$2,'noop','control-plane','managed_certificate',$3,'succeeded','{}')`,
-        [approvalId, f.workspaceId, f.certificateId],
+        `INSERT INTO certificate_jobs(id,workspace_id,operation,source,subject_type,subject_id,status,requested_by_user_id,payload)
+      VALUES($1,$2,'noop','control-plane','managed_certificate',$3,'succeeded',$4,$5::jsonb)`,
+        [approvalId, f.workspaceId, f.certificateId, f.actor, JSON.stringify({ distributionRollout: {
+          groupId: f.groupId, workspaceAuthorizationRevision: String(revision), verificationOnly: false, bindings: [],
+        } })],
       );
       await pool.query(
         `INSERT INTO certops_distribution_rollouts(id,workspace_id,group_id,material_version_id,generation,approved_intent_hash,approval_job_id,state)
