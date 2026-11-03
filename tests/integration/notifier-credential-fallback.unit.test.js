@@ -47,7 +47,14 @@ describe("Worker notifier credential fallback", () => {
     axios = workerRequire("axios");
     const axiosModule = await import(pathToFileURL(workerRequire.resolve("axios")).href);
     axiosDefault = axiosModule.default || axios;
-    nodemailer = workerRequire("nodemailer");
+    // Match the worker's conditional ESM export, even in a nested checkout.
+    const mailerManifestPath = workerRequire.resolve("nodemailer/package.json");
+    const mailerManifest = workerRequire("nodemailer/package.json");
+    const mailerImportPath = path.resolve(
+      path.dirname(mailerManifestPath),
+      mailerManifest.exports["."].import,
+    );
+    nodemailer = (await import(pathToFileURL(mailerImportPath).href)).default;
     const dbModule = await import(pathToFileURL(dbModulePath).href);
     dbPool = dbModule.pool;
   });
