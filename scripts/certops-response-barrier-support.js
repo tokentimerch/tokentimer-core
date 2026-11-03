@@ -13,7 +13,7 @@ function nativeFileIdentity(file) { const value = fs.lstatSync(file, { bigint: t
 function verifyCase(value) { assert.deepEqual(Object.keys(value).sort(), ["outputIndex", ...flags].sort()); assert.ok([0, 1, 2].includes(value.outputIndex)); for (const flag of flags) assert.equal(value[flag], true, flag); return true; }
 function verifyProof(value) { assert.deepEqual(Object.keys(value).sort(), ["scope", "nativeAdcsQualified", "sourceAcquisitionRaceQualified", "cases"].sort()); assert.equal(value.scope, scope); assert.equal(value.nativeAdcsQualified, false); assert.equal(value.sourceAcquisitionRaceQualified, false); assert.equal(value.cases.length, 3); assert.deepEqual(value.cases.map(item => item.outputIndex).sort(), [0, 1, 2]); for (const item of value.cases) verifyCase(item); return true; }
 function assertCleanupSafe(root, token) {
-  const resolved = path.resolve(root); assert.equal(path.dirname(resolved), path.resolve(os.tmpdir())); assert.match(path.basename(resolved), /^certops-response-barrier-support-[a-f0-9-]{36}$/);
+  const resolved = path.resolve(root); assert.equal(path.dirname(resolved), fs.realpathSync.native(os.tmpdir())); assert.match(path.basename(resolved), /^certops-response-barrier-support-[a-f0-9-]{36}$/);
   assert.equal(fs.realpathSync(resolved).toLowerCase(), resolved.toLowerCase()); assert.equal(fs.readFileSync(path.join(resolved, ".owner"), "utf8"), token);
   const guardFile = path.join(resolved, ".active-guard.json"), drainedFile = path.join(resolved, ".drained.json");
   assert.ok(fs.existsSync(guardFile) && fs.existsSync(drainedFile), "Incomplete supporting guard: preserve root");
@@ -34,14 +34,15 @@ function assertCleanupSafe(root, token) {
 function alive(pid) { try { process.kill(pid, 0); return true; } catch (error) { if (error.code === "ESRCH") return false; throw error; } }
 async function runCase(outputIndex) {
   assert.equal(process.platform, "win32"); assert.ok([0, 1, 2].includes(outputIndex));
-  const token = crypto.randomBytes(16).toString("hex"), root = path.join(os.tmpdir(), `certops-response-barrier-support-${crypto.randomUUID()}`);
+  const temporary = fs.realpathSync.native(os.tmpdir());
+  const token = crypto.randomBytes(16).toString("hex"), root = path.join(temporary, `certops-response-barrier-support-${crypto.randomUUID()}`);
   fs.mkdirSync(root); fs.writeFileSync(path.join(root, ".owner"), token, { flag: "wx" });
   const request = path.join(root, "request.req"); fs.writeFileSync(request, `Public temporary supporting input ${crypto.randomUUID()}`, { flag: "wx" });
   for (const name of ["issued.cer", "chain.p7b", "submit-response.rsp"]) fs.writeFileSync(path.join(root, name), "", { flag: "wx" });
   const rootId = identity(root), inputId = identity(request), inputHash = hash(request), ownerId = identity(path.join(root, ".owner")), sourceHashes = [hash(driver), hash(worker)];
-  let passed = false;
+  let passed = false, phase = "launch";
   try {
-    const child = spawn(path.join(process.env.SystemRoot, "System32/WindowsPowerShell/v1.0/powershell.exe"), ["-NoProfile", "-NonInteractive", "-File", driver, "-Root", root, "-Token", token, "-OwnerPid", String(process.pid), "-OutputIndex", String(outputIndex)], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(path.join(process.env.SystemRoot, "System32/WindowsPowerShell/v1.0/powershell.exe"), ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", driver, "-Root", root, "-Token", token, "-OwnerPid", String(process.pid), "-OutputIndex", String(outputIndex)], { env: { ...process.env, TEMP: temporary, TMP: temporary }, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     let output = "", overflow = false, closed = false, code, failure;
     const cancel = () => { const file = path.join(root, ".cancel"); if (!fs.existsSync(file)) fs.writeFileSync(file, token, { flag: "wx" }); };
     child.stdout.on("data", bytes => { if (Buffer.byteLength(output) + bytes.length > 8192) { overflow = true; cancel(); } else output += bytes.toString(); }); child.stderr.resume();
@@ -51,13 +52,16 @@ async function runCase(outputIndex) {
     finally { clearTimeout(timer); clearTimeout(drainTimer); }
     // Never kill a holder to make a timeout pass; its exact-worker custodian
     // must retain output barriers if termination cannot be proved.
+    phase = "driver-result";
     assert.equal(closed, true); assert.equal(alive(child.pid), false); assert.equal(failure, undefined); assert.equal(overflow, false); assert.equal(code, 0, "Supporting barrier failed; owned root preserved");
+    phase = "proof";
     const proof = JSON.parse(output); verifyCase(proof); assert.equal(proof.outputIndex, outputIndex);
     assert.deepEqual([hash(driver), hash(worker)], sourceHashes); assert.equal(identity(root), rootId); assert.equal(identity(request), inputId); assert.equal(hash(request), inputHash); assert.equal(identity(path.join(root, ".owner")), ownerId);
     for (const name of ["issued.cer", "chain.p7b", "submit-response.rsp"]) assert.equal(fs.statSync(path.join(root, name)).size, 0);
-    assertCleanupSafe(root, token); passed = true;
+    phase = "cleanup"; assertCleanupSafe(root, token); passed = true;
     return proof;
-  } finally { if (passed) { assertCleanupSafe(root, token); fs.rmSync(path.resolve(root), { recursive: true }); } }
+  } catch (error) { console.error(`Supporting response barrier case=${outputIndex} phase=${phase}`); throw error; }
+  finally { if (passed) { assertCleanupSafe(root, token); fs.rmSync(path.resolve(root), { recursive: true }); } }
 }
 async function main() { assert.equal(process.env.CERTOPS_RESPONSE_BARRIER_SUPPORT, "1", "Explicit supporting temp-native opt-in required"); const cases = []; for (const index of [0, 1, 2]) cases.push(await runCase(index)); const proof = { scope, nativeAdcsQualified: false, sourceAcquisitionRaceQualified: false, cases }; verifyProof(proof); console.log(JSON.stringify(proof)); return proof; }
 if (require.main === module) main().catch(() => { console.error("Supporting response barrier failed; preserve private temporary receipts and any undrained holder"); process.exitCode = 1; });

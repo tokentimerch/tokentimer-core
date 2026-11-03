@@ -27,11 +27,13 @@ function Assert-Owner {
   if(-not $current -or $current.CreationDate.ToUniversalTime().ToString('o') -cne $ownerCreated){throw 'Supporting parent ownership lost'}
   if(Test-Path -LiteralPath (Join-Path $rootPath '.cancel')){throw 'Supporting cancellation requested'}
 }
-function Receipt([string]$Name,$Value) {
+function Receipt([string]$Name,$Value,[switch]$Raw) {
   $target=Join-Path $rootPath $Name
-  $bytes=[Text.Encoding]::UTF8.GetBytes(($Value|ConvertTo-Json -Depth 8 -Compress))
-  $stream=[IO.File]::Open($target,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+  $temporary=$target+'.tmp'
+  $bytes=if($Raw){[Text.Encoding]::UTF8.GetBytes([string]$Value)}else{[Text.Encoding]::UTF8.GetBytes(($Value|ConvertTo-Json -Depth 8 -Compress))}
+  $stream=[IO.File]::Open($temporary,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
   try{$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+  [IO.File]::Move($temporary,$target)
 }
 Add-Type @'
 using System;
@@ -111,7 +113,7 @@ try {
   $workerScript=Join-Path $PSScriptRoot 'certops-response-barrier-worker.ps1'
   $workerHash=(Public-Hash $workerScript)
   $exe=(Get-Process -Id $PID).Path
-  $worker=Start-Process -FilePath $exe -ArgumentList @('-NoProfile','-NonInteractive','-File',('"'+$workerScript+'"'),'-Root',('"'+$rootPath+'"'),'-Token',$Token,'-DriverPid',"$PID",'-DriverCreated',$driverCreated,'-OutputIndex',"$OutputIndex") -WindowStyle Hidden -PassThru
+  $worker=Start-Process -FilePath $exe -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$workerScript+'"'),'-Root',('"'+$rootPath+'"'),'-Token',$Token,'-DriverPid',"$PID",'-DriverCreated',$driverCreated,'-OutputIndex',"$OutputIndex") -WindowStyle Hidden -PassThru
   $workerHandle=$worker.Handle
   $until=[DateTime]::UtcNow.AddSeconds(30)
   while(-not(Test-Path -LiteralPath (Join-Path $rootPath '.worker-ready.json'))) { Assert-Owner;if($worker.HasExited -or [DateTime]::UtcNow -ge $until){throw 'Supporting worker startup deadline'};Start-Sleep -Milliseconds 10 }
@@ -120,7 +122,7 @@ try {
   if($ready.token -cne $Token -or $ready.pid -ne $worker.Id -or $ready.parentPid -ne $PID -or $ready.scriptHash -cne $workerHash){throw 'Supporting startup receipt mismatch'}
   Assert-ExactWorker
   Receipt '.registered-worker.json' @{token=$Token;pid=$worker.Id;created=$workerCreated;exe=$workerExe;parentPid=$PID;scriptHash=$workerHash}
-  [IO.File]::WriteAllText((Join-Path $rootPath '.allow-access'),$Token)
+  Receipt '.allow-access' $Token -Raw
   $until=[DateTime]::UtcNow.AddSeconds(30)
   while(-not $inputHolder.Broken(20)){Assert-Owner;Assert-ExactWorker;if([DateTime]::UtcNow -ge $until){throw 'Actual input read never broke its granted oplock'}}
   Assert-ExactWorker

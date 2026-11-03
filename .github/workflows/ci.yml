@@ -858,6 +858,15 @@ jobs:
           Expand-Archive -LiteralPath $actionlintArchive -DestinationPath $actionlintDirectory
           $actionlintBinary = Join-Path $actionlintDirectory 'actionlint.exe'
           "CERTOPS_ACTIONLINT=$actionlintBinary" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Exercise temporary response barriers from a restricted PowerShell parent
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          CERTOPS_RESPONSE_BARRIER_SUPPORT: '1'
+        run: |
+          $env:PSExecutionPolicyPreference = 'Restricted'
+          node scripts/certops-response-barrier-support.js
+          if ($LASTEXITCODE -ne 0) { throw 'Temporary response barrier supporting controls failed' }
       - name: Run complete qualification tooling including all AD CS language package gates
         run: pnpm run test:certops:qualification
       - name: Run complete release collector inventory
