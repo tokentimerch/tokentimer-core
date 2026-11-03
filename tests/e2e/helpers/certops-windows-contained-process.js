@@ -487,9 +487,13 @@ async function startContainedNativeProcess({
   });
   const startup = async () => {
     if (onCreated) onCreated(resource);
+    // Cold Server runners compile the native helper and measure the owner before
+    // readiness. Give that preparation its own finite budget; run/resume gates
+    // and all native identity, lifetime and drainage checks retain their limits.
     ready = await wait(
       () =>
         fs.existsSync(path.join(directory, "ready.json")) && read("ready.json"),
+      90000,
     );
     exact(ready, [
       "token",

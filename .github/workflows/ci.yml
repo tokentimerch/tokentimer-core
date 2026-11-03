@@ -858,6 +858,8 @@ jobs:
           $env:PSExecutionPolicyPreference = 'Restricted'
           node scripts/certops-installer-second-rename-support.js
           if ($LASTEXITCODE -ne 0) { throw 'Restricted-parent installer activation control failed' }
+          node scripts/certops-installer-startup-support.js
+          if ($LASTEXITCODE -ne 0) { throw 'Cold-start installer activation control failed' }
       - name: Exercise temporary response barriers from a restricted PowerShell parent
         if: runner.os == 'Windows'
         shell: pwsh
