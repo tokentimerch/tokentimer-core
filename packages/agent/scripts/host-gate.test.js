@@ -11,10 +11,10 @@ const { verifyReport } = require("../../../scripts/certops-qualification-report"
 test("native command failures retain only bounded diagnostic metadata", async () => {
   const gate = createHostGate({ suite: "fixture", strict: true, reportPath: null, continueOnFailure: true });
   await gate.preflight();
-  const error = Object.assign(new Error("private token and path"), { code: "CERTOPS_NATIVE_COMMAND_FAILED", qualificationCommand: { executable: "powershell.exe", exitStatus: 1, script: "owned-issued-request.ps1", powerShellCode: "PermissionDenied", scriptHead: "private command arguments" } });
+  const error = Object.assign(new Error("private token and path"), { code: "CERTOPS_NATIVE_COMMAND_FAILED", qualificationCommand: { executable: "powershell.exe", exitStatus: 1, script: "owned-issued-request.ps1", issuedStep: "enumeration", powerShellCode: "PermissionDenied", scriptHead: "private command arguments" } });
   await gate.scenario("owned-command", async () => { throw error; });
   const failure = gate.report.scenarios[0].failure;
-  assert.deepEqual(failure.command, { executable: "powershell.exe", exitStatus: 1, script: "owned-issued-request.ps1", powerShellCode: "PermissionDenied" });
+  assert.deepEqual(failure.command, { executable: "powershell.exe", exitStatus: 1, script: "owned-issued-request.ps1", issuedStep: "enumeration", powerShellCode: "PermissionDenied" });
   assert.equal(JSON.stringify(failure).includes("private"), false);
   const second = Object.assign(new Error("secret"), { code: "CERTOPS_NATIVE_COMMAND_FAILED", qualificationCommand: { executable: "powershell.exe", exitStatus: 1, powerShellCode: "Issued leaf uses a foreign native key" } });
   await gate.scenario("owned-command-classification", async () => { throw second; });

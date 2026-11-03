@@ -88,6 +88,7 @@ test("installer swap regression runs under Windows PowerShell 5.1 in the selecti
  assert.deepEqual(selectFiles(["scripts/certops-installer-swap.test.ps1"]),{tooling:true,windows:true,stack:false,reason:"changed-files"});
  assert.equal(selectFiles(["packages/agent/scripts/install-agent.ps1"]).windows,true);
  for(const file of ["scripts/certops-installer-second-rename-support.js","scripts/certops-installer-startup-support.js","tests/e2e/helpers/certops-windows-contained-process.js","tests/e2e/helpers/certops-windows-contained-process.ps1","tests/e2e/helpers/certops-windows-second-rename.js","tests/e2e/helpers/certops-windows-second-rename-driver.ps1"])assert.equal(selectFiles([file]).windows,true,file);
+ assert.equal(selectFiles(["packages/agent/scripts/host-gate.js"]).windows,true);
  const ci=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows/ci.yml"),"utf8"));
  const ordinary=ci.jobs.certops_tooling.steps.find(item=>item.name==="Exercise installer activation using owned temporary files");
  assert.ok(ordinary);assert.equal(ordinary.shell,"powershell");assert.equal(ordinary.if,"runner.os == 'Windows'");assert.notEqual(ordinary["continue-on-error"],true);

@@ -24,6 +24,7 @@ function selectFiles(files){
   if(/^tests\/e2e\/helpers\/certops-arm64-installed-journey\.js$/.test(file))continue;
   if(/^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.npmrc)$/.test(file)||/^packages\/(shared|contracts)\//.test(file))return all("shared-runtime-or-dependencies");
   if(/^packages\/agent\//.test(file)){
+   if(file==="packages/agent/scripts/host-gate.js")selected.windows=true;
    if(!/^packages\/agent\/scripts\/(host-gate(?:\.test)?\.js|.*(?:report|qualification).*\.js)$/.test(file)){selected.windows=true;selected.stack=true;}
   }
   if(file==="scripts/certops-installer-swap.test.ps1"||file==="scripts/certops-installer-pe.test.ps1")selected.windows=true;
