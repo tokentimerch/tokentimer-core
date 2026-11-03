@@ -105,6 +105,25 @@ function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = 
     const frame = stack.match(/\(?([A-Za-z0-9_.-]+\.(?:js|cjs)):(\d{1,6}):\d{1,5}\)?/);
     if (frame) detail.sourceFrame = `${frame[1]}:${frame[2]}`;
     if (failureCount > 0) detail.afterEarlierFailure = true;
+    if (error?.code === "CERTOPS_NATIVE_COMMAND_FAILED" && error.qualificationCommand) {
+      const command = error.qualificationCommand;
+      const executables = ["powershell.exe", "certutil.exe", "certreq.exe", "sc.exe", "netsh.exe", "node.exe", "icacls.exe"];
+      const codes = ["NamedParameterNotFound", "ParameterBindingException", "ParameterArgumentValidationError", "PathNotFound", "ItemNotFoundException", "CommandNotFoundException", "PermissionDenied", "UnauthorizedAccessException", "NativeCommandError", "InvalidOperationException", "InvokeMethodOnNull", "NoMatchingEventsFound"];
+      detail.command = { executable: executables.includes(command.executable) ? command.executable : "other", exitStatus: Number.isInteger(command.exitStatus) ? command.exitStatus : null };
+      if (command.script === "owned-issued-request.ps1") detail.command.script = command.script;
+      if (command.script === "owned-issued-request.ps1" && ["connection", "columns", "restriction", "enumeration", "row-validation", "certificate-decode", "match", "remoting"].includes(command.issuedStep)) detail.command.issuedStep = command.issuedStep;
+      if (codes.includes(command.powerShellCode)) detail.command.powerShellCode = command.powerShellCode;
+      const fixedFailures = {
+        "Missing private key": "missing-private-key",
+        "Issued leaf uses a foreign native key": "foreign-native-key",
+        "Exportable key": "exportable-key",
+        "Foreign or malformed native issued request observation": "issued-row-refused",
+        "Owned request observation exceeded its bounded fixture scope": "issued-row-limit",
+        "Expected exactly one owned issued CA request with the independently observed leaf fingerprint": "issued-request-mismatch",
+        "System.Runtime.InteropServices.COMException": "com-exception",
+      };
+      if (Object.hasOwn(fixedFailures, command.powerShellCode)) detail.command.failure = fixedFailures[command.powerShellCode];
+    }
     if (debugDetail) {
       detail.debug = { message: bounded(error?.message ?? error).slice(0, 512) };
       if (stack) detail.debug.stack = stack.split("\n").slice(0, 12).map((line) => bounded(line.trim())).filter(Boolean);
