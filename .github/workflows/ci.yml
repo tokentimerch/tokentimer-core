@@ -528,6 +528,8 @@ jobs:
           main().catch(error => { console.error(error.message); process.exitCode = 1; });
           NODE
           node --test --test-force-exit tests/postgres/distribution-migration-upgrade.test.js
+      - name: Verify alert date serialization across host timezones
+        run: node --test tests/postgres/alert-queue-timezones.test.js
       - name: Exercise PagerDuty lifecycle and actual recipient-runtime interoperability
         env:
           DB_NAME: pagerduty_ci_issue364_test

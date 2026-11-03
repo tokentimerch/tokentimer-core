@@ -194,6 +194,7 @@ jobs:
     timeout-minutes: 50
     env:
       CERTOPS_HOST_TESTS: '1'
+      CERTOPS_WINDOWS_DISPOSABLE_HOST: '1'
       CERTOPS_QUALIFICATION_STRICT: '1'
       CERTOPS_QUALIFICATION_REPORT: qualification-results/windows.json
       CERTOPS_HOST_ARTIFACTS: qualification-results/host
@@ -264,7 +265,14 @@ jobs:
           $ErrorActionPreference = 'Stop'
           & ./scripts/certops-installer-pe.test.ps1
       - name: Real Windows discovery CNG IIS and supporting Go checks
-        run: node --test packages/agent/scripts/host/windows-host.test.js
+        shell: pwsh
+        run: |
+          $canonicalTemporary = node -p "require('node:fs').realpathSync.native(require('node:os').tmpdir())"
+          if ($LASTEXITCODE -ne 0) { throw 'Canonical temporary root unavailable' }
+          $env:TEMP = $canonicalTemporary
+          $env:TMP = $canonicalTemporary
+          node --test packages/agent/scripts/host/windows-host.test.js
+          if ($LASTEXITCODE -ne 0) { throw 'Windows host qualification failed' }
       - name: Assert required host scenarios executed
         run: node scripts/certops-qualification-report.js qualification-results/windows.json
       - name: Preserve execution evidence

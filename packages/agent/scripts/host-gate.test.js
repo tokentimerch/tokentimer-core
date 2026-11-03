@@ -7,6 +7,21 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createHostGate, classifyWindowsHost } = require("./host-gate");
 const { verifyReport } = require("../../../scripts/certops-qualification-report");
+
+test("an outside-scenario failure survives finish without exposing private details", async () => {
+  const gate = createHostGate({ suite: "fixture", strict: true, reportPath: null });
+  await gate.preflight();
+  await gate.scenario("complete-before-setup-error", async () => {});
+  const failure = Object.assign(new Error("password=private-fixture-value ttboot_private_fixture"), { code: "ERR_ASSERTION" });
+  failure.stack = "Error: private-fixture-value\n    at setup (C:\\private\\credential-weak-acl-fixture.js:227:3)";
+  await gate.recordFailure(failure);
+  await gate.recordFailure(new Error("later cleanup diagnostic"));
+  await assert.rejects(gate.finish({ requiredScenarios: ["complete-before-setup-error"] }), /Host qualification incomplete/);
+  assert.equal(gate.report.status, "failed");
+  assert.deepEqual(gate.report.failure, { errorClass: "Error", errorCode: "ERR_ASSERTION", sourceFrame: "credential-weak-acl-fixture.js:227" });
+  assert.equal(JSON.stringify(gate.report).includes("private-fixture"), false);
+  assert.equal(JSON.stringify(gate.report).includes("C:\\private"), false);
+});
 const gate = () => createHostGate({ suite: "fixture", candidateSha: "a".repeat(40), strict: true, requiredCapabilities: ["native"], probeCapabilities: async () => ({ native: { available: true } }) });
 test("shared Windows build numbers require native server product type", () => {
   for (const [build, server] of [["17763", "2019"], ["20348", "2022"], ["26100", "2025"]]) {

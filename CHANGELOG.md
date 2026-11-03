@@ -19,6 +19,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **AD CS on localized Windows agents.** Issuer preflight now returns the CA certificates needed for key confirmation on German and French hosts. **Operator action:** update affected Windows agents.
+
+- **Alert dates and times stay correct on non-UTC API hosts.** The alert queue and asset delivery state preserve calendar due dates and the actual update, retry and delivery-attempt timestamps.
 - **AD CS profile reattachment works after stopping management.** Creating a profile can attach it to the same certificate and start a new management period while keeping its history. The certificate must still be in inventory.
 
 ## [0.18.2] - 2026-10-27
