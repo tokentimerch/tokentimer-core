@@ -25,6 +25,27 @@ const { test } = require("node:test"),
   path = require("node:path"),
   os = require("node:os");
 const helper = require("../tests/e2e/helpers/certops-adcs-browser-journey");
+test("native browser selects its owned current registration instead of observed source history", () => {
+  const certificateId=crypto.randomUUID(), periodId=crypto.randomUUID(), identityId=crypto.randomUUID();
+  const source={managedCertificateId:certificateId,periodId,currentIdentityId:identityId,endedAt:null,periodEndedAt:null};
+  const identity={identityId,fingerprintSha256:"a".repeat(64),lifecycleStatus:"active",sources:[
+    {...source,managedCertificateId:crypto.randomUUID(),source:"agent_windows"},
+    {...source,source:"agent_issuance"},
+  ]};
+  const expected={certificateId,fingerprint:"a".repeat(64)};
+  assert.deepEqual(helper.currentBrowserSource({items:[identity]},expected),{id:certificateId,periodId});
+  for(const fields of [
+    {managedCertificateId:crypto.randomUUID()},
+    {currentIdentityId:crypto.randomUUID()},
+    {endedAt:"2026-11-02T00:00:00Z"},
+    {periodEndedAt:"2026-11-02T00:00:00Z"},
+  ])assert.equal(helper.currentBrowserSource({items:[{...identity,sources:[{...source,...fields}]}]},expected),null);
+  for(const fields of [{fingerprintSha256:"b".repeat(64)},{lifecycleStatus:"revoked"}]){
+    assert.equal(helper.currentBrowserSource({items:[{...identity,...fields}]},expected),null);
+  }
+  assert.throws(()=>helper.currentBrowserSource({items:[identity,identity]},expected));
+  assert.throws(()=>helper.currentBrowserSource({items:[{...identity,sources:[source,source]}]},expected));
+});
 function valid() {
   return {
     scope: helper.SCOPE,
