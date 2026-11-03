@@ -1,5 +1,5 @@
 import {beforeEach,describe,expect,it,vi} from 'vitest';
-import {fireEvent,render,screen,waitFor} from '@testing-library/react';
+import {fireEvent,render,screen,waitFor,within} from '@testing-library/react';
 import {ChakraProvider} from '@chakra-ui/react';
 import {MemoryRouter,Outlet,Route,Routes} from 'react-router';
 import {DashboardThemeProvider} from '../../src/hooks/useDashboardTheme.js';
@@ -72,6 +72,25 @@ describe('Distribution Management',()=>{
     api.retention.mockResolvedValue({cleanupAvailable:true,versions:[{id:retained,provider_version:1,retainedReasons:[],metadataEligible:true}]});
     page();const select=await screen.findByLabelText('Exact published version');expect([...select.options].some(option=>option.value===retained)).toBe(false);
     fireEvent.click(screen.getByRole('button',{name:'Preview retained versions'}));await screen.findByText(/Metadata eligible/);expect(screen.queryByRole('button',{name:'Request cleanup approval'})).not.toBeInTheDocument();
+  });
+  it('distinguishes material identities when Vault objects share a provider version before cleanup review',async()=>{
+    const oldest='33333333-3333-4333-8333-333333333333',protectedVersion='44444444-4444-4444-8444-444444444444';
+    data.policy={revision:1,policy:structuredClone(policy)};
+    Object.assign(data.policy.policy.retention,{minimumSeconds:0,minimumVersions:2,rollbackSeconds:0,cleanupEnabled:true,reportOnly:false});
+    data.versions=[latest,protectedVersion,retained,oldest].map(id=>({id,state:'published',provider_version:1}));
+    api.retention.mockResolvedValue({cleanupAvailable:true,versions:data.versions.map((version,index)=>({...version,retainedReasons:index<2?['minimum_version_count']:[],metadataEligible:index>=2}))});
+    page();fireEvent.click(await screen.findByRole('button',{name:'Preview retained versions'}));
+    await screen.findByText(`Material version ${oldest}`);
+    for(const version of data.versions){
+      const row=screen.getByRole('article',{name:`Material version ${version.id}`});
+      expect(within(row).getByText('Store version 1')).toBeInTheDocument();
+    }
+    const row=screen.getByRole('article',{name:`Material version ${oldest}`});
+    fireEvent.click(within(row).getByRole('button',{name:'Request cleanup approval'}));
+    expect(api.cleanup).not.toHaveBeenCalled();
+    expect(screen.getByRole('alertdialog')).toHaveTextContent(`soft delete only material version ${oldest}`);
+    fireEvent.click(screen.getByRole('button',{name:'Confirm'}));
+    await waitFor(()=>expect(api.cleanup).toHaveBeenCalledWith('workspace','group',{materialVersionId:oldest,expectedRevision:1,reauthorize:false}));
   });
   it('requires confirmation for a bounded administrator emergency and still requires rollout approval',async()=>{
     page();fireEvent.click(await screen.findByRole('button',{name:'Maintenance'}));

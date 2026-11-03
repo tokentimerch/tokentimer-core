@@ -1409,9 +1409,21 @@ function Management({
                 : `Cleanup unavailable or report-only. ${label(retention.diagnosticCode || 'customer agent qualification required')}`}
             </Text>
             {retention.versions.map(value => (
-              <Box key={value.id} borderWidth='1px' borderRadius='md' p={3}>
+              <Box
+                as='article'
+                aria-label={`Material version ${value.id}`}
+                key={value.id}
+                borderWidth='1px'
+                borderRadius='md'
+                p={3}
+              >
+                <Text fontSize='sm' fontWeight='semibold'>
+                  Material version {value.id}
+                </Text>
+                {value.provider_version != null ? (
+                  <Text fontSize='xs'>Store version {value.provider_version}</Text>
+                ) : null}
                 <Text fontSize='sm'>
-                  Version {value.provider_version || value.id}:{' '}
                   {value.retainedReasons.length
                     ? value.retainedReasons.map(label).join(', ')
                     : 'Metadata eligible; cleanup authorization and provider qualification still required'}
