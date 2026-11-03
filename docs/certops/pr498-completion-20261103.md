@@ -80,7 +80,7 @@ and `expected_core_sha=4a5dedcacf600db2406f756ca97f986cfba2cc1a`.
 | Core canonical unit | 3,197 passed, no failures/skips; `TEST_CONCURRENCY=2 pnpm run test:unit`; frozen product source now committed as `8a8cb8cd` |
 | Real PG lifecycle | 74 passed, no skips, including preparation and reviewer removal/restoration |
 | Upgrades/concurrency | Lifecycle upgrade fixture, 30 migration histories, seven PagerDuty histories and 77 PagerDuty lifecycle tests passed; fresh plan ends at 97 |
-| Vault/OpenBao | Final migration-97 reruns: 15 passed per provider, no skips; manifests retain actual product SHA/dirty-worktree provenance; final-head CI reruns both |
+| Vault/OpenBao | Final migration-97 reruns: 15 passed per provider, no skips; manifests retain actual product SHA/dirty-worktree provenance. Head `a541dd1e` CI did not start those suites: Vault was OOM-killed at 384m |
 | Agent focused supported Linux fixture | 86 passed, no skips, with real OpenSSL; staging/calendar/discovery and file/read-only boundaries |
 | Native packaging retry | Eight passed, zero failures, two explicit host/tar-mode skips; system tar resolves Git GNU tar's Windows drive-path collision |
 | Dashboard | Original three targeted files: 60 passed; updated distribution file: 15 passed including two new cases; typecheck/build/lint passed |
@@ -91,10 +91,18 @@ and `expected_core_sha=4a5dedcacf600db2406f756ca97f986cfba2cc1a`.
 
 The Core baseline [41603078735](https://github.com/tokentimerch/tokentimer-core/actions/runs/41603078735)
 passed all 37 jobs / 41 checks on `e076f3c7`; it was not pending. This is not a
-pass for new code. New-head CI is linked in the PR. Enterprise full CI:
-[41613282001](https://github.com/tokentimerch/tokentimer-enterprise/actions/runs/41613282001).
-Cloud [41606040288](https://github.com/tokentimerch/tokentimer-cloud/actions/runs/41606040288)
-correctly rejects the unmerged Core preview for release.
+pass for new code. New-head CI is linked in the PR. Edition-specific workflow
+results are recorded in their respective private PR descriptions. Cloud release
+validation correctly rejects the unmerged Core preview for release.
+
+Head `a541dd1e` workflow
+[41623801301](https://github.com/tokentimerch/tokentimer-core/actions/runs/41623801301)
+failed four jobs. Skip inventory and skip-qualification drift followed a main
+merge that moved Windows discovery lines. Leak scan matched private repository
+names in this note. The provider step never reached its tests: PostgreSQL was
+still running and Vault was OOM-killed at 384m (exit 137). Ownership files are
+regenerated, those names are removed, and the disposable provider limit is
+1024m. This note does not treat that correction as a passing CI run.
 
 ## E. Evidence and reproduction
 

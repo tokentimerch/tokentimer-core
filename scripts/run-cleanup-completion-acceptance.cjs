@@ -13,6 +13,14 @@ const nonce = crypto.randomBytes(8).toString("hex");
 const output = path.join(root, "qualification-results", `cleanup-completion-${nonce}`);
 fs.mkdirSync(output, { recursive: true });
 
+function fixtureState(container) {
+  const result = spawnSync("docker", ["inspect", "--format", "{{json .State}}", container],
+    { encoding: "utf8", windowsHide: true, timeout: 10000 });
+  if (result.status !== 0) return { container, inspected: false };
+  const state = JSON.parse(result.stdout);
+  return { container, status: state.Status, oomKilled: state.OOMKilled, exitCode: state.ExitCode, error: state.Error };
+}
+
 function run(command, args, { env = process.env, log, timeout = 180000 } = {}) {
   const result = spawnSync(command, args, { cwd: root, env, encoding: "utf8", windowsHide: true,
     timeout, maxBuffer: 32 * 1024 * 1024 });
@@ -36,7 +44,8 @@ async function main() {
     for (const [name, args] of [
       [pg, ["--memory=512m", "-p", "127.0.0.1::5432", "-e", "POSTGRES_USER=certops_fixture", "-e",
         "POSTGRES_PASSWORD=synthetic-completion-only", "-e", `POSTGRES_DB=${database}`, "postgres:16-alpine"]],
-      [vault, ["--memory=384m", "-p", "127.0.0.1::8200", "-e", `${provider === "openbao-kv2" ? "BAO" : "VAULT"}_DEV_ROOT_TOKEN_ID=isolated-completion-fixture-only`,
+      // Vault 1.21 dev was OOM-killed at 384m on GitHub-hosted runners before health returned.
+      [vault, ["--memory=1024m", "-p", "127.0.0.1::8200", "-e", `${provider === "openbao-kv2" ? "BAO" : "VAULT"}_DEV_ROOT_TOKEN_ID=isolated-completion-fixture-only`,
         provider === "openbao-kv2" ? "openbao/openbao:2.4.1" : "hashicorp/vault:1.21", "server", "-dev", "-dev-listen-address=0.0.0.0:8200"]],
     ]) {
       run("docker", ["run", "-d", "--name", name, "--label", `tokentimer.cleanup-completion-owner=${nonce}`, ...args]);
@@ -58,7 +67,15 @@ async function main() {
       if (pgReady && vaultReady) { ready = true; break; }
       await new Promise(resolve => setTimeout(resolve, 250));
     }
-    if (!ready) throw new Error("Owned PostgreSQL/Vault startup failed");
+    if (!ready) {
+      const states = containers.map(fixtureState);
+      const detail = states.map(state => state.inspected === false
+        ? `${state.container}:uninspected`
+        : `${state.container}:${state.status}${state.oomKilled ? ",oom" : ""}`).join("; ");
+      const error = new Error(`Owned PostgreSQL/Vault startup failed (${detail})`);
+      error.fixtureStates = states;
+      throw error;
+    }
     const env = { ...process.env, NODE_ENV: "test", CERTOPS_ENABLED: "true", CERTOPS_MATERIAL_CLEANUP_ENABLED: "true",
       DB_HOST: "127.0.0.1", DB_PORT: pgPort, DB_NAME: database, DB_USER: "certops_fixture", DB_PASSWORD: "synthetic-completion-only",
       CERTOPS_SIGNING_ENCRYPTION_KEY: crypto.randomBytes(32).toString("hex"), CERTOPS_REGISTRATION_ENCRYPTION_KEY: crypto.randomBytes(32).toString("hex"),
@@ -89,13 +106,7 @@ async function main() {
     summary.failure = error.message;
     // Provider dev-server logs include bootstrap credentials. Export only
     // container state so startup/resource failures are diagnosable safely.
-    summary.fixtureStates = containers.map(container => {
-      const result = spawnSync("docker", ["inspect", "--format", "{{json .State}}", container],
-        { encoding: "utf8", windowsHide: true, timeout: 10000 });
-      if (result.status !== 0) return { container, inspected: false };
-      const state = JSON.parse(result.stdout);
-      return { container, status: state.Status, oomKilled: state.OOMKilled, exitCode: state.ExitCode, error: state.Error };
-    });
+    summary.fixtureStates = error.fixtureStates || containers.map(fixtureState);
     throw error;
   } finally {
     for (const container of [...containers].reverse()) {

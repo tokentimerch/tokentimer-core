@@ -567,7 +567,7 @@
     {
       "id": "f95b49bb19f40cd2479e",
       "file": "packages/agent/src/discovery/windows.test.js",
-      "line": 462,
+      "line": 480,
       "name": "unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
@@ -577,7 +577,7 @@
     {
       "id": "37eb38150afcae9c2681",
       "file": "packages/agent/src/discovery/windows.test.js",
-      "line": 515,
+      "line": 533,
       "name": "reports an http.sys binding with no matching IIS site as http_sys, not iis_binding",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
@@ -587,7 +587,7 @@
     {
       "id": "896b620b80b9c787229a",
       "file": "packages/agent/src/discovery/windows.test.js",
-      "line": 603,
+      "line": 621,
       "name": "reports real subjectAltNames end-to-end from the certificate's raw bytes",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
