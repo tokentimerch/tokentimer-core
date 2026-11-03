@@ -151,6 +151,35 @@ test("stable discovered consumers survive fingerprint rotation, stale observatio
   assert.equal(await discovery.recordConsumerObservation(pool,{...observation,locationKind:"windows_store"},{id:f.certificateId}),null);
   assert.equal((await pool.query("SELECT 1 FROM certops_discovered_consumers WHERE workspace_id=$1 AND id=$2",[other.workspaceId,id])).rowCount,0);
 });
+for(const [provider,providerVersion] of [["vault-kv2",7],["openbao-kv2",7],["azure-key-vault","a".repeat(32)]]) test(`public ${provider} preflight preserves its provider/version and uses that provider's capability`,async()=>{
+  const f=await fixture({materialProvider:provider,providerVersion});
+  const {providerCapability}=require("../../packages/contracts/certops/material-provider.cjs");
+  const capabilities=[providerCapability(provider),"deploy-from-store-v1","evidence-claim-binding-v1"];
+  await pool.query("UPDATE certops_agents SET declared_capabilities=$2::jsonb,capabilities_updated_at=clock_timestamp() WHERE id=$1",[f.consumer,JSON.stringify(capabilities)]);
+  const result=await administration.preflight({workspaceId:f.workspaceId,groupId:f.groupId});
+  const consumer=result.consumers.find(c=>c.bindingId===f.bindingId),intent=consumer.publicIntent;
+  assert.equal(intent.provider,provider);assert.equal(intent.providerVersion,providerVersion);
+  assert.equal(consumer.diagnostics.some(d=>d.code==="CERTOPS_AGENT_CAPABILITY_UNAVAILABLE"),false);
+  const fs=require("node:fs"),path=require("node:path"),os=require("node:os");
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),"tt-preflight-handoff-"));
+  try{
+    const file=path.join(directory,"intent.json");
+    require("../../packages/agent/src/material-store").writeProtectedJson(file,intent);
+    assert.deepEqual(require("../../packages/agent/bin/preflight-material-binding").readPublicPreflightIntent(file,f.bindingId),intent);
+  }finally{fs.rmSync(directory,{recursive:true,force:true});}
+  await pool.query("UPDATE certops_agents SET declared_capabilities=$2::jsonb WHERE id=$1",[f.consumer,JSON.stringify(capabilities.slice(1))]);
+  const missing=await administration.preflight({workspaceId:f.workspaceId,groupId:f.groupId});
+  assert.ok(missing.consumers[0].diagnostics.some(d=>d.code==="CERTOPS_AGENT_CAPABILITY_UNAVAILABLE"&&d.capability===providerCapability(provider)));
+});
+
+test("public Windows preflight reports missing native qualification capabilities",async()=>{
+  const f=await fixture();
+  await pool.query("UPDATE certops_agents SET platform='win32' WHERE id=$1",[f.consumer]);
+  const result=await administration.preflight({workspaceId:f.workspaceId,groupId:f.groupId});
+  const unavailable=result.consumers[0].diagnostics.filter(d=>d.code==="CERTOPS_AGENT_CAPABILITY_UNAVAILABLE").map(d=>d.capability);
+  for(const capability of ["windows-material-iis-v1","windows-cert-store-v1","iis-binding-v1"])assert.ok(unavailable.includes(capability),capability);
+});
+
 test("management/preflight/retention reads are non-mutating and do not expose credentials",async()=>{
   const f=await fixture();await operations.requestRollout({...f,actorUserId:f.actor});
   const count=(await pool.query("SELECT count(*) AS count FROM certificate_jobs WHERE workspace_id=$1",[f.workspaceId])).rows[0].count;

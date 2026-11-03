@@ -9,7 +9,7 @@ const {readProtectedFile,UUID,failure}=require("../src/material-store");
 const {preflightPinnedDeployment}=require("../src/material-store/lifecycle");
 function readPublicPreflightIntent(file,bindingId){
   const intent=JSON.parse(readProtectedFile(path.resolve(file),16384));
-  const fields=["groupId","bindingId","rolloutId","materialVersionId","materialStoreRef","providerVersion","fingerprintSha256","generation","deploymentProfileRef","profileRevision","authorizationRevision","verificationPolicy","verificationOnly","activationPolicy"];
+  const fields=["groupId","bindingId","rolloutId","materialVersionId","materialStoreRef","provider","providerVersion","fingerprintSha256","generation","deploymentProfileRef","profileRevision","authorizationRevision","verificationPolicy","verificationOnly","activationPolicy"];
   if(!intent || typeof intent!=="object" || Array.isArray(intent) || Object.keys(intent).some(key=>!fields.includes(key)) || intent.bindingId!==bindingId)throw failure("material_preflight_intent_invalid");
   return intent;
 }

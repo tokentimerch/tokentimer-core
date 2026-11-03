@@ -11,6 +11,7 @@ const {
 const {
   CONNECTORS,
 } = require("../../../../packages/contracts/certops/service-connectors.cjs");
+const {providerCapability,versionOf}=require("../../../../packages/contracts/certops/material-provider.cjs");
 function fail(code, statusCode = 404) {
   const e = new Error(code);
   e.code = code;
@@ -138,7 +139,7 @@ async function preflight({
     : group.latest_material_version_id;
   const version = (
     await client.query(
-      `SELECT id,state,valid_to,provider_version,fingerprint_sha256 FROM certops_material_versions WHERE workspace_id=$1 AND group_id=$2 AND id=$3`,
+      `SELECT id,state,valid_to,provider_version,provider_version_ref,fingerprint_sha256 FROM certops_material_versions WHERE workspace_id=$1 AND group_id=$2 AND id=$3`,
       [workspaceId, group.id, versionId],
     )
   ).rows[0];
@@ -166,9 +167,10 @@ async function preflight({
         diagnostics.push({ code: "CERTOPS_AGENT_OFFLINE", status: "blocked" });
       const agent = agents.find((agent) => agent.id === row.assigned_agent_id);
       for (const capability of [
-        "material-store-vault-kv2-v1",
+        providerCapability(group.material_store_provider || "vault-kv2"),
         "deploy-from-store-v1",
         "evidence-claim-binding-v1",
+        ...(row.agent_platform === "win32" ? ["windows-material-iis-v1","windows-cert-store-v1","iis-binding-v1"] : []),
         ...(row.activation_policy ? ["maintenance-calendar-v1"] : []),
       ]) {
         if (
@@ -217,7 +219,7 @@ async function preflight({
       return {
         bindingId: row.binding_id,
         publicIntent:version?.state==="published"?{groupId:group.id,bindingId:row.binding_id,materialVersionId:version.id,materialStoreRef:group.material_store_ref,
-          providerVersion:version.provider_version,fingerprintSha256:version.fingerprint_sha256,generation:Math.max(1,Number(group.generation)+1),
+          provider:group.material_store_provider || "vault-kv2",providerVersion:versionOf(version),fingerprintSha256:version.fingerprint_sha256,generation:Math.max(1,Number(group.generation)+1),
           deploymentProfileRef:row.deployment_profile_ref,profileRevision:row.profile_revision,authorizationRevision:row.authorization_revision,
           verificationPolicy:row.verification_policy,...(row.activation_policy?{activationPolicy:row.activation_policy}:{})}:null,
         authorizationRevision: row.authorization_revision,

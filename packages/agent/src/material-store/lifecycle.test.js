@@ -167,6 +167,17 @@ test("customer-local preflight reads the exact version without creating files, a
   assert.ok(result.diagnostics.some(item=>item.code==="material_exact_version_authorized"));
   assert.ok(!JSON.stringify(result).includes("PRIVATE KEY"));
 });
+for (const provider of ["vault-kv2", "openbao-kv2"]) test(`downloaded ${provider} preflight intent reaches the exact customer-local store without mutation`,async t=>{
+  const f=await fixture(t);filesOnly(f);
+  const options=f.options({intent:{provider}}),{readPublicPreflightIntent}=require("../../bin/preflight-material-binding");
+  options.stores.customer.provider=provider;
+  const file=path.join(f.deployDir,"public-intent.json"),intent={...options.job.materialDeployment};delete intent.workspaceId;
+  writeProtectedJson(file,intent);options.job.materialDeployment=readPublicPreflightIntent(file,intent.bindingId);
+  assert.equal(options.job.materialDeployment.provider,provider);
+  assert.equal((await preflightPinnedDeployment(options)).ready,true);
+  assert.equal(fs.existsSync(options.stateDir),false);assert.equal(fs.existsSync(f.target.certPath),false);
+});
+
 test("preflight before the first deployment accepts only a public intent bound to the configured consumer",async t=>{
   const f=await fixture(t);filesOnly(f);const options=f.options(),{readPublicPreflightIntent}=require("../../bin/preflight-material-binding");
   const file=path.join(f.deployDir,"public-intent.json"),intent={...options.job.materialDeployment};delete intent.workspaceId;writeProtectedJson(file,intent);
