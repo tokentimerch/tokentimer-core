@@ -1421,7 +1421,9 @@ function Management({
                   Material version {value.id}
                 </Text>
                 {value.provider_version != null ? (
-                  <Text fontSize='xs'>Store version {value.provider_version}</Text>
+                  <Text fontSize='xs'>
+                    Store version {value.provider_version}
+                  </Text>
                 ) : null}
                 <Text fontSize='sm'>
                   {value.retainedReasons.length
