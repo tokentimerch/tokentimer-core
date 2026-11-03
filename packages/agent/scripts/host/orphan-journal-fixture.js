@@ -46,11 +46,18 @@ const fields = Object.freeze([
 const scope = "native-cng-supporting-prepared-journal-orphan-protection";
 const preserveGuardName = ".preserve-native-orphan-journal.json";
 function orphanFailureCode(result, container) {
-  const reason = result.skipped.find((row) => row.containerName === container)?.reason || "";
-  return reason === "global machine-store inventory unavailable"
-    ? "CERTOPS_ORPHAN_INVENTORY_UNAVAILABLE"
-    : /^store .* query failed:/.test(reason) ? "CERTOPS_ORPHAN_STORE_QUERY_FAILED"
-      : reason.startsWith("store locked:") ? "CERTOPS_ORPHAN_STORE_LOCKED" : "CERTOPS_ORPHAN_NOT_FREED";
+  if (result.freed.length) return "CERTOPS_ORPHAN_UNEXPECTED_FREED_SET";
+  const row = result.skipped.find((entry) => entry.containerName === container);
+  if (!row) return "CERTOPS_ORPHAN_NO_RESULT";
+  const reason = typeof row.reason === "string" ? row.reason : "";
+  if (reason.startsWith("global machine-store inventory unavailable")) return "CERTOPS_ORPHAN_INVENTORY_UNAVAILABLE";
+  if (/^store .* query failed:/.test(reason)) return "CERTOPS_ORPHAN_STORE_QUERY_FAILED";
+  if (reason.startsWith("delkey failed")) return "CERTOPS_ORPHAN_DELKEY_FAILED";
+  if (reason === "enrolled") return "CERTOPS_ORPHAN_REFERENCED";
+  if (reason.startsWith("store locked:") || reason.startsWith("store lock lost")) return "CERTOPS_ORPHAN_STORE_LOCKED";
+  if (reason.startsWith("enrollment locked:") || reason.startsWith("enrollment lock lost:")) return "CERTOPS_ORPHAN_ENROLLMENT_LOCKED";
+  if (reason.includes("journal") || reason.includes("enrollment directory")) return "CERTOPS_ORPHAN_JOURNAL_DEFERRED";
+  return "CERTOPS_ORPHAN_OTHER_DEFERRAL";
 }
 const requiredSources = Object.freeze([
   "packages/agent/scripts/host/orphan-journal-fixture.js",
