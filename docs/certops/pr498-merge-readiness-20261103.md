@@ -121,6 +121,8 @@ unchanged components; full CI must additionally test the final repository head.
 | API/worker lint; `check:contracts`, `check:contracts:integrity`, `check:lockfile-overrides`, `check:secret-logging`, `check:certops-keygen-ban` | All passed; **52** contract files verified |
 | `CONTRACT_API_REQUIRED=0 pnpm run test:contracts` | **47/47**, no skips |
 | `pnpm audit --prod --audit-level=moderate` | Passed; one low advisory |
+| `node scripts/ci-guards/run-all.cjs` in an isolated Node 24.22.2 Linux container | **18/18 guards passed**. Windows runner attempts retained shell/toolchain failures; Linux reproduces CI's Bash/OpenSSL/jq execution without relaxing guards |
+| `node --test scripts/certops-distribution-report.test.js` | **8/8**, including mandatory inventory validation |
 | `pnpm --filter @tokentimer/dashboard exec vitest run tests/unit/CertOpsDistribution.test.jsx tests/unit/CertOpsDistribution.workspace.test.jsx tests/unit/ApprovalDecisionModal.test.jsx tests/unit/EvidenceTimeline.test.jsx tests/unit/ExecutorJobsPanel.test.jsx` | **112/112**, five files passed |
 | `node --test packages/agent/src/material-store/lifecycle.test.js packages/agent/src/material-store/cleanup.test.js packages/agent/src/material-store/cleanup-provider-compatibility.test.js packages/agent/src/material-store/platform-policy.test.js packages/agent/src/windows-discovery/windows-discovery.test.js packages/agent/src/capabilities/capabilities.test.js` | **171/171**, no skips; source/fixture evidence, not a Server qualification campaign |
 
@@ -138,6 +140,13 @@ campaign is retained rather than relabelled as a complete pass.
 passed **37 jobs / 41 checks** on `3021793e` before the recovery fix. Full trusted `ci.yml` must run on the pushed final head;
 retain the exact SHA/run link in the PR description and final acceptance report.
 No earlier green workflow substitutes for it.
+
+Finalization head `0eb8b805` [CI 41665181662](https://github.com/tokentimerch/tokentimer-core/actions/runs/41665181662)
+failed Backend Quality's mandatory inventory guard: the new PostgreSQL regression
+names had not been registered in `qualification-suites.json`. Both names are now
+required alongside every original case; the guard is unchanged. The report tests
+and all 18 Linux guards pass after that registration. This failed run is retained;
+the new head requires its own complete CI run before draft promotion.
 
 ## Supported functional acceptance
 

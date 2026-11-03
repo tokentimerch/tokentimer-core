@@ -185,6 +185,19 @@
     "contracts": {
       "passed": 47,
       "filesVerified": 52
+    },
+    "ciGuards": {
+      "passed": 18,
+      "failed": 0,
+      "environment": "Isolated Linux container; Node 24.22.2 with Bash/OpenSSL/jq",
+      "command": "node scripts/ci-guards/run-all.cjs",
+      "windowsAttempt": "Shell/toolchain failures retained; no guard changed or skipped"
+    },
+    "distributionReportTests": {
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "command": "node --test scripts/certops-distribution-report.test.js"
     }
   },
   "fixtureCleanup": "All three owned journey projects stopped; evidence and named volumes retained. Provider/database helper containers removed under ownership checks.",
