@@ -1540,7 +1540,7 @@ test("a degraded optional deployment retries its original job and waits for expl
 });
 
 test("degraded optional retry retains current binding and independent-review authority fences", async (t) => {
-  for (const change of ["binding", "reviewer"]) await t.test(change, async () => {
+  for (const change of ["binding", "reviewer", "workspace pause"]) await t.test(change, async () => {
     const f = await fixture();
     const lab = await waveLab(f, [{ name: "required", wave: 0 }, { name: "optional", wave: 0, required: false }]);
     await lab.advance();
@@ -1550,7 +1550,11 @@ test("degraded optional retry retains current binding and independent-review aut
     if (change === "binding") await operations.putBinding({ workspaceId: f.workspaceId, groupId: f.groupId,
       bindingId: lab.nodes.optional.bindingId, actorUserId: f.actor,
       binding: { ...f.binding, agentId: lab.nodes.optional.agentId, required: false, wave: 1 } });
-    else await pool.query("DELETE FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2", [f.workspaceId, f.approver]);
+    else if (change === "reviewer") await pool.query("DELETE FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2", [f.workspaceId, f.approver]);
+    else {
+      await pool.query("UPDATE workspaces SET certops_paused=true WHERE id=$1", [f.workspaceId]);
+      await pool.query("UPDATE workspaces SET certops_paused=false WHERE id=$1", [f.workspaceId]);
+    }
     await assert.rejects(operations.retryDistributionJob({ workspaceId: f.workspaceId, jobId: failedId, actorUserId: f.actor }),
       { code: change === "binding" ? "CERTOPS_MATERIAL_RETRY_AUTHORIZATION_STALE" : "CERTOPS_DISTRIBUTION_POLICY_STALE" });
     assert.equal(await lab.rolloutState(), "degraded");

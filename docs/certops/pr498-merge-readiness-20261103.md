@@ -57,8 +57,8 @@ current deployment only after all existing fences pass and atomically changes
 the rollout to `paused`. Explicit Resume is still required; successful siblings,
 the original payload/job and uncertain proof remain intact. Completed recurring
 verification cycles retain scheduler/backoff semantics. New PostgreSQL regressions
-failed before the fix; the full review suite passes **38/38** afterward, including
-changed-binding and revoked-reviewer rejection. A fresh full enrolled-agent run
+failed before the fix; the full review suite passes **39/39** afterward, including
+changed-binding, revoked-reviewer and workspace-pause epoch rejection. A fresh full enrolled-agent run
 and final-head CI must validate the fix before readiness. Any remaining failed
 required check, supported-flow regression, unsafe migration or security defect
 blocks readiness. Focused review also covers exact-scope/current-authority checks at
@@ -124,6 +124,12 @@ issuance, two trusted consumers, renewal/offline recovery and canary progression
 then failed at optional-consumer retry. It is retained as failed evidence, not
 reported as a pass. The corrected candidate requires a fresh complete journey;
 actual counts/provenance will be recorded before the final decision.
+The subsequent `e66add85` campaign passed the optional failure/reconciliation/retry
+scenario and correctly kept an old review inactive after the workspace kill
+switch changed its epoch. Its helper still expected that old approval to resume.
+The helper now asserts refusal of the old job and obtains a fresh independent
+exact-scope review. Product authorization fences are unchanged; that interrupted
+campaign is retained rather than relabelled as a complete pass.
 [Full CI 41652216212](https://github.com/tokentimerch/tokentimer-core/actions/runs/41652216212)
 tests `3021793e` before the recovery fix. Full trusted `ci.yml` must run on the pushed final head;
 retain the exact SHA/run link in the PR description and final acceptance report.

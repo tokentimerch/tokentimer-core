@@ -141,6 +141,10 @@ can be `degraded`. Retrying that current deployment puts the rollout in `paused`
 without redeploying successful consumers. Use **Resume** after local reconciliation;
 normal current-authority, version/generation and maintenance checks still apply.
 This does not reopen completed recurring verification cycles or stale rollouts.
+The workspace kill switch changes the authorization epoch. Clearing that switch
+and resuming a rollout cannot revive its earlier review: request fresh independent
+approval of the exact scope. An ordinary rollout pause/resume retains current
+authority when its scope and workspace authorization have not changed.
 
 ## Retention and provider limitations
 
