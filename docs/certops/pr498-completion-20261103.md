@@ -130,6 +130,16 @@ filesystem write, so a clean failure is correct. The bridge now interrupts on
 the following check, after the write, where the uncertain binding must be
 reconciled.
 
+Head `aa1d4a1c` workflow
+[41636868443](https://github.com/tokentimerch/tokentimer-core/actions/runs/41636868443)
+passed the provider-pin step, including that post-write lease interruption.
+The pinned-rollback step then left the first wave without a job.
+`advanceRollout` pauses when the recorded approver is not a current workspace
+manager. The wildcard PostgreSQL fixture now grants that role before building
+the rollout intent. A disposable PostgreSQL rerun of
+`tests/wildcard-vault/postgres.test.cjs` passed 2/2. That rerun is not a new
+full CI result.
+
 ## E. Evidence and reproduction
 
 See the [sanitized evidence index](evidence/2026-11-03/README.md), public provider
