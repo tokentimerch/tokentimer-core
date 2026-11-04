@@ -26,6 +26,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { freePort } = require("./iis-fixture");
 const { collectWindowsDiscoveryObservations } = require("../../src/discovery/windows");
+function annotateFailure(error, stage) {
+  const stages = ["BASELINE", "PORTS", "CERTIFICATE_MY", "CERTIFICATE_WEBHOSTING", "PUBLIC_CERTIFICATE", "SELECTOR_CHECK", "BINDING_ADD", "BINDING_SHOW", "DISCOVERY", "VERIFY"];
+  if (error && typeof error === "object") error.code = `CERTOPS_HTTP_SYS_${stages.includes(stage) ? stage : "OTHER"}`;
+  return error;
+}
 
 const inventoryScript = String.raw`
 $rows=@(); $root='HKLM:\SYSTEM\CurrentControlSet\Services\HTTP\Parameters'
@@ -56,31 +61,37 @@ async function qualifyHttpSysDiscovery({powershell,run,workDir,gate}) {
   const native=()=>JSON.parse(powershell(inventoryScript));let baseline;
   const ports=[];
   const host=`certops-${token}.example.test`;
-  const expected=[];let primary;
+  const expected=[];let primary,stage="BASELINE";
   try {
     baseline=native();
+    stage="PORTS";
     while(ports.length<3){const candidate=await freePort();if(!ports.includes(candidate))ports.push(candidate);}
     const specifications=[{kind:"SslBindingInfo",key:"ipport",address:"127.0.0.1",selector:`127.0.0.1:${ports[0]}`,port:ports[0],store:"My",certificate:0},{kind:"SslBindingInfo",key:"ipport",address:"::1",selector:`[::1]:${ports[1]}`,port:ports[1],store:"WebHosting",certificate:1},{kind:"SslSniBindingInfo",key:"hostnameport",address:host,selector:`${host}:${ports[2]}`,port:ports[2],store:"WebHosting",certificate:1}];
     for(let index=0;index<2;index++) {
+      stage=index===0?"CERTIFICATE_MY":"CERTIFICATE_WEBHOSTING";
       const receipt=quote(path.join(owned,`${index}.thumbprint`)), keyReceipt=quote(path.join(owned,`${index}.key-name`));
       powershell(`$cert=New-SelfSignedCertificate -DnsName '${host}' -CertStoreLocation 'Cert:\\LocalMachine\\My' -KeyAlgorithm RSA -KeyLength 2048 -KeyExportPolicy NonExportable -Provider 'Microsoft Software Key Storage Provider'; [IO.File]::WriteAllText('${receipt}',$cert.Thumbprint); $rsa=[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert); try { if($rsa -isnot [Security.Cryptography.RSACng]){throw 'Fixture key is not CNG'}; [IO.File]::WriteAllText('${keyReceipt}',$rsa.Key.UniqueName) } finally { $rsa.Dispose() }; ${index===1?"Move-Item -LiteralPath ('Cert:\\LocalMachine\\My\\'+$cert.Thumbprint) -Destination 'Cert:\\LocalMachine\\WebHosting'":""}`);
     }
     for(const specification of specifications) {
+      stage="PUBLIC_CERTIFICATE";
       const thumbprint=fs.readFileSync(path.join(owned,`${specification.certificate}.thumbprint`),"utf8").trim();assert.match(thumbprint,/^[A-F0-9]{40}$/);
       const publicData=JSON.parse(powershell(`$cert=Get-Item -LiteralPath 'Cert:\\LocalMachine\\${specification.store}\\${thumbprint}'; @{raw=[Convert]::ToBase64String($cert.RawData);hasPrivateKey=$cert.HasPrivateKey} | ConvertTo-Json -Compress`));assert.equal(publicData.hasPrivateKey,true);
       const fingerprint=new crypto.X509Certificate(Buffer.from(publicData.raw,"base64")).fingerprint256.replace(/:/g,"").toLowerCase();
       assert.equal(baseline.some(row=>row.selector.toLowerCase()===specification.selector.toLowerCase()),false,"Refuse preexisting native selector");
+      stage="SELECTOR_CHECK";
       powershell(`& netsh.exe http show sslcert '${specification.key}=${specification.selector}' | Out-Null; if($LASTEXITCODE -eq 0){throw 'Refuse existing native selector'}`);
       expected.push({...specification,appId,thumbprint,fingerprint});
-      run("netsh.exe",["http","add","sslcert",`${specification.key}=${specification.selector}`,`certhash=${thumbprint}`,`appid={${appId}}`,`certstorename=${specification.store}`]);
+      stage="BINDING_ADD";run("netsh.exe",["http","add","sslcert",`${specification.key}=${specification.selector}`,`certhash=${thumbprint}`,`appid={${appId}}`,`certstorename=${specification.store}`]);
+      stage="BINDING_SHOW";
       run("netsh.exe",["http","show","sslcert",`${specification.key}=${specification.selector}`]);
     }
-    const warnings=[],observations=await collectWindowsDiscoveryObservations({stores:["My"],onWarning:warning=>warnings.push(warning)});
+    stage="DISCOVERY";const warnings=[],observations=await collectWindowsDiscoveryObservations({stores:["My"],onWarning:warning=>warnings.push(warning)});
+    stage="VERIFY";
     verifyObservations(expected,native(),observations);
     assert.ok(observations.some(row=>row.locationKind==="windows_store"&&row.storeName==="WebHosting"&&row.thumbprint.toUpperCase()===expected[1].thumbprint),"Binding-referenced store must be inventoried without configuring it");
     const file="packages/agent/scripts/host/discovery-http-sys-fixture.js";gate.report.fixtureSources||=[];gate.report.fixtureSources.push({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(__filename)).digest("hex")});
     gate.report.httpSysDiscovery={selectors:["ipv4-ipport","ipv6-ipport","hostnameport"],bindingReferencedStore:"WebHosting",configuredStores:["My"],independentPublicDer:true,ccs:"unsupported-not-enumerated"};
-  } catch(error){primary=error;throw error;}
+  } catch(error){primary=annotateFailure(error,stage);throw primary;}
   finally {
     const failures=[];
     for(const item of expected){try{const current=native().filter(row=>row.kind===item.kind&&row.selector.toLowerCase()===item.selector.toLowerCase());if(current.length){assert.equal(current.length,1);assert.equal(current[0].appId.toLowerCase(),appId);assert.equal(current[0].thumbprint,item.thumbprint);run("netsh.exe",["http","delete","sslcert",`${item.key}=${item.selector}`]);}}catch(error){failures.push(error);}}
@@ -90,4 +101,4 @@ async function qualifyHttpSysDiscovery({powershell,run,workDir,gate}) {
     fs.rmSync(owned,{recursive:true});
   }
 }
-module.exports={qualifyHttpSysDiscovery,verifyObservations,inventoryScript};
+module.exports={qualifyHttpSysDiscovery,verifyObservations,inventoryScript,annotateFailure};

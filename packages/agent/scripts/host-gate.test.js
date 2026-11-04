@@ -7,6 +7,16 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createHostGate, classifyWindowsHost } = require("./host-gate");
 const { verifyReport } = require("../../../scripts/certops-qualification-report");
+test("HTTP.sys failures expose only a fixed stage code", async () => {
+  const { annotateFailure } = require("./host/discovery-http-sys-fixture");
+  const run = createHostGate({ suite: "fixture", reportPath: null });
+  await run.preflight();
+  const error = annotateFailure(new Error("private path"), "CERTIFICATE_WEBHOSTING");
+  await assert.rejects(run.scenario("http-sys", async () => { throw error; }));
+  assert.equal(run.report.scenarios[0].failure.errorCode, "CERTOPS_HTTP_SYS_CERTIFICATE_WEBHOSTING");
+  assert.doesNotMatch(JSON.stringify(run.report), /private path/);
+  assert.equal(annotateFailure(new Error(), "private path").code, "CERTOPS_HTTP_SYS_OTHER");
+});
 
 test("native command failures retain only bounded diagnostic metadata", async () => {
   const gate = createHostGate({ suite: "fixture", strict: true, reportPath: null, continueOnFailure: true });
