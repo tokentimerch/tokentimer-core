@@ -42,9 +42,13 @@ async function fixture() {
     VALUES($1,$2,$3,$4,'fixture-publication',1,'published',$5,1,$6,NOW()+INTERVAL '30 days',NOW()) RETURNING id`,
   [workspaceId, groupId, period.id, publicationJobId, period.current_identity_id, fingerprint])).rows[0].id;
   await pool.query("UPDATE certops_distribution_groups SET latest_material_version_id=$3 WHERE workspace_id=$1 AND id=$2", [workspaceId, groupId, versionId]);
+  const revision = (await pool.query("SELECT certops_manual_rollout_revision FROM workspaces WHERE id=$1", [workspaceId])).rows[0].certops_manual_rollout_revision;
   const approvalJobId = (await pool.query(`INSERT INTO certificate_jobs(workspace_id,operation,subject_type,subject_id,
-    executor_kind,assigned_agent_id,status) VALUES($1,'noop','managed_certificate',$2,'agent',$3,'succeeded') RETURNING id`,
-  [workspaceId, certificateId, agents[0]])).rows[0].id;
+    executor_kind,assigned_agent_id,status,requested_by_user_id,payload)
+    VALUES($1,'noop','managed_certificate',$2,'agent',$3,'succeeded',$4,$5::jsonb) RETURNING id`,
+  [workspaceId, certificateId, agents[0], userId, JSON.stringify({ distributionRollout: {
+    groupId, manualRolloutAuthorizationRevision: String(revision),
+  } })])).rows[0].id;
   const rolloutId = (await pool.query(`INSERT INTO certops_distribution_rollouts(workspace_id,group_id,material_version_id,
     generation,approved_intent_hash,approval_job_id,max_parallel) VALUES($1,$2,$3,1,$4,$5,2) RETURNING id`,
   [workspaceId, groupId, versionId, "a".repeat(64), approvalJobId])).rows[0].id;
