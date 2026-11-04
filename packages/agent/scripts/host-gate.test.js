@@ -32,6 +32,12 @@ test("retention fixture preserves unowned or changed HTTP.sys bindings", () => {
   assert.throws(() => verifyBindingReceipt([{ ...row, appId: "11234567-89ab-cdef-0123-456789abcdef" }], 1234, row.thumbprint, receipt));
   assert.throws(() => ownedBinding([{ ...row, thumbprint: "B".repeat(40) }], 1234, row.thumbprint));
 });
+test("retention acceptance failure reports only a bounded native code", () => {
+  const { assertFixtureAccept } = require("./host/retention-elapsed-fixture");
+  assert.doesNotThrow(() => assertFixtureAccept({ ok: true }));
+  assert.throws(() => assertFixtureAccept({ ok: false, stderrExcerpt: "private data 0x800B0109" }), error => error.code === "CERTOPS_RETENTION_ACCEPT_H800B0109" && !error.message.includes("private"));
+  assert.throws(() => assertFixtureAccept({ ok: false, stage: "repairstore", stdoutExcerpt: "private" }), error => error.code === "CERTOPS_RETENTION_REPAIRSTORE_FAILED");
+});
 
 test("native command failures retain only bounded diagnostic metadata", async () => {
   const gate = createHostGate({ suite: "fixture", strict: true, reportPath: null, continueOnFailure: true });
@@ -41,9 +47,10 @@ test("native command failures retain only bounded diagnostic metadata", async ()
   const failure = gate.report.scenarios[0].failure;
   assert.deepEqual(failure.command, { executable: "powershell.exe", exitStatus: 1, script: "owned-issued-request.ps1", issuedStep: "enumeration", powerShellCode: "PermissionDenied" });
   assert.equal(JSON.stringify(failure).includes("private"), false);
-  const issuedError = Object.assign(new Error("private"), { code: "CERTOPS_NATIVE_COMMAND_FAILED", qualificationCommand: { executable: "powershell.exe", exitStatus: 1, script: "owned-issued-request.ps1", issuedStep: "connection", issuedHresults: ["0x80070005", "private-value", "0xFFFFFFFF"] } });
+  const issuedError = Object.assign(new Error("private"), { code: "CERTOPS_NATIVE_COMMAND_FAILED", qualificationCommand: { executable: "powershell.exe", exitStatus: 1, script: "owned-issued-request.ps1", issuedStep: "connection", issuedHresults: ["0x80070005", "private-value", "0xFFFFFFFF"], issuedCaDiag: ["identity-match", "private-value", "local-open-failure"] } });
   await gate.scenario("owned-issued-hresult", async () => { throw issuedError; });
   assert.deepEqual(gate.report.scenarios[1].failure.command.issuedHresults, ["0x80070005", "0xFFFFFFFF"]);
+  assert.deepEqual(gate.report.scenarios[1].failure.command.issuedCaDiag, ["identity-match", "local-open-failure"]);
   const second = Object.assign(new Error("secret"), { code: "CERTOPS_NATIVE_COMMAND_FAILED", qualificationCommand: { executable: "powershell.exe", exitStatus: 1, powerShellCode: "Issued leaf uses a foreign native key" } });
   await gate.scenario("owned-command-classification", async () => { throw second; });
   assert.equal(gate.report.scenarios[2].failure.command.failure, "foreign-native-key");
