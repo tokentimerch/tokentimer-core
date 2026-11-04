@@ -22,7 +22,7 @@ type providerSignerPrefix struct {
 	CertCount    uint32
 	CertChain    uintptr
 	SignerType   uint32
-	SignerInfo   uintptr
+	SignerInfo   *nativeCMSSignerInfo
 	Error        uint32
 	CounterCount uint32
 	Counters     uintptr
@@ -31,6 +31,45 @@ type providerSignerPrefix struct {
 type providerCertPrefix struct {
 	Size        uint32
 	Certificate *windows.CertContext
+}
+
+type nativeCryptAttribute struct {
+	OID        *byte
+	ValueCount uint32
+	Values     *windows.CryptAttrBlob
+}
+type nativeCryptAttributes struct {
+	Count      uint32
+	Attributes *nativeCryptAttribute
+}
+type nativeCMSSignerInfo struct {
+	Version                 uint32
+	Issuer                  windows.CertNameBlob
+	Serial                  windows.CryptIntegerBlob
+	HashAlgorithm           windows.CryptAlgorithmIdentifier
+	HashEncryptionAlgorithm windows.CryptAlgorithmIdentifier
+	EncryptedHash           windows.CryptDataBlob
+	Authenticated           nativeCryptAttributes
+	Unauthenticated         nativeCryptAttributes
+}
+
+func hasSingleRFC3161Timestamp(info *nativeCMSSignerInfo) bool {
+	if info == nil || info.HashAlgorithm.ObjId == nil || windows.BytePtrToString(info.HashAlgorithm.ObjId) != "2.16.840.1.101.3.4.2.1" || info.Unauthenticated.Count == 0 || info.Unauthenticated.Count > 64 || info.Unauthenticated.Attributes == nil {
+		return false
+	}
+	matches := 0
+	for _, attr := range unsafe.Slice(info.Unauthenticated.Attributes, int(info.Unauthenticated.Count)) {
+		if attr.OID == nil {
+			return false
+		}
+		if windows.BytePtrToString(attr.OID) == "1.3.6.1.4.1.311.3.3.1" {
+			if attr.ValueCount != 1 || attr.Values == nil || attr.Values.Size == 0 || attr.Values.Data == nil {
+				return false
+			}
+			matches++
+		}
+	}
+	return matches == 1
 }
 
 func nativeAuthenticodePrototype(path, pin string) error {
@@ -79,7 +118,7 @@ func nativeAuthenticodePrototype(path, pin string) error {
 		return fmt.Errorf("signer unavailable")
 	}
 	signer := (*providerSignerPrefix)(nativeTrustPointer(signerPtr))
-	if signer.Error != 0 || signer.CertCount == 0 || signer.CounterCount != 1 || signer.Chain == nil {
+	if signer.Error != 0 || signer.CertCount == 0 || signer.CounterCount != 1 || signer.Chain == nil || !hasSingleRFC3161Timestamp(signer.SignerInfo) {
 		return fmt.Errorf("publisher or timestamp unavailable")
 	}
 	if signer.Chain.TrustStatus.ErrorStatus != 0 {
