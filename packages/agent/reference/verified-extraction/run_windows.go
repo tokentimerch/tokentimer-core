@@ -214,7 +214,7 @@ func invokeInstaller(ctx context.Context, installer, scratch string, args []stri
 	if runtime.GOARCH == "arm64" {
 		architecture = "ARM64"
 	}
-	cmd.Env = []string{"SystemRoot=" + root, "WINDIR=" + root, "PATH=" + systemDir, "PSModulePath=" + filepath.Join(systemDir, "WindowsPowerShell", "v1.0", "Modules"), "TEMP=" + scratch, "TMP=" + scratch, "PROCESSOR_ARCHITECTURE=" + architecture, "TOKENTIMER_AGENT_EXECUTION_INTENT=" + transaction, "TOKENTIMER_AGENT_INTENT_HANDLE=" + strconv.FormatUint(uint64(readPipe), 10)}
+	cmd.Env = []string{"SystemRoot=" + root, "WINDIR=" + root, "PATH=" + systemDir, "PATHEXT=.COM;.EXE;.BAT;.CMD", "PSModulePath=" + filepath.Join(systemDir, "WindowsPowerShell", "v1.0", "Modules"), "TEMP=" + scratch, "TMP=" + scratch, "PROCESSOR_ARCHITECTURE=" + architecture, "TOKENTIMER_AGENT_EXECUTION_INTENT=" + transaction, "TOKENTIMER_AGENT_INTENT_HANDLE=" + strconv.FormatUint(uint64(readPipe), 10)}
 	if token != "" {
 		cmd.Env = append(cmd.Env, "TOKENTIMER_AGENT_BOOTSTRAP_TOKEN="+token)
 	}
