@@ -12,6 +12,25 @@ const path = require("node:path");
 const net = require("node:net");
 const tls = require("node:tls");
 const { deployIisBinding, checkSniPrecedenceConflict } = require("../../src/windows-iis");
+const { listHttpSysBindings } = require("../../src/windows-discovery");
+
+function selectNativeEndpoint(listing, keyedBy, selector) {
+  assert.equal(listing?.ok, true, "Complete native endpoint inventory required");
+  assert.ok(Array.isArray(listing.bindings));
+  for (const row of listing.bindings) {
+    assert.ok(row && ["ipport", "hostnameport"].includes(row.keyedBy) && typeof row.ipPort === "string" && row.ipPort.length > 0, "Malformed native endpoint inventory");
+  }
+  const matches = listing.bindings.filter(row => row.keyedBy === keyedBy && row.ipPort.toLowerCase() === selector.toLowerCase());
+  assert.ok(matches.length <= 1, "Ambiguous native endpoint");
+  return matches[0] || null;
+}
+function assertOwnedNativeEndpoint(current, receipt, certificates) {
+  assert.ok(receipt && typeof receipt.appId === "string" && receipt.appId, "Exact endpoint receipt required");
+  if (current === null) return;
+  assert.equal(String(current.appId).toLowerCase(), receipt.appId.toLowerCase(), "Preserve replaced endpoint app ID");
+  assert.equal(String(current.storeName).toLowerCase(), "my", "Preserve replaced endpoint store");
+  assert.ok(certificates.some(c => c.thumbprint === current.thumbprint), "Preserve foreign endpoint certificate");
+}
 
 async function freePort() {
   const server = net.createServer();
@@ -64,6 +83,7 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
   let sslOwned = false;
   let unrelatedOwned = false;
   let shadowOwned = false;
+  let sslReceipt, unrelatedReceipt, shadowReceipt;
   const binding = { address: "127.0.0.1", port, store: "My", site, ...(sni ? { sniHost: "localhost" } : {}) };
   const endpoint = sni ? `hostnameport=localhost:${port}` : `ipport=127.0.0.1:${port}`;
   const servername = sni ? "localhost" : undefined;
@@ -72,9 +92,10 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
   let originalFlags;
   const readFlags = () => Number(powershell(`$k=Get-Item -LiteralPath 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\HTTP\\Parameters\\SslBindingInfo\\127.0.0.1:${port}'; [uint32]$k.GetValue('DefaultFlags',0)`));
   const readHash = () => powershell(`$k=Get-Item -LiteralPath 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\HTTP\\Parameters\\SslBindingInfo\\127.0.0.1:${port}'; [BitConverter]::ToString([byte[]]$k.GetValue('SslCertHash')).Replace('-','')`);
+  const readEndpoint = async (keyedBy, selector) => selectNativeEndpoint(await listHttpSysBindings({}), keyedBy, selector);
   try {
-    powershell(`& netsh.exe http show sslcert ${endpoint} | Out-Null; if ($LASTEXITCODE -eq 0) { throw 'Refusing to replace an existing HTTP.sys binding' }`);
-    powershell(`& netsh.exe http show sslcert ipport=127.0.0.1:${unrelatedPort} | Out-Null; if ($LASTEXITCODE -eq 0) { throw 'Refusing to replace unrelated fixture endpoint' }`);
+    assert.equal(await readEndpoint(sni ? "hostnameport" : "ipport", sni ? `localhost:${port}` : `127.0.0.1:${port}`), null, "Refusing to replace an existing HTTP.sys binding");
+    assert.equal(await readEndpoint("ipport", `127.0.0.1:${unrelatedPort}`), null, "Refusing to replace unrelated fixture endpoint");
     for (let i = 0; i < 4; i += 1) {
       const receipt = path.join(directory, `certificate-${i}.receipt`).replace(/'/g, "''");
       const keyReceipt = path.join(directory, `certificate-${i}.key-receipt`).replace(/'/g, "''");
@@ -92,11 +113,17 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
     powershell(`Import-Module WebAdministration; New-Website -Name '${site}' -PhysicalPath '${physicalPath}' -IPAddress '127.0.0.1' -Port ${port} -Ssl ${sni ? "-HostHeader 'localhost'" : ""} | Out-Null; ${sni ? `Set-WebBinding -Name '${site}' -BindingInformation '127.0.0.1:${port}:localhost' -PropertyName sslFlags -Value 1` : ""}`);
     sslOwned = true;
     powershell(`Import-Module WebAdministration; (Get-WebBinding -Name '${site}' -Protocol https).AddSslCertificate('${certificates[0].thumbprint}', 'My')`);
+    sslReceipt = await readEndpoint(sni ? "hostnameport" : "ipport", sni ? `localhost:${port}` : `127.0.0.1:${port}`);
+    assertOwnedNativeEndpoint(sslReceipt, sslReceipt, certificates);
     unrelatedOwned = true;
     powershell(`Import-Module WebAdministration; New-WebBinding -Name '${site}' -Protocol https -IPAddress '127.0.0.1' -Port ${unrelatedPort}; (Get-WebBinding -Name '${site}' -Protocol https | Where-Object { $_.bindingInformation -eq '127.0.0.1:${unrelatedPort}:' }).AddSslCertificate('${certificates[0].thumbprint}', 'My')`);
+    unrelatedReceipt = await readEndpoint("ipport", `127.0.0.1:${unrelatedPort}`);
+    assertOwnedNativeEndpoint(unrelatedReceipt, unrelatedReceipt, certificates);
     if (nativeFlags) {
       assert.equal(sni, false, "native registry oracle is for an IP binding");
       run("netsh.exe", ["http", "update", "sslcert", endpoint, `certhash=${certificates[0].thumbprint}`, `appid={${crypto.randomUUID()}}`, "certstorename=My", "disablehttp2=enable", "disablelegacytls=enable"]);
+      sslReceipt = await readEndpoint("ipport", `127.0.0.1:${port}`);
+      assertOwnedNativeEndpoint(sslReceipt, sslReceipt, certificates);
       originalFlags = readFlags();
       assert.equal(originalFlags & 0x410, 0x410, "native flags must actually be set, not just return exit zero");
       assert.equal(readHash(), certificates[0].thumbprint, "registry must confirm original certificate");
@@ -192,9 +219,11 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
     }
     if (sni) {
       assert.equal(await checkSniPrecedenceConflict({ binding }), undefined, "control SNI binding must have no false shadow warning");
-      powershell(`& netsh.exe http show sslcert ipport=127.0.0.1:${port} | Out-Null; if ($LASTEXITCODE -eq 0) { throw 'Refusing to replace pre-existing shadow endpoint' }`);
+      assert.equal(await readEndpoint("ipport", `127.0.0.1:${port}`), null, "Refusing to replace pre-existing shadow endpoint");
       shadowOwned = true;
       run("netsh.exe", ["http", "add", "sslcert", `ipport=127.0.0.1:${port}`, `certhash=${certificates[0].thumbprint}`, `appid={${crypto.randomUUID()}}`, "certstorename=My"]);
+      shadowReceipt = await readEndpoint("ipport", `127.0.0.1:${port}`);
+      assertOwnedNativeEndpoint(shadowReceipt, shadowReceipt, certificates);
       assert.ok(run("netsh.exe", ["http", "show", "sslcert", `ipport=127.0.0.1:${port}`]).toLowerCase().includes(certificates[0].thumbprint.toLowerCase()));
       const warning = await checkSniPrecedenceConflict({ binding });
       assert.ok(warning?.includes(`ipport=127.0.0.1:${port}`), "native concrete-IP shadow must be detected");
@@ -241,6 +270,8 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
         powershell(`if (Test-Path -LiteralPath 'Cert:\\LocalMachine\\My\\${certificates[1].thumbprint}') { throw 'Owned predecessor certificate still present' }`);
         shadowOwned = true;
         run("netsh.exe", ["http", "add", "sslcert", `ipport=127.0.0.1:${port}`, `certhash=${certificates[0].thumbprint}`, `appid={${crypto.randomUUID()}}`, "certstorename=My"]);
+        shadowReceipt = await readEndpoint("ipport", `127.0.0.1:${port}`);
+        assertOwnedNativeEndpoint(shadowReceipt, shadowReceipt, certificates);
         const failedRestore = await deployIisBinding({ binding, certificatePem: pem(certificates[3]), verifyTimeoutMs: 3000 });
         assert.equal(failedRestore.ok, false);
         assert.equal(failedRestore.code, "VERIFY_FAILED");
@@ -250,7 +281,9 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
         fs.writeFileSync(path.join(directory, "rollback-failure.json"), JSON.stringify(failedRestore));
         const retainedKey = fs.readFileSync(path.join(directory, "certificate-1.key-receipt"), "utf8").trim();
         assert.match(retainedKey, /^[A-Za-z0-9_.{}-]{1,256}$/);
-        powershell(`$provider=[Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider; if (-not [Security.Cryptography.CngKey]::Exists('${retainedKey}', $provider, [Security.Cryptography.CngKeyOpenOptions]::MachineKey)) { throw 'Predecessor key unexpectedly removed' }; $output=& netsh.exe http show sslcert ${endpoint}; if ($LASTEXITCODE -eq 0 -and (($output -join '\n') -replace '\\s','').Contains('${certificates[1].thumbprint}')) { throw 'Absent predecessor incorrectly reported restored' }`);
+        powershell(`$provider=[Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider; if (-not [Security.Cryptography.CngKey]::Exists('${retainedKey}', $provider, [Security.Cryptography.CngKeyOpenOptions]::MachineKey)) { throw 'Predecessor key unexpectedly removed' }`);
+        const restoredEndpoint = await readEndpoint("hostnameport", `localhost:${port}`);
+        assert.notEqual(restoredEndpoint?.thumbprint, certificates[1].thumbprint, "Absent predecessor incorrectly reported restored");
         // An unsuccessful restore must never be presented as restored TLS.
         await expectServed(port, certificates[0].thumbprint, servername);
         await expectServed(unrelatedPort, certificates[0].thumbprint);
@@ -275,22 +308,26 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
         else failures.push(new Error("Malformed owned IIS key receipt"));
       }
     }
+    const cleanupEndpoints = [
+      ...(sslOwned ? [{ keyedBy: sni ? "hostnameport" : "ipport", selector: sni ? `localhost:${port}` : `127.0.0.1:${port}`, receipt: sslReceipt }] : []),
+      ...(unrelatedOwned ? [{ keyedBy: "ipport", selector: `127.0.0.1:${unrelatedPort}`, receipt: unrelatedReceipt }] : []),
+      ...(shadowOwned ? [{ keyedBy: "ipport", selector: `127.0.0.1:${port}`, receipt: shadowReceipt }] : []),
+    ];
+    // Inspect every endpoint before deleting the site or any certificate.
+    for (const item of cleanupEndpoints) assertOwnedNativeEndpoint(await readEndpoint(item.keyedBy, item.selector), item.receipt, certificates);
     if (siteCreated) {
       try { powershell(`Import-Module WebAdministration; if (Test-Path 'IIS:\\Sites\\${site}') { Remove-Website -Name '${site}' }; if (Test-Path 'IIS:\\Sites\\${site}') { throw 'Fixture site remains' }`); }
       catch (error) { failures.push(error); }
     }
-    if (sslOwned) {
-      try { powershell(`$output=& netsh.exe http show sslcert ${endpoint}; if ($LASTEXITCODE -eq 0) { & netsh.exe http delete sslcert ${endpoint} | Out-Null; if ($LASTEXITCODE -ne 0) { throw 'SSL binding cleanup failed' } }; & netsh.exe http show sslcert ${endpoint} | Out-Null; if ($LASTEXITCODE -eq 0) { throw 'SSL binding remains' }`); }
-      catch (error) { failures.push(error); }
+    for (const item of cleanupEndpoints) {
+      try {
+        const current = await readEndpoint(item.keyedBy, item.selector);
+        assertOwnedNativeEndpoint(current, item.receipt, certificates);
+        if (current) run("netsh.exe", ["http", "delete", "sslcert", `${item.keyedBy}=${item.selector}`]);
+        assert.equal(await readEndpoint(item.keyedBy, item.selector), null, "Owned SSL binding remains");
+      } catch (error) { failures.push(error); }
     }
-    if (unrelatedOwned) {
-      try { powershell(`& netsh.exe http show sslcert ipport=127.0.0.1:${unrelatedPort} | Out-Null; if ($LASTEXITCODE -eq 0) { & netsh.exe http delete sslcert ipport=127.0.0.1:${unrelatedPort} | Out-Null; if ($LASTEXITCODE -ne 0) { throw 'Unrelated fixture binding cleanup failed' } }; & netsh.exe http show sslcert ipport=127.0.0.1:${unrelatedPort} | Out-Null; if ($LASTEXITCODE -eq 0) { throw 'Unrelated fixture binding remains' }`); }
-      catch (error) { failures.push(error); }
-    }
-    if (shadowOwned) {
-      try { powershell(`& netsh.exe http show sslcert ipport=127.0.0.1:${port} | Out-Null; if ($LASTEXITCODE -eq 0) { & netsh.exe http delete sslcert ipport=127.0.0.1:${port} | Out-Null; if ($LASTEXITCODE -ne 0) { throw 'Owned shadow cleanup failed' } }`); }
-      catch (error) { failures.push(error); }
-    }
+    if (failures.length) throw new AggregateError(primaryError ? [primaryError, ...failures] : failures, "IIS fixture endpoint cleanup failed", { cause: primaryError });
     for (const certificate of certificates) {
       try { powershell(`$p='Cert:\\LocalMachine\\My\\${certificate.thumbprint}'; if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -DeleteKey }; if (Test-Path -LiteralPath $p) { throw 'Fixture certificate remains' }`); }
       catch (error) { failures.push(error); }
@@ -303,4 +340,4 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
   }
 }
 
-module.exports = { qualifyIis, freePort, expectServed:expectServedWithTrust, servedThumbprint };
+module.exports = { qualifyIis, freePort, expectServed:expectServedWithTrust, servedThumbprint, selectNativeEndpoint, assertOwnedNativeEndpoint };
