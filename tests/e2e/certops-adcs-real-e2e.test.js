@@ -74,6 +74,7 @@ function command(file, args) {
     const officerStep=output.match(/^CERTOPS_OFFICER_FAILURE=(not-found|foreign-identity|ambiguous|not-pending|serial|revoke|decision|remoting)\r?$/m)?.[1];
     const officerExit=output.match(/^CERTOPS_OFFICER_EXIT=(-?\d{1,11})\r?$/m)?.[1];
     const issuedStep=output.match(/^CERTOPS_ISSUED_FAILURE=(connection|columns|restriction|enumeration|row-validation|certificate-decode|match|remoting)\r?$/m)?.[1];
+    const issuedFallback=output.match(/^CERTOPS_ISSUED_FALLBACK=(not-attempted|attempted|connected|failed)\r?$/m)?.[1];
     const issuedHresults=[...output.matchAll(/^CERTOPS_ISSUED_HRESULT=(0x[0-9A-F]{8})\r?$/gm)].slice(0,8).map(match=>match[1]);
     const issuedCaDiag=[...output.matchAll(/^CERTOPS_ISSUED_CA_DIAG=(identity-match|identity-mismatch|identity-unavailable|local-open-success|local-open-failure|english-open-success|english-open-failure|english-probe-unavailable)\r?$/gm)].slice(0,3).map(match=>match[1]);
     // Fixed script-template heads only (never output): identifies which cleanup/native step failed.
@@ -81,7 +82,7 @@ function command(file, args) {
     const scriptHead=/^[a-z]{3,}\.exe$/i.test(path.basename(file))&&/powershell/i.test(file)?scriptArg.replace(/^\$ErrorActionPreference='Stop';\s*/,"").replace(/[^\x20-\x7e]/g," ").slice(0,90):undefined;
     const fileIndex=Array.isArray(args)?args.indexOf("-File"):-1;
     const script=fileIndex>=0?path.basename(String(args[fileIndex+1]??"")):"";
-    error.qualificationCommand={executable:path.basename(file).toLowerCase(),exitStatus:result.status,powerShellCode:fqid?.[1].trim(),officerStep,officerExit:officerExit===undefined?undefined:Number(officerExit),scriptHead,script,issuedStep,issuedHresults,issuedCaDiag};
+    error.qualificationCommand={executable:path.basename(file).toLowerCase(),exitStatus:result.status,powerShellCode:fqid?.[1].trim(),officerStep,officerExit:officerExit===undefined?undefined:Number(officerExit),scriptHead,script,issuedStep,issuedFallback,issuedHresults,issuedCaDiag};
     throw error;
   }
   return result.stdout.trim();
