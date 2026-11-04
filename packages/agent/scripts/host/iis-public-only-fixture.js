@@ -142,6 +142,7 @@ async function qualify({
   readPrimary,
   assertPrimaryTls,
   assertSibling,
+  deploy = deployIisBinding,
 }) {
   assert.equal(process.platform, "win32");
   for (const fn of [powershell, readPrimary, assertPrimaryTls, assertSibling])
@@ -198,7 +199,7 @@ async function qualify({
     "-----BEGIN CERTIFICATE-----\n" +
     certificate.der +
     "\n-----END CERTIFICATE-----\n";
-  const result = await deployIisBinding({
+  const result = await deploy({
     binding,
     certificatePem: pem,
     verifyTimeoutMs: 5000,

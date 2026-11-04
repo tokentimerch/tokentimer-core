@@ -11,7 +11,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const net = require("node:net");
 const tls = require("node:tls");
-const { deployIisBinding, checkSniPrecedenceConflict } = require("../../src/windows-iis");
+const childProcess = require("node:child_process");
+const { deployIisBinding: deployNativeIisBinding, checkSniPrecedenceConflict } = require("../../src/windows-iis");
 const { listHttpSysBindings } = require("../../src/windows-discovery");
 
 function selectNativeEndpoint(listing, keyedBy, selector) {
@@ -27,9 +28,21 @@ function selectNativeEndpoint(listing, keyedBy, selector) {
 function assertOwnedNativeEndpoint(current, receipt, certificates) {
   assert.ok(receipt && typeof receipt.appId === "string" && receipt.appId, "Exact endpoint receipt required");
   if (current === null) return;
-  assert.equal(String(current.appId).toLowerCase(), receipt.appId.toLowerCase(), "Preserve replaced endpoint app ID");
+  const normalize = value => String(value).toLowerCase().replace(/[{}]/g, "");
+  const appIds = new Set((receipt.appIds?.length ? receipt.appIds : [receipt.appId]).map(normalize));
+  assert.ok(appIds.has(normalize(current.appId)), "Preserve replaced endpoint app ID");
   assert.equal(String(current.storeName).toLowerCase(), "my", "Preserve replaced endpoint store");
   assert.ok(certificates.some(c => c.thumbprint === current.thumbprint), "Preserve foreign endpoint certificate");
+}
+function recordOwnedAppId(args, selectors, certificates, receipts) {
+  if (!Array.isArray(args) || args[0] !== "http" || !["add", "update"].includes(args[1]) || args[2] !== "sslcert") return;
+  const selector = args.find(value => typeof value === "string" && /^(?:ipport|hostnameport)=/i.test(value));
+  const appId = args.find(value => typeof value === "string" && /^appid=\{?[a-f0-9-]{36}\}?$/i.test(value));
+  const thumb = args.find(value => typeof value === "string" && /^certhash=[a-f0-9]{40}$/i.test(value));
+  if (!selector || !selectors.includes(selector.toLowerCase()) || !appId || !thumb || !args.some(value => /^certstorename=my$/i.test(String(value)))) return;
+  if (!certificates.some(c => c.thumbprint.toLowerCase() === thumb.slice(9).toLowerCase())) return;
+  const key = selector.toLowerCase();
+  receipts.set(key, appId.slice(6).toLowerCase().replace(/[{}]/g, ""));
 }
 
 async function freePort() {
@@ -86,6 +99,18 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
   let sslReceipt, unrelatedReceipt, shadowReceipt;
   const binding = { address: "127.0.0.1", port, store: "My", site, ...(sni ? { sniHost: "localhost" } : {}) };
   const endpoint = sni ? `hostnameport=localhost:${port}` : `ipport=127.0.0.1:${port}`;
+  const selectors = [endpoint.toLowerCase(), `ipport=127.0.0.1:${unrelatedPort}`, `ipport=127.0.0.1:${port}`];
+  const issuedAppIds = new Map();
+  const trackedExec = (file, args, options, callback) => childProcess.execFile(file, args, options, (error, stdout, stderr) => {
+    if (!error && /(?:^|[\\/])netsh(?:\.exe)?$/i.test(file)) recordOwnedAppId(args, selectors, certificates, issuedAppIds);
+    callback(error, stdout, stderr);
+  });
+  const deployIisBinding = options => deployNativeIisBinding({ ...options, execFileImpl: trackedExec });
+  const trackedRun = (file, args, options) => {
+    const result = run(file, args, options);
+    if (/(?:^|[\\/])netsh(?:\.exe)?$/i.test(file)) recordOwnedAppId(args, selectors, certificates, issuedAppIds);
+    return result;
+  };
   const servername = sni ? "localhost" : undefined;
   const failures = [];
   let primaryError;
@@ -132,7 +157,7 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
     await expectServed(port, certificates[0].thumbprint, servername);
     if (nativeFlags && gate) await gate.scenario("windows-iis-client-revocation-policy-preservation", async () => {
       const helper = require("./iis-client-settings-fixture");
-      gate.report.nativeHttpSysClientSettings = await helper.qualifyClientSettings({ binding, certificates, powershell, run, unrelatedPort, expectServed, pem });
+      gate.report.nativeHttpSysClientSettings = await helper.qualifyClientSettings({ binding, certificates, powershell, run: trackedRun, unrelatedPort, expectServed, pem, deploy: deployIisBinding });
       helper.verifyProof(gate.report.nativeHttpSysClientSettings);
     }, { evidenceLevel: "real-host", oracle: "Raw HTTP.sys check-mode/timer DWORDs survive genuine owned cutover and native rollback; independent trusted TLS and unrelated endpoint remain unchanged, without a client-auth handshake claim" });
     if (gate && !sni && !nativeFlags) await gate.scenario("windows-iis-unsupported-targets", () => require("./unsupported-target-fixture").qualifyUnsupportedTargets({ binding, certificatePem: pem(certificates[1]), thumbprints: certificates.map(certificate => certificate.thumbprint), powershell, expectServed, originalThumbprint: certificates[0].thumbprint }), { evidenceLevel: "real-host", oracle: "Actual native-platform executor refuses unsupported standalone IIS deploy and multiple SNI renewal destinations; independently read owned store and binding metadata plus live TLS stay unchanged" });
@@ -196,7 +221,7 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
       const nativeEndpoint=async probePort=>{const listing=await discovery.listHttpSysBindings({});assert.equal(listing.ok,true,"Complete native endpoint inventory required");const rows=listing.bindings.filter(row=>row.keyedBy==="ipport"&&row.ipPort===`127.0.0.1:${probePort}`);assert.equal(rows.length,1,"Exact owned native endpoint required");return{nativeThumb:rows[0].thumbprint,nativeStore:rows[0].storeName};};
       const readPrimary=async()=>{let output;try{output=powershell(`Import-Module WebAdministration;$s=Get-Website -Name '${site}' -ErrorAction Stop;$b=@(Get-WebBinding -Name '${site}' -Protocol https|Where-Object {[string]$_.bindingInformation-ceq'127.0.0.1:${port}:'});if(!$s-or$b.Count-ne 1){throw 'Exact owned IP site required'};$h=$b[0].certificateHash;if($h -is [byte[]]){$h=[BitConverter]::ToString($h).Replace('-','')}else{$h=[string]$h};if($h -notmatch '^[a-fA-F0-9]{40}$'){throw 'Exact native binding hash required'};@{site=[string]$s.Name;id=[long]$s.Id;path=[string]$s.physicalPath;coordinates=[string]$b[0].bindingInformation;flags=[int]$b[0].sslFlags;store=[string]$b[0].certificateStoreName;thumb=$h.ToUpperInvariant()}|ConvertTo-Json -Compress`);}catch(error){const codes=["InvalidCastExceptionScalarToArray","ParameterBindingException","ItemNotFoundException","CommandNotFoundException","RuntimeException"];const code=codes.find(value=>String(error.message).includes(value));error.code=`CERTOPS_IIS_PRIMARY_READ_${code ? code.toUpperCase() : "FAILED"}`;throw error;}const iis=JSON.parse(output);return{...iis,...await nativeEndpoint(port)};};
       let sibling;
-      await gate.scenario(association.SCENARIO,async()=>{gate.report.nativeIisPublicOnly=await association.qualify({workDir,certificate:certificates[2],containerName:fs.readFileSync(path.join(directory,"certificate-2.key-receipt"),"utf8").trim(),predecessor:certificates[1],binding,powershell,readPrimary,assertPrimaryTls:()=>expectServed(port,certificates[1].thumbprint,servername),assertSibling:async()=>{await expectServed(unrelatedPort,certificates[0].thumbprint);const actual=await nativeEndpoint(unrelatedPort);assert.equal(actual.nativeThumb,certificates[0].thumbprint);assert.equal(String(actual.nativeStore).toLowerCase(),"my");if(sibling)assert.deepEqual(actual,sibling);else sibling=actual;}});},{evidenceLevel:"real-host",oracle:"Actual public-only My certificate/key absence, production refusal and rollback, independent native predecessor/sibling binding and trusted TLS, exact public-copy removal without key deletion"});
+      await gate.scenario(association.SCENARIO,async()=>{gate.report.nativeIisPublicOnly=await association.qualify({workDir,certificate:certificates[2],containerName:fs.readFileSync(path.join(directory,"certificate-2.key-receipt"),"utf8").trim(),predecessor:certificates[1],binding,powershell,readPrimary,deploy:deployIisBinding,assertPrimaryTls:()=>expectServed(port,certificates[1].thumbprint,servername),assertSibling:async()=>{await expectServed(unrelatedPort,certificates[0].thumbprint);const actual=await nativeEndpoint(unrelatedPort);assert.equal(actual.nativeThumb,certificates[0].thumbprint);assert.equal(String(actual.nativeStore).toLowerCase(),"my");if(sibling)assert.deepEqual(actual,sibling);else sibling=actual;}});},{evidenceLevel:"real-host",oracle:"Actual public-only My certificate/key absence, production refusal and rollback, independent native predecessor/sibling binding and trusted TLS, exact public-copy removal without key deletion"});
     }
     const raw = run("netsh.exe", ["http", "show", "sslcert", endpoint]);
     assert.ok(raw.toLowerCase().includes(certificates[1].thumbprint.toLowerCase()));
@@ -313,6 +338,7 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
       ...(unrelatedOwned ? [{ keyedBy: "ipport", selector: `127.0.0.1:${unrelatedPort}`, receipt: unrelatedReceipt }] : []),
       ...(shadowOwned ? [{ keyedBy: "ipport", selector: `127.0.0.1:${port}`, receipt: shadowReceipt }] : []),
     ];
+    for (const item of cleanupEndpoints) if (item.receipt) { const latest = issuedAppIds.get(`${item.keyedBy}=${item.selector}`.toLowerCase()); item.receipt = { ...item.receipt, appIds: latest ? [latest] : [] }; }
     // Inspect every endpoint before deleting the site or any certificate.
     for (const item of cleanupEndpoints) assertOwnedNativeEndpoint(await readEndpoint(item.keyedBy, item.selector), item.receipt, certificates);
     if (siteCreated) {
@@ -340,4 +366,4 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
   }
 }
 
-module.exports = { qualifyIis, freePort, expectServed:expectServedWithTrust, servedThumbprint, selectNativeEndpoint, assertOwnedNativeEndpoint };
+module.exports = { qualifyIis, freePort, expectServed:expectServedWithTrust, servedThumbprint, selectNativeEndpoint, assertOwnedNativeEndpoint, recordOwnedAppId };
