@@ -705,6 +705,7 @@ export async function sendEmailNotification({
       const from = fromEnv
         ? `${JSON.stringify(process.env.FROM_EMAIL_NAME || "TokenTimer")} <${fromEnv}>`
         : getFromForIndex(i);
+      if (!from) continue;
       try {
         await tx.verify();
         const info = await tx.sendMail({
