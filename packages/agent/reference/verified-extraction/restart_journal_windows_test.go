@@ -163,7 +163,7 @@ func TestRestartJournalSurvivesKilledProcess(t *testing.T) {
 }
 
 func TestRestartJournalRejectsInvalidSequences(t *testing.T) {
-	sequences := [][]string{{"stop-requested"}, {"verify-stopped"}, {"start-requested"}, {"verify-started"}, {"verified"}, {"verify-before", "verify-stopped"}, {"verify-before", "stop-requested", "stop-requested"}, {"verify-before", "stop-requested", "start-requested"}, {"verify-before", "stop-requested", "verify-stopped", "verify-stopped"}, {"verify-before", "stop-requested", "verify-stopped", "start-requested", "verified"}}
+	sequences := [][]string{{"stop-requested"}, {"verify-stopped"}, {"start-requested"}, {"verify-started"}, {"verified"}, {"stopped-verified"}, {"verify-before", "verify-stopped"}, {"verify-before", "stop-requested", "stop-requested"}, {"verify-before", "stop-requested", "start-requested"}, {"verify-before", "stop-requested", "verify-stopped", "verify-stopped"}, {"verify-before", "stop-requested", "verify-stopped", "start-requested", "verified"}}
 	for _, sequence := range sequences {
 		p := restartProgress{}
 		accepted := true
@@ -178,6 +178,17 @@ func TestRestartJournalRejectsInvalidSequences(t *testing.T) {
 		if accepted {
 			t.Fatalf("invalid sequence accepted: %v", sequence)
 		}
+	}
+	stop := restartProgress{}
+	for _, step := range []string{"verify-before", "stop-requested", "verify-stopped", "stopped-verified"} {
+		next, err := advanceRestartProgress(stop, step)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stop = next
+	}
+	if _, err := advanceRestartProgress(stop, "start-requested"); err == nil {
+		t.Fatal("service start accepted after stop-only decision")
 	}
 	p := restartProgress{}
 	for _, step := range []string{"verify-before", "verify-before", "stop-requested", "verify-stopped", "start-requested", "verify-started", "verified"} {
@@ -216,5 +227,72 @@ func TestProtectedRestartJournalRejectsCorruptStepOrdering(t *testing.T) {
 			j.Close()
 			t.Fatalf("corrupt journal accepted: %q", bad)
 		}
+	}
+}
+func TestStopOnlyJournalFailsClosedAfterForcedTermination(t *testing.T) {
+	binding := upgradeJournalBinding{Volume: 1, IndexHigh: 2, IndexLow: 3, SHA256: strings.Repeat("a", 64)}
+	if os.Getenv("TT_STOP_REVIEW_CHILD") == "1" {
+		var w releaseFixtureWire
+		if err := json.Unmarshal([]byte(os.Getenv("TT_STOP_REVIEW_FIXTURE")), &w); err != nil {
+			t.Fatal(err)
+		}
+		j, err := openProtectedRestartJournal(filepath.Join(w.Parent, "protected-review"), w.SDDL, w.Transaction, binding, w.StagePolicy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer j.Close()
+		err = stopUnderVerifiedLock(context.Background(), &fakeRestart{}, pauseRestartJournal{inner: j, stop: os.Getenv("TT_STOP_REVIEW_STEP"), ready: filepath.Join(w.Parent, "stop-ready")})
+		t.Fatalf("unexpected return: %v", err)
+	}
+	for _, step := range []string{"verify-before", "stop-requested", "verify-stopped", "stopped-verified"} {
+		t.Run(step, func(t *testing.T) {
+			f := newReleaseFixture(t, strings.Repeat("f", 32))
+			archive := filepath.Join(f.parent, "protected-review")
+			if err := createRestrictedDirectory(archive, f.sddl); err != nil {
+				t.Fatal(err)
+			}
+			wire, _ := json.Marshal(releaseFixtureWire{f.parent, f.journal, f.sddl, f.txn, f.parentPolicy, f.stagePolicy})
+			exe, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(exe, "-test.run=^TestStopOnlyJournalFailsClosedAfterForcedTermination$")
+			cmd.Env = append(os.Environ(), "TT_STOP_REVIEW_CHILD=1", "TT_STOP_REVIEW_FIXTURE="+string(wire), "TT_STOP_REVIEW_STEP="+step)
+			var output strings.Builder
+			cmd.Stdout = &output
+			cmd.Stderr = &output
+			if err = cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+			ready := filepath.Join(f.parent, "stop-ready")
+			deadline := time.Now().Add(15 * time.Second)
+			for time.Now().Before(deadline) {
+				if _, err := os.Stat(ready); err == nil {
+					break
+				}
+				time.Sleep(25 * time.Millisecond)
+			}
+			if _, err = os.Stat(ready); err != nil {
+				t.Fatalf("checkpoint not reached: %s", output.String())
+			}
+			if err = cmd.Process.Kill(); err != nil {
+				t.Fatal(err)
+			}
+			_ = cmd.Wait()
+			j, err := openProtectedRestartJournal(archive, f.sddl, f.txn, binding, f.stagePolicy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer j.Close()
+			c := &fakeRestart{}
+			err = stopUnderVerifiedLock(context.Background(), c, j)
+			if step == "verify-before" && err != nil {
+				t.Fatalf("pre-stop retry rejected: %v", err)
+			}
+			if step != "verify-before" && (err == nil || len(c.calls) != 0) {
+				t.Fatal("stop-only retry performed SCM action after interruption")
+			}
+		})
 	}
 }

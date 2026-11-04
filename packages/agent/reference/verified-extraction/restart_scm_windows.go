@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"tokentimer-verified-extraction/bootstraplock"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -328,4 +329,150 @@ func parseProcessSnapshot(buffer []byte, parent uint32) (uint32, uint64, error) 
 }
 func validProcessAssociation(first, opened, second uint32, hostCreated, nodeCreated, firstCreated, secondCreated uint64, hostState, nodeState uint32) bool {
 	return first != 0 && first == opened && first == second && hostCreated != 0 && nodeCreated >= hostCreated && nodeCreated == firstCreated && nodeCreated == secondCreated && hostState == uint32(windows.WAIT_TIMEOUT) && nodeState == uint32(windows.WAIT_TIMEOUT)
+}
+
+type nativeStopController struct{ *nativeRestartController }
+
+func (c *nativeStopController) VerifyBefore(ctx context.Context) error {
+	if c.service == nil {
+		return fmt.Errorf("service unavailable")
+	}
+	cfg, err := c.service.Config()
+	if err != nil {
+		return err
+	}
+	if err = validateSCMConfig(cfg, c.app, runtime.GOARCH); err != nil {
+		return err
+	}
+	status, err := c.service.Query()
+	if err != nil {
+		return err
+	}
+	return validateStopEntryStatus(status)
+}
+
+type stoppedSCMGuard struct {
+	manager    *mgr.Mgr
+	controller *nativeStopController
+	journal    *protectedRestartJournal
+}
+
+func (g *stoppedSCMGuard) Close() error {
+	g.controller.Close()
+	_ = g.journal.Close()
+	_ = g.controller.service.Close()
+	return g.manager.Disconnect()
+}
+func (g *stoppedSCMGuard) Verify() error {
+	c := g.controller
+	cfg, err := c.service.Config()
+	if err != nil {
+		return err
+	}
+	if err = validateSCMConfig(cfg, c.app, runtime.GOARCH); err != nil {
+		return err
+	}
+	status, err := c.service.Query()
+	if err != nil || status.State != svc.Stopped || status.ProcessId != 0 {
+		return fmt.Errorf("service no longer stopped")
+	}
+	if len(c.old) != 2 {
+		return fmt.Errorf("previous process handles unavailable")
+	}
+	for _, h := range c.old {
+		state, e := windows.WaitForSingleObject(h, 0)
+		if e != nil || state != windows.WAIT_OBJECT_0 {
+			return fmt.Errorf("previous service process not confirmed exited")
+		}
+	}
+	for _, pid := range []uint32{c.oldHostPID, c.oldNodePID} {
+		if pid == 0 {
+			return fmt.Errorf("previous process identity unavailable")
+		}
+		children, e := hasDirectChildren(pid)
+		if e != nil || children {
+			return fmt.Errorf("previous service descendants remain")
+		}
+	}
+	return nil
+}
+
+// stopServiceForReview requires a protected decision record and locked,
+// authenticated inventory. It never starts the service. A stopped observation
+// cannot prevent a privileged concurrent SCM restart; operators must review
+// such actors. Direct-child snapshots do not discover detached WMI processes.
+func stopServiceForReview(ctx context.Context, app, archive, sddl, transaction string, binding upgradeJournalBinding, policy bootstraplock.Policy) (guard *stoppedSCMGuard, err error) {
+	manager, err := mgr.Connect()
+	if err != nil {
+		return nil, fmt.Errorf("service manager unavailable")
+	}
+	defer func() {
+		if err != nil {
+			manager.Disconnect()
+		}
+	}()
+	service, err := manager.OpenService("TokenTimerAgent")
+	if err != nil {
+		return nil, fmt.Errorf("service unavailable")
+	}
+	defer func() {
+		if err != nil {
+			service.Close()
+		}
+	}()
+	controller := &nativeStopController{&nativeRestartController{service: service, app: app}}
+	defer func() {
+		if err != nil {
+			controller.Close()
+		}
+	}()
+	j, err := openProtectedRestartJournal(archive, sddl, transaction, binding, policy)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			j.Close()
+		}
+	}()
+	if err = stopUnderVerifiedLock(ctx, controller, j); err != nil {
+		return nil, err
+	}
+	guard = &stoppedSCMGuard{manager: manager, controller: controller, journal: j}
+	if err = guard.Verify(); err != nil {
+		return nil, err
+	}
+	return guard, nil
+}
+
+// checkServiceBeforeStop is only a precondition for stopping, not an
+// assertion about the running image or its environment.
+func checkServiceBeforeStop(app string) error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService("TokenTimerAgent")
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	cfg, err := s.Config()
+	if err != nil {
+		return err
+	}
+	if err = validateSCMConfig(cfg, app, runtime.GOARCH); err != nil {
+		return err
+	}
+	status, err := s.Query()
+	if err != nil {
+		return err
+	}
+	return validateStopEntryStatus(status)
+}
+func nativeStopper(ctx context.Context, sddl, transaction string, policy bootstraplock.Policy) func(string, string, upgradeJournalBinding) (reviewedStoppedGuard, error) {
+	return func(app, archive string, binding upgradeJournalBinding) (reviewedStoppedGuard, error) {
+		return stopServiceForReview(ctx, app, archive, sddl, transaction, binding, policy)
+	}
 }

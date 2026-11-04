@@ -81,3 +81,23 @@ func TestRestartProtocolFlushesBeforeEveryActionAndFailsClosed(t *testing.T) {
 		t.Fatal("incomplete protocol")
 	}
 }
+func TestStopOnlyNeverStartsServiceAndFailsClosed(t *testing.T) {
+	for _, fail := range []string{"", "verify-before", "stop-requested", "verify-stopped"} {
+		t.Run("failure-"+fail, func(t *testing.T) {
+			c := &fakeRestart{fail: fail}
+			j := &fakeRestartJournal{}
+			err := stopUnderVerifiedLock(context.Background(), c, j)
+			if (err == nil) != (fail == "") {
+				t.Fatalf("unexpected stop result: %v", err)
+			}
+			for _, call := range c.calls {
+				if call == "start-requested" || call == "verify-started" {
+					t.Fatal("stop-only path tried to start service")
+				}
+			}
+			if fail == "" && (len(j.steps) != 4 || j.steps[3] != "stopped-verified") {
+				t.Fatal("missing stopped checkpoint")
+			}
+		})
+	}
+}

@@ -61,3 +61,31 @@ func restartUnderVerifiedLock(ctx context.Context, c restartController, journal 
 	}
 	return nil
 }
+
+// stopUnderVerifiedLock never starts a process. Once stop-requested is
+// durable, a new process cannot automatically resume without old handles.
+func stopUnderVerifiedLock(ctx context.Context, c restartController, journal restartStepWriter) error {
+	if c == nil || journal == nil || !journal.CanRestart() {
+		return fmt.Errorf("stop prerequisites unavailable")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	for _, step := range []struct {
+		name string
+		run  func(context.Context) error
+	}{{"verify-before", c.VerifyBefore}, {"stop-requested", c.RequestStop}, {"verify-stopped", c.WaitStoppedAndOldProcessesExited}} {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := journal.FlushStep(step.name); err != nil {
+			return fmt.Errorf("stop checkpoint failed")
+		}
+		if err := step.run(ctx); err != nil {
+			return fmt.Errorf("stop step %s failed", step.name)
+		}
+	}
+	if err := journal.FlushStep("stopped-verified"); err != nil {
+		return fmt.Errorf("stop checkpoint failed")
+	}
+	return nil
+}

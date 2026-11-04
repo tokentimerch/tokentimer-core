@@ -53,12 +53,15 @@ func openUpgradeJournalForReview(path string, policy bootstraplock.Policy) (wind
 	return h, record, nil
 }
 
-// releaseReviewedUpgrade only archives a nominal, operator-reviewed upgrade.
-// The caller holds the shared installer mutex. It does not stop processes or
-// establish that external actors have stopped; that is an operator obligation.
-func releaseReviewedUpgrade(parent, journal, transaction string, parentPolicy, stagePolicy bootstraplock.Policy, sddl string, ackActors, ackKeepCurrent bool, runtimePin identityContract, verifyIdentity func(string, string, identityContract, bootstraplock.Policy) error, service func(string) error, verifyActive func(string, string) (io.Closer, error), renameMarker func(windows.Handle, string, string) error, renameHandle func(windows.Handle, string) error) (string, error) {
-	if !ackActors || !ackKeepCurrent || verifyIdentity == nil || service == nil || verifyActive == nil || !stageNamePattern.MatchString("TokenTimer-Staging-"+transaction) {
-		return "", fmt.Errorf("explicit operator review and keep-current decision are required")
+// releaseReviewedUpgrade archives a nominal, operator-reviewed upgrade and
+// leaves the service stopped. The caller holds the shared installer mutex.
+// Independently reviewing WMI and other persistent actors remains mandatory.
+// Success means the service was last observed stopped; this is not atomic
+// against a privileged concurrent restart. Operators must stop and review
+// other privileged actors. Remote readiness is not checked.
+func releaseReviewedUpgrade(parent, journal, transaction string, parentPolicy, stagePolicy bootstraplock.Policy, sddl string, ackActors, ackKeepCurrent, ackLeaveStopped bool, runtimePin identityContract, verifyIdentity func(string, string, identityContract, bootstraplock.Policy) error, service func(string) error, verifyActive func(string, string) (io.Closer, error), stop func(string, string, upgradeJournalBinding) (reviewedStoppedGuard, error), renameMarker func(windows.Handle, string, string) error, renameHandle func(windows.Handle, string) error) (string, error) {
+	if !ackActors || !ackKeepCurrent || !ackLeaveStopped || verifyIdentity == nil || service == nil || verifyActive == nil || stop == nil || !stageNamePattern.MatchString("TokenTimer-Staging-"+transaction) {
+		return "", fmt.Errorf("explicit actor review, keep-current and leave-stopped decisions are required")
 	}
 	unlock, err := lockUpgradeState(journal, parentPolicy, stagePolicy)
 	if err != nil {
@@ -188,38 +191,9 @@ func releaseReviewedUpgrade(parent, journal, transaction string, parentPolicy, s
 			return "", fmt.Errorf("review archive unavailable")
 		}
 		if len(entries) != 0 {
-			declaration, _, e := readReviewSentinel(approved, stagePolicy, transaction, "operator-reviewed-keep-current")
-			if e != nil {
-				return "", e
-			}
-			if declaration.Journal == nil || *declaration.Journal != binding {
-				return "", fmt.Errorf("reviewed journal identity changed")
-			}
-			if e = requireActive(declaration.Stages); e != nil {
-				return "", e
-			}
-			if e = service(app); e != nil {
-				return "", fmt.Errorf("service changed under inventory lock")
-			}
-			validation, e := validateReleaseMarkers(parent, archive, approved, transaction, declaration.Stages, stagePolicy)
-			if e != nil {
-				return "", e
-			}
-			defer validation.close()
-			if len(validation.pending) != 0 {
-				return "", fmt.Errorf("incomplete review archive")
-			}
-			if _, e = os.Lstat(staging); !errors.Is(e, os.ErrNotExist) {
-				return "", fmt.Errorf("upgrade staging location changed")
-			}
-			if e = service(app); e != nil {
-				return "", fmt.Errorf("service changed; journal retained")
-			}
-			if e = renameHandle(journalHandle, filepath.Join(archive, "upgrade-recovery.json")); e != nil {
-				return "", fmt.Errorf("journal remains in place")
-			}
-			return archiveName, nil
+			return "", fmt.Errorf("interrupted review requires manual support")
 		}
+
 		records, e = inspectQuarantinePairWithPolicy(parent, parentPolicy, stagePolicy)
 		if e != nil {
 			return "", e
@@ -233,14 +207,14 @@ func releaseReviewedUpgrade(parent, journal, transaction string, parentPolicy, s
 		if e = service(app); e != nil {
 			return "", fmt.Errorf("service changed under inventory lock")
 		}
-		info, e = createReviewSentinel(sentinel, sddl, stagePolicy, transaction, records, "operator-reviewed-keep-current", &binding)
+		info, e = createReviewSentinel(sentinel, sddl, stagePolicy, transaction, records, "operator-reviewed-keep-current-and-leave-stopped", &binding)
 		if e != nil {
 			return "", e
 		}
 	} else if e != nil {
 		return "", fmt.Errorf("review sentinel unavailable")
 	} else {
-		declaration, i, e := readReviewSentinel(sentinel, stagePolicy, transaction, "operator-reviewed-keep-current")
+		declaration, i, e := readReviewSentinel(sentinel, stagePolicy, transaction, "operator-reviewed-keep-current-and-leave-stopped")
 		if e != nil {
 			return "", e
 		}
@@ -261,6 +235,14 @@ func releaseReviewedUpgrade(parent, journal, transaction string, parentPolicy, s
 		return "", err
 	}
 	defer validation.close()
+	stopped, err := stop(app, archive, binding)
+	if err != nil || stopped == nil {
+		return "", fmt.Errorf("service stop could not be safely verified; recovery evidence retained")
+	}
+	defer stopped.Close()
+	if err = stopped.Verify(); err != nil {
+		return "", fmt.Errorf("stopped service could not be verified")
+	}
 	for _, marker := range validation.pending {
 		if err = renameMarker(marker.handle, filepath.Join(parent, marker.name), filepath.Join(archive, marker.name)); err != nil {
 			return "", fmt.Errorf("marker archive incomplete; journal and sentinel retained")
@@ -272,8 +254,8 @@ func releaseReviewedUpgrade(parent, journal, transaction string, parentPolicy, s
 	if _, e := os.Lstat(staging); !errors.Is(e, os.ErrNotExist) {
 		return "", fmt.Errorf("upgrade staging location changed; journal retained")
 	}
-	if err = service(app); err != nil {
-		return "", fmt.Errorf("service changed; journal retained")
+	if err = stopped.Verify(); err != nil {
+		return "", fmt.Errorf("service state changed; journal retained")
 	}
 	if err = renameHandle(journalHandle, filepath.Join(archive, "upgrade-recovery.json")); err != nil {
 		return "", fmt.Errorf("upgrade journal retained")
@@ -349,4 +331,9 @@ func validateIdentityContract(record *identityContract, independent identityCont
 		return fmt.Errorf("identity runtime does not match the independent release policy")
 	}
 	return nil
+}
+
+type reviewedStoppedGuard interface {
+	io.Closer
+	Verify() error
 }

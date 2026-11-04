@@ -176,6 +176,10 @@ func advanceRestartProgress(p restartProgress, step string) (restartProgress, er
 			return p, nil
 		}
 	case 2:
+		if step == "stopped-verified" {
+			p.phase = 6
+			return p, nil
+		}
 		if step == "start-requested" {
 			p.phase = 3
 			return p, nil
