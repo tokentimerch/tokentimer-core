@@ -45,6 +45,11 @@ func TestNativeRFC3161AttributePolicy(t *testing.T) {
 	if hasSingleRFC3161Timestamp(&info) {
 		t.Fatal("empty timestamp accepted")
 	}
+	attrs := []nativeCryptAttribute{{OID: rfc, ValueCount: 1, Values: &blob}, {OID: legacy, ValueCount: 1, Values: &blob}}
+	info.Unauthenticated = nativeCryptAttributes{Count: 2, Attributes: &attrs[0]}
+	if hasSingleRFC3161Timestamp(&info) {
+		t.Fatal("mixed legacy and RFC3161 timestamps accepted")
+	}
 }
 
 func TestNativeAuthenticodePrototype(t *testing.T) {

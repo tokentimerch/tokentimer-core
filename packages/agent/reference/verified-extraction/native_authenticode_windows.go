@@ -62,7 +62,13 @@ func hasSingleRFC3161Timestamp(info *nativeCMSSignerInfo) bool {
 		if attr.OID == nil {
 			return false
 		}
-		if windows.BytePtrToString(attr.OID) == "1.3.6.1.4.1.311.3.3.1" {
+		oid := windows.BytePtrToString(attr.OID)
+		// Reject legacy countersignatures rather than accepting an unrelated
+		// RFC3161 attribute alongside the actually verified timestamp.
+		if oid == "1.2.840.113549.1.9.6" {
+			return false
+		}
+		if oid == "1.3.6.1.4.1.311.3.3.1" {
 			if attr.ValueCount != 1 || attr.Values == nil || attr.Values.Size == 0 || attr.Values.Data == nil {
 				return false
 			}
