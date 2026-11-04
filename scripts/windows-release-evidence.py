@@ -10,7 +10,10 @@ import binascii
 import json
 import hashlib
 import io
+import importlib.util
+from pathlib import Path
 import re
+import sys
 import zipfile
 
 DIGEST = re.compile(r"[a-f0-9]{64}\Z")
@@ -110,6 +113,30 @@ def fetch_qualification_report(edition, commit, run_id, token, download):
     except (zipfile.BadZipFile, RuntimeError, json.JSONDecodeError, UnicodeDecodeError, RecursionError):
         raise ValueError("Malformed evidence artifact") from None
     return {"run": run, "report": report}
+
+
+def _collector_transport():
+    spec = importlib.util.spec_from_file_location("certops_release_transport", Path(__file__).with_name("certops-release-collector.py"))
+    if spec is None or spec.loader is None:
+        raise ValueError("Collector transport unavailable")
+    collector = importlib.util.module_from_spec(spec)
+    scripts_dir = str(Path(__file__).resolve().parent)
+    sys.path.insert(0, scripts_dir)
+    try:
+        spec.loader.exec_module(collector)
+    finally:
+        sys.path.pop(0)
+    return collector.download
+
+
+def fetch_trusted_edition_pin(edition, commit, token):
+    """Use the existing bounded, credential-isolating collector transport."""
+    return fetch_edition_pin(edition, commit, token, _collector_transport())
+
+
+def fetch_trusted_qualification_report(edition, commit, run_id, token):
+    """Use the existing bounded, credential-isolating collector transport."""
+    return fetch_qualification_report(edition, commit, run_id, token, _collector_transport())
 
 
 def validate_binding(candidate, evidence):

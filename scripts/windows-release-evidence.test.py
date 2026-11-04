@@ -7,6 +7,8 @@ import zipfile
 import importlib.util
 from pathlib import Path
 import unittest
+import urllib.error
+from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location("binding", Path(__file__).with_name("windows-release-evidence.py"))
 binding = importlib.util.module_from_spec(spec)
@@ -72,6 +74,31 @@ class BindingTests(unittest.TestCase):
         artifact["digest"] = "sha256:" + hashlib.sha256(archive).hexdigest()
         run["head_sha"] = "f" * 40
         with self.assertRaises(ValueError): binding.fetch_qualification_report("cloud", c["editionCommits"]["cloud"], 5, "fixture", download)
+
+    def test_trusted_report_fetch_does_not_send_token_to_blob(self):
+        c, items = self.fixture()
+        original = next(item for item in items if item["report"]["slot"] == "cloud")
+        run = {**original["run"], "id": 5}
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("qualification.json", json.dumps(original["report"]))
+        data = buf.getvalue()
+        artifact = {"id": 7, "name": "windows-final-package-qualification", "expired": False, "size_in_bytes": len(data), "digest": "sha256:" + hashlib.sha256(data).hexdigest()}
+        redirect = urllib.error.HTTPError("https://api.github.com/zip", 302, "redirect", {"Location": "https://fixture.blob.core.windows.net/evidence"}, None)
+        outcomes = [json.dumps(run).encode(), json.dumps({"total_count": 1, "artifacts": [artifact]}).encode(), redirect, data]
+        calls = []
+        opener = Mock()
+        def open_request(request, timeout):
+            calls.append(request)
+            outcome = outcomes[len(calls) - 1]
+            if isinstance(outcome, Exception): raise outcome
+            return io.BytesIO(outcome)
+        opener.open.side_effect = open_request
+        with patch("urllib.request.build_opener", return_value=opener):
+            item = binding.fetch_trusted_qualification_report("cloud", c["editionCommits"]["cloud"], 5, "fixture-token")
+        self.assertEqual(item["report"], original["report"])
+        self.assertTrue(all(req.get_header("Authorization") == "Bearer fixture-token" for req in calls[:3]))
+        self.assertIsNone(calls[3].get_header("Authorization"))
 
     def test_complete_matrix_is_only_a_binding_not_publication_approval(self):
         c, e = self.fixture()
