@@ -63,6 +63,7 @@ func bounded(path string, limit int64) ([]byte, error) {
 }
 func main() {
 	inspect := flag.Bool("inspect-quarantine", false, "inspect retained staging without changing it")
+	inspectUpgrade := flag.Bool("inspect-upgrade-recovery", false, "inspect protected upgrade recovery without changing it")
 	release := flag.String("release-quarantine-transaction", "", "archive reviewed quarantine markers for this exact transaction")
 	acknowledge := flag.Bool("acknowledge-external-actors-stopped", false, "confirm that an operator stopped and reviewed all external actors")
 	manifestPath := flag.String("manifest", "", "encapsulated signed CMS manifest")
@@ -75,7 +76,7 @@ func main() {
 		os.Exit(2)
 	}
 	if *release != "" || *acknowledge {
-		if *inspect || *manifestPath != "" || *archivePath != "" || *sbomPath != "" || len(flag.Args()) != 0 {
+		if *inspect || *inspectUpgrade || *manifestPath != "" || *archivePath != "" || *sbomPath != "" || len(flag.Args()) != 0 {
 			fmt.Fprintln(os.Stderr, "quarantine release does not accept package or installer arguments")
 			os.Exit(2)
 		}
@@ -85,6 +86,22 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Fprintln(os.Stdout, "Reviewed markers archived as", archive, "; staging directories remain in place.")
+		return
+	}
+	if *inspectUpgrade {
+		if *inspect || *manifestPath != "" || *archivePath != "" || *sbomPath != "" || len(flag.Args()) != 0 {
+			fmt.Fprintln(os.Stderr, "inspection does not accept package or installer arguments")
+			os.Exit(2)
+		}
+		report, err := verified.InspectUpgradeRecovery(context.Background())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "upgrade inspection failed:", err)
+			os.Exit(1)
+		}
+		if json.NewEncoder(os.Stdout).Encode(report) != nil {
+			fmt.Fprintln(os.Stderr, "upgrade report could not be written")
+			os.Exit(1)
+		}
 		return
 	}
 	if *inspect {
