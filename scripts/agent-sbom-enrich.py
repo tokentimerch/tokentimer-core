@@ -14,6 +14,7 @@ from pathlib import PurePosixPath
 import re
 import tarfile
 import zipfile
+import zlib
 
 MAX_ARCHIVE = 128 * 1024 * 1024
 MAX_EXPANDED = 512 * 1024 * 1024
@@ -51,6 +52,26 @@ def unique_json(data):
         raise ValueError("Invalid SBOM JSON") from None
 
 
+def validate_compressed_stream(archive):
+    """Reject truncated, concatenated or excessively expanded gzip streams."""
+    decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    expanded = 0
+    limit = MAX_EXPANDED + MAX_ENTRIES * 1024 + 1024 * 1024
+    try:
+        for offset in range(0, len(archive), 65536):
+            pending = archive[offset:offset + 65536]
+            while pending:
+                block = decoder.decompress(pending, 1024 * 1024)
+                expanded += len(block)
+                if expanded > limit or decoder.unused_data:
+                    raise ValueError("Unexpected or oversized compressed stream")
+                pending = decoder.unconsumed_tail
+        if not decoder.eof or decoder.unused_data:
+            raise ValueError("Truncated or concatenated compressed stream")
+    except zlib.error:
+        raise ValueError("Invalid compressed stream") from None
+
+
 def enrich(archive, expected_archive_sha, upstream, sbom, architecture, policy=POLICY, version=NODE_VERSION):
     """Return enriched CycloneDX bytes; inputs must be read as immutable snapshots."""
     if (architecture not in policy or not isinstance(expected_archive_sha, str) or not SHA256.fullmatch(expected_archive_sha)
@@ -60,6 +81,7 @@ def enrich(archive, expected_archive_sha, upstream, sbom, architecture, policy=P
     upstream_arch, upstream_sha, runtime_sha = policy[architecture]
     if sha(upstream) != upstream_sha:
         raise ValueError("Untrusted upstream Node archive")
+    validate_compressed_stream(archive)
     source_prefix = f"node-v{version}-win-{upstream_arch}/"
     try:
         with zipfile.ZipFile(io.BytesIO(upstream)) as nodezip:

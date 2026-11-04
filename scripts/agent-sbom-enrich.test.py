@@ -1,11 +1,13 @@
 import hashlib
 import base64
+import gzip
 import importlib.util
 import io
 import json
 from pathlib import Path
 import tarfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
 spec = importlib.util.spec_from_file_location("enrich", Path(__file__).with_name("agent-sbom-enrich.py"))
@@ -96,6 +98,12 @@ class EnrichmentTests(unittest.TestCase):
         for _, zip_digest, runtime_digest in enrich.POLICY.values():
             self.assertIn(zip_digest, packager)
             self.assertIn(runtime_digest, packager)
+
+    def test_rejects_truncated_concatenated_and_oversized_gzip(self):
+        for data in (self.archive[:-6], self.archive + gzip.compress(b"hidden"), self.archive + b"trailing"):
+            with self.assertRaises(ValueError): enrich.validate_compressed_stream(data)
+        with patch.object(enrich, "MAX_EXPANDED", 1), patch.object(enrich, "MAX_ENTRIES", 1):
+            with self.assertRaises(ValueError): enrich.validate_compressed_stream(gzip.compress(b"A" * (2 * 1024 * 1024)))
 
 
 if __name__ == "__main__":

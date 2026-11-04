@@ -69,6 +69,13 @@ not part of release publishing and does not authenticate the scanner, validate
 the full schema, or prove transitive dependency coverage; maintainers must
 verify those separately before using its output.
 
+On an isolated, unprivileged Linux build runner without network access,
+`scripts/agent-sbom-generate.py`
+can scan, enrich and schema-validate a candidate with independently pinned
+scanner and validator executables. It trusts processes with the same user ID;
+it does not enforce network isolation, sign the result or establish transitive
+dependency completeness.
+
 ## Upgrade / rollback
 
 Upgrade (preserves `/opt/tokentimer-agent/state`):
