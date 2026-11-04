@@ -26,6 +26,67 @@ EDITION_REPOS = {
 }
 NATIVE_SYSTEMS = frozenset(("windows-server-2016", "windows-server-2019", "windows-server-2022", "windows-server-2025"))
 
+# These names are provisional requirements for the prototype, not evidence
+# that any workflow actually performs them. Qualification stays disabled until
+# trusted producers and their execution environments have been reviewed.
+NATIVE_CASES = frozenset(("fresh-register-heartbeat-discover", "uninstall-reinstall-identity", "legacy-migration-rollback", "bundled-upgrade-rollback", "interrupted-rename-recovery", "missing-runtime-repair", "post-reboot-signed-dry-run", "local-and-remote-recovery", "no-runtime-download", "adcs-iis-renewal", "tamper-and-publisher-rejection"))
+EDITION_CASES = {
+    "core": frozenset(("same-candidate-bytes", "private-ca-upgrade", "compatibility-block")),
+    "cloud": frozenset(("same-candidate-bytes", "enrolled-upgrade-at-quota", "identity-preserved")),
+    "enterprise": frozenset(("same-candidate-bytes", "offline-adoption", "base-entitlement")),
+    "download-command": frozenset(("generated-command", "publisher-verified-before-execution")),
+}
+
+
+def required_cases(slot):
+    if slot in NATIVE_SYSTEMS:
+        return NATIVE_CASES
+    if slot in EDITION_CASES:
+        return EDITION_CASES[slot]
+    raise ValueError("Unknown qualification slot")
+
+
+def validate_case_records(report, records):
+    """Check report claims against separately captured evidence bytes.
+
+    This only binds hashes and case identifiers. It does not prove that a case
+    ran, authenticate its producer, or authorize publication.
+    """
+    if not isinstance(report, dict) or not isinstance(records, dict):
+        raise ValueError("Invalid case evidence")
+    required = required_cases(report.get("slot"))
+    cases = report.get("cases")
+    if not isinstance(cases, list) or len(cases) != len(required):
+        raise ValueError("Incomplete case evidence")
+    observed = set()
+    for case in cases:
+        if not isinstance(case, dict) or set(case) != {"id", "status", "evidenceSha256"}:
+            raise ValueError("Invalid case evidence")
+        name, digest = case["id"], case["evidenceSha256"]
+        if not isinstance(name, str) or name not in required or name in observed or case["status"] != "passed" or not isinstance(digest, str) or not DIGEST.fullmatch(digest):
+            raise ValueError("Invalid case evidence")
+        raw = records.get(name)
+        if not isinstance(raw, bytes) or not 0 < len(raw) <= 65536 or hashlib.sha256(raw).hexdigest() != digest:
+            raise ValueError("Case evidence bytes differ")
+        def unique_pairs(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("Duplicate case evidence key")
+                result[key] = value
+            return result
+        try:
+            proof = json.loads(raw, object_pairs_hook=unique_pairs)
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+            raise ValueError("Malformed case evidence") from None
+        fields = {"caseId", "status", "sourceCommit", "version", "architecture", "artifactDigests", "editionCommit", "editionCoreCommit"}
+        if (not isinstance(proof, dict) or set(proof) != fields or proof["caseId"] != name
+                or proof["status"] != "passed" or any(proof[field] != report.get(field) for field in fields - {"caseId", "status"})):
+            raise ValueError("Case evidence candidate mismatch")
+        observed.add(name)
+    if observed != required or set(records) != required:
+        raise ValueError("Incomplete case evidence")
+
 
 def edition_pin_from_manifest(raw, edition):
     """Extract the composition pin from independently fetched manifest bytes."""
@@ -99,9 +160,19 @@ def fetch_qualification_report(edition, commit, run_id, token, download):
     try:
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
             entries = archive.infolist()
-            if len(entries) != 1 or entries[0].filename != "qualification.json" or entries[0].is_dir() or entries[0].file_size > 1024 * 1024:
+            names = [entry.filename for entry in entries]
+            if (not 2 <= len(entries) <= 32 or len(set(names)) != len(names) or "qualification.json" not in names
+                    or any(entry.is_dir() or entry.file_size > 1024 * 1024 for entry in entries)):
                 raise ValueError("Unexpected evidence archive contents")
-            payload = archive.read(entries[0])
+            payload = archive.read("qualification.json")
+            records = {}
+            for entry in entries:
+                if entry.filename == "qualification.json":
+                    continue
+                match = re.fullmatch(r"evidence/([a-z0-9]+(?:-[a-z0-9]+)*)\.json", entry.filename)
+                if match is None or entry.file_size > 65536:
+                    raise ValueError("Unexpected evidence archive contents")
+                records[match.group(1)] = archive.read(entry)
         def unique_pairs(pairs):
             result = {}
             for key, value in pairs:
@@ -110,9 +181,10 @@ def fetch_qualification_report(edition, commit, run_id, token, download):
                 result[key] = value
             return result
         report = json.loads(payload, object_pairs_hook=unique_pairs)
+        validate_case_records(report, records)
     except (zipfile.BadZipFile, RuntimeError, json.JSONDecodeError, UnicodeDecodeError, RecursionError):
         raise ValueError("Malformed evidence artifact") from None
-    return {"run": run, "report": report}
+    return {"run": run, "report": report, "records": records}
 
 
 def _collector_transport():
@@ -167,11 +239,12 @@ def validate_binding(candidate, evidence):
         raise ValueError("Incomplete final-package matrix")
     observed = set()
     for item in evidence:
-        if not isinstance(item, dict) or set(item) != {"report", "run"} or not isinstance(item["report"], dict) or not isinstance(item["run"], dict):
+        if not isinstance(item, dict) or set(item) != {"report", "run", "records"} or not isinstance(item["report"], dict) or not isinstance(item["run"], dict):
             raise ValueError("Invalid evidence")
         report, run = item["report"], item["run"]
-        if set(report) != {"slot", "architecture", "sourceCommit", "version", "artifactDigests", "editionCommit", "editionCoreCommit", "status"}:
+        if set(report) != {"slot", "architecture", "sourceCommit", "version", "artifactDigests", "editionCommit", "editionCoreCommit", "status", "cases"}:
             raise ValueError("Invalid report fields")
+        validate_case_records(report, item["records"])
         slot = (report["architecture"], report["slot"])
         if slot not in required or slot in observed:
             raise ValueError("Unexpected or duplicate matrix slot")

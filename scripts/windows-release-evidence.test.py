@@ -31,7 +31,9 @@ class BindingTests(unittest.TestCase):
                        "head_branch": branch, "head_sha": edition[owner], "repository": {"full_name": repo}, "head_repository": {"full_name": repo}}
                 report = {"slot": slot, "architecture": arch, "sourceCommit": source, "version": c["version"],
                           "artifactDigests": copy.deepcopy(c["architectures"][arch]), "editionCommit": edition[owner], "editionCoreCommit": source, "status": "passed"}
-                reports.append({"report": report, "run": run})
+                records = {name: json.dumps({"caseId": name, "status": "passed", **{field: report[field] for field in ("sourceCommit", "version", "architecture", "artifactDigests", "editionCommit", "editionCoreCommit")}}).encode() for name in binding.required_cases(slot)}
+                report["cases"] = [{"id": name, "status": "passed", "evidenceSha256": hashlib.sha256(raw).hexdigest()} for name, raw in sorted(records.items())]
+                reports.append({"report": report, "run": run, "records": records})
         return c, reports
 
     def test_edition_manifests_require_the_actual_composition_field(self):
@@ -60,6 +62,7 @@ class BindingTests(unittest.TestCase):
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as z:
             z.writestr("qualification.json", json.dumps(original["report"]))
+            for name, raw in original["records"].items(): z.writestr("evidence/" + name + ".json", raw)
         archive = buffer.getvalue()
         artifact = {"id": 7, "name": "windows-final-package-qualification", "expired": False,
                     "size_in_bytes": len(archive), "digest": "sha256:" + hashlib.sha256(archive).hexdigest()}
@@ -82,6 +85,7 @@ class BindingTests(unittest.TestCase):
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as z:
             z.writestr("qualification.json", json.dumps(original["report"]))
+            for name, raw in original["records"].items(): z.writestr("evidence/" + name + ".json", raw)
         data = buf.getvalue()
         artifact = {"id": 7, "name": "windows-final-package-qualification", "expired": False, "size_in_bytes": len(data), "digest": "sha256:" + hashlib.sha256(data).hexdigest()}
         redirect = urllib.error.HTTPError("https://api.github.com/zip", 302, "redirect", {"Location": "https://fixture.blob.core.windows.net/evidence"}, None)
@@ -100,6 +104,29 @@ class BindingTests(unittest.TestCase):
         self.assertTrue(all(req.get_header("Authorization") == "Bearer fixture-token" for req in calls[:3]))
         self.assertIsNone(calls[3].get_header("Authorization"))
 
+    def test_report_fetch_rejects_duplicate_names_and_case_tampering(self):
+        c, items = self.fixture()
+        original = next(item for item in items if item["report"]["slot"] == "cloud")
+        run = {**original["run"], "id": 5}
+        for variant in ("duplicate", "tamper", "traversal"):
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w") as z:
+                z.writestr("qualification.json", json.dumps(original["report"]))
+                for name, raw in original["records"].items():
+                    z.writestr("evidence/" + name + ".json", b"altered" if variant == "tamper" else raw)
+                if variant == "duplicate":
+                    with self.assertWarns(UserWarning): z.writestr("qualification.json", "{}")
+                if variant == "traversal": z.writestr("../outside.json", "{}")
+            data = buf.getvalue()
+            artifact = {"id": 7, "name": "windows-final-package-qualification", "expired": False,
+                        "size_in_bytes": len(data), "digest": "sha256:" + hashlib.sha256(data).hexdigest()}
+            def download(url, token, redirect=False):
+                if url.endswith("/zip"): return data
+                if "/artifacts?" in url: return json.dumps({"total_count": 1, "artifacts": [artifact]}).encode()
+                return json.dumps(run).encode()
+            with self.assertRaises(ValueError):
+                binding.fetch_qualification_report("cloud", c["editionCommits"]["cloud"], 5, "fixture", download)
+
     def test_complete_matrix_is_only_a_binding_not_publication_approval(self):
         c, e = self.fixture()
         with self.assertRaises(NotImplementedError): binding.validate_binding(c, e)
@@ -114,6 +141,26 @@ class BindingTests(unittest.TestCase):
             with self.assertRaises(ValueError): binding.validate_binding(c, bad)
         bad = copy.deepcopy(e)
         bad[0]["report"]["sourceCommit"] = "f" * 40
+        with self.assertRaises(ValueError): binding.validate_binding(c, bad)
+
+    def test_case_records_require_real_bound_bytes_and_all_required_cases(self):
+        c, e = self.fixture()
+        for mutate in (
+            lambda item: item["report"]["cases"].pop(),
+            lambda item: item["report"]["cases"][0].update(status="skipped"),
+            lambda item: item["report"]["cases"][0].update(evidenceSha256="0" * 64),
+            lambda item: item["records"].pop(next(iter(item["records"]))),
+            lambda item: item["records"].update({"unexpected": b"extra"}),
+            lambda item: item["records"].update({next(iter(item["records"])): b"changed"}),
+        ):
+            bad = copy.deepcopy(e)
+            mutate(bad[0])
+            with self.assertRaises(ValueError): binding.validate_binding(c, bad)
+        bad = copy.deepcopy(e)
+        case = bad[0]["report"]["cases"][0]
+        raw = bad[0]["records"][case["id"]].replace(b'"passed"', b'"failed"')
+        bad[0]["records"][case["id"]] = raw
+        case["evidenceSha256"] = hashlib.sha256(raw).hexdigest()
         with self.assertRaises(ValueError): binding.validate_binding(c, bad)
 
     def test_fork_wrong_workflow_or_edition_composition_is_rejected(self):
