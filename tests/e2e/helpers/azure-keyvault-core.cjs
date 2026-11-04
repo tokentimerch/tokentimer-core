@@ -90,6 +90,10 @@ async function open({ root, packageRoot, config, materials }) {
         [users[0]],
       )
     ).rows[0].id;
+    await db.query(
+      "INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,'workspace_manager')",
+      [workspaceId, users[1]],
+    );
     const agent = (
       await db.query(
         `INSERT INTO certops_agents(workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash,platform)
