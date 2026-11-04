@@ -38,6 +38,28 @@ test("retention acceptance failure reports only a bounded native code", () => {
   assert.throws(() => assertFixtureAccept({ ok: false, stderrExcerpt: "private data 0x800B0109" }), error => error.code === "CERTOPS_RETENTION_ACCEPT_H800B0109" && !error.message.includes("private"));
   assert.throws(() => assertFixtureAccept({ ok: false, stage: "repairstore", stdoutExcerpt: "private" }), error => error.code === "CERTOPS_RETENTION_REPAIRSTORE_FAILED");
 });
+test("retention signing root is removed only if its exact public identity remains", async () => {
+  const fs = require("node:fs"), os = require("node:os"), path = require("node:path"), crypto = require("node:crypto");
+  const { withOwnedRetentionRoot } = require("./host/retention-root-fixture");
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "retention-root-control-"));
+  try {
+    fs.copyFileSync(path.join(__dirname, "../src/verify/fixtures/ca.crt.pem"), path.join(directory, "ca.pem"));
+    const root = new crypto.X509Certificate(fs.readFileSync(path.join(directory, "ca.pem")));
+    let present = false, foreign = false, removed = false;
+    const powershell = script => {
+      if (script.startsWith("[bool]")) return present ? "True" : "False";
+      if (script.startsWith("$c=")) return JSON.stringify({ raw: (foreign ? Buffer.from("foreign") : root.raw).toString("base64"), hasPrivateKey: false });
+      if (script.startsWith("Remove-Item")) { removed = true; present = false; return ""; }
+      throw new Error("Unexpected test command");
+    };
+    const run = () => { present = true; };
+    assert.equal(await withOwnedRetentionRoot({ powershell, run, workDir: directory, execute: async () => 7 }), 7);
+    assert.equal(removed, true); assert.equal(present, false);
+    removed = false;
+    await assert.rejects(withOwnedRetentionRoot({ powershell, run, workDir: directory, execute: async () => { foreign = true; } }), /Preserve a replaced root/);
+    assert.equal(removed, false); assert.equal(present, true);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
 
 test("native command failures retain only bounded diagnostic metadata", async () => {
   const gate = createHostGate({ suite: "fixture", strict: true, reportPath: null, continueOnFailure: true });
