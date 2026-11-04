@@ -204,7 +204,7 @@ func invokeInstaller(ctx context.Context, installer, scratch string, args []stri
 	if err != nil {
 		return err
 	}
-	argv := append([]string{"-NoProfile", "-NonInteractive", "-File", installer}, args...)
+	argv := append([]string{"-NoProfile", "-File", installer}, args...)
 	cmd := exec.Command(ps, argv...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{AdditionalInheritedHandles: []syscall.Handle{syscall.Handle(readPipe)}}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
