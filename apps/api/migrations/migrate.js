@@ -4881,6 +4881,11 @@ const migrations = [
     name: "remove_pagerduty_rest_lookup",
     sql: fs.readFileSync(require("path").join(__dirname, "095-remove-pagerduty-rest-lookup.sql"), "utf8"),
   },
+  {
+    version: 98,
+    name: "certops_manual_rollout_authority",
+    sql: fs.readFileSync(require("path").join(__dirname, "098-certops-manual-rollout-authority.sql"), "utf8"),
+  },
 ];
 
 
