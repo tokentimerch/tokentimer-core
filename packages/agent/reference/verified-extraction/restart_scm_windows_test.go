@@ -4,12 +4,14 @@ package verifiedextraction
 
 import (
 	"context"
+	"fmt"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
 	"os"
 	"os/exec"
 	"testing"
+	"tokentimer-verified-extraction/bootstraplock"
 	"unsafe"
 )
 
@@ -121,5 +123,21 @@ func TestProcessSnapshotParserRejectsInvalidABIAndAmbiguity(t *testing.T) {
 		if _, _, err := parseProcessSnapshot(b, 11); err == nil {
 			t.Fatalf("malformed snapshot %d accepted", i)
 		}
+	}
+}
+func TestStopOnlyRejectsMissingOrUncertainPendingRestartProof(t *testing.T) {
+	if err := requireNoPendingRestart(nil); err == nil {
+		t.Fatal("missing proof accepted")
+	}
+	if err := requireNoPendingRestart(func() error { return fmt.Errorf("unknown") }); err == nil {
+		t.Fatal("uncertain proof accepted")
+	}
+	if err := requireNoPendingRestart(func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestNativeStopFactoryRejectsAbsentPendingProofBeforeSCM(t *testing.T) {
+	if guard, err := stopServiceForReview(context.Background(), "unused", "unused", "unused", "unused", upgradeJournalBinding{}, bootstraplock.Policy{}, nil); err == nil || guard != nil {
+		t.Fatal("unqualified stop factory accepted")
 	}
 }

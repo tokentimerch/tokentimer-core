@@ -331,11 +331,17 @@ func validProcessAssociation(first, opened, second uint32, hostCreated, nodeCrea
 	return first != 0 && first == opened && first == second && hostCreated != 0 && nodeCreated >= hostCreated && nodeCreated == firstCreated && nodeCreated == secondCreated && hostState == uint32(windows.WAIT_TIMEOUT) && nodeState == uint32(windows.WAIT_TIMEOUT)
 }
 
-type nativeStopController struct{ *nativeRestartController }
+type nativeStopController struct {
+	*nativeRestartController
+	proveNoPendingRestart func() error
+}
 
 func (c *nativeStopController) VerifyBefore(ctx context.Context) error {
 	if c.service == nil {
 		return fmt.Errorf("service unavailable")
+	}
+	if err := requireNoPendingRestart(c.proveNoPendingRestart); err != nil {
+		return err
 	}
 	cfg, err := c.service.Config()
 	if err != nil {
@@ -365,6 +371,9 @@ func (g *stoppedSCMGuard) Close() error {
 }
 func (g *stoppedSCMGuard) Verify() error {
 	c := g.controller
+	if err := requireNoPendingRestart(c.proveNoPendingRestart); err != nil {
+		return err
+	}
 	cfg, err := c.service.Config()
 	if err != nil {
 		return err
@@ -401,7 +410,10 @@ func (g *stoppedSCMGuard) Verify() error {
 // authenticated inventory. It never starts the service. A stopped observation
 // cannot prevent a privileged concurrent SCM restart; operators must review
 // such actors. Direct-child snapshots do not discover detached WMI processes.
-func stopServiceForReview(ctx context.Context, app, archive, sddl, transaction string, binding upgradeJournalBinding, policy bootstraplock.Policy) (guard *stoppedSCMGuard, err error) {
+func stopServiceForReview(ctx context.Context, app, archive, sddl, transaction string, binding upgradeJournalBinding, policy bootstraplock.Policy, pendingProof func() error) (guard *stoppedSCMGuard, err error) {
+	if err := requireNoPendingRestart(pendingProof); err != nil {
+		return nil, err
+	}
 	manager, err := mgr.Connect()
 	if err != nil {
 		return nil, fmt.Errorf("service manager unavailable")
@@ -420,7 +432,7 @@ func stopServiceForReview(ctx context.Context, app, archive, sddl, transaction s
 			service.Close()
 		}
 	}()
-	controller := &nativeStopController{&nativeRestartController{service: service, app: app}}
+	controller := &nativeStopController{nativeRestartController: &nativeRestartController{service: service, app: app}, proveNoPendingRestart: pendingProof}
 	defer func() {
 		if err != nil {
 			controller.Close()
@@ -469,10 +481,25 @@ func checkServiceBeforeStop(app string) error {
 	if err != nil {
 		return err
 	}
-	return validateStopEntryStatus(status)
+	if err := validateStopEntryStatus(status); err != nil {
+		return err
+	}
+	return requireNoPendingRestart(nil)
 }
 func nativeStopper(ctx context.Context, sddl, transaction string, policy bootstraplock.Policy) func(string, string, upgradeJournalBinding) (reviewedStoppedGuard, error) {
 	return func(app, archive string, binding upgradeJournalBinding) (reviewedStoppedGuard, error) {
-		return stopServiceForReview(ctx, app, archive, sddl, transaction, binding, policy)
+		return stopServiceForReview(ctx, app, archive, sddl, transaction, binding, policy, nil)
 	}
+}
+
+// No production proof provider is wired. A configured recovery action does not
+// reveal or cancel an already queued action; status alone is insufficient.
+func requireNoPendingRestart(proof func() error) error {
+	if proof == nil {
+		return fmt.Errorf("qualified proof of no pending SCM recovery action is unavailable")
+	}
+	if err := proof(); err != nil {
+		return fmt.Errorf("pending SCM recovery action not excluded")
+	}
+	return nil
 }
