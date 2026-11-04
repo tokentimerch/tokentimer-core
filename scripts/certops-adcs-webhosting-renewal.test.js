@@ -114,6 +114,8 @@ test("store cleanup requires exact durable ownership before any public removal",
   assert.throws(() =>
     helper.cleanupPlan(receipt, [{ thumbprint, containerName }], () => null),
   );
+  assert.throws(() => helper.cleanupPlan(receipt, [{ thumbprint, containerName }], () => ({ ...record, certificateId: "33333333-3333-3333-3333-333333333333" })), error => error.code === "CERTOPS_STORE_RECEIPT_CERTIFICATE" && !error.message.includes("33333333"));
+  assert.throws(() => helper.cleanupPlan(receipt, [{ thumbprint, containerName }], () => null), error => error.code === "CERTOPS_STORE_RECEIPT_MISSING");
   assert.throws(() =>
     helper.cleanupPlan(
       receipt,
