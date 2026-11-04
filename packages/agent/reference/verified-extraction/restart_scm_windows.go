@@ -179,41 +179,21 @@ func captureServiceProcesses(hostPID uint32, app string) (windows.Handle, window
 		return 0, 0, err
 	}
 	fail := func(e error) (windows.Handle, windows.Handle, error) { windows.CloseHandle(host); return 0, 0, e }
-	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	childPID, snapshotCreated, err := snapshotSingleChild(hostPID)
 	if err != nil {
 		return fail(err)
-	}
-	defer windows.CloseHandle(snapshot)
-	var entry windows.ProcessEntry32
-	entry.Size = uint32(unsafe.Sizeof(entry))
-	err = windows.Process32First(snapshot, &entry)
-	var childPID uint32
-	for err == nil {
-		if entry.ParentProcessID == hostPID {
-			if childPID != 0 {
-				return fail(fmt.Errorf("unexpected multiple service children"))
-			}
-			childPID = entry.ProcessID
-		}
-		err = windows.Process32Next(snapshot, &entry)
-	}
-	if err != nil && !errors.Is(err, windows.ERROR_NO_MORE_FILES) {
-		return fail(err)
-	}
-	if childPID == 0 {
-		return fail(fmt.Errorf("service child unavailable"))
 	}
 	node, err := openSystemProcess(childPID, filepath.Join(app, "runtime", runtime.GOARCH, "node.exe"))
 	if err != nil {
 		return fail(err)
 	}
 	openedPID, e0 := windows.GetProcessId(node)
-	observedPID, eSnapshot := singleDirectChild(hostPID)
+	observedPID, observedCreated, eSnapshot := snapshotSingleChild(hostPID)
 	nodeState, eNode := windows.WaitForSingleObject(node, 0)
 	hostState, eHost := windows.WaitForSingleObject(host, 0)
 	hostCreated, e1 := processCreationTime(host)
 	nodeCreated, e2 := processCreationTime(node)
-	if e0 != nil || eSnapshot != nil || eNode != nil || eHost != nil || e1 != nil || e2 != nil || !validProcessAssociation(childPID, openedPID, observedPID, hostCreated, nodeCreated, hostState, nodeState) {
+	if e0 != nil || eSnapshot != nil || eNode != nil || eHost != nil || e1 != nil || e2 != nil || !validProcessAssociation(childPID, openedPID, observedPID, hostCreated, nodeCreated, snapshotCreated, observedCreated, hostState, nodeState) {
 		windows.CloseHandle(node)
 		return fail(fmt.Errorf("service process association changed"))
 	}
@@ -283,34 +263,69 @@ func validateStopEntryStatus(status svc.Status) error {
 	}
 	return nil
 }
-func singleDirectChild(pid uint32) (uint32, error) {
-	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
-	if err != nil {
-		return 0, err
-	}
-	defer windows.CloseHandle(snapshot)
-	var entry windows.ProcessEntry32
-	entry.Size = uint32(unsafe.Sizeof(entry))
-	err = windows.Process32First(snapshot, &entry)
-	var child uint32
-	for err == nil {
-		if entry.ParentProcessID == pid {
-			if child != 0 {
-				return 0, fmt.Errorf("multiple child processes")
-			}
-			child = entry.ProcessID
+
+// snapshotSingleChild binds parent and process creation time in one kernel
+// snapshot. This internal Windows API must be qualified per supported OS.
+func snapshotSingleChild(parent uint32) (uint32, uint64, error) {
+	size := uint32(1 << 20)
+	var buffer []byte
+	for {
+		if size > 32<<20 {
+			return 0, 0, fmt.Errorf("process snapshot exceeds limit")
 		}
-		err = windows.Process32Next(snapshot, &entry)
+		buffer = make([]byte, size)
+		var needed uint32
+		err := windows.NtQuerySystemInformation(windows.SystemProcessInformation, unsafe.Pointer(&buffer[0]), size, &needed)
+		if err == windows.STATUS_INFO_LENGTH_MISMATCH || err == windows.STATUS_BUFFER_TOO_SMALL {
+			if needed <= size {
+				size *= 2
+			} else {
+				size = needed
+			}
+			continue
+		}
+		if err != nil {
+			return 0, 0, fmt.Errorf("process snapshot unavailable")
+		}
+		if needed > 0 && needed <= size {
+			buffer = buffer[:needed]
+		}
+		break
 	}
-	if err != nil && !errors.Is(err, windows.ERROR_NO_MORE_FILES) {
-		return 0, err
-	}
-	if child == 0 {
-		return 0, fmt.Errorf("child process unavailable")
-	}
-	return child, nil
+	return parseProcessSnapshot(buffer, parent)
 }
 
-func validProcessAssociation(first, opened, second uint32, hostCreated, nodeCreated uint64, hostState, nodeState uint32) bool {
-	return first != 0 && first == opened && first == second && hostCreated != 0 && nodeCreated >= hostCreated && hostState == uint32(windows.WAIT_TIMEOUT) && nodeState == uint32(windows.WAIT_TIMEOUT)
+func parseProcessSnapshot(buffer []byte, parent uint32) (uint32, uint64, error) {
+	var found uint32
+	var created uint64
+	offset := 0
+	minimum := int(unsafe.Sizeof(windows.SYSTEM_PROCESS_INFORMATION{}))
+	for {
+		if offset < 0 || offset+minimum > len(buffer) {
+			return 0, 0, fmt.Errorf("invalid process snapshot")
+		}
+		entry := (*windows.SYSTEM_PROCESS_INFORMATION)(unsafe.Pointer(&buffer[offset]))
+		if entry.InheritedFromUniqueProcessID == uintptr(parent) {
+			if found != 0 || entry.UniqueProcessID == 0 || uint64(entry.UniqueProcessID) > uint64(^uint32(0)) || entry.CreateTime <= 0 {
+				return 0, 0, fmt.Errorf("ambiguous service child")
+			}
+			found = uint32(entry.UniqueProcessID)
+			created = uint64(entry.CreateTime)
+		}
+		next := int(entry.NextEntryOffset)
+		if next == 0 {
+			break
+		}
+		if next < minimum || next%int(unsafe.Alignof(windows.SYSTEM_PROCESS_INFORMATION{})) != 0 || next > len(buffer)-offset {
+			return 0, 0, fmt.Errorf("invalid process snapshot offset")
+		}
+		offset += next
+	}
+	if found == 0 {
+		return 0, 0, fmt.Errorf("service child unavailable")
+	}
+	return found, created, nil
+}
+func validProcessAssociation(first, opened, second uint32, hostCreated, nodeCreated, firstCreated, secondCreated uint64, hostState, nodeState uint32) bool {
+	return first != 0 && first == opened && first == second && hostCreated != 0 && nodeCreated >= hostCreated && nodeCreated == firstCreated && nodeCreated == secondCreated && hostState == uint32(windows.WAIT_TIMEOUT) && nodeState == uint32(windows.WAIT_TIMEOUT)
 }
