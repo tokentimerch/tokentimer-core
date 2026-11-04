@@ -31,6 +31,7 @@ function collect(root, architecture) {
       if (info.isSymbolicLink()) throw new Error("Linked stage entry");
       if (info.isDirectory()) { walk(current, rel); continue; }
       if (!info.isFile() || info.nlink !== 1) throw new Error("Nonregular stage entry");
+      if (/\.(cmd|bat|vbs|vbe|wsf|hta)$/i.test(rel)) throw new Error("Unsupported Windows executable script");
       if (/\.(exe|ps1|psm1|psd1)$/i.test(rel)) {
         if (found.has(rel.toLowerCase())) throw new Error("Duplicate Windows path");
         found.add(rel.toLowerCase());

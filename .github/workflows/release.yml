@@ -215,7 +215,7 @@ jobs:
 
       - name: Verify shipped native toolchain and provenance
         run: |
-          node --test scripts/verify-agent-native-package.test.js scripts/verify-agent-release-assets.test.js
+          node --test scripts/verify-agent-native-package.test.js scripts/verify-agent-release-assets.test.js scripts/windows-signing-targets.test.cjs
           archive=(agent-dist/*.tgz)
           test "${#archive[@]}" -eq 3
           for item in "${archive[@]}"; do

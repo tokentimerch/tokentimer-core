@@ -39,6 +39,13 @@ test("fails closed for unexpected, missing or linked executable material", async
       assert.throws(() => collect(root, "amd64"), /Unexpected/);
     }
   });
+  await t.test("unsupported Windows executable scripts", t => {
+    for (const extension of ["cmd", "bat", "vbs", "vbe", "wsf", "hta"]) {
+      const root = fixture(t);
+      fs.writeFileSync(path.join(root, `extra.${extension}`), "unknown");
+      assert.throws(() => collect(root, "amd64"), /Unsupported Windows executable script/);
+    }
+  });
   await t.test("missing script", t => {
     const root = fixture(t);
     fs.unlinkSync(path.join(root, "scripts", "install-agent.ps1"));
