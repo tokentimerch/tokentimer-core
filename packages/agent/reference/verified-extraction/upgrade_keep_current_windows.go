@@ -198,6 +198,9 @@ func releaseReviewedUpgrade(parent, journal, transaction string, parentPolicy, s
 			if e = requireActive(declaration.Stages); e != nil {
 				return "", e
 			}
+			if e = service(app); e != nil {
+				return "", fmt.Errorf("service changed under inventory lock")
+			}
 			validation, e := validateReleaseMarkers(parent, archive, approved, transaction, declaration.Stages, stagePolicy)
 			if e != nil {
 				return "", e
@@ -208,6 +211,9 @@ func releaseReviewedUpgrade(parent, journal, transaction string, parentPolicy, s
 			}
 			if _, e = os.Lstat(staging); !errors.Is(e, os.ErrNotExist) {
 				return "", fmt.Errorf("upgrade staging location changed")
+			}
+			if e = service(app); e != nil {
+				return "", fmt.Errorf("service changed; journal retained")
 			}
 			if e = renameHandle(journalHandle, filepath.Join(archive, "upgrade-recovery.json")); e != nil {
 				return "", fmt.Errorf("journal remains in place")
@@ -223,6 +229,9 @@ func releaseReviewedUpgrade(parent, journal, transaction string, parentPolicy, s
 		}
 		if e = requireActive(records); e != nil {
 			return "", e
+		}
+		if e = service(app); e != nil {
+			return "", fmt.Errorf("service changed under inventory lock")
 		}
 		info, e = createReviewSentinel(sentinel, sddl, stagePolicy, transaction, records, "operator-reviewed-keep-current", &binding)
 		if e != nil {
@@ -242,6 +251,9 @@ func releaseReviewedUpgrade(parent, journal, transaction string, parentPolicy, s
 		if e = requireActive(records); e != nil {
 			return "", e
 		}
+		if e = service(app); e != nil {
+			return "", fmt.Errorf("service changed under inventory lock")
+		}
 		info = i
 	}
 	validation, err := validateReleaseMarkers(parent, archive, sentinel, transaction, records, stagePolicy)
@@ -259,6 +271,9 @@ func releaseReviewedUpgrade(parent, journal, transaction string, parentPolicy, s
 	}
 	if _, e := os.Lstat(staging); !errors.Is(e, os.ErrNotExist) {
 		return "", fmt.Errorf("upgrade staging location changed; journal retained")
+	}
+	if err = service(app); err != nil {
+		return "", fmt.Errorf("service changed; journal retained")
 	}
 	if err = renameHandle(journalHandle, filepath.Join(archive, "upgrade-recovery.json")); err != nil {
 		return "", fmt.Errorf("upgrade journal retained")

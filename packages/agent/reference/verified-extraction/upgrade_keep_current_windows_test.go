@@ -434,3 +434,29 @@ func testActiveVerifier(_ string, digest string) (io.Closer, error) {
 	}
 	return testClose{}, nil
 }
+func TestReviewedUpgradeRechecksServiceUnderInventoryLockAndBeforeJournalMove(t *testing.T) {
+	for _, failAt := range []int{2, 3} {
+		t.Run(fmt.Sprintf("call-%d", failAt), func(t *testing.T) {
+			f, _, journal := reviewedUpgradeFixture(t)
+			calls := 0
+			service := func(string) error {
+				calls++
+				if calls == failAt {
+					return fmt.Errorf("changed")
+				}
+				return nil
+			}
+			verify := func(string, string, identityContract, bootstraplock.Policy) error { return nil }
+			if _, err := releaseReviewedUpgrade(f.parent, f.journal, f.txn, f.parentPolicy, f.stagePolicy, f.sddl, true, true, fixtureIdentityPin, verify, service, testActiveVerifier, renameProtectedMarker, renameOpenFile); err == nil {
+				t.Fatal("changed service accepted")
+			}
+			data, err := os.ReadFile(f.journal)
+			if err != nil || string(data) != string(journal) {
+				t.Fatal("journal changed")
+			}
+			if calls != failAt {
+				t.Fatalf("expected %d checks, got %d", failAt, calls)
+			}
+		})
+	}
+}
