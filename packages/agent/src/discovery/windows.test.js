@@ -456,6 +456,23 @@ describe("collectWindowsDiscoveryObservations", () => {
     },
   );
 
+  it("reports each IIS site sharing an HTTP.sys binding with stable site identities", async () => {
+    const certificate = new (require("node:crypto").X509Certificate)(fs.readFileSync(path.join(__dirname, "../verify/fixtures/leaf.crt.pem")));
+    const thumbprint = "1122334455667788990011223344556677889900";
+    const execFileImpl = makeExecFileImplRouter({
+      ...storeFixtureFor(thumbprint, "shared.example.test", { hasPrivateKey: true }),
+      bindingsJson: httpSysJson([{ ipPort: "10.0.0.5:443", thumbprint, storeName: "My" }]),
+      appcmdStdout: ['SITE "First Service" (id:1,bindings:https/10.0.0.5:443:,state:Started)',
+        'SITE "Second Service" (id:2,bindings:https/10.0.0.5:443:,state:Started)',
+        'SITE "Second Service" (id:2,bindings:https/10.0.0.5:443:,state:Started)'].join("\n"),
+    });
+    const observations = await collectWindowsDiscoveryObservations({ execFileImpl,
+      spawn: () => fakeSpawnResult({ stdout: rawDataJson(thumbprint, certificate.raw.toString("base64")) }) });
+    const services = observations.filter(value => value.locationKind === "iis_binding");
+    assert.deepEqual(services.map(value => value.locationSlot).sort(), ["First Service:443", "Second Service:443"]);
+    assert.equal(observations.filter(value => value.locationKind === "windows_store").length, 1);
+  });
+
   it(
     "unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store",
     // skip-reason: prerequisite - needs a real openssl binary on PATH.
