@@ -33,6 +33,15 @@ const { deployIisBinding } = require("../../src/windows-iis");
 const { listHttpSysBindings } = require("../../src/windows-discovery");
 const retention = require("../../src/windows-retention");
 const { runWindowsRetentionSweep } = require("../../src/index");
+function assertFixtureAccept(result) {
+  if (result?.ok === true) return;
+  const output = `${result?.stdoutExcerpt || ""}\n${result?.stderrExcerpt || ""}`;
+  const nativeCode = output.match(/\b0x([0-9a-f]{8})\b/i)?.[1]?.toUpperCase();
+  const stage = ["addstore", "repairstore", "delstore", "verify"].includes(result?.stage) ? result.stage.toUpperCase() : "ACCEPT";
+  throw Object.assign(new Error("Owned short-lived certificate acceptance failed"), {
+    code: `CERTOPS_RETENTION_${stage}_${nativeCode ? `H${nativeCode}` : "FAILED"}`,
+  });
+}
 async function trustedLeaf(port, ca, expected) {
   const once = () =>
     new Promise((resolve, reject) => {
@@ -304,15 +313,12 @@ async function qualifyElapsedRetention({
         "False",
       );
       item.certificateOwned = true;
-      assert.equal(
-        (
+      assertFixtureAccept(
           await acceptCertificateViaCng({
             certificatePem: item.pem,
             workDir: directory,
             store,
-          })
-        ).ok,
-        true,
+          }),
       );
       item.custody = nativeCustody(item.thumbprint);
       assert.ok(
@@ -800,6 +806,7 @@ function verifyElapsedStoreResult(value) {
   return true;
 }
 module.exports = {
+  assertFixtureAccept,
   qualifyElapsedRetention,
   verifyElapsedProof,
   SUPPORTED_STORES,

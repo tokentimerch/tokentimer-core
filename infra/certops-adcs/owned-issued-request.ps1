@@ -60,6 +60,24 @@ try { Invoke-Command -ComputerName ($CaConfig.Split('\')[0]) -Credential $creden
       Write-Output "CERTOPS_ISSUED_HRESULT=0x$code"
       $exception=$exception.InnerException
     }
+    if($stage -eq 'connection'){
+      # Read-only distinction between an unexpected CA identity and a local
+      # CertView failure. Never substitute this probe for the required oracle.
+      $parts=$CaConfig.Split('\'); $probe=$null
+      try {
+        $active=(Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration' -Name Active).Active
+        $expectedHost=$parts[0].Split('.')[0]
+        if($parts.Count -ne 2 -or $env:COMPUTERNAME -ine $expectedHost -or $active -ine $parts[1]){
+          Write-Output 'CERTOPS_ISSUED_CA_DIAG=identity-mismatch'
+        } else {
+          Write-Output 'CERTOPS_ISSUED_CA_DIAG=identity-match'
+          $probe=New-Object -ComObject CertificateAuthority.View
+          try {$null=$probe.OpenConnection("$expectedHost\$active");Write-Output 'CERTOPS_ISSUED_CA_DIAG=local-open-success'}
+          catch {Write-Output 'CERTOPS_ISSUED_CA_DIAG=local-open-failure'}
+        }
+      } catch {Write-Output 'CERTOPS_ISSUED_CA_DIAG=identity-unavailable'}
+      finally {if($probe){try {[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($probe)}catch{}}}
+    }
     throw
   }
   finally {if($hash){$hash.Dispose()};if($view){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)}}
