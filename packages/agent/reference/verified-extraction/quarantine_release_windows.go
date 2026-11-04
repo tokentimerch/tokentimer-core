@@ -21,12 +21,13 @@ import (
 )
 
 type releaseDeclaration struct {
-	SchemaVersion int                `json:"schemaVersion"`
-	Transaction   string             `json:"transaction"`
-	OperatorSID   string             `json:"operatorSid"`
-	ReviewedAt    string             `json:"reviewedAt"`
-	Statement     string             `json:"statement"`
-	Stages        []QuarantineRecord `json:"stages"`
+	SchemaVersion int                    `json:"schemaVersion"`
+	Transaction   string                 `json:"transaction"`
+	OperatorSID   string                 `json:"operatorSid"`
+	ReviewedAt    string                 `json:"reviewedAt"`
+	Statement     string                 `json:"statement"`
+	Stages        []QuarantineRecord     `json:"stages"`
+	Journal       *upgradeJournalBinding `json:"journal,omitempty"`
 }
 
 type releaseBarrierDeclaration struct {
@@ -412,6 +413,9 @@ func renameOpenFile(h windows.Handle, destination string) error {
 }
 
 func createReleaseSentinel(path, sddl string, policy bootstraplock.Policy, transaction string, records []QuarantineRecord) (windows.ByHandleFileInformation, error) {
+	return createReviewSentinel(path, sddl, policy, transaction, records, "operator-reviewed-external-actor-risk", nil)
+}
+func createReviewSentinel(path, sddl string, policy bootstraplock.Policy, transaction string, records []QuarantineRecord, statement string, binding *upgradeJournalBinding) (windows.ByHandleFileInformation, error) {
 	var info windows.ByHandleFileInformation
 	sd, err := windows.SecurityDescriptorFromString(sddl)
 	if err != nil {
@@ -437,7 +441,7 @@ func createReleaseSentinel(path, sddl string, policy bootstraplock.Policy, trans
 	if err != nil || user.User.Sid == nil {
 		return info, fmt.Errorf("operator identity unavailable")
 	}
-	declaration, err := json.Marshal(releaseDeclaration{1, transaction, user.User.Sid.String(), time.Now().UTC().Format(time.RFC3339), "operator-reviewed-external-actor-risk", records})
+	declaration, err := json.Marshal(releaseDeclaration{SchemaVersion: 1, Transaction: transaction, OperatorSID: user.User.Sid.String(), ReviewedAt: time.Now().UTC().Format(time.RFC3339), Statement: statement, Stages: records, Journal: binding})
 	if err != nil {
 		return info, err
 	}
@@ -451,6 +455,9 @@ func createReleaseSentinel(path, sddl string, policy bootstraplock.Policy, trans
 }
 
 func readReleaseSentinel(path string, policy bootstraplock.Policy, transaction string) (releaseDeclaration, windows.ByHandleFileInformation, error) {
+	return readReviewSentinel(path, policy, transaction, "operator-reviewed-external-actor-risk")
+}
+func readReviewSentinel(path string, policy bootstraplock.Policy, transaction, statement string) (releaseDeclaration, windows.ByHandleFileInformation, error) {
 	var declaration releaseDeclaration
 	var info windows.ByHandleFileInformation
 	name, err := windows.UTF16PtrFromString(path)
@@ -490,8 +497,11 @@ func readReleaseSentinel(path string, policy bootstraplock.Policy, transaction s
 		return declaration, info, fmt.Errorf("invalid review sentinel schema")
 	}
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
-	if err != nil || user.User.Sid == nil || declaration.SchemaVersion != 1 || declaration.Transaction != transaction || declaration.OperatorSID != user.User.Sid.String() || declaration.Statement != "operator-reviewed-external-actor-risk" || len(declaration.Stages) != 2 {
+	if err != nil || user.User.Sid == nil || declaration.SchemaVersion != 1 || declaration.Transaction != transaction || declaration.OperatorSID != user.User.Sid.String() || declaration.Statement != statement || len(declaration.Stages) != 2 {
 		return releaseDeclaration{}, info, fmt.Errorf("review sentinel identity or transaction rejected")
+	}
+	if statement == "operator-reviewed-external-actor-risk" && declaration.Journal != nil {
+		return releaseDeclaration{}, info, fmt.Errorf("unexpected journal binding")
 	}
 	if _, err := time.Parse(time.RFC3339, declaration.ReviewedAt); err != nil {
 		return releaseDeclaration{}, info, fmt.Errorf("invalid review timestamp")
