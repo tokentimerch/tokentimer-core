@@ -176,6 +176,7 @@ const {
   CERTREQ_ACCEPT_DEFAULT_STORE,
   acquireStoreLock,
   acquireEnrollmentLock,
+  removePendingRequestEntries,
   removeAbandonedKeyContainer,
   removeCertificateAndKeyContainer,
   isAgentOwnedContainerName,
@@ -4512,6 +4513,18 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
             enrolled = true;
             break;
           }
+        }
+
+        // A certreq-generated REQUEST placeholder itself references the key.
+        // Remove only exact owned pending requests while holding the same locks,
+        // then require global absence before reaching the destructive primitive.
+        if (!queryFailure && !enrolled) {
+          const pending = await removePendingRequestEntries({
+            containerName, signal, assertHeld: () => storeLocks.assertHeld(),
+            ...(execFileImpl ? { execFileImpl } : {}),
+          });
+          storeLocks.assertHeld();
+          if (pending.aborted) queryFailure = "pending request cleanup aborted";
         }
 
         // Absence in My/target is not global absence: an operator may have

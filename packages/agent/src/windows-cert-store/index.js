@@ -1791,7 +1791,8 @@ const PENDING_REQUEST_STORE = "REQUEST";
  * the authority, so any failure here simply leaves the key preserved.
  */
 async function removePendingRequestEntries({
-  containerName, certutilPath, execFileImpl, timeoutMs, signal, assertHeld,
+  containerName, certutilPath = "certutil.exe", execFileImpl = childProcess.execFile,
+  timeoutMs = DEFAULT_TIMEOUT_MS, signal, assertHeld,
 }) {
   const none = { removed: 0, aborted: false };
   if (!isAgentOwnedContainerName(containerName)) return none;
@@ -1971,5 +1972,6 @@ module.exports = {
   exclusiveLockIpcTarget,
   parseStoreLockContents,
   removeCertificateAndKeyContainer,
+  removePendingRequestEntries,
   removeAbandonedKeyContainer,
 };

@@ -50,6 +50,17 @@ try { Invoke-Command -ComputerName ($CaConfig.Split('\')[0]) -Credential $creden
     if($matched.Count -ne 1 -or $matched[0].requestId -lt 1){throw 'Expected exactly one owned issued CA request with the independently observed leaf fingerprint'}
     $matched[0].subjectRequestCount=$count
     $matched[0]|ConvertTo-Json -Compress
-  } catch { Write-Output "CERTOPS_ISSUED_FAILURE=$stage"; throw }
+  } catch {
+    Write-Output "CERTOPS_ISSUED_FAILURE=$stage"
+    # HRESULTs identify the Windows failure without exposing localized messages,
+    # command arguments or CA credentials. Traverse only a bounded exception chain.
+    $exception=$_.Exception
+    for($i=0;$i -lt 8 -and $null -ne $exception;$i++){
+      $code=[BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$exception.HResult),0).ToString('X8')
+      Write-Output "CERTOPS_ISSUED_HRESULT=0x$code"
+      $exception=$exception.InnerException
+    }
+    throw
+  }
   finally {if($hash){$hash.Dispose()};if($view){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)}}
 } } catch { Write-Output 'CERTOPS_ISSUED_FAILURE=remoting'; throw }
