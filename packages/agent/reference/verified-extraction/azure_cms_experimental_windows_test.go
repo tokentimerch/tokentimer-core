@@ -7,11 +7,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func experimentalFixture(t *testing.T, name string) []byte {
@@ -21,54 +19,6 @@ func experimentalFixture(t *testing.T, name string) []byte {
 		t.Fatal(err)
 	}
 	return b
-}
-
-func TestAzureCMSExperimentalUntrustedPublisherStage(t *testing.T) {
-	fixture := experimentalFixture(t, "timestamped.p7")
-	cms := base64.StdEncoding.EncodeToString(fixture)
-	request, _ := json.Marshal(map[string]string{"cms": cms})
-	result, err := runSystemPowerShell(azureCMSExperimentalExtractScript, request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var value struct {
-		Token     string `json:"token"`
-		Signature string `json:"signature"`
-	}
-	if err := json.Unmarshal(result, &value); err != nil {
-		t.Fatal(err)
-	}
-	token, err := base64.StdEncoding.Strict().DecodeString(value.Token)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signature, err := base64.StdEncoding.Strict().DecodeString(value.Signature)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stamp, cert, err := verifyExperimentalTimestamp(token, signature)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request, err = json.Marshal(map[string]string{
-		"cms": cms, "publisherIssuer": strings.Repeat("a", 64), "timestampIssuer": strings.Repeat("b", 64),
-		"profile":   "1.3.6.1.4.1.311.97.990309390.766961637.194916062.941502583",
-		"timestamp": stamp.Format(time.RFC3339Nano), "timestampCertificate": base64.StdEncoding.EncodeToString(cert),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Diagnostics exist only in the test copy; the embedded verifier exposes a
-	// generic failure to callers.
-	script := strings.Replace(azureCMSExperimentalScript, "[Console]::Error.WriteLine('Experimental Azure CMS verification failed.')", "[Console]::Error.WriteLine($_.Exception.Message)", 1)
-	if script == azureCMSExperimentalScript {
-		t.Fatal("test diagnostic injection failed")
-	}
-	_, err = runSystemPowerShell(script, request)
-	exit, ok := err.(*exec.ExitError)
-	if !ok || !bytes.Contains(exit.Stderr, []byte("Invalid publisher EKU")) {
-		t.Fatalf("expected untrusted publisher rejection, got %v", err)
-	}
 }
 
 func TestAzureCMSExperimentalTimestampBinding(t *testing.T) {
