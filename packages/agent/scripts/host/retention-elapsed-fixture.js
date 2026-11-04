@@ -33,6 +33,15 @@ const { deployIisBinding } = require("../../src/windows-iis");
 const { listHttpSysBindings } = require("../../src/windows-discovery");
 const retention = require("../../src/windows-retention");
 const { runWindowsRetentionSweep } = require("../../src/index");
+async function cleanupOwnedEndpoint({ read, remove, receipt }) {
+  assert.ok(receipt, "Owned native endpoint receipt required");
+  const current = await read();
+  if (current !== null) {
+    assert.ok(isDeepStrictEqual(current, receipt), "Preserve replaced native endpoint");
+    await remove();
+  }
+  assert.equal(await read(), null, "Owned native endpoint remains");
+}
 function assertNativeStore(actual, expected) {
   if (typeof actual !== "string" || !actual) {
     throw Object.assign(new Error("Native IIS store name is missing"), { code: "CERTOPS_RETENTION_STORE_MISSING" });
@@ -760,11 +769,17 @@ async function qualifyElapsedRetention({
         ),
       );
     if (endpointOwned)
-      clean(() =>
-        powershell(
-          `& netsh.exe http show sslcert ipport=127.0.0.1:${port} | Out-Null;if($LASTEXITCODE -eq 0){& netsh.exe http delete sslcert ipport=127.0.0.1:${port} | Out-Null;if($LASTEXITCODE -ne 0){throw 'Elapsed-retention endpoint cleanup failed'}};& netsh.exe http show sslcert ipport=127.0.0.1:${port} | Out-Null;if($LASTEXITCODE -eq 0){throw 'Elapsed-retention endpoint remains'}`,
-        ),
-      );
+      try {
+        await cleanupOwnedEndpoint({
+          read: endpoint,
+          receipt: endpointReceipt,
+          remove: () => powershell(
+            `& netsh.exe http delete sslcert ipport=127.0.0.1:${port} | Out-Null;if($LASTEXITCODE -ne 0){throw 'Elapsed-retention endpoint cleanup failed'}`,
+          ),
+        });
+      } catch (error) {
+        failures.push(error);
+      }
     for (const item of predecessors) {
       if (item.certificateOwned)
         clean(() =>
@@ -830,6 +845,7 @@ function verifyElapsedStoreResult(value) {
 module.exports = {
   assertFixtureAccept,
   assertNativeStore,
+  cleanupOwnedEndpoint,
   qualifyElapsedRetention,
   verifyElapsedProof,
   SUPPORTED_STORES,

@@ -45,6 +45,23 @@ test("native retention store names are case-insensitive but must match", () => {
   assert.throws(() => assertNativeStore("", "My"), error => error.code === "CERTOPS_RETENTION_STORE_MISSING");
   assert.throws(() => assertNativeStore("WebHosting", "My"), error => error.code === "CERTOPS_RETENTION_STORE_MISMATCH");
 });
+test("retention endpoint cleanup deletes only an exact receipt and verifies absence", async () => {
+  const { cleanupOwnedEndpoint } = require("./host/retention-elapsed-fixture");
+  const receipt = { thumbprint: "A".repeat(40), store: "My", appId: "owned" };
+  let current = null, removals = 0;
+  const read = async () => current;
+  const remove = async () => { removals++; current = null; };
+  await cleanupOwnedEndpoint({ read, remove, receipt });
+  assert.equal(removals, 0);
+  current = { ...receipt, appId: "foreign" };
+  await assert.rejects(cleanupOwnedEndpoint({ read, remove, receipt }), /Preserve replaced/);
+  assert.equal(removals, 0);
+  current = { ...receipt };
+  await cleanupOwnedEndpoint({ read, remove, receipt });
+  assert.equal(removals, 1);
+  current = { ...receipt };
+  await assert.rejects(cleanupOwnedEndpoint({ read, remove: async () => {}, receipt }), /remains/);
+});
 test("retention signing root is removed only if its exact public identity remains", async () => {
   const fs = require("node:fs"), os = require("node:os"), path = require("node:path"), crypto = require("node:crypto");
   const { withOwnedRetentionRoot } = require("./host/retention-root-fixture");
