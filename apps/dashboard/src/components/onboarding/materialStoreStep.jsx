@@ -330,11 +330,13 @@ function MaterialStoreForm({ ctx }) {
             then refresh.
           </StatusPanel>
         )}
-        {requirements.map(reason => (
-          <Text fontSize='sm' key={reason}>
-            {reason}
-          </Text>
-        ))}
+        {issuer && requirements.length > 0 && (
+          <StatusPanel status='warning' title='Agent requirements not met'>
+            {requirements.map(reason => (
+              <Text key={reason}>{reason}</Text>
+            ))}
+          </StatusPanel>
+        )}
         <FormControl>
           <FormLabel>Material store reference</FormLabel>
           <Input

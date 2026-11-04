@@ -430,11 +430,13 @@ function IisBindingGuide({ ctx, setup, agents, enabled }) {
         <FormLabel>Existing IIS site name (local configuration only)</FormLabel>
         <Input value={site} onChange={e => setSite(e.target.value)} />
       </FormControl>
-      {requirements.map(reason => (
-        <Text key={reason} fontSize='sm'>
-          {reason}
-        </Text>
-      ))}
+      {requirements.length > 0 && (
+        <StatusPanel status='warning' title='Agent requirements not met'>
+          {requirements.map(reason => (
+            <Text key={reason}>{reason}</Text>
+          ))}
+        </StatusPanel>
+      )}
       <PrimaryButton
         isDisabled={
           !enabled || agent?.platform !== 'win32' || !agent?.wireAgentId
@@ -607,13 +609,24 @@ function MaterialConsumerForm({ ctx }) {
             <ConsumerBootstrapToken workspaceId={ctx.workspaceId} />
           </DetailsSection>
         )}
-        {consumers.map(a => (
-          <Text key={a.id} fontSize='sm'>
-            {a.name || a.id}:{' '}
-            {agentRequirements(a, setup.provider, 'consumer').join('; ') ||
-              'Required capabilities declared and fresh'}
-          </Text>
-        ))}
+        {consumers.map(a => {
+          const problems = agentRequirements(a, setup.provider, 'consumer');
+          return problems.length ? (
+            <StatusPanel
+              key={a.id}
+              status='warning'
+              title={`${a.name || a.id}: agent requirements not met`}
+            >
+              {problems.map(reason => (
+                <Text key={reason}>{reason}</Text>
+              ))}
+            </StatusPanel>
+          ) : (
+            <Text key={a.id} fontSize='sm'>
+              {a.name || a.id}: Required capabilities declared and fresh
+            </Text>
+          );
+        })}
         {platform === 'linux' ? (
           <>
             {configurable.length > 0 && (
