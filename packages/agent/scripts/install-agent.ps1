@@ -103,6 +103,8 @@ $script:TrustStore = $false
 $script:NoTrustStore = $false
 $script:NodeRuntimeLock = $null
 $script:AuthorizedLauncherTransaction = $null
+$script:LauncherExpectedStages = @()
+$script:LauncherExpectedIdentities = @()
 # The release packer changes this constant only in Windows-specific archives.
 $script:RequiresBundledRuntime = $false
 
@@ -455,10 +457,97 @@ function Assert-NoQuarantinedLauncherIntent {
     if ($intents.Count -gt 0) { throw 'recovery_required: a launcher execution remains quarantined' }
 }
 
+function Assert-ProtectedIntentMarker {
+    param([Parameter(Mandatory)][string]$Path)
+    $trusted = @('S-1-5-18', 'S-1-5-32-544')
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.Length -le 0 -or $item.Length -gt 4096) { throw 'invalid launcher intent file' }
+    $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+    if (-not $acl.AreAccessRulesProtected -or $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $trusted) { throw 'untrusted launcher intent owner or ACL' }
+    $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+    if (-not $rules.Count) { throw 'launcher intent ACL unavailable' }
+    foreach ($rule in $rules) {
+        if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and $rule.IdentityReference.Value -notin $trusted) { throw 'launcher intent grants untrusted access' }
+    }
+}
+
+# The inherited pipe carries a one-use secret, not the environment. The two
+# immutable intent records and their protected parent bind it to these exact
+# directories. This gate never authorizes automatic recovery after a crash.
+function Assert-AuthorizedLauncherOrNoIntent {
+    if (-not [Environment]::Is64BitProcess) { throw 'native 64-bit PowerShell is required' }
+    $parent = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+    if ([string]::IsNullOrWhiteSpace($parent)) { throw 'launcher staging parent unavailable' }
+    Assert-ProtectedIntentDirectory -Directory $parent
+    $intents = @(Get-ChildItem -LiteralPath $parent -Filter 'TokenTimer-Staging-*.intent' -Force -ErrorAction Stop)
+    $handleText = [Environment]::GetEnvironmentVariable('TOKENTIMER_AGENT_INTENT_HANDLE', 'Process')
+    [Environment]::SetEnvironmentVariable('TOKENTIMER_AGENT_INTENT_HANDLE', $null, 'Process')
+    if ($intents.Count -eq 0) {
+        if ($handleText) { throw 'unexpected launcher authorization handle' }
+        return
+    }
+    if ($intents.Count -ne 2 -or $handleText -notmatch '^[1-9][0-9]{0,18}$') { throw 'launcher execution remains quarantined' }
+    $payload = [IO.Path]::GetFullPath($PackageDir).TrimEnd('\')
+    $scratch = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\')
+    foreach ($stage in @($payload, $scratch)) {
+        if (-not ([IO.Path]::GetDirectoryName($stage).Equals($parent, [StringComparison]::OrdinalIgnoreCase)) -or
+            [IO.Path]::GetFileName($stage) -cnotmatch '^TokenTimer-Staging-[a-f0-9]{32}$') { throw 'launcher stage path rejected' }
+        Assert-ProtectedIntentDirectory -Directory $stage
+    }
+    if ($payload.Equals($scratch, [StringComparison]::OrdinalIgnoreCase)) { throw 'launcher stages are not distinct' }
+    $expected = @($payload + '.intent', $scratch + '.intent')
+    foreach ($entry in $intents) {
+        if (-not @($expected | Where-Object { $_.Equals($entry.FullName, [StringComparison]::OrdinalIgnoreCase) }).Count) { throw 'unrelated launcher intent remains quarantined' }
+    }
+    $records = @()
+    for ($i = 0; $i -lt 2; $i++) {
+        Assert-ProtectedIntentMarker -Path $expected[$i]
+        $record = Get-Content -LiteralPath $expected[$i] -Raw | ConvertFrom-Json -ErrorAction Stop
+        $stage = @($payload, $scratch)[$i]
+        if ($record.schemaVersion -ne 1 -or $record.phase -cne 'execution-intent' -or $record.stageName -cne [IO.Path]::GetFileName($stage) -or
+            ([string]$record.secret) -cnotmatch '^[a-f0-9]{64}$' -or ([string]$record.transaction) -cnotmatch '^[a-f0-9]{32}$' -or
+            ([string]$record.archiveSha256) -cnotmatch '^[a-f0-9]{64}$') { throw 'invalid launcher intent record' }
+        $records += $record
+    }
+    if ($records[0].transaction -cne $records[1].transaction -or $records[0].secret -cne $records[1].secret -or
+        $records[0].archiveSha256 -cne $records[1].archiveSha256) { throw 'launcher intents do not match' }
+    $handle = New-Object Microsoft.Win32.SafeHandles.SafeFileHandle([IntPtr]([int64]$handleText), $true)
+    $stream = New-Object IO.FileStream($handle, [IO.FileAccess]::Read, 64, $false)
+    try {
+        $bytes = New-Object byte[] 64
+        $offset = 0
+        while ($offset -lt $bytes.Length) {
+            $count = $stream.Read($bytes, $offset, $bytes.Length - $offset)
+            if ($count -le 0) { throw 'incomplete launcher authorization' }
+            $offset += $count
+        }
+        $actual = [Text.Encoding]::ASCII.GetString($bytes)
+        if ($actual -cne $records[0].secret) { throw 'launcher authorization rejected' }
+        $script:AuthorizedLauncherTransaction = [string]$records[0].transaction
+        $script:LauncherExpectedStages = @($payload, $scratch)
+        $script:LauncherExpectedIdentities = @($records | ForEach-Object { $index=([uint64]$_.indexHigh -shl 32) -bor [uint64]$_.indexLow; "{0}:{1}" -f [uint32]$_.volume, $index })
+    } finally { $stream.Dispose(); $handle.Dispose() }
+}
+
+function Assert-AuthorizedLauncherIdentities {
+    if ($null -eq $script:AuthorizedLauncherTransaction) { return }
+    if ($script:LauncherExpectedStages.Count -ne 2 -or $script:LauncherExpectedIdentities.Count -ne 2) { throw 'launcher stage identities unavailable' }
+    for ($i=0; $i -lt 2; $i++) {
+        if ((Get-PackageDirectoryIdentity -Directory $script:LauncherExpectedStages[$i]) -cne $script:LauncherExpectedIdentities[$i]) { throw 'launcher stage identity changed' }
+    }
+}
+
 if (-not $script:DryRun) {
     if (-not (Test-IsAdministrator)) { Fail 'installation or uninstall requires an elevated PowerShell session' }
     try { $script:AgentInstallMutex = Enter-AgentInstallLock }
     catch { Fail "cannot acquire trusted installation lock ($($_.Exception.Message))" }
+    if (-not $script:Uninstall) {
+        try {
+            Import-Module ([IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Utility.psd1')) -NoClobber -ErrorAction Stop
+            Import-Module ([IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Security.psd1')) -NoClobber -ErrorAction Stop
+            Assert-AuthorizedLauncherOrNoIntent
+        } catch { Fail "recovery_required: launcher authorization failed ($($_.Exception.Message))" }
+    }
 }
 
 # -------------------------------------------------------------- uninstall
@@ -489,6 +578,39 @@ if ($script:Uninstall) {
     Write-Log "Preserved (remove manually once you are sure):"
     Write-Log "  - $StateDir (agent credential, keys, replay store)"
     exit 0
+}
+
+function Get-PackageDirectoryIdentity {
+    param([Parameter(Mandatory)][string]$Directory)
+    if (-not [IO.Path]::IsPathRooted($Directory)) { throw 'Package directory identity requires an absolute path' }
+    $item = Get-Item -LiteralPath $Directory -Force -ErrorAction Stop
+    if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing nonregular package directory identity' }
+    $ancestor = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Directory))
+    while ($ancestor) {
+        $parentItem = Get-Item -LiteralPath $ancestor -Force -ErrorAction Stop
+        if (($parentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing linked package directory ancestor' }
+        $next = [IO.Path]::GetDirectoryName($ancestor)
+        if (!$next -or $next -eq $ancestor) { break }
+        $ancestor = $next
+    }
+    $prior = [Environment]::GetEnvironmentVariable('TOKENTIMER_INSTALLER_STAGE_ID_PATH','Process')
+    $priorNodeOptions = [Environment]::GetEnvironmentVariable('NODE_OPTIONS','Process')
+    $priorNodePath = [Environment]::GetEnvironmentVariable('NODE_PATH','Process')
+    try {
+        $env:TOKENTIMER_INSTALLER_STAGE_ID_PATH = $Directory
+        # Do not allow inherited preload/module search settings into this identity probe.
+        [Environment]::SetEnvironmentVariable('NODE_OPTIONS',$null,'Process')
+        [Environment]::SetEnvironmentVariable('NODE_PATH',$null,'Process')
+        # Built-in fs obtains the volume/file index, never package code. Passing
+        # the literal path through an environment value avoids argv quoting.
+        $identity = & $script:NodeExe -p '(()=>{const s=require(''fs'').statSync(process.env.TOKENTIMER_INSTALLER_STAGE_ID_PATH,{bigint:true});return s.dev.toString()+ '':'' + s.ino.toString()})()'
+        if ($LASTEXITCODE -ne 0 -or [string]$identity -notmatch '^\d+:[1-9]\d*$') { throw 'Package directory file identity unavailable' }
+        return ([string]$identity).Trim()
+    } finally {
+        [Environment]::SetEnvironmentVariable('TOKENTIMER_INSTALLER_STAGE_ID_PATH',$prior,'Process')
+        [Environment]::SetEnvironmentVariable('NODE_OPTIONS',$priorNodeOptions,'Process')
+        [Environment]::SetEnvironmentVariable('NODE_PATH',$priorNodePath,'Process')
+    }
 }
 
 # ----------------------------------------------------------- validate input
@@ -549,6 +671,8 @@ try {
         if ($machine -ne $expectedMachine) { throw "runtime architecture mismatch" }
     } finally { $runtimeStream.Position = 0 }
     }
+    if ($null -ne $script:AuthorizedLauncherTransaction -and -not $script:HasBundledRuntime) { throw 'launcher requires an independently pinned bundled runtime' }
+    Assert-AuthorizedLauncherIdentities
     $engineRange = [regex]::Match([string]$package.engines.node, '^>=([0-9]+\.[0-9]+\.[0-9]+)\s+<([0-9]+\.[0-9]+\.[0-9]+)$')
     if (-not $engineRange.Success) { throw "unsupported Node engine range" }
     $nodeVersionRaw = (Invoke-PackagedNode -NodeArguments @('-v')).Trim()
@@ -800,39 +924,6 @@ function Assert-WindowsPackageHelpers {
     }
 }
 
-function Get-PackageDirectoryIdentity {
-    param([Parameter(Mandatory)][string]$Directory)
-    if (-not [IO.Path]::IsPathRooted($Directory)) { throw 'Package directory identity requires an absolute path' }
-    $item = Get-Item -LiteralPath $Directory -Force -ErrorAction Stop
-    if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing nonregular package directory identity' }
-    $ancestor = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Directory))
-    while ($ancestor) {
-        $parentItem = Get-Item -LiteralPath $ancestor -Force -ErrorAction Stop
-        if (($parentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing linked package directory ancestor' }
-        $next = [IO.Path]::GetDirectoryName($ancestor)
-        if (!$next -or $next -eq $ancestor) { break }
-        $ancestor = $next
-    }
-    $prior = [Environment]::GetEnvironmentVariable('TOKENTIMER_INSTALLER_STAGE_ID_PATH','Process')
-    $priorNodeOptions = [Environment]::GetEnvironmentVariable('NODE_OPTIONS','Process')
-    $priorNodePath = [Environment]::GetEnvironmentVariable('NODE_PATH','Process')
-    try {
-        $env:TOKENTIMER_INSTALLER_STAGE_ID_PATH = $Directory
-        # Do not allow inherited preload/module search settings into this identity probe.
-        [Environment]::SetEnvironmentVariable('NODE_OPTIONS',$null,'Process')
-        [Environment]::SetEnvironmentVariable('NODE_PATH',$null,'Process')
-        # Built-in fs obtains the volume/file index, never package code. Passing
-        # the literal path through an environment value avoids argv quoting.
-        $identity = & $script:NodeExe -p '(()=>{const s=require(''fs'').statSync(process.env.TOKENTIMER_INSTALLER_STAGE_ID_PATH,{bigint:true});return s.dev.toString()+ '':'' + s.ino.toString()})()'
-        if ($LASTEXITCODE -ne 0 -or [string]$identity -notmatch '^\d+:[1-9]\d*$') { throw 'Package directory file identity unavailable' }
-        return ([string]$identity).Trim()
-    } finally {
-        [Environment]::SetEnvironmentVariable('TOKENTIMER_INSTALLER_STAGE_ID_PATH',$prior,'Process')
-        [Environment]::SetEnvironmentVariable('NODE_OPTIONS',$priorNodeOptions,'Process')
-        [Environment]::SetEnvironmentVariable('NODE_PATH',$priorNodePath,'Process')
-    }
-}
-
 function Remove-OwnedPackageStaging {
     param([Parameter(Mandatory)][string]$Directory,[Parameter(Mandatory)][string]$ExpectedIdentity)
     if ((Get-PackageDirectoryIdentity -Directory $Directory) -ne $ExpectedIdentity) { throw 'Refusing replaced package staging directory' }
@@ -1030,65 +1121,6 @@ function Assert-UpgradeRecoveryAcl {
     }
 }
 
-# The inherited pipe carries a one-use secret, not the environment. The two
-# immutable intent records and their protected parent bind it to these exact
-# directories. This gate never authorizes automatic recovery after a crash.
-function Assert-AuthorizedLauncherOrNoIntent {
-    if (-not [Environment]::Is64BitProcess) { throw 'native 64-bit PowerShell is required' }
-    $parent = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
-    if ([string]::IsNullOrWhiteSpace($parent)) { throw 'launcher staging parent unavailable' }
-    Assert-ProtectedIntentDirectory -Directory $parent
-    $intents = @(Get-ChildItem -LiteralPath $parent -Filter 'TokenTimer-Staging-*.intent' -Force -ErrorAction Stop)
-    $handleText = [Environment]::GetEnvironmentVariable('TOKENTIMER_AGENT_INTENT_HANDLE', 'Process')
-    [Environment]::SetEnvironmentVariable('TOKENTIMER_AGENT_INTENT_HANDLE', $null, 'Process')
-    if ($intents.Count -eq 0) {
-        if ($handleText) { throw 'unexpected launcher authorization handle' }
-        return
-    }
-    if ($intents.Count -ne 2 -or $handleText -notmatch '^[1-9][0-9]{0,18}$') { throw 'launcher execution remains quarantined' }
-    $payload = [IO.Path]::GetFullPath($PackageDir).TrimEnd('\')
-    $scratch = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\')
-    foreach ($stage in @($payload, $scratch)) {
-        if (-not ([IO.Path]::GetDirectoryName($stage).Equals($parent, [StringComparison]::OrdinalIgnoreCase)) -or
-            [IO.Path]::GetFileName($stage) -cnotmatch '^TokenTimer-Staging-[a-f0-9]{32}$') { throw 'launcher stage path rejected' }
-    }
-    if ($payload.Equals($scratch, [StringComparison]::OrdinalIgnoreCase)) { throw 'launcher stages are not distinct' }
-    $expected = @($payload + '.intent', $scratch + '.intent')
-    foreach ($entry in $intents) {
-        if (-not @($expected | Where-Object { $_.Equals($entry.FullName, [StringComparison]::OrdinalIgnoreCase) }).Count) { throw 'unrelated launcher intent remains quarantined' }
-    }
-    $records = @()
-    for ($i = 0; $i -lt 2; $i++) {
-        $file = Get-Item -LiteralPath $expected[$i] -Force -ErrorAction Stop
-        if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $file.Length -le 0 -or $file.Length -gt 4096) { throw 'invalid launcher intent file' }
-        Assert-UpgradeRecoveryAcl -JournalPath $expected[$i]
-        $record = Get-Content -LiteralPath $expected[$i] -Raw | ConvertFrom-Json -ErrorAction Stop
-        $stage = @($payload, $scratch)[$i]
-        if ($record.schemaVersion -ne 1 -or $record.phase -cne 'execution-intent' -or $record.stageName -cne [IO.Path]::GetFileName($stage) -or
-            ([string]$record.secret) -cnotmatch '^[a-f0-9]{64}$' -or ([string]$record.transaction) -cnotmatch '^[a-f0-9]{32}$' -or
-            ([string]$record.archiveSha256) -cnotmatch '^[a-f0-9]{64}$') { throw 'invalid launcher intent record' }
-        $index = ([uint64]$record.indexHigh -shl 32) -bor [uint64]$record.indexLow
-        if ((Get-PackageDirectoryIdentity -Directory $stage) -cne ("{0}:{1}" -f [uint32]$record.volume, $index)) { throw 'launcher stage identity changed' }
-        $records += $record
-    }
-    if ($records[0].transaction -cne $records[1].transaction -or $records[0].secret -cne $records[1].secret -or
-        $records[0].archiveSha256 -cne $records[1].archiveSha256) { throw 'launcher intents do not match' }
-    $handle = New-Object Microsoft.Win32.SafeHandles.SafeFileHandle([IntPtr]([int64]$handleText), $true)
-    $stream = New-Object IO.FileStream($handle, [IO.FileAccess]::Read, 64, $false)
-    try {
-        $bytes = New-Object byte[] 64
-        $offset = 0
-        while ($offset -lt $bytes.Length) {
-            $count = $stream.Read($bytes, $offset, $bytes.Length - $offset)
-            if ($count -le 0) { throw 'incomplete launcher authorization' }
-            $offset += $count
-        }
-        $actual = [Text.Encoding]::ASCII.GetString($bytes)
-        if ($actual -cne $records[0].secret) { throw 'launcher authorization rejected' }
-        $script:AuthorizedLauncherTransaction = [string]$records[0].transaction
-    } finally { $stream.Dispose(); $handle.Dispose() }
-}
-
 function Recover-InterruptedUpgrade {
     $journal = Get-UpgradeRecoveryPath
     if (-not (Test-Path -LiteralPath $journal)) { return }
@@ -1224,8 +1256,6 @@ function Write-UpgradeRecoveryRecord {
 if (-not $script:DryRun) {
     try { Assert-WindowsPackageHelpers -PackageDirectory $PackageDir -Architecture $arch }
     catch { Fail "native package preflight failed before installation changes ($($_.Exception.Message))" }
-    try { Assert-AuthorizedLauncherOrNoIntent }
-    catch { Fail "recovery_required: launcher authorization failed ($($_.Exception.Message))" }
     if (Test-Path -LiteralPath $StateDir -PathType Container) {
         try {
             $null = Get-PackageDirectoryIdentity -Directory $StateDir

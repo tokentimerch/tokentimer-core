@@ -196,6 +196,76 @@ exit 0
   }
 });
 
+test("launcher authorization rejects an invalid inherited handle before package Node is used", { skip: process.platform !== "win32" }, () => {
+  const installer = fs.readFileSync(path.join(__dirname, "install-agent.ps1"), "utf8");
+  const guardCall = installer.search(/\s+Assert-AuthorizedLauncherOrNoIntent\r?\n/);
+  const identityCall = installer.search(/\s+Assert-AuthorizedLauncherIdentities\r?\n/);
+  const firstNode = installer.indexOf("$nodeVersionRaw = (Invoke-PackagedNode");
+  const runtimeHash = installer.indexOf('if ($runtimeHash -cne $pinnedHash)');
+  assert.ok(guardCall >= 0 && runtimeHash > guardCall && identityCall > runtimeHash && firstNode > identityCall, "authorization, pinned runtime hash and stage identity must precede package Node scripts");
+  const tempParent = fs.realpathSync(os.tmpdir());
+  const root = fs.mkdtempSync(path.join(tempParent, "tt537-before-node-"));
+  try {
+    const script = String.raw`
+$ErrorActionPreference='Stop'
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $env:TT542_SOURCE 'install-agent.ps1'),[ref]$tokens,[ref]$errors)
+$f=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-AuthorizedLauncherOrNoIntent'},$true))
+if ($errors.Count -or $f.Count -ne 1) { throw 'missing authorization gate' }
+$body=$f[0].Extent.Text.Replace('[Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)', '$env:TT542_ROOT'); Invoke-Expression $body
+function Assert-ProtectedIntentDirectory { param($Directory) }
+function Assert-ProtectedIntentMarker { param($Path) }
+function Get-PackageDirectoryIdentity { param($Directory) [IO.File]::WriteAllText((Join-Path $env:TT542_ROOT 'node-executed'),'unsafe'); return '1:1' }
+$PackageDir=Join-Path $env:TT542_ROOT ('TokenTimer-Staging-' + ('a' * 32))
+$env:TEMP=Join-Path $env:TT542_ROOT ('TokenTimer-Staging-' + ('b' * 32))
+foreach ($stage in @($PackageDir,$env:TEMP)) {
+  New-Item -ItemType Directory -Path $stage | Out-Null
+  $r=@{schemaVersion=1;phase='execution-intent';stageName=[IO.Path]::GetFileName($stage);secret=('c'*64);transaction=('d'*32);archiveSha256=('e'*64);volume=1;indexHigh=0;indexLow=1}
+  [IO.File]::WriteAllText(($stage+'.intent'),($r|ConvertTo-Json -Compress))
+}
+$env:TOKENTIMER_AGENT_INTENT_HANDLE='2147483647'
+try { Assert-AuthorizedLauncherOrNoIntent; throw 'invalid inherited handle accepted' }
+catch { if ($_.Exception.Message -eq 'invalid inherited handle accepted') { throw } }
+if (Test-Path -LiteralPath (Join-Path $env:TT542_ROOT 'node-executed')) { throw 'package Node used before pipe authentication' }
+exit 0
+`;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+      env: { ...process.env, TT542_SOURCE: __dirname, TT542_ROOT: root }, windowsHide: true, encoding: "utf8", timeout: 15000,
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+  } finally {
+    if (path.dirname(fs.realpathSync(root)).toLowerCase() !== tempParent.toLowerCase()) throw new Error("Unsafe fixture cleanup");
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("launcher intent ACL validation rejects a user-owned marker", { skip: process.platform !== "win32" }, () => {
+  const tempParent = fs.realpathSync(os.tmpdir());
+  const root = fs.mkdtempSync(path.join(tempParent, "tt537-intent-acl-"));
+  try {
+    const file = path.join(root, "marker.intent");
+    fs.writeFileSync(file, "fixture");
+    const script = String.raw`
+$ErrorActionPreference='Stop'
+Import-Module ([IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Security.psd1')) -NoClobber -ErrorAction Stop
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $env:TT542_SOURCE 'install-agent.ps1'),[ref]$tokens,[ref]$errors)
+$f=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-ProtectedIntentMarker'},$true))
+if ($errors.Count -or $f.Count -ne 1) { throw 'missing ACL guard' }; Invoke-Expression $f[0].Extent.Text
+try { Assert-ProtectedIntentMarker -Path $env:TT542_FILE; throw 'untrusted marker accepted' }
+catch { if ($_.Exception.Message -notmatch 'untrusted launcher intent owner or ACL|launcher intent grants untrusted access') { throw } }
+exit 0
+`;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+      env: { ...process.env, TT542_SOURCE: __dirname, TT542_FILE: file }, windowsHide: true, encoding: "utf8", timeout: 15000,
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+  } finally {
+    if (path.dirname(fs.realpathSync(root)).toLowerCase() !== tempParent.toLowerCase()) throw new Error("Unsafe fixture cleanup");
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("launcher-associated recovery refuses replay even if its markers disappeared", { skip: process.platform !== "win32" }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
   const root = fs.mkdtempSync(path.join(tempParent, "tt537-recovery-"));
@@ -421,21 +491,28 @@ if ($ttErrors.Count -or $ttFunction.Count -ne 1) { throw 'Missing Node helper' }
 Invoke-Expression $ttFunction[0].Extent.Text
 $PackageDir=$env:TT542_PACKAGE; $AppDir=Join-Path $env:TT542_PACKAGE 'installed'; $arch='AMD64'
 $script:RequiresBundledRuntime=($env:TT542_EXPECT_BUNDLE -eq '1')
+$script:AuthorizedLauncherTransaction=$null
+function Assert-AuthorizedLauncherIdentities { }
+if ($env:TT542_TRAP_NODE -eq '1') {
+  function Invoke-PackagedNode { param([string[]]$NodeArguments) [IO.File]::WriteAllText($env:TT542_TRAP_MARKER,'executed'); throw 'unexpected package Node invocation' }
+}
 $ttStart=$ttSource.IndexOf('$runtimeManifestPath =')
 $ttEnd=$ttSource.IndexOf('if ([string]::IsNullOrEmpty($script:ApiUrl))',$ttStart)
 if ($ttStart -lt 0 -or $ttEnd -le $ttStart) { throw 'Missing runtime validation' }
 Invoke-Expression $ttSource.Substring($ttStart,$ttEnd-$ttStart)
 `;
-    const run = (packageDir) => spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
-      env: { ...process.env, TT542_SOURCE: __dirname, TT542_PACKAGE: packageDir, TT542_EXPECT_BUNDLE: packageDir === bundle ? '1' : '0' },
+    const trapMarker = path.join(fixture, "node-executed");
+    const run = (packageDir, trap = false) => spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+      env: { ...process.env, TT542_SOURCE: __dirname, TT542_PACKAGE: packageDir, TT542_EXPECT_BUNDLE: packageDir === bundle ? '1' : '0', TT542_TRAP_NODE: trap ? '1' : '0', TT542_TRAP_MARKER: trapMarker },
       windowsHide: true, encoding: "utf8", timeout: 15000,
     });
     let result = run(bundle);
     assert.equal(result.status, 0, result.stderr || result.stdout);
     manifest.sha256 = "0".repeat(64);
     fs.writeFileSync(manifestPath, JSON.stringify(manifest));
-    result = run(bundle);
+    result = run(bundle, true);
     assert.notEqual(result.status, 0, "a bad runtime hash must fail even with system Node available");
+    assert.equal(fs.existsSync(trapMarker), false, "substituted runtime must fail before Node invocation");
     fs.unlinkSync(manifestPath);
     result = run(bundle);
     assert.notEqual(result.status, 0, "a missing bundle manifest must fail without a PATH fallback");
@@ -621,6 +698,8 @@ if ($ttErrors.Count -or $ttFunction.Count -ne 1) { throw 'Missing Node helper' }
 Invoke-Expression $ttFunction[0].Extent.Text
 $PackageDir=$env:TT542_PACKAGE; $AppDir=Join-Path $PackageDir 'installed'; $arch='AMD64'
 $script:RequiresBundledRuntime=$true
+$script:AuthorizedLauncherTransaction=$null
+function Assert-AuthorizedLauncherIdentities { }
 $ttStart=$ttSource.IndexOf('$runtimeManifestPath =')
 $ttEnd=$ttSource.IndexOf('if ([string]::IsNullOrEmpty($script:ApiUrl))',$ttStart)
 Invoke-Expression $ttSource.Substring($ttStart,$ttEnd-$ttStart)
