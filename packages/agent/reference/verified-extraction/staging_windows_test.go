@@ -121,7 +121,7 @@ func TestCleanupChecksOwnershipBeforeRemoving(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stage := &PrivateStaging{path: root, parent: parent, identity: directoryIdentity{volume: id.volume, indexHigh: id.indexHigh, indexLow: id.indexLow + 1}, ancestors: &bootstraplock.Locks{}, staging: &bootstraplock.Locks{}}
+	stage := &PrivateStaging{freshOwned: true, path: root, parent: parent, identity: directoryIdentity{volume: id.volume, indexHigh: id.indexHigh, indexLow: id.indexLow + 1}, ancestors: &bootstraplock.Locks{}, staging: &bootstraplock.Locks{}}
 	if err := stage.Cleanup(); err == nil {
 		t.Fatal("changed identity accepted")
 	}
@@ -184,7 +184,7 @@ func TestCleanupReleasesLocksWhenDeletionAndReacquisitionFail(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Empty policy intentionally prevents relocking after deletion is blocked.
-	stage := &PrivateStaging{path: root, parent: parent, identity: id, ancestors: &bootstraplock.Locks{}, staging: &bootstraplock.Locks{}}
+	stage := &PrivateStaging{freshOwned: true, path: root, parent: parent, identity: id, ancestors: &bootstraplock.Locks{}, staging: &bootstraplock.Locks{}}
 	if err := stage.Cleanup(); err == nil {
 		t.Fatal("locked file unexpectedly deleted")
 	}

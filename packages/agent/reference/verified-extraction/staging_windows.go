@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -20,13 +21,16 @@ import (
 // PrivateStaging holds ancestor and staging handles for the caller. It is a
 // building block: it does not authenticate the launcher or any package.
 type PrivateStaging struct {
-	path      string
-	parent    string
-	identity  directoryIdentity
-	policy    bootstraplock.Policy
-	ancestors *bootstraplock.Locks
-	staging   *bootstraplock.Locks
-	payload   *bootstraplock.Locks
+	intentMu        sync.Mutex
+	intentAttempted bool
+	freshOwned      bool
+	path            string
+	parent          string
+	identity        directoryIdentity
+	policy          bootstraplock.Policy
+	ancestors       *bootstraplock.Locks
+	staging         *bootstraplock.Locks
+	payload         *bootstraplock.Locks
 }
 
 // Root is immutable to callers; its contents must remain locked until use ends.
@@ -61,6 +65,8 @@ func getDirectoryIdentity(path string) (directoryIdentity, error) {
 
 // LockPayload must be called after verified extraction and held through use.
 func (s *PrivateStaging) LockPayload() error {
+	s.intentMu.Lock()
+	defer s.intentMu.Unlock()
 	if s.ancestors == nil || s.staging == nil || s.payload != nil {
 		return fmt.Errorf("staging is not active")
 	}
@@ -75,6 +81,12 @@ func (s *PrivateStaging) LockPayload() error {
 // Close releases path locks. The caller must not execute extracted data after
 // closing the locks. Secure deletion/recovery of the directory is separate.
 func (s *PrivateStaging) Close() {
+	s.intentMu.Lock()
+	defer s.intentMu.Unlock()
+	s.closeLocked()
+}
+
+func (s *PrivateStaging) closeLocked() {
 	if s.payload != nil {
 		s.payload.Close()
 		s.payload = nil
@@ -95,9 +107,24 @@ var stageNamePattern = regexp.MustCompile("^TokenTimer-Staging-[a-f0-9]{32}$")
 // instance, with the parent still locked and the original file identity intact.
 // Unexpected links or changed identity cause a fail-closed operator recovery.
 func (s *PrivateStaging) Cleanup() error {
+	s.intentMu.Lock()
+	defer s.intentMu.Unlock()
 	if s.ancestors == nil || s.staging == nil || !filepath.IsAbs(s.path) ||
 		!strings.EqualFold(filepath.Dir(s.path), s.parent) || !stageNamePattern.MatchString(filepath.Base(s.path)) {
 		return fmt.Errorf("staging ownership not established")
+	}
+	// An absent marker on a recovered stage proves nothing about past execution.
+	if !s.freshOwned {
+		return ErrExecutionRecoveryPending
+	}
+	// Once execution intent has been attempted, or a marker already exists,
+	// this instance cannot prove that external WMI/SCM actors have finished.
+	// Never interpret a malformed or unreadable marker as permission to delete.
+	if s.intentAttempted {
+		return ErrExecutionRecoveryPending
+	}
+	if _, err := os.Lstat(s.path + ".intent"); err == nil || !os.IsNotExist(err) {
+		return ErrExecutionRecoveryPending
 	}
 	id, err := getDirectoryIdentity(s.path)
 	if err != nil || id != s.identity {
@@ -134,7 +161,7 @@ func (s *PrivateStaging) Cleanup() error {
 		// and require explicit manual recovery.
 		locks, lockErr := bootstraplock.LockProtectedTree(s.path, s.policy)
 		if lockErr != nil {
-			s.Close()
+			s.closeLocked()
 			return fmt.Errorf("staging cleanup failed; manual recovery required: %w", err)
 		}
 		s.staging = locks
@@ -233,5 +260,6 @@ func NewPrivateStaging() (_ *PrivateStaging, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("verify private staging: %w", err)
 	}
+	stage.freshOwned = true
 	return stage, nil
 }
