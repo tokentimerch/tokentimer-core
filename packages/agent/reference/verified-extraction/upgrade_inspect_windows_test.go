@@ -43,7 +43,7 @@ func TestUpgradeInspectionIsReadOnlyAndRedactsServiceSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Classification != "manual-review-required" || report.ServiceState != "running" || report.Previous != "absent" || report.Application == "absent" {
+	if report.Classification != "ambiguous-manual-review-required" || report.ServiceState != "running" || report.Previous != "absent" || report.Application == "absent" {
 		t.Fatalf("unexpected report: %+v", report)
 	}
 	encoded, _ := json.Marshal(report)
@@ -75,7 +75,14 @@ func TestUpgradeInspectionLocksJournalDuringObservation(t *testing.T) {
 	root := filepath.Dir(filepath.Dir(f.journal))
 	journal := []byte(`{"version":1,"pid":321,"previousIdentity":"11:22","stagingIdentity":"11:33","previousServicePath":"private","previousServiceDisplayName":"private","previousServiceStartMode":"Manual","hadPreviousServiceEnvironment":false,"previousServiceEnvironment":[],"launcherIntent":"` + f.txn + `"}`)
 	writeProtectedUpgradeFixture(t, f, journal)
+	app := filepath.Join(root, "app")
+	if err := createRestrictedDirectory(app, f.sddl); err != nil {
+		t.Fatal(err)
+	}
 	_, err := inspectUpgradeRecovery(root, f.parentPolicy, f.stagePolicy, func() (string, error) {
+		if err := os.Rename(app, app+".replacement"); err == nil {
+			t.Error("observed app renamed during inspection")
+		}
 		if err := os.Remove(f.journal); err == nil {
 			t.Error("journal removed during inspection")
 		}
@@ -135,5 +142,21 @@ func TestUpgradeInspectionRejectsOtherOperatorSID(t *testing.T) {
 	strict := bootstraplock.Policy{Owners: trusted, Writers: trusted}
 	if _, err = inspectUpgradeRecovery(root, f.parentPolicy, strict, func() (string, error) { t.Fatal("untrusted SID reached SCM"); return "", nil }); err == nil {
 		t.Fatal("other operator SID accepted")
+	}
+}
+
+func TestClassifyUpgradePresenceDoesNotAuthorizeRecovery(t *testing.T) {
+	for _, tc := range []struct{ app, previous, staging, want string }{
+		{"1:1", "1:2", "absent", "app-and-backup-present-unverified"},
+		{"1:1", "absent", "1:3", "app-and-staging-present-unverified"},
+		{"absent", "1:2", "1:3", "backup-and-staging-present-unverified"},
+		{"1:1", "1:2", "1:3", "ambiguous-manual-review-required"},
+		{"1:1", "absent", "absent", "ambiguous-manual-review-required"},
+		{"absent", "absent", "absent", "ambiguous-manual-review-required"},
+		{"", "1:2", "1:3", "ambiguous-manual-review-required"},
+	} {
+		if got := classifyUpgradePresence(tc.app, tc.previous, tc.staging); got != tc.want {
+			t.Errorf("layout %+v: got %s", tc, got)
+		}
 	}
 }

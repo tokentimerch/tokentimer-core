@@ -128,6 +128,12 @@ func inspectUpgradeRecovery(root string, parentPolicy, statePolicy bootstraplock
 	out.RecordedStagingIdentity = rec.StagingIdentity
 	// The installer records Node.js stat identities; report native identities only,
 	// without assuming that the two representations are interchangeable.
+	var directoryHandles []windows.Handle
+	defer func() {
+		for _, handle := range directoryHandles {
+			windows.CloseHandle(handle)
+		}
+	}()
 	for _, item := range []struct {
 		name string
 		dest *string
@@ -145,8 +151,8 @@ func inspectUpgradeRecovery(root string, parentPolicy, statePolicy bootstraplock
 		if err != nil {
 			return UpgradeInspection{}, fmt.Errorf("application location untrusted")
 		}
+		directoryHandles = append(directoryHandles, lock)
 		id, err := getDirectoryIdentity(path)
-		windows.CloseHandle(lock)
 		if err != nil {
 			return UpgradeInspection{}, fmt.Errorf("application identity unavailable")
 		}
@@ -156,8 +162,8 @@ func inspectUpgradeRecovery(root string, parentPolicy, statePolicy bootstraplock
 	if err != nil {
 		return UpgradeInspection{}, fmt.Errorf("service state unavailable")
 	}
-	out.Classification = "manual-review-required"
-	out.Notice = "Read-only observation; it does not prove health, actor termination or authorize any recovery. Preserve the journal, application and staging; contact support."
+	out.Classification = classifyUpgradePresence(out.Application, out.Previous, out.Staging)
+	out.Notice = "Read-only, non-atomic observation; classification describes presence only and does not prove identity equivalence, health, actor termination or authorize recovery. Preserve the journal, application and staging; contact support."
 	return out, nil
 }
 
@@ -210,4 +216,21 @@ func policyWithOperator(policy bootstraplock.Policy, sid string) bootstraplock.P
 	result.Owners[sid] = true
 	result.Writers[sid] = true
 	return result
+}
+
+// Classification describes only observed directory presence, never identities,
+// success, health or permission to act. Absent paths are not locked.
+func classifyUpgradePresence(app, previous, staging string) string {
+	present := func(s string) bool { return s != "" && s != "absent" }
+	absent := func(s string) bool { return s == "absent" }
+	switch {
+	case present(app) && present(previous) && absent(staging):
+		return "app-and-backup-present-unverified"
+	case present(app) && absent(previous) && present(staging):
+		return "app-and-staging-present-unverified"
+	case absent(app) && present(previous) && present(staging):
+		return "backup-and-staging-present-unverified"
+	default:
+		return "ambiguous-manual-review-required"
+	}
 }
