@@ -38,6 +38,13 @@ test("retention acceptance failure reports only a bounded native code", () => {
   assert.throws(() => assertFixtureAccept({ ok: false, stderrExcerpt: "private data 0x800B0109" }), error => error.code === "CERTOPS_RETENTION_ACCEPT_H800B0109" && !error.message.includes("private"));
   assert.throws(() => assertFixtureAccept({ ok: false, stage: "repairstore", stdoutExcerpt: "private" }), error => error.code === "CERTOPS_RETENTION_REPAIRSTORE_FAILED");
 });
+test("native retention store names are case-insensitive but must match", () => {
+  const { assertNativeStore } = require("./host/retention-elapsed-fixture");
+  assert.doesNotThrow(() => assertNativeStore("MY", "My"));
+  assert.doesNotThrow(() => assertNativeStore("WEBHOSTING", "WebHosting"));
+  assert.throws(() => assertNativeStore("", "My"), error => error.code === "CERTOPS_RETENTION_STORE_MISSING");
+  assert.throws(() => assertNativeStore("WebHosting", "My"), error => error.code === "CERTOPS_RETENTION_STORE_MISMATCH");
+});
 test("retention signing root is removed only if its exact public identity remains", async () => {
   const fs = require("node:fs"), os = require("node:os"), path = require("node:path"), crypto = require("node:crypto");
   const { withOwnedRetentionRoot } = require("./host/retention-root-fixture");

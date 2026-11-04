@@ -33,6 +33,14 @@ const { deployIisBinding } = require("../../src/windows-iis");
 const { listHttpSysBindings } = require("../../src/windows-discovery");
 const retention = require("../../src/windows-retention");
 const { runWindowsRetentionSweep } = require("../../src/index");
+function assertNativeStore(actual, expected) {
+  if (typeof actual !== "string" || !actual) {
+    throw Object.assign(new Error("Native IIS store name is missing"), { code: "CERTOPS_RETENTION_STORE_MISSING" });
+  }
+  if (actual.toLowerCase() !== expected.toLowerCase()) {
+    throw Object.assign(new Error("Native IIS store name does not match"), { code: "CERTOPS_RETENTION_STORE_MISMATCH" });
+  }
+}
 function assertFixtureAccept(result) {
   if (result?.ok === true) return;
   const output = `${result?.stdoutExcerpt || ""}\n${result?.stderrExcerpt || ""}`;
@@ -178,7 +186,7 @@ async function qualifyElapsedRetention({
   const recordBindingOwner = async (expected) => {
     siteReceipt = readSite();
     assert.equal(siteReceipt.hash, expected);
-    assert.equal(siteReceipt.store, store);
+    assertNativeStore(siteReceipt.store, store);
     assert.equal(siteReceipt.physicalPath, directory);
     assert.equal(siteReceipt.coordinates, `127.0.0.1:${port}:`);
     endpointReceipt = await endpoint();
@@ -381,7 +389,8 @@ async function qualifyElapsedRetention({
     try {
       await recordBindingOwner(a.thumbprint);
     } catch (error) {
-      error.code = "CERTOPS_RETENTION_ENDPOINT_RECEIPT_FAILED";
+      if (!String(error.code || "").startsWith("CERTOPS_RETENTION_STORE_"))
+        error.code = "CERTOPS_RETENTION_ENDPOINT_RECEIPT_FAILED";
       throw error;
     }
     await trustedLeaf(port, ca, a.thumbprint);
@@ -438,7 +447,7 @@ async function qualifyElapsedRetention({
       );
     const finalBinding = binding();
     assert.equal(finalBinding.hash, replacementThumbprint);
-    assert.equal(finalBinding.store, store);
+    assertNativeStore(finalBinding.store, store);
     const preserveReplacement = async () => {
       assert.deepEqual(binding(), finalBinding);
       assert.ok(
@@ -820,6 +829,7 @@ function verifyElapsedStoreResult(value) {
 }
 module.exports = {
   assertFixtureAccept,
+  assertNativeStore,
   qualifyElapsedRetention,
   verifyElapsedProof,
   SUPPORTED_STORES,
