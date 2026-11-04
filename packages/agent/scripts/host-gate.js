@@ -104,6 +104,10 @@ function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = 
     const stack = typeof error?.stack === "string" ? error.stack : "";
     const frame = stack.match(/\(?([A-Za-z0-9_.-]+\.(?:js|cjs)):(\d{1,6}):\d{1,5}\)?/);
     if (frame) detail.sourceFrame = `${frame[1]}:${frame[2]}`;
+    if (frame?.[1] === "windows-host.test.js") {
+      const caller = [...stack.matchAll(/\(?([A-Za-z0-9_.-]+\.(?:js|cjs)):(\d{1,6}):\d{1,5}\)?/g)].find(match => match[1] !== "windows-host.test.js" && match[1].endsWith("-fixture.js"));
+      if (caller) detail.fixtureFrame = `${caller[1]}:${caller[2]}`;
+    }
     if (failureCount > 0) detail.afterEarlierFailure = true;
     if (error?.code === "CERTOPS_NATIVE_COMMAND_FAILED" && error.qualificationCommand) {
       const command = error.qualificationCommand;

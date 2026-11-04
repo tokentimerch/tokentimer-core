@@ -10,6 +10,22 @@ const path = require("node:path");
 const { freePort, expectServed } = require("./iis-fixture");
 const { createLedgerRow } = require("../../src/windows-retention");
 const { runWindowsRetentionSweep } = require("../../src/index");
+const { inventoryScript, hasSelector } = require("./discovery-http-sys-fixture");
+function ownedBinding(rows, port, thumbprint) {
+  assert.ok(Array.isArray(rows));
+  const selector = `127.0.0.1:${port}`;
+  const matches = rows.filter(row => row.kind === "SslBindingInfo" && typeof row.selector === "string" && row.selector.toLowerCase() === selector.toLowerCase());
+  assert.equal(matches.length, 1, "Expected exactly one owned retention selector");
+  const row = matches[0];
+  assert.equal(row.thumbprint, thumbprint);
+  assert.equal(String(row.store).toLowerCase(), "my");
+  assert.match(row.appId, /^[0-9a-f-]{36}$/i);
+  return row;
+}
+function verifyBindingReceipt(rows, port, thumbprint, receipt) {
+  assert.ok(receipt, "Preserve an endpoint without an ownership receipt");
+  assert.deepEqual(ownedBinding(rows, port, thumbprint), receipt, "Preserve a changed endpoint");
+}
 // These host-suite leaves are signed by the owned CA and carry this exact
 // DNS SAN. Keep hostname authentication even though transport is loopback/IP.
 function createRetentionTlsProbe({caPem,servername="certops-host.invalid"}={}){
@@ -31,19 +47,23 @@ async function qualifyRetentionGuards({ powershell, run, workDir, oldThumbprint,
   let siteOwned = false;
   let oldBindingOwned = false;
   let replacementBindingOwned = false;
+  let oldBindingReceipt, replacementBindingReceipt;
+  const nativeBindings = () => JSON.parse(powershell(inventoryScript));
   let sharedThumbprint;
   let sharedOwned = false;
   const crossStoreCopies = [];
   let primaryError;
   const cleanupErrors = [];
   try {
-    for (const port of [oldPort, newPort]) powershell(`& netsh.exe http show sslcert ipport=127.0.0.1:${port} | Out-Null; if ($LASTEXITCODE -eq 0) { throw 'Refuse existing retention fixture endpoint' }`);
+    for (const port of [oldPort, newPort]) assert.equal(hasSelector(nativeBindings(), `127.0.0.1:${port}`), false, "Refuse existing retention fixture endpoint");
     siteOwned = true;
     powershell(`Import-Module WebAdministration; New-Website -Name '${site}' -PhysicalPath '${directory.replace(/'/g, "''")}' -IPAddress '127.0.0.1' -Port ${oldPort} -Ssl | Out-Null; New-WebBinding -Name '${site}' -Protocol https -IPAddress '127.0.0.1' -Port ${newPort}`);
     oldBindingOwned = true;
     powershell(`Import-Module WebAdministration; (Get-WebBinding -Name '${site}' -Protocol https | Where-Object { $_.bindingInformation -eq '127.0.0.1:${oldPort}:' }).AddSslCertificate('${oldThumbprint}','My')`);
+    oldBindingReceipt = ownedBinding(nativeBindings(), oldPort, oldThumbprint);
     replacementBindingOwned = true;
     powershell(`Import-Module WebAdministration; (Get-WebBinding -Name '${site}' -Protocol https | Where-Object { $_.bindingInformation -eq '127.0.0.1:${newPort}:' }).AddSslCertificate('${replacementThumbprint}','My')`);
+    replacementBindingReceipt = ownedBinding(nativeBindings(), newPort, replacementThumbprint);
     await expectOwnedServed(oldPort, oldThumbprint);
     await expectOwnedServed(newPort, replacementThumbprint);
     const oldNotAfter = powershell(`(Get-Item 'Cert:\\LocalMachine\\My\\${oldThumbprint}').NotAfter.ToUniversalTime().ToString('o')`);
@@ -67,7 +87,9 @@ async function qualifyRetentionGuards({ powershell, run, workDir, oldThumbprint,
     run("certutil.exe", ["-repairstore", "My", sharedThumbprint]);
     assert.equal(powershell(`$c=Get-Item 'Cert:\\LocalMachine\\My\\${sharedThumbprint}'; $k=[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c); try { $k.Key.KeyName } finally { if ($null -ne $k) { $k.Dispose() }; $c.Dispose() }`), containerName,
       "the second certificate must actually share the old CNG key");
+    verifyBindingReceipt(nativeBindings(), oldPort, oldThumbprint, oldBindingReceipt);
     run("netsh.exe", ["http", "delete", "sslcert", `ipport=127.0.0.1:${oldPort}`]);
+    assert.equal(hasSelector(nativeBindings(), `127.0.0.1:${oldPort}`), false);
     oldBindingOwned = false;
     result = await sweep();
     assert.equal(result.removed.length, 0);
@@ -106,11 +128,17 @@ async function qualifyRetentionGuards({ powershell, run, workDir, oldThumbprint,
     for (const thumbprint of crossStoreCopies) clean(() => powershell(`$p='Cert:\\LocalMachine\\WebHosting\\${thumbprint}';if(Test-Path -LiteralPath $p){Remove-Item -LiteralPath $p};if(Test-Path -LiteralPath $p){throw 'Owned cross-store public copy remains'}`));
     if (sharedOwned) clean(() => powershell(`$p='Cert:\\LocalMachine\\My\\${sharedThumbprint}'; if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p }; if (Test-Path -LiteralPath $p) { throw 'Owned public shared-key certificate remains' }`));
     if (siteOwned) clean(() => powershell(`Import-Module WebAdministration; if (Test-Path 'IIS:\\Sites\\${site}') { Remove-Website -Name '${site}' }; if (Test-Path 'IIS:\\Sites\\${site}') { throw 'Retention fixture site remains' }`));
-    for (const [port, owned] of [[oldPort, oldBindingOwned], [newPort, replacementBindingOwned]]) {
-      if (owned) clean(() => powershell(`& netsh.exe http show sslcert ipport=127.0.0.1:${port} | Out-Null; if ($LASTEXITCODE -eq 0) { & netsh.exe http delete sslcert ipport=127.0.0.1:${port} | Out-Null; if ($LASTEXITCODE -ne 0) { throw 'Owned retention endpoint cleanup failed' } }; & netsh.exe http show sslcert ipport=127.0.0.1:${port} | Out-Null; if ($LASTEXITCODE -eq 0) { throw 'Owned retention endpoint remains' }`));
+    for (const [port, owned, thumbprint, receipt] of [[oldPort, oldBindingOwned, oldThumbprint, oldBindingReceipt], [newPort, replacementBindingOwned, replacementThumbprint, replacementBindingReceipt]]) {
+      if (owned) clean(() => {
+        const rows = nativeBindings();
+        if (!hasSelector(rows, `127.0.0.1:${port}`)) return;
+        verifyBindingReceipt(rows, port, thumbprint, receipt);
+        run("netsh.exe", ["http", "delete", "sslcert", `ipport=127.0.0.1:${port}`]);
+        assert.equal(hasSelector(nativeBindings(), `127.0.0.1:${port}`), false, "Owned retention endpoint remains");
+      });
     }
     if (cleanupErrors.length) throw new AggregateError(primaryError ? [primaryError, ...cleanupErrors] : cleanupErrors,
       "Retention fixture cleanup failed", { cause: primaryError });
   }
 }
-module.exports = { qualifyRetentionGuards, createRetentionTlsProbe };
+module.exports = { qualifyRetentionGuards, createRetentionTlsProbe, ownedBinding, verifyBindingReceipt };

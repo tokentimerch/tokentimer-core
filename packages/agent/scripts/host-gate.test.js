@@ -23,6 +23,15 @@ test("HTTP.sys fixture refuses existing selectors using native registry observat
   assert.equal(hasSelector([{ selector: "example.test:443" }], "example.test:444"), false);
   assert.throws(() => hasSelector([{}], "example.test:443"));
 });
+test("retention fixture preserves unowned or changed HTTP.sys bindings", () => {
+  const { ownedBinding, verifyBindingReceipt } = require("./host/retention-fixture");
+  const row = { kind: "SslBindingInfo", selector: "127.0.0.1:1234", thumbprint: "A".repeat(40), store: "My", appId: "01234567-89ab-cdef-0123-456789abcdef", flags: 0 };
+  const receipt = ownedBinding([row], 1234, row.thumbprint);
+  verifyBindingReceipt([row], 1234, row.thumbprint, receipt);
+  assert.throws(() => verifyBindingReceipt([row], 1234, row.thumbprint, undefined));
+  assert.throws(() => verifyBindingReceipt([{ ...row, appId: "11234567-89ab-cdef-0123-456789abcdef" }], 1234, row.thumbprint, receipt));
+  assert.throws(() => ownedBinding([{ ...row, thumbprint: "B".repeat(40) }], 1234, row.thumbprint));
+});
 
 test("native command failures retain only bounded diagnostic metadata", async () => {
   const gate = createHostGate({ suite: "fixture", strict: true, reportPath: null, continueOnFailure: true });
@@ -65,6 +74,15 @@ test("fail-fast scenarios retain the original bounded failure before cleanup", a
   await run.recordFailure(new AggregateError([error], "private fixture state"));
   assert.equal(JSON.stringify(run.report).includes("private-fixture-value"), false);
   assert.equal(JSON.stringify(run.report).includes("C:\\private"), false);
+});
+test("host wrapper failures retain only the native fixture callsite", async () => {
+  const run = createHostGate({ suite: "fixture", reportPath: null });
+  await run.preflight();
+  const error = new Error("private output");
+  error.stack = "Error: private output\n at run (C:\\private\\windows-host.test.js:59:3)\n at check (C:\\private\\retention-fixture.js:40:2)";
+  await assert.rejects(run.scenario("native", async () => { throw error; }));
+  assert.equal(run.report.scenarios[0].failure.fixtureFrame, "retention-fixture.js:40");
+  assert.doesNotMatch(JSON.stringify(run.report), /private/);
 });
 const gate = () => createHostGate({ suite: "fixture", candidateSha: "a".repeat(40), strict: true, requiredCapabilities: ["native"], probeCapabilities: async () => ({ native: { available: true } }) });
 test("shared Windows build numbers require native server product type", () => {
