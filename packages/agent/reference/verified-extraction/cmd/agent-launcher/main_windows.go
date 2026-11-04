@@ -12,9 +12,38 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
 
 	verified "tokentimer-verified-extraction"
 )
+
+// The release signing build must set all policy fields before signing this
+// executable. They are intentionally not command-line inputs and are never
+// read from the downloaded manifest, archive or adjacent files.
+var (
+	trustedPublisherSHA256   string
+	trustedRuntimeSHA256     string
+	qualifiedInstallerSHA256 string
+	qualifiedSourceCommit    string
+	qualifiedVersion         string
+	qualifiedArchitecture    string
+)
+
+type trustPolicy struct{ publisher, runtimePublisher, installer, commit, version, architecture string }
+
+func currentTrustPolicy() trustPolicy {
+	return trustPolicy{trustedPublisherSHA256, trustedRuntimeSHA256, qualifiedInstallerSHA256, qualifiedSourceCommit, qualifiedVersion, qualifiedArchitecture}
+}
+func (p trustPolicy) validate() error {
+	hash := regexp.MustCompile(`^[a-f0-9]{64}$`)
+	commit := regexp.MustCompile(`^[a-f0-9]{40}$`)
+	version := regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$`)
+	if !hash.MatchString(p.publisher) || !hash.MatchString(p.runtimePublisher) || !hash.MatchString(p.installer) || !commit.MatchString(p.commit) || !version.MatchString(p.version) || (p.architecture != "amd64" && p.architecture != "arm64") || p.architecture != runtime.GOARCH {
+		return fmt.Errorf("launcher lacks a valid release-bound trust policy")
+	}
+	return nil
+}
 
 func bounded(path string, limit int64) ([]byte, error) {
 	f, err := os.Open(path)
@@ -35,15 +64,14 @@ func main() {
 	manifestPath := flag.String("manifest", "", "encapsulated signed CMS manifest")
 	archivePath := flag.String("archive", "", "agent archive")
 	sbomPath := flag.String("sbom", "", "SBOM")
-	publisherPin := flag.String("publisher-sha256", "", "independently trusted publisher certificate SHA-256")
-	runtimePin := flag.String("runtime-publisher-sha256", "", "independently trusted Node publisher certificate SHA-256")
-	installerPin := flag.String("installer-sha256", "", "independently trusted qualified installer SHA-256")
-	commit := flag.String("source-commit", "", "expected release source commit")
-	version := flag.String("version", "", "expected release version")
-	architecture := flag.String("architecture", "", "expected native architecture")
 	flag.Parse()
-	if *manifestPath == "" || *archivePath == "" || *sbomPath == "" || *publisherPin == "" || *runtimePin == "" || *installerPin == "" || *commit == "" || *version == "" || *architecture == "" {
-		fmt.Fprintln(os.Stderr, "all signed package and independently trusted identity flags are required")
+	policy := currentTrustPolicy()
+	if err := policy.validate(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	if *manifestPath == "" || *archivePath == "" || *sbomPath == "" {
+		fmt.Fprintln(os.Stderr, "signed manifest, archive and SBOM are required")
 		os.Exit(2)
 	}
 	cms, err := bounded(*manifestPath, 8<<20)
@@ -62,7 +90,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer archive.Close()
-	candidate := verified.Candidate{CMS: cms, PublisherPin: *publisherPin, RuntimePublisherPin: *runtimePin, InstallerSHA256: *installerPin, SourceCommit: *commit, Version: *version, Architecture: *architecture, ArchiveName: filepath.Base(*archivePath), Archive: archive, SBOMName: filepath.Base(*sbomPath), SBOM: sbom}
+	candidate := verified.Candidate{CMS: cms, PublisherPin: policy.publisher, RuntimePublisherPin: policy.runtimePublisher, InstallerSHA256: policy.installer, SourceCommit: policy.commit, Version: policy.version, Architecture: policy.architecture, ArchiveName: filepath.Base(*archivePath), Archive: archive, SBOMName: filepath.Base(*sbomPath), SBOM: sbom}
 	// Installer flags follow --; the bootstrap token is read from a protected
 	// environment variable or prompted by the existing installer, never logged.
 	result, err := verified.RunCandidate(context.Background(), candidate, flag.Args(), os.Getenv("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN"))

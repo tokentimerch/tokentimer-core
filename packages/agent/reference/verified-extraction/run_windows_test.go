@@ -5,6 +5,7 @@ package verifiedextraction
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -18,14 +19,19 @@ type runFixture struct {
 }
 
 func TestInstallerReceivesInheritedIntentPipe(t *testing.T) {
-	root := t.TempDir()
-	script := filepath.Join(root, "pipe.ps1")
-	text := `$ErrorActionPreference='Stop'; $h=[Microsoft.Win32.SafeHandles.SafeFileHandle]::new([IntPtr]::new([long]$env:TOKENTIMER_AGENT_INTENT_HANDLE),$false); $f=[IO.FileStream]::new($h,[IO.FileAccess]::Read); $b=New-Object byte[] 64; $n=$f.Read($b,0,64); if ($n -ne 64 -or [Text.Encoding]::ASCII.GetString($b) -cne ('d' * 64)) { exit 71 }; if ($env:TOKENTIMER_AGENT_EXECUTION_INTENT -cne ('a' * 32)) { exit 72 }; exit 0`
-	if err := os.WriteFile(script, []byte(text), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := invokeInstaller(context.Background(), script, root, nil, "", strings.Repeat("a", 32), strings.Repeat("d", 64)); err != nil {
-		t.Fatal(err)
+	t.Setenv("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN", "ambient-value-must-not-leak")
+	for _, token := range []string{"", "fixture-token"} {
+		t.Run(fmt.Sprintf("token-present-%t", token != ""), func(t *testing.T) {
+			root := t.TempDir()
+			script := filepath.Join(root, "pipe.ps1")
+			text := fmt.Sprintf(`$ErrorActionPreference='Stop'; $h=New-Object Microsoft.Win32.SafeHandles.SafeFileHandle([IntPtr]([int64]$env:TOKENTIMER_AGENT_INTENT_HANDLE), $true); $f=New-Object IO.FileStream($h,[IO.FileAccess]::Read,64,$false); $b=New-Object byte[] 64; $n=$f.Read($b,0,64); if ($n -ne 64 -or [Text.Encoding]::ASCII.GetString($b) -cne ('d' * 64)) { exit 71 }; if ($env:TOKENTIMER_AGENT_EXECUTION_INTENT -cne ('a' * 32)) { exit 72 }; if ([string]$env:TOKENTIMER_AGENT_BOOTSTRAP_TOKEN -cne '%s') { exit 73 }; exit 0`, token)
+			if err := os.WriteFile(script, []byte(text), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := invokeInstaller(context.Background(), script, root, nil, token, strings.Repeat("a", 32), strings.Repeat("d", 64)); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
