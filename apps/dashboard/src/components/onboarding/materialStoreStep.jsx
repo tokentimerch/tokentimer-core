@@ -16,6 +16,7 @@ import { DetailsSection, StatusPanel } from './panels.jsx';
 import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
 import { buildVaultPublishJob, buildVaultPolicies } from './certopsConfig.js';
 import { createJob } from '../certops/certopsJobsApi.js';
+import { retryDeployment as retryPublication } from './vaultGuideApi.js';
 import {
   ApprovalPolicyNote,
   ApprovalWaitPanel,
@@ -106,6 +107,8 @@ function MaterialStoreForm({ ctx }) {
   const [error, setError] = useState('');
   const [stopped, setStopped] = useState(false);
   const [transportPassed, setTransportPassed] = useState(false);
+  const [retryReviewed, setRetryReviewed] = useState(false);
+  const [jobRefresh, setJobRefresh] = useState(0);
   const [attempt] = useState(() => `wizard-material-${crypto.randomUUID()}`);
   const alive = useRef(true);
   useEffect(() => {
@@ -138,7 +141,7 @@ function MaterialStoreForm({ ctx }) {
   const replaying = Boolean(
     saved.vaultPublishRequestKey && saved.materialPublicationRequest
   );
-  const observed = useObservedJob(ctx.workspaceId, jobId);
+  const observed = useObservedJob(ctx.workspaceId, jobId, jobRefresh);
   const { required } = useJobApprovalPolicy(ctx.workspaceId);
   useSummaryPolling(ctx.refresh, manager);
   const groups = ctx.summary?.certops?.distribution?.items || [];
@@ -178,6 +181,22 @@ function MaterialStoreForm({ ctx }) {
       if (alive.current) setBusy(false);
     }
   };
+  const retry = () =>
+    run(async () => {
+      if (
+        !qualified ||
+        !retryReviewed ||
+        !['failed', 'blocked', 'orphaned_unknown_effect'].includes(
+          observed.job?.status
+        ) ||
+        observed.job?.attemptCount >= 3
+      )
+        return;
+      await retryPublication(ctx.workspaceId, jobId);
+      setRetryReviewed(false);
+      setJobRefresh(index => index + 1);
+      await ctx.refresh();
+    });
   const save = () =>
     run(async () => {
       if (setupErrors(setup).length) {
@@ -404,7 +423,7 @@ function MaterialStoreForm({ ctx }) {
         )}
         <DetailsSection
           summary='Prepare a real publication'
-          defaultOpen={!setup.groupId}
+          defaultOpen={!setup.groupId || Boolean(jobId && !done)}
         >
           <VStack align='stretch' spacing={3}>
             <Text fontSize='sm'>
@@ -452,6 +471,49 @@ function MaterialStoreForm({ ctx }) {
                   jobId={jobId}
                   title='Publication job'
                 />
+                {manager &&
+                  ['failed', 'blocked', 'orphaned_unknown_effect'].includes(
+                    observed.job?.status
+                  ) && (
+                    <>
+                      <Text fontSize='sm'>
+                        Repair the reported cause first. For an uncertain
+                        provider write, follow the runbook reconciliation
+                        procedure and preserve the local checkpoint. This
+                        retries the same signed job and publication version; it
+                        does not create another order. Current approval and
+                        authorization checks still apply.
+                      </Text>
+                      <Checkbox
+                        isChecked={retryReviewed}
+                        onChange={event =>
+                          setRetryReviewed(event.target.checked)
+                        }
+                      >
+                        I reviewed the job and completed any required host-local
+                        reconciliation
+                      </Checkbox>
+                      <DashboardActionButton
+                        onClick={retry}
+                        isLoading={busy}
+                        isDisabled={
+                          !qualified ||
+                          busy ||
+                          !retryReviewed ||
+                          observed.job?.attemptCount >= 3
+                        }
+                      >
+                        Retry original publication
+                      </DashboardActionButton>
+                      {observed.job?.attemptCount >= 3 && (
+                        <Text fontSize='sm'>
+                          The original job has reached its retry limit. Review
+                          its evidence and local checkpoint before planning a
+                          new publication.
+                        </Text>
+                      )}
+                    </>
+                  )}
               </>
             )}
           </VStack>
@@ -520,9 +582,9 @@ function MaterialStoreForm({ ctx }) {
             )}
             <Text fontSize='sm'>
               For an uncertain publication, preserve the local checkpoint and
-              retry the original signed job through Certificate Management.
-              Azure never blindly retries a write. Do not delete a pinned object
-              or create a new order to hide uncertainty.
+              complete the runbook reconciliation before choosing Retry original
+              publication above. Azure never blindly retries a write. Do not
+              delete a pinned object or create a new order to hide uncertainty.
             </Text>
           </VStack>
         </DetailsSection>
