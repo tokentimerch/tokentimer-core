@@ -19,6 +19,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Rollout authorization follows current workspace authority.** **Operator action:** apply migration 98 with matching API and worker images. Request a new rollout and, if required, fresh approval to continue pre-upgrade work; changes to manager membership, workspace ownership, pause state or approval policy also require a new request. Existing deployment evidence is retained.
+
 - **AD CS on localized Windows agents.** Issuer preflight now returns the CA certificates needed for key confirmation on German and French hosts. **Operator action:** update affected Windows agents.
 
 - **Alert dates and times stay correct on non-UTC API hosts.** The alert queue and asset delivery state preserve calendar due dates and the actual update, retry and delivery-attempt timestamps.
