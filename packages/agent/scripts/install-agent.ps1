@@ -102,6 +102,7 @@ $script:AllowInsecureLocalHttp = $false
 $script:TrustStore = $false
 $script:NoTrustStore = $false
 $script:NodeRuntimeLock = $null
+$script:AuthorizedLauncherTransaction = $null
 # The release packer changes this constant only in Windows-specific archives.
 $script:RequiresBundledRuntime = $false
 
@@ -1081,6 +1082,7 @@ function Assert-AuthorizedLauncherOrNoIntent {
         }
         $actual = [Text.Encoding]::ASCII.GetString($bytes)
         if ($actual -cne $records[0].secret) { throw 'launcher authorization rejected' }
+        $script:AuthorizedLauncherTransaction = [string]$records[0].transaction
     } finally { $stream.Dispose(); $handle.Dispose() }
 }
 
@@ -1100,6 +1102,10 @@ function Recover-InterruptedUpgrade {
     }
     Assert-UpgradeRecoveryAcl -JournalPath $journal
     $record = Get-Content -LiteralPath $journal -Raw | ConvertFrom-Json -ErrorAction Stop
+    # A launcher-backed upgrade can have external actors even if its marker
+    # later disappeared. A transaction is a denial signal, never authority to
+    # replay or delete any staging path.
+    if ($null -ne $record.PSObject.Properties['launcherIntent']) { throw 'recovery_required: launcher upgrade remains quarantined' }
     if ($record.version -ne 1 -or ([string]$record.pid) -notmatch '^[1-9][0-9]{0,9}$' -or
         ([string]$record.previousIdentity) -notmatch '^\d+:[1-9]\d*$' -or
         ([string]$record.stagingIdentity) -notmatch '^\d+:[1-9]\d*$' -or
@@ -1192,6 +1198,10 @@ function Write-UpgradeRecoveryRecord {
         previousServiceStartMode = $script:PreviousServiceStartMode
         hadPreviousServiceEnvironment = $null -ne $script:PreviousServiceEnvironment
         previousServiceEnvironment = @($script:PreviousServiceEnvironment)
+    }
+    if ($null -ne $script:AuthorizedLauncherTransaction) {
+        if ($script:AuthorizedLauncherTransaction -cnotmatch '^[a-f0-9]{32}$') { throw 'invalid authorized launcher transaction' }
+        $record['launcherIntent'] = $script:AuthorizedLauncherTransaction
     }
     $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($record | ConvertTo-Json -Compress))
     if ($bytes.Length -gt 4096) {

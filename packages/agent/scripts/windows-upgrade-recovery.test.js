@@ -196,6 +196,71 @@ exit 0
   }
 });
 
+test("launcher-associated recovery refuses replay even if its markers disappeared", { skip: process.platform !== "win32" }, () => {
+  const tempParent = fs.realpathSync(os.tmpdir());
+  const root = fs.mkdtempSync(path.join(tempParent, "tt537-recovery-"));
+  try {
+    const journal = path.join(root, "upgrade-recovery.json");
+    for (const launcherIntent of [null, "a".repeat(32)]) {
+      fs.writeFileSync(journal, JSON.stringify({ launcherIntent }));
+      const script = String.raw`
+$ErrorActionPreference='Stop'
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $env:TT542_SOURCE 'install-agent.ps1'),[ref]$tokens,[ref]$errors)
+$f=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Recover-InterruptedUpgrade'},$true))
+if ($errors.Count -or $f.Count -ne 1) { throw 'missing recovery function' }
+Invoke-Expression $f[0].Extent.Text
+function Get-UpgradeRecoveryPath { return $env:TT542_JOURNAL }
+function Assert-ProtectedIntentDirectory { param($Directory) }
+function Assert-NoQuarantinedLauncherIntent { param($LauncherParent) }
+function Assert-UpgradeRecoveryAcl { param($JournalPath) }
+try { Recover-InterruptedUpgrade; throw 'launcher recovery unexpectedly accepted' }
+catch { if ($_.Exception.Message -notmatch 'recovery_required: launcher upgrade remains quarantined') { throw } }
+exit 0
+`;
+      const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+        env: { ...process.env, TT542_SOURCE: __dirname, TT542_JOURNAL: journal }, windowsHide: true, encoding: "utf8", timeout: 15000,
+      });
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      assert.deepEqual(JSON.parse(fs.readFileSync(journal, "utf8")), { launcherIntent });
+    }
+  } finally {
+    if (path.dirname(fs.realpathSync(root)).toLowerCase() !== tempParent.toLowerCase()) throw new Error("Unsafe fixture cleanup");
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("upgrade journal persists the authorized launcher transaction", { skip: process.platform !== "win32" }, () => {
+  const tempParent = fs.realpathSync(os.tmpdir());
+  const root = fs.mkdtempSync(path.join(tempParent, "tt537-record-"));
+  try {
+    const script = String.raw`
+$ErrorActionPreference='Stop'
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $env:TT542_SOURCE 'install-agent.ps1'),[ref]$tokens,[ref]$errors)
+foreach ($name in @('Get-UpgradeRecoveryPath','Write-UpgradeRecoveryRecord')) {
+  $f=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true))
+  if ($f.Count -ne 1) { throw 'missing journal function' }; Invoke-Expression $f[0].Extent.Text
+}
+$StateDir=$env:TT542_ROOT; $AppDir=$env:TT542_ROOT
+$script:PreviousServicePath='old-path'; $script:PreviousServiceDisplayName='old-service'; $script:PreviousServiceStartMode='Manual'
+$script:PreviousServiceEnvironment=$null; $script:AuthorizedLauncherTransaction='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+function Get-PackageDirectoryIdentity { param($Directory) return '1:2' }
+function Assert-UpgradeRecoveryAcl { param($JournalPath,$Kind) }
+function Invoke-PlatformAcl { param($TargetPath,$Kind) }
+Write-UpgradeRecoveryRecord -StagingIdentity '1:3'
+`;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+      env: { ...process.env, TT542_SOURCE: __dirname, TT542_ROOT: root }, windowsHide: true, encoding: "utf8", timeout: 15000,
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, "upgrade-recovery.json"), "utf8")).launcherIntent, "a".repeat(32));
+  } finally {
+    if (path.dirname(fs.realpathSync(root)).toLowerCase() !== tempParent.toLowerCase()) throw new Error("Unsafe fixture cleanup");
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("rejects an oversized recovery record before touching the existing application", { skip: process.platform !== "win32", timeout: 30000 }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
   const fixture = fs.mkdtempSync(path.join(tempParent, "tt542-journal-size-"));
