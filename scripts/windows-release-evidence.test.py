@@ -27,6 +27,14 @@ class BindingTests(unittest.TestCase):
                 reports.append({"report": report, "run": run})
         return c, reports
 
+    def test_edition_manifests_require_the_actual_composition_field(self):
+        cloud = b'{"manifestVersion":1,"repo":"tokentimer-cloud","core":{"testedCommit":"' + b'a' * 40 + b'"}}'
+        enterprise = b'{"manifestVersion":1,"repo":"tokentimer-enterprise","core":{"lastSyncedCoreCommit":"' + b'b' * 40 + b'"}}'
+        self.assertEqual(binding.edition_pin_from_manifest(cloud, "cloud"), "a" * 40)
+        self.assertEqual(binding.edition_pin_from_manifest(enterprise, "enterprise"), "b" * 40)
+        for raw, edition in ((cloud, "enterprise"), (cloud.replace(b'"core":', b'"core":{},"core":'), "cloud"), (cloud.replace(b'"testedCommit"', b'"lastSyncedCoreCommit"'), "cloud"), (b'{}', "cloud")):
+            with self.assertRaises(ValueError): binding.edition_pin_from_manifest(raw, edition)
+
     def test_complete_matrix_is_only_a_binding_not_publication_approval(self):
         c, e = self.fixture()
         self.assertIsNone(binding.validate_binding(c, e))

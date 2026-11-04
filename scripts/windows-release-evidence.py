@@ -5,6 +5,7 @@ this module does not authenticate reports, validate signatures/SBOMs, retrieve
 edition manifests or authorize publication. Existing workflows do not produce
 these final-package reports, so this is intentionally not a release gate.
 """
+import json
 import re
 
 DIGEST = re.compile(r"[a-f0-9]{64}\Z")
@@ -16,6 +17,30 @@ EDITION_REPOS = {
     "enterprise": ("tokentimerch/tokentimer-enterprise", "master", ".github/workflows/certops-qualification.yml"),
 }
 NATIVE_SYSTEMS = frozenset(("windows-server-2016", "windows-server-2019", "windows-server-2022", "windows-server-2025"))
+
+
+def edition_pin_from_manifest(raw, edition):
+    """Extract the composition pin from independently fetched manifest bytes."""
+    if edition not in ("cloud", "enterprise") or not isinstance(raw, bytes) or not 0 < len(raw) <= 1024 * 1024:
+        raise ValueError("Invalid edition manifest")
+    def unique_pairs(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate manifest key")
+            result[key] = value
+        return result
+    try:
+        manifest = json.loads(raw, object_pairs_hook=unique_pairs)
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+        raise ValueError("Malformed edition manifest") from None
+    if not isinstance(manifest, dict) or manifest.get("repo") != "tokentimer-" + edition or type(manifest.get("manifestVersion")) is not int or manifest["manifestVersion"] != 1 or not isinstance(manifest.get("core"), dict):
+        raise ValueError("Edition manifest identity mismatch")
+    field = "testedCommit" if edition == "cloud" else "lastSyncedCoreCommit"
+    pin = manifest["core"].get(field)
+    if not isinstance(pin, str) or not COMMIT.fullmatch(pin):
+        raise ValueError("Invalid edition composition pin")
+    return pin
 
 
 def validate_binding(candidate, evidence):
