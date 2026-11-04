@@ -23,6 +23,7 @@ import (
 type PrivateStaging struct {
 	intentMu        sync.Mutex
 	intentAttempted bool
+	intentFlushed   bool
 	freshOwned      bool
 	path            string
 	parent          string

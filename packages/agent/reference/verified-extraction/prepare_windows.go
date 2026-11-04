@@ -14,13 +14,16 @@ type Candidate struct {
 	CMS                 []byte
 	PublisherPin        string
 	RuntimePublisherPin string
-	SourceCommit        string
-	Version             string
-	Architecture        string
-	ArchiveName         string
-	Archive             io.Reader
-	SBOMName            string
-	SBOM                []byte
+	// InstallerSHA256 must be supplied by independent release trust policy,
+	// not copied from the untrusted download or its adjacent manifest.
+	InstallerSHA256 string
+	SourceCommit    string
+	Version         string
+	Architecture    string
+	ArchiveName     string
+	Archive         io.Reader
+	SBOMName        string
+	SBOM            []byte
 }
 
 // Prepared keeps the secure paths locked through verification and use.
@@ -30,8 +33,13 @@ type Prepared struct {
 }
 
 func (p *Prepared) InstallerPath() (string, error) {
-	if p == nil || p.staging == nil || p.staging.ancestors == nil || p.staging.staging == nil || p.staging.payload == nil {
+	if p == nil || p.staging == nil {
 		return "", fmt.Errorf("prepared payload is not locked")
+	}
+	p.staging.intentMu.Lock()
+	defer p.staging.intentMu.Unlock()
+	if p.staging.ancestors == nil || p.staging.staging == nil || p.staging.payload == nil || !p.staging.intentFlushed {
+		return "", fmt.Errorf("prepared payload is not locked with a flushed intent")
 	}
 	return filepath.Join(p.staging.Root(), "scripts", "install-agent.ps1"), nil
 }
@@ -66,6 +74,9 @@ func PrepareCandidate(c Candidate) (_ *Prepared, err error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := requireQualifiedInstaller(manifest, c.InstallerSHA256); err != nil {
+		return nil, err
+	}
 	if !digest.MatchString(c.RuntimePublisherPin) {
 		return nil, fmt.Errorf("independent runtime publisher pin is required")
 	}
@@ -91,4 +102,16 @@ func PrepareCandidate(c Candidate) (_ *Prepared, err error) {
 		return nil, err
 	}
 	return &Prepared{staging: stage, manifest: manifest}, nil
+}
+
+func requireQualifiedInstaller(manifest Manifest, trustedHash string) error {
+	if !digest.MatchString(trustedHash) {
+		return fmt.Errorf("independently trusted installer digest is required")
+	}
+	for _, entry := range manifest.Files {
+		if entry.Path == "package/scripts/install-agent.ps1" && entry.SHA256 == trustedHash {
+			return nil
+		}
+	}
+	return fmt.Errorf("installer differs from the qualified execution protocol")
 }

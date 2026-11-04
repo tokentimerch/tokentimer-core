@@ -23,8 +23,9 @@ import (
 // A marker, even a valid one, cannot prove that WMI or SCM actors have ended.
 var ErrExecutionRecoveryPending = errors.New("execution recovery requires manual reconciliation")
 
-// ExecutionIntent is an immutable, non-secret pre-execution record. It is not
-// an authenticated statement of success and never authorizes automatic cleanup.
+// ExecutionIntent is an immutable protected pre-execution record. Secret must
+// never be logged or placed in a process environment. It is not evidence of
+// success and never authorizes automatic cleanup.
 type ExecutionIntent struct {
 	SchemaVersion     int    `json:"schemaVersion"`
 	Phase             string `json:"phase"`
@@ -33,6 +34,7 @@ type ExecutionIntent struct {
 	IndexHigh         uint32 `json:"indexHigh"`
 	IndexLow          uint32 `json:"indexLow"`
 	Transaction       string `json:"transaction"`
+	Secret            string `json:"secret"`
 	ArchiveSHA256     string `json:"archiveSha256"`
 	PreviousSCMSHA256 string `json:"previousScmSha256"`
 }
@@ -69,6 +71,10 @@ func (p *Prepared) BeginExecutionIntent(previousSCMSHA256 string) (ExecutionInte
 }
 
 func (s *PrivateStaging) beginExecutionIntent(archiveSHA256, scmSHA256, sddl string, op intentIO) (result ExecutionIntent, err error) {
+	return s.beginExecutionIntentForTransaction(archiveSHA256, scmSHA256, sddl, "", "", op)
+}
+
+func (s *PrivateStaging) beginExecutionIntentForTransaction(archiveSHA256, scmSHA256, sddl, transaction, secret string, op intentIO) (result ExecutionIntent, err error) {
 	s.intentMu.Lock()
 	defer s.intentMu.Unlock()
 	if s.ancestors == nil || s.staging == nil || s.payload == nil || !s.freshOwned || s.intentAttempted ||
@@ -80,11 +86,27 @@ func (s *PrivateStaging) beginExecutionIntent(archiveSHA256, scmSHA256, sddl str
 	if err != nil || id != s.identity || id.indexHigh == 0 && id.indexLow == 0 {
 		return result, fmt.Errorf("staging identity unavailable or changed")
 	}
-	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return result, err
+	if transaction == "" {
+		var nonce [16]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			return result, err
+		}
+		transaction = hex.EncodeToString(nonce[:])
 	}
-	result = ExecutionIntent{SchemaVersion: 1, Phase: "execution-intent", StageName: filepath.Base(s.path), Volume: id.volume, IndexHigh: id.indexHigh, IndexLow: id.indexLow, Transaction: hex.EncodeToString(nonce[:]), ArchiveSHA256: archiveSHA256, PreviousSCMSHA256: scmSHA256}
+	if !stageNamePattern.MatchString("TokenTimer-Staging-" + transaction) {
+		return result, fmt.Errorf("invalid intent transaction")
+	}
+	if secret == "" {
+		var nonce [32]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			return result, err
+		}
+		secret = hex.EncodeToString(nonce[:])
+	}
+	if !digest.MatchString(secret) {
+		return result, fmt.Errorf("invalid intent secret")
+	}
+	result = ExecutionIntent{SchemaVersion: 1, Phase: "execution-intent", StageName: filepath.Base(s.path), Volume: id.volume, IndexHigh: id.indexHigh, IndexLow: id.indexLow, Transaction: transaction, Secret: secret, ArchiveSHA256: archiveSHA256, PreviousSCMSHA256: scmSHA256}
 	data, err := json.Marshal(result)
 	if err != nil || len(data) == 0 || len(data) > 4096 {
 		return ExecutionIntent{}, fmt.Errorf("invalid intent size")
@@ -128,6 +150,7 @@ func (s *PrivateStaging) beginExecutionIntent(archiveSHA256, scmSHA256, sddl str
 		return ExecutionIntent{}, fmt.Errorf("close intent: %w", err)
 	}
 	h = 0
+	s.intentFlushed = true
 	return result, nil
 }
 
@@ -207,7 +230,7 @@ func (s *PrivateStaging) inspectExecutionIntentRecord(archiveSHA256, scmSHA256 s
 	if err := d.Decode(&result); err != nil {
 		return ExecutionIntent{}, ErrExecutionRecoveryPending
 	}
-	if result.SchemaVersion != 1 || result.Phase != "execution-intent" || result.StageName != filepath.Base(s.path) || result.Volume != id.volume || result.IndexHigh != id.indexHigh || result.IndexLow != id.indexLow || len(result.Transaction) != 32 || !stageNamePattern.MatchString("TokenTimer-Staging-"+result.Transaction) || result.ArchiveSHA256 != archiveSHA256 || result.PreviousSCMSHA256 != scmSHA256 {
+	if result.SchemaVersion != 1 || result.Phase != "execution-intent" || result.StageName != filepath.Base(s.path) || result.Volume != id.volume || result.IndexHigh != id.indexHigh || result.IndexLow != id.indexLow || len(result.Transaction) != 32 || !stageNamePattern.MatchString("TokenTimer-Staging-"+result.Transaction) || !digest.MatchString(result.Secret) || result.ArchiveSHA256 != archiveSHA256 || result.PreviousSCMSHA256 != scmSHA256 {
 		return ExecutionIntent{}, ErrExecutionRecoveryPending
 	}
 	return result, ErrExecutionRecoveryPending
