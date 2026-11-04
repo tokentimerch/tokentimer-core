@@ -1,6 +1,9 @@
 // Command agent-release-inventory creates an unsigned, deterministic inventory
 // of the actual Windows agent release archive and its supplied SBOM. A separate
-// trusted signing step must authenticate the resulting bytes before use.
+// trusted signing step must authenticate the resulting bytes before use. The
+// caller must provide protected staging, source provenance, full SBOM schema
+// validation and complete dependency/license coverage; this tool establishes
+// only the minimum binary coverage and byte bindings below.
 package main
 
 import (
@@ -46,6 +49,92 @@ type inventory struct {
 	Archive       artifact `json:"archive"`
 	SBOM          artifact `json:"sbom"`
 	Files         []entry  `json:"files"`
+}
+
+type sbomHash struct {
+	Alg           string `json:"alg"`
+	Content       string `json:"content"`
+	Algorithm     string `json:"algorithm"`
+	ChecksumValue string `json:"checksumValue"`
+}
+type sbomItem struct {
+	Name             string            `json:"name"`
+	SPDXID           string            `json:"SPDXID"`
+	Hashes           []sbomHash        `json:"hashes"`
+	Checksums        []sbomHash        `json:"checksums"`
+	Licenses         []json.RawMessage `json:"licenses"`
+	LicenseDeclared  string            `json:"licenseDeclared"`
+	LicenseConcluded string            `json:"licenseConcluded"`
+}
+
+// These checks establish minimum binary coverage, not complete SBOM schema or
+// dependency coverage. The release pipeline must validate both separately.
+func verifySBOMCoverage(items []sbomItem, files []entry, arch string) error {
+	covered := map[string][]string{}
+	nodeCovered := false
+	var nodeHash string
+	for _, f := range files {
+		if f.Path == "package/runtime/"+arch+"/node.exe" {
+			nodeHash = f.SHA256
+		}
+	}
+	if nodeHash == "" {
+		return errors.New("archive is missing its architecture-specific Node runtime")
+	}
+	for _, item := range items {
+		declared := strings.TrimSpace(item.LicenseDeclared)
+		concluded := strings.TrimSpace(item.LicenseConcluded)
+		license := (declared != "" && declared != "NOASSERTION" && declared != "NONE") || (concluded != "" && concluded != "NOASSERTION" && concluded != "NONE")
+		for _, raw := range item.Licenses {
+			var value struct {
+				License struct {
+					ID   string `json:"id"`
+					Name string `json:"name"`
+				} `json:"license"`
+				Expression string `json:"expression"`
+			}
+			if json.Unmarshal(raw, &value) == nil && (strings.TrimSpace(value.License.ID) != "" || strings.TrimSpace(value.License.Name) != "" || strings.TrimSpace(value.Expression) != "") {
+				license = true
+			}
+		}
+		for _, h := range append(append([]sbomHash{}, item.Hashes...), item.Checksums...) {
+			algorithm, digest := h.Alg, h.Content
+			if h.Algorithm != "" || h.ChecksumValue != "" {
+				if h.Alg != "" || h.Content != "" {
+					continue
+				}
+				algorithm, digest = h.Algorithm, h.ChecksumValue
+			}
+			algorithm = strings.ToUpper(strings.ReplaceAll(algorithm, "-", ""))
+			if algorithm != "SHA256" || !regexp.MustCompile(`^[a-fA-F0-9]{64}$`).MatchString(digest) {
+				continue
+			}
+			digest = strings.ToLower(digest)
+			covered[digest] = append(covered[digest], strings.ToLower(item.Name))
+			if digest == nodeHash && strings.Contains(strings.ToLower(item.Name), "node") && license {
+				nodeCovered = true
+			}
+		}
+	}
+	if !nodeCovered {
+		return errors.New("SBOM lacks Node runtime digest and license")
+	}
+	for _, f := range files {
+		if strings.HasSuffix(strings.ToLower(f.Path), ".exe") {
+			base := strings.TrimSuffix(strings.ToLower(path.Base(f.Path)), ".exe")
+			base = strings.TrimSuffix(strings.TrimSuffix(base, "-amd64"), "-arm64")
+			found := false
+			for _, name := range covered[f.SHA256] {
+				if strings.Contains(name, base) || (base == "tokentimer-agent-host" && strings.Contains(name, "windows-service-host")) {
+					found = true
+				}
+			}
+			if !found {
+				return fmt.Errorf("SBOM lacks packaged executable identity and digest: %s", f.Path)
+			}
+		}
+	}
+	return nil
 }
 
 func checksum(data []byte) string {
@@ -94,6 +183,7 @@ func listFiles(compressed []byte) ([]entry, error) {
 	seen := map[string]byte{}
 	files := []entry{}
 	var expanded int64
+	var entries int
 	for {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -101,6 +191,10 @@ func listFiles(compressed []byte) ([]entry, error) {
 		}
 		if err != nil {
 			return nil, err
+		}
+		entries++
+		if entries > maxFiles {
+			return nil, errors.New("archive entry limit exceeded")
 		}
 		isDir := h.Typeflag == tar.TypeDir
 		if !isDir && h.Typeflag != tar.TypeReg && h.Typeflag != tar.TypeRegA {
@@ -170,19 +264,15 @@ func build(archiveName string, compressed, sbom []byte, sbomName, version, arch,
 		return inventory{}, errors.New("artifact size invalid")
 	}
 	var sbomMetadata struct {
-		SPDXVersion       string `json:"spdxVersion"`
-		SPDXID            string `json:"SPDXID"`
-		DocumentNamespace string `json:"documentNamespace"`
-		Packages          []struct {
-			Name   string `json:"name"`
-			SPDXID string `json:"SPDXID"`
-		} `json:"packages"`
-		BOMFormat   string `json:"bomFormat"`
-		SpecVersion string `json:"specVersion"`
-		Version     int    `json:"version"`
-		Components  []struct {
-			Name string `json:"name"`
-		} `json:"components"`
+		SPDXVersion       string     `json:"spdxVersion"`
+		SPDXID            string     `json:"SPDXID"`
+		DocumentNamespace string     `json:"documentNamespace"`
+		Packages          []sbomItem `json:"packages"`
+		Files             []sbomItem `json:"files"`
+		BOMFormat         string     `json:"bomFormat"`
+		SpecVersion       string     `json:"specVersion"`
+		Version           int        `json:"version"`
+		Components        []sbomItem `json:"components"`
 	}
 	if err := json.Unmarshal(sbom, &sbomMetadata); err != nil {
 		return inventory{}, errors.New("invalid SPDX or CycloneDX SBOM")
@@ -213,6 +303,10 @@ func build(archiveName string, compressed, sbom []byte, sbomName, version, arch,
 	if err != nil {
 		return inventory{}, err
 	}
+	items := append(append(sbomMetadata.Packages, sbomMetadata.Files...), sbomMetadata.Components...)
+	if err := verifySBOMCoverage(items, files, arch); err != nil {
+		return inventory{}, err
+	}
 	return inventory{
 		SchemaVersion: 1, SourceCommit: source, Version: version, Architecture: arch,
 		Archive: artifact{Name: archiveName, SHA256: checksum(compressed)},
@@ -238,23 +332,44 @@ func run(archive, sbom, version, arch, source, output string) error {
 	if archive == "" || sbom == "" || output == "" {
 		return errors.New("archive, sbom and out are required")
 	}
-	for _, input := range []struct {
-		name  string
-		limit int64
-	}{{archive, maxArchiveBytes}, {sbom, 16 << 20}} {
-		st, err := os.Stat(input.name)
+	readInput := func(input string, limit int64) ([]byte, error) {
+		before, err := os.Lstat(input)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if !st.Mode().IsRegular() || st.Size() <= 0 || st.Size() > input.limit {
-			return errors.New("input size or type invalid")
+		if !before.Mode().IsRegular() || before.Size() <= 0 || before.Size() > limit {
+			return nil, errors.New("input size or type invalid")
 		}
+		f, err := os.Open(input)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		opened, err := f.Stat()
+		if err != nil {
+			return nil, err
+		}
+		if !opened.Mode().IsRegular() || !os.SameFile(before, opened) {
+			return nil, errors.New("input changed before open")
+		}
+		data, err := io.ReadAll(io.LimitReader(f, limit+1))
+		if err != nil {
+			return nil, err
+		}
+		after, err := f.Stat()
+		if err != nil {
+			return nil, err
+		}
+		if int64(len(data)) != opened.Size() || after.Size() != opened.Size() || !after.ModTime().Equal(opened.ModTime()) {
+			return nil, errors.New("input changed during read")
+		}
+		return data, nil
 	}
-	a, err := os.ReadFile(archive)
+	a, err := readInput(archive, maxArchiveBytes)
 	if err != nil {
 		return err
 	}
-	b, err := os.ReadFile(sbom)
+	b, err := readInput(sbom, 16<<20)
 	if err != nil {
 		return err
 	}

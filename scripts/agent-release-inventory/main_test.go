@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -51,14 +52,14 @@ func archive(t *testing.T, entries ...fixture) []byte {
 }
 
 func TestInventoryBindsActualArchiveAndSBOM(t *testing.T) {
-	a := archive(t, fixture{name: "package/", kind: tar.TypeDir}, fixture{name: "package/b.js", data: "second"}, fixture{name: "package/a.js", data: "first"})
-	b := []byte(`{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,"components":[{"name":"node"}]}`)
+	a := archive(t, fixture{name: "package/", kind: tar.TypeDir}, fixture{name: "package/b.js", data: "second"}, fixture{name: "package/a.js", data: "first"}, fixture{name: "package/runtime/amd64/node.exe", data: "node"}, fixture{name: "package/bin/host.exe", data: "host"})
+	b := []byte(fmt.Sprintf(`{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,"components":[{"name":"node","licenses":[{"license":{"id":"MIT"}}],"hashes":[{"alg":"SHA-256","content":"%s"}]},{"name":"host","hashes":[{"alg":"SHA-256","content":"%s"}]}]}`, checksum([]byte("node")), checksum([]byte("host"))))
 	commit := strings.Repeat("a", 40)
 	v, err := build("tokentimer-agent-1.2.3-windows-amd64.tgz", a, b, "agent.cdx.json", "1.2.3", "amd64", commit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Archive.SHA256 != checksum(a) || v.SBOM.SHA256 != checksum(b) || v.SourceCommit != commit || len(v.Files) != 2 {
+	if v.Archive.SHA256 != checksum(a) || v.SBOM.SHA256 != checksum(b) || v.SourceCommit != commit || len(v.Files) != 4 {
 		t.Fatal("artifact binding missing")
 	}
 	if v.Files[0].Path != "package/a.js" || v.Files[0].SHA256 != checksum([]byte("first")) || v.Files[0].Size != 5 {
@@ -78,6 +79,22 @@ func TestInventoryBindsActualArchiveAndSBOM(t *testing.T) {
 	encoded2, _ := json.Marshal(v2)
 	if !bytes.Equal(encoded, encoded2) {
 		t.Fatal("nondeterministic inventory")
+	}
+	missingHost := []byte(fmt.Sprintf(`{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,"components":[{"name":"node","licenses":[{"license":{"id":"MIT"}}],"hashes":[{"alg":"SHA-256","content":"%s"}]}]}`, checksum([]byte("node"))))
+	if _, err := build("tokentimer-agent-1.2.3-windows-amd64.tgz", a, missingHost, "agent.cdx.json", "1.2.3", "amd64", commit); err == nil || !strings.Contains(err.Error(), "packaged executable") {
+		t.Fatal("missing helper digest accepted")
+	}
+	missingLicense := bytes.Replace(b, []byte(`"licenses":[{"license":{"id":"MIT"}}],`), nil, 1)
+	if _, err := build("tokentimer-agent-1.2.3-windows-amd64.tgz", a, missingLicense, "agent.cdx.json", "1.2.3", "amd64", commit); err == nil || !strings.Contains(err.Error(), "license") {
+		t.Fatal("missing Node license accepted")
+	}
+	misnamedHost := bytes.Replace(b, []byte(`"name":"host"`), []byte(`"name":"unrelated"`), 1)
+	if _, err := build("tokentimer-agent-1.2.3-windows-amd64.tgz", a, misnamedHost, "agent.cdx.json", "1.2.3", "amd64", commit); err == nil || !strings.Contains(err.Error(), "identity and digest") {
+		t.Fatal("unrelated component identity accepted")
+	}
+	wrongNodeDigest := bytes.Replace(b, []byte(checksum([]byte("node"))), []byte(strings.Repeat("a", 64)), 1)
+	if _, err := build("tokentimer-agent-1.2.3-windows-amd64.tgz", a, wrongNodeDigest, "agent.cdx.json", "1.2.3", "amd64", commit); err == nil || !strings.Contains(err.Error(), "Node runtime digest") {
+		t.Fatal("incorrect Node digest accepted")
 	}
 }
 
@@ -102,6 +119,28 @@ func TestRejectUnsafeArchiveEntries(t *testing.T) {
 				t.Fatal("unsafe archive accepted")
 			}
 		})
+	}
+}
+
+func TestTotalEntryLimitCountsDirectories(t *testing.T) {
+	entries := make([]fixture, 0, maxFiles+1)
+	for i := 0; i <= maxFiles; i++ {
+		entries = append(entries, fixture{name: fmt.Sprintf("package/d%05d/", i), kind: tar.TypeDir})
+	}
+	if _, err := listFiles(archive(t, entries...)); err == nil || !strings.Contains(err.Error(), "entry limit") {
+		t.Fatal("excess directories accepted")
+	}
+}
+
+func TestSPDXIncludesPackagedRuntime(t *testing.T) {
+	a := archive(t, fixture{name: "package/runtime/amd64/node.exe", data: "node"})
+	b := []byte(fmt.Sprintf(`{"spdxVersion":"SPDX-2.3","SPDXID":"SPDXRef-DOCUMENT","documentNamespace":"https://example.test/doc","packages":[{"name":"nodejs","SPDXID":"SPDXRef-node","licenseDeclared":"MIT","checksums":[{"algorithm":"SHA256","checksumValue":"%s"}]}]}`, checksum([]byte("node"))))
+	if _, err := build("tokentimer-agent-1.2.3-windows-amd64.tgz", a, b, "sbom.spdx.json", "1.2.3", "amd64", strings.Repeat("a", 40)); err != nil {
+		t.Fatal(err)
+	}
+	b = bytes.Replace(b, []byte(`"licenseDeclared":"MIT"`), []byte(`"licenseDeclared":"NOASSERTION"`), 1)
+	if _, err := build("tokentimer-agent-1.2.3-windows-amd64.tgz", a, b, "sbom.spdx.json", "1.2.3", "amd64", strings.Repeat("a", 40)); err == nil {
+		t.Fatal("unknown license accepted")
 	}
 }
 
