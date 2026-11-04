@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -76,6 +77,26 @@ class CandidateBindingTests(unittest.TestCase):
         raw = json.dumps(self.doc).encode().replace(b'"schemaVersion": 1', b'"schemaVersion": 1, "schemaVersion": 1')
         with self.assertRaises(ValueError):
             binding.validate_binding(self.archive, self.sbom, raw, **self.params)
+
+    def test_cli_emits_only_digest_of_the_validated_inventory_snapshot(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive_file = root / self.params["archive_name"]
+            sbom_file = root / self.params["sbom_name"]
+            inventory_file = root / "inventory.json"
+            inventory = json.dumps(self.doc).encode()
+            archive_file.write_bytes(self.archive)
+            sbom_file.write_bytes(self.sbom)
+            inventory_file.write_bytes(inventory)
+            command = [sys.executable, str(Path(__file__).with_name("windows-release-artifact-binding.py")),
+                       "--archive", str(archive_file), "--sbom", str(sbom_file), "--inventory", str(inventory_file),
+                       "--version", "1.2.3", "--architecture", "amd64", "--source-commit", "a" * 40]
+            good = subprocess.run(command + ["--archive-sha256", sha(self.archive)], capture_output=True, text=True)
+            self.assertEqual(good.returncode, 0, good.stderr)
+            self.assertEqual(good.stdout, sha(inventory) + "\n")
+            bad = subprocess.run(command + ["--archive-sha256", "0" * 64], capture_output=True, text=True)
+            self.assertNotEqual(bad.returncode, 0)
+            self.assertEqual(bad.stdout, "")
 
     def test_inventory_generator_and_independent_binding_agree(self):
         archive = make_archive([("package/runtime/amd64/node.exe", b"node-fixture", tarfile.REGTYPE),

@@ -138,7 +138,7 @@ def validate_binding(archive, sbom, inventory, *, archive_name, sbom_name, versi
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("archive", "sbom", "inventory", "version", "architecture", "source-commit"):
+    for name in ("archive", "sbom", "inventory", "version", "architecture", "source-commit", "archive-sha256"):
         parser.add_argument("--" + name, required=True)
     args = parser.parse_args()
     archive = Path(args.archive)
@@ -152,9 +152,17 @@ def main():
             if not data or len(data) > limit:
                 raise ValueError("Candidate input size outside bounds")
             return data
-    validate_binding(read(archive, MAX_ARCHIVE), read(sbom, MAX_SBOM), read(args.inventory, MAX_INVENTORY),
+    archive_data = read(archive, MAX_ARCHIVE)
+    sbom_data = read(sbom, MAX_SBOM)
+    inventory_data = read(args.inventory, MAX_INVENTORY)
+    if not DIGEST.fullmatch(args.archive_sha256) or _hash(archive_data) != args.archive_sha256:
+        raise ValueError("Independently bound archive digest mismatch")
+    validate_binding(archive_data, sbom_data, inventory_data,
                      archive_name=archive.name, sbom_name=sbom.name, version=args.version,
                      architecture=args.architecture, source_commit=args.source_commit)
+    # Output the hash of the same immutable bytes that were just checked, not
+    # a second path read that could observe a replacement.
+    print(_hash(inventory_data))
 
 
 if __name__ == "__main__":
