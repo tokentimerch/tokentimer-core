@@ -79,11 +79,16 @@ func TestPackageDirectoryIdentityUnderLauncherJob(t *testing.T) {
 	// trusting or omitting the caller's environment.
 	t.Setenv("PATHEXT", ".UNTRUSTED")
 	root := t.TempDir()
+	t.Setenv("PATH", root)
 	installer, err := filepath.Abs(filepath.Join("..", "..", "scripts", "install-agent.ps1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	quote := func(s string) string { return strings.ReplaceAll(s, "'", "''") }
+	childScript := filepath.Join(root, "invoke-helper.js")
+	if err := os.WriteFile(childScript, []byte(`require('child_process').execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'exit 0'], {stdio: 'ignore'});`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	harness := fmt.Sprintf(`Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $script:NodeExe='%s'
@@ -94,7 +99,9 @@ if ($errors.Count -or $f.Count -ne 1) { throw 'identity function unavailable' }
 Invoke-Expression $f[0].Extent.Text
 $id=Get-PackageDirectoryIdentity -Directory '%s'
 if ($id -notmatch '^\d+:[1-9]\d*$') { throw 'invalid identity' }
-`, quote(node), quote(installer), quote(root))
+& $script:NodeExe '%s'
+if ($LASTEXITCODE -ne 0) { throw 'Node could not invoke the system PowerShell ACL helper' }
+`, quote(node), quote(installer), quote(root), quote(childScript))
 	script := filepath.Join(root, "identity.ps1")
 	if err := os.WriteFile(script, []byte(harness), 0600); err != nil {
 		t.Fatal(err)
