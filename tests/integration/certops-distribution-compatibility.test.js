@@ -37,13 +37,14 @@ describe("Independent PR migration and preview compatibility",function(){
         })));
       }else execute(upgrade);
       const after=(await client.query("SELECT * FROM migrations ORDER BY version")).rows;
-      assert.deepEqual(after.filter(row=>preserved.some(original=>original.version===row.version)),preserved);assert.equal(after.length,97);
-      assert.deepEqual(after.slice(-5).map(({version,name})=>({version,name})),[
+      assert.deepEqual(after.filter(row=>preserved.some(original=>original.version===row.version)),preserved);assert.equal(after.length,98);
+      assert.deepEqual(after.slice(-6).map(({version,name})=>({version,name})),[
         {version:93,name:"pagerduty_resolution_reason"},
         {version:94,name:"pagerduty_operator_actions"},
         {version:95,name:"remove_pagerduty_rest_lookup"},
         {version:96,name:"certops_consumer_staging"},
         {version:97,name:"certops_review_authority_epochs"},
+        {version:98,name:"certops_manual_rollout_authority"},
       ]);
       for(const table of ["certops_material_cleanups","certops_consumer_verification_outcomes","contact_channel_verifications","pagerduty_incidents"])
         assert.equal((await client.query("SELECT to_regclass($1)::text AS name",[table])).rows[0].name,table);
