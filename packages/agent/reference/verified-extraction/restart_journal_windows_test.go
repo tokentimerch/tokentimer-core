@@ -5,6 +5,7 @@ package verifiedextraction
 import (
 	"context"
 	"encoding/json"
+	"golang.org/x/sys/windows"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -294,5 +295,170 @@ func TestStopOnlyJournalFailsClosedAfterForcedTermination(t *testing.T) {
 				t.Fatal("stop-only retry performed SCM action after interruption")
 			}
 		})
+	}
+}
+func TestDisableStopJournalBindsOriginalStartType(t *testing.T) {
+	f := newReleaseFixture(t, strings.Repeat("f", 32))
+	archive := filepath.Join(f.parent, "disable-review")
+	if err := createRestrictedDirectory(archive, f.sddl); err != nil {
+		t.Fatal(err)
+	}
+	binding := upgradeJournalBinding{Volume: 1, IndexHigh: 2, IndexLow: 3, SHA256: strings.Repeat("a", 64)}
+	if j, err := openDisableStopJournal(archive, f.sddl, f.txn, binding, f.stagePolicy, windows.SERVICE_DISABLED); err == nil {
+		j.Close()
+		t.Fatal("disabled initial start accepted")
+	}
+	j, err := openDisableStopJournal(archive, f.sddl, f.txn, binding, f.stagePolicy, windows.SERVICE_AUTO_START)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = j.FlushStep("verify-before"); err != nil {
+		t.Fatal(err)
+	}
+	if err = j.FlushStep("stop-requested"); err == nil {
+		t.Fatal("stop accepted before disable")
+	}
+	if err = j.FlushStep("disable-requested"); err != nil {
+		t.Fatal(err)
+	}
+	if err = j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if j, err = openDisableStopJournal(archive, f.sddl, f.txn, binding, f.stagePolicy, windows.SERVICE_DEMAND_START); err == nil {
+		j.Close()
+		t.Fatal("changed start type accepted")
+	}
+	j, err = openDisableStopJournal(archive, f.sddl, f.txn, binding, f.stagePolicy, windows.SERVICE_AUTO_START)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	if j.CanRestart() {
+		t.Fatal("interrupted disable can restart automatically")
+	}
+}
+func TestDisableStopJournalFailsClosedAfterForcedTermination(t *testing.T) {
+	binding := upgradeJournalBinding{Volume: 1, IndexHigh: 2, IndexLow: 3, SHA256: strings.Repeat("a", 64)}
+	if os.Getenv("TT_DISABLE_REVIEW_CHILD") == "1" {
+		var w releaseFixtureWire
+		if err := json.Unmarshal([]byte(os.Getenv("TT_DISABLE_REVIEW_FIXTURE")), &w); err != nil {
+			t.Fatal(err)
+		}
+		j, err := openDisableStopJournal(filepath.Join(w.Parent, "disable-review"), w.SDDL, w.Transaction, binding, w.StagePolicy, windows.SERVICE_AUTO_START)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer j.Close()
+		err = disableAndStopUnderVerifiedLock(context.Background(), &fakeDisableStop{}, pauseRestartJournal{inner: j, stop: os.Getenv("TT_DISABLE_REVIEW_STEP"), ready: filepath.Join(w.Parent, "disable-ready")})
+		t.Fatalf("unexpected return: %v", err)
+	}
+	for _, step := range []string{"verify-before", "disable-requested", "verify-disabled", "stop-requested", "verify-stopped", "stopped-verified"} {
+		t.Run(step, func(t *testing.T) {
+			f := newReleaseFixture(t, strings.Repeat("f", 32))
+			archive := filepath.Join(f.parent, "disable-review")
+			if err := createRestrictedDirectory(archive, f.sddl); err != nil {
+				t.Fatal(err)
+			}
+			wire, _ := json.Marshal(releaseFixtureWire{f.parent, f.journal, f.sddl, f.txn, f.parentPolicy, f.stagePolicy})
+			exe, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(exe, "-test.run=^TestDisableStopJournalFailsClosedAfterForcedTermination$")
+			cmd.Env = append(os.Environ(), "TT_DISABLE_REVIEW_CHILD=1", "TT_DISABLE_REVIEW_FIXTURE="+string(wire), "TT_DISABLE_REVIEW_STEP="+step)
+			var output strings.Builder
+			cmd.Stdout = &output
+			cmd.Stderr = &output
+			if err = cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+			ready := filepath.Join(f.parent, "disable-ready")
+			deadline := time.Now().Add(15 * time.Second)
+			for time.Now().Before(deadline) {
+				if _, err := os.Stat(ready); err == nil {
+					break
+				}
+				time.Sleep(25 * time.Millisecond)
+			}
+			if _, err = os.Stat(ready); err != nil {
+				t.Fatalf("checkpoint not reached: %s", output.String())
+			}
+			if err = cmd.Process.Kill(); err != nil {
+				t.Fatal(err)
+			}
+			_ = cmd.Wait()
+			j, err := openDisableStopJournal(archive, f.sddl, f.txn, binding, f.stagePolicy, windows.SERVICE_AUTO_START)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer j.Close()
+			c := &fakeDisableStop{}
+			err = disableAndStopUnderVerifiedLock(context.Background(), c, j)
+			if step == "verify-before" && err != nil {
+				t.Fatalf("pre-disable retry rejected: %v", err)
+			}
+			if step != "verify-before" && (err == nil || len(c.calls) != 0) {
+				t.Fatal("retry performed SCM action after interrupted disable")
+			}
+		})
+	}
+}
+
+func TestDisableStopJournalCannotTransitionToStart(t *testing.T) {
+	p := restartProgress{mode: "disable-and-stop-v1"}
+	for _, step := range []string{"verify-before", "disable-requested", "verify-disabled", "stop-requested", "verify-stopped"} {
+		next, err := advanceRestartProgress(p, step)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p = next
+	}
+	if _, err := advanceRestartProgress(p, "start-requested"); err == nil {
+		t.Fatal("disable-and-stop journal accepted start")
+	}
+	if _, err := advanceRestartProgress(p, "stopped-verified"); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestDisableStopProtectedJournalRejectsStart(t *testing.T) {
+	f := newReleaseFixture(t, strings.Repeat("f", 32))
+	archive := filepath.Join(f.parent, "disable-review")
+	if err := createRestrictedDirectory(archive, f.sddl); err != nil {
+		t.Fatal(err)
+	}
+	binding := upgradeJournalBinding{Volume: 1, IndexHigh: 2, IndexLow: 3, SHA256: strings.Repeat("a", 64)}
+	j, err := openDisableStopJournal(archive, f.sddl, f.txn, binding, f.stagePolicy, windows.SERVICE_AUTO_START)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []string{"verify-before", "disable-requested", "verify-disabled", "stop-requested", "verify-stopped"} {
+		if err = j.FlushStep(step); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = j.FlushStep("start-requested"); err == nil {
+		t.Fatal("protected disable-and-stop journal accepted start")
+	}
+	if err = j.FlushStep("stopped-verified"); err != nil {
+		t.Fatal(err)
+	}
+	if err = j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(archive, "restart-review.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "start-requested") {
+		t.Fatal("refused start was persisted")
+	}
+	reopened, err := openDisableStopJournal(archive, f.sddl, f.txn, binding, f.stagePolicy, windows.SERVICE_AUTO_START)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if reopened.CanRestart() {
+		t.Fatal("completed disable-and-stop resumed automatically")
 	}
 }

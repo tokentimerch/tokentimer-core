@@ -89,3 +89,39 @@ func stopUnderVerifiedLock(ctx context.Context, c restartController, journal res
 	}
 	return nil
 }
+
+type disableStopController interface {
+	VerifyBefore(context.Context) error
+	RequestDisable(context.Context) error
+	VerifyDisabled(context.Context) error
+	RequestStop(context.Context) error
+	WaitStoppedAndOldProcessesExited(context.Context) error
+}
+
+// disableAndStopUnderVerifiedLock records the original start type in the
+// already-flushed journal header. It never re-enables or starts the service.
+func disableAndStopUnderVerifiedLock(ctx context.Context, c disableStopController, j restartStepWriter) error {
+	if c == nil || j == nil || !j.CanRestart() {
+		return fmt.Errorf("disable-and-stop prerequisites unavailable")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	for _, step := range []struct {
+		name string
+		run  func(context.Context) error
+	}{{"verify-before", c.VerifyBefore}, {"disable-requested", c.RequestDisable}, {"verify-disabled", c.VerifyDisabled}, {"stop-requested", c.RequestStop}, {"verify-stopped", c.WaitStoppedAndOldProcessesExited}} {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := j.FlushStep(step.name); err != nil {
+			return fmt.Errorf("disable-and-stop checkpoint failed")
+		}
+		if err := step.run(ctx); err != nil {
+			return fmt.Errorf("disable-and-stop step %s failed", step.name)
+		}
+	}
+	if err := j.FlushStep("stopped-verified"); err != nil {
+		return fmt.Errorf("disable-and-stop checkpoint failed")
+	}
+	return nil
+}

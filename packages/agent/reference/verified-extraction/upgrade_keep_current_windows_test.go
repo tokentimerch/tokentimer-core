@@ -103,7 +103,7 @@ func reviewedUpgradeFixture(t *testing.T) (releaseFixture, string, []byte) {
 	return f, root, b
 }
 func testReviewedUpgrade(f releaseFixture, actors, keep bool, marker func(windows.Handle, string, string) error, rename func(windows.Handle, string) error) (string, error) {
-	return releaseReviewedUpgrade(f.parent, f.journal, f.txn, f.parentPolicy, f.stagePolicy, f.sddl, actors, keep, true, fixtureIdentityPin, func(string, string, identityContract, bootstraplock.Policy) error { return nil }, func(string) error { return nil }, testActiveVerifier, testStopper(f), marker, rename)
+	return releaseReviewedUpgrade(f.parent, f.journal, f.txn, f.parentPolicy, f.stagePolicy, f.sddl, actors, keep, true, true, fixtureIdentityPin, func(string, string, identityContract, bootstraplock.Policy) error { return nil }, func(string) error { return nil }, testActiveVerifier, testStopper(f), marker, rename)
 }
 func TestReviewedUpgradePreservesDataAndRequiresBothDecisions(t *testing.T) {
 	f, root, journal := reviewedUpgradeFixture(t)
@@ -218,7 +218,7 @@ func TestReviewedUpgradeSurvivesKilledProcess(t *testing.T) {
 			}
 			return nil
 		}
-		_, err := releaseReviewedUpgrade(w.Parent, w.Journal, w.Transaction, w.ParentPolicy, w.StagePolicy, w.SDDL, true, true, true, fixtureIdentityPin, func(string, string, identityContract, bootstraplock.Policy) error { return nil }, func(string) error { return nil }, testActiveVerifier, testStopper(releaseFixture{parent: w.Parent, journal: w.Journal, sddl: w.SDDL, txn: w.Transaction, parentPolicy: w.ParentPolicy, stagePolicy: w.StagePolicy}), marker, rename)
+		_, err := releaseReviewedUpgrade(w.Parent, w.Journal, w.Transaction, w.ParentPolicy, w.StagePolicy, w.SDDL, true, true, true, true, fixtureIdentityPin, func(string, string, identityContract, bootstraplock.Policy) error { return nil }, func(string) error { return nil }, testActiveVerifier, testStopper(releaseFixture{parent: w.Parent, journal: w.Journal, sddl: w.SDDL, txn: w.Transaction, parentPolicy: w.ParentPolicy, stagePolicy: w.StagePolicy}), marker, rename)
 		t.Fatalf("unexpected return: %v", err)
 	}
 	for _, step := range []string{"before-first", "after-first", "after-second", "after-sentinel", "after-journal"} {
@@ -354,7 +354,7 @@ func TestIdentityContractRequiresIndependentPin(t *testing.T) {
 }
 func TestReviewedUpgradeRefusesUnverifiedRuntimeBeforeMutation(t *testing.T) {
 	f, _, journal := reviewedUpgradeFixture(t)
-	_, err := releaseReviewedUpgrade(f.parent, f.journal, f.txn, f.parentPolicy, f.stagePolicy, f.sddl, true, true, true, fixtureIdentityPin, func(string, string, identityContract, bootstraplock.Policy) error { return fmt.Errorf("bad runtime") }, func(string) error { return nil }, testActiveVerifier, testStopper(f), renameProtectedMarker, renameOpenFile)
+	_, err := releaseReviewedUpgrade(f.parent, f.journal, f.txn, f.parentPolicy, f.stagePolicy, f.sddl, true, true, true, true, fixtureIdentityPin, func(string, string, identityContract, bootstraplock.Policy) error { return fmt.Errorf("bad runtime") }, func(string) error { return nil }, testActiveVerifier, testStopper(f), renameProtectedMarker, renameOpenFile)
 	if err == nil {
 		t.Fatal("unverified runtime accepted")
 	}
@@ -395,7 +395,7 @@ func TestReviewedUpgradeRejectsUntrustedContractBeforeMutation(t *testing.T) {
 			}
 			called := false
 			verify := func(string, string, identityContract, bootstraplock.Policy) error { called = true; return nil }
-			if _, err = releaseReviewedUpgrade(f.parent, f.journal, f.txn, f.parentPolicy, f.stagePolicy, f.sddl, true, true, true, fixtureIdentityPin, verify, func(string) error { return nil }, testActiveVerifier, testStopper(f), renameProtectedMarker, renameOpenFile); err == nil {
+			if _, err = releaseReviewedUpgrade(f.parent, f.journal, f.txn, f.parentPolicy, f.stagePolicy, f.sddl, true, true, true, true, fixtureIdentityPin, verify, func(string) error { return nil }, testActiveVerifier, testStopper(f), renameProtectedMarker, renameOpenFile); err == nil {
 				t.Fatal("untrusted contract accepted")
 			}
 			if called {
@@ -415,7 +415,7 @@ func TestReviewedUpgradeRejectsChangedStateBeforeArchiving(t *testing.T) {
 	f, root, journal := reviewedUpgradeFixture(t)
 	service := func(string) error { return createRestrictedDirectory(filepath.Join(root, "app.staging.321"), f.sddl) }
 	verify := func(string, string, identityContract, bootstraplock.Policy) error { return nil }
-	if _, err := releaseReviewedUpgrade(f.parent, f.journal, f.txn, f.parentPolicy, f.stagePolicy, f.sddl, true, true, true, fixtureIdentityPin, verify, service, testActiveVerifier, testStopper(f), renameProtectedMarker, renameOpenFile); err == nil {
+	if _, err := releaseReviewedUpgrade(f.parent, f.journal, f.txn, f.parentPolicy, f.stagePolicy, f.sddl, true, true, true, true, fixtureIdentityPin, verify, service, testActiveVerifier, testStopper(f), renameProtectedMarker, renameOpenFile); err == nil {
 		t.Fatal("new staging location accepted")
 	}
 	if _, err := os.Stat(filepath.Join(f.parent, "TokenTimer-UpgradeReview-"+f.txn)); !os.IsNotExist(err) {
@@ -449,7 +449,7 @@ func TestReviewedUpgradeRechecksServiceUnderInventoryLockAndBeforeJournalMove(t 
 				return nil
 			}
 			verify := func(string, string, identityContract, bootstraplock.Policy) error { return nil }
-			if _, err := releaseReviewedUpgrade(f.parent, f.journal, f.txn, f.parentPolicy, f.stagePolicy, f.sddl, true, true, true, fixtureIdentityPin, verify, service, testActiveVerifier, testStopper(f), renameProtectedMarker, renameOpenFile); err == nil {
+			if _, err := releaseReviewedUpgrade(f.parent, f.journal, f.txn, f.parentPolicy, f.stagePolicy, f.sddl, true, true, true, true, fixtureIdentityPin, verify, service, testActiveVerifier, testStopper(f), renameProtectedMarker, renameOpenFile); err == nil {
 				t.Fatal("changed service accepted")
 			}
 			data, err := os.ReadFile(f.journal)
@@ -469,23 +469,23 @@ func (g *testStoppedGuard) Verify() error { return nil }
 func (g *testStoppedGuard) Close() error  { return g.journal.Close() }
 func testStopper(f releaseFixture) func(string, string, upgradeJournalBinding) (reviewedStoppedGuard, error) {
 	return func(_ string, archive string, binding upgradeJournalBinding) (reviewedStoppedGuard, error) {
-		j, err := openProtectedRestartJournal(archive, f.sddl, f.txn, binding, f.stagePolicy)
+		j, err := openDisableStopJournal(archive, f.sddl, f.txn, binding, f.stagePolicy, windows.SERVICE_AUTO_START)
 		if err != nil {
 			return nil, err
 		}
-		if err = stopUnderVerifiedLock(context.Background(), &fakeRestart{}, j); err != nil {
+		if err = disableAndStopUnderVerifiedLock(context.Background(), &fakeDisableStop{}, j); err != nil {
 			j.Close()
 			return nil, err
 		}
 		return &testStoppedGuard{journal: j}, nil
 	}
 }
-func TestReviewedUpgradeRequiresExplicitLeaveStopped(t *testing.T) {
+func TestReviewedUpgradeRequiresExplicitLeaveDisabled(t *testing.T) {
 	f, _, journal := reviewedUpgradeFixture(t)
 	called := false
 	verify := func(string, string, identityContract, bootstraplock.Policy) error { called = true; return nil }
-	if _, err := releaseReviewedUpgrade(f.parent, f.journal, f.txn, f.parentPolicy, f.stagePolicy, f.sddl, true, true, false, fixtureIdentityPin, verify, func(string) error { return nil }, testActiveVerifier, testStopper(f), renameProtectedMarker, renameOpenFile); err == nil {
-		t.Fatal("missing leave-stopped decision accepted")
+	if _, err := releaseReviewedUpgrade(f.parent, f.journal, f.txn, f.parentPolicy, f.stagePolicy, f.sddl, true, true, false, true, fixtureIdentityPin, verify, func(string) error { return nil }, testActiveVerifier, testStopper(f), renameProtectedMarker, renameOpenFile); err == nil {
+		t.Fatal("missing leave-disabled decision accepted")
 	}
 	if called {
 		t.Fatal("missing decision reached identity verification")
@@ -521,7 +521,7 @@ func TestReviewedUpgradePreservesJournalWhenStoppedGuardFails(t *testing.T) {
 				return &failingStoppedGuard{base: base, failAt: failAt}, nil
 			}
 			verify := func(string, string, identityContract, bootstraplock.Policy) error { return nil }
-			if _, err := releaseReviewedUpgrade(f.parent, f.journal, f.txn, f.parentPolicy, f.stagePolicy, f.sddl, true, true, true, fixtureIdentityPin, verify, func(string) error { return nil }, testActiveVerifier, stop, renameProtectedMarker, renameOpenFile); err == nil {
+			if _, err := releaseReviewedUpgrade(f.parent, f.journal, f.txn, f.parentPolicy, f.stagePolicy, f.sddl, true, true, true, true, fixtureIdentityPin, verify, func(string) error { return nil }, testActiveVerifier, stop, renameProtectedMarker, renameOpenFile); err == nil {
 				t.Fatal("failed stop guard accepted")
 			}
 			after, err := os.ReadFile(f.journal)
@@ -532,5 +532,21 @@ func TestReviewedUpgradePreservesJournalWhenStoppedGuardFails(t *testing.T) {
 				t.Fatal("failed stop guard resumed automatically")
 			}
 		})
+	}
+}
+
+func TestReviewedUpgradeRequiresPriorActionReview(t *testing.T) {
+	f, _, journal := reviewedUpgradeFixture(t)
+	called := false
+	verify := func(string, string, identityContract, bootstraplock.Policy) error { called = true; return nil }
+	if _, err := releaseReviewedUpgrade(f.parent, f.journal, f.txn, f.parentPolicy, f.stagePolicy, f.sddl, true, true, true, false, fixtureIdentityPin, verify, func(string) error { return nil }, testActiveVerifier, testStopper(f), renameProtectedMarker, renameOpenFile); err == nil {
+		t.Fatal("missing prior-action review accepted")
+	}
+	if called {
+		t.Fatal("missing prior-action review reached verification")
+	}
+	after, err := os.ReadFile(f.journal)
+	if err != nil || string(after) != string(journal) {
+		t.Fatal("journal changed without prior-action review")
 	}
 }

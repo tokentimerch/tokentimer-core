@@ -16,10 +16,12 @@ import (
 )
 
 type restartJournalHeader struct {
-	Kind        string                `json:"kind"`
-	Transaction string                `json:"transaction"`
-	OperatorSID string                `json:"operatorSid"`
-	Journal     upgradeJournalBinding `json:"journal"`
+	Kind              string                `json:"kind"`
+	Transaction       string                `json:"transaction"`
+	OperatorSID       string                `json:"operatorSid"`
+	Journal           upgradeJournalBinding `json:"journal"`
+	Mode              string                `json:"mode,omitempty"`
+	OriginalStartType uint32                `json:"originalStartType,omitempty"`
 }
 type protectedRestartJournal struct {
 	file           *os.File
@@ -52,12 +54,21 @@ func (j *protectedRestartJournal) FlushStep(step string) error {
 	}
 	j.size += int64(n)
 	j.progress = next
-	if step == "stop-requested" {
+	if next.phase > 0 {
 		j.stopRequested = true
 	}
 	return nil
 }
-func openProtectedRestartJournal(archive, sddl, transaction string, binding upgradeJournalBinding, policy bootstraplock.Policy) (j *protectedRestartJournal, err error) {
+func openProtectedRestartJournal(archive, sddl, transaction string, binding upgradeJournalBinding, policy bootstraplock.Policy) (*protectedRestartJournal, error) {
+	return openRestartJournal(archive, sddl, transaction, binding, policy, "", 0)
+}
+func openDisableStopJournal(archive, sddl, transaction string, binding upgradeJournalBinding, policy bootstraplock.Policy, originalStartType uint32) (*protectedRestartJournal, error) {
+	if originalStartType != windows.SERVICE_AUTO_START && originalStartType != windows.SERVICE_DEMAND_START {
+		return nil, fmt.Errorf("unsupported original start type")
+	}
+	return openRestartJournal(archive, sddl, transaction, binding, policy, "disable-and-stop-v1", originalStartType)
+}
+func openRestartJournal(archive, sddl, transaction string, binding upgradeJournalBinding, policy bootstraplock.Policy, mode string, originalStartType uint32) (j *protectedRestartJournal, err error) {
 	if !stageNamePattern.MatchString("TokenTimer-Staging-" + transaction) {
 		return nil, fmt.Errorf("invalid transaction")
 	}
@@ -65,7 +76,7 @@ func openProtectedRestartJournal(archive, sddl, transaction string, binding upgr
 	if err != nil || token.User.Sid == nil {
 		return nil, fmt.Errorf("operator identity unavailable")
 	}
-	expected := restartJournalHeader{Kind: "review-restart-v1", Transaction: transaction, OperatorSID: token.User.Sid.String(), Journal: binding}
+	expected := restartJournalHeader{Kind: "review-restart-v1", Transaction: transaction, OperatorSID: token.User.Sid.String(), Journal: binding, Mode: mode, OriginalStartType: originalStartType}
 	sd, err := windows.SecurityDescriptorFromString(sddl)
 	if err != nil {
 		return nil, err
@@ -113,7 +124,7 @@ func openProtectedRestartJournal(archive, sddl, transaction string, binding upgr
 		if e = f.Sync(); e != nil {
 			return nil, fmt.Errorf("restart journal header flush failed")
 		}
-		return &protectedRestartJournal{file: f, size: int64(n)}, nil
+		return &protectedRestartJournal{file: f, size: int64(n), progress: restartProgress{mode: mode}}, nil
 	}
 	raw, e := io.ReadAll(io.LimitReader(f, (64<<10)+1))
 	if e != nil || len(raw) == 0 || len(raw) > 64<<10 || raw[len(raw)-1] != '\n' {
@@ -136,7 +147,7 @@ func openProtectedRestartJournal(archive, sddl, transaction string, binding upgr
 	if d.Decode(&actual) != nil || actual != expected {
 		return nil, fmt.Errorf("restart journal binding mismatch")
 	}
-	progress := restartProgress{}
+	progress := restartProgress{mode: mode}
 	for scanner.Scan() {
 		next, e := advanceRestartProgress(progress, scanner.Text())
 		if e != nil {
@@ -157,6 +168,7 @@ func openProtectedRestartJournal(archive, sddl, transaction string, binding upgr
 type restartProgress struct {
 	phase    int
 	observed bool
+	mode     string
 }
 
 func advanceRestartProgress(p restartProgress, step string) (restartProgress, error) {
@@ -166,7 +178,21 @@ func advanceRestartProgress(p restartProgress, step string) (restartProgress, er
 			p.observed = true
 			return p, nil
 		}
-		if step == "stop-requested" && p.observed {
+		if step == "disable-requested" && p.observed && p.mode == "disable-and-stop-v1" {
+			p.phase = 7
+			return p, nil
+		}
+		if step == "stop-requested" && p.observed && p.mode == "" {
+			p.phase = 1
+			return p, nil
+		}
+	case 7:
+		if step == "verify-disabled" && p.mode == "disable-and-stop-v1" {
+			p.phase = 8
+			return p, nil
+		}
+	case 8:
+		if step == "stop-requested" && p.mode == "disable-and-stop-v1" {
 			p.phase = 1
 			return p, nil
 		}
@@ -180,7 +206,7 @@ func advanceRestartProgress(p restartProgress, step string) (restartProgress, er
 			p.phase = 6
 			return p, nil
 		}
-		if step == "start-requested" {
+		if step == "start-requested" && p.mode == "" {
 			p.phase = 3
 			return p, nil
 		}

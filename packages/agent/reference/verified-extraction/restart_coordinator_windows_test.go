@@ -101,3 +101,47 @@ func TestStopOnlyNeverStartsServiceAndFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+type fakeDisableStop struct{ fakeRestart }
+
+func (f *fakeDisableStop) RequestDisable(context.Context) error { return f.step("disable-requested") }
+func (f *fakeDisableStop) VerifyDisabled(context.Context) error { return f.step("verify-disabled") }
+func TestDisableStopProtocolFlushesBeforeEveryAction(t *testing.T) {
+	names := []string{"verify-before", "disable-requested", "verify-disabled", "stop-requested", "verify-stopped"}
+	for i, name := range names {
+		t.Run(name, func(t *testing.T) {
+			for _, kind := range []string{"journal", "service"} {
+				t.Run(kind, func(t *testing.T) {
+					c := &fakeDisableStop{}
+					j := &fakeRestartJournal{}
+					if kind == "journal" {
+						j.fail = name
+					} else {
+						c.fail = name
+					}
+					if err := disableAndStopUnderVerifiedLock(context.Background(), c, j); err == nil {
+						t.Fatal("failure accepted")
+					}
+					want := i
+					if kind == "service" {
+						want++
+					}
+					if !reflect.DeepEqual(c.calls, names[:want]) && !(want == 0 && len(c.calls) == 0) {
+						t.Fatalf("unexpected actions: %v", c.calls)
+					}
+					if !reflect.DeepEqual(j.steps, names[:i+1]) {
+						t.Fatalf("unexpected checkpoints: %v", j.steps)
+					}
+				})
+			}
+		})
+	}
+	c := &fakeDisableStop{}
+	j := &fakeRestartJournal{}
+	if err := disableAndStopUnderVerifiedLock(context.Background(), c, j); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(c.calls, names) || len(j.steps) != 6 || j.steps[5] != "stopped-verified" {
+		t.Fatal("incomplete sequence")
+	}
+}

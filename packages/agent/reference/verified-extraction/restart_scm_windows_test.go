@@ -141,3 +141,13 @@ func TestNativeStopFactoryRejectsAbsentPendingProofBeforeSCM(t *testing.T) {
 		t.Fatal("unqualified stop factory accepted")
 	}
 }
+func TestDisableStopRejectsCommandRebootAndUnknownFailureActions(t *testing.T) {
+	for _, kind := range []int{mgr.RunCommand, mgr.ComputerReboot, 99} {
+		if err := validateServiceFailureActions([]mgr.RecoveryAction{{Type: kind}}); err == nil {
+			t.Fatalf("unsafe action %d accepted", kind)
+		}
+	}
+	if err := validateServiceFailureActions([]mgr.RecoveryAction{{Type: mgr.NoAction}, {Type: mgr.ServiceRestart}}); err != nil {
+		t.Fatal(err)
+	}
+}

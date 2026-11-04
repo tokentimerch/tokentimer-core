@@ -503,3 +503,215 @@ func requireNoPendingRestart(proof func() error) error {
 	}
 	return nil
 }
+
+type nativeDisableStopController struct {
+	*nativeRestartController
+	originalStartType uint32
+}
+
+func (c *nativeDisableStopController) VerifyBefore(ctx context.Context) error {
+	if c.service == nil {
+		return fmt.Errorf("service unavailable")
+	}
+	cfg, err := c.service.Config()
+	if err != nil {
+		return err
+	}
+	if err = validateSCMConfig(cfg, c.app, runtime.GOARCH); err != nil {
+		return err
+	}
+	if cfg.StartType != c.originalStartType || (cfg.StartType != windows.SERVICE_AUTO_START && cfg.StartType != windows.SERVICE_DEMAND_START) {
+		return fmt.Errorf("service start type changed")
+	}
+	if err = checkServiceFailureActions(c.service); err != nil {
+		return err
+	}
+	status, err := c.service.Query()
+	if err != nil {
+		return err
+	}
+	return validateStopEntryStatus(status)
+}
+func (c *nativeDisableStopController) RequestDisable(ctx context.Context) error {
+	if err := c.VerifyBefore(ctx); err != nil {
+		return err
+	}
+	return windows.ChangeServiceConfig(c.service.Handle, windows.SERVICE_NO_CHANGE, windows.SERVICE_DISABLED, windows.SERVICE_NO_CHANGE, nil, nil, nil, nil, nil, nil, nil)
+}
+func (c *nativeDisableStopController) VerifyDisabled(ctx context.Context) error {
+	cfg, err := c.service.Config()
+	if err != nil {
+		return err
+	}
+	if err = validateSCMConfig(cfg, c.app, runtime.GOARCH); err != nil {
+		return err
+	}
+	if cfg.StartType != windows.SERVICE_DISABLED {
+		return fmt.Errorf("service is not disabled")
+	}
+	return checkServiceFailureActions(c.service)
+}
+func checkServiceFailureActions(service *mgr.Service) error {
+	actions, err := service.RecoveryActions()
+	if err != nil {
+		return fmt.Errorf("service recovery actions unavailable")
+	}
+	return validateServiceFailureActions(actions)
+}
+func validateServiceFailureActions(actions []mgr.RecoveryAction) error {
+	for _, action := range actions {
+		if action.Type != mgr.NoAction && action.Type != mgr.ServiceRestart {
+			return fmt.Errorf("service recovery action requires manual review")
+		}
+	}
+	return nil
+}
+
+type disabledSCMGuard struct {
+	manager    *mgr.Mgr
+	controller *nativeDisableStopController
+	journal    *protectedRestartJournal
+}
+
+func (g *disabledSCMGuard) Close() error {
+	g.controller.Close()
+	_ = g.journal.Close()
+	_ = g.controller.service.Close()
+	return g.manager.Disconnect()
+}
+func (g *disabledSCMGuard) Verify() error {
+	c := g.controller
+	cfg, err := c.service.Config()
+	if err != nil {
+		return err
+	}
+	if err = validateSCMConfig(cfg, c.app, runtime.GOARCH); err != nil {
+		return err
+	}
+	if cfg.StartType != windows.SERVICE_DISABLED {
+		return fmt.Errorf("service is no longer disabled")
+	}
+	if err = checkServiceFailureActions(c.service); err != nil {
+		return err
+	}
+	status, err := c.service.Query()
+	if err != nil || status.State != svc.Stopped || status.ProcessId != 0 {
+		return fmt.Errorf("service no longer stopped")
+	}
+	if len(c.old) != 2 {
+		return fmt.Errorf("previous process handles unavailable")
+	}
+	for _, h := range c.old {
+		state, e := windows.WaitForSingleObject(h, 0)
+		if e != nil || state != windows.WAIT_OBJECT_0 {
+			return fmt.Errorf("previous service process not confirmed exited")
+		}
+	}
+	for _, pid := range []uint32{c.oldHostPID, c.oldNodePID} {
+		if pid == 0 {
+			return fmt.Errorf("previous process identity unavailable")
+		}
+		children, e := hasDirectChildren(pid)
+		if e != nil || children {
+			return fmt.Errorf("previous service descendants remain")
+		}
+	}
+	return nil
+}
+
+// disableAndStopServiceForReview requires a protected decision and locked
+// signed inventory. It leaves the service disabled and never re-enables it.
+// SCM actions queued from earlier configurations cannot be enumerated here;
+// operators must independently review prior commands and other actors. A
+// crash after disabling requires support; do not automatically re-enable.
+func disableAndStopServiceForReview(ctx context.Context, app, archive, sddl, transaction string, binding upgradeJournalBinding, policy bootstraplock.Policy) (guard *disabledSCMGuard, err error) {
+	manager, err := mgr.Connect()
+	if err != nil {
+		return nil, fmt.Errorf("service manager unavailable")
+	}
+	defer func() {
+		if err != nil {
+			manager.Disconnect()
+		}
+	}()
+	service, err := manager.OpenService("TokenTimerAgent")
+	if err != nil {
+		return nil, fmt.Errorf("service unavailable")
+	}
+	defer func() {
+		if err != nil {
+			service.Close()
+		}
+	}()
+	cfg, err := service.Config()
+	if err != nil {
+		return nil, fmt.Errorf("service configuration unavailable")
+	}
+	if err = validateSCMConfig(cfg, app, runtime.GOARCH); err != nil {
+		return nil, err
+	}
+	if cfg.StartType != windows.SERVICE_AUTO_START && cfg.StartType != windows.SERVICE_DEMAND_START {
+		return nil, fmt.Errorf("unsupported initial service start type")
+	}
+	if err = checkServiceFailureActions(service); err != nil {
+		return nil, err
+	}
+	controller := &nativeDisableStopController{nativeRestartController: &nativeRestartController{service: service, app: app}, originalStartType: cfg.StartType}
+	defer func() {
+		if err != nil {
+			controller.Close()
+		}
+	}()
+	j, err := openDisableStopJournal(archive, sddl, transaction, binding, policy, cfg.StartType)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			j.Close()
+		}
+	}()
+	if err = disableAndStopUnderVerifiedLock(ctx, controller, j); err != nil {
+		return nil, err
+	}
+	guard = &disabledSCMGuard{manager: manager, controller: controller, journal: j}
+	if err = guard.Verify(); err != nil {
+		return nil, err
+	}
+	return guard, nil
+}
+func checkServiceBeforeDisable(app string) error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService("TokenTimerAgent")
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	cfg, err := s.Config()
+	if err != nil {
+		return err
+	}
+	if err = validateSCMConfig(cfg, app, runtime.GOARCH); err != nil {
+		return err
+	}
+	if cfg.StartType != windows.SERVICE_AUTO_START && cfg.StartType != windows.SERVICE_DEMAND_START {
+		return fmt.Errorf("unsupported initial service start type")
+	}
+	if err = checkServiceFailureActions(s); err != nil {
+		return err
+	}
+	status, err := s.Query()
+	if err != nil {
+		return err
+	}
+	return validateStopEntryStatus(status)
+}
+func nativeDisableStopper(ctx context.Context, sddl, transaction string, policy bootstraplock.Policy) func(string, string, upgradeJournalBinding) (reviewedStoppedGuard, error) {
+	return func(app, archive string, binding upgradeJournalBinding) (reviewedStoppedGuard, error) {
+		return disableAndStopServiceForReview(ctx, app, archive, sddl, transaction, binding, policy)
+	}
+}

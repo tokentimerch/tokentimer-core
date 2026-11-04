@@ -54,14 +54,17 @@ func openUpgradeJournalForReview(path string, policy bootstraplock.Policy) (wind
 }
 
 // releaseReviewedUpgrade archives a nominal, operator-reviewed upgrade and
-// leaves the service stopped. The caller holds the shared installer mutex.
+// leaves the service stopped and disabled. The caller holds the shared installer mutex.
 // Independently reviewing WMI and other persistent actors remains mandatory.
-// Success means the service was last observed stopped; this is not atomic
+// Success means the service was last observed stopped and disabled; this is not atomic
 // against a privileged concurrent restart. Operators must stop and review
-// other privileged actors. Remote readiness is not checked.
-func releaseReviewedUpgrade(parent, journal, transaction string, parentPolicy, stagePolicy bootstraplock.Policy, sddl string, ackActors, ackKeepCurrent, ackLeaveStopped bool, runtimePin identityContract, verifyIdentity func(string, string, identityContract, bootstraplock.Policy) error, service func(string) error, verifyActive func(string, string) (io.Closer, error), stop func(string, string, upgradeJournalBinding) (reviewedStoppedGuard, error), renameMarker func(windows.Handle, string, string) error, renameHandle func(windows.Handle, string) error) (string, error) {
-	if !ackActors || !ackKeepCurrent || !ackLeaveStopped || verifyIdentity == nil || service == nil || verifyActive == nil || stop == nil || !stageNamePattern.MatchString("TokenTimer-Staging-"+transaction) {
-		return "", fmt.Errorf("explicit actor review, keep-current and leave-stopped decisions are required")
+// other privileged actors. Remote readiness is not checked. The service is
+// never re-enabled automatically or before any queued restart has elapsed;
+// the original start type is in the protected
+// review journal for an explicit operator-led restoration after review.
+func releaseReviewedUpgrade(parent, journal, transaction string, parentPolicy, stagePolicy bootstraplock.Policy, sddl string, ackActors, ackKeepCurrent, ackLeaveDisabled, ackNoPriorCommandOrReboot bool, runtimePin identityContract, verifyIdentity func(string, string, identityContract, bootstraplock.Policy) error, service func(string) error, verifyActive func(string, string) (io.Closer, error), stop func(string, string, upgradeJournalBinding) (reviewedStoppedGuard, error), renameMarker func(windows.Handle, string, string) error, renameHandle func(windows.Handle, string) error) (string, error) {
+	if !ackActors || !ackKeepCurrent || !ackLeaveDisabled || !ackNoPriorCommandOrReboot || verifyIdentity == nil || service == nil || verifyActive == nil || stop == nil || !stageNamePattern.MatchString("TokenTimer-Staging-"+transaction) {
+		return "", fmt.Errorf("explicit actor review, prior-action review, keep-current and leave-disabled decisions are required")
 	}
 	unlock, err := lockUpgradeState(journal, parentPolicy, stagePolicy)
 	if err != nil {
@@ -207,14 +210,14 @@ func releaseReviewedUpgrade(parent, journal, transaction string, parentPolicy, s
 		if e = service(app); e != nil {
 			return "", fmt.Errorf("service changed under inventory lock")
 		}
-		info, e = createReviewSentinel(sentinel, sddl, stagePolicy, transaction, records, "operator-reviewed-keep-current-and-leave-stopped", &binding)
+		info, e = createReviewSentinel(sentinel, sddl, stagePolicy, transaction, records, "operator-reviewed-keep-current-disabled-and-no-prior-command-or-reboot", &binding)
 		if e != nil {
 			return "", e
 		}
 	} else if e != nil {
 		return "", fmt.Errorf("review sentinel unavailable")
 	} else {
-		declaration, i, e := readReviewSentinel(sentinel, stagePolicy, transaction, "operator-reviewed-keep-current-and-leave-stopped")
+		declaration, i, e := readReviewSentinel(sentinel, stagePolicy, transaction, "operator-reviewed-keep-current-disabled-and-no-prior-command-or-reboot")
 		if e != nil {
 			return "", e
 		}
