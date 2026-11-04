@@ -2040,7 +2040,12 @@ async function handleSignedJob({
   // exists for this jobId (crash-safety; operator reconciliation required).
   const stateDir = resolveAgentStateDir(executionContext);
   const materialRecoveryOnly = stateDir && hasUnresolvedJournalForJob(stateDir, jobId);
-  if (materialRecoveryOnly && !job.publication && !job.materialDeployment) {
+  const cleanupJournalEntries = materialRecoveryOnly && job.action === "cleanup-from-store" && job.materialCleanup
+    ? scanUnresolvedJournalEntries(stateDir).filter((entry) => entry.jobId === jobId)
+    : [];
+  const cleanupRecovery = cleanupJournalEntries.length > 0 &&
+    cleanupJournalEntries.every((entry) => entry.stage === "material_cleanup_soft_delete");
+  if (materialRecoveryOnly && !job.publication && !job.materialDeployment && !cleanupRecovery) {
     const msg =
       `unresolved local side-effect journal exists for job ${jobId}; ` +
       `refusing automatic re-execution pending operator reconciliation`;
@@ -2222,6 +2227,11 @@ async function handleSignedJob({
           attemptId,
           status: outcome.status,
         });
+        if (cleanupRecovery && outcome.status === "succeeded" && outcome.cleanupReceipt) {
+          for (const entry of cleanupJournalEntries) {
+            clearJournalOnTerminal({ stateDir, jobId, attemptId: entry.attemptId, status: outcome.status });
+          }
+        }
       } catch (err) {
         emitLog(
           log,
@@ -2530,7 +2540,10 @@ async function executeJob({
         if (job.materialDeployment) resolveBindingPolicy(job,executionContext.materialBindings,policyEngine);
         return { status: "dry_run_complete", keyRotated: null };
       }
-      if(action==="cleanup-from-store")return await require("./material-store/cleanup").executeMaterialCleanup({job,stores:executionContext.materialStores,stateDir,checkLease,onBeforeMutation:markMutation});
+      if (action === "cleanup-from-store") return await require("./material-store/cleanup").executeMaterialCleanup({
+        job, stores: executionContext.materialStores, stateDir, checkLease, onBeforeMutation: markMutation,
+        recoveryOnly: executionContext.materialRecoveryOnly === true,
+      });
       if (action === "deploy-from-store") return await executePinnedDeployment({
         job, stores: executionContext.materialStores, bindings: executionContext.materialBindings,
         stateDir, policyEngine, checkLease, recoveryOnly: executionContext.materialRecoveryOnly === true,

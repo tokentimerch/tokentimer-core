@@ -4,7 +4,7 @@ const {createVaultStore,writeProtectedJson,readProtectedFile,UUID,failure}=requi
 const {withMaterialLock}=require("./lifecycle");
 const {canonicalizeJobPayload}=require("../../vendor/contracts/canonical-json.cjs");
 const {cleanupIdentity,cleanupStoreIntent}=require("../../vendor/contracts/material-cleanup.cjs");
-async function executeMaterialCleanup({job,stores,stateDir,checkLease,onBeforeMutation=()=>{},fixtureLoopbackHttp=false}){
+async function executeMaterialCleanup({job,stores,stateDir,checkLease,onBeforeMutation=()=>{},fixtureLoopbackHttp=false,recoveryOnly=false}){
   const intent=job.materialCleanup;
   if(!intent || ![job.jobId,intent.cleanupId,intent.groupId,intent.materialVersionId,intent.managementPeriodId,job.workspaceId].every(id=>UUID.test(id || "")) ||
     typeof checkLease!=="function")throw failure("material_cleanup_intent_invalid");
@@ -15,6 +15,7 @@ async function executeMaterialCleanup({job,stores,stateDir,checkLease,onBeforeMu
   const hash=crypto.createHash("sha256").update(canonicalizeJobPayload(intent)).digest("hex");
   const record=path.join(stateDir,"material-cleanup",intent.cleanupId,`${job.jobId}.json`);
   return withMaterialLock(path.join(stateDir,"material-locks"),`issuer:${job.workspaceId}:${intent.groupId}`,async()=>{
+    if (recoveryOnly && !fs.existsSync(record)) throw failure("material_cleanup_uncertain");
     if(fs.existsSync(record)){
       const prior=JSON.parse(readProtectedFile(record,16384));
       if(prior.intentHash!==hash)throw failure("material_cleanup_intent_changed");
@@ -22,6 +23,8 @@ async function executeMaterialCleanup({job,stores,stateDir,checkLease,onBeforeMu
     let mutated=false;
     try{
       await store.softDeleteVersion(intent.providerVersion,{checkLease,beforeDelete:async()=>{
+        // An unresolved dispatcher attempt authorizes reconciliation only.
+        if (recoveryOnly) throw failure("material_cleanup_uncertain");
         await checkLease();onBeforeMutation("material_cleanup_soft_delete");
         writeProtectedJson(record,{intentHash:hash,cleanupId:intent.cleanupId,materialVersionId:intent.materialVersionId,uncertain:true});mutated=true;
       }});

@@ -661,3 +661,41 @@ test("read-only preflight uses the provider-neutral material-store entry point",
     delete require.cache[lifecyclePath];
   }
 });
+
+
+test("Linux verification-only preflight needs a listener but no reload authority", async (t) => {
+  const f = await fixture(t);
+  const server = tls.createServer({ cert: f.bundle.certificatePem, key: f.bundle.privateKeyPem }, (socket) => socket.end());
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  f.binding.probes[0].port = server.address().port;
+  delete f.binding.reloadService;
+  const options = f.options({ verificationOnly: true });
+  assert.equal((await preflightPinnedDeployment(options)).ready, true);
+
+  f.binding.activationMethod = "manual";
+  const policy = { method: "manual", disruptive: false, requiresApproval: false,
+    timezone: "UTC", windows: [], blackouts: [], validUntil: null, emergency: null };
+  options.job.materialDeployment.activationPolicy = policy;
+  assert.equal((await preflightPinnedDeployment(options)).ready, true);
+
+  const mutating = f.options();
+  const report = await preflightPinnedDeployment(mutating);
+  assert.equal(report.ready, false);
+  assert.ok(report.diagnostics.some(({ code, status }) => code === "material_reload_allowlist" && status === "blocked"));
+
+  mutating.job.materialDeployment.activationPolicy = policy;
+  assert.equal((await preflightPinnedDeployment(mutating)).diagnostics[0].code, "material_activation_policy_denied");
+  assert.equal((await preflightPinnedDeployment(f.options({ intent: { authorizationRevision: 2 } }))).diagnostics[0].code, "material_binding_policy_denied");
+  f.binding.probes[0].port = 0;
+  assert.equal((await preflightPinnedDeployment(options)).diagnostics[0].code, "material_probe_config_invalid");
+});
+
+test("native IIS preflight uses the typed binding without Linux reload authority", async (t) => {
+  const f = await windowsFixture(t);
+  delete f.binding.reloadService;
+  const report = await preflightPinnedDeployment(f.options());
+  assert.equal(report.ready, true);
+  assert.ok(report.diagnostics.some(({ code }) => code === "material_service_listener_present"));
+  assert.ok(!report.diagnostics.some(({ code }) => code === "material_reload_allowlist"));
+});

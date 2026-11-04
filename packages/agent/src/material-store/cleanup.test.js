@@ -121,3 +121,119 @@ test("expiry while persisting the destructive journal prevents the subsequent pr
   const result=await f.run();assert.equal(result.status,"orphaned_unknown_effect");
   assert.equal(result.errorMessage,"material_cleanup_authorization_expired");assert.equal(f.state.deletes,0);
 });
+
+
+/* The dispatcher supports cleanup only on Linux. Test capability injection is
+ * confined to this process and the preceding manifest test verifies the release gate. */
+test("signed cleanup dispatcher recovers an interrupted provider delete without repeating it", {
+  skip: process.platform !== "linux", // skip-reason: platform
+}, async (t) => {
+  const f = await fixture(t);
+  const modulePath = require.resolve("../index");
+  let dispatcher = require(modulePath);
+  const originalModule = require.cache[modulePath];
+  t.after(() => { require.cache[modulePath] = originalModule; });
+  const { generateSigningKeyPair, signJobPayload } = require("../signing");
+  const { AgentProtocolError } = require("../protocol");
+  const capability = "material-cleanup-vault-kv2-v1";
+  const signingKey = generateSigningKeyPair();
+  const config = {
+    execution: {
+      enabled: true, dryRun: false, keysDir: path.join(f.options.stateDir, "keys"),
+      replayStorePath: path.join(f.options.stateDir, "replay.json"),
+      outboxDir: path.join(f.options.stateDir, "outbox"), clockDriftToleranceMs: 30000,
+    },
+    pinnedSigningKey: { signingKeyId: signingKey.signingKeyId, publicKeyPem: signingKey.publicKeyPem },
+  };
+  const store = f.options.stores.customer;
+  const loopback = store.address;
+  store.address = loopback.replace("http:", "https:");
+  t.mock.method(require("node:https"), "request", (url, options, listener) => {
+    assert.equal(url.origin, store.address);
+    return http.request(new URL(url.pathname, loopback), options, listener);
+  });
+  const certificateId = crypto.randomUUID();
+  function dispatch(intent = f.intent, options = {}) {
+    const claimId = crypto.randomUUID();
+    const job = {
+      schemaVersion: 1, jobId: f.options.job.jobId, workspaceId: options.workspaceId || f.options.job.workspaceId,
+      agentId: "cleanup-fixture-agent", certificateId,
+      action: "cleanup-from-store", mode: "real", keyMode: "vault-managed",
+      target: { type: "domain", reference: "cleanup.example.test" },
+      claimId, nonce: crypto.randomUUID(), materialCleanup: intent,
+      requestedAt: new Date().toISOString(), issuedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 5 * 60000).toISOString(), signingKeyId: signingKey.signingKeyId,
+    };
+    job.signature = signJobPayload({ job, privateKeyPem: signingKey.privateKeyPem });
+    const reports = [];
+    const client = {
+      renewLease: async () => {
+        if (options.staleLease) throw new AgentProtocolError("claim expired", { status: 410 });
+        return { ok: true, jobId: job.jobId, claimId, status: "running",
+          leaseExpiresAt: new Date(Date.now() + 5 * 60000).toISOString() };
+      },
+      reportResult: async (body) => { reports.push(body); },
+      reportEvidence: async () => {},
+    };
+    const executionContext = { ...dispatcher.buildExecutionContext({ config }), materialStores: f.options.stores };
+    return dispatcher.handleClaimedJob({ job, client, executionContext, boundAgentId: job.agentId,
+      policyEngine: { evaluateJob: () => ({ allowed: true }) },
+    }).then(outcome => ({ ...outcome, report: reports.at(-1), claimId }));
+  }
+
+  assert.match((await dispatch()).report.errorMessage, /has not qualified/);
+  assert.equal(f.requests.length, 0);
+  t.mock.method(require("../capabilities"), "filterQualifiedCapabilities", (candidates) => {
+    const qualified = filterQualifiedCapabilities(candidates);
+    return candidates.includes(capability) ? [...qualified, capability] : qualified;
+  });
+  delete require.cache[modulePath];
+  dispatcher = require(modulePath);
+
+  f.state.loseResponse = true;
+  const outbox = config.execution.outboxDir;
+  f.state.onDelete = () => {
+    fs.renameSync(outbox, outbox + ".saved");
+    fs.writeFileSync(outbox, "unavailable after the provider mutation");
+  };
+  await assert.rejects(dispatch());
+  fs.unlinkSync(outbox);
+  fs.renameSync(outbox + ".saved", outbox);
+  delete f.state.onDelete;
+  assert.equal(f.state.deletes, 1);
+  const [interrupted] = scanUnresolvedJournalEntries(f.options.stateDir);
+  assert.equal(interrupted.stage, "material_cleanup_soft_delete");
+
+  const denied = [
+    await dispatch({ ...f.intent, expiresAt: new Date(Date.now() - 60000).toISOString() }),
+    await dispatch({ ...f.intent, providerVersion: 2 }),
+    await dispatch(f.intent, { workspaceId: crypto.randomUUID() }),
+    await dispatch(f.intent, { staleLease: true }),
+  ];
+  assert.ok(denied.every(result => result.status !== "succeeded" && !result.report?.cleanupReceipt));
+  assert.equal(f.state.deletes, 1);
+
+  const { withMaterialLock } = require("./lifecycle");
+  await withMaterialLock(path.join(f.options.stateDir, "material-locks"),
+    "issuer:" + f.options.job.workspaceId + ":" + f.intent.groupId, async () => {
+      assert.notEqual((await dispatch()).status, "succeeded");
+    });
+  const priorDeletion = f.metadata.versions[1].deletion_time;
+  f.metadata.versions[1].deletion_time = "";
+  assert.notEqual((await dispatch()).status, "succeeded", "a journal does not authorize another mutation");
+  assert.equal(f.state.deletes, 1);
+  f.metadata.versions[1].deletion_time = priorDeletion;
+
+  const recovered = await dispatch();
+  assert.equal(recovered.status, "succeeded", recovered.report?.errorMessage);
+  assert.equal(recovered.report.claimId, recovered.claimId);
+  assert.notEqual(recovered.claimId, interrupted.claimId);
+  const receipt = recovered.report.cleanupReceipt;
+  assert.equal(receipt.workspaceId, f.options.job.workspaceId);
+  assert.equal(receipt.groupId, f.intent.groupId);
+  assert.equal(receipt.materialVersionId, f.intent.materialVersionId);
+  assert.equal(receipt.providerVersion, 1);
+  assert.equal(receipt.softDeleted, true);
+  assert.equal(f.state.deletes, 1);
+  assert.equal(scanUnresolvedJournalEntries(f.options.stateDir).length, 0);
+});
