@@ -156,7 +156,7 @@ def validate_run(run, candidate, repository):
 
 
 def validate_artifact_digest(artifact, raw):
-    """Authenticate downloaded evidence bytes against GitHub artifact metadata."""
+    """Verify downloaded evidence integrity against GitHub artifact metadata."""
     if artifact.get("digest") != "sha256:" + hashlib.sha256(raw).hexdigest():
         raise ValueError("Qualification artifact digest does not match GitHub")
 
