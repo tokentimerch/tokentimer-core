@@ -369,10 +369,21 @@ async function qualifyElapsedRetention({
     );
     siteReceipt = readSite();
     endpointOwned = true;
-    powershell(
-      `Import-Module WebAdministration;(Get-WebBinding -Name '${site}' -Protocol https|Where-Object {$_.bindingInformation -eq '127.0.0.1:${port}:'}).AddSslCertificate('${a.thumbprint}','${store}')`,
-    );
-    await recordBindingOwner(a.thumbprint);
+    try {
+      powershell(
+        `Import-Module WebAdministration;(Get-WebBinding -Name '${site}' -Protocol https|Where-Object {$_.bindingInformation -eq '127.0.0.1:${port}:'}).AddSslCertificate('${a.thumbprint}','${store}')`,
+      );
+    } catch (error) {
+      const nativeCode = String(error.message).match(/\b0x([0-9a-f]{8})\b/i)?.[1]?.toUpperCase();
+      error.code = `CERTOPS_RETENTION_ENDPOINT_ADD_${nativeCode ? `H${nativeCode}` : "FAILED"}`;
+      throw error;
+    }
+    try {
+      await recordBindingOwner(a.thumbprint);
+    } catch (error) {
+      error.code = "CERTOPS_RETENTION_ENDPOINT_RECEIPT_FAILED";
+      throw error;
+    }
     await trustedLeaf(port, ca, a.thumbprint);
     const stateDir = path.join(directory, "state"),
       ledgerDir = path.join(stateDir, "windows-retention");
@@ -681,6 +692,8 @@ async function qualifyElapsedRetention({
     );
   } catch (error) {
     primaryError = error;
+    // Persist the original failure before a fail-closed cleanup guard can mask it.
+    await gate.recordFailure(error);
     throw error;
   } finally {
     // No site/store/key cleanup may race an uncertain native collector child.
