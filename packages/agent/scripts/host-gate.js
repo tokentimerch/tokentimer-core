@@ -116,6 +116,7 @@ function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = 
       detail.command = { executable: executables.includes(command.executable) ? command.executable : "other", exitStatus: Number.isInteger(command.exitStatus) ? command.exitStatus : null };
       if (command.script === "owned-issued-request.ps1") detail.command.script = command.script;
       if (command.script === "owned-issued-request.ps1" && ["connection", "columns", "restriction", "enumeration", "row-validation", "certificate-decode", "match", "remoting"].includes(command.issuedStep)) detail.command.issuedStep = command.issuedStep;
+      if (command.script === "owned-issued-request.ps1" && ["not-attempted", "attempted", "connected", "failed"].includes(command.issuedFallback)) detail.command.issuedFallback = command.issuedFallback;
       if (command.script === "owned-issued-request.ps1" && Array.isArray(command.issuedHresults)) detail.command.issuedHresults = command.issuedHresults.filter(code => typeof code === "string" && /^0x[0-9A-F]{8}$/.test(code)).slice(0, 8);
       if (command.script === "owned-issued-request.ps1" && Array.isArray(command.issuedCaDiag)) detail.command.issuedCaDiag = command.issuedCaDiag.filter(code => ["identity-match", "identity-mismatch", "identity-unavailable", "local-open-success", "local-open-failure", "english-open-success", "english-open-failure", "english-probe-unavailable"].includes(code)).slice(0, 3);
       if (codes.includes(command.powerShellCode)) detail.command.powerShellCode = command.powerShellCode;

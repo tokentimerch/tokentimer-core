@@ -18,7 +18,7 @@ try { Invoke-Command -ComputerName ($CaConfig.Split('\')[0]) -Credential $creden
   $view=New-Object -ComObject CertificateAuthority.View
   $hash=[Security.Cryptography.SHA256]::Create()
   $stage='connection'
-  $previousUiCulture=$null;$previousThreadLanguage=0;$threadLanguageChanged=$false
+  $previousUiCulture=$null;$previousThreadLanguage=0;$threadLanguageChanged=$false;$fallbackStatus='not-attempted'
   try {
     try { $null=$view.OpenConnection($CaConfig) }
     catch {
@@ -29,10 +29,13 @@ try { Invoke-Command -ComputerName ($CaConfig.Split('\')[0]) -Credential $creden
       # the CA, agent, certificate checks and database oracle stay unchanged.
       $connectionException=$_.Exception;$fileNotFound=$false
       for($i=0;$i -lt 8 -and $null -ne $connectionException;$i++){
-        if($connectionException -is [Runtime.InteropServices.COMException] -and [BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$connectionException.HResult),0) -eq [uint32]2147942402){$fileNotFound=$true;break}
+        # COM interop can map this HRESULT to FileNotFoundException instead
+        # of COMException; the native code, not the managed class, is stable.
+        if([BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$connectionException.HResult),0) -eq [uint32]2147942402){$fileNotFound=$true;break}
         $connectionException=$connectionException.InnerException
       }
       if(-not $fileNotFound){throw}
+      $fallbackStatus='attempted'
       try {
         if(-not ('TTQualificationThreadLanguage' -as [type])){
           Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class TTQualificationThreadLanguage { [DllImport("kernel32.dll")] public static extern ushort GetThreadUILanguage(); [DllImport("kernel32.dll")] public static extern ushort SetThreadUILanguage(ushort language); }'
@@ -45,7 +48,9 @@ try { Invoke-Command -ComputerName ($CaConfig.Split('\')[0]) -Credential $creden
         try {[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)}catch{}
         $view=New-Object -ComObject CertificateAuthority.View
         $null=$view.OpenConnection($CaConfig)
+        $fallbackStatus='connected'
       } catch {
+        $fallbackStatus='failed'
         if($null -ne $previousUiCulture){[Threading.Thread]::CurrentThread.CurrentUICulture=$previousUiCulture}
         if($threadLanguageChanged){[void][TTQualificationThreadLanguage]::SetThreadUILanguage($previousThreadLanguage)}
         $previousUiCulture=$null;$previousThreadLanguage=0;$threadLanguageChanged=$false
@@ -84,6 +89,7 @@ try { Invoke-Command -ComputerName ($CaConfig.Split('\')[0]) -Credential $creden
     $matched[0]|ConvertTo-Json -Compress
   } catch {
     Write-Output "CERTOPS_ISSUED_FAILURE=$stage"
+    Write-Output "CERTOPS_ISSUED_FALLBACK=$fallbackStatus"
     # HRESULTs identify the Windows failure without exposing localized messages,
     # command arguments or CA credentials. Traverse only a bounded exception chain.
     $exception=$_.Exception
