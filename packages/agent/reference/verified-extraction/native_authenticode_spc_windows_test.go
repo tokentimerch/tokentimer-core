@@ -85,9 +85,13 @@ func TestSpcRejectsWeakFileDigestWithSHA256Signer(t *testing.T) {
 }
 
 func TestExperimentalSpcNodeFixture(t *testing.T) {
-	path, err := exec.LookPath("node.exe")
-	if err != nil {
-		t.Skip("signed fixture unavailable")
+	path := os.Getenv("TT_NATIVE_SIGNED_FIXTURE")
+	if path == "" {
+		var err error
+		path, err = exec.LookPath("node.exe")
+		if err != nil {
+			t.Skip("signed fixture unavailable")
+		}
 	}
 	f, err := os.Open(path)
 	if err != nil {
