@@ -8,11 +8,31 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+func TestNativeTrustABILayout64(t *testing.T) {
+	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+		t.Skip("only 64-bit Windows architectures supported")
+	}
+	var signer providerSignerPrefix
+	var info nativeCMSSignerInfo
+	var trust windows.WinTrustData
+	if unsafe.Sizeof(signer) != 64 || unsafe.Offsetof(signer.CertChain) != 16 || unsafe.Offsetof(signer.SignerInfo) != 32 || unsafe.Offsetof(signer.CounterCount) != 44 || unsafe.Offsetof(signer.Chain) != 56 {
+		t.Fatal("unexpected CRYPT_PROVIDER_SGNR layout")
+	}
+	if unsafe.Sizeof(providerCertPrefix{}) != 16 || unsafe.Sizeof(nativeCryptAttribute{}) != 24 || unsafe.Sizeof(info) != 136 || unsafe.Offsetof(info.HashAlgorithm) != 40 || unsafe.Offsetof(info.Unauthenticated) != 120 {
+		t.Fatal("unexpected cryptography structure layout")
+	}
+	if unsafe.Sizeof(trust) != 88 || unsafe.Offsetof(trust.FileOrCatalogOrBlobOrSgnrOrCert) != 40 || unsafe.Offsetof(trust.StateData) != 56 || unsafe.Offsetof(trust.SignatureSettings) != 80 {
+		t.Fatal("unexpected WINTRUST_DATA layout")
+	}
+}
 
 func TestNativeCertificatePinMatching(t *testing.T) {
 	data := []byte("fixture DER bytes")

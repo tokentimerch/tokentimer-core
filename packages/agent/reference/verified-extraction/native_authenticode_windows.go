@@ -124,8 +124,14 @@ func nativeAuthenticodePrototype(path, pin string) error {
 		return fmt.Errorf("signer unavailable")
 	}
 	signer := (*providerSignerPrefix)(nativeTrustPointer(signerPtr))
+	if signer.Size < uint32(unsafe.Sizeof(providerSignerPrefix{})) {
+		return fmt.Errorf("unsupported publisher provider structure")
+	}
 	if signer.Error != 0 || signer.CertCount == 0 || signer.CounterCount != 1 || signer.Chain == nil || !hasSingleRFC3161Timestamp(signer.SignerInfo) {
 		return fmt.Errorf("publisher or timestamp unavailable")
+	}
+	if signer.Chain.Size < uint32(unsafe.Offsetof(windows.CertChainContext{}.TrustStatus)+unsafe.Sizeof(windows.CertTrustStatus{})) {
+		return fmt.Errorf("unsupported publisher chain structure")
 	}
 	if signer.Chain.TrustStatus.ErrorStatus != 0 {
 		return fmt.Errorf("publisher chain trust status: 0x%08x", signer.Chain.TrustStatus.ErrorStatus)
@@ -134,7 +140,11 @@ func nativeAuthenticodePrototype(path, pin string) error {
 	if certPtr == 0 {
 		return fmt.Errorf("publisher certificate unavailable")
 	}
-	cert := (*providerCertPrefix)(nativeTrustPointer(certPtr)).Certificate
+	providerCert := (*providerCertPrefix)(nativeTrustPointer(certPtr))
+	if providerCert.Size < uint32(unsafe.Sizeof(providerCertPrefix{})) {
+		return fmt.Errorf("unsupported publisher certificate structure")
+	}
+	cert := providerCert.Certificate
 	if cert == nil || cert.EncodedCert == nil || cert.Length == 0 || cert.Length > 1<<20 {
 		return fmt.Errorf("invalid publisher certificate")
 	}
@@ -146,8 +156,14 @@ func nativeAuthenticodePrototype(path, pin string) error {
 		return fmt.Errorf("timestamp signer unavailable")
 	}
 	counter := (*providerSignerPrefix)(nativeTrustPointer(counterPtr))
+	if counter.Size < uint32(unsafe.Sizeof(providerSignerPrefix{})) {
+		return fmt.Errorf("unsupported timestamp provider structure")
+	}
 	if counter.Error != 0 || counter.SignerType != 0x10 || counter.CertCount == 0 || counter.Chain == nil || (counter.VerifyAsOf.HighDateTime == 0 && counter.VerifyAsOf.LowDateTime == 0) {
 		return fmt.Errorf("timestamp verification unavailable")
+	}
+	if counter.Chain.Size < uint32(unsafe.Offsetof(windows.CertChainContext{}.TrustStatus)+unsafe.Sizeof(windows.CertTrustStatus{})) {
+		return fmt.Errorf("unsupported timestamp chain structure")
 	}
 	if counter.Chain.TrustStatus.ErrorStatus != 0 {
 		return fmt.Errorf("timestamp chain trust status: 0x%08x", counter.Chain.TrustStatus.ErrorStatus)
@@ -156,7 +172,11 @@ func nativeAuthenticodePrototype(path, pin string) error {
 	if counterCertPtr == 0 {
 		return fmt.Errorf("timestamp certificate unavailable")
 	}
-	counterCert := (*providerCertPrefix)(nativeTrustPointer(counterCertPtr)).Certificate
+	timestampProviderCert := (*providerCertPrefix)(nativeTrustPointer(counterCertPtr))
+	if timestampProviderCert.Size < uint32(unsafe.Sizeof(providerCertPrefix{})) {
+		return fmt.Errorf("unsupported timestamp certificate structure")
+	}
+	counterCert := timestampProviderCert.Certificate
 	if counterCert == nil || counterCert.EncodedCert == nil || counterCert.Length == 0 || counterCert.Length > 1<<20 {
 		return fmt.Errorf("invalid timestamp certificate")
 	}
