@@ -16,6 +16,7 @@ import (
 type runFixture struct {
 	beginErr, scratchErr, installErr error
 	events                           []string
+	afterScratch                     func()
 }
 
 func TestInstallerReceivesInheritedIntentPipe(t *testing.T) {
@@ -65,6 +66,9 @@ type scratchFixture struct{ *runFixture }
 func (f scratchFixture) Root() string { return `C:\private\scratch` }
 func (f scratchFixture) BeginScratchIntent(string, string, string, string) error {
 	f.events = append(f.events, "scratch-intent")
+	if f.afterScratch != nil {
+		f.afterScratch()
+	}
 	return f.scratchErr
 }
 func (f scratchFixture) Cleanup() error { f.events = append(f.events, "scratch-cleanup"); return nil }
@@ -123,5 +127,36 @@ func TestRunCandidateQuarantinesAfterIntent(t *testing.T) {
 				t.Fatalf("lost installer status: %v %v", err, res.InstallerErr)
 			}
 		})
+	}
+}
+
+func TestRunCandidateCancelledBeforeInvocationCleansFreshPair(t *testing.T) {
+	f := &runFixture{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	deps := executionDependencies{
+		nativeArch: func() (string, error) { return runtime.GOARCH, nil },
+		prepare:    func(Candidate) (preparedForRun, error) { return f, nil },
+		scratch:    func() (scratchForRun, error) { return scratchFixture{f}, nil },
+		beginGuard: func(context.Context) (func() error, error) {
+			return func() error { f.events = append(f.events, "release"); return nil }, nil
+		},
+		scmDigest: func() (string, error) { return strings.Repeat("c", 64), nil },
+		invoke: func(context.Context, string, string, []string, string, string, string) error {
+			t.Fatal("installer invoked after cancellation")
+			return nil
+		},
+		abortBeforeInvoke: func(preparedForRun, scratchForRun, ExecutionIntent) error {
+			f.events = append(f.events, "abort")
+			return nil
+		},
+	}
+	f.afterScratch = cancel
+	result, err := runCandidate(ctx, Candidate{Architecture: runtime.GOARCH}, nil, "", deps)
+	if !errors.Is(err, context.Canceled) || result.CleanupPending {
+		t.Fatalf("unexpected result: %+v %v", result, err)
+	}
+	if strings.Join(f.events, ",") != "intent,scratch-intent,abort,release" {
+		t.Fatalf("unexpected events: %v", f.events)
 	}
 }

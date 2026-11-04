@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -143,7 +144,9 @@ func main() {
 	candidate := verified.Candidate{CMS: cms, PublisherPin: policy.publisher, RuntimePublisherPin: policy.runtimePublisher, InstallerSHA256: policy.installer, SourceCommit: policy.commit, Version: policy.version, Architecture: policy.architecture, ArchiveName: filepath.Base(*archivePath), Archive: archive, SBOMName: filepath.Base(*sbomPath), SBOM: sbom}
 	// Installer flags follow --; the bootstrap token is read from a protected
 	// environment variable or prompted by the existing installer, never logged.
-	result, err := verified.RunCandidate(context.Background(), candidate, flag.Args(), os.Getenv("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN"))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	result, err := verified.RunCandidate(ctx, candidate, flag.Args(), os.Getenv("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN"))
 	if result.CleanupPending {
 		fmt.Fprintln(os.Stderr, "Protected staging retained; operator reconciliation is required.")
 	}
