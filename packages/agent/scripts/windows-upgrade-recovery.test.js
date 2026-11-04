@@ -406,6 +406,73 @@ exit 0
   }
 });
 
+test("uninstall refuses an existing recovery barrier even without launcher markers", { skip: process.platform !== "win32" }, () => {
+  const tempParent = fs.realpathSync(os.tmpdir());
+  const root = fs.mkdtempSync(path.join(tempParent, "tt537-uninstall-"));
+  try {
+    fs.writeFileSync(path.join(root, "upgrade-recovery.json"), "fixture");
+    const script = String.raw`
+$ErrorActionPreference='Stop'
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $env:TT542_SOURCE 'install-agent.ps1'),[ref]$tokens,[ref]$errors)
+$f=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if ($script:Uninstall)')},$true))
+if ($errors.Count -or $f.Count -ne 1) { throw 'missing uninstall branch' }
+$script:Uninstall=$true; $script:DryRun=$false; $StateDir=$env:TT542_ROOT
+function Test-IsAdministrator { return $true }
+function Assert-ProtectedIntentDirectory { param($Directory) }
+function Assert-NoQuarantinedLauncherIntent { param($LauncherParent) }
+function Fail([string]$Message) { throw $Message }
+function Invoke-Step { throw 'unsafe uninstall mutation' }
+try { Invoke-Expression $f[0].Extent.Text; throw 'uninstall unexpectedly succeeded' }
+catch { if ($_.Exception.Message -notmatch 'upgrade recovery record exists') { throw }; [Console]::Out.Write('guarded') }
+exit 0
+`;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+      env: { ...process.env, TT542_SOURCE: __dirname, TT542_ROOT: root }, windowsHide: true, encoding: "utf8", timeout: 15000,
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /guarded/);
+    assert.equal(fs.readFileSync(path.join(root, "upgrade-recovery.json"), "utf8"), "fixture");
+  } finally {
+    if (path.dirname(fs.realpathSync(root)).toLowerCase() !== tempParent.toLowerCase()) throw new Error("Unsafe fixture cleanup");
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("uninstall fails closed on journal access error but permits the absent case", { skip: process.platform !== "win32" }, () => {
+  const script = String.raw`
+$ErrorActionPreference='Stop'
+Import-Module Microsoft.PowerShell.Management -ErrorAction Stop
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $env:TT542_SOURCE 'install-agent.ps1'),[ref]$tokens,[ref]$errors)
+$f=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if ($script:Uninstall)')},$true))
+if ($errors.Count -or $f.Count -ne 1) { throw 'missing uninstall branch' }
+$script:Uninstall=$true; $script:DryRun=$false; $StateDir=$env:TEMP; $ServiceName='TokenTimerAgent-fixture-no-service'
+function Test-IsAdministrator { return $true }
+function Assert-ProtectedIntentDirectory { param($Directory) }
+function Assert-NoQuarantinedLauncherIntent { param($LauncherParent) }
+function Test-Path { param($LiteralPath,$ErrorAction) if ($env:TT542_MODE -eq 'error') { throw 'simulated access denied' }; return $false }
+function Fail([string]$Message) { throw $Message }
+function Invoke-Step { throw 'safe branch reached without mutation' }
+function Get-Service { param($Name,$ErrorAction) return $null }
+function Write-Log { param($Message) }
+try { Invoke-Expression $f[0].Extent.Text; throw 'uninstall unexpectedly completed' }
+catch {
+  $expected=if ($env:TT542_MODE -eq 'error') { 'simulated access denied' } else { 'safe branch reached without mutation' }
+  if ($_.Exception.Message -notmatch $expected) { throw }
+  [Console]::Out.Write('guarded')
+}
+exit 0
+`;
+  for (const mode of ["error", "absent"]) {
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+      env: { ...process.env, TT542_SOURCE: __dirname, TT542_MODE: mode }, windowsHide: true, encoding: "utf8", timeout: 15000,
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /guarded/);
+  }
+});
+
 test("rejects an oversized recovery record before touching the existing application", { skip: process.platform !== "win32", timeout: 30000 }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
   const fixture = fs.mkdtempSync(path.join(tempParent, "tt542-journal-size-"));

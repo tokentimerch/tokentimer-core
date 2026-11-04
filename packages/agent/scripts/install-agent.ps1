@@ -561,6 +561,7 @@ if ($script:Uninstall) {
             $launcherParent = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
             Assert-ProtectedIntentDirectory -Directory $launcherParent
             Assert-NoQuarantinedLauncherIntent -LauncherParent $launcherParent
+            if (Test-Path -LiteralPath (Join-Path $StateDir 'upgrade-recovery.json') -ErrorAction Stop) { throw 'upgrade recovery record exists' }
         } catch { Fail "recovery_required: launcher execution remains quarantined ($($_.Exception.Message))" }
     }
     $serviceExists = [bool](Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)
