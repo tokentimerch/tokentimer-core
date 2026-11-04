@@ -8,7 +8,10 @@ these final-package reports, so this is intentionally not a release gate.
 import base64
 import binascii
 import json
+import hashlib
+import io
 import re
+import zipfile
 
 DIGEST = re.compile(r"[a-f0-9]{64}\Z")
 COMMIT = re.compile(r"[a-f0-9]{40}\Z")
@@ -62,6 +65,51 @@ def fetch_edition_pin(edition, commit, token, download):
     except (UnicodeDecodeError, json.JSONDecodeError, binascii.Error, RecursionError):
         raise ValueError("Malformed manifest response") from None
     return edition_pin_from_manifest(content, edition)
+
+
+def fetch_qualification_report(edition, commit, run_id, token, download):
+    """Collect one exact evidence artifact from its expected GitHub run.
+
+    The existing workflows do not emit this artifact and their qualification for
+    final signed packages has not been reviewed; this is not an approval gate.
+    The download callback must be the bounded authenticated GitHub API transport.
+    """
+    if edition not in EDITION_REPOS or not isinstance(commit, str) or not COMMIT.fullmatch(commit) or type(run_id) is not int or run_id < 1 or not isinstance(token, str) or not token:
+        raise ValueError("Invalid evidence run identity")
+    repo, branch, workflow = EDITION_REPOS[edition]
+    endpoint = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}"
+    run = json.loads(download(endpoint, token))
+    if (not isinstance(run, dict) or run.get("id") != run_id or run.get("status") != "completed" or run.get("conclusion") != "success" or run.get("event") != "workflow_dispatch" or run.get("path") != workflow or run.get("head_branch") != branch or run.get("head_sha") != commit or run.get("repository", {}).get("full_name") != repo or run.get("head_repository", {}).get("full_name") != repo):
+        raise ValueError("Untrusted evidence run")
+    listing = json.loads(download(endpoint + "/artifacts?per_page=100", token))
+    if not isinstance(listing, dict) or type(listing.get("total_count")) is not int or not 0 <= listing["total_count"] <= 100 or not isinstance(listing.get("artifacts"), list) or len(listing["artifacts"]) != listing["total_count"]:
+        raise ValueError("Incomplete artifact listing")
+    matches = [a for a in listing["artifacts"] if isinstance(a, dict) and a.get("name") == "windows-final-package-qualification"]
+    if len(matches) != 1:
+        raise ValueError("Final-package evidence artifact unavailable")
+    artifact = matches[0]
+    if artifact.get("expired") is not False or type(artifact.get("id")) is not int or artifact["id"] < 1 or type(artifact.get("size_in_bytes")) is not int or not 0 < artifact["size_in_bytes"] <= 2 * 1024 * 1024:
+        raise ValueError("Invalid evidence artifact identity")
+    raw = download(f"https://api.github.com/repos/{repo}/actions/artifacts/{artifact['id']}/zip", token, redirect=True)
+    if not isinstance(raw, bytes) or len(raw) > 2 * 1024 * 1024 or artifact.get("digest") != "sha256:" + hashlib.sha256(raw).hexdigest():
+        raise ValueError("Evidence artifact integrity mismatch")
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            entries = archive.infolist()
+            if len(entries) != 1 or entries[0].filename != "qualification.json" or entries[0].is_dir() or entries[0].file_size > 1024 * 1024:
+                raise ValueError("Unexpected evidence archive contents")
+            payload = archive.read(entries[0])
+        def unique_pairs(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("Duplicate evidence key")
+                result[key] = value
+            return result
+        report = json.loads(payload, object_pairs_hook=unique_pairs)
+    except (zipfile.BadZipFile, RuntimeError, json.JSONDecodeError, UnicodeDecodeError, RecursionError):
+        raise ValueError("Malformed evidence artifact") from None
+    return {"run": run, "report": report}
 
 
 def validate_binding(candidate, evidence):

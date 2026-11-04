@@ -1,6 +1,9 @@
 import base64
 import copy
 import json
+import hashlib
+import io
+import zipfile
 import importlib.util
 from pathlib import Path
 import unittest
@@ -47,6 +50,28 @@ class BindingTests(unittest.TestCase):
         self.assertEqual(calls, [("https://api.github.com/repos/tokentimerch/tokentimer-cloud/contents/compatibility.manifest.json?ref=" + "b" * 40, "fixture-token")])
         for edition, commit in (("other", "b" * 40), ("cloud", "main"), ("cloud", "../")):
             with self.assertRaises(ValueError): binding.fetch_edition_pin(edition, commit, "fixture-token", download)
+
+    def test_report_fetch_binds_run_artifact_and_downloaded_zip(self):
+        c, items = self.fixture()
+        original = next(item for item in items if item["report"]["slot"] == "cloud")
+        run = {**original["run"], "id": 5}
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as z:
+            z.writestr("qualification.json", json.dumps(original["report"]))
+        archive = buffer.getvalue()
+        artifact = {"id": 7, "name": "windows-final-package-qualification", "expired": False,
+                    "size_in_bytes": len(archive), "digest": "sha256:" + hashlib.sha256(archive).hexdigest()}
+        def download(url, token, redirect=False):
+            if url.endswith("/zip"): return archive
+            if "/artifacts?" in url: return json.dumps({"total_count": 1, "artifacts": [artifact]}).encode()
+            return json.dumps(run).encode()
+        item = binding.fetch_qualification_report("cloud", c["editionCommits"]["cloud"], 5, "fixture", download)
+        self.assertEqual(item["report"], original["report"])
+        artifact["digest"] = "sha256:" + "f" * 64
+        with self.assertRaises(ValueError): binding.fetch_qualification_report("cloud", c["editionCommits"]["cloud"], 5, "fixture", download)
+        artifact["digest"] = "sha256:" + hashlib.sha256(archive).hexdigest()
+        run["head_sha"] = "f" * 40
+        with self.assertRaises(ValueError): binding.fetch_qualification_report("cloud", c["editionCommits"]["cloud"], 5, "fixture", download)
 
     def test_complete_matrix_is_only_a_binding_not_publication_approval(self):
         c, e = self.fixture()
