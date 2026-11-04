@@ -85,10 +85,10 @@ export function LocalStoreFields({
           />
         </FormControl>
       )}
-      <StatusPanel status='info' title='Keep credentials on the agent'>
-        These fields generate local configuration and are not saved or sent in
-        jobs. Do not enter tokens, private keys, passwords or credentials.
-      </StatusPanel>
+      <Text fontSize='sm'>
+        Used only to generate local configuration. Keep credentials and private
+        keys on the agent.
+      </Text>
     </>
   );
 }

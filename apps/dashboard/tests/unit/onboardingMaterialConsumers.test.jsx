@@ -74,6 +74,29 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe('Connect and validate consumers', () => {
+  it('shows missing capabilities only for the selected consumer', async () => {
+    const ctx = materialContext('openbao-kv2');
+    ctx.summary.certops.agents.items.push({
+      ...ctx.summary.certops.agents.items[1],
+      id: 'outdated-consumer',
+      wireAgentId: 'outdated-wire',
+      name: 'Outdated consumer',
+      declaredCapabilities: [],
+    });
+    show(ctx);
+    expect(
+      screen.queryByText(/Outdated consumer: requirements not met/)
+    ).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('First consumer'), {
+      target: { value: 'outdated-consumer' },
+    });
+    expect(
+      await screen.findByText('Outdated consumer: requirements not met')
+    ).toBeVisible();
+    expect(
+      screen.getByText('Missing capability: material-store-openbao-kv2-v1')
+    ).toBeVisible();
+  });
   it('persists the exact consumer intent before authorization can take effect', async () => {
     const ctx = materialContext();
     let finish;
