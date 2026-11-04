@@ -261,6 +261,28 @@ Write-UpgradeRecoveryRecord -StagingIdentity '1:3'
   }
 });
 
+test("launcher-backed health failure preserves application and backup", { skip: process.platform !== "win32" }, () => {
+  const script = String.raw`
+$ErrorActionPreference='Stop'
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $env:TT542_SOURCE 'install-agent.ps1'),[ref]$tokens,[ref]$errors)
+$f=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if (-not $healthy -and $script:IsUpgrade')},$true))
+if ($errors.Count -or $f.Count -ne 1) { throw 'missing health failure branch' }
+$healthy=$false; $script:IsUpgrade=$true; $script:AppPrevious=$env:TT542_SOURCE
+$script:AuthorizedLauncherTransaction='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+function Fail([string]$Message) { throw $Message }
+function Stop-Service { throw 'unsafe service mutation' }
+function Remove-Item { throw 'unsafe application removal' }
+try { Invoke-Expression $f[0].Extent.Text; throw 'health failure unexpectedly accepted' }
+catch { if ($_.Exception.Message -notmatch 'recovery_required: upgrade health check failed') { throw } }
+exit 0
+`;
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+    env: { ...process.env, TT542_SOURCE: __dirname }, windowsHide: true, encoding: "utf8", timeout: 15000,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
 test("rejects an oversized recovery record before touching the existing application", { skip: process.platform !== "win32", timeout: 30000 }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
   const fixture = fs.mkdtempSync(path.join(tempParent, "tt542-journal-size-"));

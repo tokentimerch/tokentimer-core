@@ -1566,6 +1566,12 @@ try {
 $healthy = (Test-ServiceHealthy -TimeoutSeconds 20) -and (Test-ServiceChildStable -ExpectedNodePath $script:InstalledNodeExe)
 
 if (-not $healthy -and $script:IsUpgrade -and (Test-Path -LiteralPath $script:AppPrevious)) {
+    if ($null -ne $script:AuthorizedLauncherTransaction) {
+        # SCM and WMI can outlive the installer. Until they are reconciled,
+        # stopping the service silently is not proof it is safe to remove or
+        # replace the active application. Keep both app copies and the journal.
+        Fail "recovery_required: upgrade health check failed; the application, backup and recovery journal were retained"
+    }
     Write-Log "Health check failed after upgrade; rolling back to the previous version."
     Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $AppDir -Recurse -Force
