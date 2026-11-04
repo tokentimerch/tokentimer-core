@@ -38,7 +38,7 @@ function verifyProof(proof) {
   }
   return true;
 }
-async function qualifyClientSettings({ binding, certificates, powershell, run, unrelatedPort, expectServed, pem }) {
+async function qualifyClientSettings({ binding, certificates, powershell, run, unrelatedPort, expectServed, pem, deploy = deployIisBinding }) {
   assert.equal(process.platform, "win32");
   assert.equal(binding.address, "127.0.0.1"); assert.equal(binding.store, "My"); assert.equal(binding.sniHost, undefined);
   assert.match(binding.site, /^CertOps-[a-f0-9-]{36}$/);
@@ -75,15 +75,15 @@ async function qualifyClientSettings({ binding, certificates, powershell, run, u
       await expectServed(unrelatedPort, certificates[0].thumbprint);
     };
     await observe(certificates[0].thumbprint);
-    const cutover = await deployIisBinding({ binding, certificatePem: pem(certificates[1]), verifyTimeoutMs: 15000 });
+    const cutover = await deploy({ binding, certificatePem: pem(certificates[1]), verifyTimeoutMs: 15000 });
     assert.equal(cutover.ok, true); assert.equal(cutover.outgoingThumbprint, certificates[0].thumbprint);
     await observe(certificates[1].thumbprint);
     assertCandidateAbsent();
-    const rollback = await deployIisBinding({ binding, certificatePem: candidatePem, verifyTimeoutMs: 5000 });
+    const rollback = await deploy({ binding, certificatePem: candidatePem, verifyTimeoutMs: 5000 });
     assert.equal(rollback.ok, false); assert.equal(rollback.code, "BIND_FAILED");
     assert.equal(rollback.rolledBack, true); assert.equal(rollback.outgoingThumbprint, certificates[1].thumbprint);
     await observe(certificates[1].thumbprint);
-    const restore = await deployIisBinding({ binding, certificatePem: pem(certificates[0]), verifyTimeoutMs: 15000 });
+    const restore = await deploy({ binding, certificatePem: pem(certificates[0]), verifyTimeoutMs: 15000 });
     assert.equal(restore.ok, true); assert.equal(restore.outgoingThumbprint, certificates[1].thumbprint);
     await observe(certificates[0].thumbprint);
     cases.push({ id: item.id, checkMode: item.checkMode, freshness: item.freshness, retrievalTimeout: item.retrievalTimeout, ...Object.fromEntries(FLAGS.map(flag => [flag, true])) });
