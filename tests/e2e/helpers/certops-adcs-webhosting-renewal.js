@@ -112,15 +112,12 @@ function storeCleanupPlan(receipt, entries, readRecord, store, domainPattern) {
       "Preserve unowned WebHosting key association",
     );
     const record = readRecord(entry.containerName);
-    assert.ok(
-      record &&
-        record.status === "enrolled_by_agent" &&
-        record.containerName === entry.containerName &&
-        record.certificateId === receipt.certificateId &&
-        record.acceptedStore === store &&
-        record.acceptedThumbprint === entry.thumbprint,
-      "Preserve public certificate without exact durable ownership",
-    );
+    const mismatch = !record ? "MISSING" : record.status !== "enrolled_by_agent" ? "STATUS"
+      : record.containerName !== entry.containerName ? "CONTAINER"
+        : record.certificateId !== receipt.certificateId ? "CERTIFICATE"
+          : record.acceptedStore !== store ? "STORE"
+            : record.acceptedThumbprint !== entry.thumbprint ? "THUMBPRINT" : null;
+    if (mismatch) throw Object.assign(new Error("Preserve public certificate without exact durable ownership"), { code: `CERTOPS_STORE_RECEIPT_${mismatch}` });
     return Object.freeze({
       thumbprint: entry.thumbprint,
       containerName: entry.containerName,
