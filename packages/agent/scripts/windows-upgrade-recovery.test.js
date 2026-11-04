@@ -277,6 +277,46 @@ if (Test-ServiceChildStable -ExpectedNodePath $script:ExpectedNode) { throw 'Exi
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
+test("bundled bootstrap rejects ancestor permissions that can alter a reparse point", { skip: process.platform !== "win32" }, () => {
+  const script = String.raw`
+$ErrorActionPreference='Stop'
+$ttTokens=$null; $ttErrors=$null
+$ttAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $env:TT542_SOURCE 'install-agent.ps1'),[ref]$ttTokens,[ref]$ttErrors)
+$ttFunction=@($ttAst.FindAll({ param($ttNode) $ttNode -is [Management.Automation.Language.FunctionDefinitionAst] -and $ttNode.Name -eq 'Assert-ProtectedBundleTree' },$true))
+if ($ttErrors.Count -or $ttFunction.Count -ne 1) { throw 'Missing bundle protection helper' }
+Invoke-Expression $ttFunction[0].Extent.Text
+$script:ttRoot='C:\tt542-parent\bundle'
+$script:ttBadMask=0
+function Get-Item { param($LiteralPath,[switch]$Force,$ErrorAction) return [pscustomobject]@{ Attributes=[IO.FileAttributes]::Directory; PSIsContainer=$true } }
+function Get-ChildItem { param($LiteralPath,[switch]$Force,$ErrorAction) return @() }
+function Get-Acl {
+  param($LiteralPath,$ErrorAction)
+  $acl=New-Object System.Security.AccessControl.DirectorySecurity
+  $system=New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
+  $everyone=New-Object System.Security.Principal.SecurityIdentifier('S-1-1-0')
+  $acl.SetOwner($system)
+  $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($system,'FullControl','Allow')))
+  if ($script:ttBadMask -and $LiteralPath -ieq 'C:\tt542-parent') {
+    $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($everyone,[Security.AccessControl.FileSystemRights]$script:ttBadMask,'Allow')))
+  }
+  return $acl
+}
+Assert-ProtectedBundleTree -Root $script:ttRoot
+foreach ($mask in @(0x2,0x100)) {
+  $script:ttBadMask=$mask
+  $rejected=$false
+  try { Assert-ProtectedBundleTree -Root $script:ttRoot } catch {
+    if ($_.Exception.Message -match 'untrusted principal') { $rejected=$true } else { throw }
+  }
+  if (-not $rejected) { throw "Writable ancestor accepted for mask $mask" }
+}
+`;
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+    env: { ...process.env, TT542_SOURCE: __dirname }, windowsHide: true, encoding: "utf8", timeout: 15000,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
 test("bundled bootstrap rejects a user-owned extraction directory", { skip: process.platform !== "win32" }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
   const fixture = fs.mkdtempSync(path.join(tempParent, "tt542-untrusted-"));

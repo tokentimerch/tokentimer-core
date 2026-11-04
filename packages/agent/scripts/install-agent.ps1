@@ -126,7 +126,10 @@ function Assert-ProtectedBundleTree {
     param([Parameter(Mandatory)][string]$Root)
     $trustedOwners = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
     $trustedWriters = $trustedOwners
-    $ancestorMask = [int64]0x100D0040
+    # Setting a reparse point can require FILE_WRITE_DATA or
+    # FILE_WRITE_ATTRIBUTES. Reject these rights on ancestors as well as
+    # delete/ACL ownership rights and generic write/all.
+    $ancestorMask = [int64]0x500D0142
     $payloadMask = [int64]0x500D0156
     function Assert-ProtectedItem([string]$Path, [bool]$AncestorOnly) {
         $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
