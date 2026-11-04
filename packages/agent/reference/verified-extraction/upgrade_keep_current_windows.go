@@ -59,12 +59,15 @@ func openUpgradeJournalForReview(path string, policy bootstraplock.Policy) (wind
 // Success means the service was last observed stopped and disabled; this is not atomic
 // against a privileged concurrent restart. Operators must stop and review
 // other privileged actors. Remote readiness is not checked. The service is
-// never re-enabled automatically or before any queued restart has elapsed;
-// the original start type is in the protected
-// review journal for an explicit operator-led restoration after review.
-func releaseReviewedUpgrade(parent, journal, transaction string, parentPolicy, stagePolicy bootstraplock.Policy, sddl string, ackActors, ackKeepCurrent, ackLeaveDisabled, ackNoPriorCommandOrReboot bool, runtimePin identityContract, verifyIdentity func(string, string, identityContract, bootstraplock.Policy) error, service func(string) error, verifyActive func(string, string) (io.Closer, error), stop func(string, string, upgradeJournalBinding) (reviewedStoppedGuard, error), renameMarker func(windows.Handle, string, string) error, renameHandle func(windows.Handle, string) error) (string, error) {
+// never re-enabled automatically. Operators must not re-enable it until
+// support has assessed queued actions; the protected journal retains its
+// original start type for a later, explicitly reviewed restoration.
+func releaseReviewedUpgrade(parent, journal, transaction string, parentPolicy, stagePolicy bootstraplock.Policy, sddl string, ackActors, ackKeepCurrent, ackLeaveDisabled, ackNoPriorCommandOrReboot bool, proveNoPriorCommands func() error, runtimePin identityContract, verifyIdentity func(string, string, identityContract, bootstraplock.Policy) error, service func(string) error, verifyActive func(string, string) (io.Closer, error), stop func(string, string, upgradeJournalBinding) (reviewedStoppedGuard, error), renameMarker func(windows.Handle, string, string) error, renameHandle func(windows.Handle, string) error) (string, error) {
 	if !ackActors || !ackKeepCurrent || !ackLeaveDisabled || !ackNoPriorCommandOrReboot || verifyIdentity == nil || service == nil || verifyActive == nil || stop == nil || !stageNamePattern.MatchString("TokenTimer-Staging-"+transaction) {
 		return "", fmt.Errorf("explicit actor review, prior-action review, keep-current and leave-disabled decisions are required")
+	}
+	if err := requireNoPendingNonRestartActions(proveNoPriorCommands); err != nil {
+		return "", err
 	}
 	unlock, err := lockUpgradeState(journal, parentPolicy, stagePolicy)
 	if err != nil {
@@ -260,6 +263,9 @@ func releaseReviewedUpgrade(parent, journal, transaction string, parentPolicy, s
 	if err = stopped.Verify(); err != nil {
 		return "", fmt.Errorf("service state changed; journal retained")
 	}
+	if err = requireNoPendingNonRestartActions(proveNoPriorCommands); err != nil {
+		return "", err
+	}
 	if err = renameHandle(journalHandle, filepath.Join(archive, "upgrade-recovery.json")); err != nil {
 		return "", fmt.Errorf("upgrade journal retained")
 	}
@@ -339,4 +345,16 @@ func validateIdentityContract(record *identityContract, independent identityCont
 type reviewedStoppedGuard interface {
 	io.Closer
 	Verify() error
+}
+
+// Acknowledgement is not proof: no production provider is wired because SCM
+// does not expose queued command/reboot actions. Any uncertainty fails closed.
+func requireNoPendingNonRestartActions(proof func() error) error {
+	if proof == nil {
+		return fmt.Errorf("qualified proof of no queued command or reboot is unavailable")
+	}
+	if err := proof(); err != nil {
+		return fmt.Errorf("queued command or reboot action not excluded")
+	}
+	return nil
 }
