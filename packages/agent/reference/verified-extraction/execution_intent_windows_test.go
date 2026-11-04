@@ -52,6 +52,30 @@ func TestRecoveredStagingWithoutIntentRemainsQuarantined(t *testing.T) {
 	}
 }
 
+func TestExecutionIntentPairSharesOnlyExplicitSecretAndTransaction(t *testing.T) {
+	payload, pSDDL := intentFixture(t)
+	scratch, sSDDL := intentFixture(t)
+	first, err := payload.beginExecutionIntent(fixtureArchive, fixtureSCM, pSDDL, defaultIntentIO())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := scratch.beginExecutionIntentForTransaction(fixtureArchive, fixtureSCM, sSDDL, first.Transaction, first.Secret, defaultIntentIO())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Transaction != second.Transaction || first.Secret != second.Secret || first.Secret == "" {
+		t.Fatal("paired intent identity mismatch")
+	}
+	if first.Volume == second.Volume && first.IndexHigh == second.IndexHigh && first.IndexLow == second.IndexLow {
+		t.Fatal("distinct stages share identity")
+	}
+	for _, stage := range []*PrivateStaging{payload, scratch} {
+		if err := stage.Cleanup(); !errors.Is(err, ErrExecutionRecoveryPending) {
+			t.Fatalf("stage escaped quarantine: %v", err)
+		}
+	}
+}
+
 func TestExecutionIntentIsFlushedOutsidePayloadAndBlocksCleanup(t *testing.T) {
 	s, sddl := intentFixture(t)
 	intent, err := s.beginExecutionIntent(fixtureArchive, fixtureSCM, sddl, defaultIntentIO())
