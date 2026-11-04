@@ -19,7 +19,7 @@ function New-Object {
   if($ComObject -ne 'CertificateAuthority.View'){throw 'Unexpected fixture COM request'}
   $value=[pscustomobject]@{}
   $global:diagnosticViews++
-  $value | Add-Member -MemberType ScriptMethod -Name OpenConnection -Value { param($value) if($global:diagnosticMode -eq 'local-success' -and $global:diagnosticViews -gt 1){return}; throw [Runtime.InteropServices.COMException]::new('private-diagnostic-sentinel',-2147024891) }
+  $value | Add-Member -MemberType ScriptMethod -Name OpenConnection -Value { param($value) if(($global:diagnosticMode -eq 'local-success' -and $global:diagnosticViews -gt 1) -or ($global:diagnosticMode -eq 'english-success' -and $global:diagnosticViews -gt 2)){return}; throw [Runtime.InteropServices.COMException]::new('private-diagnostic-sentinel',-2147024891) }
   return $value
 }
 function Invoke-Command {
@@ -40,6 +40,9 @@ catch { exit 7 }
   $localOutput = @(& $powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $wrapper -Source $source -Mode 'local-success' 2>&1 | ForEach-Object { [string]$_ })
   if ($LASTEXITCODE -ne 7 -or 'CERTOPS_ISSUED_CA_DIAG=local-open-success' -notin $localOutput) { throw 'A successful local probe must not replace the failed required connection' }
   if (($localOutput -join "`n") -match 'private-diagnostic-sentinel|synthetic-test-only') { throw 'Private fixture text escaped the diagnostic boundary' }
+  $englishOutput = @(& $powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $wrapper -Source $source -Mode 'english-success' 2>&1 | ForEach-Object { [string]$_ })
+  if ($LASTEXITCODE -ne 7 -or 'CERTOPS_ISSUED_CA_DIAG=english-open-success' -notin $englishOutput) { throw 'A successful English probe must not replace the failed required connection' }
+  if (($englishOutput -join "`n") -match 'private-diagnostic-sentinel|synthetic-test-only') { throw 'Private fixture text escaped the diagnostic boundary' }
   'CA observation diagnostic stream and privacy control passed'
 } finally {
   $resolved = [IO.Path]::GetFullPath($root)

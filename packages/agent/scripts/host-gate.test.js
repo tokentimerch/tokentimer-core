@@ -76,10 +76,10 @@ test("native command failures retain only bounded diagnostic metadata", async ()
   const failure = gate.report.scenarios[0].failure;
   assert.deepEqual(failure.command, { executable: "powershell.exe", exitStatus: 1, script: "owned-issued-request.ps1", issuedStep: "enumeration", powerShellCode: "PermissionDenied" });
   assert.equal(JSON.stringify(failure).includes("private"), false);
-  const issuedError = Object.assign(new Error("private"), { code: "CERTOPS_NATIVE_COMMAND_FAILED", qualificationCommand: { executable: "powershell.exe", exitStatus: 1, script: "owned-issued-request.ps1", issuedStep: "connection", issuedHresults: ["0x80070005", "private-value", "0xFFFFFFFF"], issuedCaDiag: ["identity-match", "private-value", "local-open-failure"] } });
+  const issuedError = Object.assign(new Error("private"), { code: "CERTOPS_NATIVE_COMMAND_FAILED", qualificationCommand: { executable: "powershell.exe", exitStatus: 1, script: "owned-issued-request.ps1", issuedStep: "connection", issuedHresults: ["0x80070005", "private-value", "0xFFFFFFFF"], issuedCaDiag: ["identity-match", "private-value", "local-open-failure", "english-open-success"] } });
   await gate.scenario("owned-issued-hresult", async () => { throw issuedError; });
   assert.deepEqual(gate.report.scenarios[1].failure.command.issuedHresults, ["0x80070005", "0xFFFFFFFF"]);
-  assert.deepEqual(gate.report.scenarios[1].failure.command.issuedCaDiag, ["identity-match", "local-open-failure"]);
+  assert.deepEqual(gate.report.scenarios[1].failure.command.issuedCaDiag, ["identity-match", "local-open-failure", "english-open-success"]);
   const second = Object.assign(new Error("secret"), { code: "CERTOPS_NATIVE_COMMAND_FAILED", qualificationCommand: { executable: "powershell.exe", exitStatus: 1, powerShellCode: "Issued leaf uses a foreign native key" } });
   await gate.scenario("owned-command-classification", async () => { throw second; });
   assert.equal(gate.report.scenarios[2].failure.command.failure, "foreign-native-key");
