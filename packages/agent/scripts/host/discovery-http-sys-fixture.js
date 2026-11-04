@@ -31,6 +31,13 @@ function annotateFailure(error, stage) {
   if (error && typeof error === "object") error.code = `CERTOPS_HTTP_SYS_${stages.includes(stage) ? stage : "OTHER"}`;
   return error;
 }
+function hasSelector(rows, selector) {
+  assert.ok(Array.isArray(rows) && typeof selector === "string" && selector.length > 0);
+  return rows.some(row => {
+    assert.ok(row && typeof row.selector === "string");
+    return row.selector.toLowerCase() === selector.toLowerCase();
+  });
+}
 
 const inventoryScript = String.raw`
 $rows=@(); $root='HKLM:\SYSTEM\CurrentControlSet\Services\HTTP\Parameters'
@@ -77,9 +84,11 @@ async function qualifyHttpSysDiscovery({powershell,run,workDir,gate}) {
       const thumbprint=fs.readFileSync(path.join(owned,`${specification.certificate}.thumbprint`),"utf8").trim();assert.match(thumbprint,/^[A-F0-9]{40}$/);
       const publicData=JSON.parse(powershell(`$cert=Get-Item -LiteralPath 'Cert:\\LocalMachine\\${specification.store}\\${thumbprint}'; @{raw=[Convert]::ToBase64String($cert.RawData);hasPrivateKey=$cert.HasPrivateKey} | ConvertTo-Json -Compress`));assert.equal(publicData.hasPrivateKey,true);
       const fingerprint=new crypto.X509Certificate(Buffer.from(publicData.raw,"base64")).fingerprint256.replace(/:/g,"").toLowerCase();
-      assert.equal(baseline.some(row=>row.selector.toLowerCase()===specification.selector.toLowerCase()),false,"Refuse preexisting native selector");
+      assert.equal(hasSelector(baseline,specification.selector),false,"Refuse preexisting native selector");
       stage="SELECTOR_CHECK";
-      powershell(`& netsh.exe http show sslcert '${specification.key}=${specification.selector}' | Out-Null; if($LASTEXITCODE -eq 0){throw 'Refuse existing native selector'}`);
+      // Re-read the independent HTTP.sys registry immediately before add.
+      // netsh's missing-selector exit status is not a reliable absence oracle.
+      assert.equal(hasSelector(native(),specification.selector),false,"Refuse newly occupied native selector");
       expected.push({...specification,appId,thumbprint,fingerprint});
       stage="BINDING_ADD";run("netsh.exe",["http","add","sslcert",`${specification.key}=${specification.selector}`,`certhash=${thumbprint}`,`appid={${appId}}`,`certstorename=${specification.store}`]);
       stage="BINDING_SHOW";
@@ -101,4 +110,4 @@ async function qualifyHttpSysDiscovery({powershell,run,workDir,gate}) {
     fs.rmSync(owned,{recursive:true});
   }
 }
-module.exports={qualifyHttpSysDiscovery,verifyObservations,inventoryScript,annotateFailure};
+module.exports={qualifyHttpSysDiscovery,verifyObservations,inventoryScript,annotateFailure,hasSelector};

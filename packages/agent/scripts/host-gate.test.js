@@ -17,6 +17,12 @@ test("HTTP.sys failures expose only a fixed stage code", async () => {
   assert.doesNotMatch(JSON.stringify(run.report), /private path/);
   assert.equal(annotateFailure(new Error(), "private path").code, "CERTOPS_HTTP_SYS_OTHER");
 });
+test("HTTP.sys fixture refuses existing selectors using native registry observations", () => {
+  const { hasSelector } = require("./host/discovery-http-sys-fixture");
+  assert.equal(hasSelector([{ selector: "EXAMPLE.test:443" }], "example.test:443"), true);
+  assert.equal(hasSelector([{ selector: "example.test:443" }], "example.test:444"), false);
+  assert.throws(() => hasSelector([{}], "example.test:443"));
+});
 
 test("native command failures retain only bounded diagnostic metadata", async () => {
   const gate = createHostGate({ suite: "fixture", strict: true, reportPath: null, continueOnFailure: true });
