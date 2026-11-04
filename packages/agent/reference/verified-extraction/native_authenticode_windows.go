@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"path/filepath"
 	"unsafe"
 
@@ -86,7 +87,18 @@ func nativeAuthenticodePrototype(path, pin string) error {
 	if err != nil {
 		return err
 	}
-	file := windows.WinTrustFileInfo{Size: uint32(unsafe.Sizeof(windows.WinTrustFileInfo{})), FilePath: name}
+	f, err := lockSignedFile(name)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := experimentalSpcSHA256(f); err != nil {
+		return err
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		return err
+	}
+	file := windows.WinTrustFileInfo{Size: uint32(unsafe.Sizeof(windows.WinTrustFileInfo{})), FilePath: name, File: windows.Handle(f.Fd())}
 	settings := windows.WinTrustSignatureSettings{Size: uint32(unsafe.Sizeof(windows.WinTrustSignatureSettings{})), Index: 0, Flags: 0x1 | 0x2}
 	data := windows.WinTrustData{
 		Size: uint32(unsafe.Sizeof(windows.WinTrustData{})), UIChoice: windows.WTD_UI_NONE,
@@ -194,6 +206,24 @@ func nativeAuthenticodePrototype(path, pin string) error {
 		return fmt.Errorf("timestamp signing usage missing")
 	}
 	return nil
+}
+
+func lockSignedFile(name *uint16) (*os.File, error) {
+	h, err := windows.CreateFile(name, windows.GENERIC_READ, windows.FILE_SHARE_READ, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
+		return nil, fmt.Errorf("lock signed file: %w", err)
+	}
+	f := os.NewFile(uintptr(h), "locked-signed-file")
+	if f == nil {
+		windows.CloseHandle(h)
+		return nil, fmt.Errorf("locked signed file unavailable")
+	}
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &info); err != nil || info.FileAttributes&(windows.FILE_ATTRIBUTE_REPARSE_POINT|windows.FILE_ATTRIBUTE_DIRECTORY) != 0 {
+		f.Close()
+		return nil, fmt.Errorf("invalid signed file identity")
+	}
+	return f, nil
 }
 
 // Native WinTrust returns an unmanaged pointer, valid until its state is
