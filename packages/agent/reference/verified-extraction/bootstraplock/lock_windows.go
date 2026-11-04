@@ -54,7 +54,10 @@ func LockAncestors(root string, policy Policy) (_ *Locks, err error) {
 		}
 	}
 	for i := len(ancestors) - 1; i >= 0; i-- {
-		if err = l.open(ancestors[i], true, func(h syscall.Handle) error { return policy.ValidateHandle(h, true) }); err != nil {
+		// The final directory contains newly created protected stages and must
+		// exclude untrusted child creation, unlike its higher ancestors.
+		ancestor := i != 0
+		if err = l.open(ancestors[i], true, func(h syscall.Handle) error { return policy.ValidateHandle(h, ancestor) }); err != nil {
 			return nil, err
 		}
 	}

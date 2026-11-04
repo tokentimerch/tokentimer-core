@@ -58,6 +58,8 @@ func TestSecurityDescriptorPolicy(t *testing.T) {
 		{"untrusted owner", "O:WDD:(A;;FA;;;SY)", false, false},
 		{"null dacl", "O:SYD:NO_ACCESS_CONTROL", false, false},
 		{"untrusted create in payload", "O:SYD:(A;;FA;;;SY)(A;;0x00000002;;;WD)", false, false},
+		{"untrusted create subdirectory in direct parent", "O:SYD:(A;;FA;;;SY)(A;;0x00000004;;;WD)", false, false},
+		{"higher ancestor create subdirectory only", "O:SYD:(A;;FA;;;SY)(A;;0x00000004;;;WD)", true, true},
 		{"untrusted delete child on ancestor", "O:SYD:(A;;FA;;;SY)(A;;0x00000040;;;WD)", true, false},
 		{"untrusted write attributes on ancestor", "O:SYD:(A;;FA;;;SY)(A;;0x00000100;;;WD)", true, false},
 		{"untrusted write data on ancestor", "O:SYD:(A;;FA;;;SY)(A;;0x00000002;;;WD)", true, false},
