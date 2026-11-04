@@ -74,6 +74,71 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe('Connect and validate consumers', () => {
+  it('persists the exact consumer intent before authorization can take effect', async () => {
+    const ctx = materialContext();
+    let finish;
+    assignConsumer.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        })
+    );
+    const view = show(ctx);
+    fireEvent.change(
+      screen.getByLabelText('Customer-local store HTTPS address'),
+      { target: { value: 'https://store.example.test' } }
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Assign Consumer' })
+    );
+    await waitFor(() => expect(assignConsumer).toHaveBeenCalledOnce());
+    const [, , bindingId, body] = assignConsumer.mock.calls[0];
+    const saved = structuredClone(
+      ctx.session.progress.certops.vaultConsumers || []
+    );
+    view.unmount();
+    finish({
+      binding: {
+        id: bindingId,
+        assigned_agent_id: body.agentId,
+        deployment_profile_ref: body.deploymentProfileRef,
+        profile_revision: 1,
+        authorization_revision: 1,
+      },
+    });
+    expect(saved).toEqual([
+      expect.objectContaining({
+        bindingId,
+        agentId: CONSUMER,
+        deploymentProfileRef: 'certificate-files',
+      }),
+    ]);
+  });
+  it('does not authorize a consumer when its intent cannot be saved', async () => {
+    const ctx = materialContext();
+    assignConsumer.mockImplementation(async (_ws, _group, id, body) => ({
+      binding: {
+        id,
+        assigned_agent_id: body.agentId,
+        deployment_profile_ref: body.deploymentProfileRef,
+        profile_revision: 1,
+        authorization_revision: 1,
+      },
+    }));
+    ctx.controller.update.mockRejectedValueOnce(
+      new Error('Guide progress unavailable')
+    );
+    show(ctx);
+    fireEvent.change(
+      screen.getByLabelText('Customer-local store HTTPS address'),
+      { target: { value: 'https://store.example.test' } }
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Assign Consumer' })
+    );
+    await screen.findByText('Guide progress unavailable');
+    expect(assignConsumer).not.toHaveBeenCalled();
+  });
   it('authorizes the chosen first consumer when another registered host sorts first', async () => {
     const ctx = materialContext();
     const consumer = ctx.summary.certops.agents.items[1];
