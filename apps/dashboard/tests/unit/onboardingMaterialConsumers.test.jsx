@@ -91,6 +91,27 @@ const withActiveConsumer = () =>
     ],
   });
 describe('Connect and validate consumers', () => {
+  it('does not verify a different assigned consumer when the selected agent is unassigned', async () => {
+    readDistribution.mockResolvedValue({
+      versions: [],
+      consumers: [
+        {
+          binding_id: 'old',
+          binding_state: 'active',
+          assigned_agent_id: 'web-01',
+        },
+      ],
+    });
+    show(materialContext());
+    expect(
+      await screen.findByText(/Selected consumer is not assigned/)
+    ).toBeVisible();
+    expect(
+      screen.getByRole('button', {
+        name: 'Check installed material (no deployment)',
+      })
+    ).toBeDisabled();
+  });
   it('explains and prevents verification when no consumer is assigned', async () => {
     show(materialContext());
     expect(await screen.findByText('No consumer assigned')).toBeVisible();

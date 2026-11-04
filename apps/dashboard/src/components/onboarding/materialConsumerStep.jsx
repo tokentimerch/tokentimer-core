@@ -44,7 +44,13 @@ import {
   materialCertificateInput,
 } from './materialSetupModel.js';
 
-function VerificationRequest({ ctx, group, disabled, real = false }) {
+function VerificationRequest({
+  ctx,
+  group,
+  disabled,
+  real = false,
+  selectedAgentId,
+}) {
   const saved = certopsProgress(ctx);
   const field = real ? 'materialIisRollout' : 'materialVerification';
   const previous = saved[field];
@@ -87,6 +93,13 @@ function VerificationRequest({ ctx, group, disabled, real = false }) {
   const hasActiveConsumer = consumerState.rows.some(
     row => (row.binding_state || row.state || 'active') === 'active'
   );
+  const selectedAssigned =
+    !selectedAgentId ||
+    consumerState.rows.some(
+      row =>
+        (row.binding_state || row.state || 'active') === 'active' &&
+        row.assigned_agent_id === selectedAgentId
+    );
   const canReset = real
     ? group.completed === true ||
       group.verified === true ||
@@ -146,6 +159,17 @@ function VerificationRequest({ ctx, group, disabled, real = false }) {
           it before checking installed material.
         </StatusPanel>
       )}
+      {consumerState.loaded && hasActiveConsumer && !selectedAssigned && (
+        <StatusPanel status='warning' title='Selected consumer is not assigned'>
+          Assign the selected consumer above before checking installed material.
+          The check runs on all active consumers in this publication.
+        </StatusPanel>
+      )}
+      {consumerState.loaded && hasActiveConsumer && selectedAssigned && (
+        <Text fontSize='sm'>
+          This check covers all active consumers in the publication.
+        </Text>
+      )}
       {real ? (
         <StatusPanel status='warning' title='Real IIS deployment'>
           This rollout imports the private key and changes IIS bindings.
@@ -179,6 +203,7 @@ function VerificationRequest({ ctx, group, disabled, real = false }) {
           !consumerState.loaded ||
           consumerState.error ||
           !hasActiveConsumer ||
+          !selectedAssigned ||
           (real && !confirmed) ||
           Boolean(current?.jobId)
         }
@@ -847,6 +872,9 @@ function MaterialConsumerForm({ ctx }) {
                 key={`check/${group.id}`}
                 ctx={ctx}
                 group={group}
+                selectedAgentId={
+                  platform === 'linux' ? firstAgentId : undefined
+                }
                 disabled={!ready || (platform === 'win32' && !wEnabled)}
               />
             )}
