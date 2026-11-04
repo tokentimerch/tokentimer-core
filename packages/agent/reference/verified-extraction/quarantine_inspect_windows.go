@@ -56,8 +56,12 @@ type QuarantineRecord struct {
 // inspectQuarantineRecord reads one bounded, protected marker using a handle
 // that denies replacement and writing. It never mutates or releases a stage.
 func inspectQuarantineRecord(stage *PrivateStaging) (ExecutionIntent, error) {
+	return inspectQuarantineRecordAt(stage, stage.path+".intent")
+}
+
+func inspectQuarantineRecordAt(stage *PrivateStaging, markerPath string) (ExecutionIntent, error) {
 	var result ExecutionIntent
-	name, err := windows.UTF16PtrFromString(stage.path + ".intent")
+	name, err := windows.UTF16PtrFromString(markerPath)
 	if err != nil {
 		return result, err
 	}
@@ -65,12 +69,12 @@ func inspectQuarantineRecord(stage *PrivateStaging) (ExecutionIntent, error) {
 	if err != nil {
 		return result, fmt.Errorf("open protected marker: %w", err)
 	}
-	f := os.NewFile(uintptr(h), "protected-intent")
-	if f == nil {
-		windows.CloseHandle(h)
-		return result, fmt.Errorf("marker handle unavailable")
-	}
-	defer f.Close()
+	defer windows.CloseHandle(h)
+	return inspectQuarantineHandle(stage, h)
+}
+
+func inspectQuarantineHandle(stage *PrivateStaging, h windows.Handle) (ExecutionIntent, error) {
+	var result ExecutionIntent
 	var info windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(h, &info); err != nil || info.FileAttributes&(windows.FILE_ATTRIBUTE_DIRECTORY|windows.FILE_ATTRIBUTE_REPARSE_POINT) != 0 || info.NumberOfLinks != 1 || info.FileSizeHigh != 0 || info.FileSizeLow == 0 || info.FileSizeLow > 4096 {
 		return result, fmt.Errorf("invalid marker identity or size")
@@ -78,8 +82,9 @@ func inspectQuarantineRecord(stage *PrivateStaging) (ExecutionIntent, error) {
 	if err := validateIntentACL(h, stage); err != nil {
 		return result, fmt.Errorf("invalid marker ACL")
 	}
-	b, err := io.ReadAll(io.LimitReader(f, 4097))
-	if err != nil || len(b) == 0 || len(b) > 4096 {
+	b := make([]byte, info.FileSizeLow)
+	var read uint32
+	if err := windows.ReadFile(h, b, &read, nil); err != nil || read != uint32(len(b)) {
 		return result, fmt.Errorf("marker read failed")
 	}
 	check := json.NewDecoder(bytes.NewReader(b))
@@ -176,6 +181,10 @@ func quarantineMarkerNames(entries []os.DirEntry) ([]string, error) {
 // Lock only the directory identity, not the contained files: a diagnostic
 // must not block writes by a still-running privileged actor inside the stage.
 func lockQuarantineDirectory(path string, policy bootstraplock.Policy) (windows.Handle, error) {
+	return lockDirectoryWithPolicy(path, policy, false)
+}
+
+func lockDirectoryWithPolicy(path string, policy bootstraplock.Policy, ancestor bool) (windows.Handle, error) {
 	name, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return 0, err
@@ -189,7 +198,7 @@ func lockQuarantineDirectory(path string, policy bootstraplock.Policy) (windows.
 		windows.CloseHandle(h)
 		return 0, fmt.Errorf("invalid stage directory")
 	}
-	if err := policy.ValidateHandle(syscall.Handle(h), false); err != nil {
+	if err := policy.ValidateHandle(syscall.Handle(h), ancestor); err != nil {
 		windows.CloseHandle(h)
 		return 0, err
 	}

@@ -63,6 +63,8 @@ func bounded(path string, limit int64) ([]byte, error) {
 }
 func main() {
 	inspect := flag.Bool("inspect-quarantine", false, "inspect retained staging without changing it")
+	release := flag.String("release-quarantine-transaction", "", "archive reviewed quarantine markers for this exact transaction")
+	acknowledge := flag.Bool("acknowledge-external-actors-stopped", false, "confirm that an operator stopped and reviewed all external actors")
 	manifestPath := flag.String("manifest", "", "encapsulated signed CMS manifest")
 	archivePath := flag.String("archive", "", "agent archive")
 	sbomPath := flag.String("sbom", "", "SBOM")
@@ -71,6 +73,19 @@ func main() {
 	if err := policy.validate(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
+	}
+	if *release != "" || *acknowledge {
+		if *inspect || *manifestPath != "" || *archivePath != "" || *sbomPath != "" || len(flag.Args()) != 0 {
+			fmt.Fprintln(os.Stderr, "quarantine release does not accept package or installer arguments")
+			os.Exit(2)
+		}
+		archive, err := verified.ReleaseQuarantineAfterOperatorReview(context.Background(), *release, *acknowledge)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "quarantine release refused:", err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stdout, "Reviewed markers archived as", archive, "; staging directories remain in place.")
+		return
 	}
 	if *inspect {
 		if *manifestPath != "" || *archivePath != "" || *sbomPath != "" || len(flag.Args()) != 0 {
