@@ -155,6 +155,12 @@ def validate_run(run, candidate, repository):
         raise ValueError("Selected run is not successful trusted-main candidate qualification")
 
 
+def validate_artifact_digest(artifact, raw):
+    """Authenticate downloaded evidence bytes against GitHub artifact metadata."""
+    if artifact.get("digest") != "sha256:" + hashlib.sha256(raw).hexdigest():
+        raise ValueError("Qualification artifact digest does not match GitHub")
+
+
 def migration_evidence(value):
     """Retain only bounded public source/schema facts required by its verifier."""
     def text(raw, expression):
@@ -2327,8 +2333,7 @@ def main(arguments=()):
                 downloaded_bytes += len(raw)
                 if downloaded_bytes > MAX_TOTAL_DOWNLOAD:
                     raise ValueError("Collection total download size exceeds limit")
-                if elapsed_finalizer and artifact.get("digest") != "sha256:" + hashlib.sha256(raw).hexdigest():
-                    raise ValueError("Real-day finalizer artifact digest does not match GitHub")
+                validate_artifact_digest(artifact, raw)
                 def authenticate_elapsed_report(report):
                     if not isinstance(report, dict):
                         return False
