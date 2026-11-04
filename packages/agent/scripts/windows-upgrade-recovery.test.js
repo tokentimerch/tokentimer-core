@@ -315,16 +315,26 @@ foreach ($name in @('Get-UpgradeRecoveryPath','Write-UpgradeRecoveryRecord')) {
 $StateDir=$env:TT542_ROOT; $AppDir=$env:TT542_ROOT
 $script:PreviousServicePath='old-path'; $script:PreviousServiceDisplayName='old-service'; $script:PreviousServiceStartMode='Manual'
 $script:PreviousServiceEnvironment=$null; $script:AuthorizedLauncherTransaction='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+$script:HasBundledRuntime=$true; $runtimeArch='amd64'; $pinnedHash='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+$runtimeManifest=[pscustomobject]@{version='24.18.0';architecture='amd64';sha256=$pinnedHash}
 function Get-PackageDirectoryIdentity { param($Directory) return '1:2' }
 function Assert-UpgradeRecoveryAcl { param($JournalPath,$Kind) }
 function Invoke-PlatformAcl { param($TargetPath,$Kind) }
 Write-UpgradeRecoveryRecord -StagingIdentity '1:3'
+Copy-Item -LiteralPath (Join-Path $StateDir 'upgrade-recovery.json') -Destination (Join-Path $StateDir 'snapshot.json')
+Remove-Item -LiteralPath (Join-Path $StateDir 'upgrade-recovery.json')
+$runtimeManifest.sha256='cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+$refused=$false
+try { Write-UpgradeRecoveryRecord -StagingIdentity '1:3' } catch { $refused=$true }
+if (-not $refused -or (Test-Path -LiteralPath (Join-Path $StateDir 'upgrade-recovery.json'))) { throw 'untrusted runtime contract accepted' }
 `;
     const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
       env: { ...process.env, TT542_SOURCE: __dirname, TT542_ROOT: root }, windowsHide: true, encoding: "utf8", timeout: 15000,
     });
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.equal(JSON.parse(fs.readFileSync(path.join(root, "upgrade-recovery.json"), "utf8")).launcherIntent, "a".repeat(32));
+    const record = JSON.parse(fs.readFileSync(path.join(root, "snapshot.json"), "utf8"));
+    assert.equal(record.launcherIntent, "a".repeat(32));
+    assert.deepEqual(record.identityContract, { scheme: "node-fs-win32-v1", nodeVersion: "24.18.0", architecture: "amd64", nodeSha256: "b".repeat(64) });
   } finally {
     if (path.dirname(fs.realpathSync(root)).toLowerCase() !== tempParent.toLowerCase()) throw new Error("Unsafe fixture cleanup");
     fs.rmSync(root, { recursive: true, force: true });

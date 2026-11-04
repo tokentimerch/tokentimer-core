@@ -160,3 +160,20 @@ func TestClassifyUpgradePresenceDoesNotAuthorizeRecovery(t *testing.T) {
 		}
 	}
 }
+func TestUpgradeInspectionAcceptsLegacyAndRejectsUnknownContractFields(t *testing.T) {
+	for _, extra := range []struct {
+		name, suffix string
+		ok           bool
+	}{{"legacy", "", true}, {"unknown contract field", `,"identityContract":{"scheme":"node-fs-win32-v1","unexpected":"x"}`, false}} {
+		t.Run(extra.name, func(t *testing.T) {
+			f := newReleaseFixture(t, strings.Repeat("f", 32))
+			root := filepath.Dir(filepath.Dir(f.journal))
+			journal := []byte(`{"version":1,"pid":321,"previousIdentity":"11:22","stagingIdentity":"11:33","previousServicePath":"private","previousServiceDisplayName":"private","previousServiceStartMode":"Manual","hadPreviousServiceEnvironment":false,"previousServiceEnvironment":[],"launcherIntent":"` + f.txn + `"` + extra.suffix + `}`)
+			writeProtectedUpgradeFixture(t, f, journal)
+			_, err := inspectUpgradeRecovery(root, f.parentPolicy, f.stagePolicy, func() (string, error) { return "running", nil })
+			if (err == nil) != extra.ok {
+				t.Fatalf("unexpected inspection result: %v", err)
+			}
+		})
+	}
+}

@@ -22,16 +22,17 @@ import (
 )
 
 type upgradeRecord struct {
-	Version                       int             `json:"version"`
-	PID                           int             `json:"pid"`
-	PreviousIdentity              string          `json:"previousIdentity"`
-	StagingIdentity               string          `json:"stagingIdentity"`
-	PreviousServicePath           string          `json:"previousServicePath"`
-	PreviousServiceDisplayName    string          `json:"previousServiceDisplayName"`
-	PreviousServiceStartMode      string          `json:"previousServiceStartMode"`
-	HadPreviousServiceEnvironment bool            `json:"hadPreviousServiceEnvironment"`
-	PreviousServiceEnvironment    json.RawMessage `json:"previousServiceEnvironment"`
-	LauncherIntent                string          `json:"launcherIntent"`
+	Version                       int               `json:"version"`
+	PID                           int               `json:"pid"`
+	PreviousIdentity              string            `json:"previousIdentity"`
+	StagingIdentity               string            `json:"stagingIdentity"`
+	PreviousServicePath           string            `json:"previousServicePath"`
+	PreviousServiceDisplayName    string            `json:"previousServiceDisplayName"`
+	PreviousServiceStartMode      string            `json:"previousServiceStartMode"`
+	HadPreviousServiceEnvironment bool              `json:"hadPreviousServiceEnvironment"`
+	PreviousServiceEnvironment    json.RawMessage   `json:"previousServiceEnvironment"`
+	LauncherIntent                string            `json:"launcherIntent"`
+	IdentityContract              *identityContract `json:"identityContract,omitempty"`
 }
 
 type UpgradeInspection struct {
@@ -86,10 +87,6 @@ func inspectUpgradeRecovery(root string, parentPolicy, statePolicy bootstraplock
 		return out, fmt.Errorf("protected upgrade record unavailable")
 	}
 	defer windows.CloseHandle(h)
-	var info windows.ByHandleFileInformation
-	if err = windows.GetFileInformationByHandle(h, &info); err != nil || info.NumberOfLinks != 1 || info.FileAttributes&(windows.FILE_ATTRIBUTE_DIRECTORY|windows.FILE_ATTRIBUTE_REPARSE_POINT) != 0 || info.FileSizeHigh != 0 || info.FileSizeLow == 0 || info.FileSizeLow > 4096 {
-		return out, fmt.Errorf("invalid upgrade record identity or size")
-	}
 	// The installer explicitly grants its current elevated SID access to the
 	// journal. Only this process's own SID is added; a different installer's
 	// personal SID still fails closed and requires support.
@@ -98,30 +95,9 @@ func inspectUpgradeRecovery(root string, parentPolicy, statePolicy bootstraplock
 		return out, fmt.Errorf("operator identity unavailable")
 	}
 	journalPolicy := policyWithOperator(statePolicy, user.User.Sid.String())
-	if validateIntentACL(h, &PrivateStaging{policy: journalPolicy}) != nil {
-		return out, fmt.Errorf("untrusted upgrade record ACL")
-	}
-	b := make([]byte, info.FileSizeLow)
-	var n uint32
-	if err = windows.ReadFile(h, b, &n, nil); err != nil || n != uint32(len(b)) {
-		return out, fmt.Errorf("upgrade record read failed")
-	}
-	d := json.NewDecoder(bytes.NewReader(b))
-	if checkJSONValue(d, 0) != nil {
-		return out, fmt.Errorf("invalid upgrade record JSON")
-	}
-	if _, e := d.Token(); e != io.EOF {
-		return out, fmt.Errorf("invalid upgrade record JSON")
-	}
-	var rec upgradeRecord
-	d = json.NewDecoder(bytes.NewReader(b))
-	d.DisallowUnknownFields()
-	if d.Decode(&rec) != nil {
-		return out, fmt.Errorf("invalid upgrade record schema")
-	}
-	identity := regexp.MustCompile(`^\d+:[1-9]\d*$`)
-	if rec.Version != 1 || rec.PID <= 0 || rec.PID > 2147483647 || !identity.MatchString(rec.PreviousIdentity) || !identity.MatchString(rec.StagingIdentity) || !stageNamePattern.MatchString("TokenTimer-Staging-"+rec.LauncherIntent) || rec.PreviousServicePath == "" || rec.PreviousServiceDisplayName == "" || (rec.PreviousServiceStartMode != "Automatic" && rec.PreviousServiceStartMode != "Manual" && rec.PreviousServiceStartMode != "Disabled") {
-		return out, fmt.Errorf("unsupported upgrade record")
+	rec, err := readProtectedUpgradeRecord(h, journalPolicy)
+	if err != nil {
+		return out, err
 	}
 	out.Transaction = rec.LauncherIntent
 	out.RecordedPreviousIdentity = rec.PreviousIdentity
@@ -233,4 +209,43 @@ func classifyUpgradePresence(app, previous, staging string) string {
 	default:
 		return "ambiguous-manual-review-required"
 	}
+}
+
+func readProtectedUpgradeRecord(h windows.Handle, journalPolicy bootstraplock.Policy) (rec upgradeRecord, err error) {
+	var info windows.ByHandleFileInformation
+	if err = windows.GetFileInformationByHandle(h, &info); err != nil || info.NumberOfLinks != 1 || info.FileAttributes&(windows.FILE_ATTRIBUTE_DIRECTORY|windows.FILE_ATTRIBUTE_REPARSE_POINT) != 0 || info.FileSizeHigh != 0 || info.FileSizeLow == 0 || info.FileSizeLow > 4096 {
+		return rec, fmt.Errorf("invalid upgrade record identity or size")
+	}
+	if validateIntentACL(h, &PrivateStaging{policy: journalPolicy}) != nil {
+		return rec, fmt.Errorf("untrusted upgrade record ACL")
+	}
+	b := make([]byte, info.FileSizeLow)
+	var n uint32
+	if err = windows.ReadFile(h, b, &n, nil); err != nil || n != uint32(len(b)) {
+		return rec, fmt.Errorf("upgrade record read failed")
+	}
+	d := json.NewDecoder(bytes.NewReader(b))
+	if checkJSONValue(d, 0) != nil {
+		return rec, fmt.Errorf("invalid upgrade record JSON")
+	}
+	if _, e := d.Token(); e != io.EOF {
+		return rec, fmt.Errorf("invalid upgrade record JSON")
+	}
+	d = json.NewDecoder(bytes.NewReader(b))
+	d.DisallowUnknownFields()
+	if d.Decode(&rec) != nil {
+		return rec, fmt.Errorf("invalid upgrade record schema")
+	}
+	identity := regexp.MustCompile(`^\d+:[1-9]\d*$`)
+	if rec.Version != 1 || rec.PID <= 0 || rec.PID > 2147483647 || !identity.MatchString(rec.PreviousIdentity) || !identity.MatchString(rec.StagingIdentity) || !stageNamePattern.MatchString("TokenTimer-Staging-"+rec.LauncherIntent) || rec.PreviousServicePath == "" || rec.PreviousServiceDisplayName == "" || (rec.PreviousServiceStartMode != "Automatic" && rec.PreviousServiceStartMode != "Manual" && rec.PreviousServiceStartMode != "Disabled") {
+		return rec, fmt.Errorf("unsupported upgrade record")
+	}
+	return rec, nil
+}
+
+type identityContract struct {
+	Scheme       string `json:"scheme"`
+	NodeVersion  string `json:"nodeVersion"`
+	Architecture string `json:"architecture"`
+	NodeSHA256   string `json:"nodeSha256"`
 }

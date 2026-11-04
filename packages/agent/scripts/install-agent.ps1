@@ -1238,6 +1238,15 @@ function Write-UpgradeRecoveryRecord {
     if ($null -ne $script:AuthorizedLauncherTransaction) {
         if ($script:AuthorizedLauncherTransaction -cnotmatch '^[a-f0-9]{32}$') { throw 'invalid authorized launcher transaction' }
         $record['launcherIntent'] = $script:AuthorizedLauncherTransaction
+        if (-not $script:HasBundledRuntime -or $null -eq $runtimeManifest -or $runtimeManifest.sha256 -cne $pinnedHash -or $runtimeManifest.architecture -cne $runtimeArch) {
+            throw 'authenticated identity runtime contract is unavailable'
+        }
+        $record['identityContract'] = [ordered]@{
+            scheme = 'node-fs-win32-v1'
+            nodeVersion = [string]$runtimeManifest.version
+            architecture = [string]$runtimeArch
+            nodeSha256 = [string]$pinnedHash
+        }
     }
     $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($record | ConvertTo-Json -Compress))
     if ($bytes.Length -gt 4096) {
