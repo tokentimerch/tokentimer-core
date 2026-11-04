@@ -73,7 +73,29 @@ try { Invoke-Command -ComputerName ($CaConfig.Split('\')[0]) -Credential $creden
           Write-Output 'CERTOPS_ISSUED_CA_DIAG=identity-match'
           $probe=New-Object -ComObject CertificateAuthority.View
           try {$null=$probe.OpenConnection("$expectedHost\$active");Write-Output 'CERTOPS_ISSUED_CA_DIAG=local-open-success'}
-          catch {Write-Output 'CERTOPS_ISSUED_CA_DIAG=local-open-failure'}
+          catch {
+            Write-Output 'CERTOPS_ISSUED_CA_DIAG=local-open-failure'
+            # Diagnostic only: test whether the view client is affected by its
+            # thread UI language. Restore both settings and never replace the
+            # original failed connection or the independent request oracle.
+            $englishProbe=$null;$oldCulture=[Threading.Thread]::CurrentThread.CurrentUICulture;$oldLanguage=0
+            try {
+              if(-not ('TTQualificationThreadLanguage' -as [type])){
+                Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class TTQualificationThreadLanguage { [DllImport("kernel32.dll")] public static extern ushort GetThreadUILanguage(); [DllImport("kernel32.dll")] public static extern ushort SetThreadUILanguage(ushort language); }'
+              }
+              $oldLanguage=[TTQualificationThreadLanguage]::GetThreadUILanguage()
+              if([TTQualificationThreadLanguage]::SetThreadUILanguage(1033) -eq 0){throw 'Thread language diagnostic unavailable'}
+              [Threading.Thread]::CurrentThread.CurrentUICulture=[Globalization.CultureInfo]::GetCultureInfo('en-US')
+              $englishProbe=New-Object -ComObject CertificateAuthority.View
+              try {$null=$englishProbe.OpenConnection($CaConfig);Write-Output 'CERTOPS_ISSUED_CA_DIAG=english-open-success'}
+              catch {Write-Output 'CERTOPS_ISSUED_CA_DIAG=english-open-failure'}
+            } catch {Write-Output 'CERTOPS_ISSUED_CA_DIAG=english-probe-unavailable'}
+            finally {
+              if($englishProbe){try {[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($englishProbe)}catch{}}
+              [Threading.Thread]::CurrentThread.CurrentUICulture=$oldCulture
+              if($oldLanguage -ne 0){[void][TTQualificationThreadLanguage]::SetThreadUILanguage($oldLanguage)}
+            }
+          }
         }
       } catch {Write-Output 'CERTOPS_ISSUED_CA_DIAG=identity-unavailable'}
       finally {if($probe){try {[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($probe)}catch{}}}

@@ -75,7 +75,7 @@ function command(file, args) {
     const officerExit=output.match(/^CERTOPS_OFFICER_EXIT=(-?\d{1,11})\r?$/m)?.[1];
     const issuedStep=output.match(/^CERTOPS_ISSUED_FAILURE=(connection|columns|restriction|enumeration|row-validation|certificate-decode|match|remoting)\r?$/m)?.[1];
     const issuedHresults=[...output.matchAll(/^CERTOPS_ISSUED_HRESULT=(0x[0-9A-F]{8})\r?$/gm)].slice(0,8).map(match=>match[1]);
-    const issuedCaDiag=[...output.matchAll(/^CERTOPS_ISSUED_CA_DIAG=(identity-match|identity-mismatch|identity-unavailable|local-open-success|local-open-failure)\r?$/gm)].slice(0,2).map(match=>match[1]);
+    const issuedCaDiag=[...output.matchAll(/^CERTOPS_ISSUED_CA_DIAG=(identity-match|identity-mismatch|identity-unavailable|local-open-success|local-open-failure|english-open-success|english-open-failure|english-probe-unavailable)\r?$/gm)].slice(0,3).map(match=>match[1]);
     // Fixed script-template heads only (never output): identifies which cleanup/native step failed.
     const scriptArg=Array.isArray(args)?String(args[args.length-1]??""):"";
     const scriptHead=/^[a-z]{3,}\.exe$/i.test(path.basename(file))&&/powershell/i.test(file)?scriptArg.replace(/^\$ErrorActionPreference='Stop';\s*/,"").replace(/[^\x20-\x7e]/g," ").slice(0,90):undefined;
