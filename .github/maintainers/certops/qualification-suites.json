@@ -1983,14 +1983,14 @@
         "every distribution write route rejects private-key material before any handler runs and persists or logs none of it",
         "a required failure in a later wave pauses the rollout, keeps earlier waves current and starts nothing further",
         "a required failure inside a wave pauses the rollout without disturbing its verified sibling or later waves",
-        "a degraded optional deployment retries its original job and waits for explicit resume",
-        "degraded optional retry retains current binding and independent-review authority fences",
         "an in-flight deployment blocks consumer reassignment",
         "publication retry rejects a job whose issuer or profile no longer matches its frozen group",
         "a reviewer removed and restored cannot revive a pending rollout approval",
         "membership removal cannot commit concurrently with a locked rollout authorization",
         "an otherwise valid pre-upgrade approval cannot authorize a new deployment",
         "restored human authority and workspace policy never revive a rollout at claim, renewal or retry",
+        "a degraded optional deployment retries its original job and waits for explicit resume",
+        "degraded optional retry retains current binding and independent-review authority fences",
         "an optional destination failure never blocks the rollout, a required one does"
       ],
       "environmentGroup": "job-decisions-api-environment"

@@ -586,9 +586,10 @@ function MaterialStoreForm({ ctx }) {
             <DetailsSection summary='Recover an uncertain publication'>
               <Text fontSize='sm'>
                 For an uncertain publication, preserve the local checkpoint and
-                complete the runbook reconciliation before choosing Retry original
-                publication above. Azure never blindly retries a write. Do not
-                delete a pinned object or create a new order to hide uncertainty.
+                complete the runbook reconciliation before choosing Retry
+                original publication above. Azure never blindly retries a write.
+                Do not delete a pinned object or create a new order to hide
+                uncertainty.
               </Text>
             </DetailsSection>
           </VStack>
