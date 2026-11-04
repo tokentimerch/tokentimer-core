@@ -38,8 +38,11 @@ func TestProtectedRestartJournalFlushAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = j.FlushStep("verify-before"); err != nil {
-		t.Fatal(err)
+	if j.CanRestart() {
+		t.Fatal("interrupted stop was marked restartable")
+	}
+	if err = j.FlushStep("verify-before"); err == nil {
+		t.Fatal("interrupted stop accepted new steps")
 	}
 	if err = j.Close(); err != nil {
 		t.Fatal(err)
@@ -69,6 +72,7 @@ type pauseRestartJournal struct {
 	ready string
 }
 
+func (j pauseRestartJournal) CanRestart() bool { return j.inner.CanRestart() }
 func (j pauseRestartJournal) FlushStep(step string) error {
 	if err := j.inner.FlushStep(step); err != nil {
 		return err
@@ -141,8 +145,15 @@ func TestRestartJournalSurvivesKilledProcess(t *testing.T) {
 			}
 			defer j.Close()
 			c := &fakeRestart{}
-			if err = restartUnderVerifiedLock(context.Background(), c, j); err != nil {
-				t.Fatalf("retry failed: %v", err)
+			err = restartUnderVerifiedLock(context.Background(), c, j)
+			if step == "verify-before" && err != nil {
+				t.Fatalf("safe retry refused: %v", err)
+			}
+			if step != "verify-before" && err == nil {
+				t.Fatal("retry after stop request accepted without old process handles")
+			}
+			if step != "verify-before" && len(c.calls) != 0 {
+				t.Fatal("SCM acted after interrupted stop")
 			}
 		})
 	}

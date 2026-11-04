@@ -34,6 +34,7 @@ type fakeRestartJournal struct {
 	fail  string
 }
 
+func (j *fakeRestartJournal) CanRestart() bool { return true }
 func (j *fakeRestartJournal) FlushStep(s string) error {
 	j.steps = append(j.steps, s)
 	if j.fail == s {

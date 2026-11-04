@@ -25,6 +25,8 @@ type nativeRestartController struct {
 	app              string
 	proveEnvironment func(context.Context) error
 	old              []windows.Handle
+	oldHostPID       uint32
+	oldNodePID       uint32
 }
 
 func (c *nativeRestartController) Close() {
@@ -51,17 +53,22 @@ func (c *nativeRestartController) RequestStop(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if status.State == svc.Stopped {
-		return nil
-	}
-	if status.State != svc.Running || status.ProcessId == 0 {
-		return fmt.Errorf("ambiguous service state")
+	if err := validateStopEntryStatus(status); err != nil {
+		return err
 	}
 	host, node, err := captureServiceProcesses(status.ProcessId, c.app)
 	if err != nil {
 		return err
 	}
 	c.old = append(c.old, host, node)
+	c.oldHostPID = status.ProcessId
+	c.oldNodePID, err = windows.GetProcessId(node)
+	if err != nil {
+		return fmt.Errorf("service child identity unavailable")
+	}
+	if children, e := hasDirectChildren(c.oldNodePID); e != nil || children {
+		return fmt.Errorf("service child has active descendants")
+	}
 	status2, err := c.service.Query()
 	if err != nil || status2.State != svc.Running || status2.ProcessId != status.ProcessId {
 		return fmt.Errorf("service changed during inspection")
@@ -70,6 +77,9 @@ func (c *nativeRestartController) RequestStop(ctx context.Context) error {
 	return err
 }
 func (c *nativeRestartController) WaitStoppedAndOldProcessesExited(ctx context.Context) error {
+	if len(c.old) != 2 || c.oldHostPID == 0 || c.oldNodePID == 0 {
+		return fmt.Errorf("prior process handles unavailable; manual review required")
+	}
 	for {
 		status, err := c.service.Query()
 		if err != nil {
@@ -103,6 +113,13 @@ func (c *nativeRestartController) WaitStoppedAndOldProcessesExited(ctx context.C
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-time.After(100 * time.Millisecond):
+			}
+		}
+	}
+	for _, pid := range []uint32{c.oldHostPID, c.oldNodePID} {
+		if pid != 0 {
+			if children, e := hasDirectChildren(pid); e != nil || children {
+				return fmt.Errorf("old service descendants remain")
 			}
 		}
 	}
@@ -190,10 +207,15 @@ func captureServiceProcesses(hostPID uint32, app string) (windows.Handle, window
 	if err != nil {
 		return fail(err)
 	}
-	state, err := windows.WaitForSingleObject(host, 0)
-	if err != nil || state != uint32(windows.WAIT_TIMEOUT) {
+	openedPID, e0 := windows.GetProcessId(node)
+	observedPID, eSnapshot := singleDirectChild(hostPID)
+	nodeState, eNode := windows.WaitForSingleObject(node, 0)
+	hostState, eHost := windows.WaitForSingleObject(host, 0)
+	hostCreated, e1 := processCreationTime(host)
+	nodeCreated, e2 := processCreationTime(node)
+	if e0 != nil || eSnapshot != nil || eNode != nil || eHost != nil || e1 != nil || e2 != nil || !validProcessAssociation(childPID, openedPID, observedPID, hostCreated, nodeCreated, hostState, nodeState) {
 		windows.CloseHandle(node)
-		return fail(fmt.Errorf("service host exited"))
+		return fail(fmt.Errorf("service process association changed"))
 	}
 	return host, node, nil
 }
@@ -225,4 +247,70 @@ func validateSCMConfig(cfg mgr.Config, app, architecture string) error {
 		return fmt.Errorf("service account, type or command rejected")
 	}
 	return nil
+}
+
+func processCreationTime(h windows.Handle) (uint64, error) {
+	var created, exited, kernel, user windows.Filetime
+	if err := windows.GetProcessTimes(h, &created, &exited, &kernel, &user); err != nil {
+		return 0, err
+	}
+	return uint64(created.HighDateTime)<<32 | uint64(created.LowDateTime), nil
+}
+func hasDirectChildren(pid uint32) (bool, error) {
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return false, err
+	}
+	defer windows.CloseHandle(snapshot)
+	var entry windows.ProcessEntry32
+	entry.Size = uint32(unsafe.Sizeof(entry))
+	err = windows.Process32First(snapshot, &entry)
+	for err == nil {
+		if entry.ParentProcessID == pid {
+			return true, nil
+		}
+		err = windows.Process32Next(snapshot, &entry)
+	}
+	if err != nil && !errors.Is(err, windows.ERROR_NO_MORE_FILES) {
+		return false, err
+	}
+	return false, nil
+}
+
+func validateStopEntryStatus(status svc.Status) error {
+	if status.State != svc.Running || status.ProcessId == 0 {
+		return fmt.Errorf("prior process handles unavailable; manual review required")
+	}
+	return nil
+}
+func singleDirectChild(pid uint32) (uint32, error) {
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return 0, err
+	}
+	defer windows.CloseHandle(snapshot)
+	var entry windows.ProcessEntry32
+	entry.Size = uint32(unsafe.Sizeof(entry))
+	err = windows.Process32First(snapshot, &entry)
+	var child uint32
+	for err == nil {
+		if entry.ParentProcessID == pid {
+			if child != 0 {
+				return 0, fmt.Errorf("multiple child processes")
+			}
+			child = entry.ProcessID
+		}
+		err = windows.Process32Next(snapshot, &entry)
+	}
+	if err != nil && !errors.Is(err, windows.ERROR_NO_MORE_FILES) {
+		return 0, err
+	}
+	if child == 0 {
+		return 0, fmt.Errorf("child process unavailable")
+	}
+	return child, nil
+}
+
+func validProcessAssociation(first, opened, second uint32, hostCreated, nodeCreated uint64, hostState, nodeState uint32) bool {
+	return first != 0 && first == opened && first == second && hostCreated != 0 && nodeCreated >= hostCreated && hostState == uint32(windows.WAIT_TIMEOUT) && nodeState == uint32(windows.WAIT_TIMEOUT)
 }

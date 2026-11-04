@@ -22,12 +22,18 @@ type restartJournalHeader struct {
 	Journal     upgradeJournalBinding `json:"journal"`
 }
 type protectedRestartJournal struct {
-	file *os.File
-	size int64
+	file           *os.File
+	size           int64
+	stopRequested  bool
+	resumedBlocked bool
 }
 
-func (j *protectedRestartJournal) Close() error { return j.file.Close() }
+func (j *protectedRestartJournal) CanRestart() bool { return !j.stopRequested }
+func (j *protectedRestartJournal) Close() error     { return j.file.Close() }
 func (j *protectedRestartJournal) FlushStep(step string) error {
+	if j.resumedBlocked {
+		return fmt.Errorf("interrupted stop requires manual review")
+	}
 	switch step {
 	case "verify-before", "stop-requested", "verify-stopped", "start-requested", "verify-started", "verified":
 	default:
@@ -45,6 +51,9 @@ func (j *protectedRestartJournal) FlushStep(step string) error {
 		return fmt.Errorf("restart journal flush failed")
 	}
 	j.size += int64(n)
+	if step == "stop-requested" {
+		j.stopRequested = true
+	}
 	return nil
 }
 func openProtectedRestartJournal(archive, sddl, transaction string, binding upgradeJournalBinding, policy bootstraplock.Policy) (j *protectedRestartJournal, err error) {
@@ -126,7 +135,11 @@ func openProtectedRestartJournal(archive, sddl, transaction string, binding upgr
 	if d.Decode(&actual) != nil || actual != expected {
 		return nil, fmt.Errorf("restart journal binding mismatch")
 	}
+	stopRequested := false
 	for scanner.Scan() {
+		if scanner.Text() == "stop-requested" {
+			stopRequested = true
+		}
 		switch scanner.Text() {
 		case "verify-before", "stop-requested", "verify-stopped", "start-requested", "verify-started", "verified":
 		default:
@@ -139,5 +152,5 @@ func openProtectedRestartJournal(archive, sddl, transaction string, binding upgr
 	if _, e = f.Seek(0, io.SeekEnd); e != nil {
 		return nil, fmt.Errorf("restart journal seek failed")
 	}
-	return &protectedRestartJournal{file: f, size: int64(len(raw))}, nil
+	return &protectedRestartJournal{file: f, size: int64(len(raw)), stopRequested: stopRequested, resumedBlocked: stopRequested}, nil
 }

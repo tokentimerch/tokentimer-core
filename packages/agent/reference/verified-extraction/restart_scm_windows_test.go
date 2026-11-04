@@ -5,6 +5,7 @@ package verifiedextraction
 import (
 	"context"
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
 	"testing"
 )
@@ -33,5 +34,32 @@ func TestRestartControllerRefusesMissingEnvironmentProof(t *testing.T) {
 	c := &nativeRestartController{}
 	if err := c.VerifyBefore(context.Background()); err == nil {
 		t.Fatal("unqualified controller accepted")
+	}
+}
+func TestRestartRejectsStoppedOrAmbiguousEntryWithoutOldHandles(t *testing.T) {
+	for _, status := range []svc.Status{{State: svc.Stopped}, {State: svc.StopPending}, {State: svc.Running, ProcessId: 0}} {
+		if err := validateStopEntryStatus(status); err == nil {
+			t.Fatal("ambiguous prior process state accepted")
+		}
+	}
+	if err := (&nativeRestartController{}).WaitStoppedAndOldProcessesExited(context.Background()); err == nil {
+		t.Fatal("missing old process handles accepted")
+	}
+}
+func TestCapturedChildRequiresStableAssociationAndCreation(t *testing.T) {
+	timeout := uint32(windows.WAIT_TIMEOUT)
+	if !validProcessAssociation(21, 21, 21, 100, 101, timeout, timeout) {
+		t.Fatal("stable association rejected")
+	}
+	for _, tc := range []struct {
+		first, opened, second uint32
+		hostTime, nodeTime    uint64
+		hostState, nodeState  uint32
+	}{
+		{21, 22, 21, 100, 101, timeout, timeout}, {21, 21, 22, 100, 101, timeout, timeout}, {21, 21, 21, 100, 99, timeout, timeout}, {21, 21, 21, 0, 101, timeout, timeout}, {21, 21, 21, 100, 101, 0, timeout}, {21, 21, 21, 100, 101, timeout, 0}, {0, 0, 0, 100, 101, timeout, timeout},
+	} {
+		if validProcessAssociation(tc.first, tc.opened, tc.second, tc.hostTime, tc.nodeTime, tc.hostState, tc.nodeState) {
+			t.Fatalf("ambiguous process accepted: %+v", tc)
+		}
 	}
 }

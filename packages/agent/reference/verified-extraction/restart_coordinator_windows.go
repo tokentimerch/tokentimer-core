@@ -19,14 +19,18 @@ type restartController interface {
 	VerifyStarted(context.Context) error
 }
 
-type restartStepWriter interface{ FlushStep(string) error }
+type restartStepWriter interface {
+	FlushStep(string) error
+	CanRestart() bool
+}
 
 // restartUnderVerifiedLock is a protocol component, not proof of isolation.
 // A caller must hold authenticated application and journal locks throughout,
 // retain the recovery barrier on failure, and independently review persistent
-// actors. Each retry restarts from VerifyBefore rather than trusting old steps.
+// actors. A retry is permitted only before a prior stop request; later interruption
+// requires manual review because process handles are no longer available.
 func restartUnderVerifiedLock(ctx context.Context, c restartController, journal restartStepWriter) error {
-	if c == nil || journal == nil {
+	if c == nil || journal == nil || !journal.CanRestart() {
 		return fmt.Errorf("restart prerequisites unavailable")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
