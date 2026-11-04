@@ -23,6 +23,26 @@ test("HTTP.sys fixture refuses existing selectors using native registry observat
   assert.equal(hasSelector([{ selector: "example.test:443" }], "example.test:444"), false);
   assert.throws(() => hasSelector([{}], "example.test:443"));
 });
+test("IIS fixture refuses existing selectors and incomplete native inventories", () => {
+  const { selectNativeEndpoint } = require("./host/iis-fixture");
+  const row = { keyedBy: "hostnameport", ipPort: "LOCALHOST:443", thumbprint: "A".repeat(40) };
+  assert.equal(selectNativeEndpoint({ ok: true, bindings: [row] }, "hostnameport", "localhost:443"), row);
+  assert.equal(selectNativeEndpoint({ ok: true, bindings: [row] }, "ipport", "127.0.0.1:443"), null);
+  assert.throws(() => selectNativeEndpoint({ ok: false, bindings: [] }, "ipport", "127.0.0.1:443"));
+  assert.throws(() => selectNativeEndpoint({ ok: true, bindings: [{ keyedBy: "ipport", ipPort: null }] }, "ipport", "127.0.0.1:443"));
+  assert.throws(() => selectNativeEndpoint({ ok: true, bindings: [row, row] }, "hostnameport", "localhost:443"));
+});
+test("IIS fixture preserves endpoints with foreign ownership", () => {
+  const { assertOwnedNativeEndpoint } = require("./host/iis-fixture");
+  const row = { appId: "owned", storeName: "MY", thumbprint: "A".repeat(40) };
+  const certificates = [{ thumbprint: row.thumbprint }];
+  assert.doesNotThrow(() => assertOwnedNativeEndpoint(row, row, certificates));
+  assert.doesNotThrow(() => assertOwnedNativeEndpoint(null, row, certificates));
+  assert.throws(() => assertOwnedNativeEndpoint(row, null, certificates));
+  assert.throws(() => assertOwnedNativeEndpoint({ ...row, appId: "foreign" }, row, certificates));
+  assert.throws(() => assertOwnedNativeEndpoint({ ...row, thumbprint: "B".repeat(40) }, row, certificates));
+  assert.throws(() => assertOwnedNativeEndpoint({ ...row, storeName: "WebHosting" }, row, certificates));
+});
 test("retention fixture preserves unowned or changed HTTP.sys bindings", () => {
   const { ownedBinding, verifyBindingReceipt } = require("./host/retention-fixture");
   const row = { kind: "SslBindingInfo", selector: "127.0.0.1:1234", thumbprint: "A".repeat(40), store: "My", appId: "01234567-89ab-cdef-0123-456789abcdef", flags: 0 };
