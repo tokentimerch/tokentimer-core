@@ -100,6 +100,10 @@ services:
 
       # Auth
       SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
+      RECIPIENT_VERIFICATION_MODE: ${RECIPIENT_VERIFICATION_MODE:-off}
+      RECIPIENT_FINGERPRINT_SECRET: ${RECIPIENT_FINGERPRINT_SECRET:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      TT_DEPLOYMENT: ${TT_DEPLOYMENT:-self-hosted}
       SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE: ${SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE:-false}
 
       # Reverse proxy: number of trusted proxy hops in front of the API.
@@ -249,6 +253,10 @@ services:
 
       # Session secret (needed for decrypting DB-stored secrets)
       SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
+      RECIPIENT_VERIFICATION_MODE: ${RECIPIENT_VERIFICATION_MODE:-off}
+      RECIPIENT_FINGERPRINT_SECRET: ${RECIPIENT_FINGERPRINT_SECRET:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      TT_DEPLOYMENT: ${TT_DEPLOYMENT:-self-hosted}
       WORKER_API_KEY: ${WORKER_API_KEY:-}
 
       # Metrics (Prometheus pushgateway)
@@ -322,6 +330,10 @@ services:
 
       # Session secret (needed for decrypting DB-stored secrets)
       SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
+      RECIPIENT_VERIFICATION_MODE: ${RECIPIENT_VERIFICATION_MODE:-off}
+      RECIPIENT_FINGERPRINT_SECRET: ${RECIPIENT_FINGERPRINT_SECRET:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      TT_DEPLOYMENT: ${TT_DEPLOYMENT:-self-hosted}
       WORKER_API_KEY: ${WORKER_API_KEY:-}
 
       # Delivery tuning
@@ -414,6 +426,10 @@ services:
 
       # Session secret (needed for decrypting DB-stored secrets)
       SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
+      RECIPIENT_VERIFICATION_MODE: ${RECIPIENT_VERIFICATION_MODE:-off}
+      RECIPIENT_FINGERPRINT_SECRET: ${RECIPIENT_FINGERPRINT_SECRET:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      TT_DEPLOYMENT: ${TT_DEPLOYMENT:-self-hosted}
       WORKER_API_KEY: ${WORKER_API_KEY:-}
       WEEKLY_DIGEST_RECIPIENT_KEY: ${WEEKLY_DIGEST_RECIPIENT_KEY:-}
 
@@ -491,6 +507,10 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       DB_NAME: ${DB_NAME:-tokentimer}
       SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
+      RECIPIENT_VERIFICATION_MODE: ${RECIPIENT_VERIFICATION_MODE:-off}
+      RECIPIENT_FINGERPRINT_SECRET: ${RECIPIENT_FINGERPRINT_SECRET:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      TT_DEPLOYMENT: ${TT_DEPLOYMENT:-self-hosted}
       WORKER_API_KEY: ${WORKER_API_KEY:-}
       API_URL: http://api:4000
       APP_URL: ${APP_URL:-http://localhost:5173}

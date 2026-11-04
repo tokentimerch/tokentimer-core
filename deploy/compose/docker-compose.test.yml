@@ -58,6 +58,10 @@ services:
       - CERTOPS_REGISTRATION_ENCRYPTION_KEY=${CERTOPS_REGISTRATION_ENCRYPTION_KEY:-abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789}
       # Auth
       - SESSION_SECRET=test-session-secret-key
+      - RECIPIENT_VERIFICATION_MODE=${RECIPIENT_VERIFICATION_MODE:-off}
+      - RECIPIENT_FINGERPRINT_SECRET=${RECIPIENT_FINGERPRINT_SECRET:-}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - TT_DEPLOYMENT=${TT_DEPLOYMENT:-self-hosted}
       # SMTP (MailHog)
       - SMTP_HOST=mailhog
       - SMTP_PORT=1025
@@ -151,6 +155,10 @@ services:
       - DB_USER=tokentimer
       - DB_PASSWORD=password
       - SESSION_SECRET=test-session-secret-key
+      - RECIPIENT_VERIFICATION_MODE=${RECIPIENT_VERIFICATION_MODE:-off}
+      - RECIPIENT_FINGERPRINT_SECRET=${RECIPIENT_FINGERPRINT_SECRET:-}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - TT_DEPLOYMENT=${TT_DEPLOYMENT:-self-hosted}
       - API_URL=http://api:4000
       - NODE_V8_COVERAGE=${NODE_V8_COVERAGE:+/tmp/v8-coverage}
     depends_on:
@@ -184,6 +192,10 @@ services:
       - DB_PASSWORD=password
       - APP_URL=http://localhost:5173
       - SESSION_SECRET=test-session-secret-key
+      - RECIPIENT_VERIFICATION_MODE=${RECIPIENT_VERIFICATION_MODE:-off}
+      - RECIPIENT_FINGERPRINT_SECRET=${RECIPIENT_FINGERPRINT_SECRET:-}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - TT_DEPLOYMENT=${TT_DEPLOYMENT:-self-hosted}
       # SMTP (MailHog)
       - SMTP_HOST=mailhog
       - SMTP_PORT=1025
