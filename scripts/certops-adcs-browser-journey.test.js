@@ -26,6 +26,12 @@ const { test } = require("node:test"),
   os = require("node:os");
 const helper = require("../tests/e2e/helpers/certops-adcs-browser-journey");
 
+test("browser mutation failures expose only bounded operation and status", () => {
+  assert.doesNotThrow(() => helper.assertMutationStatus(201, 201, "/profiles"));
+  assert.throws(() => helper.assertMutationStatus(409, 201, "/private/replace-management"), error => error.code === "CERTOPS_BROWSER_ATTACH_HTTP_409" && !error.message.includes("private"));
+  assert.throws(() => helper.assertMutationStatus(500, 201, "/private/profiles"), error => error.code === "CERTOPS_BROWSER_CREATE_PROFILE_HTTP_500");
+});
+
 test("native browser selects a current owned IIS source without another open enrollment", () => {
   const original = crypto.randomUUID(), observed = crypto.randomUUID();
   const identityId = crypto.randomUUID(), periodId = crypto.randomUUID();
