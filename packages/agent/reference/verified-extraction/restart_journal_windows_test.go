@@ -70,6 +70,55 @@ func TestProtectedRestartJournalFlushAndRetry(t *testing.T) {
 	}
 }
 
+func TestProtectedRestartJournalWriteFailureDisablesReuse(t *testing.T) {
+	f := newReleaseFixture(t, strings.Repeat("f", 32))
+	archive := filepath.Join(f.parent, "protected-review")
+	if err := createRestrictedDirectory(archive, f.sddl); err != nil {
+		t.Fatal(err)
+	}
+	binding := upgradeJournalBinding{Volume: 1, IndexHigh: 2, IndexLow: 3, SHA256: strings.Repeat("a", 64)}
+	j, err := openProtectedRestartJournal(archive, f.sddl, f.txn, binding, f.stagePolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.FlushStep("verify-before"); err != nil {
+		t.Fatal(err)
+	}
+	// A closed OS handle deterministically exercises the I/O failure path.
+	if err := j.file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.FlushStep("stop-requested"); err == nil {
+		t.Fatal("expected failed checkpoint write")
+	}
+	if j.CanRestart() {
+		t.Fatal("failed checkpoint incorrectly allowed restart")
+	}
+	if err := j.FlushStep("verify-before"); err == nil {
+		t.Fatal("failed journal instance accepted another checkpoint")
+	}
+}
+
+func TestProtectedRestartJournalSyncFailureDisablesReuse(t *testing.T) {
+	// Windows NUL accepts a write but cannot flush file buffers, exercising a
+	// distinct failure after the checkpoint write returned successfully.
+	f, err := os.OpenFile("NUL", os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	j := &protectedRestartJournal{file: f}
+	if err := j.FlushStep("verify-before"); err == nil || !strings.Contains(err.Error(), "flush failed") {
+		t.Fatalf("expected sync failure after write, got %v", err)
+	}
+	if j.CanRestart() {
+		t.Fatal("failed journal flush incorrectly allowed restart")
+	}
+	if err := j.FlushStep("verify-before"); err == nil {
+		t.Fatal("failed journal instance accepted another checkpoint")
+	}
+}
+
 type pauseRestartJournal struct {
 	inner *protectedRestartJournal
 	stop  string

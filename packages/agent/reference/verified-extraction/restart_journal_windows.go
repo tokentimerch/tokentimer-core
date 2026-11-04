@@ -47,9 +47,16 @@ func (j *protectedRestartJournal) FlushStep(step string) error {
 	}
 	n, err := j.file.Write(line)
 	if err != nil || n != len(line) {
+		// A failed or short write may still have changed the on-disk journal.
+		// Never reuse this instance to authorize subsequent SCM actions.
+		j.resumedBlocked = true
+		j.stopRequested = true
 		return fmt.Errorf("restart journal write failed")
 	}
 	if err = j.file.Sync(); err != nil {
+		// The checkpoint's durability is uncertain even if Write succeeded.
+		j.resumedBlocked = true
+		j.stopRequested = true
 		return fmt.Errorf("restart journal flush failed")
 	}
 	j.size += int64(n)
