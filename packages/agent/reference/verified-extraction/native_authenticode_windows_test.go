@@ -25,6 +25,28 @@ func TestNativeCertificatePinMatching(t *testing.T) {
 	}
 }
 
+func TestNativeRFC3161AttributePolicy(t *testing.T) {
+	sha, _ := windows.BytePtrFromString("2.16.840.1.101.3.4.2.1")
+	rfc, _ := windows.BytePtrFromString("1.3.6.1.4.1.311.3.3.1")
+	legacy, _ := windows.BytePtrFromString("1.2.840.113549.1.9.6")
+	data := byte(1)
+	blob := windows.CryptAttrBlob{Size: 1, Data: &data}
+	attr := nativeCryptAttribute{OID: rfc, ValueCount: 1, Values: &blob}
+	info := nativeCMSSignerInfo{HashAlgorithm: windows.CryptAlgorithmIdentifier{ObjId: sha}, Unauthenticated: nativeCryptAttributes{Count: 1, Attributes: &attr}}
+	if !hasSingleRFC3161Timestamp(&info) {
+		t.Fatal("RFC3161 marker rejected")
+	}
+	attr.OID = legacy
+	if hasSingleRFC3161Timestamp(&info) {
+		t.Fatal("legacy timestamp accepted")
+	}
+	attr.OID = rfc
+	attr.ValueCount = 0
+	if hasSingleRFC3161Timestamp(&info) {
+		t.Fatal("empty timestamp accepted")
+	}
+}
+
 func TestNativeAuthenticodePrototype(t *testing.T) {
 	if os.Getenv("TT_REQUIRE_NATIVE_AUTHENTICODE_EXPERIMENT") != "1" {
 		t.Skip("experimental native trust provider test")
