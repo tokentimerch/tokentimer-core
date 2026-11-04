@@ -1,4 +1,6 @@
+import base64
 import copy
+import json
 import importlib.util
 from pathlib import Path
 import unittest
@@ -35,9 +37,20 @@ class BindingTests(unittest.TestCase):
         for raw, edition in ((cloud, "enterprise"), (cloud.replace(b'"core":', b'"core":{},"core":'), "cloud"), (cloud.replace(b'"testedCommit"', b'"lastSyncedCoreCommit"'), "cloud"), (b'{}', "cloud")):
             with self.assertRaises(ValueError): binding.edition_pin_from_manifest(raw, edition)
 
+    def test_manifest_fetch_uses_fixed_repository_and_exact_commit(self):
+        raw = b'{"manifestVersion":1,"repo":"tokentimer-cloud","core":{"testedCommit":"' + b'a' * 40 + b'"}}'
+        calls = []
+        def download(url, token):
+            calls.append((url, token))
+            return json.dumps({"type": "file", "path": "compatibility.manifest.json", "encoding": "base64", "content": base64.b64encode(raw).decode()}).encode()
+        self.assertEqual(binding.fetch_edition_pin("cloud", "b" * 40, "fixture-token", download), "a" * 40)
+        self.assertEqual(calls, [("https://api.github.com/repos/tokentimerch/tokentimer-cloud/contents/compatibility.manifest.json?ref=" + "b" * 40, "fixture-token")])
+        for edition, commit in (("other", "b" * 40), ("cloud", "main"), ("cloud", "../")):
+            with self.assertRaises(ValueError): binding.fetch_edition_pin(edition, commit, "fixture-token", download)
+
     def test_complete_matrix_is_only_a_binding_not_publication_approval(self):
         c, e = self.fixture()
-        self.assertIsNone(binding.validate_binding(c, e))
+        with self.assertRaises(NotImplementedError): binding.validate_binding(c, e)
 
     def test_missing_duplicate_or_stale_evidence_is_rejected(self):
         c, e = self.fixture()

@@ -5,6 +5,8 @@ this module does not authenticate reports, validate signatures/SBOMs, retrieve
 edition manifests or authorize publication. Existing workflows do not produce
 these final-package reports, so this is intentionally not a release gate.
 """
+import base64
+import binascii
 import json
 import re
 
@@ -41,6 +43,25 @@ def edition_pin_from_manifest(raw, edition):
     if not isinstance(pin, str) or not COMMIT.fullmatch(pin):
         raise ValueError("Invalid edition composition pin")
     return pin
+
+
+def fetch_edition_pin(edition, commit, token, download):
+    """Read a fixed manifest from an exact edition commit via the GitHub API."""
+    if edition not in ("cloud", "enterprise") or not isinstance(commit, str) or not COMMIT.fullmatch(commit) or not isinstance(token, str) or not token:
+        raise ValueError("Invalid edition fetch identity")
+    repo = EDITION_REPOS[edition][0]
+    url = f"https://api.github.com/repos/{repo}/contents/compatibility.manifest.json?ref={commit}"
+    response = download(url, token)
+    if not isinstance(response, bytes) or len(response) > 2 * 1024 * 1024:
+        raise ValueError("Invalid manifest response")
+    try:
+        obj = json.loads(response)
+        if not isinstance(obj, dict) or obj.get("type") != "file" or obj.get("path") != "compatibility.manifest.json" or obj.get("encoding") != "base64" or not isinstance(obj.get("content"), str):
+            raise ValueError("Unexpected manifest response")
+        content = base64.b64decode(obj["content"].replace("\n", ""), validate=True)
+    except (UnicodeDecodeError, json.JSONDecodeError, binascii.Error, RecursionError):
+        raise ValueError("Malformed manifest response") from None
+    return edition_pin_from_manifest(content, edition)
 
 
 def validate_binding(candidate, evidence):
@@ -92,4 +113,5 @@ def validate_binding(candidate, evidence):
             raise ValueError("Candidate evidence mismatch")
     if observed != required:
         raise ValueError("Incomplete final-package matrix")
-    # Explicitly no success result: callers cannot use this as release approval.
+    # Existing workflows do not produce authenticated final-package evidence.
+    raise NotImplementedError("Final-package evidence producers are not qualified")
