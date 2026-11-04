@@ -276,6 +276,9 @@ async function retryDistributionJob({ workspaceId,jobId,actorUserId }) {
       await require("./manualRolloutAuthority").assertManualRolloutAuthority(client,workspaceId,group.id,current.approval_job_id);
       if (degraded) await client.query(`UPDATE certops_distribution_rollouts SET state='paused'
         WHERE workspace_id=$1 AND id=$2 AND state='degraded' AND verification_only=false`, [workspaceId,current.rollout_id]);
+    } else {
+      await material.resolveDistributionJobDefaults({ client, workspaceId, operation:job.operation,
+        subjectId:job.subject_id, payload:job.payload, assignedAgentId:job.assigned_agent_id, jobId:job.id });
     }
     if (job.approved_payload_hash && require("./jobApprovals").computeJobPayloadApprovalHash(job.payload) !== job.approved_payload_hash)
       fail("CERTOPS_MATERIAL_RETRY_AUTHORIZATION_STALE");

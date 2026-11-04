@@ -1509,6 +1509,26 @@ test("an in-flight deployment blocks consumer reassignment", async () => {
     { code: "CERTOPS_CONSUMER_REASSIGNMENT_REQUIRES_RECONCILIATION" });
 });
 
+test("publication retry rejects a job whose issuer or profile no longer matches its frozen group", async () => {
+  const f = await fixture();
+  const job = (await pool.query(`SELECT j.* FROM certificate_jobs j JOIN certops_material_versions v
+    ON v.workspace_id=j.workspace_id AND v.publishing_job_id=j.id WHERE v.id=$1`, [f.materialVersionId])).rows[0];
+  await pool.query("UPDATE certificate_jobs SET status='failed' WHERE id=$1", [job.id]);
+  await pool.query("UPDATE certificate_jobs SET payload=jsonb_set(payload,'{publication,profileRevision}','2'::jsonb) WHERE id=$1", [job.id]);
+  await assert.rejects(() => operations.retryDistributionJob({ workspaceId:f.workspaceId, jobId:job.id, actorUserId:f.actor }),
+    { code:"CERTOPS_PUBLICATION_INTENT_MISMATCH" });
+  assert.equal((await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [job.id])).rows[0].status, "failed");
+  await pool.query("UPDATE certificate_jobs SET payload=$2::jsonb,assigned_agent_id=$3 WHERE id=$1", [job.id,JSON.stringify(job.payload),f.consumer]);
+  await assert.rejects(() => operations.retryDistributionJob({ workspaceId:f.workspaceId, jobId:job.id, actorUserId:f.actor }),
+    { code:"CERTOPS_PUBLICATION_INTENT_MISMATCH" });
+  assert.equal((await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [job.id])).rows[0].status, "failed");
+  await pool.query("UPDATE certificate_jobs SET assigned_agent_id=$2 WHERE id=$1", [job.id,f.issuer]);
+  const retried = await operations.retryDistributionJob({ workspaceId:f.workspaceId, jobId:job.id, actorUserId:f.actor });
+  assert.equal(retried.jobId, job.id);
+  assert.equal(retried.materialVersionId, f.materialVersionId);
+  assert.equal(retried.status, "pending");
+});
+
 test("a reviewer removed and restored cannot revive a pending rollout approval", async () => {
   const f = await fixture();
   const job = await f.approved();
