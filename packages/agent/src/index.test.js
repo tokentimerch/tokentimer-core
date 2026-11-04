@@ -5703,6 +5703,36 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
     assert.equal(hasUnresolvedJournalForJob(workDir, "job-1"), true);
   });
 
+  it("removes an exact pending request before checking orphan key survivors", async () => {
+    workDir = makeTempConfigDir();
+    const containerName = "tokentimer-job-1-pendingreq";
+    const thumbprint = "AB".repeat(20);
+    seedOrphanedContainerJournalEntry(workDir, { containerName });
+    let pending = true, deleted = false;
+    const fallback = makeReconcileExecStub();
+    const result = await reconcileOrphanedWindowsCngContainers({
+      stateDir: workDir,
+      keySurvivorHelperPath: __filename,
+      execFileImpl(file, args, options, callback) {
+        if (args[0] === "--key-survivors") {
+          const shared = pending;
+          return process.nextTick(() => callback(null, JSON.stringify({ complete: true, shared, storesScanned: 25, certificatesScanned: shared ? 1 : 0, matches: shared ? 1 : 0 }), ""));
+        }
+        if (file === "certutil.exe" && args[0] === "-store" && args[2] === "REQUEST")
+          return process.nextTick(() => callback(null, pending ? `==== 0 ====\nContainer = ${containerName}\nCert Hash(sha1): ${thumbprint}\n` : "", ""));
+        if (file === "certutil.exe" && args[0] === "-delstore" && args[1] === "REQUEST") {
+          assert.equal(args[2], thumbprint); pending = false;
+          return process.nextTick(() => callback(null, "", ""));
+        }
+        if (args.includes("-delkey")) deleted = true;
+        return fallback(file, args, options, callback);
+      },
+    });
+    assert.equal(pending, false);
+    assert.equal(deleted, true);
+    assert.deepEqual(result.freed, [containerName]);
+  });
+
   it("preserves a key referenced only in a different machine store and reconciles its crash receipt", async () => {
     workDir = makeTempConfigDir();
     const containerName = "tokentimer-job-1-otherstore";

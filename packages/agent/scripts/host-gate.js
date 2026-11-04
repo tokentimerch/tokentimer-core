@@ -112,6 +112,7 @@ function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = 
       detail.command = { executable: executables.includes(command.executable) ? command.executable : "other", exitStatus: Number.isInteger(command.exitStatus) ? command.exitStatus : null };
       if (command.script === "owned-issued-request.ps1") detail.command.script = command.script;
       if (command.script === "owned-issued-request.ps1" && ["connection", "columns", "restriction", "enumeration", "row-validation", "certificate-decode", "match", "remoting"].includes(command.issuedStep)) detail.command.issuedStep = command.issuedStep;
+      if (command.script === "owned-issued-request.ps1" && Array.isArray(command.issuedHresults)) detail.command.issuedHresults = command.issuedHresults.filter(code => typeof code === "string" && /^0x[0-9A-F]{8}$/.test(code)).slice(0, 8);
       if (codes.includes(command.powerShellCode)) detail.command.powerShellCode = command.powerShellCode;
       const fixedFailures = {
         "Missing private key": "missing-private-key",

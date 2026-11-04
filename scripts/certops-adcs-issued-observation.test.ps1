@@ -15,7 +15,7 @@ function New-Object {
   param([string]$ComObject)
   if($ComObject -ne 'CertificateAuthority.View'){throw 'Unexpected fixture COM request'}
   $value=[pscustomobject]@{}
-  $value | Add-Member -MemberType ScriptMethod -Name OpenConnection -Value { param($value) throw 'private-diagnostic-sentinel' }
+  $value | Add-Member -MemberType ScriptMethod -Name OpenConnection -Value { param($value) throw [Runtime.InteropServices.COMException]::new('private-diagnostic-sentinel',-2147024891) }
   return $value
 }
 function Invoke-Command {
@@ -30,6 +30,7 @@ catch { exit 7 }
   $output = @(& $powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $wrapper -Source $source 2>&1 | ForEach-Object { [string]$_ })
   if ($LASTEXITCODE -ne 7) { throw 'Expected the owned diagnostic fixture to fail' }
   if ('CERTOPS_ISSUED_FAILURE=connection' -notin $output -or 'CERTOPS_ISSUED_FAILURE=remoting' -notin $output) { throw 'Fixed diagnostic stages were not preserved' }
+  if ('CERTOPS_ISSUED_HRESULT=0x80070005' -notin $output) { throw 'Native HRESULT was not preserved' }
   if (($output -join "`n") -match 'private-diagnostic-sentinel|synthetic-test-only') { throw 'Private fixture text escaped the diagnostic boundary' }
   'CA observation diagnostic stream and privacy control passed'
 } finally {
