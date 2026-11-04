@@ -53,6 +53,40 @@ function VerificationRequest({ ctx, group, disabled, real = false }) {
     [error, setError] = useState(''),
     [confirmed, setConfirmed] = useState(false);
   const observed = useObservedJob(ctx.workspaceId, current?.jobId);
+  const [consumerState, setConsumerState] = useState({
+    loaded: false,
+    rows: [],
+    error: false,
+  });
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    const load = async () => {
+      try {
+        const result = await readDistribution(ctx.workspaceId, group.id, {
+          signal: controller.signal,
+        });
+        if (active)
+          setConsumerState({
+            loaded: true,
+            rows: result.consumers,
+            error: false,
+          });
+      } catch {
+        if (active) setConsumerState({ loaded: false, rows: [], error: true });
+      }
+    };
+    load();
+    const timer = setInterval(load, 5000);
+    return () => {
+      active = false;
+      controller.abort();
+      clearInterval(timer);
+    };
+  }, [ctx.workspaceId, group.id]);
+  const hasActiveConsumer = consumerState.rows.some(
+    row => (row.binding_state || row.state || 'active') === 'active'
+  );
   const canReset = real
     ? group.completed === true ||
       group.verified === true ||
@@ -100,6 +134,18 @@ function VerificationRequest({ ctx, group, disabled, real = false }) {
   };
   return (
     <VStack align='stretch' spacing={3}>
+      {consumerState.error && (
+        <StatusPanel status='warning'>
+          Consumer assignments could not be read. Refresh before requesting
+          verification.
+        </StatusPanel>
+      )}
+      {consumerState.loaded && !hasActiveConsumer && (
+        <StatusPanel status='warning' title='No consumer assigned'>
+          Enter the store address above, select a compatible consumer and assign
+          it before checking installed material.
+        </StatusPanel>
+      )}
       {real ? (
         <StatusPanel status='warning' title='Real IIS deployment'>
           This rollout imports the private key and changes IIS bindings.
@@ -128,7 +174,14 @@ function VerificationRequest({ ctx, group, disabled, real = false }) {
       <PrimaryButton
         onClick={request}
         isLoading={busy}
-        isDisabled={disabled || (real && !confirmed) || Boolean(current?.jobId)}
+        isDisabled={
+          disabled ||
+          !consumerState.loaded ||
+          consumerState.error ||
+          !hasActiveConsumer ||
+          (real && !confirmed) ||
+          Boolean(current?.jobId)
+        }
       >
         {real
           ? 'Request real IIS deployment'

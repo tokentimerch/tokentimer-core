@@ -73,7 +73,34 @@ beforeEach(() => {
   });
 });
 afterEach(cleanup);
+const withActiveConsumer = () =>
+  readDistribution.mockResolvedValue({
+    versions: [
+      {
+        id: VERSION,
+        state: 'published',
+        valid_to: new Date(Date.now() + 86400000).toISOString(),
+      },
+    ],
+    consumers: [
+      {
+        binding_id: 'binding',
+        binding_state: 'active',
+        assigned_agent_id: CONSUMER,
+      },
+    ],
+  });
 describe('Connect and validate consumers', () => {
+  it('explains and prevents verification when no consumer is assigned', async () => {
+    show(materialContext());
+    expect(await screen.findByText('No consumer assigned')).toBeVisible();
+    expect(
+      screen.getByRole('button', {
+        name: 'Check installed material (no deployment)',
+      })
+    ).toBeDisabled();
+    expect(requestRollout).not.toHaveBeenCalled();
+  });
   it('shows missing capabilities only for the selected consumer', async () => {
     const ctx = materialContext('openbao-kv2');
     ctx.summary.certops.agents.items.push({
@@ -273,8 +300,16 @@ describe('Connect and validate consumers', () => {
   });
   it('uses a fresh request identity for an explicitly new verification after the previous one finishes', async () => {
     const ctx = materialContext();
+    withActiveConsumer();
     getJob.mockResolvedValue({ job: { id: 'verify', status: 'succeeded' } });
     const view = show(ctx);
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', {
+          name: 'Check installed material (no deployment)',
+        })
+      ).toBeEnabled()
+    );
     fireEvent.click(
       screen.getByRole('button', {
         name: 'Check installed material (no deployment)',
@@ -308,7 +343,15 @@ describe('Connect and validate consumers', () => {
   });
   it('sends an explicit verification-only intent and preserves approval handling', async () => {
     const ctx = materialContext();
+    withActiveConsumer();
     show(ctx);
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', {
+          name: 'Check installed material (no deployment)',
+        })
+      ).toBeEnabled()
+    );
     fireEvent.click(
       screen.getByRole('button', {
         name: 'Check installed material (no deployment)',
@@ -327,8 +370,16 @@ describe('Connect and validate consumers', () => {
   });
   it('retries a lost verification request with the original version and key', async () => {
     const ctx = materialContext();
+    withActiveConsumer();
     requestRollout.mockRejectedValueOnce(new Error('lost'));
     const view = show(ctx);
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', {
+          name: 'Check installed material (no deployment)',
+        })
+      ).toBeEnabled()
+    );
     fireEvent.click(
       screen.getByRole('button', {
         name: 'Check installed material (no deployment)',
@@ -339,6 +390,13 @@ describe('Connect and validate consumers', () => {
       '66666666-6666-4666-8666-666666666666';
     view.unmount();
     show(ctx);
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', {
+          name: 'Check installed material (no deployment)',
+        })
+      ).toBeEnabled()
+    );
     fireEvent.click(
       screen.getByRole('button', {
         name: 'Check installed material (no deployment)',
