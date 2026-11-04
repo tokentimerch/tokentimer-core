@@ -452,16 +452,17 @@ async function collectWindowsDiscoveryObservations({
 
     const matchedSites = findSitesForBinding(sites, binding);
     if (matchedSites.length > 0) {
-      const siteName = matchedSites[0];
       const sniHost = binding.keyedBy === "hostnameport" ? parsed.address : null;
-      observations.push({
-        ...base,
-        locationKind: "iis_binding",
-        locationSlot: `${siteName}:${parsed.port}${sniHost ? `#${sniHost}` : ""}`,
-        siteName,
-        port: parsed.port,
-        sniHost,
-      });
+      for (const siteName of new Set(matchedSites)) {
+        observations.push({
+          ...base,
+          locationKind: "iis_binding",
+          locationSlot: `${siteName}:${parsed.port}${sniHost ? `#${sniHost}` : ""}`,
+          siteName,
+          port: parsed.port,
+          sniHost,
+        });
+      }
     } else {
       observations.push({
         ...base,

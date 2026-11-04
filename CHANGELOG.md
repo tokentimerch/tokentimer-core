@@ -19,6 +19,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Windows discovery now reports each IIS site that shares an HTTP.sys certificate binding, so the inventory no longer omits all but one site.
+
 - **AD CS on localized Windows agents.** Issuer preflight now returns the CA certificates needed for key confirmation on German and French hosts. **Operator action:** update affected Windows agents.
 
 - **Alert dates and times stay correct on non-UTC API hosts.** The alert queue and asset delivery state preserve calendar due dates and the actual update, retry and delivery-attempt timestamps.
