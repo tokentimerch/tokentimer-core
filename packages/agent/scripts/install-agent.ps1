@@ -949,6 +949,9 @@ function Activate-StagedPackage {
         Rename-Item -LiteralPath $StagingDirectory -NewName (Split-Path -Leaf $AppDirectory) -ErrorAction Stop
     } catch {
         $activationError = $_.Exception.Message
+        if ($null -ne $script:AuthorizedLauncherTransaction) {
+            throw "recovery_required: package activation failed; application, backup and staging were retained ($activationError)"
+        }
         $recoveryErrors = @()
         if ($previousMoved) {
             try { Rename-Item -LiteralPath $PreviousDirectory -NewName (Split-Path -Leaf $AppDirectory) -ErrorAction Stop }
@@ -1289,6 +1292,9 @@ if ($script:DryRun) {
         }
     } catch {
         $stagingError = $_.Exception.Message
+        if ($null -ne $script:AuthorizedLauncherTransaction) {
+            Fail "recovery_required: package staging failed; preserve $($script:AppStaging) for review ($stagingError)"
+        }
         try {
             Remove-OwnedPackageStaging -Directory $script:AppStaging -ExpectedIdentity $stagingIdentity
         } catch {
@@ -1301,6 +1307,9 @@ if ($script:DryRun) {
         Activate-StagedPackage -AppDirectory $AppDir -StagingDirectory $script:AppStaging -PreviousDirectory $script:AppPrevious -ExpectedStagingIdentity $stagingIdentity
     } catch {
         $activationError = $_.Exception.Message
+        if ($null -ne $script:AuthorizedLauncherTransaction) {
+            Fail "recovery_required: package activation failed; preserve the application, backup, staging and recovery journal ($activationError)"
+        }
         if ($script:IsUpgrade -and -not (Test-Path -LiteralPath (Get-UpgradeRecoveryPath)) -and (Test-Path -LiteralPath $script:AppStaging)) {
             try { Remove-OwnedPackageStaging -Directory $script:AppStaging -ExpectedIdentity $stagingIdentity }
             catch { Fail "upgrade preparation failed; staging cleanup refused; manual inspection is required ($activationError)" }

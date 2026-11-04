@@ -305,6 +305,37 @@ exit 0
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
+test("launcher-backed activation failure preserves both staged directories", { skip: process.platform !== "win32" }, () => {
+  const tempParent = fs.realpathSync(os.tmpdir());
+  const root = fs.mkdtempSync(path.join(tempParent, "tt537-activation-"));
+  try {
+    const script = String.raw`
+$ErrorActionPreference='Stop'
+Import-Module Microsoft.PowerShell.Management
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $env:TT542_SOURCE 'install-agent.ps1'),[ref]$tokens,[ref]$errors)
+$f=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Activate-StagedPackage'},$true))
+if ($errors.Count -or $f.Count -ne 1) { throw 'missing activation function' }; Invoke-Expression $f[0].Extent.Text
+$app=Join-Path $env:TT542_ROOT 'app'; $stage="$app.staging.$PID"; $previous="$app.previous.$PID"
+New-Item -ItemType Directory -Path $app,$stage | Out-Null
+$script:AuthorizedLauncherTransaction='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; $script:renameCount=0
+function Get-PackageDirectoryIdentity { param($Directory) return '1:3' }
+function Rename-Item { param($LiteralPath,$NewName,$ErrorAction) $script:renameCount++; if($script:renameCount -eq 2){throw 'injected activation failure'}; Microsoft.PowerShell.Management\Rename-Item -LiteralPath $LiteralPath -NewName $NewName -ErrorAction Stop }
+try { Activate-StagedPackage -AppDirectory $app -StagingDirectory $stage -PreviousDirectory $previous -ExpectedStagingIdentity '1:3'; throw 'activation unexpectedly succeeded' }
+catch { if ($_.Exception.Message -notmatch 'recovery_required: package activation failed') { throw } }
+if ((Test-Path -LiteralPath $app) -or -not (Test-Path -LiteralPath $stage) -or -not (Test-Path -LiteralPath $previous)) { throw 'activation failure did not preserve stages' }
+exit 0
+`;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+      env: { ...process.env, TT542_SOURCE: __dirname, TT542_ROOT: root }, windowsHide: true, encoding: "utf8", timeout: 15000,
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+  } finally {
+    if (path.dirname(fs.realpathSync(root)).toLowerCase() !== tempParent.toLowerCase()) throw new Error("Unsafe fixture cleanup");
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("rejects an oversized recovery record before touching the existing application", { skip: process.platform !== "win32", timeout: 30000 }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
   const fixture = fs.mkdtempSync(path.join(tempParent, "tt542-journal-size-"));
