@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -61,6 +62,7 @@ func bounded(path string, limit int64) ([]byte, error) {
 	return b, nil
 }
 func main() {
+	inspect := flag.Bool("inspect-quarantine", false, "inspect retained staging without changing it")
 	manifestPath := flag.String("manifest", "", "encapsulated signed CMS manifest")
 	archivePath := flag.String("archive", "", "agent archive")
 	sbomPath := flag.String("sbom", "", "SBOM")
@@ -69,6 +71,22 @@ func main() {
 	if err := policy.validate(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
+	}
+	if *inspect {
+		if *manifestPath != "" || *archivePath != "" || *sbomPath != "" || len(flag.Args()) != 0 {
+			fmt.Fprintln(os.Stderr, "inspection does not accept package or installer arguments")
+			os.Exit(2)
+		}
+		records, err := verified.InspectQuarantine(context.Background())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "quarantine inspection failed:", err)
+			os.Exit(1)
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(records); err != nil {
+			fmt.Fprintln(os.Stderr, "quarantine report could not be written")
+			os.Exit(1)
+		}
+		return
 	}
 	if *manifestPath == "" || *archivePath == "" || *sbomPath == "" {
 		fmt.Fprintln(os.Stderr, "signed manifest, archive and SBOM are required")
