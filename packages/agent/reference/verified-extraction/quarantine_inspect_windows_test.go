@@ -31,9 +31,8 @@ func TestQuarantineInspectionValidatesMarkerAndRedactsSecret(t *testing.T) {
 	if err != nil || observed != first {
 		t.Fatalf("inspect protected marker: %v", err)
 	}
-	badPolicy := *stage
-	badPolicy.policy = bootstraplock.Policy{Owners: map[string]bool{}, Writers: map[string]bool{}}
-	if _, err := inspectQuarantineRecord(&badPolicy); err == nil || strings.Contains(err.Error(), first.Secret) {
+	badPolicy := &PrivateStaging{path: stage.path, identity: stage.identity, policy: bootstraplock.Policy{Owners: map[string]bool{}, Writers: map[string]bool{}}}
+	if _, err := inspectQuarantineRecord(badPolicy); err == nil || strings.Contains(err.Error(), first.Secret) {
 		t.Fatal("untrusted marker ACL accepted or secret leaked")
 	}
 	other := first
