@@ -495,7 +495,7 @@ function Assert-AuthorizedLauncherOrNoIntent {
         Assert-ProtectedIntentDirectory -Directory $stage
     }
     if ($payload.Equals($scratch, [StringComparison]::OrdinalIgnoreCase)) { throw 'launcher stages are not distinct' }
-    $expected = @($payload + '.intent', $scratch + '.intent')
+    $expected = @(($payload + '.intent'), ($scratch + '.intent'))
     foreach ($entry in $intents) {
         if (-not @($expected | Where-Object { $_.Equals($entry.FullName, [StringComparison]::OrdinalIgnoreCase) }).Count) { throw 'unrelated launcher intent remains quarantined' }
     }
