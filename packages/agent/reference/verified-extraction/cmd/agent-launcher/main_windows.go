@@ -64,7 +64,7 @@ func bounded(path string, limit int64) ([]byte, error) {
 func main() {
 	inspect := flag.Bool("inspect-quarantine", false, "inspect retained staging without changing it")
 	inspectUpgrade := flag.Bool("inspect-upgrade-recovery", false, "inspect protected upgrade recovery without changing it")
-	release := flag.String("release-quarantine-transaction", "", "archive reviewed quarantine markers for this exact transaction")
+	release := flag.String("release-quarantine-transaction", "", "unavailable until queued SCM actions can be excluded")
 	acknowledge := flag.Bool("acknowledge-external-actors-stopped", false, "confirm that an operator stopped and reviewed all external actors")
 	manifestPath := flag.String("manifest", "", "encapsulated signed CMS manifest")
 	archivePath := flag.String("archive", "", "agent archive")

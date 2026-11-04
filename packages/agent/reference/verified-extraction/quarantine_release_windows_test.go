@@ -218,6 +218,13 @@ func TestManualQuarantineReleaseRequiresOperatorAcknowledgement(t *testing.T) {
 	}
 }
 
+func TestManualQuarantineReleaseRejectsAcknowledgementWithoutQueuedActionProof(t *testing.T) {
+	archive, err := ReleaseQuarantineAfterOperatorReview(context.Background(), strings.Repeat("f", 32), true)
+	if archive != "" || !errors.Is(err, ErrQueuedSCMActionProofUnavailable) {
+		t.Fatalf("operator acknowledgement must not replace queued action proof: archive=%q err=%v", archive, err)
+	}
+}
+
 // This opt-in test creates only a new, empty agent fixture at the real product
 // path. It refuses an existing installation and is for disposable VMs only.
 func TestManualQuarantineReleaseRefusesRealUpgradeJournal(t *testing.T) {
@@ -291,8 +298,8 @@ func TestManualQuarantineReleaseRefusesRealUpgradeJournal(t *testing.T) {
 		}
 	}()
 	_, err = ReleaseQuarantineAfterOperatorReview(context.Background(), strings.Repeat("f", 32), true)
-	if err == nil || !strings.Contains(err.Error(), "upgrade recovery journal requires support review") {
-		t.Fatalf("real upgrade journal not refused: %v", err)
+	if !errors.Is(err, ErrQueuedSCMActionProofUnavailable) {
+		t.Fatalf("missing queued-action proof not refused: %v", err)
 	}
 	if b, err := os.ReadFile(journal); err != nil || string(b) != "fixture" {
 		t.Fatal("real upgrade journal was modified")

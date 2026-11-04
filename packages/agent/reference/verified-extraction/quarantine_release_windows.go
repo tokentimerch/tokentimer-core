@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -40,13 +41,20 @@ type releaseBarrier struct {
 	info windows.ByHandleFileInformation
 }
 
-// ReleaseQuarantineAfterOperatorReview does not determine whether external
-// processes have stopped. The caller must first independently stop and review
-// SCM, WMI and any persistent actors. It archives markers only; stage contents
-// are preserved. A surviving upgrade journal always blocks this operation.
+// ErrQueuedSCMActionProofUnavailable means quarantined paths must be retained.
+// Windows can execute an already queued command after a service is disabled or
+// its recovery configuration has changed; operator acknowledgement alone does
+// not establish that no such action is pending.
+var ErrQueuedSCMActionProofUnavailable = errors.New("qualified proof that no queued SCM command or reboot remains is unavailable; retain quarantine and contact support")
+
+// ReleaseQuarantineAfterOperatorReview remains disabled until a trustworthy
+// proof of queued SCM action absence is available. Inspection remains usable.
 func ReleaseQuarantineAfterOperatorReview(ctx context.Context, transaction string, acknowledged bool) (archive string, err error) {
 	if !acknowledged {
 		return "", fmt.Errorf("explicit external-actor review is required")
+	}
+	if err := requireQueuedSCMActionProof(); err != nil {
+		return "", err
 	}
 	if !windows.GetCurrentProcessToken().IsElevated() {
 		return "", fmt.Errorf("an elevated token is required")
@@ -71,6 +79,10 @@ func ReleaseQuarantineAfterOperatorReview(ctx context.Context, transaction strin
 	stages := map[string]bool{"S-1-5-18": true, "S-1-5-32-544": true}
 	return releaseQuarantinePair(parent, `C:\ProgramData\TokenTimerAgent\state\upgrade-recovery.json`, transaction, bootstraplock.Policy{Owners: parents, Writers: parents}, bootstraplock.Policy{Owners: stages, Writers: stages}, "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)", renameProtectedMarker, renameOpenFile)
 }
+
+// No production provider is available. Do not replace this guard with a
+// check of the current SCM configuration, service state, or acknowledgement.
+func requireQueuedSCMActionProof() error { return ErrQueuedSCMActionProofUnavailable }
 
 // Caller holds the global mutex. If the process dies between moves, a flushed
 // sentinel remains in the scanned parent and blocks subsequent installations.
