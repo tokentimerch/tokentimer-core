@@ -64,6 +64,49 @@ func TestNewPrivateStagingRequiresElevation(t *testing.T) {
 	}
 }
 
+// This creates and removes one randomly named staging directory using the
+// production API. It is opt-in and must run on an authorized disposable host.
+// It validates the current host's staging ACL/path only, not an installer,
+// release signature, WMI/SCM execution or automatic crash recovery.
+func TestNativePrivateStagingWithElevatedToken(t *testing.T) {
+	if os.Getenv("TT_REQUIRE_STAGING_NATIVE") != "1" {
+		t.Skip("set TT_REQUIRE_STAGING_NATIVE=1 on an authorized disposable host")
+	}
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		t.Fatal("native staging qualification requires an elevated token")
+	}
+	parent, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, windows.KF_FLAG_DEFAULT)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := NewPrivateStaging()
+	if err != nil {
+		t.Fatalf("create production private staging: %v", err)
+	}
+	// Refuse cleanup entirely if the created target is outside the intended
+	// parent or does not have the production random-name format.
+	if !strings.EqualFold(filepath.Dir(stage.Root()), filepath.Clean(parent)) || !stageNamePattern.MatchString(filepath.Base(stage.Root())) {
+		stage.Close()
+		t.Fatal("created staging path is outside the verified target parent")
+	}
+	defer func() {
+		if err := stage.Cleanup(); err != nil {
+			stage.Close()
+			t.Errorf("owned staging cleanup failed: %v", err)
+		}
+	}()
+	id, err := getDirectoryIdentity(stage.Root())
+	if err != nil || id != stage.identity {
+		t.Fatalf("staging identity mismatch: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(stage.Root(), "fixture.txt"), []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := stage.LockPayload(); err != nil {
+		t.Fatalf("lock protected payload: %v", err)
+	}
+}
+
 func TestCleanupChecksOwnershipBeforeRemoving(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "TokenTimer-Staging-"+strings.Repeat("a", 32))
