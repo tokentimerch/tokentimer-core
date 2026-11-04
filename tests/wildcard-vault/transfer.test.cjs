@@ -62,6 +62,7 @@ async function fixture({ ordinary = false, published = true, neverStarted = fals
       );
     }
   }
+  await pool.query("INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,'workspace_manager')", [workspaceId, approver]);
   const issuer = (
     await pool.query(
       `INSERT INTO certops_agents(workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)

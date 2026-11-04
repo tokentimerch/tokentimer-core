@@ -41,9 +41,10 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
     const currentMainLedger=(await pool.query("SELECT * FROM migrations ORDER BY version")).rows;
     assert.equal(currentMainLedger.at(-1).version,80);
     assert.equal(currentMainLedger.at(-1).name,"auto_sync_run_metrics");
-    migrations.push(...pending.filter(entry=>entry.version>80 && entry.version<=89));
+    migrations.push(...pending.filter(entry=>entry.version>80 && (entry.version<=89 || entry.version===98)));
     await runMigrations();
     const beforeVerificationLedger=(await pool.query("SELECT * FROM migrations ORDER BY version")).rows;
+    assert.equal(beforeVerificationLedger.at(-1).version, 98);
     const {fixture}=require("../helpers/distribution-lifecycle-fixture.cjs");
     const operations=require("../../apps/api/services/certops/distributionOperations");
     const f=await fixture();
@@ -101,9 +102,9 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
       recovered.push({incident,delivered});
       if(delivered)await pool.query("INSERT INTO alert_queue(user_id,certops_agent_id,alert_key,threshold_days,due_date,channels,status) VALUES($1,$2,$3,0,CURRENT_DATE,'[]'::jsonb,'sent')",[f.actor,f.consumer,`cert_distribution:${incident.id}:2:resolved`]);
     }
-    migrations.push(...pending.filter(entry=>entry.version>89));
+    migrations.push(...pending.filter(entry=>entry.version>89 && entry.version!==98));
     await runMigrations();
-    assert.deepEqual((await pool.query("SELECT * FROM migrations WHERE version<=89 ORDER BY version")).rows,beforeVerificationLedger);
+    assert.deepEqual((await pool.query("SELECT * FROM migrations WHERE version<=89 OR version=98 ORDER BY version")).rows,beforeVerificationLedger);
     const backfilled=(await pool.query("SELECT verification_failure_count,verification_failure_revision FROM certops_consumer_current_state WHERE workspace_id=$1 AND binding_id=$2",[f.workspaceId,f.bindingId])).rows[0];
     assert.equal(Number(backfilled.verification_failure_count),1,"Fresh success resets the two earlier failures; the retrying failed cycle is retained from its log, not attempt_count=99");
     assert.equal(backfilled.verification_failure_revision,1);
@@ -229,7 +230,8 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
   {"version":94,"name":"pagerduty_operator_actions"},
   {"version":95,"name":"remove_pagerduty_rest_lookup"},
   {"version":96,"name":"certops_consumer_staging"},
-  {"version":97,"name":"certops_review_authority_epochs"}
+  {"version":97,"name":"certops_review_authority_epochs"},
+  {"version":98,"name":"certops_manual_rollout_authority"}
 ]);
     const constraints =
       await pool.query(`SELECT conname, pg_get_constraintdef(oid) AS definition

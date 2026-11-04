@@ -42,6 +42,8 @@ Choose the **Published certificate version**, review **Maximum parallel deployme
 
 With workspace Job approval off, the initial rollout can start without a second user. With workspace approval on, another authorized manager must approve it through the existing Jobs review surface; its actual pending status is shown in the guide. Child-job approval also follows workspace policy. Later publications remain manual by default. Configure approval-request or explicitly reviewed automatic distribution in **Certificate Management → Distribution** using the [lifecycle workflow](distribution-lifecycle.md). Mandatory workspace approval remains authoritative. Retained-version deployments always require explicit human approval.
 
+To continue a pre-upgrade rollout, request a new rollout and obtain fresh approval if required. Changes to manager membership, workspace ownership, pause state or Job approval policy also require a new request; restoring the previous setting does not revive the old authorization. Existing deployment evidence is retained.
+
 If a required deployment fails, repair the host and follow the guide's reconciliation instructions before **Retry deployment**. Then use **Resume rollout** in the same guide. It resumes the existing version and assignments; fresh deployment evidence is still required before the guide reports success.
 
 ## Confirm the selected result

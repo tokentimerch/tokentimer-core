@@ -23,14 +23,16 @@ async function putBinding({ workspaceId, groupId, bindingId = crypto.randomUUID(
     await material.lockGroup(client, workspaceId, groupId);
     const old = (await client.query(`SELECT * FROM certops_consumer_bindings WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, [workspaceId, bindingId])).rows[0];
     if (old && old.group_id !== groupId) fail("CERTOPS_BINDING_GROUP_IMMUTABLE");
+    if (old && old.assigned_agent_id !== binding.agentId) {
+      const live = await client.query(`SELECT 1 FROM certops_consumer_deployments d
+        LEFT JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND (j.id=d.job_id OR j.id=d.staging_job_id)
+        WHERE d.workspace_id=$1 AND d.binding_id=$2
+          AND (j.status IN ('claimed','running','orphaned_unknown_effect') OR d.stage='orphaned_unknown_effect') LIMIT 1`, [workspaceId, bindingId]);
+      if (live.rowCount) fail("CERTOPS_CONSUMER_REASSIGNMENT_REQUIRES_RECONCILIATION");
+    }
     if (binding.verificationPolicy === "installed") {
       const agent = (await client.query("SELECT platform FROM certops_agents WHERE workspace_id=$1 AND id=$2", [workspaceId,binding.agentId])).rows[0];
       if (agent?.platform === "win32") fail("CERTOPS_DEPLOYMENT_ASSURANCE_MISMATCH",422);
-    }
-    if(old && old.assigned_agent_id!==binding.agentId){
-      const live=await client.query(`SELECT 1 FROM certops_consumer_deployments d JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=COALESCE(d.job_id,d.staging_job_id)
-        WHERE d.workspace_id=$1 AND d.binding_id=$2 AND (j.status IN ('claimed','running','orphaned_unknown_effect') OR d.stage='orphaned_unknown_effect') LIMIT 1`,[workspaceId,bindingId]);
-      if(live.rowCount)fail("CERTOPS_CONSUMER_REASSIGNMENT_REQUIRES_RECONCILIATION");
     }
     // Compare validated typed values while holding the group and binding locks.
     // An identical PUT must preserve approvals, proofs and local authorization.
@@ -125,7 +127,14 @@ async function setRolloutState({ workspaceId, groupId, rolloutId, state, actorUs
     if(state==="deploying")await lockWorkspaceForCertOpsSideEffect({client,workspaceId});
     // Containment must remain possible after a source is disabled or retired.
     // Only resuming can enqueue execution and requires current admission.
-    await material.lockGroup(client,workspaceId,groupId,{allowInactive:state!=="deploying"});
+    const group = await material.lockGroup(client,workspaceId,groupId,{allowInactive:state!=="deploying"});
+    if (state === "deploying") {
+      const existing = (await client.query(`SELECT approval_job_id FROM certops_distribution_rollouts
+        WHERE workspace_id=$1 AND group_id=$2 AND id=$3 AND state<>'retired' FOR UPDATE`,
+      [workspaceId,groupId,rolloutId])).rows[0];
+      if (!existing) fail("CERTOPS_ROLLOUT_NOT_FOUND",404);
+      await require("./distributionLifecycle").assertAutomaticRolloutAuthorized(client,workspaceId,group,existing.approval_job_id);
+    }
     const row = (await client.query(`UPDATE certops_distribution_rollouts SET state=$4
       WHERE workspace_id=$1 AND group_id=$2 AND id=$3 AND state<>'retired' RETURNING *`, [workspaceId,groupId,rolloutId,state])).rows[0];
     if (!row) fail("CERTOPS_ROLLOUT_NOT_FOUND",404);
@@ -145,14 +154,6 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
     WHERE r.workspace_id=$1 AND r.group_id=$2 AND r.id=$3 FOR UPDATE OF r`,[workspaceId,groupId,rolloutId])).rows[0];
   if (!rollout || ["retired","installed","verified"].includes(rollout.state) ||
     rollout.verification_only && rollout.state==="degraded") return { queued: false,reason:"rollout_inactive" };
-  if (rollout.approval_job_id) {
-    try { await require("./distributionLifecycle").assertAutomaticRolloutAuthorized(client,workspaceId,group,rollout.approval_job_id); }
-    catch(error) {
-      if(error.code!=="CERTOPS_DISTRIBUTION_POLICY_STALE") throw error;
-      await client.query(`UPDATE certops_distribution_rollouts SET state='paused' WHERE workspace_id=$1 AND id=$2`,[workspaceId,rolloutId]);
-      return {queued:false,reason:"rollout_authorization_stale"};
-    }
-  }
   let stale = group.state !== "active" || !!group.ended_at || Number(group.generation)!==Number(rollout.generation);
   if (!stale) {
     try { await material.assertDeployableVersion(client,workspaceId,groupId,rollout.material_version_id); }
@@ -164,6 +165,13 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
   if (stale) {
     await client.query(`UPDATE certops_distribution_rollouts SET state='retired' WHERE workspace_id=$1 AND id=$2`,[workspaceId,rolloutId]);
     return { queued:false,reason:"rollout_superseded" };
+  }
+  try {
+    await require("./distributionLifecycle").assertAutomaticRolloutAuthorized(client,workspaceId,group,rollout.approval_job_id);
+  } catch (error) {
+    if (!["CERTOPS_DISTRIBUTION_AUTHORIZATION_STALE", "CERTOPS_DISTRIBUTION_POLICY_STALE"].includes(error.code)) throw error;
+    await client.query("UPDATE certops_distribution_rollouts SET state='paused' WHERE workspace_id=$1 AND id=$2",[workspaceId,rolloutId]);
+    return { queued:false,reason:"rollout_authorization_stale" };
   }
   if (rollout.state === "paused") return {queued:false,reason:"rollout_inactive"};
   const rows = (await client.query(`SELECT d.*,j.status AS job_status,j.needs_operator_reconciliation,
@@ -280,7 +288,8 @@ async function processDistributionIntent({client,row,payload}) {
         // A fresh request/approval is required; never rewrite the frozen intent
         // or retry it against changed membership, validity or generation.
         if (job.status !== "pending" || !["CERTOPS_ROLLOUT_APPROVAL_MISMATCH","CERTOPS_ROLLOUT_VERSION_INVALID",
-          "CERTOPS_ROLLOUT_POLICY_INVALID","CERTOPS_DISTRIBUTION_INACTIVE"].includes(error.code)) throw error;
+          "CERTOPS_ROLLOUT_POLICY_INVALID","CERTOPS_DISTRIBUTION_INACTIVE","CERTOPS_DISTRIBUTION_AUTHORIZATION_STALE",
+          "CERTOPS_DISTRIBUTION_POLICY_STALE"].includes(error.code)) throw error;
         await client.query(`UPDATE certificate_jobs SET status='failed',error_code='CERTOPS_ROLLOUT_APPROVAL_STALE',
           error_message='Rollout authorization changed; request a new rollout approval',completed_at=clock_timestamp(),updated_at=clock_timestamp(),
           approved_by_user_id=NULL,approved_at=NULL,approved_payload_hash=NULL,approved_canonical_intent_hash=NULL

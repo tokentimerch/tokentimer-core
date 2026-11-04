@@ -141,14 +141,17 @@ function composeMigrations(migrations, recorded = []) {
       [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason"],
       [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason", "pagerduty_operator_actions", "remove_pagerduty_rest_lookup"],
     ];
+    const laterCompanions = new Set([...lifecycle, Z, "certops_consumer_staging", "certops_review_authority_epochs"]);
     const recognized = seeds.some((seed) => {
-      const names = [
-        ...seed.filter((name) => byName.has(name)),
-        ...extensions
-          .map((entry) => entry.name)
-          .filter((name) => !seed.includes(name)),
-      ];
-      return rows.every((row, index) => row.name === names[index]);
+      const remaining = extensions.map((entry) => entry.name).filter((name) => !seed.includes(name));
+      const ordinary = [...seed.filter((name) => byName.has(name)), ...remaining];
+      // A previously supported preview can receive the independent manual
+      // authority fix before the reserved lifecycle companions are installed.
+      // Preserve that recorded append order when the companions arrive later.
+      const manualFirst = [...seed.filter((name) => byName.has(name)),
+        ...remaining.filter((name) => !laterCompanions.has(name)),
+        ...remaining.filter((name) => laterCompanions.has(name))];
+      return [ordinary, manualFirst].some((names) => rows.every((row, index) => row.name === names[index]));
     });
     if (!recognized)
       throw new Error(

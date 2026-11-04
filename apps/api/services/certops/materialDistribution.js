@@ -102,7 +102,7 @@ async function resolveDistributionJobDefaults({ client, workspaceId, operation, 
       binding.material_version_id !== intent.materialVersionId || versionOf(binding) !== intent.providerVersion ||
       binding.fingerprint_sha256 !== intent.fingerprintSha256 || binding.deployment_profile_ref !== intent.deploymentProfileRef ||
       binding.profile_revision !== intent.profileRevision || binding.verification_policy !== intent.verificationPolicy) fail("CERTOPS_DEPLOYMENT_INTENT_MISMATCH");
-    if (binding.approval_job_id) await require("./distributionLifecycle").assertAutomaticRolloutAuthorized(client,workspaceId,group,binding.approval_job_id);
+    await require("./distributionLifecycle").assertAutomaticRolloutAuthorized(client,workspaceId,group,binding.approval_job_id);
     if(hashIntent({policy:binding.activation_policy || null})!==hashIntent({policy:intent.activationPolicy || null}))fail("CERTOPS_DEPLOYMENT_ACTIVATION_POLICY_MISMATCH");
     if (intent.preparationOnly === true && (binding.verification_only || binding.activation_policy?.independentStaging !== true || binding.agent_platform === "win32"))
       fail("CERTOPS_DEPLOYMENT_STAGING_UNSUPPORTED");
@@ -207,6 +207,9 @@ async function acceptPublicationReceipt({ client, workspaceId, agentId, job, rec
 }
 
 async function buildRolloutIntent({ client, workspaceId, groupId, materialVersionId, maxParallel = 1, verificationOnly = false }) {
+  const workspace = (await client.query(`SELECT certops_manual_rollout_revision,certops_distribution_authorization_revision
+    FROM workspaces WHERE id=$1 FOR SHARE`, [workspaceId])).rows[0];
+  if (!workspace) fail("CERTOPS_WORKSPACE_NOT_FOUND", 404);
   const group = await lockGroup(client, workspaceId, groupId);
   await assertDeployableVersion(client, workspaceId, groupId, materialVersionId);
   const version = (await client.query(`SELECT * FROM certops_material_versions
@@ -217,11 +220,10 @@ async function buildRolloutIntent({ client, workspaceId, groupId, materialVersio
     WHERE b.workspace_id=$1 AND b.group_id=$2 AND b.state='active' ORDER BY b.id FOR SHARE OF b`, [workspaceId, groupId])).rows;
   if (!bindings.length || bindings.length > 1000 || !Number.isInteger(maxParallel) || maxParallel < 1 || maxParallel > 16) fail("CERTOPS_ROLLOUT_POLICY_INVALID", 422);
   const generation = Number(group.generation) + 1;
-  const workspace = (await client.query("SELECT certops_distribution_authorization_revision FROM workspaces WHERE id=$1 FOR SHARE",[workspaceId])).rows[0];
-  if(!workspace)fail("CERTOPS_WORKSPACE_NOT_FOUND",404);
   if (typeof verificationOnly !== "boolean") fail("CERTOPS_ROLLOUT_POLICY_INVALID",422);
   const intent = { workspaceId, groupId, materialVersionId, generation, maxParallel, verificationOnly,
     workspaceAuthorizationRevision:String(workspace.certops_distribution_authorization_revision),
+    manualRolloutAuthorizationRevision: String(workspace.certops_manual_rollout_revision),
     managementPeriodId: group.management_period_id, materialStoreRef: group.material_store_ref,
     issuanceProfileRevision: group.profile_revision, fingerprintSha256: version.fingerprint_sha256,
     providerVersion: versionOf(version), ...(group.material_store_provider && group.material_store_provider !== "vault-kv2" ? { provider: group.material_store_provider } : {}), bindings: bindings.map((b) => ({
@@ -253,6 +255,7 @@ async function createRolloutSnapshot({ client, workspaceId, groupId, materialVer
   const { computeJobPayloadApprovalHash } = require("./jobApprovals");
   if (!approval || approval.status !== "pending" ||
     hashIntent(approval.payload.distributionRollout) !== approvedIntentHash) fail("CERTOPS_ROLLOUT_APPROVAL_REQUIRED");
+  await require("./manualRolloutAuthority").assertManualRolloutAuthority(client, workspaceId, groupId, approvalJobId);
   if (approvalRequired) {
     if (!approval.approved_payload_hash ||
       computeJobPayloadApprovalHash(approval.payload) !== approval.approved_payload_hash) fail("CERTOPS_ROLLOUT_APPROVAL_REQUIRED");

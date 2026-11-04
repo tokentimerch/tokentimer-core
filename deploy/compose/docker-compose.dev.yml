@@ -67,6 +67,10 @@ services:
       - CERTOPS_AGENT_LOG_RETENTION_DAYS=${CERTOPS_AGENT_LOG_RETENTION_DAYS:-}
       - CERTOPS_AGENT_LOG_DAILY_BYTES=${CERTOPS_AGENT_LOG_DAILY_BYTES:-}
       - SESSION_SECRET=dev_session_secret_change_in_production
+      - RECIPIENT_VERIFICATION_MODE=${RECIPIENT_VERIFICATION_MODE:-off}
+      - RECIPIENT_FINGERPRINT_SECRET=${RECIPIENT_FINGERPRINT_SECRET:-}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - TT_DEPLOYMENT=${TT_DEPLOYMENT:-self-hosted}
       - ADMIN_EMAIL=admin@localhost.local
       - ADMIN_PASSWORD=AdminPassword123!
       - ADMIN_NAME=Administrator
@@ -198,6 +202,10 @@ services:
       - DB_PASSWORD=password
       - APP_URL=http://localhost:5173
       - SESSION_SECRET=dev_session_secret_change_in_production
+      - RECIPIENT_VERIFICATION_MODE=${RECIPIENT_VERIFICATION_MODE:-off}
+      - RECIPIENT_FINGERPRINT_SECRET=${RECIPIENT_FINGERPRINT_SECRET:-}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - TT_DEPLOYMENT=${TT_DEPLOYMENT:-self-hosted}
       # SMTP (optional - configure here or via System Settings UI)
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-}
@@ -259,6 +267,10 @@ services:
       - DB_PASSWORD=password
       - APP_URL=http://localhost:5173
       - SESSION_SECRET=dev_session_secret_change_in_production
+      - RECIPIENT_VERIFICATION_MODE=${RECIPIENT_VERIFICATION_MODE:-off}
+      - RECIPIENT_FINGERPRINT_SECRET=${RECIPIENT_FINGERPRINT_SECRET:-}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - TT_DEPLOYMENT=${TT_DEPLOYMENT:-self-hosted}
       # Webhook security
       - WEBHOOK_PROVIDER_HOSTS=${WEBHOOK_PROVIDER_HOSTS:-}
       - WEBHOOK_EXTRA_PROVIDER_HOSTS=${WEBHOOK_EXTRA_PROVIDER_HOSTS:-}
@@ -332,6 +344,10 @@ services:
       - DB_PASSWORD=password
       - APP_URL=http://localhost:5173
       - SESSION_SECRET=dev_session_secret_change_in_production
+      - RECIPIENT_VERIFICATION_MODE=${RECIPIENT_VERIFICATION_MODE:-off}
+      - RECIPIENT_FINGERPRINT_SECRET=${RECIPIENT_FINGERPRINT_SECRET:-}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - TT_DEPLOYMENT=${TT_DEPLOYMENT:-self-hosted}
       - WEEKLY_DIGEST_RECIPIENT_KEY=${WEEKLY_DIGEST_RECIPIENT_KEY:-}
       # Webhook security
       - WEBHOOK_PROVIDER_HOSTS=${WEBHOOK_PROVIDER_HOSTS:-}
@@ -397,6 +413,10 @@ services:
       - DB_USER=tokentimer
       - DB_PASSWORD=password
       - SESSION_SECRET=dev_session_secret_change_in_production
+      - RECIPIENT_VERIFICATION_MODE=${RECIPIENT_VERIFICATION_MODE:-off}
+      - RECIPIENT_FINGERPRINT_SECRET=${RECIPIENT_FINGERPRINT_SECRET:-}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - TT_DEPLOYMENT=${TT_DEPLOYMENT:-self-hosted}
       - API_URL=http://api:4000
       - APP_URL=${APP_URL:-http://localhost:5173}
       - OP_NOTIFICATION_EMAIL_DAILY_CAP=${OP_NOTIFICATION_EMAIL_DAILY_CAP:-}

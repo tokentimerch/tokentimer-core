@@ -8,6 +8,7 @@ const {
 } = require("../../apps/api/services/certops/distributionOperations");
 
 test("rollout completion requires current authorization even for previously verified optional consumers", async (t) => {
+  t.mock.method(require("../../apps/api/services/certops/manualRolloutAuthority"), "assertManualRolloutAuthority", async () => {});
   t.mock.method(material, "lockGroup", async () => ({
     state: "active",
     generation: 1,
@@ -40,6 +41,8 @@ test("rollout completion requires current authorization even for previously veri
           return { rows: [{ id: "workspace", certops_paused: false }] };
         if (sql.includes("FROM system_settings"))
           return { rows: [{ certops_settings: { enabled: true } }] };
+        if (sql.includes("FROM certops_distribution_automations"))
+          return { rows: [] };
         if (sql.includes("SELECT r.*"))
           return {
             rows: [

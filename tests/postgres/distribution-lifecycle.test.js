@@ -910,7 +910,7 @@ test("independent manual review is fenced by reviewer and workspace epochs and e
   };
   const check = id => operations.transaction(client =>
     lifecycle.assertAutomaticRolloutAuthorized(client, f.workspaceId, group, id));
-  const stale = { code: "CERTOPS_DISTRIBUTION_POLICY_STALE" };
+  const stale = { code: "CERTOPS_DISTRIBUTION_AUTHORIZATION_STALE" };
   const original = await review();
   await check(original);
   await pool.query("DELETE FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2", [f.workspaceId, f.approver]);

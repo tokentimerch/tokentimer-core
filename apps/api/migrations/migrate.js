@@ -4911,6 +4911,11 @@ const migrations = [
     name: "certops_review_authority_epochs",
     sql: fs.readFileSync(require("path").join(__dirname, "097-certops-review-authority-epochs.sql"), "utf8"),
   },
+  {
+    version: 98,
+    name: "certops_manual_rollout_authority",
+    sql: fs.readFileSync(require("path").join(__dirname, "098-certops-manual-rollout-authority.sql"), "utf8"),
+  },
 ];
 
 

@@ -322,6 +322,7 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
     { version: 95, name: "remove_pagerduty_rest_lookup" },
     { version: 96, name: "certops_consumer_staging" },
     { version: 97, name: "certops_review_authority_epochs" },
+    { version: 98, name: "certops_manual_rollout_authority" },
   ]);
   assert.equal(
     (

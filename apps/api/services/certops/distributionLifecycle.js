@@ -478,29 +478,7 @@ async function assertAutomaticRolloutAuthorized(
       [workspaceId, group.id, approvalJobId],
     )
   ).rows[0];
-  if (!automation) {
-    // Exact-version/manual reviews need the same current human authority as a
-    // standing grant. A review is not permanent authority after its reviewer
-    // or requester loses workspace access. Recheck under the caller's locks at
-    // expansion, every claim/renewal and original-intent retry.
-    const job = (await client.query("SELECT * FROM certificate_jobs WHERE workspace_id=$1 AND id=$2 FOR SHARE", [workspaceId,approvalJobId])).rows[0];
-    const workspace = (await client.query("SELECT created_by,certops_require_approval_always,certops_distribution_authorization_revision FROM workspaces WHERE id=$1 FOR SHARE", [workspaceId])).rows[0];
-    const members = (await client.query("SELECT user_id FROM workspace_memberships WHERE workspace_id=$1 AND role IN ('admin','workspace_manager') FOR SHARE", [workspaceId])).rows;
-    const authorized = new Set([workspace?.created_by,...members.map(row=>row.user_id)].filter(id=>id!=null).map(String));
-    const intent = job?.payload?.distributionRollout;
-    if(!job || !workspace || !intent || intent.groupId!==group.id || !["pending","succeeded"].includes(job.status) ||
-      intent.workspaceAuthorizationRevision!==String(workspace.certops_distribution_authorization_revision) ||
-      !authorized.has(String(job.requested_by_user_id))) fail("CERTOPS_DISTRIBUTION_POLICY_STALE",409);
-    if(job.approved_payload_hash){
-      if(!job.approved_at || !job.approved_by_user_id || !authorized.has(String(job.approved_by_user_id)) ||
-        String(job.approved_by_user_id)===String(job.requested_by_user_id) || computeJobPayloadApprovalHash(job.payload)!==job.approved_payload_hash ||
-        require("./jobApprovals").computeCanonicalIntentHash({operation:job.operation,subjectType:job.subject_type,subjectId:job.subject_id,payload:job.payload})!==job.approved_canonical_intent_hash)
-        fail("CERTOPS_DISTRIBUTION_POLICY_STALE",409);
-    }else if(workspace.certops_require_approval_always || (!intent.verificationOnly && intent.bindings.some(binding=>binding.activationPolicy?.requiresApproval || binding.activationPolicy?.disruptive))) {
-      fail("CERTOPS_DISTRIBUTION_POLICY_STALE",409);
-    }
-    return;
-  }
+  if (!automation) return require("./manualRolloutAuthority").assertManualRolloutAuthority(client, workspaceId, group.id, approvalJobId);
   const policy = await loadPolicy(client, workspaceId, group.id);
   if (
     !policy ||

@@ -207,7 +207,9 @@ publishing claim IDs are never public, including for administrators.
 `POST /api/v1/workspaces/{id}/certops/distribution-jobs/{jobId}/retry` requeues the
 same failed/blocked/uncertain job, preserves approved payload/version/generation
 and is bounded to three claims. Publication retries recover staged material or
-the deterministic Vault object; they do not create another order. A consumer
+the deterministic Vault object; they do not create another order. After reviewing
+the failure and completing any required local reconciliation, use **Retry original
+publication** in the setup guide. A consumer
 retry fetches the same pinned provider version. A changed intent needs a new
 approval. Cloud admission rejects new effects for frozen or unpaid workspaces;
 claim-bound continuing results remain accepted.

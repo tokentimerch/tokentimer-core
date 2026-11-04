@@ -555,6 +555,18 @@ test("malformed pinned migration registries cannot be composed", () => {
     /inconsistent pinned Core migration/,
   );
 });
+test("manual rollout authority composes before or after reserved companion migrations", () => {
+  const { migrations } = require("../../apps/api/migrations/migrate");
+  const companions = new Set([86, 87, 88, 89, 90, 91, 96, 97]);
+  const registry = migrations;
+  const current = composeMigrations(migrations.filter(({ version }) => !companions.has(version)));
+  const applied = current.map(({ version,name }) => ({ version,name }));
+  const planned = composeMigrations(registry, applied);
+  for (const entry of applied) assert.equal(planned.find(row => row.name === entry.name).version, entry.version);
+  assert.equal(new Set(planned.map(row => row.version)).size, planned.length);
+  assert.deepEqual(composeMigrations(registry, planned), planned);
+});
+
 test("all 72 legacy distribution-first definitions retain their immutable historical SQL", () => {
   const coreRoot = path.resolve(__dirname, "../..");
   const { migrations } = require(
