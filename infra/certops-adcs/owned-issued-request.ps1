@@ -18,8 +18,40 @@ try { Invoke-Command -ComputerName ($CaConfig.Split('\')[0]) -Credential $creden
   $view=New-Object -ComObject CertificateAuthority.View
   $hash=[Security.Cryptography.SHA256]::Create()
   $stage='connection'
+  $previousUiCulture=$null;$previousThreadLanguage=0;$threadLanguageChanged=$false
   try {
-    $null=$view.OpenConnection($CaConfig)
+    try { $null=$view.OpenConnection($CaConfig) }
+    catch {
+      $originalConnectionFailure=$_
+      # Server 2022 CertView can fail to load its localized management
+      # resources even while the localized CA issues successfully. Retry only
+      # that native file-not-found result with this thread's UI set to en-US;
+      # the CA, agent, certificate checks and database oracle stay unchanged.
+      $connectionException=$_.Exception;$fileNotFound=$false
+      for($i=0;$i -lt 8 -and $null -ne $connectionException;$i++){
+        if($connectionException -is [Runtime.InteropServices.COMException] -and [BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$connectionException.HResult),0) -eq [uint32]2147942402){$fileNotFound=$true;break}
+        $connectionException=$connectionException.InnerException
+      }
+      if(-not $fileNotFound){throw}
+      try {
+        if(-not ('TTQualificationThreadLanguage' -as [type])){
+          Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class TTQualificationThreadLanguage { [DllImport("kernel32.dll")] public static extern ushort GetThreadUILanguage(); [DllImport("kernel32.dll")] public static extern ushort SetThreadUILanguage(ushort language); }'
+        }
+        $previousUiCulture=[Threading.Thread]::CurrentThread.CurrentUICulture
+        $previousThreadLanguage=[TTQualificationThreadLanguage]::GetThreadUILanguage()
+        if([TTQualificationThreadLanguage]::SetThreadUILanguage(1033) -eq 0){throw 'Thread language fallback unavailable'}
+        $threadLanguageChanged=$true
+        [Threading.Thread]::CurrentThread.CurrentUICulture=[Globalization.CultureInfo]::GetCultureInfo('en-US')
+        try {[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)}catch{}
+        $view=New-Object -ComObject CertificateAuthority.View
+        $null=$view.OpenConnection($CaConfig)
+      } catch {
+        if($null -ne $previousUiCulture){[Threading.Thread]::CurrentThread.CurrentUICulture=$previousUiCulture}
+        if($threadLanguageChanged){[void][TTQualificationThreadLanguage]::SetThreadUILanguage($previousThreadLanguage)}
+        $previousUiCulture=$null;$previousThreadLanguage=0;$threadLanguageChanged=$false
+        throw $originalConnectionFailure
+      }
+    }
     $stage='columns'
     $names=@('RequestID','CommonName','RequesterName','Disposition','RawCertificate')
     $view.SetResultColumnCount($names.Count)
@@ -102,5 +134,11 @@ try { Invoke-Command -ComputerName ($CaConfig.Split('\')[0]) -Credential $creden
     }
     throw
   }
-  finally {if($hash){$hash.Dispose()};if($view){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)}}
+  finally {
+    try {if($hash){$hash.Dispose()};if($view){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)}}
+    finally {
+      if($null -ne $previousUiCulture){[Threading.Thread]::CurrentThread.CurrentUICulture=$previousUiCulture}
+      if($threadLanguageChanged){[void][TTQualificationThreadLanguage]::SetThreadUILanguage($previousThreadLanguage)}
+    }
+  }
 } } catch { Write-Output 'CERTOPS_ISSUED_FAILURE=remoting'; throw }
