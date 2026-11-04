@@ -26,6 +26,7 @@ type protectedRestartJournal struct {
 	size           int64
 	stopRequested  bool
 	resumedBlocked bool
+	progress       restartProgress
 }
 
 func (j *protectedRestartJournal) CanRestart() bool { return !j.stopRequested }
@@ -34,10 +35,9 @@ func (j *protectedRestartJournal) FlushStep(step string) error {
 	if j.resumedBlocked {
 		return fmt.Errorf("interrupted stop requires manual review")
 	}
-	switch step {
-	case "verify-before", "stop-requested", "verify-stopped", "start-requested", "verify-started", "verified":
-	default:
-		return fmt.Errorf("invalid restart step")
+	next, err := advanceRestartProgress(j.progress, step)
+	if err != nil {
+		return err
 	}
 	line := []byte(step + "\n")
 	if j.size+int64(len(line)) > 64<<10 {
@@ -51,6 +51,7 @@ func (j *protectedRestartJournal) FlushStep(step string) error {
 		return fmt.Errorf("restart journal flush failed")
 	}
 	j.size += int64(n)
+	j.progress = next
 	if step == "stop-requested" {
 		j.stopRequested = true
 	}
@@ -135,22 +136,60 @@ func openProtectedRestartJournal(archive, sddl, transaction string, binding upgr
 	if d.Decode(&actual) != nil || actual != expected {
 		return nil, fmt.Errorf("restart journal binding mismatch")
 	}
-	stopRequested := false
+	progress := restartProgress{}
 	for scanner.Scan() {
-		if scanner.Text() == "stop-requested" {
-			stopRequested = true
+		next, e := advanceRestartProgress(progress, scanner.Text())
+		if e != nil {
+			return nil, fmt.Errorf("invalid restart journal sequence")
 		}
-		switch scanner.Text() {
-		case "verify-before", "stop-requested", "verify-stopped", "start-requested", "verify-started", "verified":
-		default:
-			return nil, fmt.Errorf("invalid restart journal step")
-		}
+		progress = next
 	}
+	stopRequested := progress.phase > 0
 	if scanner.Err() != nil {
 		return nil, fmt.Errorf("invalid restart journal content")
 	}
 	if _, e = f.Seek(0, io.SeekEnd); e != nil {
 		return nil, fmt.Errorf("restart journal seek failed")
 	}
-	return &protectedRestartJournal{file: f, size: int64(len(raw)), stopRequested: stopRequested, resumedBlocked: stopRequested}, nil
+	return &protectedRestartJournal{file: f, size: int64(len(raw)), stopRequested: stopRequested, resumedBlocked: stopRequested, progress: progress}, nil
+}
+
+type restartProgress struct {
+	phase    int
+	observed bool
+}
+
+func advanceRestartProgress(p restartProgress, step string) (restartProgress, error) {
+	switch p.phase {
+	case 0:
+		if step == "verify-before" {
+			p.observed = true
+			return p, nil
+		}
+		if step == "stop-requested" && p.observed {
+			p.phase = 1
+			return p, nil
+		}
+	case 1:
+		if step == "verify-stopped" {
+			p.phase = 2
+			return p, nil
+		}
+	case 2:
+		if step == "start-requested" {
+			p.phase = 3
+			return p, nil
+		}
+	case 3:
+		if step == "verify-started" {
+			p.phase = 4
+			return p, nil
+		}
+	case 4:
+		if step == "verified" {
+			p.phase = 5
+			return p, nil
+		}
+	}
+	return p, fmt.Errorf("invalid restart journal sequence")
 }

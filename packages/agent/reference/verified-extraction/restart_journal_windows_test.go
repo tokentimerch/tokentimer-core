@@ -24,6 +24,9 @@ func TestProtectedRestartJournalFlushAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err = j.FlushStep("verify-before"); err != nil {
+		t.Fatal(err)
+	}
 	if err = j.FlushStep("stop-requested"); err != nil {
 		t.Fatal(err)
 	}
@@ -156,5 +159,62 @@ func TestRestartJournalSurvivesKilledProcess(t *testing.T) {
 				t.Fatal("SCM acted after interrupted stop")
 			}
 		})
+	}
+}
+
+func TestRestartJournalRejectsInvalidSequences(t *testing.T) {
+	sequences := [][]string{{"stop-requested"}, {"verify-stopped"}, {"start-requested"}, {"verify-started"}, {"verified"}, {"verify-before", "verify-stopped"}, {"verify-before", "stop-requested", "stop-requested"}, {"verify-before", "stop-requested", "start-requested"}, {"verify-before", "stop-requested", "verify-stopped", "verify-stopped"}, {"verify-before", "stop-requested", "verify-stopped", "start-requested", "verified"}}
+	for _, sequence := range sequences {
+		p := restartProgress{}
+		accepted := true
+		for _, step := range sequence {
+			next, err := advanceRestartProgress(p, step)
+			if err != nil {
+				accepted = false
+				break
+			}
+			p = next
+		}
+		if accepted {
+			t.Fatalf("invalid sequence accepted: %v", sequence)
+		}
+	}
+	p := restartProgress{}
+	for _, step := range []string{"verify-before", "verify-before", "stop-requested", "verify-stopped", "start-requested", "verify-started", "verified"} {
+		next, err := advanceRestartProgress(p, step)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p = next
+	}
+}
+func TestProtectedRestartJournalRejectsCorruptStepOrdering(t *testing.T) {
+	f := newReleaseFixture(t, strings.Repeat("f", 32))
+	archive := filepath.Join(f.parent, "protected-review")
+	if err := createRestrictedDirectory(archive, f.sddl); err != nil {
+		t.Fatal(err)
+	}
+	binding := upgradeJournalBinding{Volume: 1, IndexHigh: 2, IndexLow: 3, SHA256: strings.Repeat("a", 64)}
+	j, err := openProtectedRestartJournal(archive, f.sddl, f.txn, binding, f.stagePolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(archive, "restart-review.log")
+	header, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"stop-requested\n", "verify-stopped\n", "start-requested\n", "verified\n", "verify-before\nstop-requested\nstop-requested\n", "verify-before\nstop-requested\nstart-requested\n", "verify-before\nstop-requested\nverify-stopped\nverified\n", "verify-before\nstop-requested"} {
+		raw := append(append([]byte{}, header...), []byte(bad)...)
+		if err = os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if j, err = openProtectedRestartJournal(archive, f.sddl, f.txn, binding, f.stagePolicy); err == nil {
+			j.Close()
+			t.Fatalf("corrupt journal accepted: %q", bad)
+		}
 	}
 }
