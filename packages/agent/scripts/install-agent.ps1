@@ -386,10 +386,92 @@ function Test-IsAdministrator {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+# Cooperating installers and launchers serialize creation of a protected
+# execution intent with upgrade recovery. Earlier installers do not honor this
+# lock; they must not run concurrently with a verified launcher.
+function Enter-AgentInstallLock {
+    $trusted = @('S-1-5-18', 'S-1-5-32-544')
+    $security = New-Object System.Security.AccessControl.MutexSecurity
+    $security.SetAccessRuleProtection($true, $false)
+    foreach ($sid in $trusted) {
+        $identity = New-Object System.Security.Principal.SecurityIdentifier($sid)
+        $rule = New-Object System.Security.AccessControl.MutexAccessRule($identity, 'FullControl', 'Allow')
+        $security.AddAccessRule($rule)
+    }
+    $created = $false
+    $mutex = New-Object System.Threading.Mutex($false, 'Global\TokenTimer.Agent.Install.v1', [ref]$created, $security)
+    try {
+        $actual = $mutex.GetAccessControl()
+        $owner = $actual.GetOwner([Security.Principal.SecurityIdentifier]).Value
+        if ($owner -notin $trusted -or -not $actual.AreAccessRulesProtected) { throw 'untrusted installation lock owner or ACL' }
+        $rules = @($actual.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+        if (-not $rules.Count) { throw 'installation lock has no access rules' }
+        foreach ($rule in $rules) {
+            if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and $rule.IdentityReference.Value -notin $trusted) {
+                throw 'installation lock grants untrusted access'
+            }
+        }
+        try { $acquired = $mutex.WaitOne([TimeSpan]::FromSeconds(60)) }
+        catch [Threading.AbandonedMutexException] { $acquired = $true }
+        if (-not $acquired) { throw 'another installer or launcher owns the installation lock' }
+        return $mutex
+    } catch {
+        $mutex.Dispose()
+        throw
+    }
+}
+
+function Assert-ProtectedIntentDirectory {
+    param([Parameter(Mandatory)][string]$Directory)
+    $trusted = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+    $cursor = [IO.Path]::GetFullPath($Directory).TrimEnd('\')
+    $first = $true
+    while ($cursor) {
+        $item = Get-Item -LiteralPath $cursor -Force -ErrorAction Stop
+        if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'intent directory is not a trusted directory' }
+        $acl = Get-Acl -LiteralPath $cursor -ErrorAction Stop
+        if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $trusted) { throw 'untrusted intent directory owner' }
+        $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+        if (-not $rules.Count) { throw 'intent directory ACL unavailable' }
+        $mask = if ($first) { [int64]0x500D0156 } else { [int64]0x500D0142 }
+        foreach ($rule in $rules) {
+            if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
+                ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0 -and
+                $rule.IdentityReference.Value -notin $trusted -and (([int64]$rule.FileSystemRights -band $mask) -ne 0)) {
+                throw 'intent directory permits untrusted modification'
+            }
+        }
+        $first = $false
+        $next = [IO.Path]::GetDirectoryName($cursor)
+        if (-not $next -or $next -eq $cursor) { break }
+        $cursor = $next
+    }
+}
+
+function Assert-NoQuarantinedLauncherIntent {
+    param([Parameter(Mandatory)][string]$LauncherParent)
+    $intents = @(Get-ChildItem -LiteralPath $LauncherParent -Filter 'TokenTimer-Staging-*.intent' -Force -ErrorAction Stop)
+    if ($intents.Count -gt 0) { throw 'recovery_required: a launcher execution remains quarantined' }
+}
+
+if (-not $script:DryRun) {
+    if (-not (Test-IsAdministrator)) { Fail 'installation or uninstall requires an elevated PowerShell session' }
+    try { $script:AgentInstallMutex = Enter-AgentInstallLock }
+    catch { Fail "cannot acquire trusted installation lock ($($_.Exception.Message))" }
+}
+
 # -------------------------------------------------------------- uninstall
 if ($script:Uninstall) {
     if (-not $script:DryRun -and -not (Test-IsAdministrator)) {
         Fail "uninstall must run from an elevated (Administrator) PowerShell session"
+    }
+    if (-not $script:DryRun) {
+        try {
+            if (-not [Environment]::Is64BitProcess) { throw 'native 64-bit PowerShell is required' }
+            $launcherParent = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+            Assert-ProtectedIntentDirectory -Directory $launcherParent
+            Assert-NoQuarantinedLauncherIntent -LauncherParent $launcherParent
+        } catch { Fail "recovery_required: launcher execution remains quarantined ($($_.Exception.Message))" }
     }
     $serviceExists = [bool](Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)
     if ($serviceExists) {
@@ -944,9 +1026,74 @@ function Assert-UpgradeRecoveryAcl {
     }
 }
 
+# The inherited pipe carries a one-use secret, not the environment. The two
+# immutable intent records and their protected parent bind it to these exact
+# directories. This gate never authorizes automatic recovery after a crash.
+function Assert-AuthorizedLauncherOrNoIntent {
+    if (-not [Environment]::Is64BitProcess) { throw 'native 64-bit PowerShell is required' }
+    $parent = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+    if ([string]::IsNullOrWhiteSpace($parent)) { throw 'launcher staging parent unavailable' }
+    Assert-ProtectedIntentDirectory -Directory $parent
+    $intents = @(Get-ChildItem -LiteralPath $parent -Filter 'TokenTimer-Staging-*.intent' -Force -ErrorAction Stop)
+    $handleText = [Environment]::GetEnvironmentVariable('TOKENTIMER_AGENT_INTENT_HANDLE', 'Process')
+    [Environment]::SetEnvironmentVariable('TOKENTIMER_AGENT_INTENT_HANDLE', $null, 'Process')
+    if ($intents.Count -eq 0) {
+        if ($handleText) { throw 'unexpected launcher authorization handle' }
+        return
+    }
+    if ($intents.Count -ne 2 -or $handleText -notmatch '^[1-9][0-9]{0,18}$') { throw 'launcher execution remains quarantined' }
+    $payload = [IO.Path]::GetFullPath($PackageDir).TrimEnd('\')
+    $scratch = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\')
+    foreach ($stage in @($payload, $scratch)) {
+        if (-not ([IO.Path]::GetDirectoryName($stage).Equals($parent, [StringComparison]::OrdinalIgnoreCase)) -or
+            [IO.Path]::GetFileName($stage) -cnotmatch '^TokenTimer-Staging-[a-f0-9]{32}$') { throw 'launcher stage path rejected' }
+    }
+    if ($payload.Equals($scratch, [StringComparison]::OrdinalIgnoreCase)) { throw 'launcher stages are not distinct' }
+    $expected = @($payload + '.intent', $scratch + '.intent')
+    foreach ($entry in $intents) {
+        if (-not @($expected | Where-Object { $_.Equals($entry.FullName, [StringComparison]::OrdinalIgnoreCase) }).Count) { throw 'unrelated launcher intent remains quarantined' }
+    }
+    $records = @()
+    for ($i = 0; $i -lt 2; $i++) {
+        $file = Get-Item -LiteralPath $expected[$i] -Force -ErrorAction Stop
+        if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $file.Length -le 0 -or $file.Length -gt 4096) { throw 'invalid launcher intent file' }
+        Assert-UpgradeRecoveryAcl -JournalPath $expected[$i]
+        $record = Get-Content -LiteralPath $expected[$i] -Raw | ConvertFrom-Json -ErrorAction Stop
+        $stage = @($payload, $scratch)[$i]
+        if ($record.schemaVersion -ne 1 -or $record.phase -cne 'execution-intent' -or $record.stageName -cne [IO.Path]::GetFileName($stage) -or
+            ([string]$record.secret) -cnotmatch '^[a-f0-9]{64}$' -or ([string]$record.transaction) -cnotmatch '^[a-f0-9]{32}$' -or
+            ([string]$record.archiveSha256) -cnotmatch '^[a-f0-9]{64}$') { throw 'invalid launcher intent record' }
+        $index = ([uint64]$record.indexHigh -shl 32) -bor [uint64]$record.indexLow
+        if ((Get-PackageDirectoryIdentity -Directory $stage) -cne ("{0}:{1}" -f [uint32]$record.volume, $index)) { throw 'launcher stage identity changed' }
+        $records += $record
+    }
+    if ($records[0].transaction -cne $records[1].transaction -or $records[0].secret -cne $records[1].secret -or
+        $records[0].archiveSha256 -cne $records[1].archiveSha256) { throw 'launcher intents do not match' }
+    $handle = New-Object Microsoft.Win32.SafeHandles.SafeFileHandle([IntPtr]([int64]$handleText), $true)
+    $stream = New-Object IO.FileStream($handle, [IO.FileAccess]::Read, 64, $false)
+    try {
+        $bytes = New-Object byte[] 64
+        $offset = 0
+        while ($offset -lt $bytes.Length) {
+            $count = $stream.Read($bytes, $offset, $bytes.Length - $offset)
+            if ($count -le 0) { throw 'incomplete launcher authorization' }
+            $offset += $count
+        }
+        $actual = [Text.Encoding]::ASCII.GetString($bytes)
+        if ($actual -cne $records[0].secret) { throw 'launcher authorization rejected' }
+    } finally { $stream.Dispose(); $handle.Dispose() }
+}
+
 function Recover-InterruptedUpgrade {
     $journal = Get-UpgradeRecoveryPath
     if (-not (Test-Path -LiteralPath $journal)) { return }
+    # A launcher intent is only a denial signal. It is never parsed or used to
+    # authorize recovery. Keep the shared lock through all later mutations.
+    if (-not [Environment]::Is64BitProcess) { throw 'recovery_required: native 64-bit PowerShell is required' }
+    $launcherParent = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+    if ([string]::IsNullOrWhiteSpace($launcherParent)) { throw 'recovery_required: launcher staging parent unavailable' }
+    Assert-ProtectedIntentDirectory -Directory $launcherParent
+    Assert-NoQuarantinedLauncherIntent -LauncherParent $launcherParent
     $journalItem = Get-Item -LiteralPath $journal -Force -ErrorAction Stop
     if ($journalItem.PSIsContainer -or ($journalItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $journalItem.Length -gt 4096) {
         throw 'refusing an unsafe upgrade recovery record'
@@ -1064,6 +1211,8 @@ function Write-UpgradeRecoveryRecord {
 if (-not $script:DryRun) {
     try { Assert-WindowsPackageHelpers -PackageDirectory $PackageDir -Architecture $arch }
     catch { Fail "native package preflight failed before installation changes ($($_.Exception.Message))" }
+    try { Assert-AuthorizedLauncherOrNoIntent }
+    catch { Fail "recovery_required: launcher authorization failed ($($_.Exception.Message))" }
     if (Test-Path -LiteralPath $StateDir -PathType Container) {
         try {
             $null = Get-PackageDirectoryIdentity -Directory $StateDir

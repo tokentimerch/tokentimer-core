@@ -24,6 +24,7 @@ $script:PreviousServiceEnvironment = $null
 function Write-Log([string]$Message) { Write-Output $Message }
 function Invoke-PlatformAcl { param([string]$TargetPath,[string]$Kind) }
 function Assert-UpgradeRecoveryAcl { param([string]$JournalPath) }
+function Assert-ProtectedIntentDirectory { param([string]$Directory) }
 function Test-ServiceChildStable { param([string]$ExpectedNodePath) return $true }
 function Get-CimInstance {
     param($ClassName,$Filter,$ErrorAction)
@@ -47,7 +48,7 @@ $ttTokens=$null
 $ttErrors=$null
 $ttAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PackageDir 'install-agent.ps1'),[ref]$ttTokens,[ref]$ttErrors)
 if ($ttErrors.Count) { throw 'Installer parser errors' }
-foreach ($ttName in @('Get-PackageDirectoryIdentity','Remove-OwnedPackageStaging','Get-UpgradeRecoveryPath','Get-ServiceNodePath','Recover-InterruptedUpgrade','Write-UpgradeRecoveryRecord')) {
+foreach ($ttName in @('Get-PackageDirectoryIdentity','Remove-OwnedPackageStaging','Get-UpgradeRecoveryPath','Get-ServiceNodePath','Assert-NoQuarantinedLauncherIntent','Recover-InterruptedUpgrade','Write-UpgradeRecoveryRecord')) {
     $ttMatches=@($ttAst.FindAll({ param($ttNode) $ttNode -is [Management.Automation.Language.FunctionDefinitionAst] -and $ttNode.Name -eq $ttName },$true))
     if ($ttMatches.Count -ne 1) { throw "Missing recovery function $ttName" }
     Invoke-Expression $ttMatches[0].Extent.Text
@@ -127,6 +128,73 @@ async function exerciseInterruptedUpgrade(mode) {
 
 test("restores the original application after a process dies between renames", { skip: process.platform !== "win32", timeout: 30000 }, () => exerciseInterruptedUpgrade("interrupt"));
 test("restores the original application and service after activation", { skip: process.platform !== "win32", timeout: 30000 }, () => exerciseInterruptedUpgrade("interrupt-after-activation"));
+
+test("recovery refuses any quarantined launcher intent and enumeration errors", { skip: process.platform !== "win32" }, () => {
+  const tempParent = fs.realpathSync(os.tmpdir());
+  const root = fs.mkdtempSync(path.join(tempParent, "tt537-intent-"));
+  fs.writeFileSync(path.join(root, "TokenTimer-Staging-123.intent"), "untrusted marker");
+  try {
+  const script = String.raw`
+$ErrorActionPreference = 'Stop'
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $env:TT542_SOURCE 'install-agent.ps1'),[ref]$tokens,[ref]$errors)
+if ($errors.Count) { throw 'installer parse failed' }
+$f=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-NoQuarantinedLauncherIntent'},$true))
+if ($f.Count -ne 1) { throw 'missing intent guard' }
+Invoke-Expression $f[0].Extent.Text
+try { Assert-NoQuarantinedLauncherIntent -LauncherParent $env:TT542_ROOT; throw 'recovery unexpectedly succeeded' }
+catch { if ($_.Exception.Message -notmatch 'recovery_required: a launcher execution remains quarantined') { [Console]::Error.WriteLine($_.Exception.Message); exit 1 } }
+try { Assert-NoQuarantinedLauncherIntent -LauncherParent (Join-Path $env:TT542_ROOT 'missing'); throw 'missing parent unexpectedly accepted' }
+catch { if ($_.Exception.Message -eq 'missing parent unexpectedly accepted') { throw } }
+exit 0
+`;
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+    env: { ...process.env, TT542_SOURCE: __dirname, TT542_ROOT: root }, windowsHide: true, encoding: "utf8", timeout: 15000,
+  });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  } finally {
+    if (path.dirname(fs.realpathSync(root)).toLowerCase() !== tempParent.toLowerCase()) throw new Error("Unsafe fixture cleanup");
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("launcher authorization fails closed on missing or unrelated intent", { skip: process.platform !== "win32" }, () => {
+  const tempParent = fs.realpathSync(os.tmpdir());
+  const root = fs.mkdtempSync(path.join(tempParent, "tt537-auth-"));
+  try {
+    const script = String.raw`
+$ErrorActionPreference='Stop'
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $env:TT542_SOURCE 'install-agent.ps1'),[ref]$tokens,[ref]$errors)
+if ($errors.Count) { throw 'installer parse failed' }
+$f=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-AuthorizedLauncherOrNoIntent'},$true))
+if ($f.Count -ne 1) { throw 'missing authorization gate' }
+$body=$f[0].Extent.Text.Replace('[Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)', '$env:TT542_ROOT')
+Invoke-Expression $body
+function Assert-ProtectedIntentDirectory { param($Directory) }
+$PackageDir=Join-Path $env:TT542_ROOT ('TokenTimer-Staging-' + ('a' * 32))
+$env:TEMP=Join-Path $env:TT542_ROOT ('TokenTimer-Staging-' + ('b' * 32))
+[Environment]::SetEnvironmentVariable('TOKENTIMER_AGENT_INTENT_HANDLE',$null,'Process')
+Assert-AuthorizedLauncherOrNoIntent
+[IO.File]::WriteAllText(($PackageDir + '.intent'),'{}')
+try { Assert-AuthorizedLauncherOrNoIntent; throw 'one marker unexpectedly accepted' }
+catch { if ($_.Exception.Message -notmatch 'launcher execution remains quarantined') { throw } }
+[IO.File]::WriteAllText(($env:TEMP + '.intent'),'{}')
+[Environment]::SetEnvironmentVariable('TOKENTIMER_AGENT_INTENT_HANDLE','123','Process')
+[IO.File]::WriteAllText((Join-Path $env:TT542_ROOT ('TokenTimer-Staging-' + ('c' * 32) + '.intent')),'{}')
+try { Assert-AuthorizedLauncherOrNoIntent; throw 'extra marker unexpectedly accepted' }
+catch { if ($_.Exception.Message -notmatch 'launcher execution remains quarantined') { throw } }
+exit 0
+`;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+      env: { ...process.env, TT542_SOURCE: __dirname, TT542_ROOT: root }, windowsHide: true, encoding: "utf8", timeout: 15000,
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  } finally {
+    if (path.dirname(fs.realpathSync(root)).toLowerCase() !== tempParent.toLowerCase()) throw new Error("Unsafe fixture cleanup");
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("rejects an oversized recovery record before touching the existing application", { skip: process.platform !== "win32", timeout: 30000 }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
