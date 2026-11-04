@@ -283,6 +283,28 @@ exit 0
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
+test("launcher-backed healthy upgrade retains recovery journal and backup", { skip: process.platform !== "win32" }, () => {
+  const script = String.raw`
+$ErrorActionPreference='Stop'
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $env:TT542_SOURCE 'install-agent.ps1'),[ref]$tokens,[ref]$errors)
+$patterns=@('if ($healthy -and $script:IsUpgrade -and $null -eq $script:AuthorizedLauncherTransaction)', 'if ($null -eq $script:AuthorizedLauncherTransaction -and (Test-Path')
+$healthy=$true; $script:IsUpgrade=$true; $script:AppPrevious=$env:TT542_SOURCE
+$script:AuthorizedLauncherTransaction='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+function Remove-Item { throw 'unsafe removal' }
+foreach ($pattern in $patterns) {
+  $matches=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith($pattern)},$true))
+  if ($matches.Count -ne 1) { throw 'missing healthy-upgrade cleanup guard' }
+  Invoke-Expression $matches[0].Extent.Text
+}
+exit 0
+`;
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+    env: { ...process.env, TT542_SOURCE: __dirname }, windowsHide: true, encoding: "utf8", timeout: 15000,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
 test("rejects an oversized recovery record before touching the existing application", { skip: process.platform !== "win32", timeout: 30000 }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
   const fixture = fs.mkdtempSync(path.join(tempParent, "tt542-journal-size-"));

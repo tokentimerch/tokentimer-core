@@ -1605,8 +1605,8 @@ if (-not $healthy -and $script:IsUpgrade -and (Test-Path -LiteralPath $script:Ap
     Fail "upgrade failed its post-install health check and was rolled back to the previous version; the agent credential and configuration were preserved and the credential file's ACL was re-asserted"
 }
 
-if ($healthy -and $script:IsUpgrade) { Remove-Item -LiteralPath (Get-UpgradeRecoveryPath) -Force -ErrorAction Stop }
-if (Test-Path -LiteralPath $script:AppPrevious) { Remove-Item -LiteralPath $script:AppPrevious -Recurse -Force }
+if ($healthy -and $script:IsUpgrade -and $null -eq $script:AuthorizedLauncherTransaction) { Remove-Item -LiteralPath (Get-UpgradeRecoveryPath) -Force -ErrorAction Stop }
+if ($null -eq $script:AuthorizedLauncherTransaction -and (Test-Path -LiteralPath $script:AppPrevious)) { Remove-Item -LiteralPath $script:AppPrevious -Recurse -Force }
 
 if (-not $healthy) {
     Fail "the $ServiceName service did not reach the Running state within 20 seconds; check 'Get-Service $ServiceName' and the agent's own logs"

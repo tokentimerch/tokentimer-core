@@ -31,7 +31,7 @@ Windows state is protected and checked with `icacls` ACLs. Only the agent identi
 
 For a protected config that even an elevated editor cannot change, follow [Windows configuration maintenance](../windows-maintenance.md). Never delete enrolled identity or keys to get past an access error.
 
-If the verified installer reports `recovery_required` or retained staging, stop retries and contact support. Preserve the staging directories, their `.intent` records and `state\upgrade-recovery.json`: they are needed to assess the interrupted operation. A failed launcher-backed upgrade preserves the current app and backup for review; it does not roll back automatically. Do not remove or move these files to resume installation. Process checks alone cannot establish that services or other persistent Windows components will not act later.
+If the verified installer reports `recovery_required` or retained staging, stop retries and contact support. Preserve the staging directories, their `.intent` records and `state\upgrade-recovery.json`: they are needed to assess the operation. A launcher-backed upgrade retains its backup and journal even after a successful health check; a failed check requires review rather than automatic rollback. Do not remove or move these files to resume installation. Process checks alone cannot establish that services or other persistent Windows components will not act later.
 
 ## Verify
 
