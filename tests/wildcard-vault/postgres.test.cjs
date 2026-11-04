@@ -29,6 +29,7 @@ test("real PostgreSQL publication, renewal identities, approvals, frozen waves, 
   const actor=(await pool.query(`INSERT INTO users(email,display_name,password_hash,auth_method) VALUES($1,'Distribution fixture','fixture-only','local') RETURNING id`,[`${workspaceId}@example.test`])).rows[0].id;
   const approver=(await pool.query(`INSERT INTO users(email,display_name,password_hash,auth_method) VALUES($1,'Approver fixture','fixture-only','local') RETURNING id`,[`approver-${workspaceId}@example.test`])).rows[0].id;
   await pool.query(`INSERT INTO workspaces(id,name,created_by,plan) VALUES($1,'Isolated distribution',$2,$3)`,[workspaceId,actor,isCloud?"pro":"oss"]);
+  await pool.query("INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,'workspace_manager')",[workspaceId,approver]);
   // The Cloud candidate advances its Core baseline. Exercise its real upgraded
   // inventory name constraint as well as the material tables below.
   const nameInsert="INSERT INTO tokens(user_id,workspace_id,created_by,name,expiration,type,category) VALUES($1,$2,$1,$3,'2027-01-01','other','general') RETURNING name";

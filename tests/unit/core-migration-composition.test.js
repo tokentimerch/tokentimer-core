@@ -234,6 +234,21 @@ test("cross-PR reservations reject collisions and compose without changing suppo
   assert.deepEqual(composeMigrations(registry, composed), composed);
 });
 
+test("manual rollout authority composes before or after reserved companion migrations", () => {
+  const { migrations } = require("../../apps/api/migrations/migrate");
+  const { reservations } = require("../../apps/api/migrations/migration-reservations.cjs");
+  const future = Object.entries(reservations)
+    .filter(([version]) => [86, 87, 88, 89, 90, 91, 96, 97].includes(Number(version)))
+    .map(([version, name]) => ({ version:Number(version), name, sql:`future-${name}` }));
+  const registry = [...migrations, ...future];
+  const current = composeMigrations(migrations);
+  const applied = current.map(({ version,name }) => ({ version,name }));
+  const planned = composeMigrations(registry, applied);
+  for (const entry of applied) assert.equal(planned.find(row => row.name === entry.name).version, entry.version);
+  assert.equal(new Set(planned.map(row => row.version)).size, planned.length);
+  assert.deepEqual(composeMigrations(registry, planned), planned);
+});
+
 test("all 72 legacy distribution-first definitions retain their immutable historical SQL", () => {
   const coreRoot = path.resolve(__dirname, "../..");
   const { migrations } = require(
