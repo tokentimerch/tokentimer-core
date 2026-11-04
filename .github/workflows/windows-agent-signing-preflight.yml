@@ -131,3 +131,93 @@ jobs:
           profile-eku: ${{ vars.AZURE_SIGNING_PROFILE_EKU }}
           issuer-sha256: ${{ vars.AZURE_SIGNING_ISSUER_SHA256 }}
           node-sha256: ${{ matrix.node }}
+      # These are test candidates only. The receipt does not authenticate the
+      # archive or authorize it to be distributed as a release.
+      - name: Repackage signed preflight files once
+        shell: pwsh
+        env:
+          TT_VERSION: ${{ needs.build.outputs.version }}
+          TT_ARCH: ${{ matrix.arch }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:TT_VERSION -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' -or $env:TT_ARCH -cnotin @('amd64', 'arm64') -or $env:GITHUB_SHA -cnotmatch '^[a-f0-9]{40}$') { throw 'Invalid preflight candidate identity' }
+          $output = Join-Path $env:RUNNER_TEMP 'signed-preflight'
+          New-Item -ItemType Directory -Path $output -ErrorAction Stop | Out-Null
+          $name = "tokentimer-agent-$($env:TT_VERSION)-windows-$($env:TT_ARCH).tgz"
+          $archive = Join-Path $output $name
+          tar -czf $archive -C (Join-Path $env:RUNNER_TEMP 'agent-stage') package
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $archive -PathType Leaf)) { throw 'Signed candidate packaging failed' }
+          $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          @{ sourceCommit = $env:GITHUB_SHA; version = $env:TT_VERSION; architecture = $env:TT_ARCH; archive = $name; sha256 = $digest } |
+            ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $output 'receipt.json') -Encoding utf8NoBOM
+      - name: Transfer unqualified signed candidate for SBOM preflight
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-signing-preflight-signed-${{ matrix.arch }}
+          path: ${{ runner.temp }}/signed-preflight/*
+          if-no-files-found: error
+          retention-days: 1
+
+  sbom-preflight:
+    needs: [build, sign]
+    # This job has no promotion or publication step and cannot run while the
+    # signing job is disabled. Signed inventory and native qualification are
+    # separate requirements that are not provided by this workflow.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            node-arch: x64
+            node-zip-sha: 0ae68406b42d7725661da979b1403ec9926da205c6770827f33aac9d8f26e821
+          - arch: arm64
+            node-arch: arm64
+            node-zip-sha: f274669adb93b1fd0fbf8f21fd078609e9dcc84333d4f2718d2dde3f9a161a01
+    env:
+      GOTOOLCHAIN: local
+      GO_VERSION: '1.26.10'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-signing-preflight-signed-${{ matrix.arch }}
+          path: ${{ runner.temp }}/signed-preflight
+      - name: Generate and independently bind experimental SBOM and inventory
+        shell: bash
+        env:
+          TT_VERSION: ${{ needs.build.outputs.version }}
+          TT_ARCH: ${{ matrix.arch }}
+          TT_NODE_ARCH: ${{ matrix.node-arch }}
+          TT_NODE_ZIP_SHA: ${{ matrix.node-zip-sha }}
+        run: |
+          set -euo pipefail
+          [[ "$TT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$TT_NODE_ZIP_SHA" =~ ^[a-f0-9]{64}$ ]]
+          archive="$RUNNER_TEMP/signed-preflight/tokentimer-agent-${TT_VERSION}-windows-${TT_ARCH}.tgz"
+          receipt="$RUNNER_TEMP/signed-preflight/receipt.json"
+          jq -e --arg source "$GITHUB_SHA" --arg version "$TT_VERSION" --arg arch "$TT_ARCH" --arg name "$(basename "$archive")" 'keys == ["architecture","archive","sha256","sourceCommit","version"] and .sourceCommit == $source and .version == $version and .architecture == $arch and .archive == $name and (.sha256 | test("^[a-f0-9]{64}$"))' "$receipt" >/dev/null
+          digest=$(jq -r '.sha256' "$receipt")
+          echo "${digest}  ${archive}" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/sbom-tools" "$RUNNER_TEMP/sbom-output"
+          curl --fail --silent --show-error --location 'https://github.com/anchore/syft/releases/download/v1.56.0/syft_1.56.0_linux_amd64.tar.gz' -o "$RUNNER_TEMP/sbom-tools/syft.tgz"
+          echo '1c2493cfcf52d3367d6cb25780d9190c111c2219c34c820574c43e8bae15c528  '"$RUNNER_TEMP/sbom-tools/syft.tgz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/sbom-tools/syft.tgz" -C "$RUNNER_TEMP/sbom-tools" syft
+          curl --fail --silent --show-error --location 'https://github.com/CycloneDX/cyclonedx-cli/releases/download/v0.33.1/cyclonedx-linux-x64' -o "$RUNNER_TEMP/sbom-tools/cyclonedx"
+          echo 'bfc8b2538da86fe239bc53658bbb63c1c8c510a293c1e6891aa5bea5d3c58746  '"$RUNNER_TEMP/sbom-tools/cyclonedx" | sha256sum --check
+          curl --fail --silent --show-error --location "https://nodejs.org/dist/v24.18.0/node-v24.18.0-win-${TT_NODE_ARCH}.zip" -o "$RUNNER_TEMP/sbom-tools/node.zip"
+          echo "${TT_NODE_ZIP_SHA}  $RUNNER_TEMP/sbom-tools/node.zip" | sha256sum --check
+          sbom="$RUNNER_TEMP/sbom-output/tokentimer-agent-${TT_VERSION}-windows-${TT_ARCH}.cdx.json"
+          inventory="$RUNNER_TEMP/sbom-output/tokentimer-agent-${TT_VERSION}-windows-${TT_ARCH}.inventory.json"
+          python scripts/agent-sbom-generate.py --archive "$archive" --archive-sha256 "$digest" --node-zip "$RUNNER_TEMP/sbom-tools/node.zip" --architecture "$TT_ARCH" --syft "$RUNNER_TEMP/sbom-tools/syft" --syft-sha256 '20572660f157af9f9bd4db5541e89f306ad108cdec0376eabd7d682ed98cbf2d' --validator "$RUNNER_TEMP/sbom-tools/cyclonedx" --validator-sha256 'bfc8b2538da86fe239bc53658bbb63c1c8c510a293c1e6891aa5bea5d3c58746' --out "$sbom"
+          (cd scripts/agent-release-inventory && go run . --archive "$archive" --sbom "$sbom" --version "$TT_VERSION" --architecture "$TT_ARCH" --source-commit "$GITHUB_SHA" --out "$inventory")
+          python scripts/windows-release-artifact-binding.py --archive "$archive" --sbom "$sbom" --inventory "$inventory" --version "$TT_VERSION" --architecture "$TT_ARCH" --source-commit "$GITHUB_SHA"
+          echo 'Experimental archive, SBOM and unsigned inventory are bound; no release qualification or publication was performed.'
