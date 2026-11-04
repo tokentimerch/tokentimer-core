@@ -91,7 +91,7 @@ def fetch_qualification_report(edition, commit, run_id, token, download):
     if artifact.get("expired") is not False or type(artifact.get("id")) is not int or artifact["id"] < 1 or type(artifact.get("size_in_bytes")) is not int or not 0 < artifact["size_in_bytes"] <= 2 * 1024 * 1024:
         raise ValueError("Invalid evidence artifact identity")
     raw = download(f"https://api.github.com/repos/{repo}/actions/artifacts/{artifact['id']}/zip", token, redirect=True)
-    if not isinstance(raw, bytes) or len(raw) > 2 * 1024 * 1024 or artifact.get("digest") != "sha256:" + hashlib.sha256(raw).hexdigest():
+    if not isinstance(raw, bytes) or len(raw) != artifact["size_in_bytes"] or len(raw) > 2 * 1024 * 1024 or artifact.get("digest") != "sha256:" + hashlib.sha256(raw).hexdigest():
         raise ValueError("Evidence artifact integrity mismatch")
     try:
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:

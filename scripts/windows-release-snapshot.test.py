@@ -24,7 +24,7 @@ class SnapshotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "archive.tgz"
             path.write_bytes(b"data")
-            for entries in ({"../archive.tgz": "a" * 64}, {path.name: "a" * 64}, {"missing": "a" * 64}, {}, {path.name: "invalid"}):
+            for entries in ({"../archive.tgz": "a" * 64}, {"CON.txt": "a" * 64}, {"lpt1": "a" * 64}, {"file.": "a" * 64}, {path.name: "a" * 64}, {"missing": "a" * 64}, {}, {path.name: "invalid"}):
                 with self.assertRaises((ValueError, FileNotFoundError)):
                     snapshot.snapshot_assets(d, entries)
             snapshot.MAX_FILE = 3

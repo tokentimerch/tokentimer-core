@@ -16,6 +16,7 @@ DIGEST = re.compile(r"[a-f0-9]{64}\Z")
 MAX_FILE = 128 * 1024 * 1024
 MAX_TOTAL = 384 * 1024 * 1024
 MAX_ASSETS = 24
+RESERVED = frozenset(("CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))))
 
 
 def snapshot_assets(directory, expected):
@@ -26,7 +27,7 @@ def snapshot_assets(directory, expected):
     snapshots = {}
     total = 0
     for name, digest in expected.items():
-        if not isinstance(name, str) or not NAME.fullmatch(name) or not isinstance(digest, str) or not DIGEST.fullmatch(digest):
+        if not isinstance(name, str) or not NAME.fullmatch(name) or name.endswith(".") or name.split(".", 1)[0].upper() in RESERVED or not isinstance(digest, str) or not DIGEST.fullmatch(digest):
             raise ValueError("Invalid candidate asset identity")
         path = root / name
         # Bounded reads ensure the immutable snapshot, not a later reopened
