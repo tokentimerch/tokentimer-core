@@ -43,6 +43,21 @@ test("IIS fixture preserves endpoints with foreign ownership", () => {
   assert.throws(() => assertOwnedNativeEndpoint({ ...row, thumbprint: "B".repeat(40) }, row, certificates));
   assert.throws(() => assertOwnedNativeEndpoint({ ...row, storeName: "WebHosting" }, row, certificates));
 });
+test("IIS rebind receipts accept only exact owned selector and certificate commands", () => {
+  const { recordOwnedAppId, assertOwnedNativeEndpoint } = require("./host/iis-fixture");
+  const id = "01234567-89ab-cdef-0123-456789abcdef", thumb = "A".repeat(40), selector = "ipport=127.0.0.1:1234";
+  const receipts = new Map(), certificates = [{ thumbprint: thumb }];
+  const command = ["http", "add", "sslcert", selector, `certhash=${thumb}`, `appid={${id}}`, "certstorename=My"];
+  recordOwnedAppId(command, [selector], certificates, receipts);
+  const receipt = { appId: "original", appIds: [receipts.get(selector)] };
+  assert.doesNotThrow(() => assertOwnedNativeEndpoint({ appId: `{${id}}`, storeName: "My", thumbprint: thumb }, receipt, certificates));
+  assert.throws(() => assertOwnedNativeEndpoint({ appId: "foreign", storeName: "My", thumbprint: thumb }, receipt, certificates));
+  assert.throws(() => assertOwnedNativeEndpoint({ appId: "original", storeName: "My", thumbprint: thumb }, receipt, certificates));
+  const foreign = new Map();
+  recordOwnedAppId(command, ["ipport=127.0.0.1:9999"], certificates, foreign);
+  recordOwnedAppId(command, [selector], [{ thumbprint: "B".repeat(40) }], foreign);
+  assert.equal(foreign.size, 0);
+});
 test("retention fixture preserves unowned or changed HTTP.sys bindings", () => {
   const { ownedBinding, verifyBindingReceipt } = require("./host/retention-fixture");
   const row = { kind: "SslBindingInfo", selector: "127.0.0.1:1234", thumbprint: "A".repeat(40), store: "My", appId: "01234567-89ab-cdef-0123-456789abcdef", flags: 0 };
