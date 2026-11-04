@@ -45,7 +45,7 @@ $code = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'install-agent.ps1') -
 $tokens=$null; $errors=$null
 $ast=[System.Management.Automation.Language.Parser]::ParseInput($code,[ref]$tokens,[ref]$errors)
 if ($errors.Count -ne 0) { throw 'installer parse failed' }
-$names=@('Invoke-PackagedNode','Get-PackageDirectoryIdentity','Assert-UpgradeRecoveryAcl','Assert-ProtectedIntentDirectory','Assert-AuthorizedLauncherOrNoIntent','Enter-AgentInstallLock')
+$names=@('Invoke-PackagedNode','Get-PackageDirectoryIdentity','Assert-UpgradeRecoveryAcl','Assert-ProtectedIntentDirectory','Assert-ProtectedIntentMarker','Assert-AuthorizedLauncherOrNoIntent','Enter-AgentInstallLock')
 foreach ($name in $names) {
   $f=$ast.FindAll({param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
   if (@($f).Count -ne 1) { throw 'fixture function missing or ambiguous' }
