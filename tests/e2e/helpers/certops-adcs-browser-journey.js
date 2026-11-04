@@ -18,6 +18,11 @@ const REQUIRED_SCENARIOS = Object.freeze([
   "adcs-real-browser-installed-enrollment-visible",
   "adcs-real-browser-owned-cleanup",
 ]);
+function assertMutationStatus(status, expectedStatus, pathname) {
+  if (status === expectedStatus) return;
+  const operation = pathname.endsWith('/replace-management') ? 'ATTACH' : pathname.endsWith('/profiles') ? 'CREATE_PROFILE' : 'ISSUER';
+  throw Object.assign(new Error('Browser mutation returned an unexpected status'), {code: `CERTOPS_BROWSER_${operation}_HTTP_${Number.isInteger(status) && status >= 100 && status <= 599 ? status : 'OTHER'}`});
+}
 const REQUIRED_SOURCES = Object.freeze([
   "scripts/certops-adcs-lab-contract.js",
   "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
@@ -396,7 +401,7 @@ async function qualifyAdcsBrowserJourney(context) {
       ),
       button.click(),
     ]);
-    assert.equal(response.status(), expectedStatus);
+    assertMutationStatus(response.status(), expectedStatus, pathname);
     mutations++;
     return response;
   }
@@ -1026,5 +1031,6 @@ module.exports = {
   currentIisBrowserSource,
   loadCurrentIisBrowserSource,
   currentAuthorityGroup,
+  assertMutationStatus,
   qualifyAdcsBrowserJourney,
 };

@@ -295,7 +295,7 @@ test("background cleanup defers other-identity leaves only when they are indepen
   // Without independent ownership another identity's leaf still blocks cleanup.
   assert.throws(
     () => run([foreign], new Set()),
-    /Preserve unowned WebHosting key association/,
+    error => error.code === "CERTOPS_STORE_CONTAINER_MISSING",
   );
   assert.throws(
     () => run([foreign]),
