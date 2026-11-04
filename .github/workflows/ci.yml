@@ -826,7 +826,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2025]
+        os: [ubuntu-24.04, windows-2022, windows-2025]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -871,6 +871,26 @@ jobs:
           Expand-Archive -LiteralPath $actionlintArchive -DestinationPath $actionlintDirectory
           $actionlintBinary = Join-Path $actionlintDirectory 'actionlint.exe'
           "CERTOPS_ACTIONLINT=$actionlintBinary" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Check bounded CA observation diagnostics
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/certops-adcs-issued-observation.test.ps1
+      - name: Exercise temporary credential ACL refusal
+        if: runner.os == 'Windows'
+        env:
+          CERTOPS_WINDOWS_DISPOSABLE_HOST: '1'
+        run: node scripts/certops-credential-weak-acl-support.js
+      - name: Exercise installer activation using owned temporary files
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) { throw 'Windows PowerShell 5.1 is required for installer compatibility' }
+          & ./scripts/certops-installer-swap.test.ps1
+          $env:PSExecutionPolicyPreference = 'Restricted'
+          node scripts/certops-installer-second-rename-support.js
+          if ($LASTEXITCODE -ne 0) { throw 'Restricted-parent installer activation control failed' }
+          node scripts/certops-installer-startup-support.js
+          if ($LASTEXITCODE -ne 0) { throw 'Cold-start installer activation control failed' }
       - name: Exercise temporary response barriers from a restricted PowerShell parent
         if: runner.os == 'Windows'
         shell: pwsh

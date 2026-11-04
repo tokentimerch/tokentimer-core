@@ -463,14 +463,16 @@ describe("collectWindowsDiscoveryObservations", () => {
       ...storeFixtureFor(thumbprint, "shared.example.test", { hasPrivateKey: true }),
       bindingsJson: httpSysJson([{ ipPort: "10.0.0.5:443", thumbprint, storeName: "My" }]),
       appcmdStdout: ['SITE "First Service" (id:1,bindings:https/10.0.0.5:443:,state:Started)',
+        'SITE "Second Service" (id:2,bindings:https/10.0.0.5:443:,state:Started)',
         'SITE "Second Service" (id:2,bindings:https/10.0.0.5:443:,state:Started)'].join("\n"),
     });
     const observations = await collectWindowsDiscoveryObservations({ execFileImpl,
       spawn: () => fakeSpawnResult({ stdout: rawDataJson(thumbprint, certificate.raw.toString("base64")) }) });
     const services = observations.filter(value => value.locationKind === "iis_binding");
-    assert.deepEqual(services.map(value => value.siteName).sort(), ["First Service", "Second Service"]);
-    assert.equal(new Set(services.map(value => value.locationSlot)).size, 2);
-    assert.ok(services.every(value => value.locationSlot.endsWith("@10.0.0.5")));
+    assert.deepEqual(
+      services.map(value => value.locationSlot).sort(),
+      ["First Service:443@10.0.0.5", "Second Service:443@10.0.0.5"],
+    );
     assert.equal(observations.filter(value => value.locationKind === "windows_store").length, 1);
   });
 

@@ -47,6 +47,11 @@ const REQUIRED_SOURCES = Object.freeze([
 const active = new Set(),
   hash = (b) => crypto.createHash("sha256").update(b).digest("hex"),
   key = (p) => path.resolve(p).toLowerCase();
+function isWeakAclRefusal(error, file) {
+  return typeof error?.message === "string" &&
+    error.message.includes(`refusing to use credential file ${file}: its ACL grants access to `) &&
+    error.message.includes("S-1-1-0");
+}
 function identity(file) {
   const s = fs.lstatSync(file, { bigint: true });
   assert.ok(!s.isSymbolicLink() && s.ino > 0n && s.dev > 0n);
@@ -353,13 +358,18 @@ function qualify({ gate, workDir, installedCredential }) {
           explicitAllowCount: 1,
           readMask: 1,
         });
-        assert.throws(
-          () => config.readCredential(credentialDirectory),
-          (error) =>
-            error.message.includes(
-              "refusing to use credential file: its ACL grants access to",
-            ) && error.message.includes("S-1-1-0"),
-        );
+        let value, refusal;
+        try { value = config.readCredential(credentialDirectory); }
+        catch (error) { refusal = error; }
+        if (!refusal) throw Object.assign(new Error("Weak credential ACL was not refused"), {
+          code: value === null ? "CERTOPS_WEAK_ACL_TREATED_AS_MISSING" : "CERTOPS_WEAK_ACL_ACCEPTED",
+        });
+        if (!isWeakAclRefusal(refusal, file))
+          throw Object.assign(new Error("Weak credential ACL refusal differed"), {
+            code: typeof refusal.message === "string" && refusal.message.includes(`refusing to use credential file ${file}: its ACL grants access to `)
+              ? "CERTOPS_WEAK_ACL_OTHER_SID" : ["EACCES", "EPERM"].includes(refusal.code)
+                ? "CERTOPS_WEAK_ACL_PERMISSION_ERROR" : "CERTOPS_WEAK_ACL_UNEXPECTED_REFUSAL",
+          });
         if(installedCredential)await installedCredential.onWeak();
       } catch (error) {
         failure = error;
@@ -492,6 +502,7 @@ module.exports = {
   FLAGS,
   REQUIRED_SOURCES,
   verifyProof,
+  isWeakAclRefusal,
   verifyReady,
   read,
   readRecord,

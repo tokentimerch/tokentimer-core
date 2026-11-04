@@ -298,6 +298,10 @@ test("Windows real-host discovery and service-host qualification", { timeout: 24
         if (!gate.report.fixtureSources.some(source => source.file === file)) gate.report.fixtureSources.push({ file, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, "../../../..", file))).digest("hex") });
       }
     }, { evidenceLevel: "integration", oracle: "real configured100ms production polling loop and two delayed empty-ledger collector callbacks, actual abort drainage and unchanged production168h/6h defaults; no installed-service/default-six-hour/native-deletion claim" });
+    gate.report.fixtureSources ||= [];
+    const retentionRootSource = "packages/agent/scripts/host/retention-root-fixture.js";
+    gate.report.fixtureSources.push({ file: retentionRootSource, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, "../../../..", retentionRootSource))).digest("hex") });
+    await require("./retention-root-fixture").withOwnedRetentionRoot({ powershell, run, workDir, execute: async () => {
     await gate.scenario("windows-retention-real-expiry-grace", async () => {
       gate.report.fixtureSources ||= [];
       for (const file of ["packages/agent/scripts/host/retention-elapsed-fixture.js", "packages/agent/scripts/host/retention-interrupted-child.js", "packages/agent/src/index.js", "packages/agent/src/windows-retention/index.js", "packages/agent/src/windows-discovery/index.js"]) {
@@ -314,6 +318,7 @@ test("Windows real-host discovery and service-host qualification", { timeout: 24
     }
     await policyExpiry.qualifyPolicyExpiry({ gate, powershell, run, workDir,
       replacementPem: fs.readFileSync(path.join(workDir, "ec-p256-My/issued.pem"), "utf8"), replacementThumbprint: acceptedCertificates[1] });
+    }});
     await gate.scenario("windows-iis-deploy-rollback", async () => {
       await require("./iis-fixture").qualifyIis({ powershell, run, workDir, gate });
     }, { evidenceLevel: "real-host", oracle: "independent TLS fingerprint and netsh binding" });

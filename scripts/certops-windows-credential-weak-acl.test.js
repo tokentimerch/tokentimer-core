@@ -7,6 +7,13 @@ const test = require("node:test"),
   os = require("node:os"),
   path = require("node:path");
 const h = require("../packages/agent/scripts/host/credential-weak-acl-fixture");
+test("weak ACL refusal requires the actual credential path and Everyone SID", () => {
+  const file = "C:\\fixture\\credential";
+  const message = `tokentimer-agent: refusing to use credential file ${file}: its ACL grants access to S-1-1-0 (only the agent's own identity, SYSTEM and Administrators are allowed)`;
+  assert.equal(h.isWeakAclRefusal(new Error(message), file), true);
+  assert.equal(h.isWeakAclRefusal(new Error(message), "C:\\other\\credential"), false);
+  assert.equal(h.isWeakAclRefusal(new Error(message.replace("S-1-1-0", "S-1-5-11")), file), false);
+});
 function fixture() {
   return {
     scope: h.SCOPE,

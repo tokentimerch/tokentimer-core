@@ -25,6 +25,27 @@ const { test } = require("node:test"),
   path = require("node:path"),
   os = require("node:os");
 const helper = require("../tests/e2e/helpers/certops-adcs-browser-journey");
+
+test("browser mutation failures expose only bounded operation and status", () => {
+  assert.doesNotThrow(() => helper.assertMutationStatus(201, 201, "/profiles"));
+  assert.throws(() => helper.assertMutationStatus(409, 201, "/private/replace-management"), error => error.code === "CERTOPS_BROWSER_ATTACH_HTTP_409" && !error.message.includes("private"));
+  assert.throws(() => helper.assertMutationStatus(500, 201, "/private/profiles"), error => error.code === "CERTOPS_BROWSER_CREATE_PROFILE_HTTP_500");
+});
+
+test("native browser selects a current owned IIS source without another open enrollment", () => {
+  const original = crypto.randomUUID(), observed = crypto.randomUUID();
+  const identityId = crypto.randomUUID(), periodId = crypto.randomUUID();
+  const fingerprint = "a".repeat(64);
+  const inventory = { items: [{ identityId, fingerprintSha256: fingerprint, lifecycleStatus: "active", sources: [original, observed].map(managedCertificateId => ({ managedCertificateId, periodId, currentIdentityId: identityId, endedAt: null, periodEndedAt: null })) }] };
+  assert.deepEqual(helper.currentIisBrowserSource(inventory, { certificateIds: [original, observed], openCertificateIds: [original], fingerprint }), { id: observed, periodId });
+  assert.equal(helper.currentIisBrowserSource(inventory, { certificateIds: [original], openCertificateIds: [original], fingerprint }), null);
+  assert.equal(helper.currentIisBrowserSource(inventory, { certificateIds: [observed], fingerprint: "b".repeat(64) }), null);
+  assert.throws(() => helper.currentIisBrowserSource(inventory, { certificateIds: [original, observed], fingerprint }));
+  assert.throws(() => helper.currentIisBrowserSource(inventory, { certificateIds: [observed, observed], fingerprint }));
+  assert.throws(() => helper.currentIisBrowserSource(inventory, { certificateIds: [observed], openCertificateIds: [crypto.randomUUID()], fingerprint }));
+  const ended = { items: [{ ...inventory.items[0], sources: [{ ...inventory.items[0].sources[1], periodEndedAt: "2026-11-03T00:00:00Z" }] }] };
+  assert.equal(helper.currentIisBrowserSource(ended, { certificateIds: [observed], fingerprint }), null);
+});
 test("native browser selects its owned current registration instead of observed source history", () => {
   const certificateId=crypto.randomUUID(), periodId=crypto.randomUUID(), identityId=crypto.randomUUID();
   const source={managedCertificateId:certificateId,periodId,currentIdentityId:identityId,endedAt:null,periodEndedAt:null};

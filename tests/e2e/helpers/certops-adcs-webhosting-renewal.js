@@ -107,20 +107,18 @@ function storeCleanupPlan(receipt, entries, readRecord, store, domainPattern) {
     assert.match(entry.thumbprint, /^[A-F0-9]{40}$/);
     assert.ok(!seen.has(entry.thumbprint));
     seen.add(entry.thumbprint);
-    assert.ok(
-      containers.has(entry.containerName),
-      "Preserve unowned WebHosting key association",
-    );
+    if (!containers.has(entry.containerName)) {
+      const untracked = readRecord(entry.containerName);
+      const reason = !untracked ? "MISSING" : untracked.certificateId === receipt.certificateId ? "SAME_CERTIFICATE" : "OTHER_CERTIFICATE";
+      throw Object.assign(new Error("Preserve unowned WebHosting key association"), { code: `CERTOPS_STORE_CONTAINER_${reason}` });
+    }
     const record = readRecord(entry.containerName);
-    assert.ok(
-      record &&
-        record.status === "enrolled_by_agent" &&
-        record.containerName === entry.containerName &&
-        record.certificateId === receipt.certificateId &&
-        record.acceptedStore === store &&
-        record.acceptedThumbprint === entry.thumbprint,
-      "Preserve public certificate without exact durable ownership",
-    );
+    const mismatch = !record ? "MISSING" : record.status !== "enrolled_by_agent" ? "STATUS"
+      : record.containerName !== entry.containerName ? "CONTAINER"
+        : record.certificateId !== receipt.certificateId ? "CERTIFICATE"
+          : record.acceptedStore !== store ? "STORE"
+            : record.acceptedThumbprint !== entry.thumbprint ? "THUMBPRINT" : null;
+    if (mismatch) throw Object.assign(new Error("Preserve public certificate without exact durable ownership"), { code: `CERTOPS_STORE_RECEIPT_${mismatch}` });
     return Object.freeze({
       thumbprint: entry.thumbprint,
       containerName: entry.containerName,

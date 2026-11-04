@@ -24,9 +24,12 @@ function selectFiles(files){
   if(/^tests\/e2e\/helpers\/certops-arm64-installed-journey\.js$/.test(file))continue;
   if(/^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.npmrc)$/.test(file)||/^packages\/(shared|contracts)\//.test(file))return all("shared-runtime-or-dependencies");
   if(/^packages\/agent\//.test(file)){
+   if(file==="packages/agent/scripts/host-gate.js")selected.windows=true;
    if(!/^packages\/agent\/scripts\/(host-gate(?:\.test)?\.js|.*(?:report|qualification).*\.js)$/.test(file)){selected.windows=true;selected.stack=true;}
   }
   if(file==="scripts/certops-installer-swap.test.ps1"||file==="scripts/certops-installer-pe.test.ps1")selected.windows=true;
+  if(file==="scripts/certops-credential-weak-acl-support.js")selected.windows=true;
+  if(/^scripts\/certops-installer-(?:second-rename-support|startup-support)\.js$/.test(file)||/^tests\/e2e\/helpers\/certops-windows-(?:contained-process|second-rename)(?:-driver)?\.(?:js|ps1)$/.test(file))selected.windows=true;
   if(/^scripts\/certops-response-barrier-(?:driver\.ps1|worker\.ps1|support(?:\.test)?\.js)$/.test(file))selected.windows=true;
   if(file==="infra/certops-adcs/issued-san-fault.ps1"||file==="scripts/certops-adcs-issued-san-file.test.ps1")selected.windows=true;
   if(/^packages\/(?!agent\/)/.test(file))selected.stack=true;

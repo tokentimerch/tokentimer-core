@@ -33,6 +33,32 @@ const { deployIisBinding } = require("../../src/windows-iis");
 const { listHttpSysBindings } = require("../../src/windows-discovery");
 const retention = require("../../src/windows-retention");
 const { runWindowsRetentionSweep } = require("../../src/index");
+async function cleanupOwnedEndpoint({ read, remove, receipt }) {
+  assert.ok(receipt, "Owned native endpoint receipt required");
+  const current = await read();
+  if (current !== null) {
+    assert.ok(isDeepStrictEqual(current, receipt), "Preserve replaced native endpoint");
+    await remove();
+  }
+  assert.equal(await read(), null, "Owned native endpoint remains");
+}
+function assertNativeStore(actual, expected) {
+  if (typeof actual !== "string" || !actual) {
+    throw Object.assign(new Error("Native IIS store name is missing"), { code: "CERTOPS_RETENTION_STORE_MISSING" });
+  }
+  if (actual.toLowerCase() !== expected.toLowerCase()) {
+    throw Object.assign(new Error("Native IIS store name does not match"), { code: "CERTOPS_RETENTION_STORE_MISMATCH" });
+  }
+}
+function assertFixtureAccept(result) {
+  if (result?.ok === true) return;
+  const output = `${result?.stdoutExcerpt || ""}\n${result?.stderrExcerpt || ""}`;
+  const nativeCode = output.match(/\b0x([0-9a-f]{8})\b/i)?.[1]?.toUpperCase();
+  const stage = ["addstore", "repairstore", "delstore", "verify"].includes(result?.stage) ? result.stage.toUpperCase() : "ACCEPT";
+  throw Object.assign(new Error("Owned short-lived certificate acceptance failed"), {
+    code: `CERTOPS_RETENTION_${stage}_${nativeCode ? `H${nativeCode}` : "FAILED"}`,
+  });
+}
 async function trustedLeaf(port, ca, expected) {
   const once = () =>
     new Promise((resolve, reject) => {
@@ -169,7 +195,7 @@ async function qualifyElapsedRetention({
   const recordBindingOwner = async (expected) => {
     siteReceipt = readSite();
     assert.equal(siteReceipt.hash, expected);
-    assert.equal(siteReceipt.store, store);
+    assertNativeStore(siteReceipt.store, store);
     assert.equal(siteReceipt.physicalPath, directory);
     assert.equal(siteReceipt.coordinates, `127.0.0.1:${port}:`);
     endpointReceipt = await endpoint();
@@ -304,15 +330,12 @@ async function qualifyElapsedRetention({
         "False",
       );
       item.certificateOwned = true;
-      assert.equal(
-        (
+      assertFixtureAccept(
           await acceptCertificateViaCng({
             certificatePem: item.pem,
             workDir: directory,
             store,
-          })
-        ).ok,
-        true,
+          }),
       );
       item.custody = nativeCustody(item.thumbprint);
       assert.ok(
@@ -363,10 +386,22 @@ async function qualifyElapsedRetention({
     );
     siteReceipt = readSite();
     endpointOwned = true;
-    powershell(
-      `Import-Module WebAdministration;(Get-WebBinding -Name '${site}' -Protocol https|Where-Object {$_.bindingInformation -eq '127.0.0.1:${port}:'}).AddSslCertificate('${a.thumbprint}','${store}')`,
-    );
-    await recordBindingOwner(a.thumbprint);
+    try {
+      powershell(
+        `Import-Module WebAdministration;(Get-WebBinding -Name '${site}' -Protocol https|Where-Object {$_.bindingInformation -eq '127.0.0.1:${port}:'}).AddSslCertificate('${a.thumbprint}','${store}')`,
+      );
+    } catch (error) {
+      const nativeCode = String(error.message).match(/\b0x([0-9a-f]{8})\b/i)?.[1]?.toUpperCase();
+      error.code = `CERTOPS_RETENTION_ENDPOINT_ADD_${nativeCode ? `H${nativeCode}` : "FAILED"}`;
+      throw error;
+    }
+    try {
+      await recordBindingOwner(a.thumbprint);
+    } catch (error) {
+      if (!String(error.code || "").startsWith("CERTOPS_RETENTION_STORE_"))
+        error.code = "CERTOPS_RETENTION_ENDPOINT_RECEIPT_FAILED";
+      throw error;
+    }
     await trustedLeaf(port, ca, a.thumbprint);
     const stateDir = path.join(directory, "state"),
       ledgerDir = path.join(stateDir, "windows-retention");
@@ -421,7 +456,7 @@ async function qualifyElapsedRetention({
       );
     const finalBinding = binding();
     assert.equal(finalBinding.hash, replacementThumbprint);
-    assert.equal(finalBinding.store, store);
+    assertNativeStore(finalBinding.store, store);
     const preserveReplacement = async () => {
       assert.deepEqual(binding(), finalBinding);
       assert.ok(
@@ -675,6 +710,8 @@ async function qualifyElapsedRetention({
     );
   } catch (error) {
     primaryError = error;
+    // Persist the original failure before a fail-closed cleanup guard can mask it.
+    await gate.recordFailure(error);
     throw error;
   } finally {
     // No site/store/key cleanup may race an uncertain native collector child.
@@ -732,11 +769,17 @@ async function qualifyElapsedRetention({
         ),
       );
     if (endpointOwned)
-      clean(() =>
-        powershell(
-          `& netsh.exe http show sslcert ipport=127.0.0.1:${port} | Out-Null;if($LASTEXITCODE -eq 0){& netsh.exe http delete sslcert ipport=127.0.0.1:${port} | Out-Null;if($LASTEXITCODE -ne 0){throw 'Elapsed-retention endpoint cleanup failed'}};& netsh.exe http show sslcert ipport=127.0.0.1:${port} | Out-Null;if($LASTEXITCODE -eq 0){throw 'Elapsed-retention endpoint remains'}`,
-        ),
-      );
+      try {
+        await cleanupOwnedEndpoint({
+          read: endpoint,
+          receipt: endpointReceipt,
+          remove: () => powershell(
+            `& netsh.exe http delete sslcert ipport=127.0.0.1:${port} | Out-Null;if($LASTEXITCODE -ne 0){throw 'Elapsed-retention endpoint cleanup failed'}`,
+          ),
+        });
+      } catch (error) {
+        failures.push(error);
+      }
     for (const item of predecessors) {
       if (item.certificateOwned)
         clean(() =>
@@ -800,6 +843,9 @@ function verifyElapsedStoreResult(value) {
   return true;
 }
 module.exports = {
+  assertFixtureAccept,
+  assertNativeStore,
+  cleanupOwnedEndpoint,
   qualifyElapsedRetention,
   verifyElapsedProof,
   SUPPORTED_STORES,

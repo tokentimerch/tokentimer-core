@@ -455,7 +455,8 @@ async function collectWindowsDiscoveryObservations({
       const sniHost = binding.keyedBy === "hostnameport" ? parsed.address : null;
       // A single HTTP.sys certificate can back several configured IIS sites.
       // Preserve every service, including distinct IP-keyed binding slots.
-      for (const siteName of new Set(matchedSites)) observations.push({
+      for (const siteName of new Set(matchedSites)) {
+        observations.push({
           ...base,
           locationKind: "iis_binding",
           locationSlot: `${siteName}:${parsed.port}${sniHost ? `#${sniHost}` : `@${parsed.address}`}`,
@@ -463,6 +464,7 @@ async function collectWindowsDiscoveryObservations({
           port: parsed.port,
           sniHost,
         });
+      }
     } else {
       observations.push({
         ...base,

@@ -104,7 +104,33 @@ function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = 
     const stack = typeof error?.stack === "string" ? error.stack : "";
     const frame = stack.match(/\(?([A-Za-z0-9_.-]+\.(?:js|cjs)):(\d{1,6}):\d{1,5}\)?/);
     if (frame) detail.sourceFrame = `${frame[1]}:${frame[2]}`;
+    if (frame?.[1] === "windows-host.test.js") {
+      const caller = [...stack.matchAll(/\(?([A-Za-z0-9_.-]+\.(?:js|cjs)):(\d{1,6}):\d{1,5}\)?/g)].find(match => match[1] !== "windows-host.test.js" && match[1].endsWith("-fixture.js"));
+      if (caller) detail.fixtureFrame = `${caller[1]}:${caller[2]}`;
+    }
     if (failureCount > 0) detail.afterEarlierFailure = true;
+    if (error?.code === "CERTOPS_NATIVE_COMMAND_FAILED" && error.qualificationCommand) {
+      const command = error.qualificationCommand;
+      const executables = ["powershell.exe", "certutil.exe", "certreq.exe", "sc.exe", "netsh.exe", "node.exe", "icacls.exe"];
+      const codes = ["NamedParameterNotFound", "ParameterBindingException", "ParameterArgumentValidationError", "PathNotFound", "ItemNotFoundException", "CommandNotFoundException", "PermissionDenied", "UnauthorizedAccessException", "NativeCommandError", "InvalidOperationException", "InvokeMethodOnNull", "NoMatchingEventsFound"];
+      detail.command = { executable: executables.includes(command.executable) ? command.executable : "other", exitStatus: Number.isInteger(command.exitStatus) ? command.exitStatus : null };
+      if (command.script === "owned-issued-request.ps1") detail.command.script = command.script;
+      if (command.script === "owned-issued-request.ps1" && ["connection", "columns", "restriction", "enumeration", "row-validation", "certificate-decode", "match", "remoting"].includes(command.issuedStep)) detail.command.issuedStep = command.issuedStep;
+      if (command.script === "owned-issued-request.ps1" && ["not-attempted", "attempted", "connected", "failed"].includes(command.issuedFallback)) detail.command.issuedFallback = command.issuedFallback;
+      if (command.script === "owned-issued-request.ps1" && Array.isArray(command.issuedHresults)) detail.command.issuedHresults = command.issuedHresults.filter(code => typeof code === "string" && /^0x[0-9A-F]{8}$/.test(code)).slice(0, 8);
+      if (command.script === "owned-issued-request.ps1" && Array.isArray(command.issuedCaDiag)) detail.command.issuedCaDiag = command.issuedCaDiag.filter(code => ["identity-match", "identity-mismatch", "identity-unavailable", "local-open-success", "local-open-failure", "english-open-success", "english-open-failure", "english-probe-unavailable"].includes(code)).slice(0, 3);
+      if (codes.includes(command.powerShellCode)) detail.command.powerShellCode = command.powerShellCode;
+      const fixedFailures = {
+        "Missing private key": "missing-private-key",
+        "Issued leaf uses a foreign native key": "foreign-native-key",
+        "Exportable key": "exportable-key",
+        "Foreign or malformed native issued request observation": "issued-row-refused",
+        "Owned request observation exceeded its bounded fixture scope": "issued-row-limit",
+        "Expected exactly one owned issued CA request with the independently observed leaf fingerprint": "issued-request-mismatch",
+        "System.Runtime.InteropServices.COMException": "com-exception",
+      };
+      if (Object.hasOwn(fixedFailures, command.powerShellCode)) detail.command.failure = fixedFailures[command.powerShellCode];
+    }
     if (debugDetail) {
       detail.debug = { message: bounded(error?.message ?? error).slice(0, 512) };
       if (stack) detail.debug.stack = stack.split("\n").slice(0, 12).map((line) => bounded(line.trim())).filter(Boolean);
@@ -164,7 +190,7 @@ function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = 
       }
       catch (error) {
         entry.status = "failed"; report.status = "failed";
-        if (!continueOnFailure) throw error;
+        if (!continueOnFailure) { entry.failure = describeFailure(error); throw error; }
         // Keep running so one run reports every independent failure; the suite still ends as failed.
         entry.failure = noteFailure(error);
         if (report.failureBudgetExhausted) throw error;

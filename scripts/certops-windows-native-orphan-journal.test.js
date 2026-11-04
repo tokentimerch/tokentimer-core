@@ -8,6 +8,18 @@ const test = require("node:test"),
   os = require("node:os"),
   path = require("node:path");
 const helper = require("../packages/agent/scripts/host/orphan-journal-fixture");
+test("orphan failure classification does not expose native details", () => {
+  const result = (reason) => ({ freed: [], skipped: [{ containerName: "owned", reason }] });
+  assert.equal(helper.orphanFailureCode(result("global machine-store inventory unavailable"), "owned"), "CERTOPS_ORPHAN_INVENTORY_UNAVAILABLE");
+  assert.equal(helper.orphanFailureCode(result("store My query failed: private details"), "owned"), "CERTOPS_ORPHAN_STORE_QUERY_FAILED");
+  assert.equal(helper.orphanFailureCode(result("store locked: private details"), "owned"), "CERTOPS_ORPHAN_STORE_LOCKED");
+  assert.equal(helper.orphanFailureCode(result("delkey failed (exit code 1): private"), "owned"), "CERTOPS_ORPHAN_DELKEY_FAILED");
+  assert.equal(helper.orphanFailureCode(result("enrolled"), "owned"), "CERTOPS_ORPHAN_REFERENCED");
+  assert.equal(helper.orphanFailureCode(result("enrollment directory exists without readable journal; deferred"), "owned"), "CERTOPS_ORPHAN_JOURNAL_DEFERRED");
+  assert.equal(helper.orphanFailureCode(result("private details"), "owned"), "CERTOPS_ORPHAN_OTHER_DEFERRAL");
+  assert.equal(helper.orphanFailureCode(result("global machine-store inventory unavailable"), "other"), "CERTOPS_ORPHAN_NO_RESULT");
+  assert.equal(helper.orphanFailureCode({ freed: ["foreign"], skipped: [] }, "owned"), "CERTOPS_ORPHAN_UNEXPECTED_FREED_SET");
+});
 function proof() {
   return {
     scope: helper.scope,
