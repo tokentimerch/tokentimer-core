@@ -551,6 +551,8 @@ jobs:
           DELIVERY_WORKER_DB_USER: ${{ env.DB_USER }}
           DELIVERY_WORKER_DB_PASSWORD: ${{ env.DB_PASSWORD }}
         run: node --test --test-force-exit tests/postgres/delivery-worker-ledger.test.js
+      - name: Verify bulk webhook retry preserves delivery history
+        run: node --test --test-force-exit tests/postgres/bulk-webhook-requeue.test.js
       - name: Prove abandoned certificate-path reuse on isolated PostgreSQL
         env:
           DB_NAME: pr329_issuance_path_reuse_ci_test

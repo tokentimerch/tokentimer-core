@@ -444,11 +444,24 @@ function recipientIdentity(channel, value) {
   return channel === "email" ? text.toLowerCase() : text;
 }
 
-function recipientChannelOutcome(recipients) {
+function recipientChannelOutcome(recipients, currentRecipients) {
   const entries = Object.entries(deliveryData(recipients) || {})
     .filter(([, value]) => value && value.state);
-  const required = entries.filter(([, value]) => value.state !== "excluded");
   const outcome = { recipients: Object.fromEntries(entries) };
+  let current = entries;
+  if (Array.isArray(currentRecipients)) {
+    outcome.currentRecipients = [...new Set(currentRecipients.map(String).filter((key) => key && safeDeliveryKey(key)))];
+    const selected = new Set(outcome.currentRecipients);
+    current = entries.filter(([key]) => selected.has(key));
+    for (const key of selected) {
+      if (!Object.hasOwn(outcome.recipients, key)) {
+        const pending = { state: "failed", code: "DELIVERY_NOT_ATTEMPTED" };
+        outcome.recipients[key] = pending;
+        current.push([key, pending]);
+      }
+    }
+  }
+  const required = current.filter(([, value]) => value.state !== "excluded");
   if (required.some(([, value]) => value.state === "unavailable")) {
     outcome.state = "failed";
     outcome.terminal = false;
@@ -464,7 +477,7 @@ function recipientChannelOutcome(recipients) {
     return outcome;
   }
   if (required.length === 0) {
-    const codes = entries.map(([, value]) => value.code).filter(Boolean);
+    const codes = current.map(([, value]) => value.code).filter(Boolean);
     outcome.state = "blocked";
     outcome.terminal = true;
     outcome.reason = "eligibility";
@@ -586,12 +599,15 @@ function foldDeliveryLog(rows) {
     if (!channel || !safeDeliveryKey(channel)) continue;
     const current = outcomes[channel] || { state: "failed", terminal: false, endpoints: {} };
     const meta = metadataObject(row.metadata);
-    if (channel === "webhooks" && meta.urlHash) {
-      if (!safeDeliveryKey(String(meta.urlHash))) continue;
-      if (row.status === "success") current.endpoints[meta.urlHash] = "sent";
+    if (channel === "webhooks" && meta.event_action && meta.event_action !== "trigger") continue;
+    const endpoint = channel === "webhooks" && (meta.kind === "pagerduty" ? meta.destination_id : meta.urlHash);
+    if (channel === "webhooks" && meta.kind === "pagerduty" && !endpoint) continue;
+    if (endpoint) {
+      if (!safeDeliveryKey(String(endpoint))) continue;
+      if (row.status === "success") current.endpoints[endpoint] = "sent";
       else if (row.status === "blocked" || meta.terminal === true || meta.terminal === "true") {
-        current.endpoints[meta.urlHash] = "permanent";
-      } else current.endpoints[meta.urlHash] = "failed";
+        current.endpoints[endpoint] = "permanent";
+      } else current.endpoints[endpoint] = "failed";
       const values = Object.values(current.endpoints);
       const pending = values.filter((item) => item === "failed");
       if (pending.length) {
@@ -633,6 +649,9 @@ function foldDeliveryLog(rows) {
         current.recipients[key] = { state: "failed", code };
       }
       Object.assign(current, recipientChannelOutcome(current.recipients));
+    } else if (channel === "webhooks" && Object.keys(current.endpoints).length > 0) {
+      // A channel-level legacy record cannot settle specific destinations.
+      continue;
     } else if (row.status === "success") {
       current.state = "sent";
       current.terminal = true;
@@ -959,6 +978,37 @@ function requeueWebhookChannel(stored) {
   return { version: 1, retry, required, outcomes };
 }
 
+// Used inside the bulk UPDATE so the ledger and queue state change atomically.
+function bulkRequeueWebhookSql() {
+  return `CASE
+    WHEN jsonb_typeof(aq.channels) = 'object'
+      AND aq.channels->>'version' = '1'
+      AND jsonb_typeof(aq.channels->'outcomes'->'webhooks') = 'object'
+      AND COALESCE(aq.channels->'outcomes'->'webhooks'->>'state', '') <> 'sent'
+      AND COALESCE(aq.channels->'outcomes'->'webhooks'->>'reason', '') <> 'eligibility'
+      AND (aq.channels->'outcomes'->'webhooks'->>'terminal' = 'true'
+        OR aq.channels->'outcomes'->'webhooks'->>'state' IN ('blocked', 'partial'))
+    THEN jsonb_set(
+      jsonb_set(aq.channels, '{retry}',
+        CASE WHEN jsonb_typeof(aq.channels->'retry') = 'array'
+          THEN CASE WHEN (aq.channels->'retry') ? 'webhooks' THEN aq.channels->'retry'
+            ELSE (aq.channels->'retry') || '["webhooks"]'::jsonb END
+          ELSE '["webhooks"]'::jsonb END, true),
+      '{outcomes,webhooks}',
+      ((aq.channels->'outcomes'->'webhooks') - 'reopened') || jsonb_build_object(
+        'state', 'failed', 'terminal', false, 'reason', 'provider',
+        'retryGeneration', (
+          CASE WHEN aq.channels->'outcomes'->'webhooks'->>'retryGeneration' ~ '^[0-9]{1,12}([.][0-9]{1,12})?$'
+            THEN CASE WHEN (aq.channels->'outcomes'->'webhooks'->>'retryGeneration')::numeric > 0
+              THEN floor((aq.channels->'outcomes'->'webhooks'->>'retryGeneration')::numeric)
+              WHEN aq.channels->'outcomes'->'webhooks'->>'reopened' = 'true' THEN 1
+              ELSE 0 END
+            WHEN aq.channels->'outcomes'->'webhooks'->>'reopened' = 'true' THEN 1
+            ELSE 0 END
+        ) + 1), true)
+    ELSE aq.channels END`;
+}
+
 function outcomeFromAttempt(row) {
   if (row && row.recipients && (row.channel === "email" || row.channel === "whatsapp")) {
     return recipientChannelOutcome(row.recipients);
@@ -992,8 +1042,9 @@ function mergeDeliveryAttempt({ prior, logRows, attempted, liveChannels } = {}) 
   const ledger = parseDeliveryLedger(prior);
   const outcomes = Object.assign(Object.create(null), ledger.outcomes);
   for (const [channel, logged] of Object.entries(foldDeliveryLog(logRows))) {
+    const previous = outcomes[channel];
     outcomes[channel] = logged.recipients
-      ? recipientChannelOutcome({ ...outcomes[channel]?.recipients, ...logged.recipients })
+      ? recipientChannelOutcome({ ...previous?.recipients, ...logged.recipients }, previous?.currentRecipients)
       : logged;
   }
   for (const row of Array.isArray(attempted) ? attempted : []) {
@@ -1006,15 +1057,19 @@ function mergeDeliveryAttempt({ prior, logRows, attempted, liveChannels } = {}) 
       outcomes[channel] = recipientChannelOutcome({
         ...(previous && previous.recipients ? previous.recipients : {}),
         ...fromAttempt.recipients,
-      });
+      }, Array.isArray(row.currentRecipients) ? row.currentRecipients : previous?.currentRecipients);
     } else if (previous && previous.recipients && row.success === true && (channel === "email" || channel === "whatsapp")) {
       const recipients = { ...previous.recipients };
+      const current = new Set(Array.isArray(previous.currentRecipients)
+        ? previous.currentRecipients : Object.keys(recipients));
       for (const [key, value] of Object.entries(recipients)) {
-        if (value.state === "failed" || value.state === "unavailable") recipients[key] = { state: "sent" };
+        if (current.has(key) && (value.state === "failed" || value.state === "unavailable")) {
+          recipients[key] = { state: "sent" };
+        }
       }
-      outcomes[channel] = recipientChannelOutcome(recipients);
+      outcomes[channel] = recipientChannelOutcome(recipients, previous.currentRecipients);
     } else if (previous && previous.recipients && channel !== "webhooks" && row.success !== true && !row.eligibilityTerminal && row.errorCode !== TEMPORARY_VERIFICATION_CODE) {
-      outcomes[channel] = recipientChannelOutcome(previous.recipients);
+      outcomes[channel] = recipientChannelOutcome(previous.recipients, previous.currentRecipients);
     } else {
       outcomes[channel] = fromAttempt;
     }
@@ -2199,6 +2254,7 @@ module.exports = {
   parseDeliveryLedger,
   reconcileDeliveryChannels,
   planManualRetry,
+  bulkRequeueWebhookSql,
   publicDeliveryChannels,
   deliveryClaimIsActive,
   webhookRetryGeneration,
