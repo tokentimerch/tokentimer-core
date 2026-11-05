@@ -333,8 +333,9 @@ test("delivery worker records ledger outcomes and notifications on a migrated da
     [mixedId],
   );
   const retry = verification.planManualRetry(mixedRow.channels, "email");
-  assert.equal(retry.ok, false);
-  assert.equal(retry.code, "NO_VERIFIED_RECIPIENTS");
+  assert.equal(retry.ok, true);
+  assert.deepEqual(retry.channels.retry, ["email"]);
+  assert.equal(retry.channels.outcomes.email, undefined);
   const reopen = verification.planManualRetry(mixedRow.channels, "webhooks");
   assert.equal(reopen.ok, true);
   assert.equal(reopen.channels.outcomes.email.reason, "eligibility");
@@ -695,6 +696,97 @@ test("a successful webhook cannot erase a stored terminal email failure", async 
   }
 });
 
+
+for (const channel of ["email", "whatsapp"]) {
+  for (const corrected of [false, true]) {
+    test(`${channel} worker settles after a failed recipient is ${corrected ? "corrected" : "removed"} without resending a successful sibling`, async () => {
+      migrate();
+      const kept = channel === "email" ? "kept@example.test" : "+14155550112";
+      const old = channel === "email" ? "old@example.test" : "+14155550111";
+      const replacement = channel === "email" ? "replacement@example.test" : "+14155550113";
+      const fixture = await createWorkspace(`current-${channel}-${corrected}`, {
+        contact: channel === "email" ? { email: kept } : { phone: kept },
+        group: {}, webhooks: [],
+      });
+      const contacts = [{ id: fixture.contactId, destination: kept }];
+      if (corrected) {
+        const id = crypto.randomUUID();
+        await pool.query(`INSERT INTO workspace_contacts (id, workspace_id, first_name, last_name, phone_e164, details)
+          VALUES ($1,$2,'New','Contact',$3,$4::jsonb)`,
+        [id, fixture.workspaceId, channel === "whatsapp" ? replacement : null,
+          JSON.stringify({ email: channel === "email" ? replacement : null })]);
+        contacts.push({ id, destination: replacement });
+      }
+      for (const contact of contacts) {
+        await pool.query(`INSERT INTO contact_channel_verifications
+          (workspace_id,contact_id,channel,destination_normalized,destination_fingerprint,status,verified_at,consent_at)
+          VALUES ($1,$2,$3,$4,$5,'verified',NOW(),NOW())`,
+        [fixture.workspaceId, contact.id, channel, contact.destination,
+          verification.destinationFingerprint(channel, contact.destination)]);
+      }
+      await pool.query("UPDATE workspace_settings SET contact_groups=$2::jsonb WHERE workspace_id=$1",
+        [fixture.workspaceId, JSON.stringify([{ id: "default", name: "Default",
+          [channel === "email" ? "email_contact_ids" : "whatsapp_contact_ids"]: contacts.map((row) => row.id) }])]);
+      const ledger = { version: 1, required: [channel], retry: [channel], outcomes: {
+        [channel]: { state: "failed", terminal: false, recipients: {
+          [kept]: { state: "sent" }, [old]: { state: "failed", code: "PROVIDER_ERROR" },
+        } },
+      } };
+      const alertId = await enqueue(fixture, ledger);
+      for (const [recipient, status] of [[kept, "success"], [old, "failed"]]) {
+        await pool.query(`INSERT INTO alert_delivery_log
+          (alert_queue_id,user_id,token_id,workspace_id,channel,status,metadata)
+          VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)`,
+        [alertId, fixture.userId, fixture.tokenId, fixture.workspaceId, channel, status, JSON.stringify({ recipient })]);
+      }
+      const { deliveryWorkerJob } = await import("../../apps/worker/src/delivery-worker.js");
+      await deliveryWorkerJob({ closePool: false, incidentEmailSender: async () => ({ success: true }) });
+      const result = await loadAlert(alertId);
+      assert.equal(result.status, "sent");
+      assert.deepEqual(result.channels.retry, []);
+      assert.equal(result.channels.outcomes[channel].recipients[old].state, "failed", "history remains truthful");
+      const deliveries = await pool.query(`SELECT metadata->>'recipient' AS recipient, COUNT(*)::int AS n
+        FROM alert_delivery_log WHERE alert_queue_id=$1 AND channel=$2 AND status='success'
+        GROUP BY metadata->>'recipient' ORDER BY recipient`, [alertId, channel]);
+      const expected = corrected ? [kept, replacement] : [kept];
+      assert.deepEqual(deliveries.rows, expected.sort().map((recipient) => ({ recipient, n: 1 })));
+    });
+  }
+}
+
+
+test("bulk requeue retries a repaired webhook without resending its successful sibling", async () => {
+  migrate();
+  const fixture = await createWorkspace("bulk-webhook-retry", {
+    contact: {}, group: { webhook_names: ["Good", "Repair"] },
+    webhooks: [
+      { name: "Good", kind: "generic", url: "https://good.example.test/hook" },
+      { name: "Repair", kind: "generic", url: "https://repair.example.test/hook" },
+    ],
+  });
+  const alertId = await enqueue(fixture, ["webhooks"]);
+  const hits = { good: 0, repair: 0 };
+  const webhookSender = async (url) => {
+    const destination = new URL(url).hostname.split(".")[0];
+    hits[destination]++;
+    if (destination === "repair" && hits.repair === 1) return { success: false, status: 401, error: "HTTP 401" };
+    return { success: true, status: 200 };
+  };
+  const { deliveryWorkerJob } = await import("../../apps/worker/src/delivery-worker.js");
+  const run = () => deliveryWorkerJob({ closePool: false, incidentEmailSender: async () => ({ success: true }), webhookSender });
+  await run();
+  const blocked = await loadAlert(alertId);
+  assert.equal(blocked.status, "partial");
+  assert.deepEqual(blocked.channels.retry, []);
+  assert.deepEqual(hits, { good: 1, repair: 1 });
+  const { requeueAlertsCore } = require("../../apps/api/services/alertQueue");
+  assert.equal(await requeueAlertsCore({ userId: fixture.userId, workspaceId: fixture.workspaceId }), 1);
+  await run();
+  const resolved = await loadAlert(alertId);
+  assert.equal(resolved.status, "sent");
+  assert.deepEqual(hits, { good: 1, repair: 2 });
+});
+
 test.after(async () => {
   if (hookServer) {
     await new Promise((resolve) => hookServer.close(() => resolve()));
@@ -706,4 +798,5 @@ test.after(async () => {
   } catch {
     // The worker pool exists only after the job imported it.
   }
+  try { await require("../../apps/api/db/database").pool.end(); } catch { /* not loaded */ }
 });

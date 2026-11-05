@@ -351,7 +351,12 @@ addendum to ADR-0007 supersedes its earlier source-row lifecycle description.
   with the exact SHA-256 fingerprint precondition, `revoked` or
   `decommissioned`, and a reason. The old record-based route also requires the
   fingerprint precondition. Rows, instances, and evidence are preserved;
-  linked token lifecycle status is updated only when no independently active
+  Open management periods still pointing to the retired fingerprint close and
+  disable automation; periods already rotated to another identity remain open.
+  Closing the last open period releases that identity's quota unit. Observation
+  of a replacement does not resume management: explicit re-add selects its
+  renewal configuration and cannot reactivate a retired fingerprint.
+  Linked token lifecycle status is updated only when no independently active
   fingerprint shares that token. Retiring also stops
   expiry and renewal-failure alerts for that certificate: pending
   renewal-failure alerts are discarded with their history retained; pending expiry alerts are
@@ -502,8 +507,7 @@ flows use this path when `certops.enabled` is on.
 - Current-state index (behavior, architecture, enrollment prerequisites):
   [CURRENT_STATE.md](../../../docs/certops/CURRENT_STATE.md).
 - Operator guides: `docs/certops/`; engineering references: `.github/maintainers/certops/`.
-- ADRs: `docs/adr/` (CertOps ADRs 0001-0014 today; see `docs/adr/README.md` for
-  the index and which records carry amendments).
+- ADRs: `docs/adr/`; see `docs/adr/README.md` for the index and amendments.
 - API: `apps/api/` (core), `apps/saas/` (cloud), `src/api/` (enterprise).
 - Contracts: `packages/contracts/` (registered in `contracts.manifest.json`).
 
@@ -512,3 +516,30 @@ registrations, including stopping, restarting, and history visibility, see
 [Certificate details](../../../docs/certops/certificate-details.md).
 
 Existing open management periods may rotate to a different fingerprint even when other sources retain the old certificate and quota usage temporarily exceeds the limit. New period enrollment still requires admission; joining an already managed fingerprint adds no unit. Core migration 64 (Cloud migration 82) repairs the earlier admission function without rewriting historical migrations or management history.
+
+## Assistant operator boundary
+
+An operator connection represents one user in one workspace. Its scopes, fixed
+role ceiling and live membership bound authority; submission, approval and
+fresh dispatch revalidate it. Token metadata reads expose filtered, bounded
+inventory without credential values. Manager-only `mcp:inventory:import` adds
+normalized metadata through a connection-bound preview and idempotent submission;
+existing records are preserved. Import needs the instance write flag and its
+own explicit scope, independently of CertOps renewal controls.
+Workspace locking prevents renewal write-disable races.
+CertOps **Job approval** on requires another manager/admin; off queues claimable
+work without recording approval. Changed effect, routing or approval policy
+requires a fresh preview; existing jobs keep their gate. Production MCP defaults
+remain false. See [ADR-0017](../../../docs/adr/0017-mcp-operator-interface.md)
+for the boundary and [the adapter README](../../../packages/mcp/README.md) for
+qualified clients and setup.
+
+Renewal/publication, consumer rollout, installed-file convergence and live TLS
+verification are separate outcomes. Unknown execution effects require human
+reconciliation. File-only delivery does not establish live TLS. Profile and
+issuer management are manager-or-admin actions. Owners and workspace managers
+can allow MCP renewal requests; kill switches, trust anchors and diagnostic
+credential issuance retain their existing session permissions. New assistant
+scopes are never implied by those session permissions. Provider-side actions,
+general token updates/deletes, AD CS enrollment and issuer-side revocation keep
+their existing workflows.

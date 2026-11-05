@@ -28,6 +28,15 @@ test("the release mode is never filtered", () => {
   assert.throws(() => createShard("bogus"), /Unknown AD CS qualification shard/);
 });
 
+test("diagnostic reports use the complete canonical inventory while full runs keep their own requirements", () => {
+  const incomplete = REQUIRED.filter((id) => id !== "adcs-real-localized-iis-repeat-deployment-idempotent");
+  const shard = createShard("issuance");
+  const required = shard.selectReportRequirements(incomplete, REQUIRED);
+  assert.ok(required.includes("adcs-real-localized-iis-repeat-deployment-idempotent"));
+  assert.deepEqual(required, shard.select(REQUIRED));
+  assert.equal(createShard("all").selectReportRequirements(incomplete, REQUIRED), incomplete);
+});
+
 function report(shard) {
   const required = createShard(shard).select(REQUIRED);
   return {

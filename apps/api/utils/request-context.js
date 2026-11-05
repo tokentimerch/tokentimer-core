@@ -31,9 +31,41 @@ function requestCorrelation(req, res, next) {
   requestContext.run(Object.freeze({ correlationId }), next);
 }
 
+function requestCompletionLogger(logger) {
+  return (req, res, next) => {
+    res.once("finish", () => {
+      // Only suppress successful exact probe routes. Never log raw URLs, which
+      // can contain credentials; use the path solely for this comparison.
+      const path =
+        typeof req.originalUrl === "string"
+          ? req.originalUrl.split("?", 1)[0]
+          : "";
+      const route =
+        typeof req.route?.path === "string" ? req.route.path : "unmatched";
+      const probe =
+        (path === "/health" || path === "/metrics") && route === path;
+      if (
+        probe &&
+        (req.method === "GET" || req.method === "HEAD") &&
+        res.statusCode >= 200 &&
+        res.statusCode < 400
+      )
+        return;
+      logger.info("HTTP request completed", {
+        correlationId: req.correlationId,
+        method: req.method,
+        statusCode: res.statusCode,
+        route,
+      });
+    });
+    next();
+  };
+}
+
 module.exports = {
   getRequestContext,
   attachRequestContext,
   captureRequestContext,
   requestCorrelation,
+  requestCompletionLogger,
 };

@@ -23,6 +23,7 @@ import apiClient, { authAPI } from '../utils/apiClient';
 import WelcomeModal from '../components/WelcomeModal';
 import { trackEvent } from '../utils/analytics.js';
 import { dashboardHrefAfterLogin } from '../utils/lastWorkspacePreference.js';
+import { mcpAuthorizationReturnTo } from '../utils/mcpAuthorization.js';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -118,12 +119,16 @@ export default function Login() {
         try {
           trackEvent('login_success', { method: 'email', two_factor: false });
         } catch (_) {}
-        window.location.href = dashboardHrefAfterLogin({
-          firstLogin:
-            new URLSearchParams(window.location.search).get(
-              'verification_success'
-            ) === 'true',
-        });
+        window.location.href =
+          mcpAuthorizationReturnTo(
+            new URLSearchParams(window.location.search).get('returnTo')
+          ) ||
+          dashboardHrefAfterLogin({
+            firstLogin:
+              new URLSearchParams(window.location.search).get(
+                'verification_success'
+              ) === 'true',
+          });
       } catch (error) {
         logger.error('Login error:', error);
         let errorMessage = 'Login failed. Please try again.';
@@ -158,12 +163,16 @@ export default function Login() {
       try {
         trackEvent('login_success', { method: 'email', two_factor: true });
       } catch (_) {}
-      window.location.href = dashboardHrefAfterLogin({
-        firstLogin:
-          new URLSearchParams(window.location.search).get(
-            'verification_success'
-          ) === 'true',
-      });
+      window.location.href =
+        mcpAuthorizationReturnTo(
+          new URLSearchParams(window.location.search).get('returnTo')
+        ) ||
+        dashboardHrefAfterLogin({
+          firstLogin:
+            new URLSearchParams(window.location.search).get(
+              'verification_success'
+            ) === 'true',
+        });
     } catch (error) {
       const errorMessage =
         error.response?.data?.error || 'Invalid 2FA code. Please try again.';

@@ -33,6 +33,18 @@ ingress:
         - path: /api
           pathType: Prefix
           service: api
+        - path: /.well-known/oauth-protected-resource
+          pathType: Prefix
+          service: api
+        - path: /.well-known/oauth-authorization-server
+          pathType: Prefix
+          service: api
+        - path: /verify/recipient
+          pathType: Prefix
+          service: api
+        - path: /webhooks/twilio/whatsapp/inbound
+          pathType: Exact
+          service: api
         - path: /auth
           pathType: Prefix
           service: api

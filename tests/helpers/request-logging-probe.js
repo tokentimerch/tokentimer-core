@@ -12,7 +12,7 @@ async function main() {
   const express = apiRequire("express");
   const cors = apiRequire("cors");
   const { logger } = apiRequire("./utils/logger");
-  const { requestCorrelation } = apiRequire("./utils/request-context");
+  const { requestCorrelation, requestCompletionLogger } = apiRequire("./utils/request-context");
   const records = [];
   logger.on("data", (record) => records.push(record));
 
@@ -56,20 +56,22 @@ async function main() {
 
   const source = fs.readFileSync(bootstrap, "utf8");
   const start = source.indexOf("app.use(requestCorrelation);");
-  const end = source.indexOf("\n});", start) + "\n});".length;
+  const middlewareEnd = "app.use(requestCompletionLogger(logger));";
+  const end = source.indexOf(middlewareEnd, start) + middlewareEnd.length;
   assert.ok(start >= 0 && end > start, "missing request middleware in bootstrap");
   const app = express();
   const evaluate = (code, bindings) => Function(...Object.keys(bindings), code)(...Object.values(bindings));
-  evaluate(source.slice(start, end), { app, requestCorrelation, logger });
+  evaluate(source.slice(start, end), { app, requestCorrelation, requestCompletionLogger, logger });
   const origin = "https://dashboard.example.test";
   const corsStart = source.indexOf("const corsOptions = {");
-  const corsEndMarker = "app.options(/.*/, cors(corsOptions));";
-  const corsEnd = source.indexOf(corsEndMarker, corsStart) + corsEndMarker.length;
+  const corsEnd = source.indexOf("\n};", corsStart) + "\n};".length;
   assert.ok(corsStart >= 0 && corsEnd > corsStart, "missing CORS setup in bootstrap");
   const buildCorsOrigins = source.includes("origin: buildCorsOrigins")
     ? apiRequire("./session-cookie-options").buildCorsOrigins
     : undefined;
-  evaluate(source.slice(corsStart, corsEnd), {
+  // Exercise the ordinary API CORS options independently of remote MCP's
+  // separate boundary, whose browser-origin isolation has HTTP/PG coverage.
+  evaluate(source.slice(corsStart, corsEnd) + "\napp.use(cors(corsOptions)); app.options(/.*/, cors(corsOptions));", {
     app, cors, buildCorsOrigins, FRONTEND_URL: origin,
     process: { env: { NODE_ENV: "production", APP_URL: origin } },
   });
@@ -124,11 +126,15 @@ async function main() {
     assert.deepEqual(responses.map((response) => response.status), [200, 404, 401, 500, 400, 200, 204, 200]);
     const ids = responses.map((response) => response.headers["x-request-id"]);
     assert.equal(new Set(ids).size, responses.length);
-    for (const response of responses) {
+    for (const [index, response] of responses.entries()) {
       assert.match(response.headers["x-request-id"], /^[0-9a-f-]{36}$/);
       assert.equal(response.headers["access-control-allow-origin"], origin);
       assert.match(response.headers["access-control-expose-headers"], /X-Request-Id/i);
       const completion = records.filter((record) => record.message === "HTTP request completed" && record.correlationId === response.headers["x-request-id"]);
+      if (index === 0) {
+        assert.equal(completion.length, 0, "successful health checks should not be logged");
+        continue;
+      }
       assert.equal(completion.length, 1);
       assert.equal(completion[0].statusCode, response.status);
       assert.doesNotMatch(JSON.stringify(completion[0]), /raw-path-marker|raw-body-marker|forged-client-id/);

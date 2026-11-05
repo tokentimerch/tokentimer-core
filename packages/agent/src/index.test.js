@@ -996,6 +996,10 @@ describe("registerIfNeeded", () => {
 });
 
 describe("createCandidateAgentId", () => {
+  it("trims a long trailing separator run without repeated regex backtracking", () => {
+    assert.equal(createCandidateAgentId("host" + "-".repeat(100000), 1), "candidate-host-1");
+    assert.equal(createCandidateAgentId("-_.:".repeat(25000), 1), "candidate-host-1");
+  });
   it("normalizes hostile hostnames into a bounded protocol-valid candidate id", () => {
     const candidate = createCandidateAgentId("host name/with/unsafe😀characters".repeat(8), 1234);
     assert.match(candidate, /^[A-Za-z0-9_.:-]{1,128}$/);
