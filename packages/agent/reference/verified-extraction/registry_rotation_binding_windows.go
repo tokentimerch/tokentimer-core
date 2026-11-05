@@ -227,30 +227,36 @@ func boundStartupCredential(ctx context.Context, parent registry.Key, trusted ma
 	}
 	var credential string
 	err := withRotationLock(ctx, func() error {
-		if validateCredentialRegistryKey(parent, trusted) != nil {
-			return fmt.Errorf("rotation parent invalid")
-		}
-		if ensureNoBoundProvisionPending(parent) != nil {
-			return fmt.Errorf("provisioning requires reconciliation")
-		}
-		name, _ := windows.UTF16PtrFromString(boundRotationKey)
-		var handle windows.Handle
-		if windows.RegOpenKeyEx(windows.Handle(parent), name, 8, registry.QUERY_VALUE|registry.WOW64_64KEY|windows.READ_CONTROL, &handle) != nil {
-			return fmt.Errorf("rotation state unavailable")
-		}
-		k := registry.Key(handle)
-		defer k.Close()
-		state, err := readBoundRotation(k, trusted, flushCredentialKey)
-		if err != nil || state.Binding != expected || state.State.Phase != "active" {
-			return fmt.Errorf("rotation binding mismatch or reconciliation required")
-		}
-		credential = state.State.Active
-		return nil
+		var err error
+		credential, err = boundStartupCredentialLocked(parent, trusted, expected)
+		return err
 	})
 	if err != nil {
 		return "", err
 	}
 	return credential, nil
+}
+
+// Caller holds the rotation mutex across the entire read and flush.
+func boundStartupCredentialLocked(parent registry.Key, trusted map[string]bool, expected rotationBinding) (string, error) {
+	if !validRotationBinding(expected) || validateCredentialRegistryKey(parent, trusted) != nil {
+		return "", fmt.Errorf("rotation parent invalid")
+	}
+	if ensureNoBoundProvisionPending(parent) != nil {
+		return "", fmt.Errorf("provisioning requires reconciliation")
+	}
+	name, _ := windows.UTF16PtrFromString(boundRotationKey)
+	var handle windows.Handle
+	if windows.RegOpenKeyEx(windows.Handle(parent), name, 8, registry.QUERY_VALUE|registry.WOW64_64KEY|windows.READ_CONTROL, &handle) != nil {
+		return "", fmt.Errorf("rotation state unavailable")
+	}
+	k := registry.Key(handle)
+	defer k.Close()
+	state, err := readBoundRotation(k, trusted, flushCredentialKey)
+	if err != nil || state.Binding != expected || state.State.Phase != "active" {
+		return "", fmt.Errorf("rotation binding mismatch or reconciliation required")
+	}
+	return state.State.Active, nil
 }
 
 func ensureNoBoundProvisionPending(parent registry.Key) error {
