@@ -9,7 +9,7 @@ function producer(result){
 }
 const plain=value=>JSON.parse(JSON.stringify(value));
 test("native failure identifies only approved CA fixture scripts",()=>{
-  for(const [script,expected] of [["foreign-request.ps1","foreign-request.ps1"],["owned-ca-checkpoint.ps1","owned-ca-checkpoint.ps1"],["owned-ca-request-certificate.ps1","owned-ca-request-certificate.ps1"],["officer-action.ps1","officer-action.ps1"],["SECRET.ps1",undefined]]){
+  for(const [script,expected] of [["foreign-request.ps1","foreign-request.ps1"],["owned-ca-checkpoint.ps1","owned-ca-checkpoint.ps1"],["owned-ca-request-certificate.ps1","owned-ca-request-certificate.ps1"],["owned-request-observation.ps1","owned-request-observation.ps1"],["officer-action.ps1","officer-action.ps1"],["SECRET.ps1",undefined]]){
     const api=producer({status:1,stdout:"",stderr:"SECRET"});
     let failure;try{api.command("powershell.exe",["-File",script,"-OwnershipToken","SECRET"]);}catch(error){failure=error;}
     const bounded=plain(api.boundedFailureMetadata(failure,{scenarios:[]}));
