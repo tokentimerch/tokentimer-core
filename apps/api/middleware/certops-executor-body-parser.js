@@ -97,6 +97,8 @@ function certOpsMachineWriteRouteFamily(requestPath, options = {}) {
     if (
       normalizedPath === `${prefix}/agent/credential-rotation/prepare` ||
       normalizedPath === `${prefix}/agent/credential-rotation/prepare/` ||
+      normalizedPath === `${prefix}/agent/credential-rotation/identity` ||
+      normalizedPath === `${prefix}/agent/credential-rotation/identity/` ||
       normalizedPath === `${prefix}/agent/credential-rotation/acknowledge` ||
       normalizedPath === `${prefix}/agent/credential-rotation/acknowledge/` ||
       normalizedPath === `${prefix}/agent/credential-rotation/confirm` ||

@@ -31,6 +31,7 @@ const ROUTES = Object.freeze({
   HEARTBEAT: "/api/v1/certops/agent/heartbeat",
   ROTATION_PREPARE: "/api/v1/certops/agent/credential-rotation/prepare",
   ROTATION_CONFIRM: "/api/v1/certops/agent/credential-rotation/confirm",
+  ROTATION_IDENTITY: "/api/v1/certops/agent/credential-rotation/identity",
   ROTATION_ACKNOWLEDGE: "/api/v1/certops/agent/credential-rotation/acknowledge",
   CLAIM: "/api/v1/certops/agent/jobs/claim",
   RESULTS: "/api/v1/certops/agent/jobs/results",
@@ -704,6 +705,30 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     return { state: response.json.state };
   }
 
+  // Transport only: consumers must independently bind this response to an
+  // enrolled workspace, agent row, origin, and authenticated TLS context.
+  async function readCredentialRotationIdentity() {
+    let response;
+    try {
+      const token = await resolveCredential(getCredential);
+      if (!token) throw new Error("credential unavailable");
+      response = await sendPlain(ROUTES.ROTATION_IDENTITY, token, {});
+    } catch (_error) {
+      throw new AgentProtocolError("agent identity request failed", AGENT_PROTOCOL_ERROR_CODES.NETWORK_ERROR);
+    }
+    if (!response.ok || (response.status >= 300 && response.status < 400)) {
+      throw new AgentProtocolError("agent identity request rejected", AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status: response.status });
+    }
+    const identity = response.json;
+    const uuid = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
+    if (!isPlainObject(identity) || Object.keys(identity).sort().join(",") !== "agentId,id,workspaceId" ||
+        typeof identity.id !== "string" || !uuid.test(identity.id) || typeof identity.workspaceId !== "string" || !uuid.test(identity.workspaceId) ||
+        typeof identity.agentId !== "string" || !AGENT_ID_PATTERN.test(identity.agentId)) {
+      throw new AgentProtocolError("invalid agent identity response", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
+    }
+    return identity;
+  }
+
   async function confirmCredentialRotation({ operationId, candidateCredential } = {}) {
     if (typeof operationId !== "string" || !/^[a-f0-9]{32}$/.test(operationId) ||
         typeof candidateCredential !== "string" || !/^ttagent_[a-f0-9]{16}_[a-f0-9]{64}$/.test(candidateCredential)) {
@@ -946,7 +971,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     return json ?? {};
   }
 
-  return { register, heartbeat, claim, renewLease, reportResult, reportEvidence, postJobLogs, prepareCredentialRotation, confirmCredentialRotation, acknowledgeCredentialRotation };
+  return { register, heartbeat, claim, renewLease, reportResult, reportEvidence, postJobLogs, prepareCredentialRotation, confirmCredentialRotation, acknowledgeCredentialRotation, readCredentialRotationIdentity };
 }
 
 module.exports = {

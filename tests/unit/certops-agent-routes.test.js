@@ -33,6 +33,7 @@ const WORKSPACE_A = "11111111-1111-4111-8111-111111111111";
 const AGENT_PATHS = [
   "/api/v1/certops/agent/register",
   "/api/v1/certops/agent/credential-rotation/prepare",
+  "/api/v1/certops/agent/credential-rotation/identity",
   "/api/v1/certops/agent/credential-rotation/confirm",
   "/api/v1/certops/agent/credential-rotation/acknowledge",
   "/api/v1/certops/agent/heartbeat",

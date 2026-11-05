@@ -16,7 +16,7 @@
 
 const router = require("express").Router;
 const { CERTOPS_AGENT_CREDENTIAL_STALE } = require("../services/certops/agentCredentialFence");
-const { prepareCredentialRotation, authenticateRotationCandidate, confirmCredentialRotation, acknowledgeCredentialRotation, isCredentialRotationEnabled, isCredentialRotationAckEnabled } = require("../services/certops/agentCredentialRotation");
+const { prepareCredentialRotation, authenticateRotationCandidate, confirmCredentialRotation, acknowledgeCredentialRotation, readRotationAgentIdentity, isCredentialRotationEnabled, isCredentialRotationAckEnabled } = require("../services/certops/agentCredentialRotation");
 const { bearerTokenFromRequest, hasSessionIdentity } = require("../middleware/api-token-auth");
 const {
   createAgentBootstrapTokenAuth,
@@ -692,6 +692,34 @@ function createCertOpsAgentRouter(options = {}) {
     }
     return next();
   };
+  // Experimental identity proof for an already-authenticated agent. The
+  // bearer never selects the returned identity through request parameters.
+  certOpsAgentRouter.post(
+    "/api/v1/certops/agent/credential-rotation/identity",
+    preAuthRateLimitFallback,
+    requireRotationEnabled,
+    credentialAuthMiddleware,
+    agentRateLimitIdentity,
+    rateLimitMiddleware,
+    certOpsEnabledMiddleware,
+    requireNonRetiredAgent,
+    async (req, res) => {
+      if (!req.body || typeof req.body !== "object" || Array.isArray(req.body) || Object.keys(req.body).length !== 0) {
+        return res.status(400).json({ error: "Invalid identity request" });
+      }
+      try {
+        const { id, agentId, workspaceId } = await (options.readRotationAgentIdentity || readRotationAgentIdentity)({ dbPool: options.dbPool, agent: req.certopsAgent, env: options.rotationEnv });
+        const uuid = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
+        if (!uuid.test(id) || !uuid.test(workspaceId) || typeof agentId !== "string" || agentId.length > 128 || !AGENT_ID_PATTERN.test(agentId)) {
+          return res.status(503).json({ error: "Agent identity unavailable" });
+        }
+        res.set("Cache-Control", "no-store");
+        return res.status(200).json({ id, agentId, workspaceId });
+      } catch (error) {
+        return handleAgentRouteError(res, error);
+      }
+    },
+  );
   certOpsAgentRouter.post(
     "/api/v1/certops/agent/credential-rotation/prepare",
     preAuthRateLimitFallback,

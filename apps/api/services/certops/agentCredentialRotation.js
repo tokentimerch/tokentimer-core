@@ -38,6 +38,18 @@ function checkOperation(operationId) {
 function isCredentialRotationAckEnabled(env = process.env) {
   return isCredentialRotationEnabled(env) && env.CERTOPS_AGENT_ROTATION_ACK_ENABLED === "true";
 }
+
+// Revalidate the authenticated credential while holding the agent row lock.
+// A response already committed to the network cannot be revoked afterwards.
+async function readRotationAgentIdentity({ dbPool = pool, agent, env = process.env }) {
+  if (!isCredentialRotationEnabled(env)) throw failure("CERTOPS_AGENT_ROTATION_DISABLED");
+  return await transaction(dbPool, async client => {
+    await lockCurrentAgentCredential(client, agent);
+    const row = (await client.query("SELECT id, agent_id, workspace_id FROM certops_agents WHERE id = $1", [agent.id])).rows[0];
+    if (!row) throw failure();
+    return { id: row.id, agentId: row.agent_id, workspaceId: row.workspace_id };
+  });
+}
 // Called under the agent row lock. This is a database coordination fence,
 // not evidence that an external effect has stopped.
 async function requireNoAgentJobs(client, agentId) {
@@ -159,4 +171,4 @@ async function acknowledgeCredentialRotation({ dbPool = pool, agent, operationId
     return { state: "acknowledged" };
   });
 }
-module.exports = { prepareCredentialRotation, authenticateRotationCandidate, confirmCredentialRotation, acknowledgeCredentialRotation, isCredentialRotationEnabled, isCredentialRotationAckEnabled };
+module.exports = { prepareCredentialRotation, authenticateRotationCandidate, confirmCredentialRotation, acknowledgeCredentialRotation, readRotationAgentIdentity, isCredentialRotationEnabled, isCredentialRotationAckEnabled };

@@ -8740,6 +8740,41 @@ paths:
           description: Security audit sink unavailable while rejecting private material
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/certops/agent/credential-rotation/identity:
+    post:
+      tags: [CertOps Agent]
+      summary: Read the authenticated agent identity
+      operationId: readCertOpsAgentRotationIdentity
+      description: >-
+        Read-only identity associated with the bearer, available only when
+        credential rotation is enabled. It does not attest local state or
+        establish trust in the server or TLS configuration.
+      security:
+        - agentCredentialAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false }
+      responses:
+        "200":
+          description: Authenticated agent identity
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [id, agentId, workspaceId]
+                properties:
+                  id: { type: string, format: uuid }
+                  agentId: { type: string, pattern: '^[A-Za-z0-9_.:-]{1,128}$' }
+                  workspaceId: { type: string, format: uuid }
+        "400": { description: Invalid request }
+        "401": { description: Agent authentication failed }
+        "404": { description: Rotation disabled }
+        "410": { description: Agent retired }
+        "429": { description: Machine-token rate limit exceeded }
+        "503": { description: Agent identity unavailable }
   /api/v1/certops/agent/credential-rotation/prepare:
     post:
       tags: [CertOps Agent]
