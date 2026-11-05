@@ -55,6 +55,9 @@ func TestEnrollmentPendingMarkerSurvivesFailuresAndBlocks(t *testing.T) {
 			if ensureNoBoundProvisionPending(parent) == nil {
 				t.Fatal("uncertain promotion unblocked")
 			}
+			if credential, err := boundStartupCredentialLocked(parent, trusted, testBoundState().Binding); err == nil || credential != "" {
+				t.Fatal("startup exposed credential with pending marker")
+			}
 		})
 	}
 }
@@ -85,6 +88,9 @@ func TestEnrollmentPromotionFlushFailureKeepsMarker(t *testing.T) {
 	}
 	if ensureNoBoundProvisionPending(parent) == nil {
 		t.Fatal("reflush silently unblocked startup")
+	}
+	if credential, err := boundStartupCredentialLocked(parent, trusted, testBoundState().Binding); err == nil || credential != "" {
+		t.Fatal("startup exposed credential after uncertain flush")
 	}
 }
 
