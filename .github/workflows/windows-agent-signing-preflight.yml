@@ -1,7 +1,7 @@
 name: Windows agent signing preflight
 
-# This workflow signs a fresh build from trusted main for integration testing.
-# It does not produce release assets or authorize release publication.
+# This workflow builds a fresh candidate from trusted main for integration testing.
+# Signing jobs remain disabled; it does not authorize release publication.
 on:
   workflow_dispatch:
 
