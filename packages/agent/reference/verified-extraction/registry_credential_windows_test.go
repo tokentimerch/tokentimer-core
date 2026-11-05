@@ -3,8 +3,10 @@
 package verifiedextraction
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -72,6 +74,178 @@ func TestRegistryCandidatePrepareRecoverAndNoOverwrite(t *testing.T) {
 	got, err = readRegistryCredential(k, trusted)
 	if err != nil || got != want {
 		t.Fatal("journal changed")
+	}
+}
+
+func TestRegistryParentLeaseValidatesEachComponent(t *testing.T) {
+	k, sddl, trusted, path := registryFixture(t)
+	trusted["S-1-5-18"] = true
+	trusted["S-1-5-32-544"] = true
+	lease, err := openRegistryParent(registry.CURRENT_USER, strings.Split(path, `\`), trusted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	if err := prepareRegistryCredential(lease.handles[len(lease.handles)-1], sddl, trusted, registryFixtureRecord()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readRegistryCredential(k, trusted)
+	if err != nil || got != registryFixtureRecord() {
+		t.Fatalf("journal under leased parent not recovered: %v", err)
+	}
+	for _, segments := range [][]string{{}, {"Software", ".."}, {"Software", `bad\child`}, {"Software", "bad/child"}} {
+		bad, err := openRegistryParent(registry.CURRENT_USER, segments, trusted)
+		if err == nil {
+			bad.Close()
+			t.Fatalf("accepted invalid path %v", segments)
+		}
+	}
+}
+
+func TestRegistryAncestorCreatorOwnerIsNotAnUntrustedWriter(t *testing.T) {
+	parent, _, trusted, _ := registryFixture(t)
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid := user.User.Sid.String()
+	create := func(name, sddl string) registry.Key {
+		t.Helper()
+		sd, err := windows.SecurityDescriptorFromString(sddl)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, _ := windows.UTF16PtrFromString(name)
+		attrs := windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
+		var h windows.Handle
+		var disposition uint32
+		r, _, _ := regCredentialCreate.Call(uintptr(parent), uintptr(unsafe.Pointer(p)), 0, 0, 0, uintptr(registry.ALL_ACCESS|windows.READ_CONTROL), uintptr(unsafe.Pointer(&attrs)), uintptr(unsafe.Pointer(&h)), uintptr(unsafe.Pointer(&disposition)))
+		if r != 0 || disposition != 1 {
+			t.Fatalf("create fixture: %d", r)
+		}
+		k := registry.Key(h)
+		t.Cleanup(func() { _ = k.Close(); _ = registry.DeleteKey(parent, name) })
+		return k
+	}
+	base := "O:" + sid + "G:" + sid + "D:P(A;;KA;;;" + sid + ")"
+	creator := create("Creator", base+"(A;CI;KA;;;CO)")
+	if err := validateRegistryAncestor(creator, trusted); err != nil {
+		t.Fatalf("trusted owner with creator placeholder rejected: %v", err)
+	}
+	if err := validateCredentialRegistryKey(creator, trusted); err == nil {
+		t.Fatal("credential parent allowed creator placeholder")
+	}
+	world := create("World", base+"(A;;KW;;;WD)")
+	if err := validateRegistryAncestor(world, trusted); err == nil {
+		t.Fatal("untrusted writer accepted")
+	}
+}
+
+func TestRegistryParentRejectsLinkMarker(t *testing.T) {
+	k, _, trusted, path := registryFixture(t)
+	trusted["S-1-5-18"] = true
+	trusted["S-1-5-32-544"] = true
+	if err := k.SetStringValue("SymbolicLinkValue", "not-a-trusted-link"); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := openRegistryParent(registry.CURRENT_USER, strings.Split(path, `\`), trusted)
+	if err == nil {
+		lease.Close()
+		t.Fatal("accepted ambiguous registry link marker")
+	}
+}
+
+func TestRegistryJournalPipeRoundTripAndBounds(t *testing.T) {
+	k, sddl, trusted, _ := registryFixture(t)
+	want := registryFixtureRecord()
+	b, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := runCredentialJournalWithParent(k, trusted, sddl, []string{"prepare"}, bytes.NewReader(b), &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), want.Credential) || out.String() != "{\"state\":\"prepared\"}\n" {
+		t.Fatal("prepare disclosed credential")
+	}
+	out.Reset()
+	if err := runCredentialJournalWithParent(k, trusted, sddl, []string{"read"}, bytes.NewReader(nil), &out); err != nil {
+		t.Fatal(err)
+	}
+	var got registryCredentialRecord
+	if json.Unmarshal(out.Bytes(), &got) != nil || got != want {
+		t.Fatal("pipe recovery failed")
+	}
+	out.Reset()
+	if err := runCredentialJournalWithParent(k, trusted, sddl, []string{"prepare", want.Credential}, bytes.NewReader(b), &out); err == nil || strings.Contains(err.Error(), want.Credential) || out.Len() != 0 {
+		t.Fatal("accepted or exposed secret argument")
+	}
+	if err := runCredentialJournalWithParent(k, trusted, sddl, []string{"read"}, strings.NewReader(want.Credential), &out); err == nil || strings.Contains(err.Error(), want.Credential) || out.Len() != 0 {
+		t.Fatal("accepted or exposed unexpected input")
+	}
+	if err := runCredentialJournalWithParent(k, trusted, sddl, []string{"prepare"}, strings.NewReader(strings.Repeat("x", 513)), &out); err == nil || out.Len() != 0 {
+		t.Fatal("accepted oversized input")
+	}
+}
+
+func TestRegistryJournalPipeChild(t *testing.T) {
+	path, mode := os.Getenv("TT_JOURNAL_TEST_PATH"), os.Getenv("TT_JOURNAL_TEST_MODE")
+	if path == "" {
+		return
+	}
+	k, err := registry.OpenKey(registry.CURRENT_USER, path, registry.ALL_ACCESS|windows.READ_CONTROL)
+	if err != nil {
+		os.Exit(4)
+	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		os.Exit(5)
+	}
+	sid := user.User.Sid.String()
+	sddl := "O:" + sid + "G:" + sid + "D:P(A;;KA;;;" + sid + ")"
+	err = runCredentialJournalWithParent(k, map[string]bool{sid: true}, sddl, []string{mode}, os.Stdin, os.Stdout)
+	_ = k.Close()
+	if err != nil {
+		os.Exit(6)
+	}
+	os.Exit(0)
+}
+
+func TestRegistryJournalPipesAcrossProcesses(t *testing.T) {
+	_, _, _, path := registryFixture(t)
+	want := registryFixtureRecord()
+	b, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := func(mode string) *exec.Cmd {
+		c := exec.Command(exe, "-test.run=^TestRegistryJournalPipeChild$")
+		c.Env = append(os.Environ(), "TT_JOURNAL_TEST_PATH="+path, "TT_JOURNAL_TEST_MODE="+mode)
+		return c
+	}
+	prepare := child("prepare")
+	prepare.Stdin = bytes.NewReader(b)
+	out, err := prepare.Output()
+	if err != nil || string(out) != "{\"state\":\"prepared\"}\n" {
+		t.Fatalf("prepare pipe failed: %v", err)
+	}
+	if strings.Contains(strings.Join(prepare.Args, " "), want.Credential) || strings.Contains(strings.Join(prepare.Env, " "), want.Credential) {
+		t.Fatal("credential leaked to args or environment")
+	}
+	read := child("read")
+	read.Stdin = bytes.NewReader(nil)
+	out, err = read.Output()
+	if err != nil {
+		t.Fatalf("read pipe failed: %v", err)
+	}
+	var got registryCredentialRecord
+	if json.Unmarshal(out, &got) != nil || got != want {
+		t.Fatal("second process did not recover the candidate")
 	}
 }
 
