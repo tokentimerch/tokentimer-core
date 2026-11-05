@@ -3,6 +3,8 @@
 const { describe, it, beforeEach, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
+const { bindAuthenticatedAgent } = require("../../apps/api/services/certops/agentCredentialFence");
+const FIXTURE_CREDENTIAL_HASH = "a".repeat(64);
 
 const {
   CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
@@ -69,11 +71,18 @@ function createMockPool(handler) {
     transaction: [],
     audits: [],
     jobLogs: [],
+    credentialHash: FIXTURE_CREDENTIAL_HASH,
+    lockOrder: [],
   };
   const client = {
     query: async (text, params) => {
       if (String(typeof text === "string" ? text : text?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
       const sql = typeof text === "string" ? text : text?.text || "";
+      if (sql.includes("SELECT credential_hash FROM certops_agents")) {
+        state.lockOrder.push("agent-lock");
+        return { rows: [{ credential_hash: state.credentialHash }] };
+      }
+      if (sql.includes("FROM certificate_jobs") && sql.includes("FOR UPDATE")) state.lockOrder.push("job-lock");
       state.queries.push({ text: sql, params });
       const trimmed = sql.trim().toUpperCase();
       if (
@@ -129,7 +138,9 @@ function createMockPool(handler) {
       ) {
         return { rows: [] };
       }
-      return handler(sql, params, state);
+      const response = await handler(sql, params, state);
+      if (sql.includes("WHERE credential_prefix = $1") && response.rows[0]) state.credentialHash = response.rows[0].credential_hash;
+      return response;
     },
     release: () => {
       state.released = true;
@@ -144,7 +155,7 @@ function createMockPool(handler) {
 }
 
 function agentFixture(overrides = {}) {
-  return {
+  return bindAuthenticatedAgent({
     id: "agent-row-1",
     workspaceId: WORKSPACE_A,
     agentId: "agent-01",
@@ -156,7 +167,7 @@ function agentFixture(overrides = {}) {
     lastSeenAt: null,
     retiredAt: null,
     ...overrides,
-  };
+  }, FIXTURE_CREDENTIAL_HASH);
 }
 
 function registerEnvelope() {
@@ -3218,7 +3229,7 @@ describe("agentDispatch.ingestResult", () => {
     });
 
     assert.equal(result.status, "succeeded");
-    assert.deepEqual(queryOrder, ["agent-lock", "job-lock"]);
+    assert.deepEqual(dbPool.state.lockOrder.slice(0, 2), ["agent-lock", "job-lock"]);
   });
 
   describe("result_metadata / certificate_job_log population (Bug 2: every real agent result used to leave both at their insert-time defaults)", () => {

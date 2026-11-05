@@ -15,6 +15,7 @@
  */
 
 const router = require("express").Router;
+const { CERTOPS_AGENT_CREDENTIAL_STALE } = require("../services/certops/agentCredentialFence");
 const {
   createAgentBootstrapTokenAuth,
   createAgentCredentialAuth,
@@ -408,6 +409,8 @@ function handleAgentRouteError(res, error) {
         error: "Result nonce was rejected",
         code: CERTOPS_AGENT_RESULT_NONCE_REJECTED,
       });
+    case CERTOPS_AGENT_CREDENTIAL_STALE:
+      return res.status(401).json({ error: "CertOps agent authentication required", code: "CERTOPS_AGENT_UNAUTHORIZED" });
     case CERTOPS_AGENT_SEQUENCE_REGRESSION:
       return res.status(409).json({
         error:

@@ -3,6 +3,8 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
+const { bindAuthenticatedAgent } = require("../../apps/api/services/certops/agentCredentialFence");
+const FIXTURE_CREDENTIAL_HASH = "a".repeat(64);
 
 const {
   CERTOPS_AGENT_OBSERVATION_INVALID,
@@ -17,12 +19,12 @@ const {
   ),
 );
 
-const AGENT = {
+const AGENT = bindAuthenticatedAgent({
   id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   agentId: "agent-host-1",
   workspaceId: "11111111-1111-4111-8111-111111111111",
   hostname: "edge-01.example",
-};
+}, FIXTURE_CREDENTIAL_HASH);
 const WINDOWS_THUMBPRINT = "A1".repeat(20);
 
 describe("normalizeAgentFilesystemObservation", () => {
@@ -119,6 +121,7 @@ describe("persistAgentDiscoveryEvidenceBatch", () => {
     let rolledBack = false;
     const client = {
       async query(sql, params) {
+        if (sql.includes("SELECT credential_hash FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH }] };
         queries.push({ sql, params });
         if (sql === "BEGIN") {
           begun = true;
@@ -188,6 +191,7 @@ describe("persistAgentDiscoveryEvidenceBatch", () => {
     const queries = [];
     const client = {
       async query(sql, params) {
+        if (sql.includes("SELECT credential_hash FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH }] };
         queries.push({ sql, params });
         if (sql === "BEGIN" || sql === "COMMIT") return { rows: [] };
         if (sql.includes("SET last_sequence")) {
@@ -303,6 +307,7 @@ describe("persistAgentDiscoveryEvidenceBatch", () => {
     const queries = [];
     const client = {
       async query(sql, params) {
+        if (sql.includes("SELECT credential_hash FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH }] };
         queries.push({ sql, params });
         if (sql === "BEGIN" || sql === "COMMIT") return { rows: [] };
         if (sql.includes("SET last_sequence")) {
@@ -1083,6 +1088,7 @@ describe("persistAgentDiscoveryEvidenceBatch - Windows discovery persistence (ob
   function buildWindowsClient(queries) {
     return {
       async query(sql, params) {
+        if (sql.includes("SELECT credential_hash FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH }] };
         queries.push({ sql, params });
         if (sql === "BEGIN" || sql === "COMMIT") return { rows: [] };
         if (sql.includes("SET last_sequence")) {
