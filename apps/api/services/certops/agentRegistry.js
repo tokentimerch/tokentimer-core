@@ -534,7 +534,7 @@ async function getAgentById(options) {
        FROM certops_agents
       WHERE workspace_id = $1
         AND id = $2
-      LIMIT 1`,
+      LIMIT 1${options.forUpdate === true ? " FOR UPDATE" : ""}`,
     [normalizeWorkspaceId(options.workspaceId), options.agentId],
   );
   return agentMetadataFromRow(result.rows[0] || null, options.env);
