@@ -194,4 +194,32 @@ describe("Agent credential rotation on migrated schema", function () {
       deps: { computeAgentCompatibility: () => { throw new Error("EXPIRED_CLAIM_SELECTION_REACHED"); } } }), /EXPIRED_CLAIM_SELECTION_REACHED/);
   });
 
+  it("resumes an expired preparation using the identical pre-staged candidate over HTTP", async () => {
+    const email = `rotation-resume-${randomUUID()}@example.test`;
+    const user = (await db.query("INSERT INTO users(email,email_original,display_name,password_hash,auth_method) VALUES ($1,$2,'Rotation Resume','x','local') RETURNING id", [email,email])).rows[0];
+    const workspaceId = randomUUID(); await db.query("INSERT INTO workspaces (id,name,created_by,plan) VALUES ($1,'rotation resume',$2,'oss')", [workspaceId,user.id]);
+    const old = generateAgentCredential(), next = generateAgentCredential(), agentId = `agent-${randomUUID()}`;
+    await db.query(`INSERT INTO certops_agents (workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)
+      VALUES ($1,$2,'0.18.2','1.0.0',$3,$4)`, [workspaceId,agentId,old.credentialPrefix,old.credentialHash]);
+    const app = express(); app.use(createCertOpsMachineWritePreParserBoundary());
+    app.use(createCertOpsAgentRouter({ dbPool: db, rotationEnv: { CERTOPS_AGENT_ROTATION_ALL_API_FENCED: "true", CERTOPS_AGENT_ROTATION_ACK_ENABLED: "true" }, credentialAuthMiddleware: createAgentCredentialAuth({ client: db }), certOpsEnabledMiddleware: (_req,_res,nextMiddleware) => nextMiddleware() }));
+    const listener = await new Promise(resolve => { const srv = app.listen(0,"127.0.0.1",() => resolve(srv)); });
+    try {
+      const makeClient = () => createProtocolClient({ serverUrl: `http://127.0.0.1:${listener.address().port}`, allowInsecureLocalHttp: true, agentId, protocolVersion: "1.0.0", getCredential: () => old.plaintextCredential });
+      const operationId = randomUUID().replaceAll("-", "");
+      const prepare = { operationId, candidatePrefix: next.credentialPrefix, candidateHash: next.credentialHash };
+      assert.deepEqual(await makeClient().prepareCredentialRotation(prepare), { state: "pending" });
+      await db.query("UPDATE certops_agent_credential_rotations SET expires_at = NOW() - interval '1 second' WHERE operation_id = $1", [operationId]);
+      // A new transport instance models process restart; candidate retention is
+      // a fixture assumption, not a test of Windows disk durability.
+      const resumed = makeClient();
+      await assert.rejects(resumed.confirmCredentialRotation({ operationId, candidateCredential: next.plaintextCredential }), { status: 401 });
+      assert.deepEqual(await resumed.prepareCredentialRotation(prepare), { state: "pending" });
+      assert.deepEqual(await resumed.confirmCredentialRotation({ operationId, candidateCredential: next.plaintextCredential }), { state: "committed" });
+      assert.deepEqual(await resumed.acknowledgeCredentialRotation({ operationId, candidateCredential: next.plaintextCredential }), { state: "acknowledged" });
+      assert.equal((await validateAgentCredential({ client: db, rawCredential: old.plaintextCredential })).valid, false);
+      assert.equal((await validateAgentCredential({ client: db, rawCredential: next.plaintextCredential })).agent.agentId, agentId);
+    } finally { await new Promise((resolve,reject) => listener.close(error => error ? reject(error) : resolve())); }
+  });
+
 });
