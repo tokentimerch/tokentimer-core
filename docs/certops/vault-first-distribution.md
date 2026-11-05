@@ -14,7 +14,7 @@ Complete **Turn on execution safely → Send a test job** for the issuing agent 
 
 ## Allocate the group and configure hosts
 
-The first publication job allocates the real `job.payload.publication.groupId`. Use that UUID in [local material-store/binding configuration](wildcard-vault-operations.md#customer-local-configuration) and [separate Vault Agent roles](vault-agent-authentication.md).
+The first publication job allocates the real `job.payload.publication.groupId`. Use that UUID in [local material-store/binding configuration](wildcard-vault-operations.md#host-configuration) and [separate Vault Agent roles](vault-agent-authentication.md).
 
 - If ordinary job approval is required, keep the publication unapproved while preparing policy and token sinks.
 - If approval is off, set issuer `execution.enabled: false` and restart **before** allocation. Keep polling disabled until the returned group is configured and readiness checks pass. Submission alone does not hold work.

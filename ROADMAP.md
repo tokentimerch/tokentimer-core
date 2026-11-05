@@ -5,7 +5,7 @@ certificate testing expansion remains follow-up work under [#354](https://github
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
-without gating v1.0.0, and what v1.0.0 itself changes for compatibility. Customer-facing feature cards and voting
+without gating v1.0.0, and what v1.0.0 itself changes for compatibility. Public feature cards and voting
 live on the [public feature roadmap](https://tokentimer.featurebase.app/en/roadmap).
 Release history lives in [CHANGELOG.md](CHANGELOG.md). Owners, acceptance
 criteria, and evidence live in the linked GitHub issues.
@@ -37,11 +37,11 @@ called stable while they are open.
 
 - **CLM destinations: store issued material and distribute it**
   ([#248](https://github.com/tokentimerch/tokentimer-core/issues/248)).
-  Name filesystem, IIS, or customer Vault locations on a certificate.
+  Name filesystem, IIS, or Vault locations on a certificate.
   One issuance can deploy to those destinations. The control plane
   never stores private keys. Shared-key Vault mode is explicit opt-in.
   [PR #329](https://github.com/tokentimerch/tokentimer-core/pull/329) adds
-  customer Vault publication and independent consumer rollouts for any shared
+  publication through your Vault and independent consumer rollouts for any shared
   certificate, including ordinary and wildcard certificates, shipped in 0.18.0
   (see [CHANGELOG.md](CHANGELOG.md)); the remaining destination scope stays
   open on the issue.
