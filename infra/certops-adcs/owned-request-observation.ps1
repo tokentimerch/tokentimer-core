@@ -18,8 +18,28 @@ Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -A
   param([string]$CommonName,[long]$RequestId,[bool]$Discover,[bool]$AllowMissing)
   $ErrorActionPreference='Stop'
   $view=New-Object -ComObject CertificateAuthority.View
+  $previousUiCulture=$null;$previousThreadLanguage=0;$threadLanguageChanged=$false
   try {
-    $null=$view.OpenConnection('tt-ca.lab.certops.test\TTQualificationRoot')
+    try {$null=$view.OpenConnection('tt-ca.lab.certops.test\TTQualificationRoot')}
+    catch {
+      $originalFailure=$_;$exception=$_.Exception;$fileNotFound=$false
+      for($i=0;$i -lt 8 -and $null -ne $exception;$i++){
+        if([BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$exception.HResult),0) -eq [uint32]2147942402){$fileNotFound=$true;break}
+        $exception=$exception.InnerException
+      }
+      if(-not $fileNotFound){throw}
+      try {
+        if(-not ('TTQualificationThreadLanguage' -as [type])){Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class TTQualificationThreadLanguage { [DllImport("kernel32.dll")] public static extern ushort GetThreadUILanguage(); [DllImport("kernel32.dll")] public static extern ushort SetThreadUILanguage(ushort language); }'}
+        $previousUiCulture=[Threading.Thread]::CurrentThread.CurrentUICulture
+        $previousThreadLanguage=[TTQualificationThreadLanguage]::GetThreadUILanguage()
+        if([TTQualificationThreadLanguage]::SetThreadUILanguage(1033) -eq 0){throw 'Thread language fallback unavailable'}
+        $threadLanguageChanged=$true
+        [Threading.Thread]::CurrentThread.CurrentUICulture=[Globalization.CultureInfo]::GetCultureInfo('en-US')
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view);$view=$null
+        $view=New-Object -ComObject CertificateAuthority.View
+        $null=$view.OpenConnection('tt-ca.lab.certops.test\TTQualificationRoot')
+      } catch {throw $originalFailure}
+    }
     $names=@('RequestID','CommonName','RequesterName','Disposition')
     $view.SetResultColumnCount($names.Count)
     foreach($name in $names){
@@ -46,5 +66,8 @@ Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -A
     if($AllowMissing -and -not $Discover -and $matched -eq 0){@{subjectRequestCount=$count;requestId=$RequestId;disposition=$null;requestAbsent=$true}|ConvertTo-Json -Compress;return}
     if($matched -ne 1){throw 'Expected exactly one owned CA RequestId'}
     @{subjectRequestCount=$count;requestId=$RequestId;disposition=$disposition}|ConvertTo-Json -Compress
-  } finally { if($view){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)} }
+  } finally {
+    try {if($view){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)}}
+    finally {if($null -ne $previousUiCulture){[Threading.Thread]::CurrentThread.CurrentUICulture=$previousUiCulture};if($threadLanguageChanged){[void][TTQualificationThreadLanguage]::SetThreadUILanguage($previousThreadLanguage)}}
+  }
 }
