@@ -1,4 +1,5 @@
 import copy
+import gzip
 import hashlib
 import importlib.util
 import io
@@ -71,6 +72,14 @@ class CandidateBindingTests(unittest.TestCase):
             doc = copy.deepcopy(self.doc)
             doc['archive']['sha256'] = sha(archive)
             with self.subTest(items=items), self.assertRaises(ValueError):
+                self.check(archive=archive, doc=doc)
+
+    def test_rejects_data_hidden_after_tar_end_or_in_another_gzip_member(self):
+        for archive in (gzip.compress(gzip.decompress(self.archive) + b"hidden"),
+                        self.archive + gzip.compress(b"hidden")):
+            doc = copy.deepcopy(self.doc)
+            doc["archive"]["sha256"] = sha(archive)
+            with self.subTest(length=len(archive)), self.assertRaises(ValueError):
                 self.check(archive=archive, doc=doc)
 
     def test_duplicate_json_keys_are_rejected(self):

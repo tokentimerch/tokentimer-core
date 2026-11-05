@@ -12,6 +12,7 @@ import re
 import stat
 import tarfile
 import argparse
+import zlib
 from pathlib import Path
 
 DIGEST = re.compile(r"[a-f0-9]{64}\Z")
@@ -58,6 +59,35 @@ def _artifact(value, expected_name, content):
             or value["name"] != expected_name or not isinstance(value["sha256"], str)
             or not DIGEST.fullmatch(value["sha256"]) or value["sha256"] != _hash(content)):
         raise ValueError("Inventory artifact mismatch")
+
+
+def _check_complete_stream(archive, tar_end):
+    """Reject hidden data after tar EOF, trailing bytes and gzip members."""
+    decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    total = 0
+    tail_bytes = 0
+    limit = MAX_EXPANDED + MAX_FILES * 4096 + 1024 * 1024
+    try:
+        for offset in range(0, len(archive), 65536):
+            pending = archive[offset:offset + 65536]
+            while pending:
+                block = decoder.decompress(pending, 1024 * 1024)
+                pending = decoder.unconsumed_tail
+                if decoder.unused_data:
+                    raise ValueError("Trailing or concatenated gzip data")
+                start = max(0, tar_end - total)
+                if start < len(block):
+                    tail = block[start:]
+                    tail_bytes += len(tail)
+                    if any(tail):
+                        raise ValueError("Data follows tar end")
+                total += len(block)
+                if total > limit or tail_bytes >= 1024 * 1024 + 1024:
+                    raise ValueError("Expanded archive exceeds limit")
+        if not decoder.eof or decoder.unused_data or tail_bytes < 1024:
+            raise ValueError("Truncated gzip or tar end")
+    except zlib.error as exc:
+        raise ValueError("Invalid compressed stream") from exc
 
 
 def validate_binding(archive, sbom, inventory, *, archive_name, sbom_name, version, architecture, source_commit):
@@ -124,6 +154,7 @@ def validate_binding(archive, sbom, inventory, *, archive_name, sbom_name, versi
                 if count != member.size:
                     raise ValueError("Truncated archive member")
                 actual[key] = (name, count, digest.hexdigest())
+            tar_end = tar.offset
     except (tarfile.TarError, OSError, EOFError) as exc:
         raise ValueError("Invalid archive") from exc
     for key in seen:
@@ -134,6 +165,7 @@ def validate_binding(archive, sbom, inventory, *, archive_name, sbom_name, versi
                 raise ValueError("Archive file is a parent directory")
     if actual != expected:
         raise ValueError("Inventory file content mismatch")
+    _check_complete_stream(archive, tar_end)
 
 
 def main():
