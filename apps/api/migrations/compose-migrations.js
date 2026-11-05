@@ -34,6 +34,7 @@ const mcpAppendNames = [
   "operator_inventory",
   "operator_oauth_retention",
   "operator_issuance",
+  "certops_issuance_job_identity",
 ];
 
 function composeMigrations(migrations, recorded = []) {
@@ -113,7 +114,7 @@ function composeMigrations(migrations, recorded = []) {
   // draft identities and append the missing authority migration afterward.
   const priorDraft = rows.some((row) => row.version === 96 && row.name === "operator_connections");
   if (!priorOrder && priorDraft) {
-    const draftNames = [...priorMcpNames.slice(0, 10), "pagerduty_operator_actions", "remove_pagerduty_rest_lookup", ...mcpAppendNames.slice(2)];
+    const draftNames = [...priorMcpNames.slice(0, 10), "pagerduty_operator_actions", "remove_pagerduty_rest_lookup", ...mcpAppendNames.slice(2).filter((name) => name !== "certops_issuance_job_identity")];
     const draftVersions = [78, 79, 80, 81, 82, 83, 84, 85, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103];
     const names = [...draftNames, ...extensions.map((entry) => entry.name).filter((name) => !draftNames.includes(name))];
     const versions = [...draftVersions, ...names.slice(draftNames.length).map((_name, index) => 104 + index)];
@@ -220,7 +221,7 @@ function composeMigrations(migrations, recorded = []) {
         const lastApplied = Math.max(-1, ...names.map((name, index) => applied.has(name) ? index : -1));
         const skipped = names.slice(0, lastApplied + 1).filter((name) => !applied.has(name));
         const orderedApplied = names.filter((name) => applied.has(name));
-        const matches = skipped.every((name) => name.startsWith("operator_")) &&
+        const matches = skipped.every((name) => name.startsWith("operator_") || name === "certops_issuance_job_identity") &&
           rows.every((row, index) => row.name === orderedApplied[index]);
         if (matches) contiguousOrder = [...orderedApplied, ...names.filter((name) => !applied.has(name))];
         return matches;
@@ -232,6 +233,7 @@ function composeMigrations(migrations, recorded = []) {
       );
   }
   const dependencies = {
+    certops_issuance_job_identity: ["operator_issuance"],
     operator_issuance: ["operator_action_requests"],
     operator_connection_lifetimes: ["operator_connections", "operator_enrollment_grants", "operator_oauth"],
     operator_inventory: ["operator_connections"],

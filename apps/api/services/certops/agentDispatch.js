@@ -1947,6 +1947,37 @@ async function reconcileProvisionedCertificate({
     ],
   );
 
+  if (job.operation === "issue" && !job.certificate_identity_id) {
+    // The job's admission identity is intentionally immutable and was null at
+    // issuance. Record the verified identity separately in the same transaction
+    // that activates the certificate.
+    const mapping = await client.query(
+      `INSERT INTO certops_issuance_job_identities(workspace_id, job_id, identity_id)
+       SELECT j.workspace_id, j.id, identity.id
+         FROM certificate_jobs j
+         JOIN certops_certificate_identities identity ON identity.workspace_id = j.workspace_id
+           AND identity.fingerprint_sha256 = certops_normalize_fingerprint($3)
+         JOIN certops_management_associations association
+           ON association.workspace_id = j.workspace_id AND association.period_id = j.management_period_id
+          AND association.identity_id = identity.id
+        WHERE j.workspace_id = $1 AND j.id = $2 AND j.operation = 'issue'
+          AND j.certificate_identity_id IS NULL
+       ON CONFLICT (job_id) DO NOTHING`,
+      [workspaceId, job.id, fingerprint],
+    );
+    if (!mapping.rowCount) {
+      const existing = await client.query(
+        `SELECT 1 FROM certops_issuance_job_identities mapping
+          JOIN certops_certificate_identities identity
+            ON identity.workspace_id = mapping.workspace_id AND identity.id = mapping.identity_id
+         WHERE mapping.workspace_id = $1 AND mapping.job_id = $2
+           AND identity.fingerprint_sha256 = certops_normalize_fingerprint($3)`,
+        [workspaceId, job.id, fingerprint],
+      );
+      if (!existing.rowCount) throw new Error("Unable to preserve the issued certificate identity");
+    }
+  }
+
   // Token linking waits until here on purpose. tokens.expiration is DATE NOT
   // NULL, so a certificate that does not exist yet cannot have a legitimate
   // token row: any earlier attempt would have to invent an expiry. Now that a

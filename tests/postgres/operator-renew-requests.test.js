@@ -247,7 +247,26 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
         const certificates = await get("/api/v1/operator/certificates", c.credential);
         assert.ok(certificates.body.items.some(item => item.id === certificateId && item.kind === "provisional"));
         const jobs = await get(`/api/v1/operator/jobs?subjectId=${certificateId}`, c.credential);
-        assert.ok(jobs.body.items.some(item => item.id === submitted.body.jobId));
+        assert.ok(jobs.body.items.some(item => item.id === submitted.body.jobId && item.subjectId === certificateId));
+        const jobDetail = await get(`/api/v1/operator/jobs/${submitted.body.jobId}`, c.credential);
+        assert.equal(jobDetail.body.job.summary.subjectId, certificateId);
+        const target = await pool.query(
+          "INSERT INTO certificate_targets(workspace_id,name,target_type) VALUES($1,'Observed fixture','other') RETURNING id",
+          [workspaceId],
+        );
+        try {
+          await pool.query(
+            `INSERT INTO certificate_instances(workspace_id,managed_certificate_id,target_id,observed_fingerprint_sha256)
+             VALUES($1,$2,$3,$4)`,
+            [workspaceId, certificateId, target.rows[0].id, crypto.randomBytes(32).toString("hex")],
+          );
+          const observedJobs = await get(`/api/v1/operator/jobs?subjectId=${certificateId}`, c.credential);
+          assert.ok(!observedJobs.body.items.some(item => item.id === submitted.body.jobId));
+          const observedDetail = await get(`/api/v1/operator/jobs/${submitted.body.jobId}`, c.credential);
+          assert.equal(observedDetail.body.job.summary.subjectId, null);
+        } finally {
+          await pool.query("DELETE FROM certificate_targets WHERE id=$1", [target.rows[0].id]);
+        }
         await pool.query("UPDATE operator_action_plans SET created_at=NOW()-INTERVAL '2 minutes',expires_at=NOW()-INTERVAL '1 second' WHERE id=$1", [preview.body.planId]);
         const changedReplay = await submitIssue(preview.body, requestId, { ...issuance, sans: ["example.test", "other.example.test"] });
         assert.equal(changedReplay.status, 409);
@@ -286,6 +305,87 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
       assert.equal((await submitIssue(revoked.body)).status, 401);
     } finally {
       await pool.query("UPDATE certificate_jobs SET status='cancelled',canceled_at=NOW() WHERE workspace_id=$1 AND operation='issue' AND requested_by_connection_id=$2 AND status IN ('pending','pending_approval')", [workspaceId, c.id]);
+      await pool.query("UPDATE workspaces SET operator_issuance_enabled=FALSE,certops_require_approval_always=TRUE WHERE id=$1", [workspaceId]);
+    }
+  });
+
+  it("retains verified issuance identity through rotation, evidence removal, and conservative backfill", async () => {
+    const c = await newConnection(manager, ["mcp:certs:read", "mcp:jobs:read", "mcp:issue:request"]);
+    const agent = (await pool.query(
+      `INSERT INTO certops_agents(workspace_id,agent_id,name,agent_version,protocol_version,credential_prefix,credential_hash,status)
+       VALUES($1,$2,'Identity fixture','0.18.0','1.0.0',$3,$4,'active') RETURNING id`,
+      [workspaceId, crypto.randomUUID(), "ttagent_" + crypto.randomBytes(8).toString("hex"), crypto.randomBytes(32).toString("hex")],
+    )).rows[0];
+    const issuance = { agentId: agent.id, commonName: "identity.example.test", sans: ["identity.example.test"],
+      commandRef: "certbot", caEndpoint: "https://ca.example.test/directory", dnsZone: "example.test",
+      dnsProvider: "cloudflare", certPath: `/etc/ssl/certs/identity-${crypto.randomUUID()}.pem` };
+    let jobId;
+    try {
+      await pool.query("UPDATE workspaces SET operator_issuance_enabled=TRUE,certops_require_approval_always=FALSE WHERE id=$1", [workspaceId]);
+      const previewResponse = await post("/api/v1/operator/issuance/preview", { issuance }, c.credential);
+      assert.equal(previewResponse.status, 200, JSON.stringify(previewResponse.body));
+      const submitted = await post("/api/v1/operator/issuance/request", {
+        issuance, planId: previewResponse.body.planId, planHash: previewResponse.body.planHash, requestId: crypto.randomUUID(),
+      }, c.credential);
+      assert.equal(submitted.status, 200, JSON.stringify(submitted.body));
+      jobId = submitted.body.jobId;
+      const claimId = crypto.randomUUID(), fingerprint = crypto.randomBytes(32).toString("hex");
+      const client = await pool.connect();
+      let sourceId;
+      try {
+        await client.query("BEGIN");
+        await client.query("UPDATE certificate_jobs SET claim_id=$2,status='succeeded',completed_at=clock_timestamp() WHERE id=$1", [jobId, claimId]);
+        const job = (await client.query("SELECT * FROM certificate_jobs WHERE id=$1", [jobId])).rows[0];
+        sourceId = job.subject_id;
+        await client.query(
+          `INSERT INTO certificate_evidence(workspace_id,job_id,claim_id,evidence_type,metadata,created_at)
+           VALUES($1,$2,$3,'validation.passed',$4::jsonb,clock_timestamp() - INTERVAL '1 second')`,
+          [workspaceId, jobId, claimId, JSON.stringify({ step: "verify", fingerprintSha256: fingerprint, validTo: "2030-01-01T00:00:00Z" })],
+        );
+        const result = await require("../../apps/api/services/certops/agentDispatch")._test.reconcileProvisionedCertificate({
+          client, workspaceId, job, linkToken: async () => {}, ensureRenewalProfile: async () => ({ reason: "already_linked" }),
+        });
+        assert.equal(result.promoted, true);
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+      const identity = (await pool.query("SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2", [workspaceId, fingerprint])).rows[0].id;
+      const jobs = await get(`/api/v1/operator/jobs?subjectId=${identity}`, c.credential);
+      assert.ok(jobs.body.items.some(item => item.id === jobId && item.subjectId === identity));
+      assert.equal((await get(`/api/v1/operator/jobs/${jobId}`, c.credential)).body.job.summary.subjectId, identity);
+      await assert.rejects(pool.query("UPDATE certops_issuance_job_identities SET identity_id=gen_random_uuid() WHERE job_id=$1", [jobId]), /immutable/);
+      const migration = fs.readFileSync(path.resolve(__dirname, "../../apps/api/migrations/107-certops-issuance-job-identity.sql"), "utf8");
+      const migrationClient = await pool.connect();
+      try {
+        await migrationClient.query("BEGIN");
+        await migrationClient.query("DELETE FROM certops_issuance_job_identities WHERE job_id=$1", [jobId]);
+        await migrationClient.query("DELETE FROM audit_events WHERE workspace_id=$1 AND action='CERTOPS_CERTIFICATE_ISSUED' AND metadata->>'jobId'=$2", [workspaceId, jobId]);
+        await migrationClient.query(migration);
+        assert.equal((await migrationClient.query("SELECT 1 FROM certops_issuance_job_identities WHERE job_id=$1", [jobId])).rowCount, 0);
+        await migrationClient.query("ROLLBACK");
+        await migrationClient.query("BEGIN");
+        await migrationClient.query("DELETE FROM certops_issuance_job_identities WHERE job_id=$1", [jobId]);
+        await migrationClient.query(migration);
+        assert.equal((await migrationClient.query("SELECT identity_id FROM certops_issuance_job_identities WHERE job_id=$1", [jobId])).rows[0].identity_id, identity);
+        await migrationClient.query("ROLLBACK");
+      } finally {
+        await migrationClient.query("ROLLBACK");
+        migrationClient.release();
+      }
+      const replacementFingerprint = crypto.randomBytes(32).toString("hex");
+      await pool.query("UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=clock_timestamp() WHERE id=$1", [sourceId, replacementFingerprint]);
+      const replacement = (await pool.query("SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2", [workspaceId, replacementFingerprint])).rows[0].id;
+      await pool.query("DELETE FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2", [workspaceId, jobId]);
+      const afterRotation = await get(`/api/v1/operator/jobs?subjectId=${identity}`, c.credential);
+      assert.ok(afterRotation.body.items.some(item => item.id === jobId && item.subjectId === identity));
+      assert.equal((await get(`/api/v1/operator/jobs/${jobId}`, c.credential)).body.job.summary.subjectId, identity);
+      const replacementJobs = await get(`/api/v1/operator/jobs?subjectId=${replacement}`, c.credential);
+      assert.ok(!replacementJobs.body.items.some(item => item.id === jobId));
+    } finally {
       await pool.query("UPDATE workspaces SET operator_issuance_enabled=FALSE,certops_require_approval_always=TRUE WHERE id=$1", [workspaceId]);
     }
   });

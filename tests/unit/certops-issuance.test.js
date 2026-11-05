@@ -749,6 +749,7 @@ describe("certops provisioning reconciliation", () => {
           if (evidenceRows) return { rows: evidenceRows };
           return { rows: metadata ? [{ metadata }] : [] };
         }
+        if (sql.includes("INSERT INTO certops_issuance_job_identities")) return { rows: [], rowCount: 1 };
         if (sql.includes("UPDATE managed_certificates")) {
           state.updates.push(params);
           return { rows: [] };

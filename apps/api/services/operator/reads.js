@@ -2,8 +2,8 @@
 
 // Read models for the operator namespace. Each function calls an existing
 // CertOps service and hands the result to a projection that names every field
-// it returns. No SQL on certificate, agent or job tables lives here: the
-// lifecycle, status and renewal rules stay in the services that own them.
+// it returns. The provisional job lookup below uses the existing CertOps
+// initial-provisioning predicate before exposing a source as a public handle.
 
 const { pool } = require("../../db/database");
 const { logger } = require("../../utils/logger");
@@ -137,6 +137,31 @@ async function listAgentHealth({ workspaceId, limit, offset, now = Date.now() })
   };
 }
 
+async function markIssuanceJobs(workspaceId, jobs) {
+  const candidates = jobs.filter((job) => job.subjectType === "managed_certificate" &&
+    job.operation === "issue" && !job.certificateIdentityId);
+  if (!candidates.length) return jobs;
+  const { rows } = await pool.query(
+    `SELECT job.id, mapping.identity_id,
+            CASE WHEN certificate.id IS NOT NULL
+              AND certops_is_initial_provisioning(certificate.workspace_id, certificate.id, 'renew', 'agent', 'api')
+              THEN certificate.id END AS provisional_id
+       FROM certificate_jobs job
+       LEFT JOIN certops_issuance_job_identities mapping
+         ON mapping.workspace_id = job.workspace_id AND mapping.job_id = job.id
+       LEFT JOIN managed_certificates certificate
+         ON certificate.workspace_id = job.workspace_id AND certificate.id::text = job.subject_id
+      WHERE job.workspace_id = $1 AND job.id = ANY($2::uuid[])`,
+    [workspaceId, candidates.map((job) => job.id)],
+  );
+  const byId = new Map(rows.map((row) => [String(row.id), row]));
+  return jobs.map((job) => {
+    const row = byId.get(String(job.id));
+    if (!row) return job;
+    return { ...job, certificateIdentityId: row.identity_id || null, provisionalSubjectId: row.provisional_id || null };
+  });
+}
+
 async function listJobs({ workspaceId, status, operation, subjectId, createdSince, limit, offset }) {
   const result = await listCertificateJobs({
     workspaceId,
@@ -150,7 +175,7 @@ async function listJobs({ workspaceId, status, operation, subjectId, createdSinc
     // never passed through.
     q: undefined,
   });
-  const items = result.items.map(read.projectJobSummary);
+  const items = (await markIssuanceJobs(workspaceId, result.items)).map(read.projectJobSummary);
   return {
     items,
     completeness: read.completeness({ offset, returned: items.length, total: result.pagination.total }),
@@ -160,7 +185,8 @@ async function listJobs({ workspaceId, status, operation, subjectId, createdSinc
 async function getJob({ workspaceId, jobId }) {
   const job = await getCertificateJobById({ workspaceId, jobId });
   if (!job) return null;
-  return { job: read.projectJobDetail(job) };
+  const [marked] = await markIssuanceJobs(workspaceId, [job]);
+  return { job: read.projectJobDetail(marked) };
 }
 
 // ---------------------------------------------------------------------------

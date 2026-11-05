@@ -273,7 +273,8 @@ function projectJobSummary(job) {
     // Legacy certificate jobs can lack an immutable identity. A current
     // source lookup would attribute old jobs to a replacement certificate.
     subjectId: job.subjectType === "managed_certificate"
-      ? (isUuid(job.certificateIdentityId) ? job.certificateIdentityId : null)
+      ? (isUuid(job.certificateIdentityId) ? job.certificateIdentityId
+        : isUuid(job.provisionalSubjectId) ? job.provisionalSubjectId : null)
       : (isUuid(job.subjectId) ? job.subjectId : null),
     createdAt: isoOrNull(job.createdAt),
     startedAt: isoOrNull(job.startedAt),
