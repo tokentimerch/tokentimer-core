@@ -18,8 +18,8 @@ Total skips found: 143
 | `packages/agent/scripts/host/windows-installed-paths-filesystem.test.js` | 14 | actual installer filesystem branches preserve literal brackets and wildcard siblings | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/install-agent-sh.test.js` | 36 | install-agent.sh polkit grants on re-run | describe(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/installer-smoke.test.js` | 370 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `packages/agent/scripts/pack-release.test.js` | 207 | tracks install-agent.sh as executable in git (mode 100755) | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `packages/agent/scripts/pack-release.test.js` | 216 | assertExecutableEntries rejects a tarball whose installer lost the exec bit | dynamic (this.skip() / t.skip()) | `platform` |
+| `packages/agent/scripts/pack-release.test.js` | 227 | tracks install-agent.sh as executable in git (mode 100755) | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `packages/agent/scripts/pack-release.test.js` | 236 | assertExecutableEntries rejects a tarball whose installer lost the exec bit | dynamic (this.skip() / t.skip()) | `platform` |
 | `packages/agent/src/acme/acme.test.js` | 250 | POSIX hook executes non-executable archive bytes with spaces and quotes in the path | test(..., { skip }) option-object | `platform` |
 | `packages/agent/src/config/config.test.js` | 121 | sets 0700 permissions on non-win32 platforms | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/config/config.test.js` | 129 | re-asserts 0700 on every call even if the mode was loosened | it(..., { skip }) option-object | `platform` |
@@ -39,9 +39,9 @@ Total skips found: 143
 | `packages/agent/src/config/config.test.js` | 1664 | fails closed when the ACL cannot be inspected at all (win32) | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/deploy/deploy.test.js` | 564 | rejects a symlinked destination escaping the allowed root (realpath re-check) | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/deploy/deploy.test.js` | 593 | rejects a symlinked parent directory escaping the allowed root | it(..., { skip }) option-object | `platform` |
-| `packages/agent/src/discovery/discovery.test.js` | 308 | rejects symbolic-link certificate candidates | dynamic (this.skip() / t.skip()) | `platform` |
-| `packages/agent/src/discovery/discovery.test.js` | 343 | parses a real self-signed certificate and extracts public fields, normalizing the fingerprint | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/discovery/discovery.test.js` | 372 | never reads private key bytes into the returned certificate entry, even when it peeks the key | it(..., { skip }) option-object | `prerequisite` |
+| `packages/agent/src/discovery/discovery.test.js` | 332 | rejects symbolic-link certificate candidates | dynamic (this.skip() / t.skip()) | `platform` |
+| `packages/agent/src/discovery/discovery.test.js` | 367 | parses a real self-signed certificate and extracts public fields, normalizing the fingerprint | it(..., { skip }) option-object | `prerequisite` |
+| `packages/agent/src/discovery/discovery.test.js` | 396 | never reads private key bytes into the returned certificate entry, even when it peeks the key | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/discovery/windows.test.js` | 214 | computes a real SHA-256 fingerprint from base64 DER bytes | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/discovery/windows.test.js` | 327 | reads real SAN entries directly from a certificate's own raw DER bytes | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/discovery/windows.test.js` | 359 | prefers the raw-bytes-derived SANs over windows-discovery's own list | it(..., { skip }) option-object | `prerequisite` |
@@ -50,7 +50,7 @@ Total skips found: 143
 | `packages/agent/src/discovery/windows.test.js` | 479 | unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/discovery/windows.test.js` | 532 | reports an http.sys binding with no matching IIS site as http_sys, not iis_binding | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/discovery/windows.test.js` | 620 | reports real subjectAltNames end-to-end from the certificate's raw bytes | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/index.test.js` | 4211 | refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/index.test.js` | 4241 | refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/issuers/adcs-enrollment-reconcile.test.js` | 420 | skips E_ACCESSDENIED and denied probes so a later unique match can attach | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/src/issuers/adcs-enrollment.test.js` | 170 | pins a CA cert under stateDir/adcs-ca and refuses a pin mismatch | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/src/keys/keys.test.js` | 180 | sets 0600 on the key file and 0700 on the parent dir on non-win32 | it(..., { skip }) option-object | `platform` |
