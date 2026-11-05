@@ -67,7 +67,7 @@ RECIPIENT_VERIFICATION_MODE=enforce
 
 `shadow` is the self-hosted observation mode. It logs eligibility and still delivers. Cloud verification is mandatory. Set `TT_DEPLOYMENT=cloud` and `RECIPIENT_VERIFICATION_MODE=enforce` on the API and every notification worker.
 
-1. Run the standard migration runner before the matching API and workers. Canonical main uses migration 82 for recipient verification and 83 for weekly-digest claim tracking; neither is skipped when verification is off. Existing contacts remain unverified. Supported preview histories retain their applied versions and timestamps; pending definitions use free versions. Do not hand-apply individual SQL files or relabel migration history.
+1. Run the standard migration runner before the matching API and workers. Canonical main uses migration 84 for recipient verification and 85 for weekly-digest claim tracking; neither is skipped when verification is off. Existing contacts remain unverified. Supported preview histories retain their applied versions and timestamps; pending definitions use free versions. Do not hand-apply individual SQL files or relabel migration history.
 2. Set `RECIPIENT_FINGERPRINT_SECRET` and `PUBLIC_BASE_URL` or `API_URL` before sending invitations.
 3. Ask workspace managers to send invitations. Existing alert groups keep their contacts.
 4. Switch self-hosted from `off` or `shadow` to `enforce` after recipients confirm.
