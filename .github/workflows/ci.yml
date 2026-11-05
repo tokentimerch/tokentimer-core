@@ -639,7 +639,14 @@ jobs:
       - name: Preserve published CertOps data and execute real signed protocol
         env:
           TT_RELEASE_UPGRADE_PG_CONTAINER: ${{ job.services.postgres.id }}
-        run: node --test --test-concurrency=1 tests/postgres/release-published-upgrade.test.js tests/postgres/staged-agent-protocol.test.js
+        run: |
+          test -f tests/postgres/release-published-upgrade.test.js
+          test -f tests/postgres/staged-agent-protocol.test.js
+          node --test --test-reporter=tap --test-concurrency=1 tests/postgres/release-published-upgrade.test.js tests/postgres/staged-agent-protocol.test.js | tee release-acceptance.tap
+          grep -qx '# tests 2' release-acceptance.tap
+          grep -qx '# pass 2' release-acceptance.tap
+          grep -qx '# skipped 0' release-acceptance.tap
+          grep -qx '# cancelled 0' release-acceptance.tap
 
   material_store_compatibility:
     name: Material Store Compatibility (${{ matrix.provider }} / ${{ matrix.version }})
