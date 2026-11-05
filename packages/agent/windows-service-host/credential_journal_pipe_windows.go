@@ -24,7 +24,7 @@ func handleCredentialJournalFrame(request []byte) ([]byte, error) {
 	for d.More() {
 		keyToken, err := d.Token()
 		key, ok := keyToken.(string)
-		if err != nil || !ok || (key != "command" && key != "record") {
+		if err != nil || !ok || (key != "command" && key != "record" && key != "binding") {
 			return nil, fmt.Errorf("invalid journal frame")
 		}
 		if _, exists := fields[key]; exists {
@@ -45,6 +45,13 @@ func handleCredentialJournalFrame(request []byte) ([]byte, error) {
 	var command string
 	if json.Unmarshal(fields["command"], &command) != nil {
 		return nil, fmt.Errorf("invalid journal frame")
+	}
+	if command == "bound-read" {
+		var output bytes.Buffer
+		if journal.RunExperimentalBoundRotation(bytes.NewReader(request), &output) != nil {
+			return nil, fmt.Errorf("journal unavailable")
+		}
+		return output.Bytes(), nil
 	}
 	var input io.Reader = bytes.NewReader(nil)
 	switch command {

@@ -14,6 +14,8 @@ const MAX_FRAME = 1024;
 const OPERATION = /^[a-f0-9]{32}$/;
 const CREDENTIAL = /^ttagent_[a-f0-9]{16}_[a-f0-9]{64}$/;
 const HASH = /^[a-f0-9]{64}$/;
+const UUID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/;
+const AGENT = /^[A-Za-z0-9_.:-]{1,128}$/;
 const sessionKeys = new WeakMap();
 
 function genericError() { return new Error("credential pipe unavailable"); }
@@ -77,6 +79,14 @@ function validRecord(record) {
     typeof record.credential === "string" && CREDENTIAL.test(record.credential);
 }
 
+function validBinding(binding) {
+  return binding && typeof binding === "object" && !Array.isArray(binding) &&
+    Object.keys(binding).sort().join(",") === "agentId,caHash,id,origin,workspaceId" &&
+    typeof binding.id === "string" && UUID.test(binding.id) && typeof binding.workspaceId === "string" && UUID.test(binding.workspaceId) &&
+    typeof binding.agentId === "string" && AGENT.test(binding.agentId) && typeof binding.caHash === "string" && HASH.test(binding.caHash) &&
+    typeof binding.origin === "string" && binding.origin.length > 0 && binding.origin.length <= 512;
+}
+
 async function sendCredentialPipeRequest(session, request, { timeoutMs = 5000, expectedOperationId, expectedCandidateHash } = {}) {
   const state = session && sessionKeys.get(session);
   if (!session || !NAME.test(session.name || "") || !state || state.closed || !Buffer.isBuffer(state.key) || state.key.length !== 32 ||
@@ -87,6 +97,8 @@ async function sendCredentialPipeRequest(session, request, { timeoutMs = 5000, e
   } else if (request.command === "read") {
     if (Object.keys(request).join(",") !== "command" || typeof expectedOperationId !== "string" || !OPERATION.test(expectedOperationId) ||
         typeof expectedCandidateHash !== "string" || !HASH.test(expectedCandidateHash)) throw genericError();
+  } else if (request.command === "bound-read") {
+    if (Object.keys(request).sort().join(",") !== "binding,command" || !validBinding(request.binding)) throw genericError();
   } else throw genericError();
   let payload;
   try { payload = Buffer.from(JSON.stringify(request), "utf8"); } catch (_error) { throw genericError(); }
@@ -127,6 +139,11 @@ async function sendCredentialPipeRequest(session, request, { timeoutMs = 5000, e
       if (request.command === "prepare") {
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || Object.keys(parsed).join(",") !== "state" || parsed.state !== "prepared") throw genericError();
         return { state: "prepared" };
+      }
+      if (request.command === "bound-read") {
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || Object.keys(parsed).join(",") !== "credential" ||
+            typeof parsed.credential !== "string" || !CREDENTIAL.test(parsed.credential)) throw genericError();
+        return parsed.credential;
       }
       if (!validRecord(parsed) || parsed.operation !== expectedOperationId) throw genericError();
       const actualHash = crypto.createHash("sha256").update(parsed.credential).digest();
