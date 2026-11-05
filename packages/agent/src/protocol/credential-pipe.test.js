@@ -137,3 +137,32 @@ test("socket failure after proof is sanitized and does not escape as an unhandle
     });
   } finally { session.dispose(); key.fill(0); await new Promise(resolve=>server.close(resolve)); }
 });
+
+test("disposing an in-flight session refuses a proof made with the cleared key and sends no credential", async t => {
+  if (process.platform !== "win32") return t.skip("Windows named pipe test");
+  const name=pipeName(), key=crypto.randomBytes(32), session=await makeSession(name,key);
+  const secret="ttagent_"+"a".repeat(16)+"_"+"b".repeat(64);
+  let received=Buffer.alloc(0), releaseProof, observed;
+  const seenChallenge=new Promise(resolve=>{observed=resolve;});
+  const proofGate=new Promise(resolve=>{releaseProof=resolve;});
+  const server=net.createServer(socket=>{ socket.on("error", () => {}); socket.on("data",data=>{
+    received=Buffer.concat([received,data]);
+    if (received.length===32) {
+      const challenge=Buffer.from(received); observed();
+      proofGate.then(()=>{
+        if (!socket.destroyed) socket.write(crypto.createHmac("sha256",Buffer.alloc(32)).update(domain).update(challenge).digest());
+      });
+    } else if (received.length>32) {
+      const reply=Buffer.from('{"state":"prepared"}'), header=Buffer.alloc(4); header.writeUInt32BE(reply.length); socket.end(Buffer.concat([header,reply]));
+    }
+  }); });
+  await new Promise((resolve,reject)=>server.listen(name,resolve).once("error",reject));
+  try {
+    const request=sendCredentialPipeRequest(session,{command:"prepare",record:{version:1,operation:"a".repeat(32),credential:secret}});
+    await seenChallenge;
+    session.dispose(); releaseProof();
+    await assert.rejects(request,/credential pipe unavailable/);
+    assert.equal(received.length,32);
+    assert.equal(received.includes(Buffer.from(secret)),false);
+  } finally { releaseProof(); session.dispose(); key.fill(0); await new Promise(resolve=>server.close(resolve)); }
+});

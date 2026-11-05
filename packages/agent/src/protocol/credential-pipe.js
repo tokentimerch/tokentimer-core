@@ -39,8 +39,16 @@ async function receiveCredentialPipeBootstrap(input, { timeoutMs = 5000 } = {}) 
       if (!NAME.test(name)) throw genericError();
       const key = Buffer.from(packet.subarray(2 + nameLength));
       const session = { name };
-      sessionKeys.set(session, key);
-      Object.defineProperty(session, "dispose", { value: () => { const owned = sessionKeys.get(session); if (owned) owned.fill(0); sessionKeys.delete(session); }, enumerable: false });
+      sessionKeys.set(session, { key, closed: false, sockets: new Set() });
+      Object.defineProperty(session, "dispose", { value: () => {
+        const state = sessionKeys.get(session);
+        if (!state) return;
+        state.closed = true;
+        state.key.fill(0);
+        for (const socket of state.sockets) socket.destroy();
+        state.sockets.clear();
+        sessionKeys.delete(session);
+      }, enumerable: false });
       return session;
     } finally { packet.fill(0); }
   } catch (_error) { throw genericError(); }
@@ -70,8 +78,8 @@ function validRecord(record) {
 }
 
 async function sendCredentialPipeRequest(session, request, { timeoutMs = 5000, expectedOperationId, expectedCandidateHash } = {}) {
-  const key = session && sessionKeys.get(session);
-  if (!session || !NAME.test(session.name || "") || !Buffer.isBuffer(key) || key.length !== 32 ||
+  const state = session && sessionKeys.get(session);
+  if (!session || !NAME.test(session.name || "") || !state || state.closed || !Buffer.isBuffer(state.key) || state.key.length !== 32 ||
       !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000) throw genericError();
   if (!request || typeof request !== "object" || Array.isArray(request)) throw genericError();
   if (request.command === "prepare") {
@@ -83,21 +91,29 @@ async function sendCredentialPipeRequest(session, request, { timeoutMs = 5000, e
   let payload;
   try { payload = Buffer.from(JSON.stringify(request), "utf8"); } catch (_error) { throw genericError(); }
   if (payload.length === 0 || payload.length > MAX_FRAME) { payload.fill(0); throw genericError(); }
-  const socket = net.createConnection(session.name);
+  const key = Buffer.from(state.key);
+  let socket;
+  try { socket = net.createConnection(session.name); } catch (_error) { key.fill(0); payload.fill(0); throw genericError(); }
+  state.sockets.add(socket);
   // An error can arrive between two framed reads, when no phase-specific
   // listener is installed. Always consume it; active waits still reject and
   // the overall timer bounds a connection that fails between phases.
   socket.on("error", () => {});
   const timer = setTimeout(() => socket.destroy(genericError()), timeoutMs);
   try {
-    await new Promise((resolve, reject) => { socket.once("connect", resolve); socket.once("error", () => reject(genericError())); });
+    await new Promise((resolve, reject) => {
+      socket.once("connect", resolve);
+      socket.once("error", () => reject(genericError()));
+      socket.once("close", () => reject(genericError()));
+    });
+    if (state.closed) throw genericError();
     const challenge = crypto.randomBytes(32);
     socket.write(challenge);
     const proof = await readExactly(socket, 32);
     const expected = crypto.createHmac("sha256", key).update(PROOF_DOMAIN).update(challenge).digest();
     const valid = crypto.timingSafeEqual(proof, expected);
     proof.fill(0); expected.fill(0); challenge.fill(0);
-    if (!valid) throw genericError();
+    if (!valid || state.closed) throw genericError();
     const frame = Buffer.alloc(4 + payload.length);
     frame.writeUInt32BE(payload.length); payload.copy(frame, 4);
     try { await new Promise((resolve, reject) => socket.write(frame, error => error ? reject(genericError()) : resolve())); }
@@ -121,7 +137,7 @@ async function sendCredentialPipeRequest(session, request, { timeoutMs = 5000, e
       return parsed;
     } finally { response.fill(0); }
   } catch (_error) { throw genericError(); }
-  finally { clearTimeout(timer); payload.fill(0); socket.destroy(); }
+  finally { clearTimeout(timer); payload.fill(0); key.fill(0); state.sockets.delete(socket); socket.destroy(); }
 }
 
 module.exports = { receiveCredentialPipeBootstrap, sendCredentialPipeRequest };
