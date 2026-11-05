@@ -102,17 +102,46 @@ describe("Agent credential rotation on PostgreSQL", function () {
     await assert.rejects(ack({ env }), { code: "CERTOPS_AGENT_ROTATION_DISABLED" });
     await assert.rejects(ack({ agent: f.agent }), { code: "CERTOPS_AGENT_CREDENTIAL_STALE" });
     await assert.rejects(ack({ operationId: randomUUID().replaceAll("-", "") }), { code: "CERTOPS_AGENT_ROTATION_UNAUTHORIZED" });
+    const unknownJob = randomUUID(), unrelatedJob = randomUUID();
+    await db.query("INSERT INTO certificate_jobs (id, workspace_id, status, needs_operator_reconciliation) VALUES ($1, $2, 'orphaned_unknown_effect', TRUE), ($3, $4, 'orphaned_unknown_effect', TRUE)", [unknownJob, f.workspaceId, unrelatedJob, randomUUID()]);
+    await assert.rejects(ack(), { code: "CERTOPS_AGENT_ROTATION_CONFLICT" });
+    assert.equal((await db.query("SELECT state FROM certops_agent_credential_rotations WHERE agent_id = $1", [f.agent.id])).rows[0].state, "committed");
+    // Fixture-only state change; the product has no supported closure flow yet.
+    await db.query("UPDATE certificate_jobs SET status = 'succeeded', needs_operator_reconciliation = FALSE WHERE id = $1", [unknownJob]);
     await assert.rejects(ack({ audit: async () => { throw new Error("audit unavailable"); } }));
     assert.equal((await db.query("SELECT state FROM certops_agent_credential_rotations WHERE agent_id = $1", [f.agent.id])).rows[0].state, "committed");
     let ackAudits = 0;
     const auditOnce = async () => { ackAudits++; };
     assert.deepEqual(await ack({ audit: auditOnce }), { state: "acknowledged" });
+    // Once acknowledged, a lost ACK response remains retryable even if
+    // normal claims have since resumed.
+    await db.query("UPDATE certificate_jobs SET status = 'claimed', claimed_by_agent_id = $2 WHERE id = $1", [unknownJob, f.agent.id]);
     assert.deepEqual(await ack({ audit: auditOnce }), { state: "acknowledged" });
     assert.equal(ackAudits, 1);
+    await db.query("UPDATE certificate_jobs SET status = 'succeeded' WHERE id = $1", [unknownJob]);
     assert.deepEqual(await confirm(f), { state: "committed" });
     const next = generateAgentCredential();
     assert.deepEqual(await prep(f, { agent: current, operationId: randomUUID().replaceAll("-", ""), candidatePrefix: next.credentialPrefix, candidateHash: next.credentialHash }), { state: "pending" });
     await assert.rejects(ack(), { code: "CERTOPS_AGENT_ROTATION_UNAUTHORIZED" });
+  });
+  it("documents that an unrelated workspace effect can appear after the ACK check", async () => {
+    const f = await fixture(); await prep(f); await confirm(f);
+    const current = (await validateAgentCredential({ client: db, rawCredential: f.next.plaintextCredential })).agent;
+    const ackEnv = { ...env, CERTOPS_AGENT_ROTATION_ACK_ENABLED: "true" };
+    let enteredAudit, resumeAudit;
+    const entered = new Promise(resolve => { enteredAudit = resolve; });
+    const resume = new Promise(resolve => { resumeAudit = resolve; });
+    const ack = acknowledgeCredentialRotation({ dbPool: db, agent: current, operationId: f.operationId, env: ackEnv,
+      audit: async () => { enteredAudit(); await resume; } });
+    try {
+      // ACK has checked jobs and written its uncommitted receipt. A distinct
+      // workspace actor can still record an unknown effect before ACK commits.
+      await entered;
+      await db.query("INSERT INTO certificate_jobs (id, workspace_id, status, needs_operator_reconciliation) VALUES ($1, $2, 'orphaned_unknown_effect', TRUE)", [randomUUID(), f.workspaceId]);
+    } finally { resumeAudit(); }
+    assert.deepEqual(await ack, { state: "acknowledged" });
+    const unknown = await db.query("SELECT count(*) FROM certificate_jobs WHERE workspace_id = $1 AND needs_operator_reconciliation", [f.workspaceId]);
+    assert.equal(Number(unknown.rows[0].count), 1);
   });
   it("rejects expired preparations and an agent retired before confirmation", async () => {
     const expired = await fixture(); await prep(expired);

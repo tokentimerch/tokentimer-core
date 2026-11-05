@@ -101,6 +101,12 @@ describe("Agent credential rotation on migrated schema", function () {
     const ackEnabled = makeApp({ CERTOPS_AGENT_ROTATION_ALL_API_FENCED: "true", CERTOPS_AGENT_ROTATION_ACK_ENABLED: "true" });
     assert.equal((await supertest(ackEnabled).post(paths.ack).set("Authorization", `Bearer ${old.plaintextCredential}`).send({ operationId })).status, 401);
     assert.equal((await supertest(ackEnabled).post(paths.ack).set("Authorization", `Bearer ${next.plaintextCredential}`).send({ operationId, extra: 1 })).status, 400);
+    const uncertainJob = (await db.query(`INSERT INTO certificate_jobs (workspace_id, operation, status, needs_operator_reconciliation)
+      VALUES ($1, 'renew', 'orphaned_unknown_effect', TRUE) RETURNING id`, [workspaceId])).rows[0];
+    assert.equal((await supertest(ackEnabled).post(paths.ack).set("Authorization", `Bearer ${next.plaintextCredential}`).send({ operationId })).status, 409);
+    assert.equal((await db.query("SELECT state FROM certops_agent_credential_rotations WHERE operation_id = $1", [operationId])).rows[0].state, "committed");
+    // Fixture-only state change; the product has no supported closure flow yet.
+    await db.query("UPDATE certificate_jobs SET status = 'succeeded', needs_operator_reconciliation = FALSE WHERE id = $1", [uncertainJob.id]);
     assert.equal((await supertest(ackEnabled).post(paths.ack).set("Authorization", `Bearer ${next.plaintextCredential}`).send({ operationId })).status, 200);
     assert.equal((await supertest(ackEnabled).post(paths.ack).set("Authorization", `Bearer ${next.plaintextCredential}`).send({ operationId })).status, 200);
     await assert.rejects(claimJobs(claimOptions), /CLAIM_SELECTION_REACHED/);
