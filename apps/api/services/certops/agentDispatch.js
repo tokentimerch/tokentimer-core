@@ -1018,7 +1018,10 @@ async function claimJobs({
 
     // Throws CERTOPS_WORKSPACE_PAUSED / CERTOPS_DISABLED; the route maps
     // these to 409 / 404 and no job is claimed.
-    await lockWorkspace({ client, workspaceId: agent.workspaceId });
+    // A concurrent workspace or membership change owns the authority lock.
+    // Skip this poll instead of waiting while holding the agent sequence lock.
+    const workspace = await lockWorkspace({ client, workspaceId: agent.workspaceId, skipLocked: true });
+    if (workspace === null) return { jobs: [], logStreams: [] };
 
     // Claiming is a liveness signal: an agent polling for jobs is alive, so
     // last_seen_at advances and an 'offline' agent flips back to 'active'.

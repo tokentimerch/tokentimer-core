@@ -100,9 +100,9 @@ function stateFromRow({
   };
 }
 
-async function loadWorkspacePauseState(dbPool, workspaceId, { lock = null } = {}) {
+async function loadWorkspacePauseState(dbPool, workspaceId, { lock = null, skipLocked = false } = {}) {
   const lockClause =
-    lock === "update" ? " FOR UPDATE" : lock === "share" ? " FOR SHARE" : "";
+    lock === "update" ? " FOR UPDATE" : lock === "share" ? ` FOR SHARE${skipLocked ? " SKIP LOCKED" : ""}` : "";
   const result = await dbPool.query(
     `SELECT id, certops_paused, certops_require_approval_always
        FROM workspaces
@@ -111,6 +111,7 @@ async function loadWorkspacePauseState(dbPool, workspaceId, { lock = null } = {}
   );
   const row = result.rows[0];
   if (!row) {
+    if (lock === "share" && skipLocked) return null;
     throw workspaceKillSwitchError(
       "Workspace not found",
       CERTOPS_WORKSPACE_NOT_FOUND,
@@ -197,6 +198,7 @@ async function lockWorkspaceForCertOpsSideEffect({
   workspaceId,
   certOpsEnabledResolver = isCertOpsEnabled,
   env = process.env,
+  skipLocked = false,
 } = {}) {
   if (!client || typeof client.query !== "function") {
     throw workspaceKillSwitchError(
@@ -213,7 +215,9 @@ async function lockWorkspaceForCertOpsSideEffect({
 
   const workspace = await loadWorkspacePauseState(client, workspaceId, {
     lock: "share",
+    skipLocked,
   });
+  if (workspace === null) return null;
   const certOpsEnabled = await certOpsEnabledResolver({ dbPool: client, env });
   const state = stateFromRow({
     workspaceId: workspace.id,
