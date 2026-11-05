@@ -46,6 +46,25 @@ test("fails closed for unexpected, missing or linked executable material", async
       assert.throws(() => collect(root, "amd64"), /Unsupported Windows executable script/);
     }
   });
+  await t.test("unsupported native formats, including case variations", t => {
+    for (const extension of ["dll", "COM", "node", "msi", "sys", "scr", "ocx", "cpl", "drv", "efi", "msp", "msix", "msixbundle", "appx", "appxbundle", "pif", "xll", "ax", "acm", "tsp", "ime"]) {
+      const root = fixture(t);
+      fs.writeFileSync(path.join(root, `extra.${extension}`), "unknown");
+      assert.throws(() => collect(root, "amd64"), /Unsupported Windows native executable/);
+    }
+  });
+  await t.test("rejects a renamed PE but accepts ordinary JavaScript", t => {
+    const root = fixture(t);
+    const file = path.join(root, "extra.js");
+    fs.writeFileSync(file, "console.log('agent JavaScript')");
+    assert.equal(collect(root, "amd64").length, OWNED.length);
+    const executable = Buffer.alloc(128);
+    executable.write("MZ");
+    executable.writeUInt32LE(64, 0x3c);
+    executable.write("PE\0\0", 64, "ascii");
+    fs.writeFileSync(file, executable);
+    assert.throws(() => collect(root, "amd64"), /Unsupported Windows native executable/);
+  });
   await t.test("missing script", t => {
     const root = fixture(t);
     fs.unlinkSync(path.join(root, "scripts", "install-agent.ps1"));

@@ -17,11 +17,29 @@ const OWNED = Object.freeze([
   ]),
 ]);
 
+// Unknown native modules and installer formats must never slip past the
+// explicitly selected signing targets. JavaScript remains a required payload.
+const UNSUPPORTED_NATIVE = /\.(dll|com|sys|scr|ocx|cpl|drv|efi|msi|msp|msix|msixbundle|appx|appxbundle|node|pif|xll|ax|acm|tsp|ime)$/i;
+
+function isPortableExecutable(file, size) {
+  if (size < 64) return false;
+  const fd = fs.openSync(file, "r");
+  try {
+    const header = Buffer.alloc(64);
+    if (fs.readSync(fd, header, 0, header.length, 0) !== header.length || header.toString("ascii", 0, 2) !== "MZ") return false;
+    const offset = header.readUInt32LE(0x3c);
+    if (offset < 64 || offset > size - 4) return false;
+    const signature = Buffer.alloc(4);
+    return fs.readSync(fd, signature, 0, 4, offset) === 4 && signature.equals(Buffer.from([0x50, 0x45, 0, 0]));
+  } finally { fs.closeSync(fd); }
+}
+
 function collect(root, architecture) {
   if (!path.isAbsolute(root) || !["amd64", "arm64"].includes(architecture)) throw new Error("Invalid stage identity");
   const rootStat = fs.lstatSync(root);
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error("Invalid package root");
   const found = new Set();
+  const expected = new Set([...OWNED, `runtime/${architecture}/node.exe`].map(v => v.toLowerCase()));
   function walk(dir, relative) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const rel = relative ? `${relative}/${entry.name}` : entry.name;
@@ -32,6 +50,9 @@ function collect(root, architecture) {
       if (info.isDirectory()) { walk(current, rel); continue; }
       if (!info.isFile() || info.nlink !== 1) throw new Error("Nonregular stage entry");
       if (/\.(cmd|bat|vbs|vbe|wsf|hta)$/i.test(rel)) throw new Error("Unsupported Windows executable script");
+      if (UNSUPPORTED_NATIVE.test(rel) || (!expected.has(rel.toLowerCase()) && isPortableExecutable(current, info.size))) {
+        throw new Error("Unsupported Windows native executable");
+      }
       if (/\.(exe|ps1|psm1|psd1)$/i.test(rel)) {
         if (found.has(rel.toLowerCase())) throw new Error("Duplicate Windows path");
         found.add(rel.toLowerCase());
@@ -39,7 +60,6 @@ function collect(root, architecture) {
     }
   }
   walk(root, "");
-  const expected = new Set([...OWNED, `runtime/${architecture}/node.exe`].map(v => v.toLowerCase()));
   if (found.size !== expected.size || [...found].some(name => !expected.has(name))) throw new Error("Unexpected or missing executable signing target");
   return OWNED.map(name => path.join(root, ...name.split("/")));
 }
