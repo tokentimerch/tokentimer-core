@@ -119,6 +119,8 @@ vi.mock('../../src/styles/theme.js', async importOriginal => ({
 }));
 
 const GITLAB_SELF_HOSTED = 'https://gitlab.selfhosted.example';
+// Full provider journeys need a coverage-instrumented time budget.
+const AUTO_SYNC_FLOW_TIMEOUT = 20000;
 
 function renderModal(openRequest, extraProps = {}) {
   return (
@@ -226,7 +228,7 @@ describe.each(['gitlab', 'github'])(
         screen.getByRole('button', { name: 'Add another', exact: true })
       );
       expect(enable()).toBeDisabled();
-    });
+    }, AUTO_SYNC_FLOW_TIMEOUT);
     // These multi-step provider flows include several asynchronous renders;
     // allow coverage instrumentation without relaxing any per-step assertion.
     it('requires a fresh scan after credentials or scope change and after failed or stale scans', async () => {
@@ -290,7 +292,7 @@ describe.each(['gitlab', 'github'])(
       });
       fireEvent.click(confirm);
       expect(apiClient.post).not.toHaveBeenCalled();
-    }, 15_000);
+    }, AUTO_SYNC_FLOW_TIMEOUT);
     it('persists selected metric labels without another scan and clears them for the next configuration', async () => {
       await addAnother();
       fireEvent.click(scanButton());
@@ -370,7 +372,7 @@ describe.each(['gitlab', 'github'])(
       expect(
         screen.getByRole('textbox', { name: 'Monitoring group label' })
       ).toHaveValue('');
-    }, 15_000);
+    }, AUTO_SYNC_FLOW_TIMEOUT);
     it('allocates an unused configuration name despite deletions, whitespace and case', async () => {
       await addAnother();
       scan().mockResolvedValue({ ...result, items: [{ name: 'fixture' }] });

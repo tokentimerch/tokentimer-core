@@ -65,14 +65,14 @@
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "b18668ef148583cc0b1edf54e1001ededf4193b19f178b4fe5996e6b094a9a4f"
+          "sha256": "0d7bbb6a801307f7468ddfea37c9276fbb640b8c0b848e63f788bf734f1ad55b"
         },
         {
           "id": "integration-openapi-spec",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "b18668ef148583cc0b1edf54e1001ededf4193b19f178b4fe5996e6b094a9a4f"
+          "sha256": "0d7bbb6a801307f7468ddfea37c9276fbb640b8c0b848e63f788bf734f1ad55b"
         },
         {
           "id": "auth-route-compat-contract",
@@ -276,12 +276,6 @@
           "status": "existing"
         },
         {
-          "id": "certops-material-provider-module",
-          "kind": "module",
-          "path": "packages/contracts/certops/material-provider.cjs",
-          "status": "existing"
-        },
-        {
           "id": "certops-enrollment-snapshot-schema",
           "kind": "schema",
           "path": "packages/contracts/certops/enrollment-snapshot.schema.json",
@@ -329,6 +323,367 @@
           "kind": "schema",
           "status": "existing",
           "description": "Strict validator for public material publication, consumer bindings and deployment receipts."
+        },
+        {
+          "id": "certops-material-provider-module",
+          "kind": "module",
+          "path": "packages/contracts/certops/material-provider.cjs",
+          "status": "existing"
+        }
+      ]
+    },
+    {
+      "name": "mcp",
+      "entries": [
+        {
+          "id": "mcp-common-schema",
+          "kind": "schema",
+          "path": "packages/contracts/mcp/mcp-common.schema.json",
+          "status": "existing",
+          "description": "Shared definitions for the proposed MCP operator interface (ADR-0017)."
+        },
+        {
+          "id": "mcp-read-tools-schema",
+          "kind": "schema",
+          "path": "packages/contracts/mcp/mcp-read-tools.schema.json",
+          "status": "existing",
+          "description": "Input and output contracts for the first read-only MCP tools (proposed with ADR-0017)."
+        },
+        {
+          "id": "mcp-renew-tools-schema",
+          "kind": "schema",
+          "path": "packages/contracts/mcp/mcp-renew-tools.schema.json",
+          "status": "existing",
+          "description": "Input and output contracts for requesting a certificate renewal through an operator connection."
+        },
+        {
+          "id": "mcp-write-envelope-draft-schema",
+          "kind": "schema",
+          "path": "packages/contracts/mcp/mcp-write-envelope.draft.schema.json",
+          "status": "existing",
+          "description": "DRAFT write-path envelope. Not final; governing ADR decisions are open."
+        },
+        {
+          "id": "mcp-tool-catalog",
+          "kind": "spec",
+          "path": "packages/contracts/mcp/mcp-tool-catalog.json",
+          "status": "existing",
+          "description": "Tool catalog with scopes, minimum roles, advisory annotations and contract status."
+        },
+        {
+          "id": "mcp-read-tools-fixtures",
+          "kind": "spec",
+          "path": "packages/contracts/mcp/fixtures/read-tools.json",
+          "status": "existing",
+          "description": "Valid and invalid examples for the read-only tool contracts."
+        },
+        {
+          "id": "mcp-tool-contracts-test",
+          "kind": "test",
+          "path": "tests/contract/mcp-tool-contracts.test.js",
+          "status": "existing"
+        },
+        {
+          "id": "mcp-remote-router",
+          "kind": "module",
+          "path": "apps/api/routes/mcpRemote.js",
+          "status": "existing",
+          "sha256": "fb2943864ea01e560ff82d6f053f51b2d49da1f13a26d7a0d3e88ac2ad3f0f1f"
+        },
+        {
+          "id": "mcp-remote-authority",
+          "kind": "module",
+          "path": "apps/api/services/operator/oauth.js",
+          "status": "existing",
+          "sha256": "b6a6b46c7dfbdc347c96c8019f8bbb1f3352d03c2ed2b13ae12154eb06bd8436"
+        },
+        {
+          "id": "mcp-remote-protocol",
+          "kind": "module",
+          "path": "apps/api/services/operator/oauthProtocol.js",
+          "status": "existing",
+          "sha256": "c76eb11d64ff85acaaf4c5ef15b200d409c786f79f5c6b7118ac1ee0d74fbbe6"
+        },
+        {
+          "id": "mcp-remote-configuration",
+          "kind": "module",
+          "path": "apps/api/services/operator/remoteConfig.js",
+          "status": "existing",
+          "sha256": "a95122a388cd0b2b94f79f49a2ba1b4f65da842b7808aaed28833f9317beef5f"
+        },
+        {
+          "id": "mcp-remote-forwarding",
+          "kind": "module",
+          "path": "apps/api/services/operator/remoteForwarding.js",
+          "status": "existing",
+          "sha256": "817a893869d93380783c1a04c33ea326f67277b386a5da535a0640df8b8af4a0"
+        },
+        {
+          "id": "mcp-remote-migration",
+          "kind": "migration",
+          "path": "apps/api/migrations/102-operator-oauth.sql",
+          "status": "existing",
+          "sha256": "fb23b62ffd9ee8d40e4513161985f31cb3acbe890422d9c465e5193bb5a4d11b"
+        },
+        {
+          "id": "mcp-remote-transport",
+          "kind": "module",
+          "path": "packages/mcp/src/http.js",
+          "status": "existing",
+          "sha256": "19d7240b13011066c21972383e3f8e4d1dd6c1c370577ef7a6c1078f9b73769a"
+        },
+        {
+          "id": "mcp-remote-consent-page",
+          "kind": "module",
+          "path": "apps/dashboard/src/pages/McpAuthorizePage.jsx",
+          "status": "existing",
+          "sha256": "573eebbeeef008f95fdf8e463e68b984e3587edc648418cdc3db0489006b46c5"
+        },
+        {
+          "id": "mcp-remote-return-route",
+          "kind": "module",
+          "path": "apps/dashboard/src/utils/mcpAuthorization.js",
+          "status": "existing",
+          "sha256": "dd95ebf196b9f37bb50024eed1e24baeb81e0b4d9e52c566937270effc3f8b41"
+        },
+        {
+          "id": "mcp-setup-dialog",
+          "kind": "module",
+          "path": "apps/dashboard/src/components/certops/AssistantConnectionsPanel.jsx",
+          "status": "existing",
+          "sha256": "8e80837e5c1438d0a432594ed9ecfb2a13c4282f8ced06e7b88a2b4a23cad18c"
+        },
+        {
+          "id": "mcp-workspace-policy",
+          "kind": "module",
+          "path": "apps/dashboard/src/components/certops/AssistantWorkspacePolicyRow.jsx",
+          "status": "existing",
+          "sha256": "2ef161e72d7604ef79510ccdb44d43581240cbad03f54c4fea5b3f85a73595ae"
+        },
+        {
+          "id": "mcp-setup-preference",
+          "kind": "module",
+          "path": "apps/dashboard/src/utils/mcpSetupPreference.js",
+          "status": "existing",
+          "sha256": "7ec5c279a26389c704759dc54cccf8e85eb63460d3097f8747f2e597361613e9"
+        },
+        {
+          "id": "mcp-connections-dialog",
+          "kind": "module",
+          "path": "apps/dashboard/src/components/certops/AssistantConnectionsModal.jsx",
+          "status": "existing",
+          "sha256": "95c68dcbc45c9272fa4888c6e54cbb6a85dc3130439592fd433d189c9eaf9caa"
+        },
+        {
+          "id": "mcp-workspace-controls",
+          "kind": "module",
+          "path": "apps/dashboard/src/components/certops/CertOpsWorkspaceControls.jsx",
+          "status": "existing",
+          "sha256": "c89448e80a3f8b33490542c16de3b9398ff117196b31bb44b25f0294c0db9863"
+        },
+        {
+          "id": "mcp-inventory-tools-schema",
+          "kind": "schema",
+          "path": "packages/contracts/mcp/mcp-inventory-tools.schema.json",
+          "status": "existing",
+          "sha256": "c8e7292bf1cdef595ed47451def05273cb1c7227bc0ed2e86f17f843f417f955"
+        },
+        {
+          "id": "mcp-contact-tools-schema",
+          "kind": "schema",
+          "path": "packages/contracts/mcp/mcp-contact-tools.schema.json",
+          "status": "existing",
+          "description": "Input and output contracts for reviewed workspace contact creation.",
+          "sha256": "7d5a8d321d941dfd7ff909a8036d8b16ff6a23ea7e1a268c04282a94908024d5"
+        },
+        {
+          "id": "mcp-contact-creates",
+          "kind": "module",
+          "path": "apps/api/services/operator/contactCreates.js",
+          "status": "existing",
+          "sha256": "6680e15bb3cc04795f28e049daa3e3b6833caccf65f45e83c73f9f5e134904ad"
+        },
+        {
+          "id": "mcp-contact-validation",
+          "kind": "module",
+          "path": "apps/api/services/operator/contactValidation.js",
+          "status": "existing",
+          "sha256": "612bc339cc3d820b70d536c9ed674ead62c5da226820fd727b462fe3832b05b9"
+        },
+        {
+          "id": "mcp-webhook-tools-schema",
+          "kind": "schema",
+          "path": "packages/contracts/mcp/mcp-webhook-tools.schema.json",
+          "status": "existing",
+          "sha256": "5951a1b57f37573ec8e1c743f8dba9eab01c3ec6232d7774f99eb020e5492bb8"
+        },
+        {
+          "id": "mcp-webhook-creates",
+          "kind": "module",
+          "path": "apps/api/services/operator/webhookCreates.js",
+          "status": "existing",
+          "sha256": "4ceff06fd37c82eb974c10a27a4bec8ab18281e21ea60ba86252a3046ad01138"
+        },
+        {
+          "id": "mcp-webhook-validation",
+          "kind": "module",
+          "path": "apps/api/services/operator/webhookValidation.js",
+          "status": "existing",
+          "sha256": "84ad329d740c6ac898ce1483cb5cc28cfec56d4e9d857a27bf134410e703141e"
+        },
+        {
+          "id": "mcp-contact-group-tools-schema",
+          "kind": "schema",
+          "path": "packages/contracts/mcp/mcp-contact-group-tools.schema.json",
+          "status": "existing",
+          "sha256": "c42bc0d1cdc6454e2685ee2e0e864b36eb15cb62d478cdcf96eeb58ffb570474"
+        },
+        {
+          "id": "mcp-contact-group-creates",
+          "kind": "module",
+          "path": "apps/api/services/operator/contactGroupCreates.js",
+          "status": "existing",
+          "sha256": "aca463eacc041de660ba36f14ff9da20b58426f01d7f137d244859a4ea239b7e"
+        },
+        {
+          "id": "mcp-contact-group-validation",
+          "kind": "module",
+          "path": "apps/api/services/operator/contactGroupValidation.js",
+          "status": "existing",
+          "sha256": "789a84e71963b15d3a67d07fba998c5263f7b96f4e228d3999f05da301234e34"
+        },
+        {
+          "id": "mcp-member-tools-schema",
+          "kind": "schema",
+          "path": "packages/contracts/mcp/mcp-member-tools.schema.json",
+          "status": "existing",
+          "sha256": "b9d3dc0a93f2e57fb83b9958db4584678c6c2f6f801a32102615183b99763309"
+        },
+        {
+          "id": "mcp-member-invites",
+          "kind": "module",
+          "path": "apps/api/services/operator/memberInvites.js",
+          "status": "existing",
+          "sha256": "5e917d71782027cc3c7e2e0102045b0f12a8877e874e851d6cab2db10216b601"
+        },
+        {
+          "id": "mcp-member-invite-validation",
+          "kind": "module",
+          "path": "apps/api/services/operator/memberInviteValidation.js",
+          "status": "existing",
+          "sha256": "9ca9a3d8113ff659d7e37082438be5b4497102d414e99ac2024199b964ead961"
+        },
+        {
+          "id": "mcp-member-invite-policy",
+          "kind": "module",
+          "path": "apps/api/services/operator/memberInvitePolicy.js",
+          "status": "existing",
+          "sha256": "0f480cf8abeb0d1f03afe196f517f9c084c1ebdecf7608c39da5282430c4d08b"
+        },
+        {
+          "id": "mcp-inventory-updates",
+          "kind": "module",
+          "path": "apps/api/services/operator/inventoryUpdates.js",
+          "status": "existing",
+          "sha256": "18812466571208cbfbc7504fb483a3f887689a3e458cb9dcd70b9fcb0449434c"
+        },
+        {
+          "id": "mcp-inventory-update-validation",
+          "kind": "module",
+          "path": "apps/api/services/operator/inventoryUpdateValidation.js",
+          "status": "existing",
+          "sha256": "66d5de9f0a21dcdb986a13d279cb6621509916d1a988b846875a6080a0f405a1"
+        },
+        {
+          "id": "mcp-token-inventory",
+          "kind": "module",
+          "path": "apps/api/services/operator/tokenInventory.js",
+          "status": "existing",
+          "sha256": "1f6d8d7fbc783ec644ff94640f1b69d6b19144e2ed03da2094f3444a410da7ee"
+        },
+        {
+          "id": "mcp-inventory-imports",
+          "kind": "module",
+          "path": "apps/api/services/operator/inventoryImports.js",
+          "status": "existing",
+          "sha256": "9b00dd684f0cc0edbf4f0d63b0e3abc08a112482c90fc56c9d31388ae75ffa50"
+        },
+        {
+          "id": "mcp-inventory-policy",
+          "kind": "module",
+          "path": "apps/api/services/operator/inventoryPolicy.js",
+          "status": "existing",
+          "sha256": "6d7fc2cb0b12b5ac9748642801730da90f3f3d371f908408052e28940ffab2ee"
+        },
+        {
+          "id": "mcp-inventory-router",
+          "kind": "module",
+          "path": "apps/api/routes/operatorInventory.js",
+          "status": "existing",
+          "sha256": "3c8e4d4aab496f96216e120ee47529fa38bd7e175d9dc97be8db5636887dc428"
+        },
+        {
+          "id": "mcp-inventory-migration",
+          "kind": "migration",
+          "path": "apps/api/migrations/104-operator-inventory.sql",
+          "status": "existing",
+          "sha256": "a0eba44f115b5349183bf86aa1b18be3704948de510dd1195f49ec4d15cafd02"
+        },
+        {
+          "id": "mcp-inventory-postgres-test",
+          "kind": "test",
+          "path": "tests/postgres/operator-inventory.test.js",
+          "status": "existing",
+          "sha256": "e3ce33001a0fbc548564b1700fd36ccfc0228fe331f90ce8bb4b42efc5cc4d76"
+        },
+        {
+          "id": "mcp-connection-lifetimes-migration",
+          "kind": "migration",
+          "path": "apps/api/migrations/103-operator-connection-lifetimes.sql",
+          "status": "existing",
+          "sha256": "8c875dc1bc298a3eb71969ceecf3a533a9d8c5a674388cc4af47f100a54adc9f"
+        },
+        {
+          "id": "mcp-oauth-retention-migration",
+          "kind": "migration",
+          "path": "apps/api/migrations/105-operator-oauth-retention.sql",
+          "status": "existing",
+          "sha256": "98be48a3bc5b69dd540237ee9b54d5daea955dbfa0f22e1552afcca2a62ef1d5"
+        },
+        {
+          "id": "mcp-issuance-tools-schema",
+          "kind": "schema",
+          "path": "packages/contracts/mcp/mcp-issuance-tools.schema.json",
+          "status": "existing",
+          "sha256": "5d56f1406bc9f937921b6ed5c5e80747b11d7e539d7c7caf7fd1c849df6e83d5"
+        },
+        {
+          "id": "mcp-issuance-requests",
+          "kind": "module",
+          "path": "apps/api/services/operator/issuanceRequests.js",
+          "status": "existing",
+          "sha256": "366961a37cbbea6b4bb62457622dfdbabaf71cb10da5233e1c79fabb5d283f26"
+        },
+        {
+          "id": "mcp-issuance-validation",
+          "kind": "module",
+          "path": "apps/api/services/operator/issuanceValidation.js",
+          "status": "existing",
+          "sha256": "3cf5164c456ac07c507ef960d64b569fd2d4b895beb2258f53f4a94c207fd269"
+        },
+        {
+          "id": "mcp-issuance-migration",
+          "kind": "migration",
+          "path": "apps/api/migrations/106-operator-issuance.sql",
+          "status": "existing",
+          "sha256": "2b3433bdf174753bf8c8111cdfa5a71537c6b107b8fdebf055f28b40ccc266c9"
+        },
+        {
+          "id": "mcp-issuance-validation-test",
+          "kind": "test",
+          "path": "tests/unit/operator-issuance-validation.test.js",
+          "status": "existing",
+          "sha256": "e916fb2e2b32c2976546ae7ce76e17e61943915c9df44250a55697699d0e596d"
         }
       ]
     }

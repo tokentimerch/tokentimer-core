@@ -37,10 +37,11 @@ const globalLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: isDevOrTest,
   skipFailedRequests: false,
-  keyGenerator: (req) => ipKeyGenerator(req),
+  keyGenerator: (req) => require("../services/operator/remoteForwarding").remoteRateKey(req) || ipKeyGenerator(req),
 });
 
 const speedLimiter = slowDown({
+  keyGenerator: (req) => require("../services/operator/remoteForwarding").remoteRateKey(req) || ipKeyGenerator(req),
   windowMs: intEnv("GLOBAL_SLOWDOWN_WINDOW_MS", 15 * 60 * 1000),
   delayAfter: intEnv("GLOBAL_SLOWDOWN_DELAY_AFTER", 50),
   delayMs: () => intEnv("GLOBAL_SLOWDOWN_DELAY_MS", 500),
@@ -192,6 +193,8 @@ function createApiLimiter(max, label) {
     legacyHeaders: false,
     skipSuccessfulRequests: false,
     keyGenerator: (req) => {
+      const remoteKey = require("../services/operator/remoteForwarding").remoteRateKey(req);
+      if (remoteKey) return remoteKey;
       if (req.user && req.user.id) {
         logger.info("Rate limiting key generated", {
           type: `api_user_${label}`,
@@ -373,6 +376,33 @@ const diagnosticBootstrapLimiter = rateLimit({
 
 function getDiagnosticBootstrapLimiter() {
   return diagnosticBootstrapLimiter;
+}
+
+// Redeeming an enrollment grant is reachable without a session, so it is
+// limited per client address. A grant is a 256-bit secret, so this is
+// defense in depth against noise and probing, not the primary protection.
+const operatorEnrollmentLimiter = rateLimit({
+  windowMs: intEnv("OPERATOR_ENROLLMENT_RATE_LIMIT_WINDOW_MS", 15 * 60 * 1000),
+  max: Math.max(
+    1,
+    intEnv("OPERATOR_ENROLLMENT_RATE_LIMIT_MAX", isDevOrTest ? 1000 : 20),
+  ),
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    logger.warn("RATE_LIMIT_EXCEEDED", {
+      type: "operator_enrollment",
+      ip: resolveClientIp(req),
+    });
+    res.status(429).json({
+      error: "Too many enrollment attempts. Please wait before trying again.",
+      code: "OPERATOR_ENROLLMENT_RATE_LIMITED",
+    });
+  },
+});
+
+function getOperatorEnrollmentLimiter() {
+  return operatorEnrollmentLimiter;
 }
 
 let resolvedApiLimiter;
@@ -565,6 +595,7 @@ module.exports = {
   getTwilioWebhookLimiter,
   getDomainCheckerLookupLimiter,
   getDiagnosticBootstrapLimiter,
+  getOperatorEnrollmentLimiter,
   getTestApiLimiter,
   csrfTokenLimiter,
   recipientVerificationPageLimiter,

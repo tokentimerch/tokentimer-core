@@ -45,6 +45,7 @@ const {
 } = require("./services/rbac");
 const { hideWorkspaceExistence } = require("./middleware/workspace-access-policy");
 const { generateCsrfToken, csrfExempt } = require("./middleware/csrf");
+const { guardOperatorCredentials } = require("./middleware/operator-connection-auth");
 const {
   createCertOpsMachineWritePreParserBoundary,
 } = require("./middleware/certops-executor-body-parser");
@@ -256,13 +257,18 @@ const corsOptions = {
   ],
   maxAge: 86400, // 24 hours
 };
-app.use(cors(corsOptions));
-app.options(/.*/, cors(corsOptions));
+const { remoteCors, remoteBodyParser, createMcpRemoteRouter } = require("./routes/mcpRemote");
+require("./services/operator/remoteConfig").remoteConfig();
+app.use(remoteCors);
+const ordinaryCors = cors(corsOptions);
+app.use((req, res, next) => req.mcpRemoteConfig ? next() : ordinaryCors(req, res, next));
+app.options(/.*/, ordinaryCors);
 
 // 3. Request size limits. The exact CertOps machine-write boundary runs its
 // prefix/IP limiter before parsing, then applies the smaller dedicated parser.
 // It marks accepted requests so the machine router does not count them twice.
 app.use(createCertOpsMachineWritePreParserBoundary());
+app.use(remoteBodyParser);
 // Parser, not a route. Global and per-route limiters apply to handlers.
 // codeql[js/missing-rate-limiting]
 app.use(express.json({ limit: "10mb" })); // Limit JSON payload size (10mb for large integration scans)
@@ -324,6 +330,11 @@ app.use(cookieParser());
 // middleware on the route so it sits in the same setup as those handlers.
 app.use("/api", csrfExempt);
 app.use("/auth", csrfExempt);
+
+// Operator connection credentials are only valid on the operator namespace.
+// Reject them everywhere else before any other authentication runs.
+app.use("/api", guardOperatorCredentials);
+app.use("/auth", guardOperatorCredentials);
 
 const {
   speedLimiter,
@@ -758,6 +769,9 @@ app.use(require("./routes/certops-enrollments"));
 app.use(require("./routes/certops-executor"));
 // --- CERTOPS AGENT (agent-protocol machine routes) ---
 app.use(require("./routes/certops-agent"));
+// --- OPERATOR INTERFACE (connection management and the operator namespace) ---
+app.use(createMcpRemoteRouter());
+app.use(require("./routes/operator"));
 // --- ADMIN (extracted to routes/admin.js) ---
 app.use(require("./routes/admin"));
 

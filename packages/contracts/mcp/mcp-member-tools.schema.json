@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/mcp/mcp-member-tools.schema.json",
+  "title": "MCP reviewed email-only workspace invitation",
+  "definitions": {
+    "tt_preview_member_invite_input": {
+      "type": "object", "additionalProperties": false, "required": ["invite"],
+      "properties": {
+        "invite": {
+          "type": "object", "additionalProperties": false, "required": ["email"],
+          "properties": { "email": { "type": "string", "minLength": 1, "maxLength": 254 } }
+        }
+      }
+    },
+    "tt_preview_member_invite_output": {
+      "type": "object", "additionalProperties": false, "required": ["planId", "planHash", "expiresAt", "effect"],
+      "properties": {
+        "planId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+        "planHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "expiresAt": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/timestamp" },
+        "effect": {
+          "type": "object", "additionalProperties": false,
+          "required": ["email", "workspaceName", "role", "mode", "attemptsEmail"],
+          "properties": {
+            "email": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/untrustedText" },
+            "workspaceName": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/untrustedText" },
+            "role": { "const": "viewer" },
+            "mode": { "type": "string", "enum": ["add_existing_user", "invite_new_user"] },
+            "attemptsEmail": { "const": true }
+          }
+        }
+      }
+    },
+    "tt_invite_member_input": {
+      "type": "object", "additionalProperties": false, "required": ["planId", "planHash", "requestId"],
+      "properties": {
+        "planId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+        "planHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "requestId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" }
+      }
+    },
+    "tt_invite_member_output": {
+      "type": "object", "additionalProperties": false,
+      "required": ["operation", "requestId", "planId", "mode", "role", "state", "emailStatus", "replayed"],
+      "properties": {
+        "operation": { "const": "invite_member" },
+        "requestId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+        "planId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+        "mode": { "type": "string", "enum": ["add_existing_user", "invite_new_user"] },
+        "role": { "const": "viewer" },
+        "state": { "const": "succeeded" },
+        "emailStatus": { "type": "string", "enum": ["pending", "unknown", "sent", "failed"] },
+        "replayed": { "type": "boolean" }
+      }
+    }
+  }
+}

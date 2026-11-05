@@ -249,6 +249,83 @@ test("manual rollout authority composes before or after reserved companion migra
   assert.deepEqual(composeMigrations(registry, planned), planned);
 });
 
+test("the reviewed MCP 94-96 preview keeps full and partial ledgers before OAuth arrives", () => {
+  const { migrations } = require("../../apps/api/migrations/migrate");
+  const original = migrations.filter(entry => entry.version <= 85 || [92, 93].includes(entry.version));
+  const names = ["operator_connections", "operator_enrollment_grants", "operator_action_requests"];
+  for (const count of [1, 2, 3]) {
+    const prior = [...original, ...names.slice(0, count).map((name, index) => ({ ...migrations.find(entry => entry.name === name), version: 94 + index }))];
+    const result = composeMigrations(migrations, prior);
+    for (const row of prior) assert.equal(result.find(entry => entry.name === row.name).version, row.version);
+    for (const name of names) assert.equal(result.find(entry => entry.name === name).version, 94 + names.indexOf(name));
+    assert.equal(result.find(entry => entry.name === "pagerduty_operator_actions").version, 97);
+    assert.equal(result.find(entry => entry.name === "operator_oauth").version, 100);
+    assert.deepEqual(composeMigrations(migrations, result), result);
+  }
+  assert.throws(() => composeMigrations(migrations, [...original, { version: 95, name: names[0] }]), /Unsupported Core migration history/);
+});
+
+test("MCP draft 96-103 upgrades without replacing the manual authority migration", () => {
+  const { migrations } = require("../../apps/api/migrations/migrate");
+  const original = migrations.filter((entry) => entry.version <= 85 || [92, 93, 94, 95].includes(entry.version));
+  const names = ["operator_connections", "operator_enrollment_grants", "operator_action_requests", "operator_oauth", "operator_connection_lifetimes", "operator_inventory", "operator_oauth_retention", "operator_issuance"];
+  for (let count = 1; count <= names.length; count++) {
+    const prior = [...original, ...names.slice(0, count).map((name, index) => ({ ...migrations.find((entry) => entry.name === name), version: 96 + index }))];
+    const planned = composeMigrations(migrations, prior);
+    for (const row of prior) assert.equal(planned.find((entry) => entry.name === row.name).version, row.version);
+    assert.ok(planned.find((entry) => entry.name === "certops_manual_rollout_authority").version > 103);
+    assert.deepEqual(composeMigrations(migrations, planned), planned);
+  }
+});
+
+test("MCP lifetime, inventory and retention upgrades preserve partial preview ledgers before and after companion features", () => {
+  const { migrations } = require("../../apps/api/migrations/migrate");
+  const { reservations } = require("../../apps/api/migrations/migration-reservations.cjs");
+  const companions = Object.entries(reservations).filter(([version]) => Number(version) >= 86 && Number(version) <= 91)
+    .map(([version, name]) => ({ version: Number(version), name, sql: "SELECT 1;" }));
+  const integrated = [...migrations, ...companions];
+  const prefix = migrations.filter((row) => row.version < 78);
+  const earlierNames = ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "auto_sync_system_metrics", "operator_connections", "operator_enrollment_grants", "operator_action_requests"];
+  const histories = [
+    migrations.filter((row) => row.version <= 102),
+    [...prefix, ...["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "certops_material_providers"].map((name, index) => ({ version: 78 + index, name }))],
+    ...[1, 2, 3].map((count) => [...prefix, ...earlierNames.slice(0, 5 + count).map((name, index) => ({ version: 78 + index, name }))]),
+    ...[1, 2, 3].map((count) => [...migrations.filter((row) => row.version <= 85 || [92, 93].includes(row.version)), ...["operator_connections", "operator_enrollment_grants", "operator_action_requests"].slice(0, count).map((name, index) => ({ version: 94 + index, name }))]),
+  ];
+  const preserve = (recorded, plan) => {
+    for (const row of recorded) {
+      const found = plan.find((entry) => entry.version === row.version);
+      assert.equal(found?.name, row.name, `applied ${row.version}/${row.name} stays unchanged`);
+      if (row.sql) assert.equal(found.sql, row.sql, `applied SQL for ${row.name} stays unchanged`);
+    }
+    assert.equal(new Set(plan.map((row) => row.version)).size, plan.length);
+    assert.equal(new Set(plan.map((row) => row.name)).size, plan.length);
+    assert.deepEqual(composeMigrations(integrated, plan), plan, "completed upgrade plan replays unchanged");
+  };
+  for (const history of histories) {
+    for (const lastVersion of [102, 103, 104, 105, 106]) {
+      const registry = migrations.filter((row) => row.version <= lastVersion);
+      const oldPlan = composeMigrations(registry, history);
+      const firstMcp = oldPlan.findIndex((row) => row.name === "operator_connections");
+      for (let length = firstMcp; length <= oldPlan.length; length++) {
+        const recorded = oldPlan.slice(0, length);
+        preserve(recorded, composeMigrations(integrated, recorded));
+        const companionsFirst = composeMigrations([...registry, ...companions], recorded);
+        preserve(companionsFirst, composeMigrations(integrated, companionsFirst));
+      }
+    }
+  }
+});
+
+test("new MCP schema dependencies cannot be recorded before their required tables", () => {
+  const { migrations } = require("../../apps/api/migrations/migrate");
+  const prefix = migrations.filter((row) => row.version < 99);
+  for (const name of ["operator_connection_lifetimes", "operator_inventory", "operator_oauth_retention"]) {
+    const entry = migrations.find((row) => row.name === name);
+    assert.throws(() => composeMigrations(migrations, [...prefix, entry]), /incomplete dependency/);
+  }
+});
+
 test("all 72 legacy distribution-first definitions retain their immutable historical SQL", () => {
   const coreRoot = path.resolve(__dirname, "../..");
   const { migrations } = require(

@@ -1,0 +1,105 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/mcp/mcp-contact-group-tools.schema.json",
+  "title": "MCP reviewed workspace contact groups",
+  "definitions": {
+    "tt_list_group_sources_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "limit": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/limit" },
+        "cursor": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/cursor" }
+      }
+    },
+    "tt_list_group_sources_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "completeness"],
+      "properties": {
+        "items": {
+          "type": "array", "maxItems": 50,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["kind", "id", "name", "hasEmail", "hasWhatsapp"],
+            "properties": {
+              "kind": { "type": "string", "enum": ["contact", "webhook"] },
+              "id": { "oneOf": [{ "type": "null" }, { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" }] },
+              "name": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/untrustedText" },
+              "hasEmail": { "type": "boolean" },
+              "hasWhatsapp": { "type": "boolean" }
+            }
+          }
+        },
+        "completeness": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/completeness" }
+      }
+    },
+    "weeklyDigest": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "email": { "type": "boolean" }, "whatsapp": { "type": "boolean" }, "webhooks": { "type": "boolean" } }
+    },
+    "tt_preview_contact_group_input": {
+      "type": "object", "additionalProperties": false, "required": ["group"],
+      "properties": {
+        "group": {
+          "type": "object", "additionalProperties": false, "required": ["name"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+            "emailContactIds": { "type": "array", "maxItems": 50, "items": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" } },
+            "whatsappContactIds": { "type": "array", "maxItems": 50, "items": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" } },
+            "webhookNames": { "type": "array", "maxItems": 50, "items": { "type": "string", "minLength": 1, "maxLength": 100 } },
+            "weeklyDigest": { "$ref": "#/definitions/weeklyDigest" }
+          }
+        }
+      }
+    },
+    "tt_preview_contact_group_output": {
+      "type": "object", "additionalProperties": false, "required": ["planId", "planHash", "expiresAt", "effect"],
+      "properties": {
+        "planId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+        "planHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "expiresAt": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/timestamp" },
+        "effect": {
+          "type": "object", "additionalProperties": false,
+          "required": ["name", "contacts", "emailContactIds", "whatsappContactIds", "webhookNames", "weeklyDigest"],
+          "properties": {
+            "name": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/untrustedText" },
+            "contacts": {
+              "type": "array", "maxItems": 100,
+              "items": {
+                "type": "object", "additionalProperties": false, "required": ["id", "name"],
+                "properties": {
+                  "id": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+                  "name": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/untrustedText" }
+                }
+              }
+            },
+            "emailContactIds": { "type": "array", "maxItems": 50, "items": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" } },
+            "whatsappContactIds": { "type": "array", "maxItems": 50, "items": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" } },
+            "webhookNames": { "type": "array", "maxItems": 50, "items": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/untrustedText" } },
+            "weeklyDigest": { "$ref": "#/definitions/weeklyDigest" }
+          }
+        }
+      }
+    },
+    "tt_create_contact_group_input": {
+      "type": "object", "additionalProperties": false, "required": ["planId", "planHash", "requestId"],
+      "properties": {
+        "planId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+        "planHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "requestId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" }
+      }
+    },
+    "tt_create_contact_group_output": {
+      "type": "object", "additionalProperties": false,
+      "required": ["operation", "requestId", "planId", "groupId", "state", "replayed"],
+      "properties": {
+        "operation": { "const": "create_contact_group" },
+        "requestId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+        "planId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+        "groupId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+        "state": { "const": "succeeded" },
+        "replayed": { "type": "boolean" }
+      }
+    }
+  }
+}

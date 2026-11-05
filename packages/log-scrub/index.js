@@ -12,7 +12,7 @@ const {
 
 const MAX_SCRUB_DEPTH = 8;
 const REDACT_KEY_PATTERN =
-  /password|secret|api[-_]?key|access[-_]?key|authorization|cookie|credential|private[-_]?key|token|role[-_]?id/i;
+  /password|secret|api[-_]?key|access[-_]?key|authorization|cookie|credential|private[-_]?key|token|role[-_]?id|code[-_]?verifier|mcp[-_]?forward/i;
 
 function isSensitiveKey(key) {
   return REDACT_KEY_PATTERN.test(String(key));
@@ -26,7 +26,13 @@ function scrubLogString(value) {
     if (containsPrivateKeyMaterial(privateKeyScrubbed)) {
       return PRIVATE_KEY_REDACTION_PLACEHOLDER;
     }
-    return redactGenericSecrets(privateKeyScrubbed);
+    return redactGenericSecrets(privateKeyScrubbed)
+      .replace(/\bttop[cmrgq]_[a-f0-9]{16}_[a-f0-9]{64}\b/gi, GENERIC_SECRET_REDACTION_PLACEHOLDER)
+      .replace(/([?&])([^=&#\s]+)=([^&#\s]*)/g, (whole, separator, rawKey) => {
+        let key;
+        try { key = decodeURIComponent(rawKey).toLowerCase(); } catch { return whole; }
+        return ["code", "code_verifier", "state", "client_secret", "refresh_token"].includes(key) ? `${separator}${rawKey}=${GENERIC_SECRET_REDACTION_PLACEHOLDER}` : whole;
+      });
   } catch (_error) {
     return GENERIC_SECRET_REDACTION_PLACEHOLDER;
   }

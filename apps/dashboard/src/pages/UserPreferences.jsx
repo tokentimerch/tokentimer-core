@@ -31,6 +31,7 @@ import {
   DashboardPanelHeader,
 } from '../components/DashboardPrimitives';
 import SEO from '../components/SEO.jsx';
+import AssistantConnectionsPanel from '../components/certops/AssistantConnectionsPanel.jsx';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import { workspaceAPI } from '../utils/apiClient';
 import { onboardingAPI } from '../utils/onboardingApi.js';
@@ -220,16 +221,6 @@ function PreferencesPanelHeader({ title, description, bodySecondary }) {
   );
 }
 
-function resolveViewerOnly(isViewerProp, workspaces) {
-  if (isViewerProp) return true;
-  const items = Array.isArray(workspaces) ? workspaces : [];
-  if (items.length === 0) return false;
-  const roles = items.map(w => String(w.role || '').toLowerCase());
-  const hasManagerOrAdmin =
-    roles.includes('admin') || roles.includes('workspace_manager');
-  return !hasManagerOrAdmin;
-}
-
 export default function UserPreferences({
   session,
   onLogout,
@@ -243,9 +234,14 @@ export default function UserPreferences({
   const { text, bodySecondary, border, dashboard } = useDashboardTheme();
   const appearanceIconBg = dashboard.accent.interactiveSurface;
   const appearanceIconColor = dashboard.accent.interactiveForeground;
-  const [viewerOnly, setViewerOnly] = useState(isViewer);
+  const [permission, setPermission] = useState(null);
 
   const { workspaceId } = useWorkspace();
+  const viewerOnly =
+    isViewer ||
+    permission?.workspaceId !== workspaceId ||
+    permission?.accountId !== session?.id ||
+    !['admin', 'workspace_manager'].includes(permission?.role);
   const [restartingSetup, setRestartingSetup] = useState(false);
 
   // Starting over only clears the guide's own progress. Assets, monitors and
@@ -273,27 +269,30 @@ export default function UserPreferences({
   };
 
   useEffect(() => {
-    if (isViewer) {
-      setViewerOnly(true);
+    if (isViewer || !workspaceId) {
+      setPermission(null);
       return;
     }
 
     let cancelled = false;
     (async () => {
       try {
-        const ws = await workspaceAPI.list(50, 0);
+        const ws = await workspaceAPI.get(workspaceId);
         if (cancelled) return;
-        const items = Array.isArray(ws?.items) ? ws.items : [];
-        setViewerOnly(resolveViewerOnly(false, items));
+        setPermission({
+          workspaceId,
+          accountId: session?.id,
+          role: String(ws?.role || '').toLowerCase(),
+        });
       } catch (_) {
-        if (!cancelled) setViewerOnly(false);
+        if (!cancelled) setPermission(null);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [isViewer, session?.id]);
+  }, [isViewer, session?.id, workspaceId]);
 
   const isDarkMode = colorMode === 'dark';
 
@@ -462,6 +461,8 @@ export default function UserPreferences({
               </Box>
             </DashboardPanel>
           </SimpleGrid>
+
+          <AssistantConnectionsPanel userId={session?.id} />
 
           <DashboardPanel p={{ base: 4, md: 5 }}>
             <PreferencesPanelHeader
