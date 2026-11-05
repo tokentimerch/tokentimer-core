@@ -23,11 +23,24 @@ async function lockCurrentAgentCredential(client, agent) {
     throw error;
   }
   const result = await client.query(
-    "SELECT credential_hash FROM certops_agents WHERE id = $1 FOR UPDATE", [agent.id],
+    "SELECT credential_hash, status FROM certops_agents WHERE id = $1 FOR UPDATE", [agent.id],
   );
   const current = result.rows[0]?.credential_hash;
   if (typeof current !== "string" || !/^[a-f0-9]{64}$/.test(current) ||
       !crypto.timingSafeEqual(snapshot, Buffer.from(current, "hex"))) {
+    const error = new Error("Agent credential no longer valid");
+    error.code = CERTOPS_AGENT_CREDENTIAL_STALE;
+    throw error;
+  }
+  // Retirement retains normal-agent credentials for the frozen 410 response.
+  // A request authenticated immediately before retirement must not mutate
+  // state after the retirement transaction commits.
+  if (result.rows[0].status === "retired") {
+    const error = new Error("Agent is retired");
+    error.code = "CERTOPS_AGENT_RETIRED";
+    throw error;
+  }
+  if (!["active", "offline"].includes(result.rows[0].status)) {
     const error = new Error("Agent credential no longer valid");
     error.code = CERTOPS_AGENT_CREDENTIAL_STALE;
     throw error;
