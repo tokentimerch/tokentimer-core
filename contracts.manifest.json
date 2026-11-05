@@ -388,28 +388,28 @@
           "kind": "module",
           "path": "apps/api/routes/mcpRemote.js",
           "status": "existing",
-          "sha256": "7b0542531e0922360bdbef3d5d31d378995d679a54d595daecf749a8fdbbdfce"
+          "sha256": "fb2943864ea01e560ff82d6f053f51b2d49da1f13a26d7a0d3e88ac2ad3f0f1f"
         },
         {
           "id": "mcp-remote-authority",
           "kind": "module",
           "path": "apps/api/services/operator/oauth.js",
           "status": "existing",
-          "sha256": "e68470ff794e4930b363157ef244487d0d02da83dc8ab217214b05c32d0e7e89"
+          "sha256": "2e39cc774b90ef2d0b7be83ad659829efc5f07431df8abf1bd581b02b8a7dbf7"
         },
         {
           "id": "mcp-remote-protocol",
           "kind": "module",
           "path": "apps/api/services/operator/oauthProtocol.js",
           "status": "existing",
-          "sha256": "8da0a9739964e1ed7793bf87facd2458046ecacf64d69516de8cfe538a04b819"
+          "sha256": "c76eb11d64ff85acaaf4c5ef15b200d409c786f79f5c6b7118ac1ee0d74fbbe6"
         },
         {
           "id": "mcp-remote-configuration",
           "kind": "module",
           "path": "apps/api/services/operator/remoteConfig.js",
           "status": "existing",
-          "sha256": "951cb801008fb5f7cc70c4641f4d37ddaec0ebba6a5424d709ae0c43e0c5265b"
+          "sha256": "a95122a388cd0b2b94f79f49a2ba1b4f65da842b7808aaed28833f9317beef5f"
         },
         {
           "id": "mcp-remote-forwarding",

@@ -107,13 +107,6 @@
         },
         "mcpAllowedOrigins": {
           "type": "string"
-        },
-        "mcpClientRegistrationMode": {
-          "type": "string",
-          "enum": [
-            "metadata-and-dynamic",
-            "dynamic-only"
-          ]
         }
       }
     },

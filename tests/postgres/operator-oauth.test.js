@@ -54,8 +54,8 @@ function appFixture() {
   return app;
 }
 
-async function authorize({ userId = manager, renewals = false, agentHealth = false, inventoryUpdate = false, contactCreate = false, webhookCreate = false, groupCreate = false, memberInvite = false, issuance = false, lifetimeDays = 30, noExpiry = false, decide = true } = {}) {
-  const registered = await oauth.registerClient({ client_name: "HTTP qualification client", redirect_uris: ["http://127.0.0.1:4567/callback"], grant_types: ["authorization_code", "refresh_token"] });
+async function authorize({ registeredClient = null, userId = manager, renewals = false, agentHealth = false, inventoryUpdate = false, contactCreate = false, webhookCreate = false, groupCreate = false, memberInvite = false, issuance = false, lifetimeDays = 30, noExpiry = false, decide = true } = {}) {
+  const registered = registeredClient || await oauth.registerClient({ client_name: "HTTP qualification client", redirect_uris: ["http://127.0.0.1:4567/callback"], grant_types: ["authorization_code", "refresh_token"] });
   ids.push(registered.clientId);
   const verifier = crypto.randomBytes(32).toString("base64url"), challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
   const browser = request.agent(server);
@@ -276,6 +276,41 @@ describe("remote MCP OAuth on PostgreSQL", { concurrency: false }, () => {
     const as = await request(server).get("/.well-known/oauth-authorization-server").expect(200);
     assert.deepEqual(as.body.code_challenge_methods_supported, ["S256"]);
     assert.equal(as.body.authorization_response_iss_parameter_supported, true);
+    assert.equal(as.body.client_id_metadata_document_supported, false);
+  });
+
+  it("completes dynamic registration, consent, token exchange and refresh over HTTP", async () => {
+    const registration = await request(server).post(OAUTH_PATH + "/register").send({ client_name: "Dynamic HTTP client", redirect_uris: ["http://127.0.0.1:4567/callback"], grant_types: ["authorization_code", "refresh_token"] }).expect(201);
+    const flow = await authorize({ registeredClient: { ...registration.body, clientId: registration.body.client_id } });
+    const issued = await tokenFor(flow);
+    assert.equal(issued.status, 200);
+    assert.equal(issued.body.scope, "mcp:connect");
+    assert.equal((await oauth.authenticateAccess({ rawCredential: issued.body.access_token })).valid, true);
+    const rotated = await refresh(flow, issued.body.refresh_token).expect(200);
+    assert.notEqual(rotated.body.refresh_token, issued.body.refresh_token);
+  });
+
+  it("preserves access and refresh for an existing URL-client grant while refusing new authorization", async () => {
+    const flow = await authorize();
+    const issued = await tokenFor(flow);
+    assert.equal(issued.status, 200);
+    const clientId = `https://legacy.example.test/${crypto.randomUUID()}.json`;
+    await pool.query("INSERT INTO operator_oauth_clients(client_id,metadata,source,expires_at) VALUES($1,$2::jsonb,'metadata',NOW()+INTERVAL '1 day')", [clientId, JSON.stringify({ redirect_uris: flow.registered.redirect_uris })]);
+    await pool.query("UPDATE operator_oauth_grants SET client_id=$1 WHERE client_id=$2", [clientId, flow.registered.clientId]);
+    assert.equal((await oauth.authenticateAccess({ rawCredential: issued.body.access_token })).valid, true);
+    const rotated = await refresh(flow, issued.body.refresh_token, { client_id: clientId }).expect(200);
+    assert.equal((await oauth.authenticateAccess({ rawCredential: rotated.body.access_token })).valid, true);
+    await assert.rejects(oauth.findClient(clientId), (err) => err.oauthCode === "invalid_client");
+  });
+
+  it("rejects URL client IDs even when metadata was previously cached", async () => {
+    const clientId = `https://metadata.example.test/${crypto.randomUUID()}.json`;
+    await pool.query("INSERT INTO operator_oauth_clients(client_id,metadata,source,expires_at) VALUES($1,$2::jsonb,'metadata',NOW()+INTERVAL '1 day') ON CONFLICT(client_id) DO UPDATE SET source='metadata', metadata=EXCLUDED.metadata", [clientId, JSON.stringify({ redirect_uris: ["https://metadata.example.test/callback"] })]);
+    try {
+      await assert.rejects(oauth.findClient(clientId), (err) => err.oauthCode === "invalid_client");
+    } finally {
+      await pool.query("DELETE FROM operator_oauth_clients WHERE client_id=$1", [clientId]);
+    }
   });
 
   it("bounds unfinished browser authorizations before they can evict sign-in cookies", async () => {

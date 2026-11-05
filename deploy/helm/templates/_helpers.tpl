@@ -216,7 +216,6 @@ MCP_OPERATOR_INTERFACE_ENABLED: "true"
 MCP_OPERATOR_REMOTE_ENABLED: "true"
 MCP_PUBLIC_URL: {{ required "config.mcpPublicUrl is required for remote MCP" .Values.config.mcpPublicUrl | quote }}
 MCP_ALLOWED_ORIGINS: {{ .Values.config.mcpAllowedOrigins | default "" | quote }}
-MCP_CLIENT_REGISTRATION_MODE: {{ .Values.config.mcpClientRegistrationMode | default "metadata-and-dynamic" | quote }}
 {{- end }}
 {{- if and (eq .Values.config.mcpOperatorInterfaceEnabled true) (eq .Values.config.mcpOperatorWritesEnabled true) }}
 MCP_OPERATOR_WRITES_ENABLED: "true"

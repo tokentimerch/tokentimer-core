@@ -565,10 +565,10 @@ assert_not_contains "${mcp_remote_alone}" 'MCP_OPERATOR_' "remote flag without i
 if helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com --set config.mcpOperatorInterfaceEnabled=true --set config.mcpOperatorRemoteEnabled=true >/dev/null 2>&1; then
   fail "remote MCP accepted without a public resource URL"
 fi
-mcp_remote="$(helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com --set config.mcpOperatorInterfaceEnabled=true --set config.mcpOperatorRemoteEnabled=true --set config.mcpPublicUrl=https://api.example.test/api/v1/operator/mcp --set config.mcpClientRegistrationMode=dynamic-only --show-only templates/configmap.yaml)"
+mcp_remote="$(helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com --set config.mcpOperatorInterfaceEnabled=true --set config.mcpOperatorRemoteEnabled=true --set config.mcpPublicUrl=https://api.example.test/api/v1/operator/mcp --show-only templates/configmap.yaml)"
 assert_contains "${mcp_remote}" 'MCP_OPERATOR_REMOTE_ENABLED: "true"' "remote flag renders"
 assert_contains "${mcp_remote}" 'MCP_PUBLIC_URL: "https://api.example.test/api/v1/operator/mcp"' "resource URL renders exactly"
-assert_contains "${mcp_remote}" 'MCP_CLIENT_REGISTRATION_MODE: "dynamic-only"' "isolated client registration renders"
+assert_not_contains "${mcp_remote}" 'MCP_CLIENT_REGISTRATION_MODE' "metadata registration configuration is absent"
 assert_not_contains "${mcp_remote}" 'MCP_OPERATOR_WRITES_ENABLED' "remote sign-in leaves writes off"
 if helm template "${RELEASE_NAME}" "${CHART}" \
   --set config.adminEmail=ci@example.com \

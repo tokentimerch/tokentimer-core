@@ -222,7 +222,7 @@ function createMcpRemoteRouter({ admitWorkspace } = {}) {
         revocation_endpoint_auth_methods_supported: ["none"],
         code_challenge_methods_supported: ["S256"],
         scopes_supported: [OAUTH_SCOPE],
-        client_id_metadata_document_supported: config.clientMetadataEnabled,
+        client_id_metadata_document_supported: false,
         authorization_response_iss_parameter_supported: true,
       });
     }

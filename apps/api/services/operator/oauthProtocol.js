@@ -1,10 +1,6 @@
 "use strict";
 
 const crypto = require("node:crypto");
-const https = require("node:https");
-const dns = require("node:dns/promises");
-const { isIP } = require("node:net");
-const { isPrivateOrReservedIP } = require("@tokentimer/webhook-safety");
 const {
   defineCredentialFamily,
   sha256Hex,
@@ -23,7 +19,6 @@ const READ_SCOPES = Object.freeze([
 ]);
 const UUID =
   /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
-let activeMetadataFetches = 0;
 
 function oauthError(code, status = 400) {
   const error = new Error("The MCP authorization request was refused");
@@ -201,162 +196,6 @@ function callbackUrl(record, config, values) {
   return url.href;
 }
 
-// CIMD is public HTTPS metadata, never an arbitrary credentialed fetch. Check
-// every DNS answer and pin the chosen address; reject redirects and large bodies.
-async function resolveMetadataHost(host, { signal } = {}) {
-  const family = isIP(host);
-  if (family) return [{ address: host, family }];
-  // A separate c-ares resolver can be cancelled at the overall deadline. Do
-  // not leave getaddrinfo work occupying the shared libuv pool after timeout.
-  const resolver = new dns.Resolver({ timeout: 2000, tries: 1 });
-  const cancel = () => resolver.cancel();
-  signal?.throwIfAborted();
-  signal?.addEventListener("abort", cancel, { once: true });
-  try {
-    const answers = await Promise.allSettled([
-      resolver.resolve4(host),
-      resolver.resolve6(host),
-    ]);
-    const records = [];
-    for (const [index, answer] of answers.entries()) {
-      if (answer.status === "fulfilled")
-        records.push(
-          ...answer.value.map((address) => ({
-            address,
-            family: index ? 6 : 4,
-          })),
-        );
-      else if (!["ENODATA", "ENOTFOUND"].includes(answer.reason?.code))
-        throw oauthError("invalid_client");
-    }
-    signal?.throwIfAborted();
-    return records;
-  } finally {
-    signal?.removeEventListener("abort", cancel);
-  }
-}
-
-async function fetchClientMetadata(
-  clientId,
-  {
-    lookup = resolveMetadataHost,
-    request = https.request,
-    timeoutMs = 5000,
-  } = {},
-) {
-  const raw = string(clientId);
-  let url;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw oauthError("invalid_client");
-  }
-  if (
-    url.protocol !== "https:" ||
-    url.username ||
-    url.password ||
-    url.hash ||
-    url.search ||
-    url.pathname === "/" ||
-    loopback(url.hostname)
-  )
-    throw oauthError("invalid_client");
-  if (activeMetadataFetches >= 8)
-    throw oauthError("temporarily_unavailable", 503);
-  activeMetadataFetches += 1;
-  const controller = new AbortController();
-  const timer = setTimeout(
-    () => controller.abort(oauthError("invalid_client")),
-    timeoutMs,
-  );
-  let req;
-  let requestClosed = Promise.resolve();
-  try {
-    const deadline = new Promise((_resolve, reject) =>
-      controller.signal.addEventListener(
-        "abort",
-        () => reject(oauthError("invalid_client")),
-        { once: true },
-      ),
-    );
-    const records = await Promise.race([
-      lookup(url.hostname.replace(/^\[|\]$/g, ""), {
-        signal: controller.signal,
-      }),
-      deadline,
-    ]);
-    if (
-      !records.length ||
-      records.some((entry) => isPrivateOrReservedIP(entry.address))
-    )
-      throw oauthError("invalid_client");
-    controller.signal.throwIfAborted();
-    const pinned = records[0];
-    const data = await new Promise((resolve, reject) => {
-      req = request(
-        url,
-        {
-          method: "GET",
-          agent: false,
-          signal: controller.signal,
-          timeout: timeoutMs,
-          headers: {
-            Accept: "application/json",
-            "User-Agent": "TokenTimer-MCP",
-          },
-          lookup: (_host, options, cb) =>
-            options?.all
-              ? cb(null, [pinned])
-              : cb(null, pinned.address, pinned.family),
-        },
-        (res) => {
-          res.on("error", () => reject(oauthError("invalid_client")));
-          if (
-            res.statusCode !== 200 ||
-            !/^application\/(?:json|oauth-client-metadata\+json)(?:;|$)/i.test(
-              res.headers["content-type"] || "",
-            )
-          ) {
-            res.destroy();
-            return reject(oauthError("invalid_client"));
-          }
-          let size = 0;
-          const chunks = [];
-          res.on("data", (chunk) => {
-            size += chunk.length;
-            if (size > 65536) {
-              res.destroy();
-              reject(oauthError("invalid_client"));
-            } else chunks.push(chunk);
-          });
-          res.on("end", () => {
-            try {
-              resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-            } catch {
-              reject(oauthError("invalid_client"));
-            }
-          });
-        },
-      );
-      requestClosed = new Promise((resolve) => req.once("close", resolve));
-      req.on("timeout", () => req.destroy(oauthError("invalid_client")));
-      req.on("error", () => reject(oauthError("invalid_client")));
-      req.end();
-    });
-    return clientMetadata(data, clientId);
-  } catch (error) {
-    // A refused response may keep streaming. Close its transport before
-    // releasing the fetch slot or cancelling the overall deadline.
-    controller.abort();
-    req?.destroy();
-    await requestClosed;
-    throw error;
-  } finally {
-    clearTimeout(timer);
-    activeMetadataFetches -= 1;
-  }
-}
-
 module.exports = {
   ACCESS,
   REFRESH,
@@ -373,5 +212,4 @@ module.exports = {
   validateAuthorize,
   validVerifier,
   callbackUrl,
-  fetchClientMetadata,
 };

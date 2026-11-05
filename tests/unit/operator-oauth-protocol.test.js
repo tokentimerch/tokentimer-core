@@ -3,8 +3,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
-const { EventEmitter } = require("node:events");
-const { Readable } = require("node:stream");
 const p = require("../../apps/api/services/operator/oauthProtocol");
 const { remoteConfig, MCP_PATH } = require("../../apps/api/services/operator/remoteConfig");
 const { forwardingHeaders, remoteRateKey } = require("../../apps/api/services/operator/remoteForwarding");
@@ -32,7 +30,6 @@ test("production HTTP is refused except an explicitly local qualification", () =
   const local = { ...env, NODE_ENV: "production", MCP_PUBLIC_URL: "http://127.0.0.1:4000" + MCP_PATH, APP_URL: "http://127.0.0.1:5173" };
   assert.throws(() => remoteConfig(local));
   assert.ok(remoteConfig({ ...local, SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE: "true" }));
-  assert.equal(remoteConfig({ ...env, MCP_CLIENT_REGISTRATION_MODE: "dynamic-only" }).clientMetadataEnabled, false);
 });
 
 test("redirect binding permits only the native loopback port to vary", () => {
@@ -61,100 +58,6 @@ test("callback preserves state and identifies this issuer without exposing the v
   assert.equal(callback.searchParams.get("state"), "value with spaces & punctuation");
   assert.equal(callback.searchParams.has("code_verifier"), false);
 });
-
-function mockRequest(body, { status = 200, contentType = "application/json", pinned } = {}) {
-  return (_url, options, callback) => {
-    if (pinned) options.lookup("client.example.test", {}, (_err, address, family) => pinned(address, family));
-    const req = new EventEmitter();
-    req.end = () => queueMicrotask(() => { const res = Readable.from([Buffer.from(body)]); res.statusCode = status; res.headers = { "content-type": contentType }; callback(res); });
-    req.destroy = (err) => {
-      if (req.destroyed) return req;
-      req.destroyed = true;
-      queueMicrotask(() => {
-        if (err) req.emit("error", err);
-        req.emit("close");
-      });
-      return req;
-    };
-    options.signal.addEventListener("abort", () => req.destroy(new Error("aborted")), { once: true });
-    return req;
-  };
-}
-const publicDns = async () => [{ address: "93.184.216.34", family: 4 }];
-
-test("metadata fetch rejects private, mixed and mapped addresses before connecting", async () => {
-  for (const records of [[{ address: "127.0.0.1", family: 4 }], [{ address: "93.184.216.34", family: 4 }, { address: "10.0.0.1", family: 4 }], [{ address: "::ffff:127.0.0.1", family: 6 }]]) {
-    await assert.rejects(p.fetchClientMetadata(metadata.client_id, { lookup: async () => records, request: () => assert.fail("must not connect") }), error("invalid_client"));
-  }
-});
-
-test("metadata fetch pins the validated address and validates client identity", async () => {
-  let pin;
-  const result = await p.fetchClientMetadata(metadata.client_id, { lookup: publicDns, request: mockRequest(JSON.stringify(metadata), { pinned: (address, family) => { pin = [address, family]; } }) });
-  assert.deepEqual(pin, ["93.184.216.34", 4]);
-  assert.equal(result.client_name, metadata.client_name);
-  await assert.rejects(p.fetchClientMetadata(metadata.client_id, { lookup: publicDns, request: mockRequest(JSON.stringify({ ...metadata, client_id: "https://evil.example.test/meta.json" })) }), error("invalid_client_metadata"));
-});
-
-test("metadata redirects, non-JSON and oversized bodies are refused", async () => {
-  for (const options of [{ status: 302 }, { contentType: "text/html" }]) await assert.rejects(p.fetchClientMetadata(metadata.client_id, { lookup: publicDns, request: mockRequest("{}", options) }), error("invalid_client"));
-  await assert.rejects(p.fetchClientMetadata(metadata.client_id, { lookup: publicDns, request: mockRequest("x".repeat(65537)) }), error("invalid_client"));
-  await assert.rejects(p.fetchClientMetadata(metadata.client_id, { timeoutMs: 10, lookup: () => new Promise(() => {}) }), error("invalid_client"));
-});
-
-for (const [label, status, contentType] of [["redirect", 302, "application/json"], ["non-JSON", 200, "text/html"]]) {
-  test(`metadata fetch closes streaming ${label} responses before releasing capacity`, async () => {
-    const transports = [];
-    let responsesReady;
-    const allResponses = new Promise((resolve) => { responsesReady = resolve; });
-    let responses = 0;
-    const request = (_url, options, callback) => {
-      const req = new EventEmitter();
-      const res = new Readable({ read() {} });
-      res.statusCode = status;
-      res.headers = { "content-type": contentType };
-      // This body never ends on its own, unlike the finite metadata fixtures.
-      const stream = setInterval(() => res.push(Buffer.alloc(256)), 1);
-      res.once("close", () => clearInterval(stream));
-      req.destroy = (err) => {
-        if (req.destroyed) return req;
-        req.destroyed = true;
-        res.destroy();
-        if (err) queueMicrotask(() => req.emit("error", err));
-        return req;
-      };
-      req.end = () => queueMicrotask(() => {
-        callback(res);
-        if (++responses === 8) responsesReady();
-      });
-      options.signal.addEventListener("abort", () => req.destroy(new Error("aborted")), { once: true });
-      // Hold the asynchronous close event so capacity cannot be released just
-      // because destroy() was called while the transport is still closing.
-      transports.push({ req, res, close: () => req.emit("close") });
-      return req;
-    };
-    const completed = Promise.allSettled(Array.from({ length: 8 }, () => p.fetchClientMetadata(metadata.client_id, { lookup: publicDns, request })));
-    let settled = false;
-    completed.then(() => { settled = true; });
-    let results;
-    try {
-      await allResponses;
-      await new Promise(setImmediate);
-      for (const { req, res } of transports) {
-        assert.equal(res.destroyed, true, "the refused body must stop streaming");
-        assert.equal(req.destroyed, true, "the refused request must be destroyed");
-      }
-      assert.equal(settled, false, "fetches must wait for their transports to close");
-      await assert.rejects(p.fetchClientMetadata(metadata.client_id, { lookup: () => assert.fail("closing transports still occupy all eight slots") }), error("temporarily_unavailable"));
-    } finally {
-      for (const { req, close } of transports) { req.destroy(); close(); }
-      results = await completed;
-    }
-    assert.ok(results.every((result) => result.status === "rejected" && result.reason.oauthCode === "invalid_client"));
-    // Once close has completed, the slot is available for a valid response.
-    assert.equal((await p.fetchClientMetadata(metadata.client_id, { lookup: publicDns, request: mockRequest(JSON.stringify(metadata)) })).client_name, metadata.client_name);
-  });
-}
 
 test("only an intact, recent same-process forwarding proof changes the rate key", () => {
   const token = p.ACCESS.generate(), id = crypto.randomUUID(), path = "/api/v1/operator/jobs";

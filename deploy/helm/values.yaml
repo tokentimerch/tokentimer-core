@@ -569,8 +569,6 @@ config:
   # Exact external HTTPS endpoint, ending /api/v1/operator/mcp.
   mcpPublicUrl: ""
   mcpAllowedOrigins: ""
-  # Isolated deployments may use dynamic-only without public metadata egress.
-  mcpClientRegistrationMode: metadata-and-dynamic
 
   # CertOps encryption keys. Each must be 64 hex chars (32 bytes).
   # These wrap, at rest, the job-signing private keys and the agent

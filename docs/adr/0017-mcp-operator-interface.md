@@ -156,7 +156,7 @@ Remote access requires an additional disabled-by-default flag and an exact
 public HTTPS resource URL. OAuth authorization code with S256 PKCE uses normal
 sign-in/SSO, session/CSRF-protected explicit consent, a workspace, scope ceiling
 and expiry. Browser nonce and account/session binding prevent consent swapping.
-Public clients use HTTPS client metadata documents or dynamic registration;
+Public clients use dynamic registration;
 metadata fetches reject private addresses, pin DNS, and bound time, size and
 concurrency. Isolated deployments can disable metadata fetching.
 

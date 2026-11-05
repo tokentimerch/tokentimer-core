@@ -49,10 +49,6 @@ function remoteConfig(env = process.env) {
     env,
   );
   const prefix = resource.pathname.slice(0, -MCP_PATH.length);
-  const clientRegistration =
-    env.MCP_CLIENT_REGISTRATION_MODE || "metadata-and-dynamic";
-  if (!["metadata-and-dynamic", "dynamic-only"].includes(clientRegistration))
-    throw new Error("MCP_CLIENT_REGISTRATION_MODE is invalid");
   const issuer = resource.origin + prefix;
   const origins = new Set([resource.origin, app.origin]);
   for (const raw of String(env.MCP_ALLOWED_ORIGINS || "")
@@ -75,7 +71,6 @@ function remoteConfig(env = process.env) {
     authorizationMetadataPath:
       "/.well-known/oauth-authorization-server" + prefix,
     secureCookie: resource.protocol === "https:",
-    clientMetadataEnabled: clientRegistration === "metadata-and-dynamic",
   });
 }
 

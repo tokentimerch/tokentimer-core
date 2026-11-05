@@ -103,19 +103,8 @@ async function registerClient(input) {
   );
 }
 
-async function findClient(
-  clientId,
-  { metadataFetcher = protocol.fetchClientMetadata } = {},
-) {
+async function findClient(clientId) {
   protocol.string(clientId);
-  if (clientId.startsWith("https://")) {
-    const cached = await pool.query(
-      "SELECT metadata FROM operator_oauth_clients WHERE client_id=$1 AND source='metadata' AND updated_at>NOW()-INTERVAL '1 minute'",
-      [clientId],
-    );
-    if (cached.rows[0]) return { clientId, ...cached.rows[0].metadata };
-    return saveClient(clientId, await metadataFetcher(clientId), "metadata");
-  }
   const found = await pool.query(
     "SELECT metadata FROM operator_oauth_clients WHERE client_id=$1 AND source='registration'",
     [clientId],
@@ -126,11 +115,6 @@ async function findClient(
 
 async function beginAuthorization(input, config = remoteConfig()) {
   if (!config) throw oauthError("temporarily_unavailable", 404);
-  if (
-    String(input.client_id || "").startsWith("https://") &&
-    !config.clientMetadataEnabled
-  )
-    throw oauthError("invalid_client");
   const registered = await findClient(input.client_id);
   const intent = protocol.validateAuthorize(input, registered, config);
   const id = crypto.randomUUID(),
