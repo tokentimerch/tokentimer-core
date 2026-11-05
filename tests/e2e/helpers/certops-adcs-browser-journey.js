@@ -18,9 +18,11 @@ const REQUIRED_SCENARIOS = Object.freeze([
   "adcs-real-browser-installed-enrollment-visible",
   "adcs-real-browser-owned-cleanup",
 ]);
-function assertMutationStatus(status, expectedStatus, pathname) {
+function assertMutationStatus(status, expectedStatus, pathname, responseCode) {
   if (status === expectedStatus) return;
   const operation = pathname.endsWith('/replace-management') ? 'ATTACH' : pathname.endsWith('/profiles') ? 'CREATE_PROFILE' : 'ISSUER';
+  const attachReasons = new Set(['CERTOPS_MANAGEMENT_ALREADY_OPEN','CERTOPS_MANAGEMENT_PERIOD_MISMATCH','CERTOPS_CERTIFICATE_RETIRED','CERTOPS_MUTATION_RUNNING','CERTOPS_MANAGED_CERT_LIMIT','CERTOPS_MANAGEMENT_SOURCE_UNAVAILABLE']);
+  if (operation === 'ATTACH' && status === 409 && attachReasons.has(responseCode)) throw Object.assign(new Error('Browser attachment was refused'), {code:`CERTOPS_BROWSER_ATTACH_${responseCode.slice('CERTOPS_'.length)}`});
   throw Object.assign(new Error('Browser mutation returned an unexpected status'), {code: `CERTOPS_BROWSER_${operation}_HTTP_${Number.isInteger(status) && status >= 100 && status <= 599 ? status : 'OTHER'}`});
 }
 const REQUIRED_SOURCES = Object.freeze([
@@ -401,7 +403,9 @@ async function qualifyAdcsBrowserJourney(context) {
       ),
       button.click(),
     ]);
-    assertMutationStatus(response.status(), expectedStatus, pathname);
+    let responseCode;
+    if(response.status()!==expectedStatus && pathname.endsWith('/replace-management')){try{responseCode=(await response.json())?.code;}catch{}}
+    assertMutationStatus(response.status(), expectedStatus, pathname, responseCode);
     mutations++;
     return response;
   }
