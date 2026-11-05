@@ -537,6 +537,8 @@ router.post(
   authorize("membership.invite"),
   requireManualInvitesEnabled,
   async (req, res) => {
+    let memberClient = null;
+    let memberTransaction = false;
     try {
       const userId = req.user.id;
       const ws = req.workspace;
@@ -571,11 +573,20 @@ router.post(
           .status(400)
           .json({ error: "Invalid email format", code: "VALIDATION_ERROR" });
       }
+      memberClient = await pool.connect();
+      await memberClient.query("BEGIN");
+      memberTransaction = true;
+      const lockedUsers = await memberClient.query("SELECT id FROM users WHERE id IN ($1,$2) OR LOWER(email)=$3 ORDER BY id FOR KEY SHARE", [ws.created_by, userId, normalizedEmail]);
+      const lockedWorkspace = await memberClient.query("SELECT created_by,plan FROM workspaces WHERE id=$1 FOR SHARE", [ws.id]);
+      if (!lockedWorkspace.rows[0] || String(lockedWorkspace.rows[0].created_by) !== String(ws.created_by)) {
+        return res.status(409).json({ error: "Workspace ownership changed", code: "WORKSPACE_CHANGED" });
+      }
+      await memberClient.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [JSON.stringify(["operator-member-admission", String(ws.created_by)])]);
       // Enforce organization member cap based on plan
       try {
         let orgPlan = "oss";
         try {
-          orgPlan = String(ws.plan || "oss").toLowerCase();
+          orgPlan = String(lockedWorkspace.rows[0].plan || "oss").toLowerCase();
         } catch (_err) {
           logger.debug("Non-critical operation failed", {
             error: _err.message,
@@ -590,7 +601,7 @@ router.post(
           memberLimit = MEMBER_LIMITS.oss ?? Infinity;
         }
         if (Number.isFinite(memberLimit)) {
-          const memberCountRes = await pool.query(
+          const memberCountRes = await memberClient.query(
             `SELECT COUNT(DISTINCT wm.user_id)::int AS c
                FROM workspaces w
                JOIN workspace_memberships wm ON wm.workspace_id = w.id
@@ -598,7 +609,7 @@ router.post(
             [ws.created_by],
           );
           const activeMemberCount = memberCountRes.rows?.[0]?.c || 0;
-          const pendingInvitesRes = await pool.query(
+          const pendingInvitesRes = await memberClient.query(
             `SELECT COUNT(DISTINCT LOWER(wi.email))::int AS c
                FROM workspaces w
                JOIN workspace_invitations wi ON wi.workspace_id = w.id
@@ -608,7 +619,7 @@ router.post(
           const pendingInviteCount = pendingInvitesRes.rows?.[0]?.c || 0;
           let alreadyMemberInOrg = false;
           try {
-            const existsRes = await pool.query(
+            const existsRes = await memberClient.query(
               `SELECT 1
                  FROM workspaces w
                  JOIN workspace_memberships wm ON wm.workspace_id = w.id
@@ -623,7 +634,7 @@ router.post(
           }
           let alreadyPending = false;
           try {
-            const pend = await pool.query(
+            const pend = await memberClient.query(
               `SELECT 1
                  FROM workspaces w
                  JOIN workspace_invitations wi ON wi.workspace_id = w.id
@@ -649,7 +660,7 @@ router.post(
       } catch (_err) {
         logger.debug("Non-critical operation failed", { error: _err.message });
       }
-      const userRes = await pool.query(
+      const userRes = await memberClient.query(
         "SELECT id, display_name FROM users WHERE email = $1",
         [normalizedEmail],
       );
@@ -658,11 +669,14 @@ router.post(
       if (userRes.rowCount > 0) {
         // Existing user: create membership directly
         targetUserId = userRes.rows[0].id;
+        if (!lockedUsers.rows.some((row) => String(row.id) === String(targetUserId))) {
+          return res.status(409).json({ error: "User changed; retry the invitation", code: "MEMBER_CHANGED" });
+        }
         // Owners retain implicit admin access even without a membership row.
         if (String(targetUserId) === String(ws.created_by)) {
           return res.status(403).json({ error: "Workspace admin role cannot be changed here", code: "FORBIDDEN" });
         }
-        const membership = await pool.query(
+        const membership = await memberClient.query(
           `INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by) VALUES ($1,$2,$3,$4)
          ON CONFLICT (user_id, workspace_id) DO UPDATE SET role = EXCLUDED.role
          WHERE workspace_memberships.role <> 'admin'
@@ -676,7 +690,7 @@ router.post(
         // Clear any residual invitation row for this email so it does not count
         // against plan caps and does not leak through the pending list.
         try {
-          await pool.query(
+          await memberClient.query(
             `DELETE FROM workspace_invitations WHERE workspace_id = $1 AND LOWER(email) = $2`,
             [ws.id, normalizedEmail],
           );
@@ -690,13 +704,17 @@ router.post(
         // Not registered: create invitation token record
         const inviteId = require("crypto").randomUUID();
         inviteToken = require("crypto").randomBytes(32).toString("hex");
-        await pool.query(
+        await memberClient.query(
           `INSERT INTO workspace_invitations (id, workspace_id, email, role, invited_by, token)
          VALUES ($1,$2,$3,$4,$5,$6)
          ON CONFLICT (workspace_id, email) DO UPDATE SET role=EXCLUDED.role, invited_by=EXCLUDED.invited_by, token=EXCLUDED.token, accepted_at=NULL`,
           [inviteId, ws.id, normalizedEmail, role, userId, inviteToken],
         );
       }
+      await memberClient.query("COMMIT");
+      memberTransaction = false;
+      memberClient.release();
+      memberClient = null;
       await writeAudit({
         actorUserId: userId,
         subjectUserId: targetUserId || userId,
@@ -797,6 +815,11 @@ If you did not expect this invitation, please contact your workspace administrat
       return res
         .status(500)
         .json({ error: "Failed to add member", code: "INTERNAL_ERROR" });
+    } finally {
+      if (memberClient) {
+        if (memberTransaction) await memberClient.query("ROLLBACK").catch(() => {});
+        memberClient.release();
+      }
     }
   },
 );

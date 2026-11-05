@@ -208,7 +208,7 @@ describe('CertOpsRoutes kill-switch banner', () => {
   const OTHER_TABS = Object.keys(TAB_PANELS).filter(
     path => path !== '/certops/settings'
   );
-  const RUNNING = 'Certificate operations are running for this workspace.';
+  const RUNNING = 'Pause new certificate jobs and commands during an incident.';
   const PAUSED = 'Certificate operations are paused for this workspace';
 
   it.each(OTHER_TABS)('stays silent on %s while operations run', path => {
@@ -254,9 +254,7 @@ describe('CertOpsRoutes kill-switch banner', () => {
     // One sentence, one Paused badge and one Resume button: the row replaces
     // the page-wide warning on this tab instead of stacking beside it.
     expect(
-      screen.getAllByText(
-        /Certificate operations are paused for this workspace/
-      )
+      screen.getAllByText(/New certificate jobs and commands are paused/)
     ).toHaveLength(1);
     expect(screen.getAllByText('Paused')).toHaveLength(1);
     expect(

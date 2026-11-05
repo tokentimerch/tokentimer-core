@@ -4916,6 +4916,56 @@ const migrations = [
     name: "certops_manual_rollout_authority",
     sql: fs.readFileSync(require("path").join(__dirname, "098-certops-manual-rollout-authority.sql"), "utf8"),
   },
+  {
+    version: 99,
+    name: "operator_connections",
+    sql: fs.readFileSync(require("path").join(__dirname, "099-operator-connections.sql"), "utf8"),
+  },
+  {
+    version: 100,
+    name: "operator_enrollment_grants",
+    sql: fs.readFileSync(require("path").join(__dirname, "100-operator-enrollment-grants.sql"), "utf8"),
+  },
+  {
+    version: 101,
+    name: "operator_action_requests",
+    sql: fs.readFileSync(require("path").join(__dirname, "101-operator-action-requests.sql"), "utf8"),
+  },
+  {
+    version: 102,
+    name: "operator_oauth",
+    sql: fs.readFileSync(require("path").join(__dirname, "102-operator-oauth.sql"), "utf8"),
+  },
+  {
+    version: 103,
+    name: "operator_connection_lifetimes",
+    sql: fs.readFileSync(require("path").join(__dirname, "103-operator-connection-lifetimes.sql"), "utf8"),
+  },
+  {
+    version: 104,
+    name: "operator_inventory",
+    sql: fs.readFileSync(require("path").join(__dirname, "104-operator-inventory.sql"), "utf8"),
+  },
+  {
+    version: 105,
+    name: "operator_oauth_retention",
+    sql: fs.readFileSync(require("path").join(__dirname, "105-operator-oauth-retention.sql"), "utf8"),
+  },
+  {
+    version: 106,
+    name: "operator_issuance",
+    sql: fs.readFileSync(require("path").join(__dirname, "106-operator-issuance.sql"), "utf8"),
+  },
+  {
+    version: 107,
+    name: "certops_issuance_job_identity",
+    sql: fs.readFileSync(require("path").join(__dirname, "107-certops-issuance-job-identity.sql"), "utf8"),
+  },
+  {
+    version: 108,
+    name: "certops_issuance_identity_transfer",
+    sql: fs.readFileSync(require("path").join(__dirname, "108-certops-issuance-identity-transfer.sql"), "utf8"),
+  },
 ];
 
 

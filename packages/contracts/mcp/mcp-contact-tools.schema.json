@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/mcp/mcp-contact-tools.schema.json",
+  "title": "MCP workspace contact creation",
+  "definitions": {
+    "tt_preview_contact_create_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contact"],
+      "properties": {
+        "contact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["firstName", "lastName"],
+          "properties": {
+            "firstName": { "type": "string", "minLength": 1, "maxLength": 100 },
+            "lastName": { "type": "string", "minLength": 1, "maxLength": 100 },
+            "email": { "type": ["string", "null"], "maxLength": 254 },
+            "phoneE164": { "type": ["string", "null"], "maxLength": 16 }
+          }
+        }
+      }
+    },
+    "tt_preview_contact_create_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planId", "planHash", "expiresAt", "effect"],
+      "properties": {
+        "planId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+        "planHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "expiresAt": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/timestamp" },
+        "effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["firstName", "lastName", "email", "phoneE164"],
+          "properties": {
+            "firstName": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/untrustedText" },
+            "lastName": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/untrustedText" },
+            "email": { "oneOf": [{ "type": "null" }, { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/untrustedText" }] },
+            "phoneE164": { "oneOf": [{ "type": "null" }, { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/untrustedText" }] }
+          }
+        }
+      }
+    },
+    "tt_create_contact_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planId", "planHash", "requestId"],
+      "properties": {
+        "planId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+        "planHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "requestId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" }
+      }
+    },
+    "tt_create_contact_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "requestId", "planId", "contactId", "state", "replayed"],
+      "properties": {
+        "operation": { "const": "create_contact" },
+        "requestId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+        "planId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+        "contactId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+        "state": { "const": "succeeded" },
+        "replayed": { "type": "boolean" }
+      }
+    }
+  }
+}

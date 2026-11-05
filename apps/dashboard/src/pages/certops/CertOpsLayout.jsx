@@ -183,6 +183,7 @@ export default function CertOpsLayout({ session, onLogout, onAccountClick }) {
                 <CertOpsSubNav />
                 <Outlet
                   context={{
+                    currentUserId: session?.id ?? null,
                     certOpsPaused: Boolean(killSwitch.certOpsPaused),
                     killSwitchResolved:
                       !killSwitch.loading &&

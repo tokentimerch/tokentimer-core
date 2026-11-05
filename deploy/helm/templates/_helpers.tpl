@@ -213,6 +213,18 @@ CERTOPS_SWEEP_DISTRIBUTION_SCHEDULER_ENABLED: {{ ternary "true" "false" (not (eq
 CERTOPS_SWEEP_DISTRIBUTION_SCHEDULER_TIMEOUT_MS: {{ .Values.config.certopsDistributionSchedulerTimeoutMs | default 120000 | quote }}
 CERTOPS_SWEEP_DISTRIBUTION_MONITORING_ENABLED: {{ ternary "true" "false" (not (eq .Values.config.certopsDistributionMonitoringEnabled false)) | quote }}
 CERTOPS_SWEEP_DISTRIBUTION_MONITORING_TIMEOUT_MS: {{ .Values.config.certopsDistributionMonitoringTimeoutMs | default 120000 | quote }}
+{{- /* Both assistant flags fail closed: only an explicit true turns them on. */}}
+{{- if eq .Values.config.mcpOperatorInterfaceEnabled true }}
+MCP_OPERATOR_INTERFACE_ENABLED: "true"
+{{- end }}
+{{- if and (eq .Values.config.mcpOperatorInterfaceEnabled true) (eq .Values.config.mcpOperatorRemoteEnabled true) }}
+MCP_OPERATOR_REMOTE_ENABLED: "true"
+MCP_PUBLIC_URL: {{ required "config.mcpPublicUrl is required for remote MCP" .Values.config.mcpPublicUrl | quote }}
+MCP_ALLOWED_ORIGINS: {{ .Values.config.mcpAllowedOrigins | default "" | quote }}
+{{- end }}
+{{- if and (eq .Values.config.mcpOperatorInterfaceEnabled true) (eq .Values.config.mcpOperatorWritesEnabled true) }}
+MCP_OPERATOR_WRITES_ENABLED: "true"
+{{- end }}
 {{- /* Explicit checks, not truthiness: retention 0 means "store nothing".
        Reject values the API would silently replace (retention > 3650, or a
        daily-byte quota above Number.MAX_SAFE_INTEGER which becomes unlimited).

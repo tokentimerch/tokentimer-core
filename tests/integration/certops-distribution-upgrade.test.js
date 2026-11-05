@@ -17,10 +17,14 @@ describe("Core distribution and lifecycle migration histories", function () {
     'pagerduty_incident_lifecycle', 'pagerduty_resolution_reason',
     'pagerduty_operator_actions', 'remove_pagerduty_rest_lookup', 'certops_consumer_staging', 'certops_review_authority_epochs',
     'certops_manual_rollout_authority',
+    'operator_connections', 'operator_enrollment_grants', 'operator_action_requests', 'operator_oauth',
+    'operator_connection_lifetimes', 'operator_inventory', 'operator_oauth_retention', 'operator_issuance',
+    'certops_issuance_job_identity', 'certops_issuance_identity_transfer',
   ];
   const migrations = require('../../apps/api/migrations/migrate').migrations;
   const companions = companionNames.filter(name => migrations.some(m => m.name === name));
   const extensionHistories = {
+    "mcp-preview-through-85": ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "auto_sync_system_metrics", "operator_connections", "operator_enrollment_grants", "operator_action_requests"],
     "mainline-installed-78": ["certops_installed_file_distribution"],
     "mainline-stats-79": ["certops_installed_file_distribution", "auto_sync_provider_stats"],
     "mainline-metrics-80": ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics"],
@@ -36,6 +40,7 @@ describe("Core distribution and lifecycle migration histories", function () {
 
   for (const history of [
     "fresh",
+    "mcp-preview-through-85",
     "distribution-first",
     "enrollment-first",
     "canonical-core",
@@ -245,8 +250,9 @@ describe("Core distribution and lifecycle migration histories", function () {
         ];
         const mainlineOrder = history === "distribution-first" ? [canonical[4],canonical[5],canonical[6],canonical[0],canonical[1],canonical[2],canonical[3]] : history === "enrollment-first" ? [canonical[0],canonical[4],canonical[5],canonical[6],canonical[1],canonical[2],canonical[3]] : history === "previous-distribution" ? [canonical[0],canonical[1],canonical[2],canonical[4],canonical[5],canonical[6],canonical[3]] : canonical;
         // Both assurance and provider changes follow every supported history.
-        const expected = history === "provider-preview-through-pagerduty"
+        const expected = ["provider-preview-through-pagerduty", "mcp-preview-through-85"].includes(history)
           ? [...mainlineOrder, "onboarding_sessions", ...extensionHistories[history],
+            ...(history === "mcp-preview-through-85" ? ["certops_material_providers"] : []),
             ...companions.filter(name => !extensionHistories[history].includes(name))]
           : [
           ...mainlineOrder,
@@ -262,6 +268,19 @@ describe("Core distribution and lifecycle migration histories", function () {
                   : ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "auto_sync_system_metrics", "certops_material_providers"]),
           ...companions,
         ];
+        if (["provider-preview-81", "provider-preview-through-pagerduty"].includes(history)) {
+          // These previews retain the reviewed PagerDuty/MCP append order
+          // before adding lifecycle companions.
+          const mcp = ["operator_connections", "operator_enrollment_grants", "operator_action_requests"];
+          expected.splice(expected.indexOf(mcp[0]), mcp.length);
+          const append = history === "provider-preview-81"
+            ? ["pagerduty_incident_lifecycle", "pagerduty_resolution_reason", ...mcp]
+            : mcp;
+          if (history === "provider-preview-81") {
+            expected.splice(expected.indexOf("pagerduty_incident_lifecycle"), 2);
+          }
+          expected.splice(expected.indexOf("certops_distribution_lifecycle"), 0, ...append);
+        }
         assert.deepEqual(
           after.filter((row) => row.version >= 70).map((row) => row.name),
           expected,
@@ -273,6 +292,7 @@ describe("Core distribution and lifecycle migration histories", function () {
               : ["canonical-core", "mainline-alert-context"].includes(history)
                 ? { ...oldJob, distribution_request_hash: null, certificate_token_id: null }
                 : { ...oldJob, certificate_token_id: null };
+          expectedJob.requested_by_connection_id = null;
           assert.deepEqual(
             (
               await db.query("SELECT * FROM certificate_jobs WHERE id=$1", [

@@ -2072,6 +2072,7 @@ export async function deliveryWorkerJob({
           let eligibilityTerminal = false;
           let channelTerminal = false;
           let channelRecipients = null;
+          let currentRecipients = null;
           let partialSuccess = false;
           let deliveryEndpoints = null;
 
@@ -2105,6 +2106,7 @@ export async function deliveryWorkerJob({
                     })
                     .filter(Boolean);
                 }
+                currentRecipients = recipients.map((row) => row.destination);
               } catch (_err) {
                 logger.debug("Non-critical operation failed", {
                   error: _err.message,
@@ -2730,6 +2732,7 @@ export async function deliveryWorkerJob({
               {
                 // Resolve phones by querying workspace_contacts with contact_ids from group
                 let contactInfos = [];
+                let contactsLoaded = false;
                 try {
                   const waIds = unionContactIds(
                     eligibleGroups,
@@ -2749,6 +2752,7 @@ export async function deliveryWorkerJob({
                       }))
                       .filter((c) => !!c.phone);
                   }
+                  contactsLoaded = true;
                 } catch (_err) {
                   logger.debug("Non-critical operation failed", {
                     error: _err.message,
@@ -2777,6 +2781,7 @@ export async function deliveryWorkerJob({
                     contactId: item.id,
                     destination: String(item.phone).trim(),
                   }));
+                if (contactsLoaded) currentRecipients = phoneRows.map((row) => row.destination);
                 const gatedPhones = await deliveryState.recipients(
                   client,
                   alert.workspace_id,
@@ -3241,6 +3246,7 @@ export async function deliveryWorkerJob({
             partialSuccess,
             endpoints: deliveryEndpoints,
             recipients: channelRecipients,
+            currentRecipients,
           });
           // If WhatsApp failed and it's not a soft throttle, consider it permanent and block the queue entry
           const verificationUnavailable = String(errorCode || "") === "RECIPIENT_VERIFICATION_UNAVAILABLE"

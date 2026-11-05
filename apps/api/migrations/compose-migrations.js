@@ -23,6 +23,20 @@ const histories = [
   [DISTRIBUTION, REVIEW, TRANSFER, ENROLLMENT, EVIDENCE, ISSUER, ALERT],
   [ENROLLMENT, DISTRIBUTION, REVIEW, TRANSFER, EVIDENCE, ISSUER, ALERT],
 ];
+const mcpAppendNames = [
+  "pagerduty_operator_actions",
+  "remove_pagerduty_rest_lookup",
+  "operator_connections",
+  "operator_enrollment_grants",
+  "operator_action_requests",
+  "operator_oauth",
+  "operator_connection_lifetimes",
+  "operator_inventory",
+  "operator_oauth_retention",
+  "operator_issuance",
+  "certops_issuance_job_identity",
+  "certops_issuance_identity_transfer",
+];
 
 function composeMigrations(migrations, recorded = []) {
   for (const [offset, name] of canonical.entries()) {
@@ -72,6 +86,55 @@ function composeMigrations(migrations, recorded = []) {
     .slice()
     .sort((a, b) => a.version - b.version);
   const byName = new Map(extensions.map((entry) => [entry.name, entry]));
+  // This reviewed preview predates main's PagerDuty migrations at 94/95.
+  // Keep its applied identities and finish any partial MCP tail before appending.
+  const priorMcpNames = ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "auto_sync_system_metrics", "certops_material_providers", "recipient_channel_verification", "weekly_digest_recipient_claim_token", "pagerduty_incident_lifecycle", "pagerduty_resolution_reason", "operator_connections", "operator_enrollment_grants", "operator_action_requests"];
+  const priorMcpVersions = [78, 79, 80, 81, 82, 83, 84, 85, 92, 93, 94, 95, 96];
+  const priorMcp = rows.some((row) => row.version === 94 && row.name === "operator_connections");
+  const priorAppend = mcpAppendNames.filter((name) => byName.has(name) && !priorMcpNames.includes(name));
+  const priorAppendWithAuthority = [...priorAppend];
+  if (byName.has("certops_manual_rollout_authority"))
+    priorAppendWithAuthority.splice(2, 0, "certops_manual_rollout_authority");
+  // A preview may have applied some MCP companions before an independent
+  // feature arrived. Recognize each reviewed append prefix, then preserve
+  // that exact ledger while placing only unapplied definitions afterward.
+  let priorOrder = null;
+  if (priorMcp) {
+    for (const append of [priorAppend, priorAppendWithAuthority]) {
+      for (let length = 0; length <= append.length; length++) {
+        const appliedAppend = append.slice(0, length);
+        const remaining = extensions.map((entry) => entry.name).filter((name) => !priorMcpNames.includes(name) && !appliedAppend.includes(name));
+        const lifecycle = new Set([
+          "certops_distribution_lifecycle", "certops_distribution_incident_delivery",
+          "certops_stable_consumer_discovery", "certops_material_cleanup",
+          "certops_consumer_verification_failures", "certops_distribution_resolution_delivery",
+          "certops_consumer_staging", "certops_review_authority_epochs",
+        ]);
+        // Keep the existing MCP preview append order when no later lifecycle
+        // migration has been applied, but recognize either historical ordering.
+        const mainFirst = [...remaining.filter((name) => !lifecycle.has(name)), ...remaining.filter((name) => lifecycle.has(name))];
+        for (const tail of [mainFirst, remaining]) {
+          const names = [...priorMcpNames, ...appliedAppend, ...tail];
+          const versions = [...priorMcpVersions, ...names.slice(priorMcpNames.length).map((_name, index) => 97 + index)];
+          if (rows.every((row, index) => row.name === names[index] && row.version === versions[index])) { priorOrder = names; break; }
+        }
+        if (priorOrder) break;
+      }
+      if (priorOrder) break;
+    }
+  }
+  // Earlier MCP draft builds used 96–103 after the PagerDuty tail, before
+  // main reserved those slots for independent CertOps work. Keep any applied
+  // draft identities and append the missing authority migration afterward.
+  const priorDraft = rows.some((row) => row.version === 96 && row.name === "operator_connections");
+  if (!priorOrder && priorDraft) {
+    const draftNames = [...priorMcpNames.slice(0, 10), "pagerduty_operator_actions", "remove_pagerduty_rest_lookup", ...mcpAppendNames.slice(2).filter((name) => !["certops_issuance_job_identity", "certops_issuance_identity_transfer"].includes(name))];
+    const draftVersions = [78, 79, 80, 81, 82, 83, 84, 85, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103];
+    const names = [...draftNames, ...extensions.map((entry) => entry.name).filter((name) => !draftNames.includes(name))];
+    const versions = [...draftVersions, ...names.slice(draftNames.length).map((_name, index) => 104 + index)];
+    if (rows.every((row, index) => row.name === names[index] && row.version === versions[index])) priorOrder = names;
+  }
+  const recognizedPriorMcp = priorOrder !== null;
   const unknown = rows.find((row) => !byName.has(row.name));
   if (unknown)
     throw new Error(
@@ -100,11 +163,12 @@ function composeMigrations(migrations, recorded = []) {
       !base.every((name, index) =>
         rows.some((row) => row.version === 78 + index && row.name === name),
       ) ||
-      rows.some((row) => row.version !== byName.get(row.name).version)
+      (rows.some((row) => row.version !== byName.get(row.name).version) && !recognizedPriorMcp)
     )
       throw new Error("Unsupported Core migration history: noncanonical gap");
   }
 
+  let contiguousOrder = null;
   if (contiguous && rows.length) {
     const I = "certops_installed_file_distribution",
       S = "auto_sync_provider_stats",
@@ -124,6 +188,10 @@ function composeMigrations(migrations, recorded = []) {
     const Z = "certops_distribution_resolution_delivery";
     const seeds = [
       [],
+      // Applied MCP preview through 85 retains its ledger and appends other features.
+      [I, S, R, L, "auto_sync_system_metrics", "operator_connections", "operator_enrollment_grants", "operator_action_requests"],
+      [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason", "operator_connections", "operator_enrollment_grants", "operator_action_requests"],
+      [I, S, R, L, "auto_sync_system_metrics", "operator_connections", "operator_enrollment_grants", "operator_action_requests", P, C, D, PD, "pagerduty_resolution_reason"],
       [P],
       [I, P],
       [I, S, R, P],
@@ -142,16 +210,36 @@ function composeMigrations(migrations, recorded = []) {
       [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason", "pagerduty_operator_actions", "remove_pagerduty_rest_lookup"],
     ];
     const laterCompanions = new Set([...lifecycle, Z, "certops_consumer_staging", "certops_review_authority_epochs"]);
-    const recognized = seeds.some((seed) => {
+    const integratedSeeds = seeds.flatMap((seed) =>
+      [mcpAppendNames, mcpAppendNames.slice(2),
+        [...mcpAppendNames.slice(2, 5), ...mcpAppendNames.slice(0, 2), ...mcpAppendNames.slice(5)],
+      ].flatMap((append) =>
+        Array.from({ length: append.length + 1 }, (_entry, length) =>
+          [...seed, ...append.slice(0, length).filter((name) => !seed.includes(name))],
+        ),
+      ),
+    );
+    const recognized = integratedSeeds.some((seed) => {
       const remaining = extensions.map((entry) => entry.name).filter((name) => !seed.includes(name));
-      const ordinary = [...seed.filter((name) => byName.has(name)), ...remaining];
-      // A previously supported preview can receive the independent manual
-      // authority fix before the reserved lifecycle companions are installed.
-      // Preserve that recorded append order when the companions arrive later.
-      const manualFirst = [...seed.filter((name) => byName.has(name)),
-        ...remaining.filter((name) => !laterCompanions.has(name)),
-        ...remaining.filter((name) => laterCompanions.has(name))];
-      return [ordinary, manualFirst].some((names) => rows.every((row, index) => row.name === names[index]));
+      const prefix = seed.filter((name) => byName.has(name));
+      const ordinary = [...prefix, ...remaining];
+      const independent = remaining.filter((name) => !laterCompanions.has(name));
+      const companions = remaining.filter((name) => laterCompanions.has(name));
+      // A preview may have applied only part of an independent tail before
+      // the reserved companions arrived. Preserve that exact append order.
+      const companionOrders = Array.from({ length: independent.length + 1 }, (_entry, cut) =>
+        [...prefix, ...independent.slice(0, cut), ...companions, ...independent.slice(cut)],
+      );
+      return [ordinary, ...companionOrders].some((names) => {
+        const applied = new Set(rows.map((row) => row.name));
+        const lastApplied = Math.max(-1, ...names.map((name, index) => applied.has(name) ? index : -1));
+        const skipped = names.slice(0, lastApplied + 1).filter((name) => !applied.has(name));
+        const orderedApplied = names.filter((name) => applied.has(name));
+        const matches = skipped.every((name) => name.startsWith("operator_") || ["certops_issuance_job_identity", "certops_issuance_identity_transfer"].includes(name)) &&
+          rows.every((row, index) => row.name === orderedApplied[index]);
+        if (matches) contiguousOrder = [...orderedApplied, ...names.filter((name) => !applied.has(name))];
+        return matches;
+      });
     });
     if (!recognized)
       throw new Error(
@@ -159,6 +247,15 @@ function composeMigrations(migrations, recorded = []) {
       );
   }
   const dependencies = {
+    certops_issuance_identity_transfer: ["certops_issuance_job_identity"],
+    certops_issuance_job_identity: ["operator_issuance"],
+    operator_issuance: ["operator_action_requests"],
+    operator_connection_lifetimes: ["operator_connections", "operator_enrollment_grants", "operator_oauth"],
+    operator_inventory: ["operator_connections"],
+    operator_oauth_retention: ["operator_oauth"],
+    operator_oauth: ["operator_connections"],
+    operator_enrollment_grants: ["operator_connections"],
+    operator_action_requests: ["operator_connections"],
     auto_sync_run_metrics: ["auto_sync_provider_stats"],
     auto_sync_metric_labels: ["auto_sync_run_metrics"],
     auto_sync_system_metrics: ["auto_sync_metric_labels"],
@@ -194,7 +291,9 @@ function composeMigrations(migrations, recorded = []) {
           ...extensions.map((entry) => entry.version),
           ...rows.map((row) => row.version),
         )) + 1;
-  for (const entry of extensions) {
+  const reviewedOrder = recognizedPriorMcp ? priorOrder : contiguousOrder;
+  const executionOrder = reviewedOrder ? [...extensions].sort((a, b) => reviewedOrder.indexOf(a.name) - reviewedOrder.indexOf(b.name)) : extensions;
+  for (const entry of executionOrder) {
     if (assigned.has(entry.name)) continue;
     const dependencyFloor = Math.max(
       77,

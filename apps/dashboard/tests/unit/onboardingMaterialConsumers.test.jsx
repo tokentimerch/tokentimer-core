@@ -53,73 +53,80 @@ const show = ctx =>
       </DashboardThemeProvider>
     </ChakraProvider>
   );
+const mockDistribution = (consumers = []) =>
+  readDistribution.mockResolvedValue({
+    versions: [
+      {
+        id: VERSION,
+        state: 'published',
+        valid_to: new Date(Date.now() + 86400000).toISOString(),
+      },
+    ],
+    consumers,
+  });
+const mockAssignedConsumer = (agentId = CONSUMER) =>
+  mockDistribution([
+    {
+      binding_id: 'active-binding',
+      binding_state: 'active',
+      assigned_agent_id: agentId,
+    },
+  ]);
+const verificationButton = () =>
+  screen.getByRole('button', {
+    name: 'Check installed material (no deployment)',
+  });
+const requestVerification = async () => {
+  await waitFor(() => expect(verificationButton()).toBeEnabled());
+  fireEvent.click(verificationButton());
+};
 beforeEach(() => {
   vi.clearAllMocks();
   getJob.mockResolvedValue({
     job: { id: 'verify', status: 'pending_approval' },
   });
-  readDistribution.mockResolvedValue({
-    versions: [
-      {
-        id: VERSION,
-        state: 'published',
-        valid_to: new Date(Date.now() + 86400000).toISOString(),
-      },
-    ],
-    consumers: [],
-  });
+  mockDistribution();
   requestRollout.mockResolvedValue({
     job: { id: 'verify', status: 'pending_approval' },
   });
 });
 afterEach(cleanup);
-const withActiveConsumer = () =>
-  readDistribution.mockResolvedValue({
-    versions: [
-      {
-        id: VERSION,
-        state: 'published',
-        valid_to: new Date(Date.now() + 86400000).toISOString(),
-      },
-    ],
-    consumers: [
-      {
-        binding_id: 'binding',
-        binding_state: 'active',
-        assigned_agent_id: CONSUMER,
-      },
-    ],
-  });
 describe('Connect and validate consumers', () => {
-  it('does not verify a different assigned consumer when the selected agent is unassigned', async () => {
-    readDistribution.mockResolvedValue({
-      versions: [],
-      consumers: [
-        {
-          binding_id: 'old',
-          binding_state: 'active',
-          assigned_agent_id: 'web-01',
-        },
-      ],
-    });
+  it('blocks installed-material verification until a consumer is assigned', async () => {
     show(materialContext());
-    expect(
-      await screen.findByText(/Selected consumer is not assigned/)
-    ).toBeVisible();
-    expect(
-      screen.getByRole('button', {
-        name: 'Check installed material (no deployment)',
-      })
-    ).toBeDisabled();
+    expect(verificationButton()).toBeDisabled();
+    await screen.findByText('No consumer assigned');
+    expect(verificationButton()).toBeDisabled();
+    fireEvent.click(verificationButton());
+    expect(requestRollout).not.toHaveBeenCalled();
   });
-  it('explains and prevents verification when no consumer is assigned', async () => {
+  it('does not verify another consumer when the selected agent is unassigned', async () => {
+    const ctx = materialContext();
+    const otherAgentId = '66666666-6666-4666-8666-666666666666';
+    ctx.summary.certops.agents.items.push({
+      ...ctx.summary.certops.agents.items[1],
+      id: otherAgentId,
+      wireAgentId: 'other-consumer',
+      name: 'Other consumer',
+    });
+    mockAssignedConsumer(otherAgentId);
+    show(ctx);
+    expect(verificationButton()).toBeDisabled();
+    await screen.findByText('Selected consumer is not assigned');
+    expect(verificationButton()).toBeDisabled();
+    fireEvent.click(verificationButton());
+    expect(requestRollout).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText('First consumer'), {
+      target: { value: otherAgentId },
+    });
+    await waitFor(() => expect(verificationButton()).toBeEnabled());
+  });
+  it('blocks verification when consumer assignments cannot be read', async () => {
+    readDistribution.mockRejectedValue(new Error('Read failed'));
     show(materialContext());
-    expect(await screen.findByText('No consumer assigned')).toBeVisible();
-    expect(
-      screen.getByRole('button', {
-        name: 'Check installed material (no deployment)',
-      })
-    ).toBeDisabled();
+    await screen.findByText(/Consumer assignments could not be read/);
+    expect(verificationButton()).toBeDisabled();
     expect(requestRollout).not.toHaveBeenCalled();
   });
   it('shows missing capabilities only for the selected consumer', async () => {
@@ -320,22 +327,11 @@ describe('Connect and validate consumers', () => {
     expect(requestRollout).not.toHaveBeenCalled();
   });
   it('uses a fresh request identity for an explicitly new verification after the previous one finishes', async () => {
+    mockAssignedConsumer();
     const ctx = materialContext();
-    withActiveConsumer();
     getJob.mockResolvedValue({ job: { id: 'verify', status: 'succeeded' } });
     const view = show(ctx);
-    await waitFor(() =>
-      expect(
-        screen.getByRole('button', {
-          name: 'Check installed material (no deployment)',
-        })
-      ).toBeEnabled()
-    );
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: 'Check installed material (no deployment)',
-      })
-    );
+    await requestVerification();
     const another = await screen.findByRole('button', {
       name: 'Prepare another verification',
     });
@@ -351,11 +347,7 @@ describe('Connect and validate consumers', () => {
         </DashboardThemeProvider>
       </ChakraProvider>
     );
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: 'Check installed material (no deployment)',
-      })
-    );
+    await requestVerification();
     await waitFor(() => expect(requestRollout).toHaveBeenCalledTimes(2));
     expect(requestRollout.mock.calls[1][3]).not.toBe(
       requestRollout.mock.calls[0][3]
@@ -363,21 +355,10 @@ describe('Connect and validate consumers', () => {
     expect(requestRollout.mock.calls[1][2].verificationOnly).toBe(true);
   });
   it('sends an explicit verification-only intent and preserves approval handling', async () => {
+    mockAssignedConsumer();
     const ctx = materialContext();
-    withActiveConsumer();
     show(ctx);
-    await waitFor(() =>
-      expect(
-        screen.getByRole('button', {
-          name: 'Check installed material (no deployment)',
-        })
-      ).toBeEnabled()
-    );
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: 'Check installed material (no deployment)',
-      })
-    );
+    await requestVerification();
     await waitFor(() => expect(requestRollout).toHaveBeenCalledTimes(1));
     expect(requestRollout).toHaveBeenCalledWith(
       WS,
@@ -390,39 +371,17 @@ describe('Connect and validate consumers', () => {
     expect(assignConsumer).not.toHaveBeenCalled();
   });
   it('retries a lost verification request with the original version and key', async () => {
+    mockAssignedConsumer();
     const ctx = materialContext();
-    withActiveConsumer();
     requestRollout.mockRejectedValueOnce(new Error('lost'));
     const view = show(ctx);
-    await waitFor(() =>
-      expect(
-        screen.getByRole('button', {
-          name: 'Check installed material (no deployment)',
-        })
-      ).toBeEnabled()
-    );
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: 'Check installed material (no deployment)',
-      })
-    );
+    await requestVerification();
     await screen.findByText(/request could not be completed/);
     ctx.summary.certops.distribution.items[0].publication.materialVersionId =
       '66666666-6666-4666-8666-666666666666';
     view.unmount();
     show(ctx);
-    await waitFor(() =>
-      expect(
-        screen.getByRole('button', {
-          name: 'Check installed material (no deployment)',
-        })
-      ).toBeEnabled()
-    );
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: 'Check installed material (no deployment)',
-      })
-    );
+    await requestVerification();
     await waitFor(() => expect(requestRollout).toHaveBeenCalledTimes(2));
     expect(requestRollout.mock.calls[1]).toEqual(requestRollout.mock.calls[0]);
   });
@@ -535,6 +494,8 @@ describe('Connect and validate consumers', () => {
       consumers: [
         {
           binding_id: 'existing-iis',
+          binding_state: 'active',
+          assigned_agent_id: CONSUMER,
           agent_platform: 'win32',
           agent_name: 'IIS fixture',
           profile_revision: 1,
@@ -610,9 +571,11 @@ describe('Connect and validate consumers', () => {
         'I applied the exact authorized binding configuration and enabled real execution on the consumer'
       )
     );
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Request real IIS deployment' })
-    );
+    const deploy = screen.getByRole('button', {
+      name: 'Request real IIS deployment',
+    });
+    await waitFor(() => expect(deploy).toBeEnabled());
+    fireEvent.click(deploy);
     await waitFor(() => expect(requestRollout).toHaveBeenCalledTimes(1));
     expect(requestRollout.mock.calls[0][2]).toMatchObject({
       materialVersionId: VERSION,

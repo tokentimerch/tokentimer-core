@@ -59,47 +59,50 @@ function VerificationRequest({
     [error, setError] = useState(''),
     [confirmed, setConfirmed] = useState(false);
   const observed = useObservedJob(ctx.workspaceId, current?.jobId);
-  const [consumerState, setConsumerState] = useState({
-    loaded: false,
-    rows: [],
-    error: false,
-  });
+  const checkAssignments =
+    !disabled && Boolean(group.publication) && !current?.jobId;
+  const [assignments, setAssignments] = useState({ rows: null, error: false });
   useEffect(() => {
-    let active = true;
-    const controller = new AbortController();
+    if (!checkAssignments) return undefined;
+    const abort = new AbortController();
+    let inFlight = false;
+    setAssignments({ rows: null, error: false });
     const load = async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
-        const result = await readDistribution(ctx.workspaceId, group.id, {
-          signal: controller.signal,
-        });
-        if (active)
-          setConsumerState({
-            loaded: true,
-            rows: result.consumers,
-            error: false,
-          });
+        const { consumers } = await readDistribution(
+          ctx.workspaceId,
+          group.id,
+          {
+            signal: abort.signal,
+          }
+        );
+        if (!abort.signal.aborted)
+          setAssignments({ rows: consumers, error: false });
       } catch {
-        if (active) setConsumerState({ loaded: false, rows: [], error: true });
+        if (!abort.signal.aborted) setAssignments({ rows: null, error: true });
+      } finally {
+        inFlight = false;
       }
     };
     load();
     const timer = setInterval(load, 5000);
     return () => {
-      active = false;
-      controller.abort();
+      abort.abort();
       clearInterval(timer);
     };
-  }, [ctx.workspaceId, group.id]);
-  const hasActiveConsumer = consumerState.rows.some(
-    row => (row.binding_state || row.state || 'active') === 'active'
+  }, [checkAssignments, ctx.workspaceId, group.id]);
+
+  const activeConsumers = assignments.rows?.filter(
+    row =>
+      (row.binding_state ?? row.state) === 'active' && row.assigned_agent_id
   );
-  const selectedAssigned =
-    !selectedAgentId ||
-    consumerState.rows.some(
-      row =>
-        (row.binding_state || row.state || 'active') === 'active' &&
-        row.assigned_agent_id === selectedAgentId
-    );
+  const hasAssignedConsumer = activeConsumers?.some(
+    row => !selectedAgentId || row.assigned_agent_id === selectedAgentId
+  );
+  const requestBlocked =
+    !checkAssignments || !hasAssignedConsumer || (real && !confirmed);
   const canReset = real
     ? group.completed === true ||
       group.verified === true ||
@@ -115,7 +118,7 @@ function VerificationRequest({
     };
   }, []);
   const request = async () => {
-    if (disabled || busy || !group.publication || (real && !confirmed)) return;
+    if (requestBlocked || busy) return;
     setBusy(true);
     setError('');
     try {
@@ -147,37 +150,15 @@ function VerificationRequest({
   };
   return (
     <VStack align='stretch' spacing={3}>
-      {consumerState.error && (
-        <StatusPanel status='warning'>
-          Consumer assignments could not be read. Refresh before requesting
-          verification.
-        </StatusPanel>
-      )}
-      {consumerState.loaded && !hasActiveConsumer && (
-        <StatusPanel status='warning' title='No consumer assigned'>
-          Enter the store address above, select a compatible consumer and assign
-          it before checking installed material.
-        </StatusPanel>
-      )}
-      {consumerState.loaded && hasActiveConsumer && !selectedAssigned && (
-        <StatusPanel status='warning' title='Selected consumer is not assigned'>
-          Assign the selected consumer above before checking installed material.
-          The check runs on all active consumers in this publication.
-        </StatusPanel>
-      )}
-      {consumerState.loaded && hasActiveConsumer && selectedAssigned && (
-        <Text fontSize='sm'>
-          This check covers all active consumers in the publication.
-        </Text>
-      )}
       {real ? (
         <StatusPanel status='warning' title='Real IIS deployment'>
           This rollout imports the private key and changes IIS bindings.
         </StatusPanel>
       ) : (
         <Text fontSize='sm'>
-          Checks installed material and applicable TLS evidence without
-          deploying or reloading. Missing material fails the check.
+          Checks installed material and applicable TLS evidence for all active
+          consumers in this publication without deploying or reloading. Missing
+          material fails the check.
         </Text>
       )}
       <Text fontSize='sm'>
@@ -186,6 +167,27 @@ function VerificationRequest({
           group.publication?.materialVersionId ||
           'No active publication'}
       </Text>
+      {checkAssignments && assignments.error && (
+        <StatusPanel status='warning'>
+          Consumer assignments could not be read. Refresh before continuing.
+        </StatusPanel>
+      )}
+      {checkAssignments && activeConsumers?.length === 0 && (
+        <StatusPanel status='warning' title='No consumer assigned'>
+          Assign a consumer before requesting{' '}
+          {real ? 'deployment' : 'verification'}.
+        </StatusPanel>
+      )}
+      {checkAssignments &&
+        activeConsumers?.length > 0 &&
+        !hasAssignedConsumer && (
+          <StatusPanel
+            status='warning'
+            title='Selected consumer is not assigned'
+          >
+            Assign the selected consumer before checking installed material.
+          </StatusPanel>
+        )}
       {real && (
         <Checkbox
           isChecked={confirmed}
@@ -198,15 +200,7 @@ function VerificationRequest({
       <PrimaryButton
         onClick={request}
         isLoading={busy}
-        isDisabled={
-          disabled ||
-          !consumerState.loaded ||
-          consumerState.error ||
-          !hasActiveConsumer ||
-          !selectedAssigned ||
-          (real && !confirmed) ||
-          Boolean(current?.jobId)
-        }
+        isDisabled={requestBlocked}
       >
         {real
           ? 'Request real IIS deployment'

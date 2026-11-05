@@ -3383,6 +3383,29 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     assert.equal(page.items[0].managedCertificateId, mc.id);
   });
 
+  it("keeps an active renewal profile representative when later discovery observes the same leaf", async () => {
+    const ws = await workspace();
+    const issued = await source(ws, A, { source: "agent_issuance", status: "active" });
+    const profileId = (await db.query(
+      "INSERT INTO certificate_profiles(workspace_id,name) VALUES($1,'Issued certificate renewal') RETURNING id",
+      [ws],
+    )).rows[0].id;
+    await db.query("UPDATE managed_certificates SET profile_id=$2 WHERE id=$1", [issued.id, profileId]);
+    const discovered = await source(ws, A);
+    const identityId = (await identity(ws, A)).id;
+    for (const filter of [{}, { identityId }]) {
+      const page = await listCertificateIdentities({ workspaceId: ws, client: db, ...filter });
+      assert.equal(page.pagination.total, 1);
+      assert.equal(page.items[0].managedCertificateId, issued.id);
+      assert.equal(page.items[0].profileId, profileId);
+      assert.equal(page.items[0].sourceCount, 2);
+    }
+    await stopManagingSource({ workspaceId: ws, periodId: (await period(issued)).id, client: db });
+    const stopped = await listCertificateIdentities({ workspaceId: ws, identityId, client: db });
+    assert.equal(stopped.items[0].managedCertificateId, discovered.id);
+    assert.equal(stopped.items[0].profileId, null, "A stopped profile cannot override an active source");
+  });
+
   it("searches every associated managed certificate's public properties", async () => {
     const ws = await workspace();
     const first = await source(ws, A, { name: "primary" });

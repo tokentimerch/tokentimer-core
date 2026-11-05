@@ -489,6 +489,42 @@ describe('ExecutorJobsPanel approvals', () => {
     expect(dialog.getByRole('button', { name: 'Approve' })).toBeEnabled();
   });
 
+  it('shows the requester why approval needs a different person while leaving rejection available', () => {
+    useCertOpsJobsMock.mockReturnValue(
+      jobsState({
+        jobs: [
+          {
+            ...pendingJob,
+            requestedByUserId: 42,
+            requestedByConnectionId: 'assistant-one',
+          },
+        ],
+      })
+    );
+    const { unmount } = renderPanel({ currentUserId: '42' });
+    expect(
+      screen.getByRole('button', { name: 'Approve', exact: true })
+    ).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Reject', exact: true })
+    ).toBeEnabled();
+    expect(
+      screen.getByText(
+        'A different workspace manager or admin must approve your request.'
+      )
+    ).toBeInTheDocument();
+    unmount();
+    renderPanel({ currentUserId: 43 });
+    expect(
+      screen.getByRole('button', { name: 'Approve', exact: true })
+    ).toBeEnabled();
+    expect(
+      screen.queryByText(
+        'A different workspace manager or admin must approve your request.'
+      )
+    ).not.toBeInTheDocument();
+  });
+
   it('shows Approve/Reject only for a manager on a job pending approval', () => {
     useCertOpsJobsMock.mockReturnValue(jobsState({ jobs: [pendingJob] }));
 
@@ -628,8 +664,10 @@ describe('ExecutorJobsPanel approvals', () => {
 
     renderPanel();
 
-    // Status filter also has an "Approved" option; the row chip is the extra hit.
-    expect(screen.getAllByText('Approved').length).toBeGreaterThan(1);
+    expect(
+      screen.getByRole('option', { name: 'Approved (queued)' })
+    ).toBeInTheDocument();
+    expect(screen.getByText('Approved', { exact: true })).toBeInTheDocument();
   });
 
   it('does not show the "Approved" indicator on a row with no approval attribution', () => {
@@ -637,8 +675,10 @@ describe('ExecutorJobsPanel approvals', () => {
 
     renderPanel();
 
-    // Only the status filter option should mention Approved.
-    expect(screen.getAllByText('Approved')).toHaveLength(1);
+    expect(
+      screen.getByRole('option', { name: 'Approved (queued)' })
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Approved', { exact: true })).toBeNull();
   });
 });
 

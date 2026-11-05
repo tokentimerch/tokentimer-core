@@ -85,6 +85,7 @@ async function show(
         <ApprovalDecisionModal
           isOpen
           onClose={vi.fn()}
+          workspaceId='review-workspace'
           job={{ id: 'review-job', operation, payload }}
           decision={decision}
           onDecide={onDecide}
@@ -320,6 +321,7 @@ describe('immutable distribution approval review', () => {
           <ApprovalDecisionModal
             isOpen
             onClose={vi.fn()}
+            workspaceId='review-workspace'
             job={{ id, operation: 'cleanup-from-store' }}
             decision='approve'
             onDecide={vi.fn()}

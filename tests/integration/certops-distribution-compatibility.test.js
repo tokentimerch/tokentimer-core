@@ -37,15 +37,17 @@ describe("Independent PR migration and preview compatibility",function(){
         })));
       }else execute(upgrade);
       const after=(await client.query("SELECT * FROM migrations ORDER BY version")).rows;
-      assert.deepEqual(after.filter(row=>preserved.some(original=>original.version===row.version)),preserved);assert.equal(after.length,98);
-      assert.deepEqual(after.slice(-6).map(({version,name})=>({version,name})),[
-        {version:93,name:"pagerduty_resolution_reason"},
-        {version:94,name:"pagerduty_operator_actions"},
-        {version:95,name:"remove_pagerduty_rest_lookup"},
-        {version:96,name:"certops_consumer_staging"},
-        {version:97,name:"certops_review_authority_epochs"},
-        {version:98,name:"certops_manual_rollout_authority"},
-      ]);
+      assert.deepEqual(after.filter(row=>preserved.some(original=>original.version===row.version)),preserved);assert.equal(after.length,108);
+      const canonicalTail=["pagerduty_resolution_reason","pagerduty_operator_actions","remove_pagerduty_rest_lookup","certops_consumer_staging","certops_review_authority_epochs","certops_manual_rollout_authority"];
+      const previewTails={
+        "lifecycle-81-85":["weekly_digest_recipient_claim_token","pagerduty_incident_lifecycle","pagerduty_resolution_reason","pagerduty_operator_actions","remove_pagerduty_rest_lookup","certops_manual_rollout_authority"],
+        "providers-81":["certops_stable_consumer_discovery","certops_material_cleanup","certops_consumer_verification_failures","certops_distribution_resolution_delivery","pagerduty_operator_actions","remove_pagerduty_rest_lookup"],
+      };
+      assert.deepEqual(after.filter(({version})=>version>=93 && version<=98).map(({name})=>name),previewTails[history] || canonicalTail);
+      for(const name of ["certops_consumer_staging","certops_review_authority_epochs","certops_manual_rollout_authority"])
+        assert.equal(after.filter(row=>row.name===name).length,1,"Authority migration "+name+" is present once");
+      for(const name of ["operator_connections","operator_enrollment_grants","operator_action_requests","operator_oauth","operator_connection_lifetimes","operator_inventory","operator_oauth_retention","operator_issuance","certops_issuance_job_identity","certops_issuance_identity_transfer"])
+        assert.equal(after.filter(row=>row.name===name).length,1,"Released MCP migration "+name+" is present once");
       for(const table of ["certops_material_cleanups","certops_consumer_verification_outcomes","contact_channel_verifications","pagerduty_incidents"])
         assert.equal((await client.query("SELECT to_regclass($1)::text AS name",[table])).rows[0].name,table);
       assert.equal((await client.query("SELECT resolution_delivery_pending FROM certops_distribution_incidents LIMIT 0")).rowCount,0);

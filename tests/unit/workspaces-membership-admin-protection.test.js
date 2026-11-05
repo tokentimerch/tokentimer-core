@@ -33,8 +33,17 @@ function fixture({ target = 2, owner = 9, existingRole = "admin" } = {}) {
     },
   );
   const pool = {
+    async connect() {
+      return { query: pool.query.bind(pool), release() {} };
+    },
     async query(sql, args) {
       state.queries.push({ sql, args });
+      if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql) || sql.includes("pg_advisory_xact_lock"))
+        return { rowCount: 0, rows: [] };
+      if (sql.includes("SELECT id FROM users WHERE id IN"))
+        return { rowCount: 3, rows: [{ id: owner }, { id: 1 }, { id: target }] };
+      if (sql.includes("SELECT created_by,plan FROM workspaces"))
+        return { rowCount: 1, rows: [{ created_by: owner, plan: "oss" }] };
       if (sql.includes("SELECT id, display_name FROM users"))
         return {
           rowCount: 1,
