@@ -4886,6 +4886,11 @@ const migrations = [
     name: "certops_manual_rollout_authority",
     sql: fs.readFileSync(require("path").join(__dirname, "098-certops-manual-rollout-authority.sql"), "utf8"),
   },
+  {
+    version: 99,
+    name: "certops_observed_revocation",
+    sql: fs.readFileSync(require("path").join(__dirname, "099-certops-observed-revocation.sql"), "utf8"),
+  },
 ];
 
 

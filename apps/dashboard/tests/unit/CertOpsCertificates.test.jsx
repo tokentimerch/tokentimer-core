@@ -207,6 +207,30 @@ beforeEach(() => {
   listCertOpsRenewalProfilesMock.mockResolvedValue([]);
 });
 
+it('shows observed revocation separately from the certificate lifecycle', () => {
+  const now = Date.now();
+  useCertOpsCertificatesMock.mockReturnValue(
+    certState({
+      certificates: [
+        certificate({
+          source: null,
+          revocationObservable: true,
+          observedRevocation: {
+            verdict: 'revoked',
+            chainStatus: 'valid',
+            checkedAt: new Date(now - 1000).toISOString(),
+            validUntil: new Date(now + 60000).toISOString(),
+          },
+        }),
+      ],
+    })
+  );
+  renderPage();
+  const row = screen.getByText('example.test').closest('tr');
+  expect(within(row).getByText('Revoked')).toBeInTheDocument();
+  expect(within(row).getByText('Active')).toBeInTheDocument();
+});
+
 it.each([
   ['vault:customer/group', true],
   [null, false],

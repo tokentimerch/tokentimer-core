@@ -30,6 +30,7 @@ const crypto = require("node:crypto");
 const { validateValidationTimeoutSeconds } = require("../issuers/adcs-validation-deadline");
 const { normalizeRuleConstraints } = require("../issuers/adcs-enrollment-rules");
 const { normalizePropagationConfig } = require("../dns/propagate.js");
+const { validateObservedRevocation } = require("../revocation/config.js");
 const {
   applyRestrictivePermissions,
   assertRestrictivePermissions,
@@ -1107,6 +1108,7 @@ function loadAgentConfig({ configDir } = {}) {
   // Independent of `windows` above: this is inventory observation, that is
   // superseded-certificate cleanup.
   const windowsDiscovery = validateWindowsDiscoveryObject(fileConfig.windowsDiscovery);
+  const observedRevocation = validateObservedRevocation(fileConfig.observedRevocation);
 
   const caBundlePath = validateCaBundlePath(
     process.env.TOKENTIMER_AGENT_CA_BUNDLE || fileConfig.caBundlePath,
@@ -1173,6 +1175,7 @@ function loadAgentConfig({ configDir } = {}) {
     discovery,
     windows,
     windowsDiscovery,
+    observedRevocation,
     caBundlePath,
     allowInsecureLocalHttp,
     requireSignedAgentId,

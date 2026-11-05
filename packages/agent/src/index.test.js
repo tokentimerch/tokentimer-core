@@ -309,6 +309,22 @@ describe("runDiscoveryScan", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it("reports revocation facts without transmitting the public PEM", async () => {
+    fs.writeFileSync(path.join(dir, "server.crt"), TEST_CERT_PEM, "utf8");
+    const client = createRecordingClient();
+    let seen;
+    await runDiscoveryScan({ directories: [dir], client, checkRevocation: async (item) => {
+      seen = item;
+      return { verdict: "revoked", chainStatus: "valid", checkedAt: new Date(Date.now() - 1000).toISOString(), validUntil: new Date(Date.now() + 60000).toISOString() };
+    } });
+    assert.match(seen.certificatePem, /BEGIN CERTIFICATE/);
+    const item = client.calls.reportEvidence[0].evidenceItems[0];
+    const metadata = Object.fromEntries(item.metadata.map(({ name, value }) => [name, value]));
+    assert.equal(metadata.observedRevocationVerdict, "revoked");
+    assert.equal(metadata.observedChainStatus, "valid");
+    assert.doesNotMatch(JSON.stringify(item), /BEGIN CERTIFICATE|PRIVATE KEY/);
+  });
+
   it("reports SAN-only certificates with an empty subject through the evidence contract", async () => {
     const pem = fs.readFileSync(path.join(__dirname, "verify/fixtures/san-only.crt.pem"), "utf8");
     const cert = new crypto.X509Certificate(pem);
@@ -427,6 +443,20 @@ describe("runDiscoveryScan", () => {
 
 describe("runWindowsDiscoveryScan", () => {
   const WINDOWS_THUMBPRINT = "DEADBEEF".repeat(5);
+
+  it("reports a checked Windows observation without exposing certificate bytes", async () => {
+    const client = createRecordingClient();
+    const cert = new crypto.X509Certificate(TEST_CERT_PEM);
+    const fingerprintSha256 = cert.fingerprint256.replace(/:/g, "").toLowerCase();
+    const collect = ({ includePublicCertificate }) => {
+      assert.equal(includePublicCertificate, true);
+      return [{ locationKind: "windows_store", locationSlot: "LocalMachine/My/test", fingerprintSha256, certificatePem: TEST_CERT_PEM, subject: "CN=test", issuer: "CN=test", thumbprint: WINDOWS_THUMBPRINT, storeLocation: "LocalMachine", storeName: "My" }];
+    };
+    await runWindowsDiscoveryScan({ client, collect, checkRevocation: async () => ({ verdict: "issuer_revoked", chainStatus: "valid", checkedAt: new Date(Date.now() - 1000).toISOString(), validUntil: new Date(Date.now() + 60000).toISOString() }) });
+    const item = client.calls.reportEvidence[0].evidenceItems[0];
+    assert.equal(item.metadata.find((entry) => entry.name === "observedRevocationVerdict").value, "issuer_revoked");
+    assert.doesNotMatch(JSON.stringify(item), /BEGIN CERTIFICATE|PRIVATE KEY/);
+  });
 
   it("passes the configured store set to the canonical collector", async () => {
     const client = createRecordingClient();

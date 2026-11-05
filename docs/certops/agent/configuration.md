@@ -96,6 +96,7 @@ Top level:
 | `policy` | object or null | null | Agent-local allowlists (below). Null means every allowlist is empty: default deny. |
 | `discovery` | object or null | null | Null disables discovery entirely. |
 | `windowsDiscovery` | object or null | enabled | Windows only: `{ "enabled": true, "intervalMs": 1800000, "stores": ["My"] }`. Omit it to use these defaults; it does nothing on other platforms. |
+| `observedRevocation` | object or null | disabled | Opt in to CRL and OCSP checks for discovered certificates. Set `enabled: true` and list permitted HTTP(S) origins in `allowedOrigins`; optionally add PEM-only `trustAnchorFiles` and `intermediateFiles`. System trust is read each scan with Node 22.19 or later. Checks run on the discovery interval and may extend the scan. LDAP and delta CRLs are unsupported; without a usable OCSP response, the result is unknown. Remove a distrusted root CA from the local trust store; root trust anchors do not have a revocation check. |
 | `execution` | object or null | null | Null is treated as `{ enabled: false }` (observe-only mode). |
 | `caBundlePath` | string or null | null | Path to a PEM CA bundle trusted for the agent-to-control-plane HTTPS channel (private-CA control planes). Env override: `TOKENTIMER_AGENT_CA_BUNDLE`. Fail-loud at startup: a missing/unreadable file, a file without a `BEGIN CERTIFICATE` block, or a file containing private key material aborts before any network call. When set, the bundle replaces the default trust store for control-plane requests (it does not extend it); plain `http` URLs are unaffected. When unset, the OS trust store applies (`NODE_EXTRA_CA_CERTS` remains a coarser process-wide alternative). |
 | `dnsProviders` | object or null | null | Native DNS-01 solver configuration (see "DNS-01 providers" in [DNS and ACME](dns-and-acme.md)). Maps provider id to `{ credentialsFile: <absolute path>, ...non-secret options }`, plus a reserved `zoneProviderMap` key (zone to provider id). Credentials never live in `config.json`, only the path to a 0600 credentials file does. Fail-loud validation: unknown provider ids, relative paths, and `zoneProviderMap` entries naming unconfigured providers abort startup. |
@@ -140,6 +141,13 @@ platform rejects a trust job with `command_not_allowlisted` before attempting
 any mutation, on every platform including Windows: a "renew-only" agent (no
 `allowedCommands` profiles configured at all) refuses `distribute-trust`/
 `revoke-trust` the same way regardless of which platform it runs on.
+
+For example, to permit checks against a local PKI responder, add this field to
+the agent configuration and restart the agent:
+
+```json
+"observedRevocation": { "enabled": true, "allowedOrigins": ["http://pki.example.test"] }
+```
 
 `discovery` block:
 

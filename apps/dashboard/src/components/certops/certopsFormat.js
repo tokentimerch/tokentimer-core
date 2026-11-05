@@ -49,6 +49,76 @@ export function formatDateTime(value) {
   });
 }
 
+// Revocation is independent of the certificate lifecycle and location status.
+export function observedRevocationDescriptor(result, now = Date.now()) {
+  if (!result)
+    return {
+      label: 'Revocation not checked',
+      scheme: 'gray',
+      help: 'No revocation check has been reported.',
+    };
+  const checkedAt = Date.parse(result.checkedAt);
+  const validUntil = Date.parse(result.validUntil);
+  const checked = Number.isFinite(checkedAt)
+    ? formatDateTime(result.checkedAt)
+    : 'unknown';
+  const reason = result.detail ? ` ${result.detail}` : '';
+  if (Number.isFinite(checkedAt) && checkedAt > now)
+    return {
+      label: 'Revocation unknown',
+      scheme: 'orange',
+      help: 'The verification time is in the future; check the agent clock.',
+    };
+  if (result.chainStatus === 'invalid')
+    return {
+      label: 'Chain untrusted',
+      scheme: 'red',
+      help: `Chain validation failed. Checked: ${checked}.${reason}`,
+    };
+  if (result.verdict === 'unknown') {
+    const previous = result.lastVerified;
+    if (previous && ['revoked', 'issuer_revoked'].includes(previous.verdict))
+      return {
+        label:
+          previous.verdict === 'revoked'
+            ? 'Last known revoked'
+            : 'Last known CA revoked',
+        scheme: 'red',
+        help: `Latest verification is unavailable. Last verified: ${formatDateTime(previous.checkedAt)}.${reason}`,
+      };
+    return {
+      label: 'Revocation unknown',
+      scheme: 'orange',
+      help: `Verification is unavailable. Checked: ${checked}.${reason}`,
+    };
+  }
+  const stale =
+    !Number.isFinite(checkedAt) ||
+    !Number.isFinite(validUntil) ||
+    validUntil <= checkedAt ||
+    now >= validUntil;
+  const help = `Checked: ${checked}. Valid until: ${formatDateTime(result.validUntil)}.${reason}`;
+  if (result.verdict === 'revoked')
+    return {
+      label: stale ? 'Revoked (stale)' : 'Revoked',
+      scheme: 'red',
+      help,
+    };
+  if (result.verdict === 'issuer_revoked')
+    return {
+      label: stale ? 'CA revoked (stale)' : 'CA revoked',
+      scheme: 'red',
+      help,
+    };
+  if (result.verdict === 'good' && result.chainStatus === 'valid' && !stale)
+    return { label: 'Revocation checked', scheme: 'green', help };
+  return {
+    label: stale ? 'Revocation check stale' : 'Revocation unknown',
+    scheme: 'orange',
+    help,
+  };
+}
+
 export function daysUntil(value) {
   if (!value) return null;
   const date = new Date(value);

@@ -113,6 +113,7 @@ const {
 } = require("./evidence");
 const { discoverCertificates } = require("./discovery");
 const { collectWindowsDiscoveryObservations } = require("./discovery/windows");
+const { enrichObservedItems, createScanChecker } = require("./revocation/observation");
 const {
   validateClaimedJob,
   hasReportableJobId,
@@ -6555,9 +6556,10 @@ async function executeTrustJob({
  * @param {(msg: string) => void} [params.log]
  * @returns {Promise<{ observed: number, warnings: number }>}
  */
-async function runDiscoveryScan({ directories, client, log = null }) {
+async function runDiscoveryScan({ directories, client, log = null, checkRevocation = null }) {
   const { certificates, warnings, truncated } = discoverCertificates(directories, {
     onWarning: (message) => emitLog(log, message),
+    includePublicCertificate: typeof checkRevocation === "function",
   });
   if (truncated) {
     emitLog(log, "discovery scan hit a bound and was truncated");
@@ -6565,6 +6567,7 @@ async function runDiscoveryScan({ directories, client, log = null }) {
 
   const targetHost = os.hostname();
   const items = [];
+  const revocationEntries = [];
   const observedAt = new Date().toISOString();
   for (const cert of certificates) {
     if (!cert.parsed) continue;
@@ -6596,7 +6599,10 @@ async function runDiscoveryScan({ directories, client, log = null }) {
         metadata,
       }),
     );
+    revocationEntries.push({ item: items[items.length - 1], certificatePem: cert.certificatePem, intermediateCertificates: cert.intermediateCertificates });
   }
+
+  await enrichObservedItems(revocationEntries, checkRevocation);
 
   const EVIDENCE_CHUNK_SIZE = 16;
   for (let start = 0; start < items.length; start += EVIDENCE_CHUNK_SIZE) {
@@ -6640,16 +6646,19 @@ async function runWindowsDiscoveryScan({
   stores = ["My"],
   log = null,
   collect = collectWindowsDiscoveryObservations,
+  checkRevocation = null,
 }) {
   const warnings = [];
   const observations = await collect({
     stores,
+    includePublicCertificate: typeof checkRevocation === "function",
     onWarning: (message) => warnings.push(message),
   });
   for (const warning of warnings) emitLog(log, warning);
 
   const targetHost = os.hostname();
   const items = [];
+  const revocationEntries = [];
   const observedAt = new Date().toISOString();
   for (const observation of observations) {
     // Structured metadata matching agentObservations.js's generalized
@@ -6710,7 +6719,10 @@ async function runWindowsDiscoveryScan({
         metadata,
       }),
     );
+    revocationEntries.push({ item: items[items.length - 1], certificatePem: observation.certificatePem });
   }
+
+  await enrichObservedItems(revocationEntries, checkRevocation);
 
   const EVIDENCE_CHUNK_SIZE = 16;
   for (let start = 0; start < items.length; start += EVIDENCE_CHUNK_SIZE) {
@@ -7272,10 +7284,11 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
         intervalMs: config.discovery.intervalMs,
         signal: controller.signal,
         startImmediately: true,
-        onTick: () =>
+        onTick: async () =>
           runDiscoveryScan({
             directories: config.discovery.directories,
             client,
+            checkRevocation: await createScanChecker(config.observedRevocation),
           }),
       }),
     );
@@ -7329,9 +7342,10 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
         intervalMs: config.windowsDiscovery.intervalMs,
         signal: controller.signal,
         startImmediately: true,
-        onTick: () => runWindowsDiscoveryScan({
+        onTick: async () => runWindowsDiscoveryScan({
           client,
           stores: config.windowsDiscovery.stores,
+          checkRevocation: await createScanChecker(config.observedRevocation),
         }),
       }),
     );

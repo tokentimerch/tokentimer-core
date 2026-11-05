@@ -24,10 +24,10 @@ pnpm --filter @tokentimer/agent pack:release
 # and dist/tokentimer-agent-<version>.tgz.sha256
 ```
 
-The canonical pack command requires Go and freshly cross-compiles both Windows
-service-host and chain/store-query helpers for amd64 and arm64 before creating
-the archive. A failed or wrong-architecture helper build stops packaging. The
-single cross-platform tarball contains the four architecture-named executables
+The canonical pack command requires Go and freshly cross-compiles the Windows
+service-host and chain/store-query helpers and the Windows/Linux revocation
+helpers for amd64 and arm64 before creating the archive. A failed or
+wrong-architecture helper build stops packaging. The cross-platform tarball contains the architecture-named executables
 under `bin/`; development `reference/adcs-chain/dist` binaries and other stale
 `bin/*.exe` files are not distribution inputs. Windows selects the exact runtime
 architecture; ARM64 never falls back to the amd64 helper. These are unsigned

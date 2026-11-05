@@ -1,4 +1,8 @@
-import CertOpsBadge, { CertificateLifecycleBadge } from './CertOpsBadge.jsx';
+import CertOpsBadge, {
+  CertificateLifecycleBadge,
+  ObservedRevocationBadge,
+  hasObservedRevocationContext,
+} from './CertOpsBadge.jsx';
 import {
   Box,
   Code,
@@ -139,6 +143,9 @@ function CertOpsPanelBody({ tokenId, workspaceId }) {
             Certificate operations
           </Text>
           <CertificateLifecycleBadge certificate={certificate} />
+          {hasObservedRevocationContext(certificate) ? (
+            <ObservedRevocationBadge result={certificate.observedRevocation} />
+          ) : null}
           <RenewalBadge renewal={certificate.renewal} />
           <RenewalPathBadge certificate={certificate} />
         </HStack>
