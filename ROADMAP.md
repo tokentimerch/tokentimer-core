@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-02 against main 5bc9b519 (v0.18.2). Other
+Last reviewed: 2026-11-05 against main eeacfc1b (v0.19.0 draft).
 certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
 
 This page is the repository milestone index: what Core takes next, what must
@@ -45,11 +45,11 @@ called stable while they are open.
   certificate, including ordinary and wildcard certificates, shipped in 0.18.0
   (see [CHANGELOG.md](CHANGELOG.md)); the remaining destination scope stays
   open on the issue.
-  Active, unmerged increments are [PR #498](https://github.com/tokentimerch/tokentimer-core/pull/498)
-  for the distribution lifecycle and [PR #460](https://github.com/tokentimerch/tokentimer-core/pull/460)
-  for Windows/IIS shared material and provider extensions. Functional
+  The distribution lifecycle remains open in [PR #498](https://github.com/tokentimerch/tokentimer-core/pull/498).
+  Windows/IIS shared material and provider extensions merged in
+  [PR #460](https://github.com/tokentimerch/tokentimer-core/pull/460). Functional
   implementation is separate from remaining fleet/protected qualification;
-  neither PR completes every #248 requirement.
+  these increments do not complete every #248 requirement.
   Provider extensions cover OpenBao KV v2 and Azure Key Vault Secrets exact
   versions. Azure and Windows/IIS remain subject to independent production
   qualification; see [implementation and evidence](docs/certops/distribution-extensions-qualification.md).

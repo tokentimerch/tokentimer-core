@@ -9,6 +9,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-05
+
 ### Added
 
 - **Global auto-sync overrides.** System Settings can force metric exposure/labels and the monitoring group independently across all integrations. Managed controls prevent local changes; a Configured badge identifies active overrides. Otherwise, connections keep their saved choices. Import forms use consistent typography and structured run history. Environment values retain priority; extra asset labels default off and increase series/alert cardinality. Names/scopes cover future creations; existing provider counters stay unchanged. **Operator action:** apply migrations 81–82 with matching API/dashboard code.
@@ -17,9 +19,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Recipient confirmation before workspace email and WhatsApp alerts.** Cloud requires consent; self-hosted delivery keeps verification off until enabled. **Operator action:** run the standard migrations before matching API/worker images; canonical main uses 84 for recipient verification and 85 for digest claims. Supported preview histories retain applied versions and timestamps. Set `RECIPIENT_FINGERPRINT_SECRET` and `PUBLIC_BASE_URL` or `API_URL` before invitations, then switch self-hosted to `enforce` after recipients confirm. Existing contacts remain unverified. Retries retain successful-recipient evidence; uncertain provider outcomes can delay retries, and SMTP cannot guarantee exactly-once delivery. See [recipient verification](docs/recipient-verification.md) for setup, limits and recovery.
 
+- **PagerDuty incident actions.** Managers can acknowledge or resolve incidents from the token details. Resolve asks for a reason. TokenTimer also resolves the expiry incident after confirmed managed-certificate revocation or decommissioning. A pending or failed action leaves the incident open. See [PagerDuty setup](docs/PAGERDUTY.md).
+
 ### Fixed
 
 - **Rollout authorization follows current workspace authority.** **Operator action:** apply migration 98 with matching API and worker images. Request a new rollout and, if required, fresh approval to continue pre-upgrade work; changes to manager membership, workspace ownership, pause state or approval policy also require a new request. Existing deployment evidence is retained.
+
+- **Vault material setup** can recover after a failed publication and explains when the selected consumer needs an active assignment before installed material can be verified.
 
 - Windows discovery reports non-SNI IIS sites with host headers that share an HTTP.sys certificate binding and distinguishes SNI sites when IIS binding metadata is available. **Operator action:** update affected Windows agents and install IIS Management Scripts and Tools.
 
