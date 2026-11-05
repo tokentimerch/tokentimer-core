@@ -6748,13 +6748,12 @@ async function registerIfNeeded({
     }
     deleteBootstrapEnvFile(configDir);
     if (platformModule.isWindows()) {
-      const result = platformModule.clearWindowsServiceBootstrapToken({ configDir });
-      if (result.attempted && !result.cleared) {
+      const result = platformModule.clearWindowsServiceBootstrapToken({ configDir, serviceName: env.TOKENTIMER_AGENT_SERVICE_NAME });
+      if (!result.cleared && (result.attempted || result.reason === "invalid Windows service name")) {
         log(
           `tokentimer-agent: could not confirm the Windows service registry ` +
             `Environment value no longer holds the bootstrap token (${result.reason}); ` +
-            "if this agent runs as the TokenTimerAgent service, check " +
-            "HKLM\\SYSTEM\\CurrentControlSet\\Services\\TokenTimerAgent\\Environment manually.",
+            "check the agent service's registry Environment value manually.",
         );
       }
     }
