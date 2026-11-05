@@ -31,6 +31,7 @@ const ROUTES = Object.freeze({
   HEARTBEAT: "/api/v1/certops/agent/heartbeat",
   ROTATION_PREPARE: "/api/v1/certops/agent/credential-rotation/prepare",
   ROTATION_CONFIRM: "/api/v1/certops/agent/credential-rotation/confirm",
+  ROTATION_ACKNOWLEDGE: "/api/v1/certops/agent/credential-rotation/acknowledge",
   CLAIM: "/api/v1/certops/agent/jobs/claim",
   RESULTS: "/api/v1/certops/agent/jobs/results",
   // B6: plain POST (no message envelope). Path is jobs/:jobId/lease.
@@ -721,6 +722,26 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     return { state: "committed" };
   }
 
+  // Explicit transport only. ACK must be called only after a qualified store
+  // has verified durable persistence and local execution is coordinated.
+  async function acknowledgeCredentialRotation({ operationId, candidateCredential } = {}) {
+    if (typeof operationId !== "string" || !/^[a-f0-9]{32}$/.test(operationId) ||
+        typeof candidateCredential !== "string" || !/^ttagent_[a-f0-9]{16}_[a-f0-9]{64}$/.test(candidateCredential)) {
+      throw new AgentProtocolError("invalid credential rotation acknowledgement", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
+    }
+    let response;
+    try { response = await sendPlain(ROUTES.ROTATION_ACKNOWLEDGE, candidateCredential, { operationId }); }
+    catch (error) { throw new AgentProtocolError("credential rotation acknowledgement request failed",
+      error instanceof AgentProtocolError && error.code === AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR
+        ? AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR : AGENT_PROTOCOL_ERROR_CODES.NETWORK_ERROR,
+      { status: Number.isInteger(error?.status) ? error.status : undefined }); }
+    if (!response.ok) throw new AgentProtocolError("credential rotation acknowledgement was rejected", AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status: response.status });
+    if (!isPlainObject(response.json) || Object.keys(response.json).length !== 1 || response.json.state !== "acknowledged") {
+      throw new AgentProtocolError("invalid credential rotation acknowledgement response", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
+    }
+    return { state: "acknowledged" };
+  }
+
   async function heartbeat({
     agentVersion,
     supportedOperations = undefined,
@@ -925,7 +946,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     return json ?? {};
   }
 
-  return { register, heartbeat, claim, renewLease, reportResult, reportEvidence, postJobLogs, prepareCredentialRotation, confirmCredentialRotation };
+  return { register, heartbeat, claim, renewLease, reportResult, reportEvidence, postJobLogs, prepareCredentialRotation, confirmCredentialRotation, acknowledgeCredentialRotation };
 }
 
 module.exports = {

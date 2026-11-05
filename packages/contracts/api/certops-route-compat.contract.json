@@ -61,7 +61,8 @@
     "/api/v1/workspaces/{id}/certops/distribution-jobs/{jobId}/retry": "cookieAuth",
     "/api/v1/certops/agent/jobs/{jobId}/logs": "agentCredentialAuth",
     "/api/v1/certops/agent/credential-rotation/prepare": "agentCredentialAuth",
-    "/api/v1/certops/agent/credential-rotation/confirm": "agentRotationCandidateAuth"
+    "/api/v1/certops/agent/credential-rotation/confirm": "agentRotationCandidateAuth",
+    "/api/v1/certops/agent/credential-rotation/acknowledge": "agentCredentialAuth"
   },
   "guarantees": {
     "stableRoutes": [
@@ -291,6 +292,10 @@
       },
       {
         "path": "/api/v1/certops/agent/credential-rotation/confirm",
+        "method": "POST"
+      },
+      {
+        "path": "/api/v1/certops/agent/credential-rotation/acknowledge",
         "method": "POST"
       }
     ],

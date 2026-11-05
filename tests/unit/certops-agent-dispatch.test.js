@@ -78,6 +78,7 @@ function createMockPool(handler) {
     query: async (text, params) => {
       if (String(typeof text === "string" ? text : text?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
       const sql = typeof text === "string" ? text : text?.text || "";
+      if (sql.includes("to_regclass('certops_agent_credential_rotations')")) return { rows: [{ rotation_table: null }] };
       if (sql.includes("SELECT credential_hash, status FROM certops_agents")) {
         state.lockOrder.push("agent-lock");
         return { rows: [{ credential_hash: state.credentialHash, status: state.agentStatus || "active" }] };
@@ -1230,6 +1231,11 @@ describe("agentDispatch.recordHeartbeat", () => {
 });
 
 describe("agentDispatch.claimJobs", () => {
+  it("fails closed when rotation is enabled but its schema is absent", async () => {
+    const dbPool = createMockPool(() => { throw new Error("claim must not proceed"); });
+    await assert.rejects(claimJobs({ dbPool, agent: agentFixture(), env: { CERTOPS_AGENT_ROTATION_ALL_API_FENCED: "true" },
+      deps: { enforceAgentSequence: async () => {} } }), { code: "CERTOPS_AGENT_ROTATION_SCHEMA_UNAVAILABLE" });
+  });
   for (const platform of ["win32", "linux"]) {
     for (const missing of [null, "windows-material-iis-v1", "windows-cert-store-v1", "iis-binding-v1"]) {
       it(`authenticated ${platform} claim enforces persisted Windows capabilities: ${missing || "qualified"}`, async () => {

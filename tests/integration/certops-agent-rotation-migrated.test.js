@@ -10,6 +10,7 @@ const { createCertOpsMachineWritePreParserBoundary } = require("../../apps/api/m
 const { createCsrfExemptMiddleware, isCertOpsMachineTokenCsrfExemptPath } = require("../../apps/api/middleware/csrf-exempt");
 const { createProtocolClient } = require("../../packages/agent/src/protocol/index.js");
 const { migrations } = require("../../apps/api/migrations/migrate");
+const { claimJobs } = require("../../apps/api/services/certops/agentDispatch");
 const { generateAgentCredential, validateAgentCredential } = require("../../apps/api/services/certops/agentCredentials");
 const { prepareCredentialRotation, confirmCredentialRotation } = require("../../apps/api/services/certops/agentCredentialRotation");
 const connection = { host: process.env.DB_HOST || "localhost", port: Number(process.env.DB_PORT || 5432), user: process.env.DB_USER || "tokentimer", password: process.env.DB_PASSWORD || "password" };
@@ -53,7 +54,7 @@ describe("Agent credential rotation on migrated schema", function () {
     await db.query(`INSERT INTO certops_agents (workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)
       VALUES ($1,$2,'0.18.2','1.0.0',$3,$4)`, [workspaceId,`agent-${randomUUID()}`,old.credentialPrefix,old.credentialHash]);
     const operationId = randomUUID().replaceAll("-", "");
-    const paths = { prepare: "/api/v1/certops/agent/credential-rotation/prepare", confirm: "/api/v1/certops/agent/credential-rotation/confirm" };
+    const paths = { prepare: "/api/v1/certops/agent/credential-rotation/prepare", confirm: "/api/v1/certops/agent/credential-rotation/confirm", ack: "/api/v1/certops/agent/credential-rotation/acknowledge" };
     const body = { operationId, candidatePrefix: next.credentialPrefix, candidateHash: next.credentialHash };
     const makeApp = (rotationEnv, options = {}) => {
       const app = express();
@@ -68,10 +69,20 @@ describe("Agent credential rotation on migrated schema", function () {
     const disabled = makeApp({});
     assert.equal((await supertest(disabled).post(paths.prepare).send(body)).status, 404);
     assert.equal((await supertest(disabled).post(paths.confirm).send({ operationId })).status, 404);
+    assert.equal((await supertest(disabled).post(paths.ack).send({ operationId })).status, 404);
     const enabled = makeApp({ CERTOPS_AGENT_ROTATION_ALL_API_FENCED: "true" });
     assert.equal((await supertest(enabled).post(paths.prepare).send(body)).status, 401);
     assert.equal((await supertest(enabled).post(paths.prepare).set("Authorization", `Bearer ${old.plaintextCredential}`).send({ ...body, extra: 1 })).status, 400);
     assert.equal((await supertest(enabled).post(paths.prepare).set("Authorization", `Bearer ${old.plaintextCredential}`).send(body)).status, 200);
+    const before = (await validateAgentCredential({ client: db, rawCredential: old.plaintextCredential })).agent;
+    let sequences = 0;
+    const claimOptions = { dbPool: db, agent: before, body: { supportedActions: ["renew"] }, env: { CERTOPS_AGENT_ROTATION_ALL_API_FENCED: "true" }, deps: { enforceAgentSequence: async () => { sequences++; }, computeAgentCompatibility: () => { throw new Error("CLAIM_SELECTION_REACHED"); }, lockWorkspaceForCertOpsSideEffect: async () => {} } };
+    assert.deepEqual(await claimJobs(claimOptions), { jobs: [], logStreams: [] });
+    assert.equal(sequences, 1);
+    claimOptions.env = {};
+    assert.deepEqual(await claimJobs(claimOptions), { jobs: [], logStreams: [] });
+    assert.equal(sequences, 2);
+    claimOptions.env = { CERTOPS_AGENT_ROTATION_ALL_API_FENCED: "true" };
     const sessionApp = makeApp({ CERTOPS_AGENT_ROTATION_ALL_API_FENCED: "true" }, { fakeSession: true });
     assert.equal((await supertest(sessionApp).post(paths.confirm).set("Authorization", `Bearer ${next.plaintextCredential}`).send({ operationId })).status, 401);
     const auditsBefore = Number((await db.query("SELECT count(*) FROM audit_events")).rows[0].count);
@@ -82,6 +93,18 @@ describe("Agent credential rotation on migrated schema", function () {
     assert.equal((await supertest(enabled).post(paths.confirm).set("Authorization", `Bearer ${old.plaintextCredential}`).send({ operationId })).status, 401);
     assert.equal((await supertest(enabled).post(paths.confirm).set("Authorization", `Bearer ${next.plaintextCredential}`).send({ operationId })).status, 200);
     assert.equal((await supertest(enabled).post(paths.confirm).set("Authorization", `Bearer ${next.plaintextCredential}`).send({ operationId })).status, 200);
+    assert.equal((await supertest(enabled).post(paths.ack).set("Authorization", `Bearer ${next.plaintextCredential}`).send({ operationId })).status, 404);
+    const current = (await validateAgentCredential({ client: db, rawCredential: next.plaintextCredential })).agent;
+    claimOptions.agent = current;
+    assert.deepEqual(await claimJobs(claimOptions), { jobs: [], logStreams: [] });
+    assert.equal(sequences, 3);
+    const ackEnabled = makeApp({ CERTOPS_AGENT_ROTATION_ALL_API_FENCED: "true", CERTOPS_AGENT_ROTATION_ACK_ENABLED: "true" });
+    assert.equal((await supertest(ackEnabled).post(paths.ack).set("Authorization", `Bearer ${old.plaintextCredential}`).send({ operationId })).status, 401);
+    assert.equal((await supertest(ackEnabled).post(paths.ack).set("Authorization", `Bearer ${next.plaintextCredential}`).send({ operationId, extra: 1 })).status, 400);
+    assert.equal((await supertest(ackEnabled).post(paths.ack).set("Authorization", `Bearer ${next.plaintextCredential}`).send({ operationId })).status, 200);
+    assert.equal((await supertest(ackEnabled).post(paths.ack).set("Authorization", `Bearer ${next.plaintextCredential}`).send({ operationId })).status, 200);
+    await assert.rejects(claimJobs(claimOptions), /CLAIM_SELECTION_REACHED/);
+    assert.equal(sequences, 4);
     assert.equal((await supertest(enabled).post(paths.prepare).set("Authorization", `Bearer ${old.plaintextCredential}`).send(body)).status, 401);
     const bounded = makeApp({ CERTOPS_AGENT_ROTATION_ALL_API_FENCED: "true" }, { boundary: { parserOptions: { limitBytes: 128 } } });
     assert.equal((await supertest(bounded).post(paths.confirm).set("Authorization", `Bearer ${next.plaintextCredential}`).send({ operationId, padding: "x".repeat(300) })).status, 413);
@@ -99,13 +122,14 @@ describe("Agent credential rotation on migrated schema", function () {
     await db.query(`INSERT INTO certops_agents (workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)
       VALUES ($1,$2,'0.18.2','1.0.0',$3,$4)`, [workspaceId,agentId,old.credentialPrefix,old.credentialHash]);
     const app = express(); app.use(createCertOpsMachineWritePreParserBoundary());
-    app.use(createCertOpsAgentRouter({ dbPool: db, rotationEnv: { CERTOPS_AGENT_ROTATION_ALL_API_FENCED: "true" }, credentialAuthMiddleware: createAgentCredentialAuth({ client: db }), certOpsEnabledMiddleware: (_req,_res,nextMiddleware) => nextMiddleware() }));
+    app.use(createCertOpsAgentRouter({ dbPool: db, rotationEnv: { CERTOPS_AGENT_ROTATION_ALL_API_FENCED: "true", CERTOPS_AGENT_ROTATION_ACK_ENABLED: "true" }, credentialAuthMiddleware: createAgentCredentialAuth({ client: db }), certOpsEnabledMiddleware: (_req,_res,nextMiddleware) => nextMiddleware() }));
     const listener = await new Promise(resolve => { const srv = app.listen(0,"127.0.0.1",() => resolve(srv)); });
     try {
-      let dropConfirmResponse = true;
+      let dropConfirmResponse = true, dropAckResponse = true;
       const transport = async (url, options) => {
         const response = await fetch(url, options);
         if (url.endsWith("/credential-rotation/confirm") && dropConfirmResponse) { dropConfirmResponse = false; throw new Error("simulated lost response"); }
+        if (url.endsWith("/credential-rotation/acknowledge") && dropAckResponse) { dropAckResponse = false; throw new Error("simulated lost ACK response"); }
         return response;
       };
       const client = createProtocolClient({ serverUrl: `http://127.0.0.1:${listener.address().port}`, allowInsecureLocalHttp: true, agentId, protocolVersion: "1.0.0", getCredential: () => old.plaintextCredential, fetchImpl: transport });
@@ -114,8 +138,54 @@ describe("Agent credential rotation on migrated schema", function () {
       await assert.rejects(client.confirmCredentialRotation({ operationId, candidateCredential: next.plaintextCredential }), { code: "network_error" });
       assert.equal((await validateAgentCredential({ client: db, rawCredential: old.plaintextCredential })).valid, false);
       assert.deepEqual(await client.confirmCredentialRotation({ operationId, candidateCredential: next.plaintextCredential }), { state: "committed" });
+      await assert.rejects(client.acknowledgeCredentialRotation({ operationId, candidateCredential: next.plaintextCredential }), { code: "network_error" });
+      assert.deepEqual(await client.acknowledgeCredentialRotation({ operationId, candidateCredential: next.plaintextCredential }), { state: "acknowledged" });
+      const ackAudits = await db.query("SELECT count(*) FROM audit_events WHERE workspace_id = $1 AND action = 'CERTOPS_AGENT_CREDENTIAL_ROTATION_ACKNOWLEDGED'", [workspaceId]);
+      assert.equal(Number(ackAudits.rows[0].count), 1);
       assert.equal((await validateAgentCredential({ client: db, rawCredential: next.plaintextCredential })).agent.agentId, agentId);
     } finally { await new Promise((resolve,reject) => listener.close(error => error ? reject(error) : resolve())); }
+  });
+
+  it("serializes preparation against a claim and fences later claims until ACK", async () => {
+    const email = `rotation-race-${randomUUID()}@example.test`;
+    const user = (await db.query("INSERT INTO users(email,email_original,display_name,password_hash,auth_method) VALUES ($1,$2,'Rotation Race','x','local') RETURNING id", [email,email])).rows[0];
+    const workspaceId = randomUUID(); await db.query("INSERT INTO workspaces (id,name,created_by,plan) VALUES ($1,'rotation race',$2,'oss')", [workspaceId,user.id]);
+    const old = generateAgentCredential(), next = generateAgentCredential(), agentId = `agent-${randomUUID()}`;
+    const row = (await db.query(`INSERT INTO certops_agents (workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)
+      VALUES ($1,$2,'0.18.2','1.0.0',$3,$4) RETURNING id`, [workspaceId,agentId,old.credentialPrefix,old.credentialHash])).rows[0];
+    const agent = (await validateAgentCredential({ client: db, rawCredential: old.plaintextCredential })).agent;
+    const job = (await db.query(`INSERT INTO certificate_jobs (workspace_id,operation,status,requested_by_user_id,executor_kind,mode)
+      VALUES ($1,'renew','pending',$2,'agent','real') RETURNING id`, [workspaceId,user.id])).rows[0];
+    const rotation = { dbPool: db, agent, operationId: randomUUID().replaceAll("-", ""), candidatePrefix: next.credentialPrefix, candidateHash: next.credentialHash, env: { CERTOPS_AGENT_ROTATION_ALL_API_FENCED: "true" } };
+    const claimant = await db.connect();
+    try {
+      await claimant.query("BEGIN");
+      await claimant.query("SELECT id FROM certops_agents WHERE id = $1 FOR UPDATE", [row.id]);
+      await claimant.query("UPDATE certificate_jobs SET status = 'claimed', claimed_by_agent_id = $2 WHERE id = $1", [job.id, row.id]);
+      const pending = prepareCredentialRotation(rotation).then(() => null, error => error);
+      let blocked = false;
+      for (let i = 0; i < 100 && !blocked; i++) {
+        const waiting = await db.query(`SELECT count(*) AS count FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%SELECT credential_hash, status%'`);
+        blocked = Number(waiting.rows[0].count) > 0;
+        if (!blocked) await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      assert.equal(blocked, true);
+      await claimant.query("COMMIT");
+      assert.equal((await pending)?.code, "CERTOPS_AGENT_ROTATION_CONFLICT");
+    } finally { try { await claimant.query("ROLLBACK"); } catch (_) {} claimant.release(); }
+    await db.query("UPDATE certificate_jobs SET status = 'succeeded' WHERE id = $1", [job.id]);
+    await prepareCredentialRotation(rotation);
+    let sequenceCalls = 0;
+    const response = await claimJobs({ dbPool: db, agent, env: rotation.env, body: { supportedActions: [] },
+      deps: { enforceAgentSequence: async () => { sequenceCalls++; }, lockWorkspaceForCertOpsSideEffect: async () => {} } });
+    assert.deepEqual(response, { jobs: [], logStreams: [] }); assert.equal(sequenceCalls, 1);
+    await db.query("UPDATE certops_agents SET last_sequence = 5 WHERE id = $1", [agent.id]);
+    await assert.rejects(claimJobs({ dbPool: db, agent, env: rotation.env, envelope: { sequence: 5 }, body: { supportedActions: [] } }), { code: "CERTOPS_AGENT_SEQUENCE_REGRESSION" });
+    assert.deepEqual(await claimJobs({ dbPool: db, agent, env: rotation.env, envelope: { sequence: 6 }, body: { supportedActions: [] } }), { jobs: [], logStreams: [] });
+    assert.equal(Number((await db.query("SELECT last_sequence FROM certops_agents WHERE id = $1", [agent.id])).rows[0].last_sequence), 6);
+    await db.query("UPDATE certops_agent_credential_rotations SET expires_at = NOW() - interval '1 second' WHERE agent_id = $1", [agent.id]);
+    await assert.rejects(claimJobs({ dbPool: db, agent, env: {}, envelope: { sequence: 7 }, body: { supportedActions: ["renew"] },
+      deps: { computeAgentCompatibility: () => { throw new Error("EXPIRED_CLAIM_SELECTION_REACHED"); } } }), /EXPIRED_CLAIM_SELECTION_REACHED/);
   });
 
 });

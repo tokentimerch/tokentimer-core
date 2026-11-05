@@ -17,6 +17,7 @@ const reservations = Object.freeze({
   92: "pagerduty_incident_lifecycle",
   93: "pagerduty_resolution_reason",
   96: "agent_credential_rotations",
+  97: "agent_credential_rotation_ack",
 });
 
 function validateMigrationReservations(migrations) {
