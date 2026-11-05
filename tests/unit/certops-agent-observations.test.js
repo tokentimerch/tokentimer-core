@@ -245,6 +245,7 @@ describe("persistAgentDiscoveryEvidenceBatch", () => {
             },
           ],
           deps: {
+            assertCurrentAgentCredential: async () => {},
             enforceAgentSequence: async ({ client: c, envelope }) => {
               await c.query("SET last_sequence = $1", [envelope.sequence]);
             },
@@ -331,6 +332,7 @@ describe("persistAgentDiscoveryEvidenceBatch", () => {
         },
       ],
       deps: {
+        assertCurrentAgentCredential: async () => {},
         enforceAgentSequence: async ({ client: c, envelope }) => {
           await c.query("SET last_sequence = $1", [envelope.sequence]);
         },
@@ -450,6 +452,7 @@ describe("persistAgentDiscoveryEvidenceBatch", () => {
         },
       ],
       deps: {
+        assertCurrentAgentCredential: async () => {},
         enforceAgentSequence: async ({ client: c, envelope }) => {
           await c.query("SET last_sequence = $1", [envelope.sequence]);
         },
@@ -1232,6 +1235,7 @@ describe("persistAgentDiscoveryEvidenceBatch - Windows discovery persistence (ob
         },
       ],
       deps: {
+        assertCurrentAgentCredential: async () => {},
         enforceAgentSequence: async ({ client: c, envelope }) => {
           await c.query("SET last_sequence = $1", [envelope.sequence]);
         },
@@ -1317,6 +1321,7 @@ describe("persistAgentDiscoveryEvidenceBatch - Windows discovery persistence (ob
       ],
     });
     const deps = {
+      assertCurrentAgentCredential: async () => {},
       enforceAgentSequence: async ({ client: c, envelope }) => {
         await c.query("SET last_sequence = $1", [envelope.sequence]);
       },

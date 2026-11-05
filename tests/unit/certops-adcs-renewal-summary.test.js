@@ -52,7 +52,7 @@ describe("AD CS inventory renewal summary", () => {
   });
 
   for (const [name, profile, reason] of [
-    ["missing target", { target: null }, /Windows\/IIS deployment target/],
+    ["missing target", { target: null }, /Windows certificate destination/],
     [
       "wrong DNS policy",
       { sanPolicy: { sans: ["other.example.test"] } },

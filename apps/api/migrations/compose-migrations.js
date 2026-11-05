@@ -195,6 +195,8 @@ function composeMigrations(migrations, recorded = []) {
       // lifecycle is integrated. Its committed append order remains immutable.
       [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason"],
       [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason", "pagerduty_operator_actions", "remove_pagerduty_rest_lookup"],
+      [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason", "pagerduty_operator_actions", "remove_pagerduty_rest_lookup",
+        "certops_manual_rollout_authority", "store_issuance_explicit_renewal_consent", "certops_acme_store_enrollment_identity", "certops_adcs_expected_identity_receipts"],
     ];
     const laterCompanions = new Set([...lifecycle, Z, "certops_consumer_staging", "certops_review_authority_epochs"]);
     const integratedSeeds = seeds.flatMap((seed) =>

@@ -1808,6 +1808,57 @@ describe("signed-dispatch payload, wire wrappers, and the action-keyed discrimin
     assert.equal(result.valid, true, JSON.stringify(result.errors));
   });
 
+  it("accepts only a machine-store CNG target without service fields", () => {
+    const target = { type: "windows-cert-store", reference: "app.example.com", store: "My" };
+    const job = baseCertificateJob({ target, keyMode: "os-store-managed" });
+    assert.equal(validateSignedJob(job).valid, true);
+
+    for (const invalid of [
+      { ...job, target: { ...target, store: "Root" } },
+      { ...job, target: { ...target, reference: "remote/host" } },
+      { ...job, target: { ...target, binding: { site: "site", port: 443 } } },
+      { ...job, target: { ...target, thumbprintSha1: "A".repeat(40) } },
+      { ...job, keyMode: "agent-local" },
+      { ...job, action: "deploy" },
+      { ...job, certPath: "/tmp/leaf.pem" },
+      { ...job, verifyHost: "app.example.com" },
+      { ...job, deploymentTargets: [{ type: "domain", reference: "other" }] },
+      { ...job, keyRotation: false },
+    ]) assert.equal(validateSignedJob(invalid).valid, false, JSON.stringify(invalid));
+  });
+
+  it("accepts an ACME store binding only for an ACME machine-store renew", () => {
+    const binding = { enrollmentId: "33333333-3333-4333-8333-333333333333", originalJobId: "44444444-4444-4444-8444-444444444444",
+      requestB64: "e30=", requestSha256: "a".repeat(64) };
+    const job = baseCertificateJob({ issuerKind: "acme", keyMode: "os-store-managed",
+      target: { type: "windows-cert-store", reference: "app.example.com", store: "My" }, acmeStoreEnrollment: binding });
+    assert.equal(validateSignedJob(job).valid, true);
+    assert.equal(validateSignedJob({ ...job, action: "continue-enrollment" }).valid, true);
+    for (const patch of [{ issuerKind: "adcs" }, { keyMode: "agent-local" }, { target: { type: "domain", reference: "app.example.com" } },
+      { acmeStoreEnrollment: { ...binding, requestSha256: "bad" } }, { acmeStoreEnrollment: { ...binding, extra: true } }]) {
+      assert.equal(validateSignedJob({ ...job, ...patch }).valid, false);
+    }
+  });
+
+  it("binds an AD CS store target to an enrollment for renew and continuation", () => {
+    const job = baseCertificateJob({
+      issuerKind: "adcs",
+      keyMode: "os-store-managed",
+      target: { type: "windows-cert-store", reference: "app.example.com", store: "My" },
+      enrollment: {
+        enrollmentId: "33333333-3333-4333-8333-333333333333",
+        attempt: 1,
+        snapshotB64: "e30=",
+        snapshotSha256: "a".repeat(64),
+      },
+    });
+    for (const action of ["renew", "continue-enrollment"]) {
+      const result = validateSignedJob({ ...job, action });
+      assert.equal(result.valid, true, JSON.stringify(result.errors));
+    }
+    assert.equal(validateSignedJob({ ...job, enrollment: undefined }).valid, false);
+  });
+
   it("rejects a windows-iis target with a malformed binding.port", () => {
     const result = validateSignedJob(
       baseCertificateJob({

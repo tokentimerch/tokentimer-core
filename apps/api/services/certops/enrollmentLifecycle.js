@@ -116,6 +116,11 @@ function freezeSnapshot(input) {
     pendingTimeout: input.pendingTimeout === undefined ? DEFAULT_PENDING_TIMEOUT_SECONDS : input.pendingTimeout,
     minimumRemainingValidity: input.minimumRemainingValidity === undefined ? 0 : input.minimumRemainingValidity,
     requireLaterNotAfter: input.requireLaterNotAfter === undefined ? false : input.requireLaterNotAfter,
+    ...(input.destinationType === undefined ? {} : {
+      destinationType: input.destinationType,
+      destinationSha256: input.destinationSha256,
+      predecessorFingerprintSha256: input.predecessorFingerprintSha256,
+    }),
   };
   if (snapshot.transport !== "dcom") {
     throw serviceError("AD CS transport must be dcom", "CERTOPS_SNAPSHOT_INVALID");

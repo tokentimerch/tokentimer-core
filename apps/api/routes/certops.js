@@ -234,6 +234,7 @@ const {
   CERTOPS_APPROVAL_APPROVER_REQUIRED,
   CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL,
   CERTOPS_APPROVAL_REQUEST_STALE,
+  CERTOPS_APPROVAL_STORE_ENROLLMENT_UNAVAILABLE,
   CERTOPS_APPROVAL_REASON_INVALID,
   CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN,
   approveJob,
@@ -698,6 +699,10 @@ function handleCertOpsError(res, err) {
     });
   }
 
+  if (err?.code === CERTOPS_APPROVAL_STORE_ENROLLMENT_UNAVAILABLE) {
+    return res.status(409).json({ error: err.message, code: err.code });
+  }
+
   if (
     err?.code === CERTOPS_APPROVAL_APPROVER_REQUIRED ||
     err?.code === CERTOPS_APPROVAL_REASON_INVALID
@@ -1079,9 +1084,14 @@ function createManualCertificateJobHandler({
       // allowed to create that job, since its installation-row state
       // machine must advance in the same transaction as the job insert.
       // Everything else (workspace lock, kill switch, audit row) is shared.
+      // An edition middleware may install a server-side creator on the request
+      // to add transactional admission. It is never read from the request body
+      // and applies only to issue, preserving the existing route's guards.
       const jobCreator =
         req.body?.operation === "issue"
-          ? createCertificateIssuanceJob
+          ? (typeof req.certopsIssueJobCreator === "function"
+              ? req.certopsIssueJobCreator
+              : createCertificateIssuanceJob)
           : req.body?.operation === "renew"
             ? manualRenewalJobCreator({ certificateId: req.body?.subjectId })
             : isTrustAnchorOperation(req.body?.operation)
@@ -1107,6 +1117,14 @@ function createManualCertificateJobHandler({
         .status(201)
         .json({ job: redactClaimIdForNonAdmins(req, jobDetail(job)) });
     } catch (err) {
+      if (
+        req.body?.operation === "issue" &&
+        typeof req.certopsIssueJobCreator === "function" &&
+        typeof req.certopsIssueAdmissionErrorHandler === "function"
+      ) {
+        const handled = req.certopsIssueAdmissionErrorHandler(err, res);
+        if (handled) return handled;
+      }
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;
 
@@ -2617,6 +2635,13 @@ router.post(
   // blocks only new work; reads and existing machine event/evidence ingestion
   // remain available while a workspace is paused.
   requireWorkspaceCertOpsActive,
+  (req, res, next) => {
+    // An edition may attach admission middleware to the request before this
+    // router. Run it only after the shared security and workspace gates.
+    if (req.body?.operation !== "issue" ||
+        typeof req.certopsIssueAdmissionGuard !== "function") return next();
+    return Promise.resolve(req.certopsIssueAdmissionGuard(req, res, next)).catch(next);
+  },
   createManualCertificateJobHandler(),
 );
 

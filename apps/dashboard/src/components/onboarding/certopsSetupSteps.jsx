@@ -317,8 +317,8 @@ export function ConfigStep({ ctx }) {
     reloadService: saved.reloadService || '',
     acmeClientPath: saved.acmeClientPath || '',
     acmeShellPath: saved.acmeShellPath ?? DEFAULT_WINDOWS_SHELL,
-    iisSite: saved.iisSite || 'Default Web Site',
-    iisPort: saved.iisPort || '443',
+    iisSite: saved.iisSite || (objective === 'adcs' ? '' : 'Default Web Site'),
+    iisPort: saved.iisPort || (objective === 'adcs' ? '' : '443'),
     sniHost: saved.sniHost || '',
     caHost: saved.caHost || '',
     caName: saved.caName || '',
@@ -554,30 +554,9 @@ export function ConfigStep({ ctx }) {
               stores CA credentials: the agent authenticates as the computer
               account.
             </Text>
-            <HStack align='start' spacing={3} flexWrap='wrap'>
-              <FormControl flex='1 1 200px'>
-                <FormLabel fontSize='sm'>HTTPS binding (IIS site)</FormLabel>
-                <Input
-                  size='sm'
-                  value={form.iisSite}
-                  onChange={set('iisSite')}
-                />
-                <Text fontSize='xs' mt={1} data-testid='iis-site-helper'>
-                  {IIS_SITE_HELPER}
-                </Text>
-              </FormControl>
-              <FormControl flex='0 1 110px'>
-                <FormLabel fontSize='sm'>Port</FormLabel>
-                <Input
-                  size='sm'
-                  type='number'
-                  value={form.iisPort}
-                  onChange={set('iisPort')}
-                />
-              </FormControl>
-            </HStack>
-            <Text fontSize='xs' data-testid='binding-note'>
-              {BINDING_NOTE}
+            <Text fontSize='xs' data-testid='adcs-preparation-note'>
+              This prepares access to the CA. Choose the certificate destination
+              later when configuring issuance.
             </Text>
           </>
         ) : (

@@ -385,6 +385,28 @@
               "binding"
             ]
           }
+        },
+        {
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "windows-cert-store" } }
+          },
+          "then": {
+            "required": ["store"],
+            "properties": {
+              "store": { "const": "My" },
+              "reference": { "maxLength": 253, "pattern": "^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$" }
+            },
+            "not": {
+              "anyOf": [
+                { "required": ["binding"] },
+                { "required": ["thumbprintSha1"] },
+                { "required": ["certPath"] },
+                { "required": ["keyPath"] },
+                { "required": ["chainPath"] }
+              ]
+            }
+          }
         }
       ],
       "properties": {
@@ -397,7 +419,8 @@
             "appliance",
             "load-balancer",
             "external",
-            "windows-iis"
+            "windows-iis",
+            "windows-cert-store"
           ]
         },
         "store": {
@@ -900,6 +923,29 @@
   "allOf": [
     {
       "if": {
+        "required": ["target"],
+        "properties": {
+          "target": {
+            "required": ["type"],
+            "properties": { "type": { "const": "windows-cert-store" } }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "verification": {
+            "properties": {
+              "host": { "type": "null" },
+              "port": { "type": "null" },
+              "requireMatch": { "const": false }
+            }
+          }
+        },
+        "not": { "required": ["publicationDestination"] }
+      }
+    },
+    {
+      "if": {
         "required": [
           "target"
         ],
@@ -910,7 +956,7 @@
             ],
             "properties": {
               "type": {
-                "const": "windows-iis"
+                "enum": ["windows-iis", "windows-cert-store"]
               }
             }
           }
@@ -930,8 +976,17 @@
     },
     {
       "if": {
-        "required": [
-          "publicationDestination"
+        "anyOf": [
+          { "required": ["publicationDestination"] },
+          {
+            "required": ["target"],
+            "properties": {
+              "target": {
+                "required": ["type"],
+                "properties": { "type": { "const": "windows-cert-store" } }
+              }
+            }
+          }
         ]
       },
       "then": {

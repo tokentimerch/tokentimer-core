@@ -95,7 +95,7 @@ function Invoke-Stage([string]$Machine, [string]$Script, [string]$Marker, [strin
     if($languageDiagnostic.Success){Write-Output $languageDiagnostic.Value.Trim()}
     $languageVerifyDiagnostic=[regex]::Match($message,'(?m)^CERTOPS_LANGUAGE_VERIFY_FAILURE=(membership|ui-language|system-locale|resource-verification):[0-9]{1,5}:-?[0-9]{1,11}:[0-9]{1,6}:[0-9]{1,6}\s*$')
     if($languageVerifyDiagnostic.Success){Write-Output $languageVerifyDiagnostic.Value.Trim()}
-    $memberDiagnostic=[regex]::Match($message,'(?m)^CERTOPS_MEMBER_FAILURE=(membership|dns-config|dns-lookup|iis-install|domain-join):[0-9]{1,5}:-?[0-9]{1,11}\s*$')
+    $memberDiagnostic=[regex]::Match($message,'(?m)^CERTOPS_MEMBER_FAILURE=(membership|dns-config|dns-lookup|iis-install|iis-check|domain-join):[0-9]{1,5}:-?[0-9]{1,11}\s*$')
     if($memberDiagnostic.Success){Write-Output $memberDiagnostic.Value.Trim()}
     $verifyDiagnostic=[regex]::Match($message,'(?m)^CERTOPS_MEMBER_VERIFY_FAILURE=(membership|secure-channel|ca-rpc|ca-export|ca-identity|root-trust):[0-9]{1,5}:-?[0-9]{1,11}\s*$')
     if($verifyDiagnostic.Success){Write-Output $verifyDiagnostic.Value.Trim()}
