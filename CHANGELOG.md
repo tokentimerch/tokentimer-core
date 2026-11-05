@@ -11,6 +11,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **MCP assistant access.** Connect by URL and browser sign-in without Node; the local adapter is optional. Inspect inventory and certificate state, or grant reviewed inventory updates, contact and webhook setup, viewer invitations, and ACME issuance and renewal requests. Certificate jobs follow workspace **Job approval**. Connections default to 30 days, with longer or explicitly acknowledged non-expiring access available. **Operator guidance:** MCP deployment flags default off; configure HTTPS access and grant only the permissions needed. See the visual [setup guide](https://tokentimer.ch/docs/api/mcp-setup).
+
 - **Global auto-sync overrides.** System Settings can force metric exposure/labels and the monitoring group independently across all integrations. Managed controls prevent local changes; a Configured badge identifies active overrides. Otherwise, connections keep their saved choices. Import forms use consistent typography and structured run history. Environment values retain priority; extra asset labels default off and increase series/alert cardinality. Names/scopes cover future creations; existing provider counters stay unchanged. **Operator action:** apply migrations 81–82 with matching API/dashboard code.
 
 - **API request correlation.** Responses include a generated `X-Request-Id` that matches `correlationId` in request-scoped API logs and completion records. Use it when reporting API failures; incoming request IDs are replaced to prevent forged or sensitive values from entering logs. Dashboard API errors display the matching request reference when available. Worker propagation remains follow-up work.
@@ -18,6 +20,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Recipient confirmation before workspace email and WhatsApp alerts.** Cloud requires consent; self-hosted delivery keeps verification off until enabled. **Operator action:** run the standard migrations before matching API/worker images; canonical main uses 84 for recipient verification and 85 for digest claims. Supported preview histories retain applied versions and timestamps. Set `RECIPIENT_FINGERPRINT_SECRET` and `PUBLIC_BASE_URL` or `API_URL` before invitations, then switch self-hosted to `enforce` after recipients confirm. Existing contacts remain unverified. Retries retain successful-recipient evidence; uncertain provider outcomes can delay retries, and SMTP cannot guarantee exactly-once delivery. See [recipient verification](docs/recipient-verification.md) for setup, limits and recovery.
 
 ### Fixed
+
+- **Approved jobs remain discoverable while queued.** The Jobs filter **Approved (queued)** includes human-approved jobs waiting for an agent, with matching pagination totals.
+- **Setup invitations respect workspace access.** Viewer and unresolved-role sessions keep management controls hidden. Setup copy describes the asset/site alert inventory rather than declaring the whole workspace empty.
 
 - **Rollout authorization follows current workspace authority.** **Operator action:** apply migration 98 with matching API and worker images. Request a new rollout and, if required, fresh approval to continue pre-upgrade work; changes to manager membership, workspace ownership, pause state or approval policy also require a new request. Existing deployment evidence is retained.
 

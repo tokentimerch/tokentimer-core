@@ -24,6 +24,10 @@ vi.mock('react-router', async () => {
   };
 });
 
+vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
+  useWorkspace: () => ({ workspaceId: 'workspace-a' }),
+}));
+
 vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsCanManage: useCertOpsCanManageMock,
   useCertOpsIsWorkspaceAdmin: useCertOpsIsWorkspaceAdminMock,
@@ -36,6 +40,10 @@ vi.mock('../../src/components/certops/ApiTokenList.jsx', () => ({
 
 vi.mock('../../src/components/certops/ApiTokenModal.jsx', () => ({
   default: () => null,
+}));
+
+vi.mock('../../src/components/certops/AssistantWorkspacePolicyRow.jsx', () => ({
+  default: () => <div>Workspace MCP renewal policy</div>,
 }));
 
 // Has its own tests; this page only needs to place it.
@@ -80,12 +88,12 @@ describe('CertOpsSettings job approval policy', () => {
 
     expect(screen.getByText('Job approval')).toBeInTheDocument();
     expect(
-      screen.getByText(/Require approval before every new job can run/)
+      screen.getByText(/Require a different approver before new jobs can run/)
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/scheduled renewals, Vault rollouts and their deployment jobs/)
+      screen.getByText(/Scheduled renewals also wait for approval/)
     ).toBeInTheDocument();
-    expect(screen.getByText(/renewal is not unattended/)).toBeInTheDocument();
+    expect(screen.getByText(/Applies to all job sources/)).toBeInTheDocument();
     expect(
       screen.getByLabelText('Require approval for every new job')
     ).toBeInTheDocument();
@@ -97,7 +105,7 @@ describe('CertOpsSettings job approval policy', () => {
     renderPage();
 
     expect(screen.getByText('Job approval')).toBeInTheDocument();
-    expect(screen.getByText('Not required')).toBeInTheDocument();
+    expect(screen.getByText('Off')).toBeInTheDocument();
     expect(
       screen.getByText(
         'Only workspace admins can enable or disable job approval.'

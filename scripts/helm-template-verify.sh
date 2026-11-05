@@ -540,6 +540,41 @@ agent_log_null="$(helm template "${RELEASE_NAME}" "${CHART}" \
   --set config.certopsAgentLogRetentionDays=null \
   --show-only templates/configmap.yaml)"
 assert_not_contains "${agent_log_null}" 'CERTOPS_AGENT_LOG_RETENTION_DAYS' "null agent log retention defers to code default"
+
+echo "==> assert assistant interface flags are off by default and writes cannot turn on alone"
+assert_not_contains "$(cat "${proxy_disabled}")" 'MCP_OPERATOR_' "default omit MCP_OPERATOR_*"
+mcp_writes_alone="$(helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  --set config.mcpOperatorWritesEnabled=true \
+  --show-only templates/configmap.yaml)"
+assert_not_contains "${mcp_writes_alone}" 'MCP_OPERATOR_' "writes flag without the interface flag renders nothing"
+mcp_read_only="$(helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  --set config.mcpOperatorInterfaceEnabled=true \
+  --show-only templates/configmap.yaml)"
+assert_contains "${mcp_read_only}" 'MCP_OPERATOR_INTERFACE_ENABLED: "true"' "interface flag renders"
+assert_not_contains "${mcp_read_only}" 'MCP_OPERATOR_WRITES_ENABLED' "interface alone leaves writes off"
+mcp_both="$(helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  --set config.mcpOperatorInterfaceEnabled=true \
+  --set config.mcpOperatorWritesEnabled=true \
+  --show-only templates/configmap.yaml)"
+assert_contains "${mcp_both}" 'MCP_OPERATOR_WRITES_ENABLED: "true"' "both flags render writes"
+mcp_remote_alone="$(helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com --set config.mcpOperatorRemoteEnabled=true --show-only templates/configmap.yaml)"
+assert_not_contains "${mcp_remote_alone}" 'MCP_OPERATOR_' "remote flag without interface renders nothing"
+if helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com --set config.mcpOperatorInterfaceEnabled=true --set config.mcpOperatorRemoteEnabled=true >/dev/null 2>&1; then
+  fail "remote MCP accepted without a public resource URL"
+fi
+mcp_remote="$(helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com --set config.mcpOperatorInterfaceEnabled=true --set config.mcpOperatorRemoteEnabled=true --set config.mcpPublicUrl=https://api.example.test/api/v1/operator/mcp --set config.mcpClientRegistrationMode=dynamic-only --show-only templates/configmap.yaml)"
+assert_contains "${mcp_remote}" 'MCP_OPERATOR_REMOTE_ENABLED: "true"' "remote flag renders"
+assert_contains "${mcp_remote}" 'MCP_PUBLIC_URL: "https://api.example.test/api/v1/operator/mcp"' "resource URL renders exactly"
+assert_contains "${mcp_remote}" 'MCP_CLIENT_REGISTRATION_MODE: "dynamic-only"' "isolated client registration renders"
+assert_not_contains "${mcp_remote}" 'MCP_OPERATOR_WRITES_ENABLED' "remote sign-in leaves writes off"
+if helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  --set config.mcpOperatorInterfaceEnabled=maybe >/dev/null 2>&1; then
+  fail "accepted a non-boolean mcpOperatorInterfaceEnabled"
+fi
 for invalid in -1 1.5 garbage 3651; do
   if helm template "${RELEASE_NAME}" "${CHART}" \
     --set config.adminEmail=ci@example.com \

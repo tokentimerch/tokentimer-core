@@ -6,7 +6,12 @@ import ExecutorJobsPanel from '../../components/certops/ExecutorJobsPanel.jsx';
  * under a row, since reading evidence is why an operator opens this list.
  */
 export default function CertOpsJobs() {
-  const { certOpsPaused } = useOutletContext() || {};
+  const { certOpsPaused, currentUserId } = useOutletContext() || {};
 
-  return <ExecutorJobsPanel certOpsPaused={Boolean(certOpsPaused)} />;
+  return (
+    <ExecutorJobsPanel
+      certOpsPaused={Boolean(certOpsPaused)}
+      currentUserId={currentUserId}
+    />
+  );
 }
