@@ -136,6 +136,10 @@ async function acknowledgeCredentialRotation({ dbPool = pool, agent, operationId
     if (!receipt || receipt.operation_id !== operationId || !["committed", "acknowledged"].includes(receipt.state) ||
         receipt.candidate_prefix !== current.credential_prefix || !sameHash(receipt.candidate_hash, current.credential_hash)) throw failure();
     if (receipt.state === "committed") {
+      // Unknown workspace effects or active agent jobs can appear after
+      // promotion. Do not reopen claims on the first ACK while they remain.
+      // This read is not a workspace-wide quiescence proof.
+      await requireNoAgentJobs(client, agent.id);
       await client.query("UPDATE certops_agent_credential_rotations SET state = 'acknowledged', updated_at = NOW() WHERE agent_id = $1", [agent.id]);
       await audit({ client, action: "CERTOPS_AGENT_CREDENTIAL_ROTATION_ACKNOWLEDGED", workspaceId: agent.workspaceId, targetType: "certops_agent", metadata: { agentId: agent.agentId } });
     }
