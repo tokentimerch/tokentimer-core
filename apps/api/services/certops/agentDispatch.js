@@ -453,7 +453,26 @@ async function registerAgent({
     );
     if (existingReplay) {
       try {
-        return registrationReplayResponse(existingReplay);
+        const replay = registrationReplayResponse(existingReplay);
+        // The original registration response is replayable only while its
+        // credential is still current. Serialize this check with credential
+        // replacement and retirement; a cached response must not resurrect a
+        // retired or superseded credential.
+        const current = await client.query(
+          `SELECT credential_hash, status
+             FROM certops_agents
+            WHERE workspace_id = $1 AND agent_id = $2
+            FOR UPDATE`,
+          [tokenRow.workspace_id, existingReplay.agent_id],
+        );
+        const hash = current.rows[0]?.credential_hash;
+        const candidate = crypto.createHash("sha256").update(replay.credential).digest();
+        if (current.rows[0]?.status === "retired" ||
+            typeof hash !== "string" || !/^[a-f0-9]{64}$/.test(hash) ||
+            !crypto.timingSafeEqual(candidate, Buffer.from(hash, "hex"))) {
+          throw serviceError("Bootstrap token could not be consumed", CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED);
+        }
+        return replay;
       } catch (error) {
         // Corrupt/unreadable envelope: treat as replay-not-available so a
         // still-active token can mint fresh, and a spent token hard-rejects.

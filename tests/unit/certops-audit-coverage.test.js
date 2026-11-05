@@ -716,7 +716,7 @@ function resultPool({ jobRow = {}, jobUpdate = {} } = {}) {
         return { rows: [] };
       }
       if (sql.includes("SET last_sequence")) return { rows: [{ id: "agent-row-1" }] };
-      if (sql.includes("SELECT credential_hash FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH }] };
+      if (sql.includes("SELECT credential_hash, status FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH, status: "active" }] };
       if (sql.includes("FROM certops_agents")) return { rows: [{ id: "agent-row-1" }] };
       if (sql.includes("INSERT INTO certops_outbox")) {
         return { rows: [{ id: "outbox-1" }] };
@@ -991,6 +991,9 @@ describe("CERTOPS_AGENT_REGISTERED", () => {
         }
         if (sql.includes("FROM certops_agent_registration_replays")) {
           return { rows: replayRow ? [replayRow] : [] };
+        }
+        if (sql.includes("SELECT credential_hash, status") && sql.includes("workspace_id = $1")) {
+          return { rows: [{ credential_hash: require("node:crypto").createHash("sha256").update(`ttagent_0123456789abcdef_${"b".repeat(64)}`).digest("hex"), status: "active" }] };
         }
         if (sql.includes("INSERT INTO certops_agents")) {
           return {

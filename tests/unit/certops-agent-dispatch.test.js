@@ -78,9 +78,9 @@ function createMockPool(handler) {
     query: async (text, params) => {
       if (String(typeof text === "string" ? text : text?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
       const sql = typeof text === "string" ? text : text?.text || "";
-      if (sql.includes("SELECT credential_hash FROM certops_agents")) {
+      if (sql.includes("SELECT credential_hash, status FROM certops_agents")) {
         state.lockOrder.push("agent-lock");
-        return { rows: [{ credential_hash: state.credentialHash }] };
+        return { rows: [{ credential_hash: state.credentialHash, status: state.agentStatus || "active" }] };
       }
       if (sql.includes("FROM certificate_jobs") && sql.includes("FOR UPDATE")) state.lockOrder.push("job-lock");
       state.queries.push({ text: sql, params });
@@ -198,6 +198,8 @@ function registrationQueryHandler({
   tokenStatus = "active",
   insertAgent = true,
   replayRow = null,
+  replayStatus = "active",
+  replayHash = require("node:crypto").createHash("sha256").update(`ttagent_0123456789abcdef_${"c".repeat(64)}`).digest("hex"),
   agentRow = {
     id: "agent-row-1",
     agent_id: "agent-01",
@@ -224,6 +226,9 @@ function registrationQueryHandler({
           row.registration_id === params[1],
       );
       return { rows: match ? [match] : [] };
+    }
+    if (sql.includes("SELECT credential_hash, status") && sql.includes("workspace_id = $1")) {
+      return { rows: [{ credential_hash: replayHash, status: replayStatus }] };
     }
     if (sql.includes("INSERT INTO certops_agents")) {
       if (!insertAgent) return { rows: [] };
@@ -505,6 +510,22 @@ describe("agentDispatch.registerAgent", () => {
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
 
+  for (const [name, replayStatus, replayHash] of [
+    ["retired", "retired", require("node:crypto").createHash("sha256").update(`ttagent_0123456789abcdef_${"c".repeat(64)}`).digest("hex")],
+    ["replaced credential", "active", "f".repeat(64)],
+  ]) {
+    it(`rejects registration replay after ${name}`, async () => {
+      const credential = `ttagent_0123456789abcdef_${"c".repeat(64)}`;
+      const dbPool = createMockPool(registrationQueryHandler({ tokenStatus: "used", replayStatus, replayHash,
+        replayRow: { bootstrap_token_id: "boot-1", registration_id: "550e8400-e29b-41d4-a716-446655440000",
+          agent_id: "agent-01", credential_ciphertext: encryptRegistrationCredential(credential),
+          encryption_version: ENCRYPTION_VERSION, protocol_version: "1.0.0" } }));
+      await assert.rejects(registerAgent({ dbPool, bootstrapToken: { id: "boot-1" },
+        envelope: registerEnvelope(), body: registerBody() }), { code: CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED });
+      assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
+    });
+  }
+
   it("hard-rejects a different registrationId against an already-spent token", async () => {
     const dbPool = createMockPool(
       registrationQueryHandler({ tokenStatus: "used" }),
@@ -707,6 +728,9 @@ describe("agentDispatch.registerAgent", () => {
             row.registration_id === params[1],
         );
         return { rows: match ? [match] : [] };
+      }
+      if (sql.includes("SELECT credential_hash, status") && sql.includes("workspace_id = $1")) {
+        return { rows: [{ credential_hash: require("node:crypto").createHash("sha256").update(credential).digest("hex"), status: "active" }] };
       }
       if (sql.includes("INSERT INTO certops_agents")) {
         if (agentInserted) return { rows: [] };

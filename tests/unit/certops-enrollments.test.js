@@ -748,7 +748,7 @@ describe("enrollment rows", () => {
           assert.deepEqual(params, [WORKSPACE, ENROLLMENT, stored.certificate_id, stored.agent_id, JOB_ID]);
           return { rows: [{ state: stored.state }] };
         }
-        if (sql.includes("SELECT credential_hash FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH }] };
+        if (sql.includes("SELECT credential_hash, status FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH, status: "active" }] };
         if (sql.includes("SELECT last_sequence")) return { rows: [{ last_sequence: 0 }] };
         if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
         if (sql.includes("SELECT declared_target_selectors")) {

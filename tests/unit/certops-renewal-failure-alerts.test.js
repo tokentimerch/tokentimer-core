@@ -320,7 +320,7 @@ function createMockPool(handler) {
     query: async (text, params) => {
       if (String(typeof text === "string" ? text : text?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
       const sql = typeof text === "string" ? text : text?.text || "";
-      if (sql.includes("SELECT credential_hash FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH }] };
+      if (sql.includes("SELECT credential_hash, status FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH, status: "active" }] };
       state.queries.push({ text: sql, params });
       const trimmed = sql.trim().toUpperCase();
       if (
