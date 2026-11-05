@@ -982,7 +982,7 @@ class CollectorTests(unittest.TestCase):
             if url.endswith("/zip"): return b"owned-fixture-archive"
             if "/artifacts?" in url:
                 run_id = int(url.split("/runs/")[1].split("/")[0])
-                return json.dumps({"total_count": 1, "artifacts": [{"id": run_id, "size_in_bytes": 21}]}).encode()
+                return json.dumps({"total_count": 1, "artifacts": [{"id": run_id, "size_in_bytes": 21, "digest": "sha256:" + hashlib.sha256(b"owned-fixture-archive").hexdigest()}]}).encode()
             return b"{}"
         with tempfile.TemporaryDirectory(prefix="certops-collector-budget-") as directory:
             root = Path(directory)
@@ -998,6 +998,14 @@ class CollectorTests(unittest.TestCase):
                 self.assertEqual(result["collectedReports"], 201)
                 self.assertEqual(result["status"], "passed")
                 self.assertEqual(len([url for url in calls if url.endswith("/zip")]), 201)
+
+    def test_downloaded_evidence_must_match_github_digest(self):
+        raw = b"trusted evidence archive"
+        digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+        collector.validate_artifact_digest({"digest": digest}, raw)
+        for metadata, content in (({}, raw), ({"digest": "sha256:" + "0" * 64}, raw), ({"digest": digest}, raw + b"tampered")):
+            with self.assertRaises(ValueError):
+                collector.validate_artifact_digest(metadata, content)
 
     def test_collection_budgets_follow_committed_growth_with_absolute_caps(self):
         self.assertEqual(collector.collection_limits(1), {"runs": 100, "archives": 200, "reports": 200})

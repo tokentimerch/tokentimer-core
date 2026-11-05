@@ -1,0 +1,351 @@
+name: Windows agent signing preflight
+
+# This workflow signs a fresh build from trusted main for integration testing.
+# It does not produce release assets or authorize release publication.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.candidate.outputs.version }}
+      amd64: ${{ steps.candidate.outputs.amd64 }}
+      arm64: ${{ steps.candidate.outputs.arm64 }}
+    env:
+      GO_VERSION: '1.26.10'
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Build and verify candidate from this workflow commit
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(go env GOVERSION)" = "go${GO_VERSION}"
+          node --test scripts/windows-signing-targets.test.cjs scripts/verify-agent-native-package.test.js
+          mkdir -p "$RUNNER_TEMP/node-runtime"
+          curl --fail --silent --show-error --location 'https://raw.githubusercontent.com/nodejs/release-keys/481637f813e912c4aa3622d7964ab426c97b8e8d/gpg/pubring.kbx' -o "$RUNNER_TEMP/node-runtime/node-release-keys.kbx"
+          echo '610b8d249da3d5733f5a128def2dd0294dbbf5b5713e6ca2529db8db419dee00  '"$RUNNER_TEMP/node-runtime/node-release-keys.kbx" | sha256sum --check
+          curl --fail --silent --show-error --location 'https://nodejs.org/dist/v24.18.0/SHASUMS256.txt.asc' -o "$RUNNER_TEMP/node-runtime/SHASUMS256.txt.asc"
+          gpgv --keyring "$RUNNER_TEMP/node-runtime/node-release-keys.kbx" --output "$RUNNER_TEMP/node-runtime/SHASUMS256.txt" "$RUNNER_TEMP/node-runtime/SHASUMS256.txt.asc"
+          grep -Fx '0ae68406b42d7725661da979b1403ec9926da205c6770827f33aac9d8f26e821  node-v24.18.0-win-x64.zip' "$RUNNER_TEMP/node-runtime/SHASUMS256.txt"
+          grep -Fx 'f274669adb93b1fd0fbf8f21fd078609e9dcc84333d4f2718d2dde3f9a161a01  node-v24.18.0-win-arm64.zip' "$RUNNER_TEMP/node-runtime/SHASUMS256.txt"
+          for arch in x64 arm64; do
+            curl --fail --silent --show-error --location "https://nodejs.org/dist/v24.18.0/node-v24.18.0-win-${arch}.zip" -o "$RUNNER_TEMP/node-runtime/node-v24.18.0-win-${arch}.zip"
+          done
+          node packages/agent/scripts/pack-release.js --out-dir "$RUNNER_TEMP/agent-dist" --windows-runtime-dir "$RUNNER_TEMP/node-runtime"
+          version=$(node -p "require('./packages/agent/package.json').version")
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          for arch in amd64 arm64; do
+            archive="$RUNNER_TEMP/agent-dist/tokentimer-agent-${version}-windows-${arch}.tgz"
+            node scripts/verify-agent-native-package.js --archive "$archive" --go-version "$GO_VERSION" --source-sha "$GITHUB_SHA" --out "$RUNNER_TEMP/${arch}.json"
+            (cd scripts/agent-release-inventory && TT_PREFLIGHT_ARCHIVE="$archive" go test -count=1 -run '^TestPreflightArchive$' .)
+            echo "${arch}=$(sha256sum "$archive" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          done
+      - name: Transfer unsigned candidates to the signing job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-signing-preflight-inputs
+          path: ${{ runner.temp }}/agent-dist/*-windows-*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  sign:
+    needs: build
+    # Intentionally disabled until the environment and Azure federation have
+    # been independently configured and reviewed; a missing environment can
+    # otherwise be created without protection by GitHub Actions.
+    # Only workflow_dispatch is enabled above, so this job cannot run yet.
+    if: github.event_name == 'workflow_call' && github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    # The environment must restrict deployments to protected main and require
+    # reviewers; the Azure federated credential must be restricted to this
+    # repository and environment. Neither is created by this workflow.
+    environment: windows-agent-signing
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            node: 9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de
+          - arch: arm64
+            node: c7225670c3f477778e18c43a55867f7a0d76468221245e5981ab80eb953c8102
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-signing-preflight-inputs
+          path: ${{ runner.temp }}/agent-input
+      - name: Bind transferred archive to the same-run build
+        shell: pwsh
+        env:
+          TT_VERSION: ${{ needs.build.outputs.version }}
+          TT_ARCH: ${{ matrix.arch }}
+          TT_EXPECTED: ${{ matrix.arch == 'amd64' && needs.build.outputs.amd64 || needs.build.outputs.arm64 }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:TT_VERSION -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' -or $env:TT_EXPECTED -cnotmatch '^[a-f0-9]{64}$') { throw 'Invalid candidate identity' }
+          $archive = Join-Path $env:RUNNER_TEMP "agent-input/tokentimer-agent-$($env:TT_VERSION)-windows-$($env:TT_ARCH).tgz"
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne $env:TT_EXPECTED) { throw 'Candidate digest mismatch' }
+          $stage = Join-Path $env:RUNNER_TEMP 'agent-stage'
+          New-Item -ItemType Directory -Path $stage -ErrorAction Stop | Out-Null
+          tar -xzf $archive -C $stage
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate extraction failed' }
+      - name: Sign and verify the preflight candidate
+        uses: ./.github/actions/windows-agent-sign
+        with:
+          package-root: ${{ runner.temp }}/agent-stage/package
+          architecture: ${{ matrix.arch }}
+          client-id: ${{ vars.AZURE_SIGNING_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_SIGNING_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SIGNING_SUBSCRIPTION_ID }}
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          profile-eku: ${{ vars.AZURE_SIGNING_PROFILE_EKU }}
+          issuer-sha256: ${{ vars.AZURE_SIGNING_ISSUER_SHA256 }}
+          node-sha256: ${{ matrix.node }}
+      # These are test candidates only. The receipt does not authenticate the
+      # archive or authorize it to be distributed as a release.
+      - name: Repackage signed preflight files once
+        shell: pwsh
+        env:
+          TT_VERSION: ${{ needs.build.outputs.version }}
+          TT_ARCH: ${{ matrix.arch }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:TT_VERSION -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' -or $env:TT_ARCH -cnotin @('amd64', 'arm64') -or $env:GITHUB_SHA -cnotmatch '^[a-f0-9]{40}$') { throw 'Invalid preflight candidate identity' }
+          $output = Join-Path $env:RUNNER_TEMP 'signed-preflight'
+          New-Item -ItemType Directory -Path $output -ErrorAction Stop | Out-Null
+          $name = "tokentimer-agent-$($env:TT_VERSION)-windows-$($env:TT_ARCH).tgz"
+          $archive = Join-Path $output $name
+          tar -czf $archive -C (Join-Path $env:RUNNER_TEMP 'agent-stage') package
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $archive -PathType Leaf)) { throw 'Signed candidate packaging failed' }
+          $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          @{ sourceCommit = $env:GITHUB_SHA; version = $env:TT_VERSION; architecture = $env:TT_ARCH; archive = $name; sha256 = $digest } |
+            ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $output 'receipt.json') -Encoding utf8NoBOM
+      - name: Transfer unqualified signed candidate for SBOM preflight
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-signing-preflight-signed-${{ matrix.arch }}
+          path: ${{ runner.temp }}/signed-preflight/*
+          if-no-files-found: error
+          retention-days: 1
+
+  sbom-preflight:
+    needs: [build, sign]
+    # This job has no promotion or publication step and cannot run while the
+    # signing job is disabled. Signed inventory and native qualification are
+    # separate requirements that are not provided by this workflow.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            node-arch: x64
+            node-zip-sha: 0ae68406b42d7725661da979b1403ec9926da205c6770827f33aac9d8f26e821
+          - arch: arm64
+            node-arch: arm64
+            node-zip-sha: f274669adb93b1fd0fbf8f21fd078609e9dcc84333d4f2718d2dde3f9a161a01
+    env:
+      GOTOOLCHAIN: local
+      GO_VERSION: '1.26.10'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-signing-preflight-signed-${{ matrix.arch }}
+          path: ${{ runner.temp }}/signed-preflight
+      - name: Generate and independently bind experimental SBOM and inventory
+        shell: bash
+        env:
+          TT_VERSION: ${{ needs.build.outputs.version }}
+          TT_ARCH: ${{ matrix.arch }}
+          TT_NODE_ARCH: ${{ matrix.node-arch }}
+          TT_NODE_ZIP_SHA: ${{ matrix.node-zip-sha }}
+        run: |
+          set -euo pipefail
+          [[ "$TT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$TT_NODE_ZIP_SHA" =~ ^[a-f0-9]{64}$ ]]
+          archive="$RUNNER_TEMP/signed-preflight/tokentimer-agent-${TT_VERSION}-windows-${TT_ARCH}.tgz"
+          receipt="$RUNNER_TEMP/signed-preflight/receipt.json"
+          jq -e --arg source "$GITHUB_SHA" --arg version "$TT_VERSION" --arg arch "$TT_ARCH" --arg name "$(basename "$archive")" 'keys == ["architecture","archive","sha256","sourceCommit","version"] and .sourceCommit == $source and .version == $version and .architecture == $arch and .archive == $name and (.sha256 | test("^[a-f0-9]{64}$"))' "$receipt" >/dev/null
+          digest=$(jq -r '.sha256' "$receipt")
+          echo "${digest}  ${archive}" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/sbom-tools" "$RUNNER_TEMP/sbom-output"
+          curl --fail --silent --show-error --location 'https://github.com/anchore/syft/releases/download/v1.56.0/syft_1.56.0_linux_amd64.tar.gz' -o "$RUNNER_TEMP/sbom-tools/syft.tgz"
+          echo '1c2493cfcf52d3367d6cb25780d9190c111c2219c34c820574c43e8bae15c528  '"$RUNNER_TEMP/sbom-tools/syft.tgz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/sbom-tools/syft.tgz" -C "$RUNNER_TEMP/sbom-tools" syft
+          curl --fail --silent --show-error --location 'https://github.com/CycloneDX/cyclonedx-cli/releases/download/v0.33.1/cyclonedx-linux-x64' -o "$RUNNER_TEMP/sbom-tools/cyclonedx"
+          echo 'bfc8b2538da86fe239bc53658bbb63c1c8c510a293c1e6891aa5bea5d3c58746  '"$RUNNER_TEMP/sbom-tools/cyclonedx" | sha256sum --check
+          curl --fail --silent --show-error --location "https://nodejs.org/dist/v24.18.0/node-v24.18.0-win-${TT_NODE_ARCH}.zip" -o "$RUNNER_TEMP/sbom-tools/node.zip"
+          echo "${TT_NODE_ZIP_SHA}  $RUNNER_TEMP/sbom-tools/node.zip" | sha256sum --check
+          sbom="$RUNNER_TEMP/sbom-output/tokentimer-agent-${TT_VERSION}-windows-${TT_ARCH}.cdx.json"
+          inventory="$RUNNER_TEMP/sbom-output/tokentimer-agent-${TT_VERSION}-windows-${TT_ARCH}.inventory.json"
+          python scripts/agent-sbom-generate.py --archive "$archive" --archive-sha256 "$digest" --node-zip "$RUNNER_TEMP/sbom-tools/node.zip" --architecture "$TT_ARCH" --syft "$RUNNER_TEMP/sbom-tools/syft" --syft-sha256 '20572660f157af9f9bd4db5541e89f306ad108cdec0376eabd7d682ed98cbf2d' --validator "$RUNNER_TEMP/sbom-tools/cyclonedx" --validator-sha256 'bfc8b2538da86fe239bc53658bbb63c1c8c510a293c1e6891aa5bea5d3c58746' --out "$sbom"
+          (cd scripts/agent-release-inventory && go run . --archive "$archive" --sbom "$sbom" --version "$TT_VERSION" --architecture "$TT_ARCH" --source-commit "$GITHUB_SHA" --out "$inventory")
+          python scripts/windows-release-artifact-binding.py --archive "$archive" --archive-sha256 "$digest" --sbom "$sbom" --inventory "$inventory" --version "$TT_VERSION" --architecture "$TT_ARCH" --source-commit "$GITHUB_SHA"
+          echo 'Experimental archive, SBOM and unsigned inventory are bound; no release qualification or publication was performed.'
+      - name: Transfer unsigned inventory and SBOM to same-run preflight
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-inventory-preflight-${{ matrix.arch }}
+          path: ${{ runner.temp }}/sbom-output/*.json
+          if-no-files-found: error
+          retention-days: 1
+
+  inventory-binding-preflight:
+    needs: [build, sign, sbom-preflight]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      amd64: ${{ steps.bind.outputs.amd64 }}
+      arm64: ${{ steps.bind.outputs.arm64 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: windows-inventory-preflight-*
+          path: ${{ runner.temp }}/inventories
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: windows-signing-preflight-signed-*
+          path: ${{ runner.temp }}/signed-candidates
+      - name: Rebind same-run candidate snapshots
+        id: bind
+        shell: bash
+        env:
+          TT_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$TT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+          for arch in amd64 arm64; do
+            name="tokentimer-agent-${TT_VERSION}-windows-${arch}"
+            base="$RUNNER_TEMP/signed-candidates/windows-signing-preflight-signed-${arch}"
+            archive="$base/${name}.tgz"
+            receipt="$base/receipt.json"
+            unsigned="$RUNNER_TEMP/inventories/windows-inventory-preflight-${arch}"
+            sbom="$unsigned/${name}.cdx.json"
+            inventory="$unsigned/${name}.inventory.json"
+            jq -e --arg source "$GITHUB_SHA" --arg version "$TT_VERSION" --arg arch "$arch" --arg name "${name}.tgz" 'keys == ["architecture","archive","sha256","sourceCommit","version"] and .sourceCommit == $source and .version == $version and .architecture == $arch and .archive == $name and (.sha256 | test("^[a-f0-9]{64}$"))' "$receipt" >/dev/null
+            archive_sha=$(jq -r '.sha256' "$receipt")
+            echo "${archive_sha}  ${archive}" | sha256sum --check
+            inventory_sha=$(python scripts/windows-release-artifact-binding.py --archive "$archive" --archive-sha256 "$archive_sha" --sbom "$sbom" --inventory "$inventory" --version "$TT_VERSION" --architecture "$arch" --source-commit "$GITHUB_SHA")
+            [[ "$inventory_sha" =~ ^[a-f0-9]{64}$ ]]
+            echo "${arch}=${inventory_sha}" >> "$GITHUB_OUTPUT"
+          done
+
+  inventory-signing-preflight:
+    needs: [build, inventory-binding-preflight]
+    # Intentionally unreachable: this workflow only accepts workflow_dispatch.
+    # Enable only after protected environment and federation review, publisher
+    # identity provisioning, and independent CMS verifier qualification.
+    if: github.event_name == 'workflow_call' && github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    environment: windows-agent-signing
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-inventory-preflight-${{ matrix.arch }}
+          path: ${{ runner.temp }}/inventory-input
+      - name: Check exact same-run inventory digest
+        id: inventory
+        shell: pwsh
+        env:
+          TT_VERSION: ${{ needs.build.outputs.version }}
+          TT_ARCH: ${{ matrix.arch }}
+          TT_EXPECTED: ${{ matrix.arch == 'amd64' && needs.inventory-binding-preflight.outputs.amd64 || needs.inventory-binding-preflight.outputs.arm64 }}
+          TT_PROFILE_EKU: ${{ vars.AZURE_SIGNING_PROFILE_EKU }}
+          TT_ISSUER_SHA256: ${{ vars.AZURE_SIGNING_ISSUER_SHA256 }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:TT_VERSION -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' -or $env:TT_ARCH -cnotin @('amd64','arm64') -or $env:TT_EXPECTED -cnotmatch '^[a-f0-9]{64}$' -or $env:TT_ISSUER_SHA256 -cnotmatch '^[a-f0-9]{64}$' -or $env:TT_PROFILE_EKU -cnotmatch '^1\.3\.6\.1\.4\.1\.311\.97\.(?:[0-9]+\.){2,}[0-9]+$' -or $env:TT_PROFILE_EKU -cmatch '^1\.3\.6\.1\.4\.1\.311\.97\.1\.(?:0|3\.1|4\.1)(?:\.|$)') { throw 'Independent signing identity and candidate digest are required' }
+          $file = Join-Path $env:RUNNER_TEMP "inventory-input/tokentimer-agent-$($env:TT_VERSION)-windows-$($env:TT_ARCH).inventory.json"
+          if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -cne $env:TT_EXPECTED) { throw 'Same-run inventory digest mismatch' }
+          "path=$file" >> $env:GITHUB_OUTPUT
+      - name: Authenticate to Azure with OIDC
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        with:
+          client-id: ${{ vars.AZURE_SIGNING_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_SIGNING_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SIGNING_SUBSCRIPTION_ID }}
+      - name: Produce an encapsulated PKCS7 inventory for preflight
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          files: ${{ steps.inventory.outputs.path }}
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          generate-pkcs7: true
+          pkcs7-options: Embedded
+          pkcs7-oid: 1.2.840.113549.1.7.1
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-shared-token-cache-credential: true
+          exclude-visual-studio-credential: true
+          exclude-visual-studio-code-credential: true
+          exclude-azure-cli-credential: false
+          exclude-azure-powershell-credential: true
+          exclude-azure-developer-cli-credential: true
+          exclude-interactive-browser-credential: true
+          cache-dependencies: false
+      - name: Refuse delivery until independent CMS verification is qualified
+        shell: pwsh
+        env:
+          TT_INVENTORY: ${{ steps.inventory.outputs.path }}
+          TT_EXPECTED: ${{ matrix.arch == 'amd64' && needs.inventory-binding-preflight.outputs.amd64 || needs.inventory-binding-preflight.outputs.arm64 }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:TT_EXPECTED -cnotmatch '^[a-f0-9]{64}$' -or (Get-FileHash -LiteralPath $env:TT_INVENTORY -Algorithm SHA256).Hash.ToLowerInvariant() -cne $env:TT_EXPECTED) { throw 'Inventory changed during signing' }
+          if (!(Test-Path -LiteralPath "$env:TT_INVENTORY.p7" -PathType Leaf)) { throw 'PKCS7 output missing' }
+          throw 'CMS publisher, timestamp and exact-content verification are not yet qualified; candidate cannot be delivered'
