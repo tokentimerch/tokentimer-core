@@ -73,7 +73,9 @@ describe("scope vocabulary", () => {
 
   it("gives every tool a scope whose minimum role is at least the tool's own", () => {
     for (const tool of catalog.tools) {
-      assert.equal(connections.SCOPE_MIN_ROLE[tool.scope], tool.minRole, tool.name);
+      for (const scope of tool.anyOfScopes || [tool.scope]) {
+        assert.equal(connections.SCOPE_MIN_ROLE[scope], tool.minRole, tool.name);
+      }
     }
   });
 });

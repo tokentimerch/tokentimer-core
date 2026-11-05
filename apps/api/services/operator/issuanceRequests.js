@@ -20,13 +20,13 @@ const hash = (value) => crypto.createHash("sha256").update(JSON.stringify(canoni
 
 async function authorizeIssuance(client, operator) {
   const actorLocks = await authorize(client, operator, "mcp:issue:request");
-  await assertInventoryImportAllowed({ client, workspaceId: operator.workspaceId, userId: operator.userId, additionalTokens: 0, actorLocks });
+  const hostedWorkspace = await assertInventoryImportAllowed({ client, workspaceId: operator.workspaceId, userId: operator.userId, additionalTokens: 0, actorLocks });
   const workspace = (await client.query(
     "SELECT operator_issuance_enabled,certops_paused,certops_require_approval_always FROM workspaces WHERE id=$1 FOR SHARE",
     [operator.workspaceId],
   )).rows[0];
   if (!workspace?.operator_issuance_enabled) throw fail("OPERATOR_WRITES_DISABLED", "Assistant issuance is not enabled in this workspace");
-  return workspace;
+  return { ...workspace, plan: hostedWorkspace?.plan };
 }
 
 async function effectFor(client, operator, normalized, workspace) {
@@ -77,10 +77,16 @@ async function requestIssuance({ client, operator, issuance, planId, planHash: s
   const workspace = await authorizeIssuance(client, operator);
   if (!UUID.test(String(planId || "")) || !UUID.test(String(requestId || "")) || !HASH.test(String(suppliedHash || ""))) throw fail("OPERATOR_PLAN_MISMATCH", "The preview does not match");
   const normalized = normalizeIssuance(issuance);
+  const intentHash = hash(normalized);
   await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`operator-request:${operator.connectionId}:${requestId}`]);
   const previous = (await client.query("SELECT * FROM operator_action_requests WHERE connection_id=$1 AND request_id=$2", [operator.connectionId, requestId])).rows[0];
   if (previous) {
     if (previous.operation !== "issue" || previous.plan_id !== planId || previous.plan_hash !== suppliedHash) throw fail("OPERATOR_IDEMPOTENCY_CONFLICT", "Request id was already used");
+    const boundPlan = (await client.query(
+      "SELECT bound_intent_hash FROM operator_action_plans WHERE id=$1 AND workspace_id=$2 AND connection_id=$3",
+      [previous.plan_id, operator.workspaceId, operator.connectionId],
+    )).rows[0];
+    if (boundPlan?.bound_intent_hash !== intentHash) throw fail("OPERATOR_IDEMPOTENCY_CONFLICT", "Request id was already used with different issuance details");
     const job = (await client.query("SELECT id,status,error_code,approved_at FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [operator.workspaceId, previous.job_id])).rows[0];
     return requestView(previous, job, { replayed: true });
   }
@@ -97,10 +103,9 @@ async function requestIssuance({ client, operator, issuance, planId, planHash: s
   }
   await lockWorkspaceForCertOpsSideEffect({ client, workspaceId: operator.workspaceId });
   const effect = await effectFor(client, operator, normalized, workspace);
-  const intentHash = hash(normalized);
   if (intentHash !== plan.bound_intent_hash || planHash(operator, intentHash, effect) !== suppliedHash) throw fail("OPERATOR_INTENT_STALE", "Issuance details changed; preview again");
   const recordId = crypto.randomUUID();
-  const outcome = await createCertificateIssuanceJob({ client, workspaceId: operator.workspaceId, assignedAgentId: normalized.agentId,
+  const outcome = await createCertificateIssuanceJob({ client, workspaceId: operator.workspaceId, workspacePlan: workspace.plan, assignedAgentId: normalized.agentId,
     payload: normalized.payload, source: "api", requestedByUserId: operator.userId, requestedByConnectionId: operator.connectionId,
     requiresApproval: false, idempotencyKey: `mcp-issue:${recordId}`, returnOutcome: true });
   const job = outcome.job || outcome;

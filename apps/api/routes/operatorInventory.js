@@ -18,15 +18,22 @@ const issuance = require("../services/operator/issuanceRequests");
 const { requireCertOpsEnabled } = require("../middleware/require-certops-enabled");
 function guard(scope, minRole) { return [getApiLimiter(), requireOperatorInterfaceEnabled, requireOperatorConnection({ scope, minRole })]; }
 function errorReply(res, error) {
+  const messages = {
+    CERTOPS_CERTIFICATE_PATH_IN_USE: "The selected destination is already in use on this agent.",
+    CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED: "The certificate authority has too many certificate jobs in progress. Try again later.",
+    CERTOPS_MANAGED_CERT_LIMIT: "The workspace has reached its managed certificate limit.",
+  };
+  const code = error.code === "P0001" && error.detail === "CERTOPS_MANAGED_CERT_LIMIT" ? error.detail : error.code;
   const statuses = { OPERATOR_VALIDATION_ERROR: 400, OPERATOR_CURSOR_INVALID: 400, OPERATOR_UNSAFE_METADATA: 422,
     OPERATOR_CONNECTION_UNAUTHORIZED: 401, OPERATOR_CONNECTION_SCOPE_DENIED: 403, OPERATOR_WRITES_DISABLED: 403,
     NOT_FOUND: 404, OPERATOR_PLAN_EXPIRED: 410, OPERATOR_PLAN_USED: 409, OPERATOR_PLAN_MISMATCH: 409,
     OPERATOR_IDEMPOTENCY_CONFLICT: 409, OPERATOR_INTENT_STALE: 409, OPERATOR_UPDATE_UNSUPPORTED: 409, OPERATOR_PENDING_LIMIT: 429,
     WORKSPACE_FROZEN: 403, PLAN_FEATURE_REQUIRED: 402, PLAN_TOKEN_LIMIT: 402, PLAN_CONTACT_GROUP_LIMIT: 402,
     PLAN_MEMBER_LIMIT: 402, MANUAL_INVITES_DISABLED: 403, PERSONAL_DEFAULT: 403,
-    CERTOPS_WORKSPACE_PAUSED: 409, CERTOPS_DISABLED: 404, CERTOPS_CERTIFICATE_PATH_IN_USE: 409 };
-  if (Object.hasOwn(statuses, error.code)) return res.status(statuses[error.code]).json({
-    error: error.code === "CERTOPS_CERTIFICATE_PATH_IN_USE" ? "The selected destination is already in use on this agent." : error.message, code: error.code,
+    CERTOPS_WORKSPACE_PAUSED: 409, CERTOPS_DISABLED: 404, CERTOPS_CERTIFICATE_PATH_IN_USE: 409,
+    CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED: 409, CERTOPS_MANAGED_CERT_LIMIT: 402 };
+  if (Object.hasOwn(statuses, code)) return res.status(statuses[code]).json({
+    error: Object.hasOwn(messages, code) ? messages[code] : error.message, code,
   });
   logger.error("Operator inventory request failed", { code: error.code || null });
   return res.status(500).json({ error: "Inventory request failed", code: "INTERNAL_ERROR" });

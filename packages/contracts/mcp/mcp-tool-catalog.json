@@ -560,7 +560,8 @@
     },
     {
       "name": "tt_cancel_request",
-      "scope": "mcp:renew:request",
+      "scope": "mcp:requests:read",
+      "anyOfScopes": ["mcp:renew:request", "mcp:issue:request"],
       "minRole": "workspace_manager",
       "contractStatus": "write",
       "input": "mcp-renew-tools.schema.json#/definitions/tt_cancel_request_input",

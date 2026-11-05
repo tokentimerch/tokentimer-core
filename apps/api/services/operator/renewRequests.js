@@ -4,6 +4,8 @@
 // for the ordering rules every function here follows.
 
 const { randomUUID } = require("node:crypto");
+const { lockConnectionAuthority } = require("./connections");
+const { preflightManualRenewalRouting } = require("../certops/jobs");
 const base = require("./actionRequests");
 const { CODES, fail, snake, authorize } = base;
 const { crypto: _c, reads, hashPlan, renewEffect, lockWorkspaceForCertOpsSideEffect, loadManagedCertificateForRenewal, manualRenewalJobCreator, preflightManualRenewalJob } = base._deps;
@@ -56,13 +58,16 @@ async function createRenewPlan({ client, operator, identityId, now = new Date() 
 
   // The same validation a real renewal runs, writing nothing. If it would be
   // refused, the preview says so now instead of after someone approves it.
-  let materialized;
+  let materialized, routing;
   try {
     materialized = await preflightManualRenewalJob({
       client,
       workspaceId: operator.workspaceId,
       certificateId: record.managedCertificateId,
       payload: {},
+    });
+    routing = await preflightManualRenewalRouting({
+      client, workspaceId: operator.workspaceId, certificateId: record.managedCertificateId, payload: materialized,
     });
   } catch (error) {
     throw fail(CODES.NOT_POSSIBLE, "A renewal cannot be requested for this certificate", {
@@ -89,6 +94,7 @@ async function createRenewPlan({ client, operator, identityId, now = new Date() 
     boundFingerprint: fingerprint,
     boundProfileId: certificate.profile_id || null,
     intentHash,
+    routing,
     effect,
   });
   const expiresAt = new Date(now.getTime() + PLAN_TTL_MS);
@@ -264,14 +270,17 @@ async function submitRenewRequest({ client, operator, planId, planHash, requestI
     (certificate.profile_id || null) === (plan.bound_profile_id || null) &&
     (!record.lifecycleStatus || record.lifecycleStatus === "active");
   if (!stillSame) throw fail(CODES.INTENT_STALE, "The certificate changed since the preview; preview again");
-  let currentPayload;
+  let currentPayload, routing;
   try {
     currentPayload = await preflightManualRenewalJob({ client, workspaceId: operator.workspaceId, certificateId: plan.subject_id, payload: {} });
+    routing = await preflightManualRenewalRouting({
+      client, workspaceId: operator.workspaceId, certificateId: plan.subject_id, payload: currentPayload,
+    });
   } catch (_error) {
     throw fail(CODES.INTENT_STALE, "The renewal configuration changed; preview again");
   }
   const effect = renewEffect({ certificate, workspacePaused: policy.rows[0]?.certops_paused === true, requireApprovalAlways: policy.rows[0]?.certops_require_approval_always === true });
-  if (hashRenewalIntent(currentPayload) !== plan.bound_intent_hash || hashPlan({ operation: "renew", workspaceId: operator.workspaceId, connectionId: operator.connectionId, subjectId: plan.subject_id, boundFingerprint: plan.bound_fingerprint_sha256, boundProfileId: plan.bound_profile_id, intentHash: plan.bound_intent_hash, effect }) !== plan.plan_hash) {
+  if (hashRenewalIntent(currentPayload) !== plan.bound_intent_hash || hashPlan({ operation: "renew", workspaceId: operator.workspaceId, connectionId: operator.connectionId, subjectId: plan.subject_id, boundFingerprint: plan.bound_fingerprint_sha256, boundProfileId: plan.bound_profile_id, intentHash: plan.bound_intent_hash, routing, effect }) !== plan.plan_hash) {
     throw fail(CODES.INTENT_STALE, "The renewal intent changed since the preview; preview again");
   }
 
@@ -290,6 +299,7 @@ async function submitRenewRequest({ client, operator, planId, planHash, requestI
     requestedByConnectionId: operator.connectionId,
     requiresApproval: false,
     idempotencyKey: `mcp-renew:${requestRecordId}`,
+    expectedRenewalRouting: routing,
     returnOutcome: true,
   });
   const job = created.job || created;
@@ -345,7 +355,12 @@ async function listRequests({ client, operator, limit = 25, offset = 0 }) {
 // new work being allowed. Withdrawal and approval race on the job row, and
 // exactly one wins.
 async function cancelRequest({ client, operator, requestRecordId }) {
-  await authorize({ client, operator, requireGates: false });
+  const locked = await lockConnectionAuthority({ client, connectionId: operator.connectionId });
+  if (!locked.valid) throw fail(CODES.UNAUTHORIZED, "Operator connection authentication required");
+  const scopes = locked.authority.scopes;
+  if (!scopes.includes("mcp:issue:request") && !scopes.includes("mcp:renew:request")) {
+    throw fail(CODES.SCOPE_DENIED, "Operator connection scope denied");
+  }
   if (!UUID.test(String(requestRecordId || ""))) throw fail(CODES.NOT_FOUND, "Not found");
   const found = await client.query(
     `SELECT * FROM operator_action_requests
@@ -353,7 +368,12 @@ async function cancelRequest({ client, operator, requestRecordId }) {
     [requestRecordId, operator.connectionId, operator.workspaceId],
   );
   const row = found.rows[0];
-  if (!row || row.operation !== "renew") throw fail(CODES.NOT_FOUND, "Not found");
+  const scope = row?.operation === "issue" ? "mcp:issue:request"
+    : row?.operation === "renew" ? "mcp:renew:request" : null;
+  if (!scope) throw fail(CODES.NOT_FOUND, "Not found");
+  if (!scopes.includes(scope)) {
+    throw fail(CODES.SCOPE_DENIED, "Operator connection scope denied");
+  }
   if (row.state_override === "cancelled") {
     return requestView(row, await loadJob(client, operator.workspaceId, row.job_id), { replayed: true });
   }

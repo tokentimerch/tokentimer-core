@@ -242,6 +242,10 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
         assert.equal(submitted.status, 200, JSON.stringify(submitted.body));
         assert.equal(tools.find(tool => tool.name === "tt_request_issuance").validateOutput(submitted.body), true);
         assert.equal(submitted.body.state, approval ? "pending_approval" : "pending");
+        await pool.query("UPDATE operator_action_plans SET created_at=NOW()-INTERVAL '2 minutes',expires_at=NOW()-INTERVAL '1 second' WHERE id=$1", [preview.body.planId]);
+        const changedReplay = await submitIssue(preview.body, requestId, { ...issuance, sans: ["example.test", "other.example.test"] });
+        assert.equal(changedReplay.status, 409);
+        assert.equal(changedReplay.body.code, "OPERATOR_IDEMPOTENCY_CONFLICT");
         const replay = await submitIssue(preview.body, requestId);
         assert.equal(replay.body.jobId, submitted.body.jobId);
         assert.equal(replay.body.replayed, true);
@@ -256,6 +260,18 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
         assert.equal((await pool.query("SELECT operator_writes_enabled FROM workspaces WHERE id=$1", [workspaceId])).rows[0].operator_writes_enabled, true);
         await pool.query("UPDATE workspaces SET operator_issuance_enabled=TRUE WHERE id=$1", [workspaceId]);
       }
+      issuance.certPath = '/etc/ssl/certs/private-fixture-withdraw.pem';
+      const withdrawPreview = await previewIssue();
+      const withdraw = await submitIssue(withdrawPreview.body);
+      assert.equal(withdraw.status, 200, JSON.stringify(withdraw.body));
+      const path = `/api/v1/operator/requests/${withdraw.body.requestRecordId}`;
+      const listed = await get("/api/v1/operator/requests", c.credential);
+      assert.equal(listed.status, 200);
+      assert.ok(listed.body.items.some(item => item.requestRecordId === withdraw.body.requestRecordId));
+      assert.equal((await get(path, c.credential)).body.jobId, withdraw.body.jobId);
+      assert.equal((await post(path + "/cancel", {}, credential)).status, 404);
+      assert.equal((await post(path + "/cancel", {}, c.credential)).body.state, "cancelled");
+      assert.equal((await post(path + "/cancel", {}, c.credential)).body.replayed, true);
       const stale = await previewIssue();
       await pool.query("UPDATE workspaces SET certops_require_approval_always=FALSE WHERE id=$1", [workspaceId]);
       assert.equal((await submitIssue(stale.body)).body.code, "OPERATOR_INTENT_STALE");
@@ -277,6 +293,34 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
       await pool.query("UPDATE workspaces SET certops_require_approval_always = TRUE WHERE id = $1", [workspaceId]);
     });
     const policy = async (enabled) => pool.query("UPDATE workspaces SET certops_require_approval_always = $2 WHERE id = $1", [workspaceId, enabled]);
+
+    it("rejects a preview after automatic filesystem or Windows executor routing changes", async () => {
+      const agents = (await pool.query(
+        `INSERT INTO certops_agents(workspace_id,agent_id,name,agent_version,protocol_version,credential_prefix,credential_hash,status)
+         SELECT $1,gen_random_uuid()::text,'Routing fixture','0.18.0','1.0.0',
+                'ttagent_' || substr(md5(random()::text),1,16),md5(random()::text) || md5(random()::text),'active'
+         FROM generate_series(1,2) RETURNING id,agent_id`,
+        [workspaceId],
+      )).rows;
+      const setRoute = (source, agent) => pool.query(
+        `UPDATE managed_certificates SET source=$2, deployed_agent_id=$3,
+                public_metadata=jsonb_build_object('controllerObservation',jsonb_build_object('agentId',$4::text))
+          WHERE id=$1`, [certA.managedId, source, agent?.id ?? null, agent?.agent_id ?? null],
+      );
+      try {
+        for (const source of ["agent_filesystem", "agent_windows"]) {
+          await setRoute(source, agents[0]);
+          const before = await preview();
+          assert.equal(before.status, 201, JSON.stringify(before.body));
+          await setRoute(source, agents[1]);
+          const stale = await submit(before.body);
+          assert.equal(stale.status, 409);
+          assert.equal(stale.body.code, "OPERATOR_INTENT_STALE");
+        }
+      } finally {
+        await setRoute("agent_filesystem", null);
+      }
+    });
 
     it("queues a renewal without inventing approval when the workspace policy is off", async () => {
       await policy(false);

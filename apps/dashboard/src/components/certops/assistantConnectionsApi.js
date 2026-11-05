@@ -19,6 +19,7 @@ export async function loadAssistantConnections(workspaceId, signal) {
   ]);
   return {
     writesEnabled: settings.data.writesEnabled === true,
+    frozenWorkspaceName: settings.data.frozenWorkspaceName ?? null,
     remote: settings.data.remote || { enabled: false, serverUrl: null },
     connections: connections.data.items,
     enrollments: enrollments.data.items,

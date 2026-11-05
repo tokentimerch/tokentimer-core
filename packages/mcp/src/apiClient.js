@@ -41,6 +41,10 @@ class ToolError extends Error {
 const CODE_ERRORS = Object.freeze({
   OPERATOR_UNSAFE_METADATA: ["MCP_VALIDATION_ERROR", "Inventory metadata was refused because it appeared to contain a secret or credential URL. Remove secret values and try again.", false, "unsafe_metadata"],
   PLAN_TOKEN_LIMIT: ["MCP_CONFLICT", "This workspace's token inventory limit is reached. Review the plan or reduce the new records before importing.", false, "inventory_quota"],
+  PLAN_CONTACT_GROUP_LIMIT: ["MCP_CONFLICT", "This workspace has reached its contact group limit.", false, "contact_group_quota"],
+  PLAN_MEMBER_LIMIT: ["MCP_CONFLICT", "This workspace has reached its member limit.", false, "member_quota"],
+  CERTOPS_MANAGED_CERT_LIMIT: ["MCP_CONFLICT", "This workspace has reached its managed certificate limit.", false, "certificate_quota"],
+  CERTOPS_CERTIFICATE_PATH_IN_USE: ["MCP_CONFLICT", "The selected destination is already in use on this agent.", false, "destination_in_use"],
   PLAN_FEATURE_REQUIRED: ["MCP_SCOPE_DENIED", "This workspace's plan does not include assistant certificate operations.", false, "plan_required"],
   WORKSPACE_FROZEN: ["MCP_SCOPE_DENIED", "This workspace is frozen. New renewal requests are unavailable.", false, "workspace_frozen"],
   CERTOPS_RENEWAL_QUOTA_EXCEEDED: ["MCP_CONFLICT", "The monthly renewal-job limit is reached. Wait for the quota reset or ask a workspace administrator to review the plan.", false, "renewal_quota"],
@@ -49,14 +53,14 @@ const CODE_ERRORS = Object.freeze({
   OPERATOR_PLAN_USED: ["MCP_CONFLICT", "This preview was already submitted. Preview again.", false, "plan_used"],
   OPERATOR_PLAN_MISMATCH: ["MCP_VALIDATION_ERROR", "The plan does not match what was previewed.", false, "plan_mismatch"],
   OPERATOR_UPDATE_UNSUPPORTED: ["MCP_CONFLICT", "This inventory record cannot be updated through the assistant.", false, "update_unsupported"],
-  OPERATOR_INTENT_STALE: ["MCP_INTENT_STALE", "The certificate changed since the preview. Preview again.", false, null],
+  OPERATOR_INTENT_STALE: ["MCP_INTENT_STALE", "The details changed since the preview. Preview again.", false, null],
   OPERATOR_IDEMPOTENCY_CONFLICT: ["MCP_IDEMPOTENCY_CONFLICT", "This request id was already used for something different. Use a new request id.", false, null],
   OPERATOR_PENDING_LIMIT: ["MCP_RATE_LIMITED", "Too many assistant requests are already waiting for approval.", true, "pending_limit"],
   OPERATOR_REQUEST_NOT_CANCELLABLE: ["MCP_CONFLICT", "The request was approved or has already moved beyond the queue.", false, "not_cancellable"],
   OPERATOR_CERTIFICATE_NOT_MANAGED: ["MCP_CONFLICT", "TokenTimer is not managing this certificate.", false, "not_managed"],
   OPERATOR_CERTIFICATE_RETIRED: ["MCP_CONFLICT", "The certificate is retired.", false, "retired"],
   OPERATOR_RENEWAL_NOT_POSSIBLE: ["MCP_CONFLICT", "A renewal cannot be requested for this certificate.", false, "renewal_not_possible"],
-  CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED: ["MCP_CONFLICT", "The certificate authority has too many renewals in progress. Try again later.", true, "capacity"],
+  CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED: ["MCP_CONFLICT", "The certificate authority has too many certificate jobs in progress. Try again later.", true, "capacity"],
   CERTOPS_WORKSPACE_PAUSED: ["MCP_CONFLICT", "Certificate operations are paused for this workspace.", true, "workspace_paused"],
 });
 
@@ -123,7 +127,7 @@ async function readCapped(response, maxBytes, correlationId) {
 // Pulls the machine code (and a snake_case reason, if present) out of a
 // refusal body, and nothing else. Anything unreadable is simply no code.
 async function refusalCode(response, maxBytes, correlationId) {
-  if (![402, 403, 409, 410, 429].includes(response.status)) {
+  if (![402, 403, 409, 410, 422, 429].includes(response.status)) {
     await response.body?.cancel().catch(() => {});
     return null;
   }

@@ -28,14 +28,14 @@ function canonicalize(value) {
   return value;
 }
 
-function hashPlan({ operation, workspaceId, connectionId, subjectId, boundFingerprint, boundProfileId, intentHash, effect }) {
+function hashPlan({ operation, workspaceId, connectionId, subjectId, boundFingerprint, boundProfileId, intentHash, routing, effect }) {
   // Everything the plan is bound to is inside the hash, so a plan cannot be
   // replayed against another certificate, connection or workspace.
   // Advisory availability warnings do not change the authorized effect. A
   // pause/resume must block/defer work, not invalidate otherwise valid consent.
   const { warnings: _warnings, ...resolvedEffect } = effect;
   const body = JSON.stringify(
-    canonicalize({ operation, workspaceId, connectionId, subjectId, boundFingerprint, boundProfileId, intentHash, effect: resolvedEffect }),
+    canonicalize({ operation, workspaceId, connectionId, subjectId, boundFingerprint, boundProfileId, intentHash, routing, effect: resolvedEffect }),
   );
   return crypto.createHash("sha256").update(body, "utf8").digest("hex");
 }

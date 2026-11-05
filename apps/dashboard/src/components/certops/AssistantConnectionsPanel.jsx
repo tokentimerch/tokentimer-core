@@ -190,8 +190,8 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
       ];
       if ((renewals || agentHealth || issuance) && canManage)
         scopes.push('mcp:agents:read');
-      if (renewals && canManage)
-        scopes.push('mcp:requests:read', 'mcp:renew:request');
+      if ((renewals || issuance) && canManage) scopes.push('mcp:requests:read');
+      if (renewals && canManage) scopes.push('mcp:renew:request');
       if (inventoryImport && canManage) scopes.push('mcp:inventory:import');
       if (inventoryUpdate && canManage) scopes.push('mcp:inventory:update');
       if (contactCreate && canManage) scopes.push('mcp:contacts:create');
@@ -357,29 +357,31 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
           <>
             <Box>
               <HStack spacing={3} flexWrap='wrap'>
-                <DashboardActionButton
-                  colorScheme='blue'
-                  onClick={() => {
-                    setNotice('');
-                    setRenewals(false);
-                    setAgentHealth(false);
-                    setInventoryImport(false);
-                    setInventoryUpdate(false);
-                    setContactCreate(false);
-                    setWebhookCreate(false);
-                    setGroupCreate(false);
-                    setMemberInvite(false);
-                    setIssuance(false);
-                    setDays('30');
-                    setNoExpiryAcknowledged(false);
-                    setUrlCopied(false);
-                    setMethod(data.remote?.enabled ? 'remote' : 'local');
-                    setStep('method');
-                    setOpen(true);
-                  }}
-                >
-                  Connect an MCP assistant
-                </DashboardActionButton>
+                {data.frozenWorkspaceName === null ? (
+                  <DashboardActionButton
+                    colorScheme='blue'
+                    onClick={() => {
+                      setNotice('');
+                      setRenewals(false);
+                      setAgentHealth(false);
+                      setInventoryImport(false);
+                      setInventoryUpdate(false);
+                      setContactCreate(false);
+                      setWebhookCreate(false);
+                      setGroupCreate(false);
+                      setMemberInvite(false);
+                      setIssuance(false);
+                      setDays('30');
+                      setNoExpiryAcknowledged(false);
+                      setUrlCopied(false);
+                      setMethod(data.remote?.enabled ? 'remote' : 'local');
+                      setStep('method');
+                      setOpen(true);
+                    }}
+                  >
+                    Connect an MCP assistant
+                  </DashboardActionButton>
+                ) : null}
                 <DashboardActionButton
                   variant='outline'
                   onClick={() => {
@@ -392,8 +394,9 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                 </DashboardActionButton>
               </HStack>
               <Text fontSize='sm' color={muted} mt={2}>
-                Choose remote HTTP with browser sign-in, or a local adapter for
-                clients that only support stdio.
+                {data.frozenWorkspaceName === null
+                  ? 'Choose remote HTTP with browser sign-in, or a local adapter for clients that only support stdio.'
+                  : `${data.frozenWorkspaceName} is frozen. You can still revoke access and setup codes.`}
               </Text>
             </Box>
           </>

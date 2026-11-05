@@ -295,7 +295,8 @@ async function decideAuthorization(
     if (count.rows[0].count >= 100) throw oauthError("connection_limit", 409);
     const scopes = [...READ_SCOPES];
     if (input.agentHealth || input.renewals || input.issuance) scopes.push("mcp:agents:read");
-    if (input.renewals) scopes.push("mcp:renew:request", "mcp:requests:read");
+    if (input.renewals || input.issuance) scopes.push("mcp:requests:read");
+    if (input.renewals) scopes.push("mcp:renew:request");
     if (input.inventoryImport) scopes.push("mcp:inventory:import");
     if (input.inventoryUpdate) scopes.push("mcp:inventory:update");
     if (input.contactCreate) scopes.push("mcp:contacts:create");

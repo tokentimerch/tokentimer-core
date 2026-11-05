@@ -787,12 +787,12 @@ function exactBody(body, allowed) {
   return body;
 }
 
-function operatorWrite(scope) {
+function operatorWrite(scope, minRole) {
   return [
     getApiLimiter(),
     rejectKeyMaterial,
     requireOperatorInterfaceEnabled,
-    requireOperatorConnection({ scope }),
+    requireOperatorConnection({ scope, minRole }),
     requireCertOpsEnabled,
   ];
 }
@@ -887,7 +887,7 @@ router.get("/api/v1/operator/requests/:requestRecordId", ...operatorRead("mcp:re
   }
 });
 
-router.post("/api/v1/operator/requests/:requestRecordId/cancel", ...operatorWrite("mcp:renew:request"), async (req, res) => {
+router.post("/api/v1/operator/requests/:requestRecordId/cancel", ...operatorWrite("mcp:requests:read", "workspace_manager"), async (req, res) => {
   try {
     exactBody(req.body ?? {}, []);
     const request = await withTransaction(async (client) => {
@@ -917,7 +917,11 @@ router.get(
   async (req, res) => {
     try {
       const row = await pool.query("SELECT operator_writes_enabled FROM workspaces WHERE id = $1", [req.workspace.id]);
-      return res.json({ writesEnabled: row.rows[0]?.operator_writes_enabled === true, remote: require("../services/operator/remoteConfig").remoteSetup() });
+      return res.json({
+        writesEnabled: row.rows[0]?.operator_writes_enabled === true,
+        remote: require("../services/operator/remoteConfig").remoteSetup(),
+        ...(req.workspace.is_frozen ? { frozenWorkspaceName: req.workspace.name } : {}),
+      });
     } catch (err) {
       return handleError(res, err, "Failed to read operator settings");
     }

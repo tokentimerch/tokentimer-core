@@ -240,6 +240,12 @@ function computeAuthority({ connection, currentRole }) {
         hasAtLeastRole(effectiveRole, SCOPE_MIN_ROLE[scope] || "admin"),
       )
     : [];
+  // A requester can follow or withdraw their own certificate jobs,
+  // including connections granted a request scope before this was explicit.
+  if (!grantedScopes.includes("mcp:requests:read") &&
+      (grantedScopes.includes("mcp:renew:request") || grantedScopes.includes("mcp:issue:request"))) {
+    grantedScopes.push("mcp:requests:read");
+  }
   return { currentRole, ceiling: connection.roleCeiling, effectiveRole, scopes: grantedScopes };
 }
 

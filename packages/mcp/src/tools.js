@@ -128,6 +128,7 @@ function loadTools({ includeWrites = false } = {}) {
         title: tool.title,
         description: DESCRIPTIONS[tool.name] || tool.title,
         scope: tool.scope,
+        anyOfScopes: tool.anyOfScopes,
         annotations: { ...tool.annotations },
         route: template,
         method,

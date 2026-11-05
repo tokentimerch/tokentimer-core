@@ -492,6 +492,24 @@ paths:
                   type: boolean
                   default: false
                   description: Allow reviewed create-only inventory imports; requires current workspace manager permission.
+                inventoryUpdate:
+                  type: boolean
+                  default: false
+                contactCreate:
+                  type: boolean
+                  default: false
+                webhookCreate:
+                  type: boolean
+                  default: false
+                groupCreate:
+                  type: boolean
+                  default: false
+                memberInvite:
+                  type: boolean
+                  default: false
+                issuance:
+                  type: boolean
+                  default: false
       responses:
         "200":
           description: Validated registered callback with code or denial
@@ -1678,7 +1696,7 @@ paths:
       summary: Withdraw my unapproved request before execution
       operationId: cancelOperatorRequest
       description: >-
-        Needs mcp:renew:request but not the write switches or an unpaused workspace. Authentication, scope and ownership still apply. May withdraw waiting approvals or claimable pending jobs without human approval. Withdrawal races atomically with approval and agent claim; if either wins first, return 409 without claiming execution was prevented. Response shape: packages/contracts/mcp/mcp-renew-tools.schema.json definition tt_cancel_request_output.
+        Needs the scope for the stored request (mcp:renew:request or mcp:issue:request) and remains available when new requests are disabled or CertOps is paused. Authentication, scope and ownership still apply. May withdraw waiting approvals or claimable pending jobs without human approval. Withdrawal races atomically with approval and agent claim; if either wins first, return 409 without claiming execution was prevented. Response shape: packages/contracts/mcp/mcp-renew-tools.schema.json definition tt_cancel_request_output.
       security:
         - operatorConnectionAuth: []
       parameters:
@@ -13336,6 +13354,10 @@ components:
         writesEnabled:
           type: boolean
           description: Whether assistant write requests are switched on for this workspace. Off by default.
+        frozenWorkspaceName:
+          type: string
+          readOnly: true
+          description: Present in hosted editions when the workspace is frozen and assistant access can only be revoked.
         remote:
           type: object
           readOnly: true
@@ -13428,6 +13450,12 @@ components:
         - mcp:renew:request
         - mcp:tokens:read
         - mcp:inventory:import
+        - mcp:inventory:update
+        - mcp:contacts:create
+        - mcp:webhooks:create
+        - mcp:groups:create
+        - mcp:members:invite
+        - mcp:issue:request
     OperatorWorkspaceRole:
       type: string
       enum: [viewer, workspace_manager, admin]

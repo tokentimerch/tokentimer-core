@@ -91,6 +91,12 @@ ingress:
         - path: /api
           pathType: Prefix
           service: api
+        - path: /.well-known/oauth-protected-resource
+          pathType: Prefix
+          service: api
+        - path: /.well-known/oauth-authorization-server
+          pathType: Prefix
+          service: api
         - path: /auth
           pathType: Prefix
           service: api

@@ -61,8 +61,9 @@ export default function AssistantConnectionsModal({
         <ModalHeader>
           <DashboardModalTitle>Manage MCP connections</DashboardModalTitle>
           <DashboardModalDescription>
-            Review access in this workspace and revoke connections you no longer
-            use.
+            {data?.frozenWorkspaceName
+              ? `Review and revoke access to ${data.frozenWorkspaceName}.`
+              : 'Review access in this workspace and revoke connections you no longer use.'}
           </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton
@@ -86,13 +87,16 @@ export default function AssistantConnectionsModal({
             {data ? (
               <>
                 <Text fontWeight='semibold' fontSize='sm'>
-                  {isAdmin ? 'Workspace connections' : 'Your connections'}
+                  {data.frozenWorkspaceName
+                    ? 'Connections in this workspace'
+                    : isAdmin ? 'Workspace connections' : 'Your connections'}
                 </Text>
                 <Stack spacing={3} divider={<Divider />}>
                   {!data.connections.length ? (
                     <Text fontSize='sm' color={muted}>
-                      No connections yet. Use Connect an MCP assistant to get
-                      started.
+                      {data.frozenWorkspaceName
+                        ? 'No connections to manage.'
+                        : 'No connections yet. Use Connect an MCP assistant to get started.'}
                     </Text>
                   ) : null}
                   {data.connections.map(item => (

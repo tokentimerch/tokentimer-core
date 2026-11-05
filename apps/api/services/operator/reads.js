@@ -142,7 +142,7 @@ async function listJobs({ workspaceId, status, operation, subjectId, createdSinc
     workspaceId,
     status,
     operation,
-    subjectId,
+    certificateIdentityId: subjectId,
     createdSince,
     limit,
     offset,

@@ -38,7 +38,7 @@ Available tools (subject to connection scopes, workspace role and feature settin
 | Certificate issuance | `tt_preview_issuance`, `tt_request_issuance` |
 | Workspace members | `tt_preview_member_invite`, `tt_invite_member` |
 | Certificates and agents | `tt_list_certificates`, `tt_get_certificate`, `tt_get_certificate_observations`, `tt_explain_certificate_state`, `tt_get_agent_health` |
-| Jobs and renewals | `tt_list_jobs`, `tt_get_job`, `tt_preview_renew`, `tt_request_renew`, `tt_list_my_requests`, `tt_get_action_request`, `tt_cancel_request` |
+| Jobs and certificate requests | `tt_list_jobs`, `tt_get_job`, `tt_preview_renew`, `tt_request_renew`, `tt_list_my_requests`, `tt_get_action_request`, `tt_cancel_request` |
 
 Certificate issuance requires a separate connection permission and workspace switch. Review the certificate, issuer, agent and installation destination before submitting; Job approval follows workspace settings. Successful issuance can establish a renewal profile.
 

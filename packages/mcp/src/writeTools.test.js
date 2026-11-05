@@ -178,6 +178,11 @@ describe("write requests", () => {
     [409, "OPERATOR_PLAN_USED", "MCP_CONFLICT"],
     [409, "CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED", "MCP_CONFLICT"],
     [409, "CERTOPS_WORKSPACE_PAUSED", "MCP_CONFLICT"],
+    [422, "OPERATOR_UNSAFE_METADATA", "MCP_VALIDATION_ERROR"],
+    [402, "PLAN_CONTACT_GROUP_LIMIT", "MCP_CONFLICT"],
+    [402, "PLAN_MEMBER_LIMIT", "MCP_CONFLICT"],
+    [402, "CERTOPS_MANAGED_CERT_LIMIT", "MCP_CONFLICT"],
+    [409, "CERTOPS_CERTIFICATE_PATH_IN_USE", "MCP_CONFLICT"],
   ];
   for (const [status, apiCode, expected] of refusals) {
     it(`turns ${apiCode} into ${expected} in our own words, never the server's`, async () => {

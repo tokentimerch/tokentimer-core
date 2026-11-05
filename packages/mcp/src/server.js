@@ -135,9 +135,11 @@ function createToolHandler(tool, api) {
 
 function createServerFactory(config, { fetchImpl, includeWrites = config.enableWrites === true } = {}) {
   const api = createApiClient(config, { fetchImpl });
-  const tools = loadTools({ includeWrites }).filter((tool) =>
-    !Array.isArray(config.operatorScopes) || config.operatorScopes.includes(tool.scope),
-  );
+  const tools = loadTools({ includeWrites }).filter((tool) => {
+    if (!Array.isArray(config.operatorScopes)) return true;
+    if (!config.operatorScopes.includes(tool.scope)) return false;
+    return !tool.anyOfScopes || tool.anyOfScopes.some((scope) => config.operatorScopes.includes(scope));
+  });
   const instructions = includeWrites ? `${READ_ONLY_INSTRUCTIONS_FOR_WRITES} ${WRITE_INSTRUCTIONS}` : INSTRUCTIONS;
   return () => {
     const server = new McpServer(

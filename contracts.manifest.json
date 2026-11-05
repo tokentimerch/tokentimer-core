@@ -65,14 +65,14 @@
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "a8e90d674cac035a808794445422a7b0ba3157cd8bf1d46faacf6831487b2acd"
+          "sha256": "0d7bbb6a801307f7468ddfea37c9276fbb640b8c0b848e63f788bf734f1ad55b"
         },
         {
           "id": "integration-openapi-spec",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "a8e90d674cac035a808794445422a7b0ba3157cd8bf1d46faacf6831487b2acd"
+          "sha256": "0d7bbb6a801307f7468ddfea37c9276fbb640b8c0b848e63f788bf734f1ad55b"
         },
         {
           "id": "auth-route-compat-contract",
@@ -395,7 +395,7 @@
           "kind": "module",
           "path": "apps/api/services/operator/oauth.js",
           "status": "existing",
-          "sha256": "2e39cc774b90ef2d0b7be83ad659829efc5f07431df8abf1bd581b02b8a7dbf7"
+          "sha256": "b6a6b46c7dfbdc347c96c8019f8bbb1f3352d03c2ed2b13ae12154eb06bd8436"
         },
         {
           "id": "mcp-remote-protocol",
@@ -451,7 +451,7 @@
           "kind": "module",
           "path": "apps/dashboard/src/components/certops/AssistantConnectionsPanel.jsx",
           "status": "existing",
-          "sha256": "933ca3601678916ad28356dce29c3c4ded73c57bc3bc75e55508e152c125572f"
+          "sha256": "e02193720358301f708f928bad21bab59660a5052ebc4ddb83f4f5a921d92a32"
         },
         {
           "id": "mcp-workspace-policy",
@@ -620,7 +620,7 @@
           "kind": "module",
           "path": "apps/api/routes/operatorInventory.js",
           "status": "existing",
-          "sha256": "e82291f732f8785636c0410b6a1d2356b9c4ea2db88f94ebce23744d138cd1c1"
+          "sha256": "3c8e4d4aab496f96216e120ee47529fa38bd7e175d9dc97be8db5636887dc428"
         },
         {
           "id": "mcp-inventory-migration",
@@ -662,7 +662,7 @@
           "kind": "module",
           "path": "apps/api/services/operator/issuanceRequests.js",
           "status": "existing",
-          "sha256": "eccd7cff9687d9e19730c80adcbd87a48b6438f08fdeebe875901f77f10d4e58"
+          "sha256": "366961a37cbbea6b4bb62457622dfdbabaf71cb10da5233e1c79fabb5d283f26"
         },
         {
           "id": "mcp-issuance-validation",

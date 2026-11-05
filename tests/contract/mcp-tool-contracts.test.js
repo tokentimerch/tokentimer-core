@@ -167,7 +167,9 @@ describe("MCP tool contracts (ADR-0017)", () => {
       assert.ok(!names.has(tool.name), `duplicate tool ${tool.name}`);
       names.add(tool.name);
       assert.ok(scopes.has(tool.scope), `${tool.name}: undeclared scope ${tool.scope}`);
-      assert.strictEqual(tool.minRole, scopes.get(tool.scope).minRole, `${tool.name}: role must match its scope`);
+      for (const scope of tool.anyOfScopes || [tool.scope]) {
+        assert.strictEqual(tool.minRole, scopes.get(scope)?.minRole, `${tool.name}: role must match its scope`);
+      }
       assert.ok(["mvp", "write", "outline", "draft"].includes(tool.contractStatus), `${tool.name}: unknown contractStatus`);
     }
   });

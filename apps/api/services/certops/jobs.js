@@ -292,6 +292,7 @@ const SAFE_JOB_SELECT_FIELDS = `
   creation_request_hash,
   subject_type,
   subject_id,
+  certificate_identity_id,
   payload,
   result_metadata,
   error_code,
@@ -1688,6 +1689,14 @@ async function preflightManualRenewalJob({
   return validateJobPayloadForOperation(materialized, "renew");
 }
 
+async function preflightManualRenewalRouting({ client, workspaceId, certificateId, payload }) {
+  const { autoAssignedAgentId } = await resolveManagedCertificateJobDefaults({
+    db: client, workspaceId, source: "api", operation: "renew",
+    subjectType: "managed_certificate", subjectId: certificateId, payload, assignedAgentId: payload.assignedAgentId,
+  });
+  return resolveExecutorKindAndRouting({}, "api", payload, autoAssignedAgentId);
+}
+
 function jobFromRow(row) {
   if (!row) return null;
   const job = {
@@ -1706,6 +1715,7 @@ function jobFromRow(row) {
     creationRequestHash: row.creation_request_hash,
     subjectType: row.subject_type,
     subjectId: row.subject_id,
+    certificateIdentityId: row.certificate_identity_id ?? null,
     payload: parseJsonb(row.payload),
     resultMetadata: parseJsonb(row.result_metadata),
     errorCode: row.error_code,
@@ -2079,6 +2089,15 @@ async function createCertificateJob(options) {
     requiredDnsProvider,
     requiredCommandProfile,
   } = resolveExecutorKindAndRouting(options, source, payload, autoAssignedAgentId);
+  if (options.expectedRenewalRouting && (
+    executorKind !== options.expectedRenewalRouting.executorKind ||
+    assignedAgentId !== options.expectedRenewalRouting.assignedAgentId ||
+    requiredTargetSelector !== options.expectedRenewalRouting.requiredTargetSelector ||
+    requiredDnsProvider !== options.expectedRenewalRouting.requiredDnsProvider ||
+    requiredCommandProfile !== options.expectedRenewalRouting.requiredCommandProfile
+  )) {
+    throw serviceError("The renewal routing changed; preview again", "OPERATOR_INTENT_STALE");
+  }
   const resultMetadata = normalizePublicObject(
     options.resultMetadata,
     "resultMetadata",
@@ -2508,6 +2527,13 @@ async function listCertificateJobs(options) {
     conditions.push(`subject_id = $${params.length}`);
   }
 
+  if (options.certificateIdentityId) {
+    params.push(options.certificateIdentityId);
+    const identity = `$${params.length}`;
+    conditions.push(`(certificate_identity_id = ${identity}::uuid OR
+      (subject_type IS DISTINCT FROM 'managed_certificate' AND subject_id = ${identity}::uuid::text))`);
+  }
+
   const createdSince = normalizeJobCreatedSince(options.createdSince);
   if (createdSince) {
     params.push(createdSince);
@@ -2898,6 +2924,7 @@ module.exports = {
   normalizeRequiredId,
   normalizeWorkspaceId,
   preflightManualRenewalJob,
+  preflightManualRenewalRouting,
   serviceError,
   updateCertificateJobStatus,
   validateJobPayloadForOperation,

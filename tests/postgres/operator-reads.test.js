@@ -560,7 +560,8 @@ describe("operator read routes on PostgreSQL", { concurrency: false }, () => {
     it("filters jobs by operation, subject and recency", async () => {
       const ids = async (params) => (await get(`/api/v1/operator/jobs${q(params)}`)).body.items.map((i) => i.id);
       assert.deepEqual(await ids({ operation: "issue" }), [jobApproval]);
-      assert.equal((await ids({ subjectId: certB.managedId })).length, 2);
+      assert.equal((await ids({ subjectId: certB.identityId })).length, 2);
+      assert.deepEqual(await ids({ subjectId: certB.managedId }), []);
       assert.equal((await ids({ createdSince: "24h" })).length, 3);
       await pool.query("UPDATE certificate_jobs SET created_at = NOW() - INTERVAL '10 days' WHERE id = $1", [jobPending]);
       assert.ok(!(await ids({ createdSince: "7d" })).includes(jobPending));
@@ -760,9 +761,21 @@ describe("operator read routes on PostgreSQL", { concurrency: false }, () => {
     });
 
     it("keeps it out of the job list", async () => {
-      const response = await get(`/api/v1/operator/jobs${q({ subjectId: injectedCert.managedId })}`);
+      const response = await get(`/api/v1/operator/jobs${q({ subjectId: injectedCert.identityId })}`);
       assert.equal(response.status, 200);
       assert.ok(!JSON.stringify(response.body).includes("ignore previous"));
+      assert.ok(response.body.items.some(item => item.id === injectedJob));
+    });
+
+    it("keeps the historical job under the certificate identity it ran against after rotation", async () => {
+      const nextFingerprint = crypto.randomBytes(32).toString("hex");
+      await pool.query("UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=clock_timestamp() WHERE id=$1", [injectedCert.managedId, nextFingerprint]);
+      const current = await pool.query("SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2", [workspaceId, nextFingerprint]);
+      assert.equal(current.rowCount, 1);
+      const oldJobs = await get(`/api/v1/operator/jobs${q({ subjectId: injectedCert.identityId })}`);
+      assert.ok(oldJobs.body.items.some(item => item.id === injectedJob && item.subjectId === injectedCert.identityId));
+      const currentJobs = await get(`/api/v1/operator/jobs${q({ subjectId: current.rows[0].id })}`);
+      assert.ok(!currentJobs.body.items.some(item => item.id === injectedJob));
     });
   });
 });
