@@ -9,6 +9,21 @@ WORKFLOW = Path(__file__).parent.parent / ".github/workflows/windows-agent-signi
 def check_safety(text):
     if not re.search(r"(?m)^on:\s*\n\s+workflow_dispatch:\s*\n\s*\npermissions:", text):
         raise ValueError("Unexpected workflow trigger")
+    signer = re.search(r"(?ms)^  sign:\s*\n(.*?)(?=^  [a-z][a-z0-9-]*:\s*$|\Z)", text)
+    if not signer:
+        raise ValueError("Missing executable signing preflight")
+    sign_job = signer.group(1)
+    sign_requirements = (
+        "needs: build",
+        "if: github.event_name == 'workflow_call' && github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main'",
+        "environment: windows-agent-signing",
+        "id-token: write",
+        "needs.build.outputs.amd64",
+        "needs.build.outputs.arm64",
+        "Candidate digest mismatch",
+    )
+    if any(value not in sign_job for value in sign_requirements):
+        raise ValueError("Executable signing preflight guard removed")
     match = re.search(r"(?ms)^  inventory-signing-preflight:\s*\n(.*?)(?=^  [a-z][a-z0-9-]*:\s*$|\Z)", text)
     if not match:
         raise ValueError("Missing signing preflight")
@@ -45,6 +60,22 @@ class InventoryWorkflowTests(unittest.TestCase):
             self.assertNotEqual(changed, text)
             with self.subTest(old=old), self.assertRaises(ValueError):
                 check_safety(changed)
+
+    def test_rejects_executable_signer_activation_or_missing_guards(self):
+        text = WORKFLOW.read_text(encoding="utf8")
+        signer_start = text.index("  sign:\n")
+        signer_end = text.index("  sbom-preflight:\n", signer_start)
+        prefix, job, suffix = text[:signer_start], text[signer_start:signer_end], text[signer_end:]
+        for old, new in (
+            ("github.event_name == 'workflow_call'", "github.event_name == 'workflow_dispatch'"),
+            ("environment: windows-agent-signing", "environment: unprotected"),
+            ("github.ref == 'refs/heads/main'", "github.ref != 'refs/heads/main'"),
+            ("Candidate digest mismatch", "Candidate digest ignored"),
+        ):
+            changed = job.replace(old, new, 1)
+            self.assertNotEqual(changed, job)
+            with self.subTest(old=old), self.assertRaises(ValueError):
+                check_safety(prefix + changed + suffix)
 
 
 if __name__ == "__main__":
