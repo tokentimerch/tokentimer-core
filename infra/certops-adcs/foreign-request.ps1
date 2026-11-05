@@ -19,8 +19,28 @@ Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -A
  function Read-OwnedRequest {
   param([bool]$AllowMissing=$false)
   $view=New-Object -ComObject CertificateAuthority.View
+  $previousUiCulture=$null;$previousThreadLanguage=0;$threadLanguageChanged=$false
   try {
-   $null=$view.OpenConnection('tt-ca.lab.certops.test\TTQualificationRoot')
+   try {$null=$view.OpenConnection('tt-ca.lab.certops.test\TTQualificationRoot')}
+   catch {
+    $originalFailure=$_;$exception=$_.Exception;$fileNotFound=$false
+    for($i=0;$i -lt 8 -and $null -ne $exception;$i++){
+     if([BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$exception.HResult),0) -eq [uint32]2147942402){$fileNotFound=$true;break}
+     $exception=$exception.InnerException
+    }
+    if(-not $fileNotFound){throw}
+    try {
+     if(-not ('TTQualificationThreadLanguage' -as [type])){Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class TTQualificationThreadLanguage { [DllImport("kernel32.dll")] public static extern ushort GetThreadUILanguage(); [DllImport("kernel32.dll")] public static extern ushort SetThreadUILanguage(ushort language); }'}
+     $previousUiCulture=[Threading.Thread]::CurrentThread.CurrentUICulture
+     $previousThreadLanguage=[TTQualificationThreadLanguage]::GetThreadUILanguage()
+     if([TTQualificationThreadLanguage]::SetThreadUILanguage(1033) -eq 0){throw 'Thread language fallback unavailable'}
+     $threadLanguageChanged=$true
+     [Threading.Thread]::CurrentThread.CurrentUICulture=[Globalization.CultureInfo]::GetCultureInfo('en-US')
+     [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view);$view=$null
+     $view=New-Object -ComObject CertificateAuthority.View
+     $null=$view.OpenConnection('tt-ca.lab.certops.test\TTQualificationRoot')
+    }catch{throw $originalFailure}
+   }
    $names=@('RequestID','CommonName','RequesterName','Disposition','RawCertificate');$view.SetResultColumnCount($names.Count)
    foreach($name in $names){$view.SetResultColumn($view.GetColumnIndex($false,$name))}
    $view.SetRestriction($view.GetColumnIndex($false,'CommonName'),1,0,$commonName)
@@ -28,7 +48,10 @@ Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -A
    $columns=$rows.EnumCertViewColumn();$values=@();while($columns.Next() -ne -1){$values+=,$columns.GetValue($(if($values.Count -eq 4){1}else{0}))}
    if($values.Count -ne 5 -or $values[1] -ne $commonName -or $values[2] -ine 'TTQUAL\tt-lab-admin' -or $rows.Next() -ne -1){throw 'Foreign request ownership is ambiguous'}
    return @{requestId=[long]$values[0];commonName=$commonName;requester=[string]$values[2];disposition=[int]$values[3];certificateB64=[string]$values[4]}
-  }finally{if($view){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)}}
+  }finally{
+   try{if($view){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)}}
+   finally{if($null -ne $previousUiCulture){[Threading.Thread]::CurrentThread.CurrentUICulture=$previousUiCulture};if($threadLanguageChanged){[void][TTQualificationThreadLanguage]::SetThreadUILanguage($previousThreadLanguage)}}
+  }
  }
  $directory=Join-Path $env:TEMP "tokentimer-foreign-$RunId";$keyName="tokentimer-qualification-foreign-$RunId"
  function Clear-OwnedArtifacts {
