@@ -1,0 +1,219 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/mcp/mcp-issuance-tools.schema.json",
+  "title": "Reviewed certificate issuance",
+  "definitions": {
+    "issuance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agentId",
+        "commonName",
+        "sans",
+        "commandRef",
+        "caEndpoint",
+        "dnsZone",
+        "dnsProvider",
+        "certPath"
+      ],
+      "properties": {
+        "agentId": {
+          "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid"
+        },
+        "commonName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253
+        },
+        "sans": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 253
+          }
+        },
+        "commandRef": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "caEndpoint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "dnsZone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "dnsProvider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "certPath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      }
+    },
+    "tt_preview_issuance_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "issuance"
+      ],
+      "properties": {
+        "issuance": {
+          "$ref": "#/definitions/issuance"
+        }
+      }
+    },
+    "tt_preview_issuance_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "planId",
+        "planHash",
+        "expiresAt",
+        "effect"
+      ],
+      "properties": {
+        "planId": {
+          "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid"
+        },
+        "planHash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "expiresAt": {
+          "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/timestamp"
+        },
+        "effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "operation",
+            "lifecycleEffect",
+            "issuerEffect",
+            "commonName",
+            "sans",
+            "agent",
+            "issuerHost",
+            "dnsZone",
+            "dnsProvider",
+            "commandProfile",
+            "destination",
+            "destinationDigest",
+            "approvalAuthority",
+            "standingRenewal",
+            "warnings"
+          ],
+          "properties": {
+            "operation": {
+              "const": "issue"
+            },
+            "lifecycleEffect": {
+              "const": "creates_and_installs_certificate"
+            },
+            "issuerEffect": {
+              "const": "contacts_issuer"
+            },
+            "commonName": {
+              "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/untrustedText"
+            },
+            "sans": {
+              "type": "array",
+              "items": {
+                "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/untrustedText"
+              }
+            },
+            "agent": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "name"
+              ],
+              "properties": {
+                "id": {
+                  "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid"
+                },
+                "name": {
+                  "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/nullableUntrustedText"
+                }
+              }
+            },
+            "issuerHost": {
+              "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/untrustedText"
+            },
+            "dnsZone": {
+              "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/untrustedText"
+            },
+            "dnsProvider": {
+              "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/untrustedText"
+            },
+            "commandProfile": {
+              "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/untrustedText"
+            },
+            "destination": {
+              "type": "string"
+            },
+            "destinationDigest": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "approvalAuthority": {
+              "enum": [
+                "none",
+                "other_manager_or_admin"
+              ]
+            },
+            "standingRenewal": {
+              "type": "string"
+            },
+            "warnings": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "tt_request_issuance_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "issuance",
+        "planId",
+        "planHash",
+        "requestId"
+      ],
+      "properties": {
+        "issuance": {
+          "$ref": "#/definitions/issuance"
+        },
+        "planId": {
+          "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid"
+        },
+        "planHash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "requestId": {
+          "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid"
+        }
+      }
+    },
+    "tt_request_issuance_output": {
+      "$ref": "https://tokentimer.io/contracts/mcp/mcp-renew-tools.schema.json#/definitions/tt_request_renew_output"
+    }
+  }
+}

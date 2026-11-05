@@ -114,7 +114,7 @@ for (const options of [{ clipboardFailure: true }, { clipboardAvailable: false }
     assert.equal(calls.shares['workspace-a:contact-b:+12025550123'].url, url);
     assert.equal(calls.shares['workspace-a:contact-b:+12025550123'].expiresAt, expires);
     assert.equal(calls.success.length, 1);
-    assert.match(calls.success[0], /link ready in Contacts/);
+    assert.match(calls.success[0], /Confirmation link ready below/);
     assert.doesNotMatch(calls.success[0], /link copied/);
     assert.equal(calls.posts.length, 1);
     assert.equal(calls.refreshes, 1);

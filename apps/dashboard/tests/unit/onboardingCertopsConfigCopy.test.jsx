@@ -185,6 +185,13 @@ describe('ACME configuration form', () => {
     );
   });
 
+  it('only shows reload commands when a server is selected', () => {
+    mount(<ConfigStep ctx={makeCtx('certops_automate', { ...linuxAcme, reloadService: '' })} />);
+    expect(screen.queryByText(/The agent runs a check, then/)).toBeNull();
+    fireEvent.change(screen.getByLabelText(/After issuing, reload a web server/), { target: { value: 'nginx' } });
+    expect(screen.getByText(/The agent runs a check, then/)).toBeTruthy();
+  });
+
   it('explains the nginx reload setup inside a collapsed panel', () => {
     mount(
       <ConfigStep

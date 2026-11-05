@@ -63,6 +63,9 @@ const { sweepExpiredNonces } = require(
 const { sweepExpiredRegistrationReplays } = require(
   "../../api/services/certops/registrationCredentialCrypto.js",
 );
+const { sweepOperatorRequests } = require(
+  "../../api/services/operator/requestMaintenance.js",
+);
 const { runRenewalSchedulerSweep } = require(
   "../../api/services/certops/renewalScheduler.js",
 );
@@ -169,6 +172,10 @@ export const CERTOPS_SWEEP_CONFIG = Object.freeze({
   "registration-replay-sweep": Object.freeze({
     enableEnv: "CERTOPS_SWEEP_REGISTRATION_REPLAY_ENABLED",
     timeoutEnv: "CERTOPS_SWEEP_REGISTRATION_REPLAY_TIMEOUT_MS",
+  }),
+  "operator-request-sweep": Object.freeze({
+    enableEnv: "CERTOPS_SWEEP_OPERATOR_REQUESTS_ENABLED",
+    timeoutEnv: "CERTOPS_SWEEP_OPERATOR_REQUESTS_TIMEOUT_MS",
   }),
   "renewal-scheduler": Object.freeze({
     enableEnv: "CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED",
@@ -1522,6 +1529,7 @@ export async function runCertOpsMaintenance({
   dbPool = pool,
   nonceSweeper = sweepExpiredNonces,
   registrationReplaySweeper = sweepExpiredRegistrationReplays,
+  operatorRequestSweeper = sweepOperatorRequests,
   renewalSweeper = runRenewalSchedulerSweep,
   outboxDrainer = drainCertOpsOutbox,
   diagnosticAgentSweeper = sweepInactiveDiagnosticAgents,
@@ -1637,6 +1645,18 @@ export async function runCertOpsMaintenance({
       results.registrationReplaySweep.result.deleted,
     );
   }
+
+  // Ends assistant requests that can no longer be approved or run, before the
+  // scheduler looks, so a stale request never blocks a certificate's renewal.
+  results.operatorRequestSweep = await runIsolated(
+    "operator-request-sweep",
+    log,
+    () => operatorRequestSweeper({ client: dbPool }),
+    {
+      enabled: isSweepEnabled("operator-request-sweep", env),
+      timeoutMs: resolveSweepTimeoutMs("operator-request-sweep", env),
+    },
+  );
 
   results.renewalScheduler = await runIsolated(
     "renewal-scheduler",

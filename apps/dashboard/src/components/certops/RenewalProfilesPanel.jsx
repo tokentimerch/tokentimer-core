@@ -38,7 +38,10 @@ import {
   DashboardModalTitle,
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
-import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
+import {
+  DashboardErrorAlert,
+  DashboardState,
+} from '../DashboardPrimitives.jsx';
 import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
 import DashboardPagination from '../DashboardPagination.jsx';
 import {
@@ -338,7 +341,7 @@ function DisableRenewalModal({ isOpen, onClose, profile, onConfirm, saving }) {
 }
 
 /** Inline editor for the renewal lead time. */
-function LeadTimeEditor({ profile, onSave, saving, disabled }) {
+export function LeadTimeEditor({ profile, onSave, saving, disabled }) {
   const [value, setValue] = useState(String(profile.renewBeforeDays ?? ''));
   const [editing, setEditing] = useState(false);
   const { muted, dashboard } = useDashboardThemeColors();
@@ -400,6 +403,17 @@ function LeadTimeEditor({ profile, onSave, saving, disabled }) {
           }}
         >
           Save
+        </Button>
+        <Button
+          size='xs'
+          variant='outline'
+          isLoading={Boolean(saving)}
+          onClick={async () => {
+            const saved = await onSave(null);
+            if (saved) setEditing(false);
+          }}
+        >
+          Use deployment default
         </Button>
         <Button
           size='xs'
@@ -589,16 +603,11 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
               </Button>
             </>
           ) : (
-            <>
-              <Text fontSize='sm' fontWeight='semibold' color={titleColor}>
-                No renewal profiles yet.
-              </Text>
-              <Text fontSize='sm' color={muted} mt={1}>
-                Issue a certificate and TokenTimer derives an ACME profile from
-                that run. For a private CA, confirm an issuer below, then choose
-                New AD CS profile.
-              </Text>
-            </>
+            <DashboardState
+              py={0}
+              title='No renewal profiles yet.'
+              description='Issue a certificate to derive an ACME profile, or confirm an issuer below and create an AD CS profile.'
+            />
           )}
         </Box>
       ) : null}

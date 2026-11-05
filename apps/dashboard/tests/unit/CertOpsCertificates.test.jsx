@@ -905,7 +905,7 @@ describe('CertOpsCertificates retire action', () => {
     });
     expect(dialog).toBeInTheDocument();
     expect(
-      screen.getByText(/Renewal-failure alerts for this certificate will stop/i)
+      screen.getByText(/Renewal-failure alerts stop/i)
     ).toBeInTheDocument();
     expect(
       screen.getByText(

@@ -451,13 +451,24 @@ export default function DeployAgentModal({
                   copyable
                   monospace
                 />
-                <Text fontSize='xs' color={muted}>
-                  The command does not include a token. The installer will pause
-                  with a hidden prompt asking for one; create a bootstrap token
-                  in step 2 below and paste it there, or set the
-                  TOKENTIMER_AGENT_BOOTSTRAP_TOKEN environment variable before
-                  running.
-                </Text>
+                <VStack align='stretch' spacing={1} fontSize='sm'>
+                  <Text>
+                    <Text as='span' fontWeight='semibold'>
+                      1.
+                    </Text>{' '}
+                    Create a bootstrap token in step 2 below.
+                  </Text>
+                  <Text>
+                    <Text as='span' fontWeight='semibold'>
+                      2.
+                    </Text>{' '}
+                    Run the command and paste the token at the hidden prompt.
+                  </Text>
+                  <Text fontSize='xs' color={muted}>
+                    Alternatively, set TOKENTIMER_AGENT_BOOTSTRAP_TOKEN before
+                    running. The command itself does not include the token.
+                  </Text>
+                </VStack>
                 <LearnMorePanel
                   variant='compact'
                   links={[

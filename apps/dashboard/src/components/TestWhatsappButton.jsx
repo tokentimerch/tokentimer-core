@@ -7,6 +7,7 @@ export default function TestWhatsappButton({
   isDisabled = false,
   cooldownUntil = 0,
   label = 'Test WhatsApp Message',
+  disabledReason,
   ...buttonProps
 }) {
   const now = Date.now();
@@ -14,7 +15,9 @@ export default function TestWhatsappButton({
   const cooldownSecs = onCooldown ? Math.ceil((cooldownUntil - now) / 1000) : 0;
   const tooltip = onCooldown
     ? `Wait ${cooldownSecs}s before sending another test`
-    : 'Send test WhatsApp message';
+    : isDisabled && disabledReason
+      ? disabledReason
+      : 'Send test WhatsApp message';
   const bg = useColorModeValue('#25D366', '#14532d');
   const hoverBg = useColorModeValue('#20BD5A', '#166534');
   const activeBg = useColorModeValue('#1DA851', '#15803d');

@@ -1,6 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const http = require("node:http");
+const { EventEmitter } = require("node:events");
 const {
   getRequestContext,
   attachRequestContext,
@@ -40,4 +41,40 @@ test("synchronous middleware failures propagate without leaking context", () => 
     throw new Error("expected");
   }), /expected/);
   assert.equal(getRequestContext(), undefined);
+});
+
+for (const event of ["finish", "close"]) {
+  test(`background work created by a request loses its ID after response ${event}`, async () => {
+    const res = new EventEmitter();
+    res.setHeader = () => {};
+    const req = {};
+    const background = new Promise((resolve) => {
+      requestCorrelation(req, res, () => {
+        assert.equal(getRequestContext().correlationId, req.correlationId);
+        setImmediate(() => resolve(attachRequestContext({ message: "pool event" })));
+      });
+    });
+    // Async resources such as a database socket inherit the context in which
+    // they were created, even if their later events are unrelated to the request.
+    res.emit(event);
+    assert.deepEqual(await background, { message: "pool event" });
+  });
+}
+
+test("ending one response does not clear another active request", async () => {
+  const first = Object.assign(new EventEmitter(), { setHeader() {} });
+  const second = Object.assign(new EventEmitter(), { setHeader() {} });
+  const req = {};
+  let firstResult;
+  let secondResult;
+  requestCorrelation({}, first, () => {
+    firstResult = new Promise((resolve) => setImmediate(() => resolve(getRequestContext())));
+  });
+  requestCorrelation(req, second, () => {
+    secondResult = new Promise((resolve) => setImmediate(() => resolve(getRequestContext())));
+  });
+  first.emit("finish");
+  assert.equal(await firstResult, undefined);
+  assert.equal((await secondResult).correlationId, req.correlationId);
+  second.emit("finish");
 });

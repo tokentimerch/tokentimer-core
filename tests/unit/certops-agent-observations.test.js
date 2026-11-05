@@ -114,6 +114,80 @@ describe("certificateFor", () => {
   });
 });
 
+describe("agent SAN metadata", () => {
+  function observe(subjectAltNames, subject = null) {
+    return normalizeAgentFilesystemObservation({
+      agent: AGENT,
+      evidenceItem: {
+        evidenceId: "ev_san_1",
+        eventType: "certificate.observed",
+        fingerprintSha256: "e".repeat(64),
+        metadata: [
+          { name: "filePath", value: "/etc/ssl/certs/app.pem" },
+          { name: "targetHost", value: "discovery-host.example" },
+          { name: "subject", value: subject },
+          { name: "subjectAltNames", value: subjectAltNames },
+        ],
+      },
+    });
+  }
+
+  it("normalizes a SAN-only Node X509 report without requiring certificate PEM", () => {
+    const observation = observe("DNS:app.example.com, DNS:alt.example.com");
+    assert.deepEqual(observation.publicCertificate.subjectAltNames, [
+      "app.example.com",
+      "alt.example.com",
+    ]);
+    assert.equal(_test.certificateFor(observation).commonName, "app.example.com");
+    assert.equal(observation.publicCertificate.subject, null);
+    assert.equal(observation.publicCertificate.certificatePem, null);
+  });
+
+  it("preserves an explicit subject CN when it differs from the first SAN", () => {
+    const observation = observe(
+      "DNS:alt.example.com",
+      "CN=app.example.com, O=Example",
+    );
+    assert.equal(_test.certificateFor(observation).commonName, "app.example.com");
+    assert.deepEqual(observation.publicCertificate.subjectAltNames, [
+      "alt.example.com",
+    ]);
+  });
+
+  it("normalizes typed IPv6 and URI values without splitting commas in URIs", () => {
+    const observation = observe(
+      "IP Address:2001:db8::1, URI:https://example.com/a,b, email:ops@example.com",
+    );
+    assert.deepEqual(observation.publicCertificate.subjectAltNames, [
+      "2001:db8::1",
+      "https://example.com/a,b",
+      "ops@example.com",
+    ]);
+  });
+
+  it("preserves already normalized arrays including IPv6 and URI values", () => {
+    const names = ["app.example.com", "2001:db8::1", "https://example.com/a,b"];
+    for (const value of [names, JSON.stringify(names)]) {
+      assert.deepEqual(observe(value).publicCertificate.subjectAltNames, names);
+    }
+  });
+
+  it("normalizes typed SAN arrays and JSON-encoded arrays", () => {
+    const names = [
+      "DNS:app.example.com",
+      "IP Address:2001:db8::1",
+      "URI:spiffe://example/workload",
+    ];
+    for (const value of [names, JSON.stringify(names)]) {
+      assert.deepEqual(observe(value).publicCertificate.subjectAltNames, [
+        "app.example.com",
+        "2001:db8::1",
+        "spiffe://example/workload",
+      ]);
+    }
+  });
+});
+
 describe("persistAgentDiscoveryEvidenceBatch", () => {
   it("rolls back sequence when inventory upsert fails mid-batch", async () => {
     const queries = [];

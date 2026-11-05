@@ -25,6 +25,22 @@ function assertMutationStatus(status, expectedStatus, pathname, responseCode) {
   if (operation === 'ATTACH' && status === 409 && attachReasons.has(responseCode)) throw Object.assign(new Error('Browser attachment was refused'), {code:`CERTOPS_BROWSER_ATTACH_${responseCode.slice('CERTOPS_'.length)}`});
   throw Object.assign(new Error('Browser mutation returned an unexpected status'), {code: `CERTOPS_BROWSER_${operation}_HTTP_${Number.isInteger(status) && status >= 100 && status <= 599 ? status : 'OTHER'}`});
 }
+async function confirmOwnedAttachmentConflict({ response, selectedSource, reloadSource, confirm }) {
+  let body;
+  try { body = await response.json(); } catch {}
+  if (response.status() !== 409 || body?.code !== "CERTOPS_MANAGEMENT_ALREADY_OPEN") {
+    assertMutationStatus(response.status(), 201, "/replace-management", body?.code);
+    return;
+  }
+  const current = await reloadSource();
+  assert.ok(
+    current && current.id === selectedSource.id &&
+      current.periodId === selectedSource.periodId &&
+      body.currentPeriod?.periodId === current.periodId,
+    "Browser conflict must match the current owned IIS management period",
+  );
+  await confirm();
+}
 const REQUIRED_SOURCES = Object.freeze([
   "scripts/certops-adcs-lab-contract.js",
   "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
@@ -394,7 +410,7 @@ async function qualifyAdcsBrowserJourney(context) {
     if ((await control.getAttribute("aria-expanded")) !== "true")
       await control.click();
   }
-  async function mutation(button, pathname, expectedStatus) {
+  async function mutation(button, pathname, expectedStatus, { allowManagementConflict = false } = {}) {
     const [response] = await Promise.all([
       page.waitForResponse(
         (response) =>
@@ -405,6 +421,7 @@ async function qualifyAdcsBrowserJourney(context) {
     ]);
     let responseCode;
     if(response.status()!==expectedStatus && pathname.endsWith('/replace-management')){try{responseCode=(await response.json())?.code;}catch{}}
+    if (allowManagementConflict && response.status() === 409 && responseCode === "CERTOPS_MANAGEMENT_ALREADY_OPEN") return response;
     assertMutationStatus(response.status(), expectedStatus, pathname, responseCode);
     mutations++;
     return response;
@@ -683,11 +700,18 @@ async function qualifyAdcsBrowserJourney(context) {
           exact: true,
         });
         if (await picker.count()) await picker.selectOption(selectedSource.id);
-        await mutation(
+        const attached = await mutation(
           attachButton,
           `${api}/sources/${selectedSource.id}/replace-management`,
           201,
+          { allowManagementConflict: true },
         );
+        if (attached.status() !== 201) await confirmOwnedAttachmentConflict({
+          response: attached,
+          selectedSource,
+          reloadSource: () => loadCurrentIisBrowserSource({ fixture, api, site, port, domain: item.domain, fingerprint: initial.fingerprint }),
+          confirm: () => mutation(dialog.getByRole("button", { name: "Replace the current management with this profile", exact: true }), `${api}/sources/${selectedSource.id}/replace-management`, 201),
+        });
         const periods = (
           await query(
             "SELECT id,automation_enabled,renewal_profile_id FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL",
@@ -1036,5 +1060,6 @@ module.exports = {
   loadCurrentIisBrowserSource,
   currentAuthorityGroup,
   assertMutationStatus,
+  confirmOwnedAttachmentConflict,
   qualifyAdcsBrowserJourney,
 };

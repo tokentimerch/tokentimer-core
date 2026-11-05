@@ -22,6 +22,8 @@ export default function AutoSyncProvenance({ tokenId, ownership }) {
   const { tokens } = useDashboardModalProps();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [retry, setRetry] = useState(0);
   const [showHistory, setShowHistory] = useState(false);
   const current = useRef(tokenId);
   current.current = tokenId;
@@ -29,16 +31,19 @@ export default function AutoSyncProvenance({ tokenId, ownership }) {
     let cancelled = false;
     setData(null);
     setShowHistory(false);
+    setError('');
     apiClient
       .get(`/api/tokens/${tokenId}/auto-sync-provenance`)
       .then(res => {
         if (!cancelled) setData(res.data);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) setError('Auto-sync history could not be loaded.');
+      });
     return () => {
       cancelled = true;
     };
-  }, [tokenId]);
+  }, [tokenId, retry]);
   const configurations = data?.configurations || [];
   const events = data?.items || [];
   const ownershipLabel = data
@@ -47,13 +52,16 @@ export default function AutoSyncProvenance({ tokenId, ownership }) {
       : configurations.length
         ? 'Observed'
         : 'Manual or legacy'
-    : ownership;
+    : ownership === 'Managed' || ownership === 'Observed'
+      ? ownership
+      : null;
   const hasAutoSyncProvenance = data
     ? data.managed || configurations.length > 0 || events.length > 0
     : ownership === 'Managed' || ownership === 'Observed';
-  if (!hasAutoSyncProvenance) return null;
+  if (!hasAutoSyncProvenance && !error) return null;
   const loadMore = async () => {
     setLoading(true);
+    setError('');
     try {
       const res = await apiClient.get(
         `/api/tokens/${tokenId}/auto-sync-provenance?before=${data.next_before}`
@@ -63,8 +71,12 @@ export default function AutoSyncProvenance({ tokenId, ownership }) {
           ...res.data,
           items: [...previous.items, ...res.data.items],
         }));
+    } catch {
+      if (current.current === tokenId) {
+        setError('Earlier history could not be loaded. Please try again.');
+      }
     } finally {
-      setLoading(false);
+      if (current.current === tokenId) setLoading(false);
     }
   };
   return (
@@ -98,11 +110,28 @@ export default function AutoSyncProvenance({ tokenId, ownership }) {
         </Heading>
       </HStack>
       <Grid mx={3} minW={0}>
-        <DashboardModalDetailRow label='Ownership' tokens={tokens}>
-          <Badge colorScheme={ownershipLabel === 'Managed' ? 'blue' : 'gray'}>
-            {ownershipLabel}
-          </Badge>
-        </DashboardModalDetailRow>
+        {error ? (
+          <Box role='alert' py={2}>
+            <Text fontSize='sm'>{error}</Text>
+            {!data ? (
+              <Button
+                size='xs'
+                variant='outline'
+                mt={2}
+                onClick={() => setRetry(value => value + 1)}
+              >
+                Retry
+              </Button>
+            ) : null}
+          </Box>
+        ) : null}
+        {ownershipLabel ? (
+          <DashboardModalDetailRow label='Ownership' tokens={tokens}>
+            <Badge colorScheme={ownershipLabel === 'Managed' ? 'blue' : 'gray'}>
+              {ownershipLabel}
+            </Badge>
+          </DashboardModalDetailRow>
+        ) : null}
         {configurations.length || events.length ? (
           <DashboardModalDetailRow label='Configurations' tokens={tokens}>
             <VStack align='stretch' spacing={1}>
@@ -170,9 +199,7 @@ export default function AutoSyncProvenance({ tokenId, ownership }) {
                       size='xs'
                       alignSelf='flex-start'
                       isLoading={loading}
-                      onClick={() => {
-                        void loadMore().catch(() => {});
-                      }}
+                      onClick={loadMore}
                     >
                       Earlier history
                     </Button>

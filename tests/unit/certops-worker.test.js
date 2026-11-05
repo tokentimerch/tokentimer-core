@@ -1484,6 +1484,7 @@ describe("certops maintenance worker", () => {
       CERTOPS_SWEEP_AGENT_RECOVERY_ALERTS_ENABLED: "0",
       CERTOPS_SWEEP_NONCE_ENABLED: "true",
         CERTOPS_SWEEP_REGISTRATION_REPLAY_ENABLED: "false",
+        CERTOPS_SWEEP_OPERATOR_REQUESTS_ENABLED: "false",
         CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED: "off",
         CERTOPS_SWEEP_AGENT_LOG_ABANDON_ENABLED: "false",
         CERTOPS_SWEEP_AGENT_LOG_PURGE_ENABLED: "false",
@@ -1527,6 +1528,7 @@ describe("certops maintenance worker", () => {
         CERTOPS_SWEEP_STALE_AGENTS_ENABLED: "false",
         CERTOPS_SWEEP_NONCE_ENABLED: "false",
         CERTOPS_SWEEP_REGISTRATION_REPLAY_ENABLED: "false",
+        CERTOPS_SWEEP_OPERATOR_REQUESTS_ENABLED: "false",
       },
       log: silentLogger,
       withClientFn: async () => {
@@ -1636,6 +1638,7 @@ describe("certops maintenance worker", () => {
         CERTOPS_SWEEP_STALE_AGENTS_ENABLED: "false",
         CERTOPS_SWEEP_NONCE_ENABLED: "false",
         CERTOPS_SWEEP_REGISTRATION_REPLAY_ENABLED: "false",
+        CERTOPS_SWEEP_OPERATOR_REQUESTS_ENABLED: "false",
         CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED: "false",
       },
       log: silentLogger,
@@ -1663,6 +1666,7 @@ describe("certops maintenance worker", () => {
             CERTOPS_SWEEP_AGENT_RECOVERY_ALERTS_ENABLED: "false",
             CERTOPS_SWEEP_NONCE_ENABLED: "false",
             CERTOPS_SWEEP_REGISTRATION_REPLAY_ENABLED: "false",
+            CERTOPS_SWEEP_OPERATOR_REQUESTS_ENABLED: "false",
             CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED: "false",
             CERTOPS_SWEEP_OUTBOX_DRAIN_ENABLED: "false",
             CERTOPS_SWEEP_DIAGNOSTIC_AGENT_INACTIVITY_ENABLED: "false",
@@ -1701,6 +1705,7 @@ describe("certops maintenance worker", () => {
         CERTOPS_SWEEP_STALE_AGENTS_ENABLED: "false",
         CERTOPS_SWEEP_AGENT_RECOVERY_ALERTS_ENABLED: "false",
         CERTOPS_SWEEP_REGISTRATION_REPLAY_ENABLED: "false",
+        CERTOPS_SWEEP_OPERATOR_REQUESTS_ENABLED: "false",
         CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED: "false",
         CERTOPS_SWEEP_OUTBOX_DRAIN_ENABLED: "false",
         CERTOPS_SWEEP_DIAGNOSTIC_AGENT_INACTIVITY_ENABLED: "false",
@@ -1718,6 +1723,67 @@ describe("certops maintenance worker", () => {
     assert.strictEqual(results.leaseReaper.status, "skipped");
     assert.strictEqual(results.trustAnchorReconciliation.status, "skipped");
     assert.strictEqual(results.nonceSweep.status, "success");
+  });
+
+  it("runs the operator request sweep inside maintenance, isolated, and lets it be switched off", async () => {
+    const worker = await import(workerUrl);
+    const allOff = {
+      CERTOPS_SWEEP_LEASE_REAPER_ENABLED: "false",
+      CERTOPS_SWEEP_STALE_AGENTS_ENABLED: "false",
+      CERTOPS_SWEEP_AGENT_RECOVERY_ALERTS_ENABLED: "false",
+      CERTOPS_SWEEP_NONCE_ENABLED: "false",
+      CERTOPS_SWEEP_REGISTRATION_REPLAY_ENABLED: "false",
+      CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED: "false",
+      CERTOPS_SWEEP_OUTBOX_DRAIN_ENABLED: "false",
+      CERTOPS_SWEEP_DIAGNOSTIC_AGENT_INACTIVITY_ENABLED: "false",
+      CERTOPS_SWEEP_TRUST_ANCHOR_RECONCILIATION_ENABLED: "false",
+      CERTOPS_SWEEP_AGENT_LOG_ABANDON_ENABLED: "false",
+      CERTOPS_SWEEP_AGENT_LOG_PURGE_ENABLED: "false",
+      CERTOPS_SWEEP_ENROLLMENT_CONTINUATIONS_ENABLED: "false",
+    };
+    const run = (env, sweeper) =>
+      worker.runCertOpsMaintenance({
+        env: { ...allOff, ...env },
+        log: silentLogger,
+        dbPool: { marker: "pool" },
+        operatorRequestSweeper: sweeper,
+        pushMetricsFn: async () => {},
+      });
+
+    const seen = [];
+    const ran = await run({}, async ({ client }) => {
+      seen.push(client);
+      return { lapsed: 2, orphaned: 1 };
+    });
+    assert.strictEqual(ran.operatorRequestSweep.status, "success");
+    assert.deepStrictEqual(ran.operatorRequestSweep.result, { lapsed: 2, orphaned: 1 });
+    assert.deepStrictEqual(seen, [{ marker: "pool" }], "it gets the worker's pool");
+
+    const off = await run({ CERTOPS_SWEEP_OPERATOR_REQUESTS_ENABLED: "false" }, async () => {
+      throw new Error("must not run when switched off");
+    });
+    assert.strictEqual(off.operatorRequestSweep.status, "skipped");
+
+    // A failing sweep fails the run once every sweep has had its turn, which is
+    // how the worker already reports any failure. The other sweeps still ran.
+    let renewalRan = false;
+    await assert.rejects(
+      worker.runCertOpsMaintenance({
+        env: { ...allOff, CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED: "true" },
+        log: silentLogger,
+        dbPool: { marker: "pool" },
+        operatorRequestSweeper: async () => {
+          throw new Error("sweep exploded");
+        },
+        renewalSweeper: async () => {
+          renewalRan = true;
+          return {};
+        },
+        pushMetricsFn: async () => {},
+      }),
+      /1 sweep\(s\) failed: operatorRequestSweep/,
+    );
+    assert.strictEqual(renewalRan, true, "a failing request sweep does not stop the scheduler that runs after it");
   });
 
   it("treats only failed sweeps as a failed run", async () => {

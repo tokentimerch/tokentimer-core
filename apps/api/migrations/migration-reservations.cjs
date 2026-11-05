@@ -21,8 +21,18 @@ const reservations = Object.freeze({
   96: "certops_consumer_staging",
   97: "certops_review_authority_epochs",
   98: "certops_manual_rollout_authority",
-  107: "agent_credential_rotations",
-  108: "agent_credential_rotation_ack",
+  99: "operator_connections",
+  100: "operator_enrollment_grants",
+  101: "operator_action_requests",
+  102: "operator_oauth",
+  103: "operator_connection_lifetimes",
+  104: "operator_inventory",
+  105: "operator_oauth_retention",
+  106: "operator_issuance",
+  107: "certops_issuance_job_identity",
+  108: "certops_issuance_identity_transfer",
+  109: "agent_credential_rotations",
+  110: "agent_credential_rotation_ack",
 });
 
 function validateMigrationReservations(migrations) {

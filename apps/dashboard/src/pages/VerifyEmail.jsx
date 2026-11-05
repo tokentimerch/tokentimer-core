@@ -79,6 +79,7 @@ function VerifyEmail() {
   const handleResendVerification = async () => {
     try {
       setResendLoading(true);
+      setError('');
       // Cancel any pending redirect to the login page triggered by a prior successful verification
       if (redirectTimeoutRef.current) {
         clearTimeout(redirectTimeoutRef.current);
@@ -232,9 +233,9 @@ function VerifyEmail() {
               </>
             ) : status === 'pending' ? (
               <>
-                <Alert status='info' rounded='md'>
+                <Alert status={error ? 'error' : 'info'} rounded='md'>
                   <AlertIcon />
-                  <AlertDescription>{message}</AlertDescription>
+                  <AlertDescription>{error || message}</AlertDescription>
                 </Alert>
 
                 <Heading size='lg' color={infoColor}>

@@ -21,7 +21,10 @@ const { isIP } = require("node:net");
 const { pool } = require("../../db/database");
 const { lockCurrentAgentCredential } = require("./agentCredentialFence");
 const { assertNoPrivateKeyMaterial } = require("../../utils/secretMaterial");
-const { parsePublicCertificateMaterial } = require("./parser");
+const {
+  parsePublicCertificateMaterial,
+  parseSubjectAltNames,
+} = require("./parser");
 const {
   upsertManagedCertificateByMonitorSource,
   upsertAgentFilesystemTarget,
@@ -225,6 +228,22 @@ function optionalStringArray(value, fieldName) {
     .filter((entry) => typeof entry === "string")
     .map((entry) => entry.trim())
     .filter(Boolean)
+    .slice(0, 64);
+}
+
+function optionalSubjectAltNames(value) {
+  // Older agents send Node X509Certificate's typed SAN string; newer ones
+  // send bare values. Only parse recognized X.509 prefixes so bare IPv6 and
+  // URI values retain their colons, and use the public parser for URI commas.
+  const typed =
+    /^(?:DNS|IP Address|IP|URI|email|RID|Registered ID|DirName|othername):/i;
+  const parseEntry = (entry) =>
+    typed.test(entry) ? parseSubjectAltNames(entry) : [entry];
+  if (typeof value === "string" && typed.test(value.trim())) {
+    return parseSubjectAltNames(value.trim()).slice(0, 64);
+  }
+  return optionalStringArray(value, "subjectAltNames")
+    .flatMap(parseEntry)
     .slice(0, 64);
 }
 
@@ -502,9 +521,8 @@ function normalizeAgentFilesystemObservation({
       "issuer",
     ),
     serialNumber: optionalText(clientMeta.serialNumber, "serialNumber"),
-    subjectAltNames: optionalStringArray(
+    subjectAltNames: optionalSubjectAltNames(
       clientMeta.subjectAltNames || clientMeta.sans,
-      "subjectAltNames",
     ),
     notBefore: optionalTimestamp(
       clientMeta.notBefore || clientMeta.validFrom,
@@ -602,12 +620,12 @@ function certificateFor(observation) {
   const publicCertificate = observation.publicCertificate || {};
   return {
     certificatePem: publicCertificate.certificatePem || null,
-    // SAN first (X.509 convention), then the certificate's own subject CN;
+    // Preserve the certificate's own subject CN, then use its first SAN;
     // the discovery host/file path are last-resort fallbacks only for a
     // certificate that reports neither, not the certificate's identity.
     commonName:
-      publicCertificate.subjectAltNames?.[0] ||
       commonNameFromSubject(publicCertificate.subject) ||
+      publicCertificate.subjectAltNames?.[0] ||
       observation.targetHost ||
       observation.filePath ||
       observation.locationSlot,
@@ -935,6 +953,7 @@ async function persistOneObservation(client, observation) {
     createdByAgentId: observation.agentRowId,
     clientEvidenceId: observation.evidenceId,
     metadata,
+    serverOwnedMetadata: { agentId: observation.agentId },
   });
 
   return {

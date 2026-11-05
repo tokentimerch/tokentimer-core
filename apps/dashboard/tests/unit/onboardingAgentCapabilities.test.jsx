@@ -262,7 +262,7 @@ describe('several agents in one workspace', () => {
   it('Linux agent only: the AD CS pick stays open and names the Linux agent', () => {
     expect(status(adcs, [web01])).toBe('current');
     mountStep(adcs, web01);
-    expect(screen.getByText('Waiting for an agent')).toBeVisible();
+    expect(screen.getAllByText('Waiting for an agent')[0]).toBeVisible();
     // The Linux agent is never reported as the agent for this pick.
     expect(screen.queryByText(/web-01 \(linux, version/)).toBeNull();
     expect(screen.queryByText('Connected')).toBeNull();

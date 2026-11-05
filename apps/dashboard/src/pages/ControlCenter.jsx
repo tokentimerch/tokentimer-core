@@ -1990,16 +1990,28 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                       colorScheme='blue'
                                       variant='solid'
                                       onClick={() => alertData.requeueAlerts()}
-                                      isDisabled={!alertData.canRequeue}
+                                      isDisabled={
+                                        !alertData.canRequeue ||
+                                        alertData.requeueState?.pending
+                                      }
+                                      isLoading={
+                                        alertData.requeueState?.pending
+                                      }
                                     >
                                       Requeue blocked/failed
                                     </DashboardActionButton>
                                   </Box>
                                 </Tooltip>
                                 <Text fontSize='xs' color={muted}>
-                                  Admins can requeue failed alerts for the
-                                  selected workspace.
+                                  {alertData.canRequeue
+                                    ? 'Admins can requeue failed alerts for the selected workspace.'
+                                    : alertData.requeueDisabledReason}
                                 </Text>
+                                {alertData.requeueState?.message && (
+                                  <Text fontSize='sm' role='status'>
+                                    {alertData.requeueState.message}
+                                  </Text>
+                                )}
                               </VStack>
 
                               <Alert status='info' variant='left-accent'>

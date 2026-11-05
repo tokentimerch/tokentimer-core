@@ -7,6 +7,9 @@ import {
   useState,
 } from 'react';
 import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
   Box,
   Button,
   HStack,
@@ -393,6 +396,30 @@ function GroupDeployments({
   const attempt = versions[0];
   return (
     <VStack align='stretch' spacing={3} py={2}>
+      {state.error ? (
+        <Alert status='warning' borderRadius='md' alignItems='start'>
+          <AlertIcon />
+          <AlertDescription fontSize='sm'>
+            <Text fontWeight='semibold'>
+              Deployment details could not be refreshed.
+            </Text>
+            <Text>
+              {state.data
+                ? 'Showing the last known data. Current state is unconfirmed.'
+                : 'Refresh to try again.'}
+            </Text>
+            <Button
+              size='xs'
+              variant='outline'
+              mt={2}
+              onClick={state.refresh}
+              isLoading={state.refreshing}
+            >
+              Refresh
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
       <Box>
         <HStack justify='space-between' align='start' spacing={2}>
           <Text fontSize='sm' fontWeight='medium' overflowWrap='anywhere'>
@@ -456,14 +483,6 @@ function GroupDeployments({
           {currentIdentity
             ? explanations.inactive
             : 'Publication history for this certificate identity. The registration currently tracks another certificate.'}
-        </Text>
-      ) : null}
-      {state.error ? (
-        <Text role='alert' fontSize='xs'>
-          Details could not be refreshed.{' '}
-          {state.data
-            ? 'Showing the last known data. Current state is unconfirmed.'
-            : 'Refresh to try again.'}
         </Text>
       ) : null}
       {state.loading ? (

@@ -45,8 +45,8 @@ test("explicit wildcard address contract preserves existing IPv6 selectors", () 
     address: "[::]",
     scope: base.WILDCARD_SCOPE,
   });
-  assert.ok(h.FLAGS.includes("trustedIpv4BaselineRecovered"));
-  assert.ok(h.FLAGS.includes("actualIpv4ShadowObserved"));
+  assert.ok(h.FLAGS.includes("trustedSniAfterWildcardRemoval"));
+  assert.ok(h.FLAGS.includes("actualWildcardBindingObserved"));
   assert.equal(
     h.FLAGS.some((key) => key.includes("Ipv6")),
     false,
@@ -72,8 +72,8 @@ test("native IPv4 variant uses one exact target for IIS, live TLS and guarded cl
       .length,
     2,
   );
-  assert.match(source, /await expectTls\(targetHost, port, shadow\)/);
-  assert.match(source, /assert\.equal\(result\.rolledBack, true\)/);
+  assert.match(source, /await expectTls\(targetHost, port, incoming\)/);
+  assert.match(source, /assert\.equal\(result\.ok, true\)/);
   assert.match(source, /flags\s*\.filter/);
 });
 
@@ -83,7 +83,7 @@ test("host hook registers its own proof before later variants borrow custody", (
     "utf8",
   );
   const start = source.indexOf(
-    'gate.scenario("windows-iis-ipv4-wildcard-shadow-rollback"',
+    'gate.scenario("windows-iis-ipv4-wildcard-sni-precedence"',
   );
   const next = source.indexOf(
     'gate.scenario("windows-iis-ipv6-native-shadow-rollback"',
@@ -91,7 +91,7 @@ test("host hook registers its own proof before later variants borrow custody", (
   assert.ok(start > 0 && next > start);
   assert.match(
     source.slice(start, next),
-    /nativeIpv4WildcardShadow = await fixture.qualifyIpv4Wildcard/,
+    /nativeIpv4WildcardPrecedence = await fixture.qualifyIpv4Wildcard/,
   );
   assert.match(source.slice(start, next), /fixture.verifyProof/);
   assert.match(source.slice(start, next), /fixture.REQUIRED_SOURCES/);

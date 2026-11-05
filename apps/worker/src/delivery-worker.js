@@ -431,20 +431,40 @@ function buildCertRenewalFailedWebhookPayload(
 
   if (kind === "teams") {
     return {
-      "@type": "MessageCard",
-      "@context": "https://schema.org/extensions",
-      summary: selectedTitle,
-      themeColor: "E02424",
-      sections: [
+      type: "message",
+      attachments: [
         {
-          activityTitle: `\u26A0\uFE0F ${escapeMarkdown(selectedTitle)}`,
-          text: escapeMarkdown(context.description),
-          facts: [
-            { name: "Certificate", value: escapeMarkdown(context.name) },
-            { name: "Job", value: escapeMarkdown(context.jobId) },
-            { name: "Error code", value: escapeMarkdown(context.errorCode) },
-          ],
-          markdown: true,
+          contentType: "application/vnd.microsoft.card.adaptive",
+          contentUrl: null,
+          content: {
+            type: "AdaptiveCard",
+            $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+            version: "1.4",
+            body: [
+              {
+                type: "TextBlock",
+                text: `\u26A0\uFE0F ${escapeMarkdown(selectedTitle)}`,
+                weight: "Bolder",
+                size: "Large",
+                wrap: true,
+              },
+              {
+                type: "TextBlock",
+                text: escapeMarkdown(context.description),
+                wrap: true,
+                spacing: "Small",
+              },
+              {
+                type: "FactSet",
+                facts: [
+                  { title: "Certificate", value: escapeMarkdown(context.name) },
+                  { title: "Job", value: escapeMarkdown(context.jobId) },
+                  { title: "Error code", value: escapeMarkdown(context.errorCode) },
+                ],
+                spacing: "Medium",
+              },
+            ],
+          },
         },
       ],
     };
@@ -749,28 +769,48 @@ function buildEndpointHealthWebhookPayload(
   }
 
   if (kind === "teams") {
+    const facts = [
+      { title: "Status", value: context.status },
+      { title: "URL", value: context.url || context.location },
+    ];
+    if (context.showLinkedToken) {
+      facts.push({
+        title: "Linked Token",
+        value: alert.name || context.endpointName,
+      });
+    }
+
     return {
-      "@type": "MessageCard",
-      "@context": "https://schema.org/extensions",
-      summary: selectedTitle,
-      themeColor: context.isDown ? "E02424" : "2F855A",
-      sections: [
+      type: "message",
+      attachments: [
         {
-          activityTitle: `${context.statusIcon} ${selectedTitle}`,
-          text: context.description,
-          facts: [
-            { name: "Status", value: context.status },
-            { name: "URL", value: context.url || context.location },
-            ...(context.showLinkedToken
-              ? [
-                  {
-                    name: "Linked Token",
-                    value: alert.name || context.endpointName,
-                  },
-                ]
-              : []),
-          ],
-          markdown: true,
+          contentType: "application/vnd.microsoft.card.adaptive",
+          contentUrl: null,
+          content: {
+            type: "AdaptiveCard",
+            $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+            version: "1.4",
+            body: [
+              {
+                type: "TextBlock",
+                text: `${context.statusIcon} ${selectedTitle}`,
+                weight: "Bolder",
+                size: "Large",
+                wrap: true,
+              },
+              {
+                type: "TextBlock",
+                text: context.description,
+                wrap: true,
+                spacing: "Small",
+              },
+              {
+                type: "FactSet",
+                facts,
+                spacing: "Medium",
+              },
+            ],
+          },
         },
       ],
     };
@@ -1132,24 +1172,49 @@ function buildAgentHealthWebhookPayload(
 
   if (kind === "teams") {
     const teamsTitle = escapeMarkdown(selectedTitle);
+    const bodyItems = [
+      {
+        type: "TextBlock",
+        text: `${context.statusIcon} ${teamsTitle}`,
+        weight: "Bolder",
+        size: "Large",
+        wrap: true,
+      },
+      {
+        type: "TextBlock",
+        text: [context.description, ...impactedLines]
+          .map(escapeMarkdown)
+          .join("\n\n"),
+        wrap: true,
+        spacing: "Small",
+      },
+    ];
+
+    const facts = [{ title: "Status", value: context.status }];
+    if (context.hostname) {
+      facts.push({ title: "Hostname", value: escapeMarkdown(context.hostname) });
+    }
+
+    if (facts.length > 0) {
+      bodyItems.push({
+        type: "FactSet",
+        facts,
+        spacing: "Medium",
+      });
+    }
+
     return {
-      "@type": "MessageCard",
-      "@context": "https://schema.org/extensions",
-      summary: teamsTitle,
-      themeColor: context.isDown ? "E02424" : "2F855A",
-      sections: [
+      type: "message",
+      attachments: [
         {
-          activityTitle: `${context.statusIcon} ${teamsTitle}`,
-          text: [context.description, ...impactedLines]
-            .map(escapeMarkdown)
-            .join("\n\n"),
-          facts: [
-            { name: "Status", value: context.status },
-            ...(context.hostname
-              ? [{ name: "Hostname", value: escapeMarkdown(context.hostname) }]
-              : []),
-          ],
-          markdown: true,
+          contentType: "application/vnd.microsoft.card.adaptive",
+          contentUrl: null,
+          content: {
+            type: "AdaptiveCard",
+            $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+            version: "1.4",
+            body: bodyItems,
+          },
         },
       ],
     };
@@ -2064,6 +2129,7 @@ export async function deliveryWorkerJob({
           let eligibilityTerminal = false;
           let channelTerminal = false;
           let channelRecipients = null;
+          let currentRecipients = null;
           let partialSuccess = false;
           let deliveryEndpoints = null;
 
@@ -2097,6 +2163,7 @@ export async function deliveryWorkerJob({
                     })
                     .filter(Boolean);
                 }
+                currentRecipients = recipients.map((row) => row.destination);
               } catch (_err) {
                 logger.debug("Non-critical operation failed", {
                   error: _err.message,
@@ -2718,6 +2785,7 @@ export async function deliveryWorkerJob({
               {
                 // Resolve phones by querying workspace_contacts with contact_ids from group
                 let contactInfos = [];
+                let contactsLoaded = false;
                 try {
                   const waIds = unionContactIds(
                     eligibleGroups,
@@ -2737,6 +2805,7 @@ export async function deliveryWorkerJob({
                       }))
                       .filter((c) => !!c.phone);
                   }
+                  contactsLoaded = true;
                 } catch (_err) {
                   logger.debug("Non-critical operation failed", {
                     error: _err.message,
@@ -2765,6 +2834,7 @@ export async function deliveryWorkerJob({
                     contactId: item.id,
                     destination: String(item.phone).trim(),
                   }));
+                if (contactsLoaded) currentRecipients = phoneRows.map((row) => row.destination);
                 const gatedPhones = await deliveryState.recipients(
                   client,
                   alert.workspace_id,
@@ -3225,6 +3295,7 @@ export async function deliveryWorkerJob({
             partialSuccess,
             endpoints: deliveryEndpoints,
             recipients: channelRecipients,
+            currentRecipients,
           });
           // If WhatsApp failed and it's not a soft throttle, consider it permanent and block the queue entry
           const verificationUnavailable = String(errorCode || "") === "RECIPIENT_VERIFICATION_UNAVAILABLE"

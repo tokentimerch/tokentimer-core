@@ -50,6 +50,7 @@ const {
   certificateCaBucket,
   countInFlightRenewalJobsByCaEndpoint,
 } = require("./renewalScheduler");
+const { renewalThresholdDaysSql } = require("./renewalThreshold");
 const { resolveRenewalPerCaCap, caCapKey } = require("./renewalCapacity");
 const { isAgentRenewableKeyMode } = require("./jobs");
 const { OPERATOR_OWNED_METADATA_KEY } = require("./renewalProfileDerivation");
@@ -777,7 +778,7 @@ function normalizeAdcsProfileInput(body) {
     name,
     description,
     issuerId,
-    renewBeforeDays: normalizeRenewBeforeDays(body?.renewBeforeDays ?? 30),
+    renewBeforeDays: normalizeRenewBeforeDays(body?.renewBeforeDays ?? null),
     renewalProfile: {
       target: {
         type: "windows-iis",
@@ -1014,6 +1015,7 @@ async function listUpcomingRenewals({
   limit,
   offset,
   thresholdDays,
+  adaptive = true,
   sort,
   direction,
 } = {}) {
@@ -1022,8 +1024,9 @@ async function listUpcomingRenewals({
   const renewableStatusFilter = NON_RENEWABLE_CERTIFICATE_STATUSES.map(
     (status) => `'${status}'`,
   ).join(", ");
+  const leadTime = renewalThresholdDaysSql("$2", adaptive);
   const renewsFromExpression =
-    "mc.not_after - (COALESCE(cp.renew_before_days, $2) || ' days')::interval";
+    `mc.not_after - (${leadTime} || ' days')::interval`;
   const orderBy = resolveListSort({
     sort,
     direction,
@@ -1051,9 +1054,8 @@ async function listUpcomingRenewals({
             cp.key_mode AS profile_key_mode,
             cp.public_metadata AS profile_public_metadata,
             cp.renew_before_days AS profile_renew_before_days,
-            mc.not_after
-              - (COALESCE(cp.renew_before_days, $2) || ' days')::interval
-              AS renews_from,
+            ${leadTime} AS effective_renew_before_days,
+            ${renewsFromExpression} AS renews_from,
             (
               SELECT cj.status
                 FROM certificate_jobs cj
@@ -1158,10 +1160,9 @@ async function listUpcomingRenewals({
         autoRenewEnabled,
         blockedReason,
         deferredReason,
-        renewBeforeDays:
-          row.profile_renew_before_days == null
-            ? Number(thresholdDays)
-            : Number(row.profile_renew_before_days),
+        renewBeforeDays: Number(
+          row.effective_renew_before_days ?? row.profile_renew_before_days ?? thresholdDays,
+        ),
         lastRenewJobStatus: row.last_renew_job_status || null,
       };
     }),

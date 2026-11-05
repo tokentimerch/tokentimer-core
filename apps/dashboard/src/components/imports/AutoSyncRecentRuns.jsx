@@ -38,6 +38,8 @@ function started(value) {
 export default function AutoSyncRecentRuns({
   runs = [],
   loading = false,
+  error = false,
+  onRetry,
   hasEarlier = false,
   loadingEarlier = false,
   onLoadEarlier,
@@ -76,12 +78,37 @@ export default function AutoSyncRecentRuns({
         <Text fontSize='sm' color={muted}>
           Loading run history…
         </Text>
+      ) : error ? (
+        <Box role='alert'>
+          <Text fontSize='sm'>Run history could not be loaded.</Text>
+          <Button size='sm' variant='outline' mt={2} onClick={onRetry}>
+            Retry
+          </Button>
+        </Box>
       ) : runs.length === 0 ? (
         <Text fontSize='sm' color={muted}>
           No runs yet
         </Text>
       ) : (
-        <TableContainer borderWidth='1px' borderRadius='md'>
+        <TableContainer
+          borderWidth='1px'
+          borderRadius='md'
+          sx={{
+            '@media (max-width: 47.99em)': {
+              table: { display: 'block', width: '100%' },
+              thead: { display: 'none' },
+              tbody: { display: 'block', width: '100%' },
+              tr: { display: 'block', padding: 3, borderBottomWidth: '1px' },
+              td: { display: 'block', padding: 1, textAlign: 'left' },
+              'td[data-label]::before': {
+                content: 'attr(data-label)',
+                display: 'inline-block',
+                fontWeight: 'semibold',
+                marginRight: 2,
+              },
+            },
+          }}
+        >
           <Table size='sm' aria-label='Recent auto-sync runs' fontSize='sm'>
             <Thead>
               <Tr>
@@ -105,8 +132,10 @@ export default function AutoSyncRecentRuns({
                 return (
                   <Fragment key={run.run_id}>
                     <Tr>
-                      <Td py={3} verticalAlign='top'>
-                        <Text fontSize='sm'>{started(run.started_at)}</Text>
+                      <Td py={3} verticalAlign='top' data-label='Started'>
+                        <Text fontSize='sm' as='span'>
+                          {started(run.started_at)}
+                        </Text>
                         <Text fontSize='xs' color={muted} mt={1}>
                           {run.trigger === 'manual'
                             ? 'Manual'
@@ -116,7 +145,7 @@ export default function AutoSyncRecentRuns({
                           · {count(run.discovered_count)} found
                         </Text>
                       </Td>
-                      <Td py={3} verticalAlign='top'>
+                      <Td py={3} verticalAlign='top' data-label='Result'>
                         <Badge colorScheme={color} textTransform='none'>
                           {label}
                         </Badge>
@@ -146,7 +175,21 @@ export default function AutoSyncRecentRuns({
                         'deleted_count',
                         'error_count',
                       ].map(key => (
-                        <Td key={key} py={3} isNumeric verticalAlign='top'>
+                        <Td
+                          key={key}
+                          py={3}
+                          isNumeric
+                          verticalAlign='top'
+                          data-label={
+                            {
+                              created_count: 'Created',
+                              updated_count: 'Updated',
+                              detached_count: 'Detached',
+                              deleted_count: 'Deleted',
+                              error_count: 'Errors',
+                            }[key]
+                          }
+                        >
                           {count(run[key])}
                         </Td>
                       ))}
@@ -157,6 +200,11 @@ export default function AutoSyncRecentRuns({
                           <Text fontSize='sm' fontWeight='semibold'>
                             Run details
                           </Text>
+                          {run.error ? (
+                            <Text fontSize='sm' mt={2}>
+                              <strong>Failure reason:</strong> {run.error}
+                            </Text>
+                          ) : null}
                           <Text fontSize='sm' mt={2}>
                             Run ID: {run.run_id}
                           </Text>
@@ -170,26 +218,49 @@ export default function AutoSyncRecentRuns({
                             Generation: {count(run.generation)} · Scan version:{' '}
                             {count(run.scan_version)}
                           </Text>
-                          {run.error ? (
-                            <Text fontSize='sm' color={muted} mt={2}>
-                              {run.error}
-                            </Text>
-                          ) : null}
                           {run.settings_snapshot ? (
-                            <>
-                              <Text fontSize='sm' fontWeight='semibold' mt={3}>
+                            <Box mt={3}>
+                              <Text fontSize='sm' fontWeight='semibold'>
                                 Settings at run start
                               </Text>
-                              <Box
-                                as='pre'
-                                fontSize='xs'
-                                whiteSpace='pre-wrap'
-                                overflowWrap='anywhere'
-                                mt={2}
-                              >
-                                {JSON.stringify(run.settings_snapshot, null, 2)}
+                              {Object.entries(run.settings_snapshot)
+                                .filter(
+                                  ([, value]) =>
+                                    value === null ||
+                                    ['string', 'number', 'boolean'].includes(
+                                      typeof value
+                                    )
+                                )
+                                .map(([key, value]) => (
+                                  <Text key={key} fontSize='sm'>
+                                    {key.replace(/_/g, ' ')}:{' '}
+                                    {value === null ? 'Not set' : String(value)}
+                                  </Text>
+                                ))}
+                              <Box as='details' mt={2}>
+                                <Box
+                                  as='summary'
+                                  fontSize='sm'
+                                  fontWeight='semibold'
+                                  cursor='pointer'
+                                >
+                                  Technical settings
+                                </Box>
+                                <Box
+                                  as='pre'
+                                  fontSize='xs'
+                                  whiteSpace='pre-wrap'
+                                  overflowWrap='anywhere'
+                                  mt={2}
+                                >
+                                  {JSON.stringify(
+                                    run.settings_snapshot,
+                                    null,
+                                    2
+                                  )}
+                                </Box>
                               </Box>
-                            </>
+                            </Box>
                           ) : null}
                           <Text fontSize='xs' color={muted} mt={2}>
                             This saved summary does not contain an item-by-item

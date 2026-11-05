@@ -315,6 +315,16 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
     { version: 94, name: "pagerduty_operator_actions" },
     { version: 95, name: "remove_pagerduty_rest_lookup" },
     { version: 98, name: "certops_manual_rollout_authority" },
+    { version: 99, name: "operator_connections" },
+    { version: 100, name: "operator_enrollment_grants" },
+    { version: 101, name: "operator_action_requests" },
+    { version: 102, name: "operator_oauth" },
+    { version: 103, name: "operator_connection_lifetimes" },
+    { version: 104, name: "operator_inventory" },
+    { version: 105, name: "operator_oauth_retention" },
+    { version: 106, name: "operator_issuance" },
+    { version: 107, name: "certops_issuance_job_identity" },
+    { version: 108, name: "certops_issuance_identity_transfer" },
   ]);
   assert.equal(
     (

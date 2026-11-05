@@ -1054,7 +1054,10 @@ async function claimJobs({
 
     // Throws CERTOPS_WORKSPACE_PAUSED / CERTOPS_DISABLED; the route maps
     // these to 409 / 404 and no job is claimed.
-    await lockWorkspace({ client, workspaceId: agent.workspaceId });
+    // A concurrent workspace or membership change owns the authority lock.
+    // Skip this poll instead of waiting while holding the agent sequence lock.
+    const workspace = await lockWorkspace({ client, workspaceId: agent.workspaceId, skipLocked: true });
+    if (workspace === null) return { jobs: [], logStreams: [] };
 
     // Claiming is a liveness signal: an agent polling for jobs is alive, so
     // last_seen_at advances and an 'offline' agent flips back to 'active'.
@@ -1174,9 +1177,9 @@ async function claimJobs({
     // without the capability keeps claiming ordinary renewals of active
     // certificates exactly as before.
     const selected = await client.query(
-      `SELECT id, workspace_id, operation, subject_type, subject_id,
-              management_period_id, certificate_identity_id, payload,
-              approved_payload_hash, approved_canonical_intent_hash,
+      `SELECT id, workspace_id, operation, status, subject_type, subject_id,
+              management_period_id, certificate_identity_id, requested_by_connection_id, requested_by_user_id, payload,
+              approved_at, approved_payload_hash, approved_canonical_intent_hash,
               mode, executor_kind,
               assigned_agent_id, required_target_selector,
               required_dns_provider, required_command_profile, enrollment_id,
@@ -1217,6 +1220,17 @@ async function claimJobs({
               status = 'pending'
               AND (scheduled_for IS NULL OR scheduled_for <= NOW())
               AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+              -- Work an assistant connection asked for is not started once that
+              -- connection has ended, even if a person approved it earlier.
+              AND (
+                cj.requested_by_connection_id IS NULL
+                OR EXISTS (
+                  SELECT 1 FROM operator_connections oc
+                   WHERE oc.id = cj.requested_by_connection_id
+                     AND oc.status = 'active'
+                     AND (oc.expires_at IS NULL OR oc.expires_at > NOW())
+                )
+              )
             )
             OR (
               -- Same agent reclaiming a never-renewed expired claim after a
@@ -1342,6 +1356,13 @@ async function claimJobs({
     const jobs = [];
     const logStreams = [];
     for (const row of selected.rows) {
+      // Reclaims are already authorized work. Only a fresh dispatch must
+      // revalidate the originating connection and requester membership.
+      if (row.status === "pending" && !await require("../operator/jobAuthority").lockOperatorJobAuthority({
+        client, connectionId: row.requested_by_connection_id, workspaceId: agent.workspaceId,
+        requesterUserId: row.requested_by_user_id, operation: row.operation, skipLocked: true,
+        requireWriteGates: !row.approved_at,
+      })) continue;
       if (!await require("./managementClaim").lockManagedJobForClaim({
         client, job: row, workspaceId: agent.workspaceId,
       })) continue;
@@ -1426,6 +1447,11 @@ async function claimJobs({
           operation: row.operation,
           subjectType: row.subject_type,
           subjectId: row.subject_id,
+          requestedByConnectionId: row.requested_by_connection_id,
+          assignedAgentId: row.assigned_agent_id,
+          requiredTargetSelector: row.required_target_selector,
+          requiredDnsProvider: row.required_dns_provider,
+          requiredCommandProfile: row.required_command_profile,
           payload: rowPayload,
         });
         const intentMismatch =
@@ -1826,6 +1852,40 @@ async function renewJobLease({
  * { certificateId, promoted, reason, profileId } or null when there was nothing
  * to do.
  */
+async function preserveIssuedJobIdentity({ client, workspaceId, job, fingerprint }) {
+  if (job.operation === "issue" && !job.certificate_identity_id) {
+    // The job's admission identity is intentionally immutable and was null at
+    // issuance. Record the verified identity separately in the same transaction
+    // that activates the certificate.
+    const mapping = await client.query(
+      `INSERT INTO certops_issuance_job_identities(workspace_id, job_id, identity_id)
+       SELECT j.workspace_id, j.id, identity.id
+         FROM certificate_jobs j
+         JOIN certops_certificate_identities identity ON identity.workspace_id = j.workspace_id
+           AND identity.fingerprint_sha256 = certops_normalize_fingerprint($3)
+         JOIN certops_management_associations association
+           ON association.workspace_id = j.workspace_id AND association.period_id = j.management_period_id
+          AND association.identity_id = identity.id
+        WHERE j.workspace_id = $1 AND j.id = $2 AND j.operation = 'issue'
+          AND j.certificate_identity_id IS NULL
+       ON CONFLICT (job_id) DO NOTHING`,
+      [workspaceId, job.id, fingerprint],
+    );
+    if (!mapping.rowCount) {
+      const existing = await client.query(
+        `SELECT 1 FROM certops_issuance_job_identities mapping
+          JOIN certops_certificate_identities identity
+            ON identity.workspace_id = mapping.workspace_id AND identity.id = mapping.identity_id
+         WHERE mapping.workspace_id = $1 AND mapping.job_id = $2
+           AND identity.fingerprint_sha256 = certops_normalize_fingerprint($3)`,
+        [workspaceId, job.id, fingerprint],
+      );
+      if (!existing.rowCount) throw new Error("Unable to preserve the issued certificate identity");
+    }
+  }
+
+}
+
 async function reconcileProvisionedCertificate({
   client,
   workspaceId,
@@ -1957,6 +2017,8 @@ async function reconcileProvisionedCertificate({
       sans,
     ],
   );
+
+  await preserveIssuedJobIdentity({ client, workspaceId, job, fingerprint });
 
   // Token linking waits until here on purpose. tokens.expiration is DATE NOT
   // NULL, so a certificate that does not exist yet cannot have a legitimate
@@ -2290,6 +2352,8 @@ async function refreshRenewedCertificateEvidence({
       sans,
     ],
   );
+
+  await preserveIssuedJobIdentity({ client, workspaceId, job, fingerprint });
 
   // Mirror the same facts to the linked token in the same transaction as the
   // certificate row. Without this, a renewal advances managed_certificates'

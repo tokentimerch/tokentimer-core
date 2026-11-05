@@ -1,0 +1,450 @@
+# TokenTimer Core integrations tracked for external API changes.
+schema_version: 1.0.0
+integrations:
+  windows-ad-cs-iis:
+    id: windows-ad-cs-iis
+    name: Windows AD CS and IIS
+    api_version: null
+    code_locations:
+      - path: packages/agent/src/issuers/adcs-enrollment.js
+      - path: packages/agent/src/windows-iis/index.js
+      - path: packages/agent/src/windows-cert-store/index.js
+    auth_method: Windows Integrated Authentication for AD CS enrollment
+    sources:
+      - url: >-
+          https://learn.microsoft.com/en-us/windows-server/identity/ad-cs/active-directory-certificate-services-overview
+        type: api-policy
+      - url: https://learn.microsoft.com/en-us/windows/release-health/windows-message-center
+        type: deprecation
+  linux-web-servers:
+    id: linux-web-servers
+    name: Linux certificate deployment
+    api_version: null
+    code_locations:
+      - path: packages/agent/src/deploy/index.js
+        functions:
+          - deployCertificate
+          - deployCertificateAndKey
+    sources:
+      - url: https://nginx.org/en/CHANGES
+        type: changelog
+      - url: https://httpd.apache.org/docs/2.4/mod/mod_ssl.html
+        type: api-policy
+  acme:
+    id: acme
+    name: ACME certificate issuance
+    api_version: RFC 8555
+    code_locations:
+      - path: packages/agent/src/issuers/acme.js
+        functions:
+          - createAcmeIssuer
+      - path: packages/agent/src/acme/index.js
+    base_urls:
+      - https://acme-v02.api.letsencrypt.org/directory
+      - https://acme-staging-v02.api.letsencrypt.org/directory
+    auth_method: ACME account key and challenge validation
+    sources:
+      - url: https://www.rfc-editor.org/rfc/rfc8555
+        type: api-policy
+        documented_version: 'RFC 8555'
+      - url: https://letsencrypt.org/upcoming-features/
+        type: deprecation
+      - url: https://letsencrypt.org/blog/
+        type: blog
+        feed: https://letsencrypt.org/feed.xml
+  dns-providers:
+    id: dns-providers
+    name: DNS-01 challenge providers
+    api_version: null
+    code_locations:
+      - path: packages/agent/src/dns/providers/acme-dns.js
+      - path: packages/agent/src/dns/providers/azure-dns.js
+      - path: packages/agent/src/dns/providers/cloudflare.js
+      - path: packages/agent/src/dns/providers/exoscale.js
+      - path: packages/agent/src/dns/providers/google-cloud-dns.js
+      - path: packages/agent/src/dns/providers/hetzner.js
+      - path: packages/agent/src/dns/providers/infomaniak.js
+      - path: packages/agent/src/dns/providers/ovhcloud.js
+      - path: packages/agent/src/dns/providers/powerdns.js
+      - path: packages/agent/src/dns/providers/rfc2136.js
+      - path: packages/agent/src/dns/providers/route53.js
+    auth_method: Provider-specific credentials or an RFC 2136 TSIG key
+    sources:
+      - url: https://developers.cloudflare.com/api/
+        type: api-policy
+      - url: https://learn.microsoft.com/en-us/rest/api/dns/
+        type: api-policy
+      - url: https://cloud.google.com/dns/docs/reference/rest
+        type: api-policy
+      - url: https://docs.aws.amazon.com/Route53/latest/APIReference/Welcome.html
+        type: api-policy
+      - url: https://www.rfc-editor.org/rfc/rfc2136
+        type: api-policy
+      - url: https://github.com/acme-dns/acme-dns
+        type: api-policy
+      - url: https://community.exoscale.com/reference/api/dns/
+        type: api-policy
+      - url: https://docs.hetzner.cloud/reference/cloud
+        type: api-policy
+      - url: https://developer.infomaniak.com/docs/api
+        type: api-policy
+      - url: https://api.ovh.com/console/
+        type: api-policy
+      - url: https://doc.powerdns.com/authoritative/http-api/zone.html
+        type: api-policy
+  kubernetes-cert-manager:
+    id: kubernetes-cert-manager
+    name: Kubernetes and cert-manager
+    api_version: cert-manager.io/v1
+    code_locations:
+      - path: apps/k8s-controller/src/cert-manager-client.js
+        contains:
+          - cert-manager.io
+      - path: apps/k8s-controller/src/certificate-provisioner.js
+        contains:
+            - '{api_version}'
+      - path: apps/k8s-controller/src/cert-manager-observer.js
+      - path: apps/k8s-controller/src/tls-crt-secret-reader.js
+    auth_method: Kubernetes service account or kubeconfig
+    sdks:
+      - name: '@kubernetes/client-node'
+        version: 1.4.0
+        location: apps/k8s-controller/package.json
+    sources:
+      - url: https://cert-manager.io/docs/releases/
+        type: changelog
+      - url: https://cert-manager.io/docs/reference/api-docs/
+        type: api-policy
+      - url: https://kubernetes.io/docs/reference/using-api/deprecation-guide/
+        type: deprecation
+  hashicorp-vault:
+    id: hashicorp-vault
+    name: HashiCorp Vault KV and PKI
+    api_version: v1
+    code_locations:
+      - path: apps/api/services/vaultIntegration.js
+        contains:
+          - /{api_version}/sys/mounts
+        functions:
+          - scanVault
+          - scanKvV2
+          - scanPki
+      - path: packages/agent/src/material-store/index.js
+    auth_method: Vault token or AppRole
+    sources:
+      - url: https://developer.hashicorp.com/vault/api-docs
+        type: api-policy
+      - url: https://developer.hashicorp.com/vault/docs/release-notes
+        type: changelog
+  aws-acm-iam:
+    id: aws-acm-iam
+    name: AWS ACM, IAM, Secrets Manager, and STS
+    api_version: null
+    code_locations:
+      - path: apps/api/services/awsIntegration.js
+        functions:
+          - scanAWS
+          - scanAWSSingleRegion
+    auth_method: AWS SigV4 credentials, including session credentials
+    sdks:
+      - name: '@aws-sdk/client-acm'
+        version: 3.1045.0
+        location: apps/api/package.json
+      - name: '@aws-sdk/client-ec2'
+        version: 3.1045.0
+        location: apps/api/package.json
+      - name: '@aws-sdk/client-iam'
+        version: 3.1045.0
+        location: apps/api/package.json
+      - name: '@aws-sdk/client-secrets-manager'
+        version: 3.1045.0
+        location: apps/api/package.json
+      - name: '@aws-sdk/client-sts'
+        version: 3.1045.0
+        location: apps/api/package.json
+    sources:
+      - url: https://docs.aws.amazon.com/acm/latest/APIReference/Welcome.html
+        type: api-policy
+      - url: https://docs.aws.amazon.com/IAM/latest/APIReference/welcome.html
+        type: api-policy
+      - url: https://github.com/aws/aws-sdk-js-v3/releases
+        type: release-feed
+        feed: https://github.com/aws/aws-sdk-js-v3/releases.atom
+  microsoft-azure:
+    id: microsoft-azure
+    name: Azure Key Vault data plane
+    api_version: '7.4'
+    code_locations:
+      - path: apps/api/services/azureIntegration.js
+        functions:
+          - scanAzure
+        contains:
+            - apiVersion = "{api_version}"
+      - path: packages/agent/src/material-store/azure.js
+        contains:
+            - API_VERSION = "{api_version}"
+    base_urls:
+      - https://<vault-name>.vault.azure.net
+    auth_method: Microsoft Entra OAuth access token
+    endpoints:
+      - method: GET
+        pattern: /certificates
+      - method: GET
+        pattern: /secrets
+      - method: GET
+        pattern: /keys
+    sources:
+      - url: https://learn.microsoft.com/en-us/rest/api/keyvault/
+        type: api-policy
+      - url: https://learn.microsoft.com/en-us/azure/key-vault/general/whats-new
+        type: changelog
+      - url: https://learn.microsoft.com/en-us/azure/key-vault/general/migrate-api-version
+        type: deprecation
+  microsoft-graph:
+    id: microsoft-graph
+    name: Microsoft Graph application credentials
+    api_version: v1.0
+    code_locations:
+      - path: apps/api/services/azureADIntegration.js
+        functions:
+          - scanAzureAD
+          - listApplications
+          - listServicePrincipals
+        contains:
+            - https://graph.microsoft.com/{api_version}
+    base_urls:
+      - https://graph.microsoft.com/v1.0
+    auth_method: Microsoft Entra OAuth access token
+    endpoints:
+      - method: GET
+        pattern: /applications
+      - method: GET
+        pattern: /servicePrincipals
+    sources:
+      - url: https://learn.microsoft.com/en-us/graph/versioning-and-support
+        type: api-policy
+      - url: https://developer.microsoft.com/en-us/graph/changelog
+        type: changelog
+  google-cloud:
+    id: google-cloud
+    name: Google Cloud Certificate Manager, Compute, and Secret Manager
+    api_version: v1
+    code_locations:
+      - path: apps/api/services/gcpIntegration.js
+        functions:
+          - scanGCP
+          - listCertificateManagerCertificates
+          - listComputeSslCertificates
+        contains:
+            - secretmanager.googleapis.com/{api_version}
+            - certificatemanager.googleapis.com/{api_version}
+    base_urls:
+      - https://certificatemanager.googleapis.com/v1
+      - https://compute.googleapis.com/compute/v1
+      - https://secretmanager.googleapis.com/v1
+    auth_method: Google OAuth access token
+    sources:
+      - url: https://docs.cloud.google.com/certificate-manager/docs/reference/certificate-manager/rest
+        type: api-policy
+      - url: https://docs.cloud.google.com/certificate-manager/docs/release-notes
+        type: changelog
+      - url: https://docs.cloud.google.com/secret-manager/docs/release-notes
+        type: changelog
+  github:
+    id: github
+    name: GitHub and GitHub Enterprise inventory
+    api_version: null
+    code_locations:
+      - path: apps/api/services/githubIntegration.js
+        functions:
+          - scanGitHub
+          - githubRequest
+        contains:
+          - /user/repos
+          - /user/keys
+        excludes:
+          - X-GitHub-Api-Version
+    base_urls:
+      - https://api.github.com
+      - https://<enterprise-host>/api/v3
+    auth_method: GitHub token
+    endpoints:
+      - method: GET
+        pattern: /user
+      - method: GET
+        pattern: /user/repos
+      - method: GET
+        pattern: /user/keys
+      - method: GET
+        pattern: /repos/{owner}/{repo}/actions/secrets
+      - method: GET
+        pattern: /repos/{owner}/{repo}/keys
+    notes: The inventory client uses the server default REST API version, which may change.
+    sdks:
+      - name: axios
+        version: 1.20.0
+        location: apps/api/package.json
+    sources:
+      - url: https://docs.github.com/en/rest/about-the-rest-api/api-versions
+        type: api-policy
+      - url: https://docs.github.com/en/rest/about-the-rest-api/breaking-changes
+        type: changelog
+  gitlab:
+    id: gitlab
+    name: GitLab inventory
+    api_version: v4
+    code_locations:
+      - path: apps/api/services/gitlabIntegration.js
+        functions:
+          - scanGitLab
+        contains:
+            - /api/{api_version}/user
+            - /api/{api_version}/personal_access_tokens
+    base_urls:
+      - https://gitlab.com
+      - https://<gitlab-host>
+    auth_method: GitLab token
+    sdks:
+      - name: axios
+        version: 1.20.0
+        location: apps/api/package.json
+    sources:
+      - url: https://docs.gitlab.com/api/rest/
+        type: api-policy
+      - url: https://docs.gitlab.com/update/deprecations/
+        type: deprecation
+  pagerduty:
+    id: pagerduty
+    name: PagerDuty Events API
+    api_version: v2
+    code_locations:
+      - path: apps/worker/src/pagerduty-incidents.js
+      - path: apps/worker/src/notify/webhooks.js
+    base_urls:
+      - https://events.pagerduty.com
+      - https://events.eu.pagerduty.com
+    auth_method: Events API routing key
+    endpoints:
+      - method: POST
+        pattern: /v2/enqueue
+    webhook_formats:
+      sent:
+        - Events API v2 trigger and resolve events
+    sources:
+      - url: https://developer.pagerduty.com/docs/events-api-v2/overview/
+        type: api-policy
+        documented_version: 'v2'
+      - url: https://developer.pagerduty.com/docs/changes/
+        type: changelog
+  slack:
+    id: slack
+    name: Slack incoming webhooks
+    api_version: null
+    code_locations:
+      - path: apps/worker/src/notify/slack.js
+        functions:
+          - sendSlackWebhook
+      - path: apps/worker/src/notify/webhooks.js
+        functions:
+          - formatSlackPayload
+    base_urls:
+      - https://hooks.slack.com
+    auth_method: Secret webhook URL
+    webhook_formats:
+      sent:
+        - Slack Block Kit message
+    sources:
+      - url: https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/
+        type: api-policy
+      - url: https://docs.slack.dev/changelog/
+        type: changelog
+  microsoft-teams:
+    id: microsoft-teams
+    name: Microsoft Teams notifications
+    api_version: null
+    code_locations:
+      - path: apps/worker/src/notify/webhooks.js
+        functions:
+          - formatTeamsPayload
+      - path: apps/worker/src/delivery-worker.js
+      - path: apps/worker/src/weekly-digest.js
+        functions:
+          - buildTeamsDigestPayload
+      - path: apps/api/routes/alerts.js
+        contains:
+          - /api/test-webhook
+      - path: apps/api/config/constants.js
+        functions:
+          - testWebhookUrl
+    auth_method: Secret webhook URL
+    webhook_formats:
+      sent:
+        - Teams notification card
+    sources:
+      - url: >-
+          https://devblogs.microsoft.com/microsoft365dev/retirement-of-office-365-connectors-within-microsoft-teams/
+        type: deprecation
+      - url: >-
+          https://support.microsoft.com/en-us/office/create-incoming-webhooks-with-workflows-for-microsoft-teams-8ae491c7-0394-4861-ba59-055e33f75498
+        type: api-policy
+  discord:
+    id: discord
+    name: Discord incoming webhooks
+    api_version: null
+    code_locations:
+      - path: apps/worker/src/notify/webhooks.js
+        functions:
+          - formatDiscordPayload
+    auth_method: Secret webhook URL
+    webhook_formats:
+      sent:
+        - Discord message and embeds
+    sources:
+      - url: https://discord.com/developers/docs/resources/webhook
+        type: api-policy
+      - url: https://discord.com/developers/docs/change-log
+        type: changelog
+  twilio-whatsapp:
+    id: twilio-whatsapp
+    name: Twilio WhatsApp messaging
+    api_version: '2010-04-01'
+    code_locations:
+      - path: apps/worker/src/notify/whatsapp.js
+        functions:
+          - sendWhatsApp
+        contains:
+            - '{api_version}'
+      - path: apps/api/services/twilioWhatsApp.js
+    base_urls:
+      - https://api.twilio.com/2010-04-01
+    auth_method: Twilio account SID and authentication token
+    endpoints:
+      - method: POST
+        pattern: /Accounts/{AccountSid}/Messages.json
+    webhook_formats:
+      received:
+        - Signed Twilio WhatsApp inbound messages
+    sources:
+      - url: https://www.twilio.com/docs/messaging/api/message-resource
+        type: api-policy
+      - url: https://www.twilio.com/changelog
+        type: changelog
+  smtp:
+    id: smtp
+    name: SMTP email delivery
+    api_version: null
+    code_locations:
+      - path: apps/worker/src/notify/email.js
+        functions:
+          - sendEmailNotification
+    auth_method: Configured SMTP credentials and transport security
+    sdks:
+      - name: nodemailer
+        version: 10.1.4
+        location: apps/worker/package.json
+    sources:
+      - url: https://www.rfc-editor.org/rfc/rfc5321
+        type: api-policy
+      - url: https://github.com/nodemailer/nodemailer/releases
+        type: release-feed
+        feed: https://github.com/nodemailer/nodemailer/releases.atom

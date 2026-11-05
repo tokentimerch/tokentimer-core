@@ -23,6 +23,7 @@ import apiClient, { authAPI } from '../utils/apiClient';
 import WelcomeModal from '../components/WelcomeModal';
 import { trackEvent } from '../utils/analytics.js';
 import { dashboardHrefAfterLogin } from '../utils/lastWorkspacePreference.js';
+import { mcpAuthorizationReturnTo } from '../utils/mcpAuthorization.js';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -118,12 +119,16 @@ export default function Login() {
         try {
           trackEvent('login_success', { method: 'email', two_factor: false });
         } catch (_) {}
-        window.location.href = dashboardHrefAfterLogin({
-          firstLogin:
-            new URLSearchParams(window.location.search).get(
-              'verification_success'
-            ) === 'true',
-        });
+        window.location.href =
+          mcpAuthorizationReturnTo(
+            new URLSearchParams(window.location.search).get('returnTo')
+          ) ||
+          dashboardHrefAfterLogin({
+            firstLogin:
+              new URLSearchParams(window.location.search).get(
+                'verification_success'
+              ) === 'true',
+          });
       } catch (error) {
         logger.error('Login error:', error);
         let errorMessage = 'Login failed. Please try again.';
@@ -158,12 +163,16 @@ export default function Login() {
       try {
         trackEvent('login_success', { method: 'email', two_factor: true });
       } catch (_) {}
-      window.location.href = dashboardHrefAfterLogin({
-        firstLogin:
-          new URLSearchParams(window.location.search).get(
-            'verification_success'
-          ) === 'true',
-      });
+      window.location.href =
+        mcpAuthorizationReturnTo(
+          new URLSearchParams(window.location.search).get('returnTo')
+        ) ||
+        dashboardHrefAfterLogin({
+          firstLogin:
+            new URLSearchParams(window.location.search).get(
+              'verification_success'
+            ) === 'true',
+        });
     } catch (error) {
       const errorMessage =
         error.response?.data?.error || 'Invalid 2FA code. Please try again.';
@@ -328,42 +337,54 @@ export default function Login() {
 
             <form onSubmit={twoFARequired ? handleVerify2FA : handleEmailLogin}>
               <VStack spacing={4}>
-                <FormControl isInvalid={formErrors.email}>
-                  <FormLabel>Email</FormLabel>
-                  <Input
-                    type='email'
-                    autoComplete='username'
-                    value={emailForm.email}
-                    onChange={e =>
-                      setEmailForm({ ...emailForm, email: e.target.value })
-                    }
-                    placeholder='Enter your email'
-                    isDisabled={twoFARequired}
-                  />
-                  <FormErrorMessage>{formErrors.email}</FormErrorMessage>
-                </FormControl>
+                {!twoFARequired && (
+                  <>
+                    <FormControl isInvalid={formErrors.email}>
+                      <FormLabel>Email</FormLabel>
+                      <Input
+                        type='email'
+                        autoComplete='username'
+                        value={emailForm.email}
+                        onChange={e =>
+                          setEmailForm({ ...emailForm, email: e.target.value })
+                        }
+                        placeholder='Enter your email'
+                        isDisabled={twoFARequired}
+                      />
+                      <FormErrorMessage>{formErrors.email}</FormErrorMessage>
+                    </FormControl>
 
-                <FormControl isInvalid={formErrors.password}>
-                  <FormLabel>Password</FormLabel>
-                  <Input
-                    type='password'
-                    autoComplete='current-password'
-                    value={emailForm.password}
-                    onChange={e =>
-                      setEmailForm({ ...emailForm, password: e.target.value })
-                    }
-                    placeholder='Enter your password'
-                    isDisabled={twoFARequired}
-                  />
-                  <FormErrorMessage>{formErrors.password}</FormErrorMessage>
-                </FormControl>
+                    <FormControl isInvalid={formErrors.password}>
+                      <FormLabel>Password</FormLabel>
+                      <Input
+                        type='password'
+                        autoComplete='current-password'
+                        value={emailForm.password}
+                        onChange={e =>
+                          setEmailForm({
+                            ...emailForm,
+                            password: e.target.value,
+                          })
+                        }
+                        placeholder='Enter your password'
+                        isDisabled={twoFARequired}
+                      />
+                      <FormErrorMessage>{formErrors.password}</FormErrorMessage>
+                    </FormControl>
+                  </>
+                )}
 
                 {twoFARequired && (
                   <FormControl>
+                    <Text fontSize='sm' mb={2}>
+                      Enter the authenticator code for {emailForm.email}.
+                    </Text>
                     <FormLabel>Two-Factor Code</FormLabel>
                     <Input
                       type='text'
                       inputMode='numeric'
+                      autoComplete='one-time-code'
+                      autoFocus
                       pattern='[0-9]*'
                       placeholder='Enter 6-digit code'
                       value={twoFaCode}
@@ -382,6 +403,20 @@ export default function Login() {
                 >
                   {twoFARequired ? 'Verify & Sign In' : 'Sign In'}
                 </Button>
+                {twoFARequired && (
+                  <Button
+                    variant='outline'
+                    w='full'
+                    onClick={() => {
+                      setTwoFARequired(false);
+                      setTwoFaCode('');
+                      setEmailForm(previous => ({ ...previous, password: '' }));
+                      setFormErrors({});
+                    }}
+                  >
+                    Back to sign in
+                  </Button>
+                )}
 
                 <Box textAlign='center' pt={2}>
                   <Link

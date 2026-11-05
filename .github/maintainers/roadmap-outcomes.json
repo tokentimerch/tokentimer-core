@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "reviewedAt": "2026-10-28",
+  "reviewedAt": "2026-11-06",
   "repository": "tokentimerch/tokentimer-core",
   "outcomes": [
     {
@@ -279,14 +279,6 @@
       "id": "followup-410",
       "title": "Restore decommissioned certificate identities",
       "issue": 410,
-      "edition": "core",
-      "horizon": "later",
-      "inRoadmap": true
-    },
-    {
-      "id": "followup-354",
-      "title": "Host qualification expansion",
-      "issue": 354,
       "edition": "core",
       "horizon": "later",
       "inRoadmap": true

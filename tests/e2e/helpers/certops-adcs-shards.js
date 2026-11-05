@@ -99,7 +99,11 @@ function createShard(value) {
     for (const id of requiredScenarios) if (!phaseOf(id)) throw new Error(`Scenario is not assigned to a qualification shard: ${id}`);
     return requiredScenarios.filter(owns);
   }
-  return Object.freeze({ name, sharded, phases: Object.freeze([...phases]), runs, owns, select });
+  // Diagnostic requirements come from the same manifest used by the report verifier.
+  function selectReportRequirements(fullRequirements, canonicalRequirements) {
+    return sharded ? select(canonicalRequirements) : fullRequirements;
+  }
+  return Object.freeze({ name, sharded, phases: Object.freeze([...phases]), runs, owns, select, selectReportRequirements });
 }
 
 module.exports = { PHASES, SHARDS, SHARD_NAMES, RULES, phaseOf, createShard, normalizeShard };

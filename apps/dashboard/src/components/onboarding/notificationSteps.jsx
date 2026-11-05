@@ -8,6 +8,7 @@ import {
   FormLabel,
   HStack,
   Input,
+  Link,
   Radio,
   RadioGroup,
   Select,
@@ -199,12 +200,31 @@ export function NotificationsStep({ ctx }) {
             aria-label='Email alerts'
           />
         </HStack>
-        <Text fontSize='xs' color={muted}>
-          Slack, Teams and other webhooks and WhatsApp are in workspace
-          preferences when you need them. There you can also set a delivery
-          window (the hours when alerts may be sent) and a weekly digest (one
-          summary of what expires soon).
-        </Text>
+        <VStack align='stretch' spacing={1} fontSize='xs' color={muted}>
+          <Text>
+            <strong>Channels:</strong> Configure Slack, Teams, other webhooks
+            and WhatsApp in workspace preferences.
+          </Text>
+          <Text>
+            <strong>Delivery window:</strong> Choose the hours when alerts may
+            be sent.
+          </Text>
+          <Text>
+            <strong>Weekly digest:</strong> Receive one summary of what expires
+            soon.
+          </Text>
+          <Text>
+            <strong>WhatsApp:</strong> Each recipient must confirm their number
+            before receiving alerts.
+          </Text>
+          <Link
+            href={`/workspace-preferences?workspace=${encodeURIComponent(ctx.workspaceId)}`}
+            isExternal
+            textDecoration='underline'
+          >
+            Open Alert Preferences in a new tab
+          </Link>
+        </VStack>
       </VStack>
     </StepFrame>
   );

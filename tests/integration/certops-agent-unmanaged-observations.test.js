@@ -77,12 +77,15 @@ describe("Quota-blocked agent observations on real PostgreSQL", function () {
   it("retains two locations and evidence without tokens or management, fences replays, and later enrolls the same identity", async () => {
     const principal = await agent();
     const one = observation("/etc/ssl/one.pem"), two = observation("/etc/ssl/two.pem");
+    one.metadata.push({ name: "agentId", value: "spoofed-agent" });
     const accepted = await send(principal, 1, [one, two]);
     assert.equal(accepted.items.filter((item) => item.unmanaged && item.evidence).length, 2);
     const identities = await rows("certops_certificate_identities", principal.workspaceId);
     assert.equal(identities.length, 1);
     assert.equal((await rows("certops_slot_observations", principal.workspaceId)).length, 2);
-    assert.equal((await rows("certificate_evidence", principal.workspaceId)).length, 2);
+    const evidence = await rows("certificate_evidence", principal.workspaceId);
+    assert.equal(evidence.length, 2);
+    assert.ok(evidence.every((item) => item.created_by_agent_id === principal.id && item.metadata.agentId === principal.agentId));
     const snapshot = (await rows("certops_identity_detail_history", principal.workspaceId))[0];
     assert.equal(snapshot.token_id, null);
     assert.equal(snapshot.token_details, null);

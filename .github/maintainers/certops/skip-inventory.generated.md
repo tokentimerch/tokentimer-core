@@ -8,7 +8,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `prerequisite`: needs the fixture or privilege supplied by its owning CI job
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 143
+Total skips found: 156
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -50,7 +50,7 @@ Total skips found: 143
 | `packages/agent/src/discovery/windows.test.js` | 479 | unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/discovery/windows.test.js` | 532 | reports an http.sys binding with no matching IIS site as http_sys, not iis_binding | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/discovery/windows.test.js` | 620 | reports real subjectAltNames end-to-end from the certificate's raw bytes | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/index.test.js` | 4211 | refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/index.test.js` | 4215 | refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/issuers/adcs-enrollment-reconcile.test.js` | 420 | skips E_ACCESSDENIED and denied probes so a later unique match can attach | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/src/issuers/adcs-enrollment.test.js` | 170 | pins a CA cert under stateDir/adcs-ca and refuses a pin mismatch | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/src/keys/keys.test.js` | 180 | sets 0600 on the key file and 0700 on the parent dir on non-win32 | it(..., { skip }) option-object | `platform` |
@@ -64,6 +64,19 @@ Total skips found: 143
 | `packages/agent/src/replay/replay.test.js` | 144 | writes the store file with 0600 permissions on non-win32 | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/trust-store/receipt.test.js` | 559 | reports {corrupt: true} for a symlink at the receipt path, never following it | dynamic (this.skip() / t.skip()) | `platform` |
 | `packages/agent/src/windows-material/pkcs12.test.js` | 14 | Windows CryptoAPI parses encrypted PKCS#12 and proves private-key association without persisting a key | test(..., { skip }) option-object | `platform` |
+| `packages/mcp/src/config.test.js` | 168 | refuses a stored credential that other users can read, and says how to fix it | it(..., { skip }) option-object | `platform` |
+| `packages/mcp/src/config.test.js` | 191 | refuses a stored credential reached through a symbolic link | it(..., { skip }) option-object | `platform` |
+| `packages/mcp/src/credentialStore.test.js` | 74 | rejects a real Windows directory granting Everyone modification before writing | it(..., { skip }) option-object | `platform` |
+| `packages/mcp/src/credentialStore.test.js` | 80 | rejects a group-writable POSIX destination directory | it(..., { skip }) option-object | `platform` |
+| `packages/mcp/src/credentialStore.test.js` | 95 | creates the file private to the owner (mode 0600) and the directory 0700 | it(..., { skip }) option-object | `platform` |
+| `packages/mcp/src/credentialStore.test.js` | 112 | refuses to write through a symbolic link, even with replace | it(..., { skip }) option-object | `platform` |
+| `packages/mcp/src/credentialStore.test.js` | 165 | really restricts the file to the current user on Windows (real icacls, not a mock) | it(..., { skip }) option-object | `platform` |
+| `packages/mcp/src/credentialStore.test.js` | 186 | removes pre-existing explicit grants before a Windows credential is written | it(..., { skip }) option-object | `platform` |
+| `packages/mcp/src/credentialStore.test.js` | 198 | can replace a restricted file on Windows | it(..., { skip }) option-object | `platform` |
+| `packages/mcp/src/credentialStore.test.js` | 305 | applies the same refusals as the write | it(..., { skip }) option-object | `platform` |
+| `packages/mcp/src/credentialStore.test.js` | 322 | refuses a read-only directory | it(..., { skip }) option-object | `platform` |
+| `packages/mcp/src/credentialStore.test.js` | 331 | accepts an owner-only file and rejects one other users can read | it(..., { skip }) option-object | `platform` |
+| `packages/mcp/src/credentialStore.test.js` | 343 | rejects a symbolic link and a missing file | it(..., { skip }) option-object | `platform` |
 | `tests/e2e/certops-adcs-gates-api-e2e.test.js` | 17 | unqualified AD CS onboarding and dispatch gates through real API | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/e2e/certops-agent-alert-e2e.test.js` | 16 | agent alert governance persists policy and rejects foreign groups and unauthorized roles | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/e2e/certops-agent-e2e.test.js` | 459 | happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack | dynamic (this.skip() / t.skip()) | `prerequisite` |

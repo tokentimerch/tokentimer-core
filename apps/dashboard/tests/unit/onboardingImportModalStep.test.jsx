@@ -73,6 +73,13 @@ describe.each([
     expect(ctx.release).toHaveBeenCalled();
   });
 
+  it('shows the saved count when reviewing a completed setup', () => {
+    const ctx = makeCtx();
+    ctx.session.progress.imported = [{ step: stepId, count: 3 }];
+    render(wrap(<Step ctx={ctx} reviewing />));
+    expect(screen.getByTestId('import-done')).toHaveTextContent('3 assets imported in this setup');
+    expect(screen.queryByTestId('modal-open')).toBeNull();
+  });
   it('does not count an import that created nothing', async () => {
     render(wrap(<Step ctx={makeCtx()} />));
     await act(async () => {

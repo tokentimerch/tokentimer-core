@@ -139,6 +139,30 @@ describe('CertificateDetailsModal', () => {
     updateTokenMock.mockReset();
   });
 
+  it('associates each editable certificate field with its visible label', () => {
+    renderModal();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+
+    for (const label of [
+      'Name',
+      'Section',
+      'Asset expiration',
+      'Domains',
+      'Issuer',
+      'Serial number',
+      'Subject',
+      'Contacts / key custodian',
+      'Renewal URL',
+    ]) {
+      const field = screen.getByLabelText(label, { exact: true });
+      expect(field.labels[0]).toHaveTextContent(label);
+    }
+    expect(
+      screen.getByRole('button', { name: 'Contact groups' })
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Notes')).toBeInTheDocument();
+  });
+
   it('hides location observations in the dashboard token view even when populated', () => {
     renderModal({ showObservedLocations: false });
     expect(
@@ -294,6 +318,22 @@ describe('CertificateDetailsModal', () => {
       'data-default-latest-expanded',
       'false'
     );
+  });
+
+  it('shows alert threshold suggestions for a short certificate lifetime', () => {
+    renderModal({
+      certOps: {
+        certificateCount: 1,
+        certificate: {
+          ...certificate,
+          notBefore: '2026-08-16T00:00:00.000Z',
+          notAfter: '2026-09-30T00:00:00.000Z',
+        },
+      },
+    });
+
+    expect(screen.getByText('Suggested alert thresholds')).toBeInTheDocument();
+    expect(screen.getByText('14, 9, 4, 1, 0')).toBeInTheDocument();
   });
 
   it('groups certificate alert state, history and upcoming delivery in one disclosure', async () => {
