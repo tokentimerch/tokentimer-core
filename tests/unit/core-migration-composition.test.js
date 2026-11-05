@@ -265,6 +265,19 @@ test("the reviewed MCP 94-96 preview keeps full and partial ledgers before OAuth
   assert.throws(() => composeMigrations(migrations, [...original, { version: 95, name: names[0] }]), /Unsupported Core migration history/);
 });
 
+test("MCP draft 96-103 upgrades without replacing the manual authority migration", () => {
+  const { migrations } = require("../../apps/api/migrations/migrate");
+  const original = migrations.filter((entry) => entry.version <= 85 || [92, 93, 94, 95].includes(entry.version));
+  const names = ["operator_connections", "operator_enrollment_grants", "operator_action_requests", "operator_oauth", "operator_connection_lifetimes", "operator_inventory", "operator_oauth_retention", "operator_issuance"];
+  for (let count = 1; count <= names.length; count++) {
+    const prior = [...original, ...names.slice(0, count).map((name, index) => ({ ...migrations.find((entry) => entry.name === name), version: 96 + index }))];
+    const planned = composeMigrations(migrations, prior);
+    for (const row of prior) assert.equal(planned.find((entry) => entry.name === row.name).version, row.version);
+    assert.ok(planned.find((entry) => entry.name === "certops_manual_rollout_authority").version > 103);
+    assert.deepEqual(composeMigrations(migrations, planned), planned);
+  }
+});
+
 test("MCP lifetime, inventory and retention upgrades preserve partial preview ledgers before and after companion features", () => {
   const { migrations } = require("../../apps/api/migrations/migrate");
   const { reservations } = require("../../apps/api/migrations/migration-reservations.cjs");

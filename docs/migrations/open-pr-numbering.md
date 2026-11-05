@@ -70,7 +70,8 @@ The MCP preview with mainline schemas through 82 and operator schemas at
 83–85 keeps those applied rows. The runner appends missing provider, recipient
 and PagerDuty schemas without reapplying MCP SQL. The later preview with MCP at
 94–96 also retains its applied identities; missing mainline PagerDuty definitions
-are appended after that tail. Fresh installs use MCP 99–106. Do not manually
+are appended after that tail. The later draft with MCP at 96–103 also keeps its
+applied identities and appends missing authority work. Fresh installs use MCP 99–106. Do not manually
 renumber an existing preview database.
 
 A ledger containing another PR's former 81 is not a provider alias. Unknown or conflicting histories fail before migration DDL. Do not manually edit them.

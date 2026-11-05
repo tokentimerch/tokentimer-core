@@ -108,6 +108,17 @@ function composeMigrations(migrations, recorded = []) {
       if (priorOrder) break;
     }
   }
+  // Earlier MCP draft builds used 96–103 after the PagerDuty tail, before
+  // main reserved those slots for independent CertOps work. Keep any applied
+  // draft identities and append the missing authority migration afterward.
+  const priorDraft = rows.some((row) => row.version === 96 && row.name === "operator_connections");
+  if (!priorOrder && priorDraft) {
+    const draftNames = [...priorMcpNames.slice(0, 10), "pagerduty_operator_actions", "remove_pagerduty_rest_lookup", ...mcpAppendNames.slice(2)];
+    const draftVersions = [78, 79, 80, 81, 82, 83, 84, 85, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103];
+    const names = [...draftNames, ...extensions.map((entry) => entry.name).filter((name) => !draftNames.includes(name))];
+    const versions = [...draftVersions, ...names.slice(draftNames.length).map((_name, index) => 104 + index)];
+    if (rows.every((row, index) => row.name === names[index] && row.version === versions[index])) priorOrder = names;
+  }
   const recognizedPriorMcp = priorOrder !== null;
   const unknown = rows.find((row) => !byName.has(row.name));
   if (unknown)
