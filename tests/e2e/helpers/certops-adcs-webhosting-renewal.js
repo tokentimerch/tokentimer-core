@@ -198,6 +198,34 @@ function refreshBackgroundEnrollmentOwnership(receipts, enrollmentIds, readRecor
     }
   }
 }
+// Later journeys may install a leaf for a different owned source with the same
+// subject. Defer it only when the parent enrollment, database row, issuing job,
+// durable container record, journal and exact public leaf all agree.
+function collectOtherOwnedThumbprints(receipts, enrollmentIds, readRecord, {workspaceId,rows,readJournal}) {
+  assert.match(workspaceId,uuid);assert.ok(Array.isArray(rows));
+  const receiptIds=new Set(receipts.map(receipt=>receipt.certificateId));
+  const subjects=new Set(receipts.map(receipt=>`CN=${receipt.domain}`));
+  const result=new Set();
+  if(!receipts.length)return result;
+  for(const id of enrollmentIds){
+    assert.match(id,uuid);
+    const containerName=buildEnrollmentContainerName(id),record=readRecord(containerName);
+    if(!record || receiptIds.has(record.certificateId) || record.acceptedStore!=="My" || record.status!=="enrolled_by_agent")continue;
+    assert.equal(record.containerName,containerName);assert.match(record.acceptedThumbprint,/^[A-F0-9]{40}$/);
+    const matches=rows.filter(row=>row.id===id && row.workspace_id===workspaceId && row.certificate_id===record.certificateId);
+    assert.equal(matches.length,1,"Preserve certificate without exact enrollment ownership");
+    assert.ok(["installed","install_failed"].includes(matches[0].state));assert.ok(matches[0].job_ids.includes(record.jobId));
+    const journal=readJournal(id);assert.equal(journal.kind,"valid");assert.equal(journal.journal.containerName,containerName);
+    assert.ok(["installed","install_failed"].includes(journal.journal.state));
+    const pem=journal.artifacts.leafPem;assert.equal(typeof pem,"string");
+    assert.equal(crypto.createHash("sha256").update(pem.endsWith("\n")?pem:`${pem}\n`).digest("hex"),journal.journal.leafSha256);
+    const leaf=new crypto.X509Certificate(pem);
+    assert.equal(leaf.fingerprint.replace(/:/g,"").toUpperCase(),record.acceptedThumbprint);
+    if(!subjects.has(leaf.subject))continue;
+    result.add(record.acceptedThumbprint);
+  }
+  return result;
+}
 function registerCapacityStoreCertificate(registry, { domain, certificateId }) {
   const receipt = {
     store: "My",
@@ -665,6 +693,7 @@ module.exports = {
   cleanupIssuerSwitch: context => cleanupRegisteredStore(context,"issuer-switch"),
   backgroundCleanupPlan,
   refreshBackgroundEnrollmentOwnership,
+  collectOtherOwnedThumbprints,
   registerBackgroundStoreCertificate,
   cleanupBackground: context => cleanupRegisteredStore(context,"background"),
   captureServiceDrain,

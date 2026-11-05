@@ -93,6 +93,8 @@ api:
   # SUBFINDER_BIN; see docs/CONFIGURATION.md).
   # Recipient verification stays off until RECIPIENT_VERIFICATION_MODE=enforce
   # or shadow. Set the same value on the worker. See docs/recipient-verification.md.
+  # Set advanced invitation/test limits here using their documented environment
+  # names; weekly-digest retry tuning belongs in worker.env.
   env: {}
   # Extra envFrom entries. configMapRef.name / secretRef.name support Helm tpl
   # (e.g. '{{ .Release.Name }}-overlay-env').
