@@ -17,6 +17,7 @@ describe("Core distribution and lifecycle migration histories", function () {
     'pagerduty_incident_lifecycle', 'pagerduty_resolution_reason',
     'pagerduty_operator_actions', 'remove_pagerduty_rest_lookup',
     'certops_manual_rollout_authority',
+    'certops_observed_revocation',
   ];
   const migrations = require('../../apps/api/migrations/migrate').migrations;
   const companions = companionNames.filter(name => migrations.some(m => m.name === name));
