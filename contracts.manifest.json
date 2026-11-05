@@ -472,7 +472,7 @@
           "kind": "module",
           "path": "apps/dashboard/src/components/certops/AssistantConnectionsModal.jsx",
           "status": "existing",
-          "sha256": "022b1b438d7c6f5a47e6df6ddd9e352a2044542ade2841479957bac4a3b51fbb"
+          "sha256": "95c68dcbc45c9272fa4888c6e54cbb6a85dc3130439592fd433d189c9eaf9caa"
         },
         {
           "id": "mcp-workspace-controls",
