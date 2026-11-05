@@ -62,7 +62,20 @@ async function prepareCredentialRotation({ dbPool = pool, agent, operationId, ca
     const previous = (await client.query("SELECT *, expires_at > NOW() AS unexpired FROM certops_agent_credential_rotations WHERE agent_id = $1 FOR UPDATE", [agent.id])).rows[0];
     if (previous && previous.operation_id === operationId) {
       if (previous.candidate_prefix !== candidatePrefix || !sameHash(previous.candidate_hash, candidateHash)) throw failure("CERTOPS_AGENT_ROTATION_CONFLICT");
-      if (previous.state === "pending" && !previous.unexpired) throw failure("CERTOPS_AGENT_ROTATION_CONFLICT");
+      if (previous.state === "pending") {
+        // A lost response or long outage may outlive the preparation window.
+        // Reuse the same candidate only with the same current credential and
+        // after checking for work that could have been claimed in the gap.
+        if (!sameHash(current.credential_hash, previous.prior_hash)) throw failure("CERTOPS_AGENT_ROTATION_CONFLICT");
+        if (!previous.unexpired) {
+          await requireNoAgentJobs(client, agent.id);
+          await client.query(`UPDATE certops_agent_credential_rotations
+            SET expires_at = NOW() + interval '15 minutes', updated_at = NOW()
+            WHERE agent_id = $1 AND operation_id = $2`, [agent.id, operationId]);
+        }
+      } else if (current.credential_prefix !== previous.candidate_prefix || !sameHash(current.credential_hash, previous.candidate_hash)) {
+        throw failure("CERTOPS_AGENT_ROTATION_CONFLICT");
+      }
       return { state: previous.state === "acknowledged" ? "committed" : previous.state };
     }
     // A committed receipt must survive a lost response. A future protocol

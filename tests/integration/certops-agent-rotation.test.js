@@ -143,6 +143,54 @@ describe("Agent credential rotation on PostgreSQL", function () {
     const unknown = await db.query("SELECT count(*) FROM certificate_jobs WHERE workspace_id = $1 AND needs_operator_reconciliation", [f.workspaceId]);
     assert.equal(Number(unknown.rows[0].count), 1);
   });
+  it("renews an expired preparation only for the same candidate and after checking intervening jobs", async () => {
+    const f = await fixture(); await prep(f);
+    await db.query("UPDATE certops_agent_credential_rotations SET expires_at = NOW() - interval '1 second' WHERE agent_id = $1", [f.agent.id]);
+    const unrelatedCandidate = generateAgentCredential();
+    await assert.rejects(prep(f, { candidatePrefix: unrelatedCandidate.credentialPrefix, candidateHash: unrelatedCandidate.credentialHash }), { code: "CERTOPS_AGENT_ROTATION_CONFLICT" });
+    const jobId = randomUUID();
+    await db.query("INSERT INTO certificate_jobs (id, workspace_id, claimed_by_agent_id, status) VALUES ($1, $2, $3, 'running')", [jobId, f.workspaceId, f.agent.id]);
+    await assert.rejects(prep(f), { code: "CERTOPS_AGENT_ROTATION_CONFLICT" });
+    const before = (await db.query("SELECT expires_at < NOW() AS expired FROM certops_agent_credential_rotations WHERE agent_id = $1", [f.agent.id])).rows[0];
+    assert.equal(before.expired, true);
+    await db.query("UPDATE certificate_jobs SET status = 'orphaned_unknown_effect', claimed_by_agent_id = NULL, needs_operator_reconciliation = TRUE WHERE id = $1", [jobId]);
+    await assert.rejects(prep(f), { code: "CERTOPS_AGENT_ROTATION_CONFLICT" });
+    // Test-only simulated state transition; the product has no general closure path.
+    await db.query("UPDATE certificate_jobs SET status = 'succeeded', needs_operator_reconciliation = FALSE WHERE id = $1", [jobId]);
+    assert.deepEqual(await prep(f), { state: "pending" });
+    const after = (await db.query("SELECT operation_id, candidate_hash, expires_at > NOW() AS valid FROM certops_agent_credential_rotations WHERE agent_id = $1", [f.agent.id])).rows[0];
+    assert.equal(after.operation_id, f.operationId); assert.equal(after.candidate_hash, f.next.credentialHash); assert.equal(after.valid, true);
+    assert.deepEqual(await confirm(f), { state: "committed" });
+  });
+  it("serializes renewal of an expired preparation with an intervening claim", async () => {
+    const f = await fixture(); await prep(f);
+    await db.query("UPDATE certops_agent_credential_rotations SET expires_at = NOW() - interval '1 second' WHERE agent_id = $1", [f.agent.id]);
+    const claimant = await db.connect();
+    try {
+      await claimant.query("BEGIN");
+      await claimant.query("SELECT id FROM certops_agents WHERE id = $1 FOR UPDATE", [f.agent.id]);
+      await claimant.query("INSERT INTO certificate_jobs (id, workspace_id, claimed_by_agent_id, status) VALUES ($1,$2,$3,'claimed')", [randomUUID(), f.workspaceId, f.agent.id]);
+      const renewal = prep(f).then(() => null, error => error);
+      let blocked = false;
+      for (let i = 0; i < 50 && !blocked; i++) {
+        const waiting = await db.query(`SELECT count(*) AS count FROM pg_stat_activity WHERE datname = current_database()
+          AND wait_event_type = 'Lock' AND query LIKE '%SELECT credential_hash, status%'`);
+        blocked = Number(waiting.rows[0].count) > 0;
+        if (!blocked) await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      assert.equal(blocked, true, "renewal must wait for the claim transaction");
+      await claimant.query("COMMIT");
+      assert.equal((await renewal)?.code, "CERTOPS_AGENT_ROTATION_CONFLICT");
+      assert.equal((await db.query("SELECT expires_at < NOW() AS expired FROM certops_agent_credential_rotations WHERE agent_id = $1", [f.agent.id])).rows[0].expired, true);
+    } finally { try { await claimant.query("ROLLBACK"); } catch (_) {} claimant.release(); }
+  });
+  it("rejects a pending replay if the current credential changed", async () => {
+    const f = await fixture(); await prep(f);
+    const other = generateAgentCredential();
+    await db.query("UPDATE certops_agents SET credential_prefix = $2, credential_hash = $3 WHERE id = $1", [f.agent.id, other.credentialPrefix, other.credentialHash]);
+    const auth = await validateAgentCredential({ client: db, rawCredential: other.plaintextCredential });
+    await assert.rejects(prep(f, { agent: auth.agent }), { code: "CERTOPS_AGENT_ROTATION_CONFLICT" });
+  });
   it("rejects expired preparations and an agent retired before confirmation", async () => {
     const expired = await fixture(); await prep(expired);
     await db.query("UPDATE certops_agent_credential_rotations SET expires_at = NOW() - interval '1 second' WHERE agent_id = $1", [expired.agent.id]);
