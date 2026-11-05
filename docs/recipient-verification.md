@@ -53,6 +53,8 @@ Defaults, overridable by environment (see [configuration](CONFIGURATION.md#recip
 - 50 invitations per workspace per day, and 20 per user per day.
 - 3 notification tests per contact per day, with 120 seconds between tests.
 
+The standard Compose API forwards these limits from `.env`; unset values retain the documented defaults. In Helm, set their environment names under `api.env`. Configure `WEEKLY_DIGEST_UNCERTAIN_RETRY_SECONDS` on the digest worker (`worker.env` in Helm). Leave `RECIPIENT_VERIFY_PAGE_MAX` unset to retain its production or development default. Reducing a limit can block further invitations or tests until its existing window expires.
+
 A destination that hits the weekly cap from 3 or more workspaces is suppressed for 24 hours. That suppression is saved even though the refused invitation is rolled back. Per-destination, per-workspace, and per-user limits are enforced inside one transaction with advisory locks, so concurrent invitations to different destinations cannot pass a shared workspace or user cap. Public confirmation pages are limited per client address in memory and in Postgres. The Twilio inbound webhook keeps its own limiter and is not part of the page limit. Limits are stored in Postgres and apply across API replicas.
 
 ## Rollout
@@ -65,7 +67,7 @@ RECIPIENT_VERIFICATION_MODE=enforce
 
 `shadow` is the self-hosted observation mode. It logs eligibility and still delivers. Cloud verification is mandatory. Set `TT_DEPLOYMENT=cloud` and `RECIPIENT_VERIFICATION_MODE=enforce` on the API and every notification worker.
 
-1. Run the standard migration runner. Main retains migrations 78–82; version 83 is reserved for material providers. Recipient verification uses migration 84 and does not mark existing contacts verified. Migration 85 adds weekly-digest claim ownership and provider-acceptance tracking. Leaving verification off does not skip migration 84. Do not hand-apply 85 while skipping 84. The runner preserves previously applied preview rows and their timestamps, assigning only pending definitions to free versions; do not rename those rows manually.
+1. Run the standard migration runner before the matching API and workers. Canonical main uses migration 84 for recipient verification and 85 for weekly-digest claim tracking; neither is skipped when verification is off. Existing contacts remain unverified. Supported preview histories retain their applied versions and timestamps; pending definitions use free versions. Do not hand-apply individual SQL files or relabel migration history.
 2. Set `RECIPIENT_FINGERPRINT_SECRET` and `PUBLIC_BASE_URL` or `API_URL` before sending invitations.
 3. Ask workspace managers to send invitations. Existing alert groups keep their contacts.
 4. Switch self-hosted from `off` or `shadow` to `enforce` after recipients confirm.
