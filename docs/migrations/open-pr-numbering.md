@@ -22,8 +22,8 @@ are reservations, not no-op migrations. They do not install another feature.
 | 90 | certops_consumer_verification_failures | Unapplied verification outcomes |
 | 91 | certops_distribution_resolution_delivery | Unapplied recovery delivery |
 | 92 | pagerduty_incident_lifecycle | Independent PagerDuty tail |
-| 99 | agent_credential_rotations | Credential rotation preparation and receipt |
-| 100 | agent_credential_rotation_ack | Credential rotation acknowledgement |
+| 107 | agent_credential_rotations | Credential rotation preparation and receipt |
+| 108 | agent_credential_rotation_ack | Credential rotation acknowledgement |
 
 Use the normal runner with these canonical identities. Independent feature tails
 may leave unapplied reservations absent; never install no-op SQL to fill them.

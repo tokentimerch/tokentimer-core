@@ -18,8 +18,8 @@ describe("Agent credential rotation on PostgreSQL", function () {
     await db.query(`CREATE TABLE certops_agents (id uuid PRIMARY KEY, workspace_id uuid, agent_id text, name text,
       credential_prefix text UNIQUE, credential_hash text UNIQUE, status text, protocol_version text,
       agent_version text, pinned_signing_key_id text, last_seen_at timestamptz, retired_at timestamptz, updated_at timestamptz)`);
-    await db.query(require("node:fs").readFileSync(require("node:path").join(__dirname, "../../apps/api/migrations/099-agent-credential-rotations.sql"), "utf8"));
-    await db.query(require("node:fs").readFileSync(require("node:path").join(__dirname, "../../apps/api/migrations/100-agent-rotation-ack.sql"), "utf8"));
+    await db.query(require("node:fs").readFileSync(require("node:path").join(__dirname, "../../apps/api/migrations/107-agent-credential-rotations.sql"), "utf8"));
+    await db.query(require("node:fs").readFileSync(require("node:path").join(__dirname, "../../apps/api/migrations/108-agent-rotation-ack.sql"), "utf8"));
     await db.query("CREATE TABLE certops_agent_registration_replays (workspace_id uuid, agent_id text)");
     await db.query("CREATE TABLE certificate_jobs (id uuid, claimed_by_agent_id uuid, status text, workspace_id uuid, needs_operator_reconciliation boolean DEFAULT false)");
   });
