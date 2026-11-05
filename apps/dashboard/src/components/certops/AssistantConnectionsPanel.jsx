@@ -357,7 +357,7 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
           <>
             <Box>
               <HStack spacing={3} flexWrap='wrap'>
-                {data.frozenWorkspaceName === null ? (
+                {!data.frozenWorkspaceName ? (
                   <DashboardActionButton
                     colorScheme='blue'
                     onClick={() => {
@@ -394,9 +394,9 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                 </DashboardActionButton>
               </HStack>
               <Text fontSize='sm' color={muted} mt={2}>
-                {data.frozenWorkspaceName === null
-                  ? 'Choose remote HTTP with browser sign-in, or a local adapter for clients that only support stdio.'
-                  : `${data.frozenWorkspaceName} is frozen. You can still revoke access and setup codes.`}
+                {data.frozenWorkspaceName
+                  ? `${data.frozenWorkspaceName} is frozen. You can still revoke access and setup codes.`
+                  : 'Choose remote HTTP with browser sign-in, or a local adapter for clients that only support stdio.'}
               </Text>
             </Box>
           </>
