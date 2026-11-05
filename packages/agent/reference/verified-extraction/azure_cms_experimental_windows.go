@@ -42,6 +42,13 @@ func verifyAzureCMSExperimentalWithContexts(cms []byte, p azureCMSExperimentalPo
 	// Snapshot the bytes once so both isolated verification stages see exactly
 	// the same content even if the caller reuses its input buffer.
 	cms = append([]byte(nil), cms...)
+	// SignedCms.Decode can ignore bytes after the outer CMS object. Reject
+	// trailing content before handing the snapshot to the native verifier.
+	var outer asn1.RawValue
+	rest, err := asn1.Unmarshal(cms, &outer)
+	if err != nil || len(rest) != 0 || outer.Class != asn1.ClassUniversal || outer.Tag != asn1.TagSequence || !outer.IsCompound {
+		return nil, fmt.Errorf("invalid experimental CMS envelope")
+	}
 	extractRequest, err := json.Marshal(struct {
 		CMS string `json:"cms"`
 	}{base64.StdEncoding.EncodeToString(cms)})

@@ -72,9 +72,29 @@ func runSystemPowerShell(script string, request []byte) ([]byte, error) {
 	cmd.Dir = systemDir
 	cmd.Env = []string{"SystemRoot=" + root, "WINDIR=" + root, "PATH=" + systemDir, "PSModulePath=" + filepath.Join(systemDir, "WindowsPowerShell", "v1.0", "Modules")}
 	cmd.Stdin = bytes.NewReader(request)
-	out, err := cmd.Output()
-	if err != nil {
+	// Close inherited pipes if the parent exits while a descendant keeps them
+	// open. This does not terminate or contain that descendant.
+	cmd.WaitDelay = 2 * time.Second
+	// Bound the child output while it is being read, not after an unbounded
+	// allocation. The command context remains the fallback for a stuck child.
+	out := &boundedPowerShellOutput{limit: 16 << 20}
+	cmd.Stdout = out
+	if err := cmd.Run(); err != nil {
 		return nil, err
 	}
-	return out, nil
+	return out.Bytes(), nil
 }
+
+type boundedPowerShellOutput struct {
+	buffer bytes.Buffer
+	limit  int
+}
+
+func (b *boundedPowerShellOutput) Write(p []byte) (int, error) {
+	if len(p) > b.limit-b.buffer.Len() {
+		return 0, fmt.Errorf("PowerShell output exceeds limit")
+	}
+	return b.buffer.Write(p)
+}
+
+func (b *boundedPowerShellOutput) Bytes() []byte { return b.buffer.Bytes() }
