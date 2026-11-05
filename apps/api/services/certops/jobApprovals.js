@@ -69,6 +69,11 @@ const CERTOPS_APPROVAL_APPROVER_REQUIRED =
   "CERTOPS_APPROVAL_APPROVER_REQUIRED";
 const CERTOPS_APPROVAL_REASON_INVALID = "CERTOPS_APPROVAL_REASON_INVALID";
 
+// 409-shaped: the job came from an operator connection that has ended, or its
+// approval window passed. The request is no longer something a person should
+// approve, and nothing about the job is changed by refusing.
+const CERTOPS_APPROVAL_REQUEST_STALE = "CERTOPS_APPROVAL_REQUEST_STALE";
+
 const MAX_APPROVAL_REASON_LENGTH = 1024;
 
 /**
@@ -132,6 +137,35 @@ function approvalFromRow(row) {
 }
 
 /**
+ * A job created through an operator connection may only be approved while the
+ * connection is still good and the approval window is open (ADR-0015).
+ * The connection row is locked, so a revocation and an approval
+ * cannot both succeed: whichever commits first decides, and the other sees it.
+ * Jobs with no connection are untouched.
+ */
+async function assertOperatorRequestStillApprovable(db, job) {
+  if (!job.requestedByConnectionId) return;
+  const allowed = await require("../operator/jobAuthority").lockOperatorJobAuthority({
+    client: db, connectionId: job.requestedByConnectionId,
+    workspaceId: job.workspaceId, requesterUserId: job.requestedByUserId,
+    operation: job.operation,
+  });
+  const request = await db.query(
+    `SELECT approval_expires_at, state_override FROM operator_action_requests
+      WHERE job_id = $1 AND workspace_id = $2`,
+    [job.id, job.workspaceId],
+  );
+  const req = request.rows[0];
+  const lapsed = !req || req.state_override || new Date(req.approval_expires_at) <= new Date();
+  if (!allowed || lapsed) {
+    throw serviceError(
+      "This request came from an assistant connection that has ended or whose approval window passed",
+      CERTOPS_APPROVAL_REQUEST_STALE,
+    );
+  }
+}
+
+/**
  * SHA256 hex of the canonical serialization of a job payload. This is the
  * exact byte contract the job signer uses (canonical-json.cjs), so the
  * approval binds precisely the bytes an agent would receive.
@@ -164,6 +198,12 @@ function buildCanonicalExecutionIntent(job) {
     profileSnapshot: payload.profileSnapshot || payload.profile || null,
     commandRef: payload.commandRef || null,
     action: payload.action || null,
+    ...(job.requestedByConnectionId ? { operatorRouting: {
+      assignedAgentId: job.assignedAgentId ?? null,
+      requiredTargetSelector: job.requiredTargetSelector ?? null,
+      requiredDnsProvider: job.requiredDnsProvider ?? null,
+      requiredCommandProfile: job.requiredCommandProfile ?? null,
+    } } : {}),
     payload,
   };
 }
@@ -251,8 +291,9 @@ function assertNonRequester(job, approverUserId) {
 async function loadJobForApproval(db, workspaceId, jobId) {
   const result = await db.query(
     `SELECT id, workspace_id, operation, status, mode, payload,
-            subject_type, subject_id,
-            requested_by_user_id, requested_by_api_token_id,
+            subject_type, subject_id, assigned_agent_id, required_target_selector,
+            required_dns_provider, required_command_profile,
+            requested_by_user_id, requested_by_api_token_id, requested_by_connection_id,
             approved_by_user_id, approved_at, approved_payload_hash,
             approved_canonical_intent_hash
        FROM certificate_jobs
@@ -360,6 +401,13 @@ async function requestApprovalState(options) {
  * because an approved-but-not-yet-claimable intermediate state has no
  * separate meaning in this per-job gate.
  */
+async function requestApprovalReview(options) {
+  const db = options.client || pool;
+  const job = await loadJobForApproval(db, normalizeWorkspaceId(options.workspaceId), normalizeRequiredId(options.jobId));
+  const review = await require("../operator/approvalReview").buildAssistantApprovalReview({ db, job, intentHash: computeCanonicalIntentHash(job) });
+  return { jobId: job.id, review: review ? { ...review, canApprove: options.viewerUserId == null || String(job.requestedByUserId) !== String(options.viewerUserId) } : null };
+}
+
 async function approveJob(options) {
   const workspaceId = normalizeWorkspaceId(options.workspaceId);
   const jobId = normalizeRequiredId(options.jobId);
@@ -376,6 +424,16 @@ async function approveJob(options) {
     );
   }
   assertNonRequester(job, approverUserId);
+  await assertOperatorRequestStillApprovable(db, job);
+    if (job.requestedByConnectionId) {
+      const { buildAssistantApprovalReview, REVIEW_REQUIRED, STALE } = require("../operator/approvalReview");
+      const review = await buildAssistantApprovalReview({ db, job, intentHash: computeCanonicalIntentHash(job), lockSources: true });
+      if (!review.current) throw serviceError("The assistant request changed or ended. Request a fresh preview.", STALE);
+      if (!options.reviewHash || options.reviewHash !== review.reviewHash) {
+        throw serviceError("Review the current assistant request before approving it", REVIEW_REQUIRED);
+      }
+    }
+
 
   // H6: approval binds against a fully resolved renewal profile snapshot in
   // the job payload, not a mutable certificate_profiles row reference.
@@ -397,10 +455,18 @@ async function approveJob(options) {
             updated_at = NOW()
       WHERE workspace_id = $1
         AND id = $2
-        AND status = 'pending_approval'
+        AND status = 'pending_approval' AND payload = $6::jsonb
+        AND COALESCE(mode, 'real') = $7 AND operation = $8
+        AND subject_type IS NOT DISTINCT FROM $9 AND subject_id IS NOT DISTINCT FROM $10
+        AND requested_by_connection_id IS NOT DISTINCT FROM $11
+        AND requested_by_user_id IS NOT DISTINCT FROM $12
+        AND assigned_agent_id IS NOT DISTINCT FROM $13
+        AND required_target_selector IS NOT DISTINCT FROM $14
+        AND required_dns_provider IS NOT DISTINCT FROM $15
+        AND required_command_profile IS NOT DISTINCT FROM $16
       RETURNING id, status, approved_by_user_id, approved_at,
                 approved_payload_hash, approved_canonical_intent_hash`,
-    [workspaceId, jobId, approverUserId, payloadHash, canonicalIntentHash],
+    [workspaceId, jobId, approverUserId, payloadHash, canonicalIntentHash, JSON.stringify(job.payload), job.mode || "real", job.operation, job.subjectType, job.subjectId, job.requestedByConnectionId, job.requestedByUserId, job.assignedAgentId ?? null, job.requiredTargetSelector ?? null, job.requiredDnsProvider ?? null, job.requiredCommandProfile ?? null],
   );
   const row = updated.rows[0];
   if (!row) {
@@ -627,6 +693,7 @@ module.exports = {
   CERTOPS_APPROVAL_APPROVER_REQUIRED,
   CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL,
   CERTOPS_APPROVAL_REASON_INVALID,
+  CERTOPS_APPROVAL_REQUEST_STALE,
   CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN,
   MAX_APPROVAL_REASON_LENGTH,
   approveJob,
@@ -636,6 +703,7 @@ module.exports = {
   invalidateApprovalForClaim,
   rejectJob,
   requestApprovalState,
+  requestApprovalReview,
   _test: {
     approvalFromRow,
     assertNonRequester,

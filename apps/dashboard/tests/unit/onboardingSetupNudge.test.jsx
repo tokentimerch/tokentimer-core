@@ -37,14 +37,16 @@ describe('SetupNudge', () => {
 
   it('opens the modal first for an empty workspace', async () => {
     show(makeApi());
-    expect(await screen.findByText('Your workspace is empty')).toBeTruthy();
+    expect(
+      await screen.findByText('Start watching an asset or site')
+    ).toBeTruthy();
     expect(screen.queryByTestId('setup-banner')).toBeNull();
   });
 
   it('leaves a banner when the modal is closed with Esc, and does not dismiss', async () => {
     const api = makeApi();
     show(api);
-    await screen.findByText('Your workspace is empty');
+    await screen.findByText('Start watching an asset or site');
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     await waitFor(() =>
       expect(screen.getByTestId('setup-banner')).toBeTruthy()
@@ -61,13 +63,13 @@ describe('SetupNudge', () => {
       status: 'dismissed',
     });
     expect(screen.queryByTestId('setup-banner')).toBeNull();
-    expect(screen.queryByText('Your workspace is empty')).toBeNull();
+    expect(screen.queryByText('Start watching an asset or site')).toBeNull();
   });
 
   it('shows the banner, not the modal, on a later visit in the same session', async () => {
     const first = makeApi();
     const { unmount } = show(first);
-    await screen.findByText('Your workspace is empty');
+    await screen.findByText('Start watching an asset or site');
     unmount();
     show(makeApi());
     expect(await screen.findByTestId('setup-banner')).toBeTruthy();
@@ -85,7 +87,7 @@ describe('SetupNudge', () => {
       })
     );
     expect(await screen.findByText('Continue setup')).toBeTruthy();
-    expect(screen.queryByText('Your workspace is empty')).toBeNull();
+    expect(screen.queryByText('Start watching an asset or site')).toBeNull();
   });
 
   it('starts the guide from the banner', async () => {
@@ -119,7 +121,7 @@ describe('SetupNudge', () => {
     const { unmount } = show(api);
     await waitFor(() => expect(api.getSummary).toHaveBeenCalled());
     expect(screen.queryByTestId('setup-banner')).toBeNull();
-    expect(screen.queryByText('Your workspace is empty')).toBeNull();
+    expect(screen.queryByText('Start watching an asset or site')).toBeNull();
     unmount();
     const again = makeApi();
     show(again);
@@ -228,6 +230,44 @@ describe('SetupNudge when the workspace changes', () => {
     rerender(tree('ws-b', api));
     resolveA();
     await new Promise(r => setTimeout(r, 40));
+    expect(screen.queryByTestId('setup-banner')).toBeNull();
+  });
+});
+
+describe('SetupNudge role changes', () => {
+  beforeEach(() => sessionStorage.clear());
+  const tree = (api, viewer) => (
+    <ChakraProvider>
+      <SetupNudge workspaceId='role-change' isViewer={viewer} api={api} />
+    </ChakraProvider>
+  );
+
+  it('removes an already loaded setup invitation when viewer access resolves', async () => {
+    const api = makeApi();
+    const { rerender } = render(tree(api, false));
+    await screen.findByText('Start watching an asset or site');
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    await screen.findByTestId('setup-banner');
+    rerender(tree(api, true));
+    expect(screen.queryByTestId('setup-banner')).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByText('Set up my environment')).toBeNull();
+  });
+
+  it('does not expose a slow setup answer after the user becomes a viewer', async () => {
+    let finish;
+    const api = makeApi();
+    api.getSummary.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finish = () => resolve(empty);
+        })
+    );
+    const { rerender } = render(tree(api, false));
+    await waitFor(() => expect(finish).toBeTypeOf('function'));
+    rerender(tree(api, true));
+    finish();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(screen.queryByTestId('setup-banner')).toBeNull();
   });
 });

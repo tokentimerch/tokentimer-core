@@ -294,14 +294,14 @@ function KillSwitchView({
               : !resolved
                 ? 'Checking the certificate operations kill switch...'
                 : certOpsPaused
-                  ? 'Certificate operations are paused for this workspace.'
-                  : 'Certificate operations are running for this workspace.'
+                  ? 'New certificate jobs and commands are paused.'
+                  : 'Pause new certificate jobs and commands during an incident.'
           }
           note={
             certOpsPaused && resolved
-              ? 'New provisioning intent and command delivery to agents are refused. Already-leased jobs keep running, and agents can still report observations and evidence.'
+              ? 'Running jobs continue. Monitoring and evidence reporting remain available.'
               : resolved && isAdmin
-                ? 'Pausing stops new provisioning and command delivery during an incident. Already-leased jobs keep running.'
+                ? 'Jobs already running can finish after a pause.'
                 : null
           }
           showDivider={showDivider}

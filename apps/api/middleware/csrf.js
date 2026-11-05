@@ -8,6 +8,7 @@ const {
 const {
   createCsrfExemptMiddleware,
   isCertOpsMachineTokenCsrfExemptPath,
+  isOperatorBearerCsrfExemptRequest,
 } = require("./csrf-exempt");
 
 const sessionCookieOptions = resolveSessionCookieOptions(process.env);
@@ -34,7 +35,9 @@ const { generateToken: generateCsrfToken, doubleCsrfProtection } = doubleCsrf({
 });
 
 const csrfExempt = createCsrfExemptMiddleware(doubleCsrfProtection, {
-  allowPath: isCertOpsMachineTokenCsrfExemptPath,
+  allowPath: (requestPath, req) =>
+    isCertOpsMachineTokenCsrfExemptPath(requestPath, req) ||
+    isOperatorBearerCsrfExemptRequest(requestPath, req),
   skip: (process.env.NODE_ENV || "").trim().toLowerCase() === "test",
 });
 

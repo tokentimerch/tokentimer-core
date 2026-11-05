@@ -63,13 +63,14 @@ async function main() {
   evaluate(source.slice(start, end), { app, requestCorrelation, logger });
   const origin = "https://dashboard.example.test";
   const corsStart = source.indexOf("const corsOptions = {");
-  const corsEndMarker = "app.options(/.*/, cors(corsOptions));";
-  const corsEnd = source.indexOf(corsEndMarker, corsStart) + corsEndMarker.length;
+  const corsEnd = source.indexOf("\n};", corsStart) + "\n};".length;
   assert.ok(corsStart >= 0 && corsEnd > corsStart, "missing CORS setup in bootstrap");
   const buildCorsOrigins = source.includes("origin: buildCorsOrigins")
     ? apiRequire("./session-cookie-options").buildCorsOrigins
     : undefined;
-  evaluate(source.slice(corsStart, corsEnd), {
+  // Exercise the ordinary API CORS options independently of remote MCP's
+  // separate boundary, whose browser-origin isolation has HTTP/PG coverage.
+  evaluate(source.slice(corsStart, corsEnd) + "\napp.use(cors(corsOptions)); app.options(/.*/, cors(corsOptions));", {
     app, cors, buildCorsOrigins, FRONTEND_URL: origin,
     process: { env: { NODE_ENV: "production", APP_URL: origin } },
   });

@@ -93,6 +93,7 @@ function reconcileClient({ metadata = VERIFY_METADATA } = {}) {
       if (sql.includes("FROM certificate_evidence")) {
         return { rows: metadata ? [{ metadata }] : [] };
       }
+      if (sql.includes("INSERT INTO certops_issuance_job_identities")) return { rows: [], rowCount: 1 };
       if (sql.includes("UPDATE managed_certificates")) return { rows: [] };
       throw new Error(`unexpected query: ${sql}`);
     },

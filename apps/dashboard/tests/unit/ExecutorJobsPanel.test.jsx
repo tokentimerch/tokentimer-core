@@ -110,13 +110,20 @@ function renderPanel(props = {}, initialEntries = ['/']) {
 it('opens the job from a deep link even outside the current page and filters', async () => {
   useCertOpsJobsMock.mockReturnValue(jobsState());
   renderPanel({}, ['/certops/jobs?job=linked-job&status=failed&offset=40']);
-  await waitFor(() => expect(useCertOpsJobTimelineMock).toHaveBeenCalledWith('linked-job', expect.anything()));
+  await waitFor(() =>
+    expect(useCertOpsJobTimelineMock).toHaveBeenCalledWith(
+      'linked-job',
+      expect.anything()
+    )
+  );
 });
 
 it('expands a linked job already on the page', async () => {
   useCertOpsJobsMock.mockReturnValue(jobsState({ jobs: [job()] }));
   renderPanel({}, ['/certops/jobs?job=job-1']);
-  await waitFor(() => expect(document.querySelector('[aria-expanded="true"]')).toBeTruthy());
+  await waitFor(() =>
+    expect(document.querySelector('[aria-expanded="true"]')).toBeTruthy()
+  );
 });
 
 function jobsState(overrides = {}) {
@@ -433,6 +440,42 @@ describe('ExecutorJobsPanel manual job creation', () => {
 describe('ExecutorJobsPanel approvals', () => {
   const pendingJob = job({ status: 'pending_approval' });
 
+  it('shows the requester why approval needs a different person while leaving rejection available', () => {
+    useCertOpsJobsMock.mockReturnValue(
+      jobsState({
+        jobs: [
+          {
+            ...pendingJob,
+            requestedByUserId: 42,
+            requestedByConnectionId: 'assistant-one',
+          },
+        ],
+      })
+    );
+    const { unmount } = renderPanel({ currentUserId: '42' });
+    expect(
+      screen.getByRole('button', { name: 'Approve', exact: true })
+    ).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Reject', exact: true })
+    ).toBeEnabled();
+    expect(
+      screen.getByText(
+        'A different workspace manager or admin must approve your request.'
+      )
+    ).toBeInTheDocument();
+    unmount();
+    renderPanel({ currentUserId: 43 });
+    expect(
+      screen.getByRole('button', { name: 'Approve', exact: true })
+    ).toBeEnabled();
+    expect(
+      screen.queryByText(
+        'A different workspace manager or admin must approve your request.'
+      )
+    ).not.toBeInTheDocument();
+  });
+
   it('shows Approve/Reject only for a manager on a job pending approval', () => {
     useCertOpsJobsMock.mockReturnValue(jobsState({ jobs: [pendingJob] }));
 
@@ -572,8 +615,10 @@ describe('ExecutorJobsPanel approvals', () => {
 
     renderPanel();
 
-    // Status filter also has an "Approved" option; the row chip is the extra hit.
-    expect(screen.getAllByText('Approved').length).toBeGreaterThan(1);
+    expect(
+      screen.getByRole('option', { name: 'Approved (queued)' })
+    ).toBeInTheDocument();
+    expect(screen.getByText('Approved', { exact: true })).toBeInTheDocument();
   });
 
   it('does not show the "Approved" indicator on a row with no approval attribution', () => {
@@ -581,8 +626,10 @@ describe('ExecutorJobsPanel approvals', () => {
 
     renderPanel();
 
-    // Only the status filter option should mention Approved.
-    expect(screen.getAllByText('Approved')).toHaveLength(1);
+    expect(
+      screen.getByRole('option', { name: 'Approved (queued)' })
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Approved', { exact: true })).toBeNull();
   });
 });
 
@@ -601,9 +648,7 @@ describe('ExecutorJobsPanel list states', () => {
   it('shows an empty state when there are no jobs', () => {
     renderPanel();
 
-    expect(
-      screen.getByText('No certificate jobs yet')
-    ).toBeInTheDocument();
+    expect(screen.getByText('No certificate jobs yet')).toBeInTheDocument();
   });
 
   it('shows an error message distinct from the loading and empty states', () => {
@@ -791,9 +836,7 @@ describe('ExecutorJobsPanel list states', () => {
 
     renderPanel({}, ['/?status=failed']);
 
-    expect(
-      screen.getByText('No jobs match these filters')
-    ).toBeInTheDocument();
+    expect(screen.getByText('No jobs match these filters')).toBeInTheDocument();
     expect(
       screen.queryByText('No certificate jobs yet')
     ).not.toBeInTheDocument();
@@ -870,7 +913,7 @@ describe('ExecutorJobsPanel manual-reconciliation visibility', () => {
     expect(
       screen
         .getAllByText('Needs reconciliation')
-        .some((node) => node.tagName === 'SPAN')
+        .some(node => node.tagName === 'SPAN')
     ).toBe(true);
   });
 

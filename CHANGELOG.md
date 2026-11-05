@@ -9,9 +9,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.19.0] - 2026-11-05
+## [0.19.0] - 2026-11-06
 
 ### Added
+
+- **MCP assistant access.** Connect by URL and browser sign-in without Node; the local adapter is optional. Inspect inventory and certificate state, or grant reviewed inventory updates, contact and webhook setup, viewer invitations, and ACME issuance and renewal requests. Certificate jobs follow workspace **Job approval**. Connections default to 30 days, with longer or explicitly acknowledged non-expiring access available. **Operator guidance:** MCP deployment flags default off; configure HTTPS access and grant only the permissions needed. Remote clients must support dynamic registration. See the visual [setup guide](https://tokentimer.ch/docs/api/mcp-setup).
 
 - **Global auto-sync overrides.** System Settings can force metric exposure/labels and the monitoring group independently across all integrations. Managed controls prevent local changes; a Configured badge identifies active overrides. Otherwise, connections keep their saved choices. Import forms use consistent typography and structured run history. Environment values retain priority; extra asset labels default off and increase series/alert cardinality. Names/scopes cover future creations; existing provider counters stay unchanged. **Operator action:** apply migrations 81–82 with matching API/dashboard code.
 
@@ -22,6 +24,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **PagerDuty incident actions.** Managers can acknowledge or resolve incidents from the token details. Resolve asks for a reason. TokenTimer also resolves the expiry incident after confirmed managed-certificate revocation or decommissioning. A pending or failed action leaves the incident open. See [PagerDuty setup](docs/PAGERDUTY.md).
 
 ### Fixed
+
+- **Approved jobs remain discoverable while queued.** The Jobs filter **Approved (queued)** includes human-approved jobs waiting for an agent, with matching pagination totals.
+- **Setup invitations respect workspace access.** Viewer and unresolved-role sessions keep management controls hidden. Setup copy describes the asset/site alert inventory rather than declaring the whole workspace empty.
 
 - **Rollout authorization follows current workspace authority.** **Operator action:** apply migration 98 with matching API and worker images. Request a new rollout and, if required, fresh approval to continue pre-upgrade work; changes to manager membership, workspace ownership, pause state or approval policy also require a new request. Existing deployment evidence is retained.
 

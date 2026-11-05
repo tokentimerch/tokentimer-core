@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-05 against main eeacfc1b (v0.19.0 draft).
+Last reviewed: 2026-11-06 against main 62ef05a7 (v0.19.0 draft). Other
 certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
 
 This page is the repository milestone index: what Core takes next, what must
@@ -91,10 +91,9 @@ called stable while it is open.
 - **MCP operator interface**
   ([#502](https://github.com/tokentimerch/tokentimer-core/issues/502),
   implementation [PR #406](https://github.com/tokentimerch/tokentimer-core/pull/406)).
-  Workspace-scoped queries, secure enrollment and approval-gated renewal
-  requests are in development, not released. General token CRUD and
-  text-to-token extraction are later follow-ons. Cloud and Enterprise
-  adoption is separate.
+  Scoped inventory queries and updates, contact and invitation actions,
+  remote sign-in, and ACME issuance and renewal requests ship in 0.19.0.
+  Deletes and provider-side actions remain follow-on work.
 
 ---
 

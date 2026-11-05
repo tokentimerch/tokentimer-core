@@ -477,7 +477,13 @@ export const handleApiError = (error, customMessage = null) => {
   // error message twice (e.g. "Webhook blocked: ... private/reserved IP").
   const isWebhookTest = requestUrl.includes('/api/test-webhook');
 
-  if (message && !suppressToast && !isIntegrationScan && !isWebhookTest) {
+  if (
+    message &&
+    !suppressToast &&
+    !error.config?._suppressToast &&
+    !isIntegrationScan &&
+    !isWebhookTest
+  ) {
     const shortMessage = `${
       message.split(
         /\. (Clear cache|Generate|If this persists|Reference:|Verify|Ensure|Wait)/

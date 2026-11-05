@@ -139,7 +139,11 @@ async function listCertificateIdentities({
   includeObservedRetired = false,
   unmanaged,
   identityId,
+  // Opt-in: let an id lookup also resolve a provisional (fingerprint-less) certificate.
+  includeProvisional = false,
   q,
+  restrictedSearch = false,
+  expiresBefore = null,
   sort,
   direction,
   canReadTopology = false,
@@ -158,7 +162,11 @@ async function listCertificateIdentities({
     if (!UUID_PATTERN.test(String(identityId)))
       fail("CERTOPS_CERTIFICATE_NOT_FOUND", "Certificate not found");
     params.push(identityId);
-    conditions.push(`kind = 'identity' AND id = $${params.length}`);
+    conditions.push(
+      includeProvisional
+        ? `id = $${params.length}`
+        : `kind = 'identity' AND id = $${params.length}`,
+    );
   }
   if (normalizedStatus) {
     params.push(normalizedStatus);
@@ -201,10 +209,31 @@ async function listCertificateIdentities({
         ? "(open_period_id IS NOT NULL OR (still_observed AND lifecycle_status IN ('revoked','decommissioned')))"
         : "open_period_id IS NOT NULL",
     );
+  if (expiresBefore instanceof Date && !Number.isNaN(expiresBefore.getTime())) {
+    params.push(expiresBefore.toISOString());
+    conditions.push(`(not_after IS NOT NULL AND not_after <= $${params.length}::timestamptz)`);
+  }
   if (search) {
     params.push(search.q.toLowerCase());
     const textParam = params.length;
-    const textMatch = `(
+    // Operator connections search only what the operator projection can show:
+    // names, issuer and subject alternative names. The full search below also
+    // reads certificate bodies, lifecycle reasons, key references and deployed
+    // paths, so a match there would reveal fields a connection must not see.
+    // Operators see the same value that is displayed, nothing else: a
+    // non-displayed label must not be confirmable by searching for it.
+    const restrictedTextMatch = `(
+      position($${textParam} in lower(COALESCE(common_name, ''))) > 0 OR
+      position($${textParam} in lower(COALESCE(display_name, ''))) > 0 OR
+      position($${textParam} in lower(COALESCE(issuer, ''))) > 0 OR
+      EXISTS (
+        SELECT 1 FROM certops_identity_detail_history history
+        WHERE kind = 'identity' AND history.workspace_id = $1
+          AND history.identity_id = candidates.id
+          AND position($${textParam} in lower(COALESCE(history.certificate_details->>'subjectAltNames', ''))) > 0
+      )
+    )`;
+    const fullTextMatch = `(
       position($${textParam} in lower(COALESCE(common_name, ''))) > 0 OR
       position($${textParam} in lower(COALESCE(managed_name, ''))) > 0 OR
       position($${textParam} in lower(COALESCE(display_name, ''))) > 0 OR
@@ -246,6 +275,7 @@ async function listCertificateIdentities({
             WHERE position($${textParam} in lower(property.value)) > 0)
       )
     )`;
+    const textMatch = restrictedSearch === true ? restrictedTextMatch : fullTextMatch;
     if (search.fingerprintNeedle) {
       params.push(search.fingerprintNeedle);
       conditions.push(
@@ -284,6 +314,7 @@ async function listCertificateIdentities({
     UNION SELECT o.fingerprint_sha256 FROM certops_unmanaged_observations o WHERE o.workspace_id = $1
       AND o.domain_monitor_id IS NOT NULL AND o.captured_at >= NOW() - INTERVAL '24 hours'`;
   // Count and page share one PostgreSQL snapshot, including provisional sources.
+  // Later discovery of an issued leaf must not hide its active renewal source.
   const page = await client.query(
     `WITH representatives AS (
     SELECT DISTINCT ON (a.identity_id) a.identity_id, mc.*,
@@ -293,6 +324,7 @@ async function listCertificateIdentities({
     JOIN managed_certificates mc ON mc.id = p.managed_certificate_id AND mc.workspace_id = p.workspace_id
     WHERE a.workspace_id = $1 ${identityId ? "AND a.identity_id = $2" : ""}
     ORDER BY a.identity_id, (p.ended_at IS NULL AND p.current_identity_id = a.identity_id) DESC,
+      (p.ended_at IS NULL AND p.current_identity_id = a.identity_id AND mc.profile_id IS NOT NULL) DESC,
       a.associated_at DESC, a.id DESC
   ), detail_tokens AS (
     SELECT h.identity_id, token.id AS token_id
