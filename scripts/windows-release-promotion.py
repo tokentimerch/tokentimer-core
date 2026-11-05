@@ -5,6 +5,8 @@ matrix and fetches reports from their fixed GitHub workflows. It neither
 authenticates Azure CMS inventories nor authorizes or performs publication.
 """
 import importlib.util
+import hashlib
+from collections.abc import Mapping
 import json
 from pathlib import Path
 from types import MappingProxyType
@@ -83,15 +85,48 @@ def stage_candidate(directory, candidate, filenames):
     return metadata, names, assets
 
 
+def _validate_staged(staged):
+    """Recheck the complete captured bytes before any evidence is requested."""
+    if not isinstance(staged, tuple) or len(staged) != 3:
+        raise ValueError("Invalid staged candidate")
+    metadata, names, assets = staged
+    if not isinstance(metadata, bytes) or not isinstance(names, Mapping) or not isinstance(assets, Mapping):
+        raise ValueError("Invalid staged candidate")
+    try:
+        candidate = json.loads(metadata)
+        _candidate(candidate)
+        if json.dumps(candidate, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf8") != metadata:
+            raise ValueError("Invalid staged candidate metadata")
+        if set(names) != ARCHES or any(not isinstance(names[arch], Mapping) or set(names[arch]) != evidence.ROLES for arch in ARCHES):
+            raise ValueError("Incomplete staged asset mapping")
+        names = {arch: dict(names[arch]) for arch in ARCHES}
+        keys = [names[arch][role] for arch in ARCHES for role in evidence.ROLES]
+        if any(not isinstance(key, str) for key in keys) or len({key.lower() for key in keys}) != len(keys) or set(assets) != set(keys):
+            raise ValueError("Invalid staged assets")
+        captured = dict(assets)
+        for arch in ARCHES:
+            for role in evidence.ROLES:
+                data = captured[names[arch][role]]
+                if not isinstance(data, bytes) or hashlib.sha256(data).hexdigest() != candidate["architectures"][arch][role]:
+                    raise ValueError("Staged asset digest mismatch")
+            archive_name, sbom_name = names[arch]["archive"], names[arch]["sbom"]
+            artifact.validate_binding(captured[archive_name], captured[sbom_name], captured[names[arch]["inventory"]],
+                                      archive_name=archive_name, sbom_name=sbom_name, version=candidate["version"],
+                                      architecture=arch, source_commit=candidate["sourceCommit"])
+            checksum = f'{candidate["architectures"][arch]["archive"]}  {archive_name}\n'.encode("ascii")
+            if captured[names[arch]["checksum"]] != checksum:
+                raise ValueError("Archive checksum sidecar mismatch")
+        return candidate
+    except (KeyError, TypeError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("Invalid staged candidate") from exc
+
 def verify_qualification(staged, run_ids, tokens):
     """Collect fixed-workflow reports, then fail closed pending qualification.
 
     Only run this in a trusted environment. No caller-supplied report or
     approval result is accepted, and this function cannot upload artifacts.
     """
-    metadata, names, assets = staged
-    candidate = json.loads(metadata)
-    _candidate(candidate)
+    candidate = _validate_staged(staged)
     if not isinstance(tokens, dict) or set(tokens) != set(evidence.EDITION_REPOS) or any(not isinstance(v, str) or not v for v in tokens.values()):
         raise ValueError("Missing scoped qualification credentials")
     slots = set(evidence.EDITION_REPOS) | set(evidence.NATIVE_SYSTEMS) | {"download-command"}

@@ -104,6 +104,26 @@ class PromotionTests(unittest.TestCase):
             self.assertEqual(fetch.call_count, len(slots) * 2)
             validate.assert_called_once()
 
+    def test_forged_staged_bytes_are_rejected_before_network(self):
+        metadata, names, assets = self.stage()
+        slots = set(promotion.evidence.EDITION_REPOS) | set(promotion.evidence.NATIVE_SYSTEMS) | {"download-command"}
+        runs = {arch: {slot: 1 for slot in slots} for arch in promotion.ARCHES}
+        tokens = {edition: "test-token" for edition in promotion.evidence.EDITION_REPOS}
+        with patch.object(promotion.evidence, "fetch_trusted_edition_pin") as fetch:
+            for arch in promotion.ARCHES:
+                for role in promotion.evidence.ROLES:
+                    altered = dict(assets)
+                    altered[names[arch][role]] = b"substituted"
+                    with self.subTest(arch=arch, role=role), self.assertRaises(ValueError):
+                        promotion.verify_qualification((metadata, names, altered), runs, tokens)
+            extra = dict(assets)
+            extra["unexpected"] = b"extra"
+            with self.assertRaises(ValueError):
+                promotion.verify_qualification((metadata, names, extra), runs, tokens)
+            with self.assertRaises(ValueError):
+                promotion.verify_qualification((metadata + b" ", names, assets), runs, tokens)
+            fetch.assert_not_called()
+
     def test_mismatched_edition_and_missing_runs_fail_closed(self):
         staged = self.stage()
         slots = set(promotion.evidence.EDITION_REPOS) | set(promotion.evidence.NATIVE_SYSTEMS) | {"download-command"}
