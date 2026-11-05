@@ -11,9 +11,12 @@ env:
   HELM_OCI_REPO: ghcr.io/${{ github.repository_owner }}/charts
 
 jobs:
-  # Stage 1a: build and push immutable versioned image tags only (never :latest).
+  # Stage 1a: scan both architectures, then publish their unchanged OCI index.
   build-and-push-docker:
     runs-on: ubuntu-latest
+    env:
+      GRYPE_CHECK_FOR_APP_UPDATE: "false"
+      SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:2681eccb8b02c495b013c2669cbf7f41d5c0b0b0e644e7c69bd3ea9bcb20641f # 1.22.3
     permissions:
       packages: write
       contents: read
@@ -45,22 +48,22 @@ jobs:
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
+      - name: Set up QEMU for both release architectures
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push ${{ matrix.component }}
+      - name: Build the multi-platform release archive
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          push: true
+          push: false
+          platforms: linux/amd64,linux/arm64
+          outputs: type=oci,dest=${{ runner.temp }}/release-image.tar
           tags: |
             ghcr.io/${{ github.repository_owner }}/tokentimer-core-${{ matrix.component }}:${{ steps.get_version.outputs.VERSION }}
           labels: |
@@ -69,6 +72,83 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Scan both release architectures
+        env:
+          SOURCE_REVISION: ${{ steps.source_identity.outputs.revision }}
+          SOURCE_REPOSITORY: https://github.com/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location \
+            https://github.com/anchore/grype/releases/download/v0.112.0/grype_0.112.0_linux_amd64.tar.gz \
+            -o "$RUNNER_TEMP/grype.tar.gz"
+          echo "acb14a030010fe9bdb9594b4ae108d9d14ef2f926d936aa0916dc62c89c058ea  $RUNNER_TEMP/grype.tar.gz" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/core-grype"
+          tar -xzf "$RUNNER_TEMP/grype.tar.gz" -C "$RUNNER_TEMP/core-grype" grype
+          sha256sum "$RUNNER_TEMP/release-image.tar" > "$RUNNER_TEMP/release-image.tar.sha256"
+          skopeo_local() {
+            docker run --rm --network none --volume "$RUNNER_TEMP:/release" "$SKOPEO_IMAGE" "$@"
+          }
+          skopeo_local inspect --raw oci-archive:/release/release-image.tar > "$RUNNER_TEMP/release-image.index.json"
+          jq --exit-status '[.manifests[].platform | select(.os == "linux") | .architecture] | unique == ["amd64", "arm64"]' \
+            "$RUNNER_TEMP/release-image.index.json"
+          SCAN_FAILED=0
+          for architecture in amd64 arm64; do
+            EXPECTED_DIGEST="$(jq --exit-status --raw-output --arg architecture "$architecture" \
+              '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == $architecture)] | if length == 1 then .[0].digest else error("Expected exactly one architecture manifest") end' \
+              "$RUNNER_TEMP/release-image.index.json")"
+            # Grype cannot select a nested OCI index reliably. Copy each exact manifest without rewriting it.
+            skopeo_local copy --override-os linux --override-arch "$architecture" \
+              --preserve-digests --digestfile "/release/release-image-$architecture.digest" \
+              oci-archive:/release/release-image.tar "oci-archive:/release/release-image-$architecture.tar"
+            test "$(cat "$RUNNER_TEMP/release-image-$architecture.digest")" = "$EXPECTED_DIGEST"
+            skopeo_local inspect --config "oci-archive:/release/release-image-$architecture.tar" | \
+              jq --exit-status --arg architecture "$architecture" --arg revision "$SOURCE_REVISION" --arg source "$SOURCE_REPOSITORY" \
+                '.architecture == $architecture and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision and .config.Labels["org.opencontainers.image.source"] == $source'
+            if ! "$RUNNER_TEMP/core-grype/grype" "oci-archive:$RUNNER_TEMP/release-image-$architecture.tar" \
+              --platform "linux/$architecture" --fail-on high --only-fixed -o json --file "$RUNNER_TEMP/release-image-$architecture.json"; then
+              SCAN_FAILED=1
+            fi
+            jq --exit-status --arg digest "$EXPECTED_DIGEST" \
+              '.source.target.manifestDigest == $digest and .descriptor.name == "grype"' \
+              "$RUNNER_TEMP/release-image-$architecture.json"
+            rm -- "$RUNNER_TEMP/release-image-$architecture.tar"
+          done
+          test "$SCAN_FAILED" -eq 0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish the scanned multi-platform archive
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/tokentimer-core-${{ matrix.component }}:${{ steps.get_version.outputs.VERSION }}
+        run: |
+          set -euo pipefail
+          sha256sum --check "$RUNNER_TEMP/release-image.tar.sha256"
+          EXPECTED_DIGEST="sha256:$(sha256sum "$RUNNER_TEMP/release-image.index.json" | cut -d ' ' -f 1)"
+          docker run --rm --volume "$RUNNER_TEMP:/release" --volume "$HOME/.docker:/auth:ro" "$SKOPEO_IMAGE" \
+            copy --all --preserve-digests --authfile /auth/config.json --digestfile /release/release-image.digest \
+            oci-archive:/release/release-image.tar "docker://$IMAGE"
+          test "$(cat "$RUNNER_TEMP/release-image.digest")" = "$EXPECTED_DIGEST"
+          ACTUAL_DIGEST="$(docker run --rm --volume "$HOME/.docker:/auth:ro" "$SKOPEO_IMAGE" \
+            inspect --raw --authfile /auth/config.json "docker://$IMAGE" | sha256sum | cut -d ' ' -f 1)"
+          test "$ACTUAL_DIGEST" = "${EXPECTED_DIGEST#sha256:}"
+
+      - name: Retain release image scan and digest evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-image-security-${{ matrix.component }}
+          path: |
+            ${{ runner.temp }}/release-image-amd64.json
+            ${{ runner.temp }}/release-image-arm64.json
+            ${{ runner.temp }}/release-image*.digest
+            ${{ runner.temp }}/release-image.index.json
+            ${{ runner.temp }}/release-image.tar.sha256
+          if-no-files-found: error
 
   sign-images:
     needs: build-and-push-docker

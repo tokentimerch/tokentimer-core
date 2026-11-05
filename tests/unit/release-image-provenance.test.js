@@ -20,7 +20,7 @@ function verifyPublisher(source) {
   assert.match(identity,/printf 'revision=%s\\n' "\$REVISION" >> "\$GITHUB_OUTPUT"/);
   const publishing=job.slice(publish);
   assert.match(publishing,/file: \$\{\{ matrix\.dockerfile \}\}/);
-  assert.match(publishing,/push: true/);
+  assert.match(publishing,/push: false/);
   assert.match(publishing,/org\.opencontainers\.image\.revision=\$\{\{ steps\.source_identity\.outputs\.revision \}\}/);
   assert.match(publishing,/org\.opencontainers\.image\.source=https:\/\/github\.com\/\$\{\{ github\.repository \}\}/);
 }
