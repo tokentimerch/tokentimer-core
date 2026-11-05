@@ -1,5 +1,8 @@
 "use strict";
 
+const { bindAuthenticatedAgent } = require("../../apps/api/services/certops/agentCredentialFence");
+const FIXTURE_CREDENTIAL_HASH = "a".repeat(64);
+
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
@@ -502,13 +505,13 @@ describe("agentDispatch.claimJobs approval-hash guard", () => {
   };
 
   function agentFixture() {
-    return {
+    return bindAuthenticatedAgent({
       id: "agent-row-1",
       workspaceId: WORKSPACE_A,
       status: "active",
       protocolVersion: "1.0.0",
       agentVersion: "1.0.0",
-    };
+    }, FIXTURE_CREDENTIAL_HASH);
   }
 
   function createMockPool(handler) {
@@ -517,6 +520,7 @@ describe("agentDispatch.claimJobs approval-hash guard", () => {
       query: async (text, params) => {
       if (String(typeof text === "string" ? text : text?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
         const sql = typeof text === "string" ? text : text?.text || "";
+        if (sql.includes("SELECT credential_hash FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH }] };
         state.queries.push({ text: sql, params });
         const trimmed = sql.trim().toUpperCase();
         if (

@@ -12,6 +12,7 @@
  */
 
 const { pool } = require("../../db/database");
+const { lockCurrentAgentCredential } = require("./agentCredentialFence");
 const crypto = require("node:crypto");
 const {
   consumeBootstrapToken,
@@ -720,6 +721,7 @@ async function recordHeartbeat({
     // Sequence enforcement runs after auth (route middleware) and before
     // the heartbeat write; a regression rejects the message with no
     // last_seen_at (or any other) update.
+    await lockCurrentAgentCredential(client, agent);
     await enforceSequence({ client, agentRowId: agent.id, envelope });
 
     // ADR-0012 decision 17 requires an audit event on a capability SET
@@ -1000,6 +1002,7 @@ async function claimJobs({
     // rejects the poll before any workspace lock or job selection. Inside
     // the transaction, so a claim that later fails rolls the counter back
     // with everything else.
+    await lockCurrentAgentCredential(client, agent);
     await enforceSequence({ client, agentRowId: agent.id, envelope });
 
     // H8 hard floor: blocked agents must not claim or execute jobs.
@@ -1678,6 +1681,7 @@ async function renewJobLease({
   }
 
   return await withTransaction(dbPool, async (client) => {
+    await lockCurrentAgentCredential(client, agent);
     await enforceSequence({ client, agentRowId: agent.id, envelope });
 
     const locked = await client.query(
@@ -2325,10 +2329,7 @@ async function ingestResult({
     // hanging, but acquiring the lock in the same order here removes the
     // possibility entirely; enforceSequence's own lock on this row later
     // in the transaction is then a no-op re-entrant lock.
-    await client.query(
-      `SELECT id FROM certops_agents WHERE id = $1 FOR UPDATE`,
-      [agent.id],
-    );
+    await lockCurrentAgentCredential(client, agent);
 
     const locked = await client.query(
       `SELECT id, status, claimed_by_agent_id, claim_id, operation,
