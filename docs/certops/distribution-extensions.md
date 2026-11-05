@@ -3,10 +3,10 @@
 This extends [the distribution operations runbook](wildcard-vault-operations.md).
 The existing onboarding wizard now guides [material-store setup and consumer
 validation](distribution-onboarding-lab.md), including reproducible UI checks
-and a manual customer/API lab walkthrough.
+and a manual operator/API lab walkthrough.
 One ordinary, wildcard or SAN certificate can be published once, then rolled
 out independently to authorized consumers. Sharing a key increases the impact
-of a consumer compromise. Use an explicit distribution group and customer
+of a consumer compromise. Use an explicit distribution group and operator
 opt-in; use local CNG enrollment when sharing is unnecessary.
 
 ## Availability and qualification
@@ -50,7 +50,7 @@ means Vault. New publication requests use `publicationDestination.type`:
 {
   "publicationDestination": {
     "type": "openbao-kv2",
-    "materialStoreRef": "customer",
+    "materialStoreRef": "primary",
     "issuanceProfileRef": "shared-web",
     "profileRevision": 1
   }
@@ -58,14 +58,14 @@ means Vault. New publication requests use `publicationDestination.type`:
 ```
 
 The group ID/workspace ID, issuer agent, CA, DNS zone/provider, SANs, algorithm
-and revisions must match the customer-local policy, just as in the existing
-Vault issuer example. Customer endpoints and credential paths belong only in
+and revisions must match the host-local policy, just as in the existing
+Vault issuer example. Provider endpoints and credential paths belong only in
 the agent's protected configuration. They are never API request fields.
 
 ## OpenBao
 
-Set `materialStores.customer.provider` to `openbao-kv2` in the existing Vault
-example, point `address` at the customer's HTTPS OpenBao listener, and retain
+Set `materialStores.primary.provider` to `openbao-kv2` in the existing Vault
+example, point `address` at your HTTPS OpenBao listener, and retain
 the KV v2 `mount`, `caFile`, `tokenFile` and group `prefix`. Use OpenBao Agent
 AppRole auto-auth to maintain the protected token sink; follow the existing
 [agent authentication walkthrough](vault-agent-authentication.md) with `bao`
@@ -92,27 +92,27 @@ mandatory scenarios at its recorded source/package hashes. Final merged HEAD and
 the exact production release artifact require their own validation; the Azure
 production capability remains disabled.
 
-Use a dedicated customer-controlled **public Azure Key Vault Secrets**
-namespace. Private endpoints are supported through customer DNS resolving the
+Use your own dedicated **public Azure Key Vault Secrets**
+namespace. Private endpoints are supported through your DNS resolving the
 normal `<name>.vault.azure.net` hostname and a trusted TLS chain. Managed HSM,
 sovereign clouds, non-exportable private keys, Certificates-only objects and
 bundles whose serialized UTF-8 JSON exceeds 25 KiB are rejected. Certificate
 metadata alone is never treated as deployable private material.
 
-Customer-local store configuration, abbreviated to show provider fields:
+Host-local store configuration, abbreviated to show provider fields:
 
 ```json
 {
   "materialStores": {
-    "customer": {
+    "primary": {
       "provider": "azure-key-vault",
-      "address": "https://customer-certops.vault.azure.net",
+      "address": "https://certops-example.vault.azure.net",
       "timeoutMs": 10000,
       "auth": {
         "type": "workload-identity",
         "tenantId": "11111111-1111-4111-8111-111111111111",
         "clientId": "22222222-2222-4222-8222-222222222222",
-        "assertionFile": "/run/customer-identity/token"
+        "assertionFile": "/run/workload-identity/token"
       },
       "groups": {
         "33333333-3333-4333-8333-333333333333": {
@@ -136,8 +136,8 @@ Azure auth alternatives are:
   implemented. Workload federation uses the public Azure authority and scope
   `https://vault.azure.net/.default`.
 - `{"type":"token-file","tokenFile":"C:\\ProgramData\\TokenTimer\\azure-token.json"}`
-  for a customer-managed renewable token sink. File contents are
-  `{"accessToken":"<customer-local bearer token>","expiresOn":"<ISO timestamp>"}`;
+  for an operator-managed renewable token sink. File contents are
+  `{"accessToken":"<host-local bearer token>","expiresOn":"<ISO timestamp>"}`;
   numeric `expiresOn` is epoch **milliseconds**. Keep the sink and its parent
   owner/SYSTEM-only (0600/0700 on Linux). Never paste its contents into TokenTimer.
 
@@ -151,7 +151,7 @@ Prefer a custom Azure RBAC data role: consumers need only
 secret version-list metadata access (`readMetadata/action`) and `setSecret/action`.
 Legacy access policies use **get** for consumers and **get/list/set** for issuers.
 No certificate/key APIs or delete/purge/recover permissions are needed. Scope
-the identity to the test/production vault or namespace as customer policy
+the identity to the test/production vault or namespace as your policy
 permits; broad built-in administrator roles are unnecessary. Ensure no other
 writer can publish into the agent's deterministic secret names.
 
@@ -192,7 +192,7 @@ configuration uses the existing binding/profile authorization fields plus:
     "reference": "iis-web-01",
     "store": "My",
     "binding": {
-      "site": "Customer web",
+      "site": "Example web",
       "address": "*",
       "port": 443,
       "sniHost": "web.example.com",
@@ -256,7 +256,7 @@ It clears uncertainty only after installed identity/key permissions, exact
 binding and every listener match the original intent. Then retry that original
 signed job and resume the authorized rollout.
 
-If the listener does not match, restore the intended state under customer change
+If the listener does not match, restore the intended state under your change
 control before reconciliation. Do not clear an uncertain marker just to run a
 different generation. To roll back, request a new rollout generation selecting
 an authorized retained material version whose identity remains permitted and

@@ -303,7 +303,7 @@ which is the SSRF private-IP guard.
 
 ### CertOps Controller
 
-The customer-cluster CertOps controller is a separate image and is disabled by
+The in-cluster CertOps controller is a separate image and is disabled by
 default. When enabled, its default `observe` mode watches cert-manager public
 status and reports outbound to the TokenTimer API. TokenTimer never connects
 inbound to Kubernetes and no kubeconfig is uploaded. Explicit `provision` mode
@@ -415,7 +415,7 @@ chart, rendered as the `CERTOPS_ENABLED` env var) is a separate outer gate.
 | CertOps controller | TokenTimer API | Outbound HTTP(S): observations, command polling, events, evidence |
 | CertOps controller | Kubernetes API | Outbound: list/watch Certificate and CertificateRequest; optional Secret `get`; owned Certificate create/patch in provision mode |
 | cert-manager | Kubernetes API | In-cluster reconciliation of Certificate/CertificateRequest and TLS Secret resources |
-| TokenTimer API | customer Kubernetes API | No connection |
+| TokenTimer API | Your Kubernetes API | No connection |
 
 When `networkPolicy.enabled` is also true,
 `networkPolicy.egress.kubeApiServerCidrs` must list the Kubernetes API server

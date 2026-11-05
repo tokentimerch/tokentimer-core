@@ -25,7 +25,7 @@ let any agent forge jobs for any other; they are not acceptable.
   public key (`signingKeyId`) and verify the signature before execution. HMAC is
   rejected.
 - This signing key is a platform operational key only. It is never used for
-  certificate issuance and never holds customer PKI/TLS key material.
+  certificate issuance and never holds PKI/TLS key material.
 - **Replay protection** envelope frozen in
   `packages/contracts/certops/job-payload.schema.json`: `jobId`, `attemptId`,
   `issuedAt`, `expiresAt`, `workspaceId`, `agentId`/selector, `nonce`,

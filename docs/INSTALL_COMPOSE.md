@@ -119,7 +119,7 @@ Continue with [First asset and alert check](FIRST_ASSET.md). For settings and re
 ## Private-CA Vault connections
 
 The API forwards `NODE_EXTRA_CA_CERTS`, but the referenced PEM CA file must also
-be mounted in its container. Use a customer Compose override, for example:
+be mounted in its container. Use your own Compose override, for example:
 
 ```yaml
 services:
@@ -133,5 +133,5 @@ services:
 Run Compose with the main file and this override. Use only the public CA
 certificate, keep TLS verification enabled, and verify the mount exists before
 starting the API. This is the server inventory scanner's trust configuration;
-customer distribution agents configure Vault trust independently on their hosts.
+distribution agents configure Vault trust independently on their hosts.
 The production Compose file requires an explicit non-empty `DB_PASSWORD`.
