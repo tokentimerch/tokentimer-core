@@ -716,6 +716,7 @@ function resultPool({ jobRow = {}, jobUpdate = {} } = {}) {
         return { rows: [] };
       }
       if (sql.includes("SET last_sequence")) return { rows: [{ id: "agent-row-1" }] };
+      if (sql.includes("to_regclass('certops_agent_credential_rotations')")) return { rows: [{ rotation_table: null }] };
       if (sql.includes("SELECT credential_hash, status FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH, status: "active" }] };
       if (sql.includes("FROM certops_agents")) return { rows: [{ id: "agent-row-1" }] };
       if (sql.includes("INSERT INTO certops_outbox")) {

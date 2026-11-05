@@ -1637,3 +1637,19 @@ test("rotation transport never exposes server response contents in errors or log
     assert.equal(JSON.stringify(calls[0].parsedBody).includes(NEW_ROTATION_CREDENTIAL), false);
   } finally { console.error = originalError; console.warn = originalWarn; console.log = originalLog; }
 });
+
+test("rotation acknowledgement retries with the candidate bearer without exposing errors", async () => {
+  const calls = stubFetch([{ throws: new Error(`lost ${NEW_ROTATION_CREDENTIAL}`) }, { status: 200, json: { state: "acknowledged" } }]);
+  const client = createProtocolClient({ serverUrl: "https://example.test", agentId: "agent-1", protocolVersion: "1.0.0" });
+  const params = { operationId: ROTATION_OPERATION, candidateCredential: NEW_ROTATION_CREDENTIAL };
+  await assert.rejects(client.acknowledgeCredentialRotation(params), error => {
+    assert.equal(error.code, AGENT_PROTOCOL_ERROR_CODES.NETWORK_ERROR);
+    assert.equal(String(error).includes(NEW_ROTATION_CREDENTIAL), false);
+    assert.equal(error.cause, undefined);
+    return true;
+  });
+  assert.deepEqual(await client.acknowledgeCredentialRotation(params), { state: "acknowledged" });
+  assert.deepEqual(calls[0].parsedBody, { operationId: ROTATION_OPERATION });
+  assert.equal(calls[0].init.headers.authorization, `Bearer ${NEW_ROTATION_CREDENTIAL}`);
+  assert.equal(calls[0].init.headers.authorization, calls[1].init.headers.authorization);
+});

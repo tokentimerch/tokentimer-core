@@ -1023,6 +1023,20 @@ async function claimJobs({
     // with everything else.
     await lockCurrentAgentCredential(client, agent);
     await enforceSequence({ client, agentRowId: agent.id, envelope });
+    // Persisted in-progress rotations must block claims even if an operator
+    // later disables the feature flag. Older databases may not have the table;
+    // with the feature enabled that schema mismatch fails closed.
+    const rotationSchema = await client.query("SELECT to_regclass('certops_agent_credential_rotations') AS rotation_table");
+    if (!rotationSchema.rows[0]?.rotation_table) {
+      if (env.CERTOPS_AGENT_ROTATION_ALL_API_FENCED === "true") {
+        throw serviceError("Agent rotation schema unavailable", "CERTOPS_AGENT_ROTATION_SCHEMA_UNAVAILABLE");
+      }
+    } else {
+      const pendingRotation = await client.query(`SELECT 1 FROM certops_agent_credential_rotations
+        WHERE agent_id = $1 AND (state = 'committed' OR (state = 'pending' AND expires_at > NOW())) LIMIT 1`, [agent.id]);
+      // Existing external effects still require separate reconciliation.
+      if (pendingRotation.rows.length) return { jobs: [], logStreams: [] };
+    }
 
     // H8 hard floor: blocked agents must not claim or execute jobs.
     // "outdated" remains advisory and does not reject claims.

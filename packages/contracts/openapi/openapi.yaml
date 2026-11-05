@@ -8799,6 +8799,34 @@ paths:
         "401": { description: Candidate authentication failed }
         "404": { description: Rotation disabled }
         "429": { description: Machine-token rate limit exceeded }
+  /api/v1/certops/agent/credential-rotation/acknowledge:
+    post:
+      tags: [CertOps Agent]
+      summary: Acknowledge a committed agent credential rotation
+      operationId: acknowledgeCertOpsAgentCredentialRotation
+      description: >-
+        Disabled unless the separate ACK gate is enabled. The client must
+        durably store the new credential before acknowledgement; the server
+        cannot verify disk durability. The current agent bearer is required.
+      security:
+        - agentCredentialAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId]
+              properties:
+                operationId: { type: string, pattern: '^[a-f0-9]{32}$' }
+      responses:
+        "200": { description: Acknowledged or previously acknowledged }
+        "400": { description: Invalid request }
+        "401": { description: Agent authentication failed or operation does not match }
+        "404": { description: Acknowledgement disabled }
+        "410": { description: Agent retired }
+        "429": { description: Machine-token rate limit exceeded }
   /api/v1/certops/agent/heartbeat:
     post:
       tags: [CertOps Agent]

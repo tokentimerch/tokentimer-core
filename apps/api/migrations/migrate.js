@@ -4891,6 +4891,11 @@ const migrations = [
     name: "agent_credential_rotations",
     sql: fs.readFileSync(require("path").join(__dirname, "099-agent-credential-rotations.sql"), "utf8"),
   },
+  {
+    version: 100,
+    name: "agent_credential_rotation_ack",
+    sql: fs.readFileSync(require("path").join(__dirname, "100-agent-rotation-ack.sql"), "utf8"),
+  },
 ];
 
 

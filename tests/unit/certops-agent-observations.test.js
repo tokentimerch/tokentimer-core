@@ -121,7 +121,8 @@ describe("persistAgentDiscoveryEvidenceBatch", () => {
     let rolledBack = false;
     const client = {
       async query(sql, params) {
-        if (sql.includes("SELECT credential_hash, status FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH, status: "active" }] };
+        if (sql.includes("to_regclass('certops_agent_credential_rotations')")) return { rows: [{ rotation_table: null }] };
+      if (sql.includes("SELECT credential_hash, status FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH, status: "active" }] };
         queries.push({ sql, params });
         if (sql === "BEGIN") {
           begun = true;
@@ -191,7 +192,8 @@ describe("persistAgentDiscoveryEvidenceBatch", () => {
     const queries = [];
     const client = {
       async query(sql, params) {
-        if (sql.includes("SELECT credential_hash, status FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH, status: "active" }] };
+        if (sql.includes("to_regclass('certops_agent_credential_rotations')")) return { rows: [{ rotation_table: null }] };
+      if (sql.includes("SELECT credential_hash, status FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH, status: "active" }] };
         queries.push({ sql, params });
         if (sql === "BEGIN" || sql === "COMMIT") return { rows: [] };
         if (sql.includes("SET last_sequence")) {
@@ -307,7 +309,8 @@ describe("persistAgentDiscoveryEvidenceBatch", () => {
     const queries = [];
     const client = {
       async query(sql, params) {
-        if (sql.includes("SELECT credential_hash, status FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH, status: "active" }] };
+        if (sql.includes("to_regclass('certops_agent_credential_rotations')")) return { rows: [{ rotation_table: null }] };
+      if (sql.includes("SELECT credential_hash, status FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH, status: "active" }] };
         queries.push({ sql, params });
         if (sql === "BEGIN" || sql === "COMMIT") return { rows: [] };
         if (sql.includes("SET last_sequence")) {
@@ -1088,7 +1091,8 @@ describe("persistAgentDiscoveryEvidenceBatch - Windows discovery persistence (ob
   function buildWindowsClient(queries) {
     return {
       async query(sql, params) {
-        if (sql.includes("SELECT credential_hash, status FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH, status: "active" }] };
+        if (sql.includes("to_regclass('certops_agent_credential_rotations')")) return { rows: [{ rotation_table: null }] };
+      if (sql.includes("SELECT credential_hash, status FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH, status: "active" }] };
         queries.push({ sql, params });
         if (sql === "BEGIN" || sql === "COMMIT") return { rows: [] };
         if (sql.includes("SET last_sequence")) {

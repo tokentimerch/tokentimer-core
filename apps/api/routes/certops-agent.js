@@ -16,7 +16,7 @@
 
 const router = require("express").Router;
 const { CERTOPS_AGENT_CREDENTIAL_STALE } = require("../services/certops/agentCredentialFence");
-const { prepareCredentialRotation, authenticateRotationCandidate, confirmCredentialRotation, isCredentialRotationEnabled } = require("../services/certops/agentCredentialRotation");
+const { prepareCredentialRotation, authenticateRotationCandidate, confirmCredentialRotation, acknowledgeCredentialRotation, isCredentialRotationEnabled, isCredentialRotationAckEnabled } = require("../services/certops/agentCredentialRotation");
 const { bearerTokenFromRequest, hasSessionIdentity } = require("../middleware/api-token-auth");
 const {
   createAgentBootstrapTokenAuth,
@@ -742,6 +742,30 @@ function createCertOpsAgentRouter(options = {}) {
         }
         const result = await (options.confirmCredentialRotation || confirmCredentialRotation)({
           dbPool: options.dbPool, operationId: req.body.operationId, rawCandidate: bearerTokenFromRequest(req).rawToken, env: options.rotationEnv,
+        });
+        return res.status(200).json(result);
+      } catch (error) { return handleAgentRouteError(res, error); }
+    },
+  );
+
+  certOpsAgentRouter.post(
+    "/api/v1/certops/agent/credential-rotation/acknowledge",
+    preAuthRateLimitFallback,
+    (req, res, next) => {
+      if (!isCredentialRotationAckEnabled(options.rotationEnv || process.env)) {
+        return res.status(404).json({ error: "Endpoint not found", code: "NOT_FOUND" });
+      }
+      return next();
+    },
+    ...credentialChain.slice(1),
+    requireNonRetiredAgent,
+    async (req, res) => {
+      try {
+        if (!req.body || typeof req.body !== "object" || Array.isArray(req.body) || Object.keys(req.body).join(",") !== "operationId") {
+          const error = new Error("Invalid rotation request"); error.code = "CERTOPS_AGENT_ROTATION_INVALID"; throw error;
+        }
+        const result = await (options.acknowledgeCredentialRotation || acknowledgeCredentialRotation)({
+          dbPool: options.dbPool, agent: req.certopsAgent, operationId: req.body.operationId, env: options.rotationEnv,
         });
         return res.status(200).json(result);
       } catch (error) { return handleAgentRouteError(res, error); }

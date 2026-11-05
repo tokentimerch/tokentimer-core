@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const { randomUUID } = require("node:crypto");
 const { Client, Pool } = require("pg");
 const { generateAgentCredential, validateAgentCredential } = require("../../apps/api/services/certops/agentCredentials");
-const { prepareCredentialRotation, confirmCredentialRotation } = require("../../apps/api/services/certops/agentCredentialRotation");
+const { prepareCredentialRotation, confirmCredentialRotation, acknowledgeCredentialRotation } = require("../../apps/api/services/certops/agentCredentialRotation");
 const connection = { host: process.env.DB_HOST || "localhost", port: Number(process.env.DB_PORT || 5432), user: process.env.DB_USER || "tokentimer", password: process.env.DB_PASSWORD || "password" };
 const database = `agent_rotation_${process.pid}_${Date.now()}`;
 const env = { CERTOPS_AGENT_ROTATION_ALL_API_FENCED: "true" };
@@ -19,7 +19,9 @@ describe("Agent credential rotation on PostgreSQL", function () {
       credential_prefix text UNIQUE, credential_hash text UNIQUE, status text, protocol_version text,
       agent_version text, pinned_signing_key_id text, last_seen_at timestamptz, retired_at timestamptz, updated_at timestamptz)`);
     await db.query(require("node:fs").readFileSync(require("node:path").join(__dirname, "../../apps/api/migrations/099-agent-credential-rotations.sql"), "utf8"));
+    await db.query(require("node:fs").readFileSync(require("node:path").join(__dirname, "../../apps/api/migrations/100-agent-rotation-ack.sql"), "utf8"));
     await db.query("CREATE TABLE certops_agent_registration_replays (workspace_id uuid, agent_id text)");
+    await db.query("CREATE TABLE certificate_jobs (id uuid, claimed_by_agent_id uuid, status text, workspace_id uuid, needs_operator_reconciliation boolean DEFAULT false)");
   });
   after(async () => {
     if (db) await db.end();
@@ -79,6 +81,38 @@ describe("Agent credential rotation on PostgreSQL", function () {
     assert.equal((await validateAgentCredential({ client: db, rawCredential: failed.old.plaintextCredential })).valid, true);
     assert.equal((await validateAgentCredential({ client: db, rawCredential: failed.next.plaintextCredential })).valid, false);
     assert.equal((await db.query("SELECT state FROM certops_agent_credential_rotations WHERE agent_id = $1", [failed.agent.id])).rows[0].state, "pending");
+  });
+  it("blocks preparation and confirmation while a job is claimed or running", async () => {
+    const f = await fixture(), jobId = randomUUID();
+    await db.query("INSERT INTO certificate_jobs (id, claimed_by_agent_id, status, workspace_id) VALUES ($1, $2, 'claimed', $3)", [jobId, f.agent.id, f.workspaceId]);
+    await assert.rejects(prep(f), { code: "CERTOPS_AGENT_ROTATION_CONFLICT" });
+    await db.query("UPDATE certificate_jobs SET status = 'orphaned_unknown_effect', claimed_by_agent_id = NULL, needs_operator_reconciliation = TRUE WHERE id = $1", [jobId]);
+    await assert.rejects(prep(f), { code: "CERTOPS_AGENT_ROTATION_CONFLICT" });
+    await db.query("UPDATE certificate_jobs SET status = 'succeeded', needs_operator_reconciliation = FALSE WHERE id = $1", [jobId]);
+    await prep(f);
+    await db.query("UPDATE certificate_jobs SET status = 'running', claimed_by_agent_id = $2 WHERE id = $1", [jobId, f.agent.id]);
+    await assert.rejects(confirm(f), { code: "CERTOPS_AGENT_ROTATION_CONFLICT" });
+    assert.equal((await validateAgentCredential({ client: db, rawCredential: f.old.plaintextCredential })).valid, true);
+  });
+  it("requires a separate ACK gate and the current credential; retries ACK without losing the receipt", async () => {
+    const f = await fixture(); await prep(f); await confirm(f);
+    const current = (await validateAgentCredential({ client: db, rawCredential: f.next.plaintextCredential })).agent;
+    const ackEnv = { ...env, CERTOPS_AGENT_ROTATION_ACK_ENABLED: "true" };
+    const ack = (extra = {}) => acknowledgeCredentialRotation({ dbPool: db, agent: current, operationId: f.operationId, env: ackEnv, audit, ...extra });
+    await assert.rejects(ack({ env }), { code: "CERTOPS_AGENT_ROTATION_DISABLED" });
+    await assert.rejects(ack({ agent: f.agent }), { code: "CERTOPS_AGENT_CREDENTIAL_STALE" });
+    await assert.rejects(ack({ operationId: randomUUID().replaceAll("-", "") }), { code: "CERTOPS_AGENT_ROTATION_UNAUTHORIZED" });
+    await assert.rejects(ack({ audit: async () => { throw new Error("audit unavailable"); } }));
+    assert.equal((await db.query("SELECT state FROM certops_agent_credential_rotations WHERE agent_id = $1", [f.agent.id])).rows[0].state, "committed");
+    let ackAudits = 0;
+    const auditOnce = async () => { ackAudits++; };
+    assert.deepEqual(await ack({ audit: auditOnce }), { state: "acknowledged" });
+    assert.deepEqual(await ack({ audit: auditOnce }), { state: "acknowledged" });
+    assert.equal(ackAudits, 1);
+    assert.deepEqual(await confirm(f), { state: "committed" });
+    const next = generateAgentCredential();
+    assert.deepEqual(await prep(f, { agent: current, operationId: randomUUID().replaceAll("-", ""), candidatePrefix: next.credentialPrefix, candidateHash: next.credentialHash }), { state: "pending" });
+    await assert.rejects(ack(), { code: "CERTOPS_AGENT_ROTATION_UNAUTHORIZED" });
   });
   it("rejects expired preparations and an agent retired before confirmation", async () => {
     const expired = await fixture(); await prep(expired);
