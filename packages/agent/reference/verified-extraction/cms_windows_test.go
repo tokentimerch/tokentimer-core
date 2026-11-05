@@ -5,9 +5,11 @@ package verifiedextraction
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestVerifyCMSRejectsUntrustedInputs(t *testing.T) {
@@ -62,5 +64,28 @@ $pin=([BitConverter]::ToString($sha.ComputeHash($cert.RawData))).Replace('-','')
 	}
 	if _, err := VerifyCMS(encoded, strings.Repeat("a", 64)); err == nil {
 		t.Fatal("wrong publisher accepted")
+	}
+}
+
+func TestSystemPowerShellBoundsOutputDuringRead(t *testing.T) {
+	out, err := runSystemPowerShell(`[Console]::Out.Write(('x' * (16MB + 1)))`, nil)
+	if err == nil || out != nil {
+		t.Fatal("oversized verifier output accepted")
+	}
+	out, err = runSystemPowerShell(`[Console]::Out.Write('ok')`, nil)
+	if err != nil || string(out) != "ok" {
+		t.Fatalf("ordinary verifier output rejected: %v", err)
+	}
+}
+
+func TestSystemPowerShellBoundsInheritedOutputPipe(t *testing.T) {
+	start := time.Now()
+	script := `$exe=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'; Start-Process -FilePath $exe -ArgumentList '-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 8' -NoNewWindow | Out-Null`
+	out, err := runSystemPowerShell(script, nil)
+	if !errors.Is(err, exec.ErrWaitDelay) || out != nil {
+		t.Fatalf("expected inherited pipe timeout, got %v", err)
+	}
+	if time.Since(start) > 6*time.Second {
+		t.Fatal("inherited output pipe was not bounded")
 	}
 }
