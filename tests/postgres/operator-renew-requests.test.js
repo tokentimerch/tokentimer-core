@@ -209,7 +209,7 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
   });
 
   it("reviews issuance, follows workspace approval, and does not repeat a request", async () => {
-    const c = await newConnection(manager, ["mcp:identity:read", "mcp:issue:request"]);
+    const c = await newConnection(manager, ["mcp:identity:read", "mcp:certs:read", "mcp:jobs:read", "mcp:issue:request"]);
     const agent = (await pool.query(
       `INSERT INTO certops_agents(workspace_id,agent_id,name,agent_version,protocol_version,credential_prefix,credential_hash,status)
        VALUES($1,$2,'Issuance fixture','0.18.0','1.0.0',$3,$4,'active') RETURNING id`,
@@ -242,6 +242,12 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
         assert.equal(submitted.status, 200, JSON.stringify(submitted.body));
         assert.equal(tools.find(tool => tool.name === "tt_request_issuance").validateOutput(submitted.body), true);
         assert.equal(submitted.body.state, approval ? "pending_approval" : "pending");
+        const source = await pool.query("SELECT subject_id FROM certificate_jobs WHERE id=$1", [submitted.body.jobId]);
+        const certificateId = source.rows[0].subject_id;
+        const certificates = await get("/api/v1/operator/certificates", c.credential);
+        assert.ok(certificates.body.items.some(item => item.id === certificateId && item.kind === "provisional"));
+        const jobs = await get(`/api/v1/operator/jobs?subjectId=${certificateId}`, c.credential);
+        assert.ok(jobs.body.items.some(item => item.id === submitted.body.jobId));
         await pool.query("UPDATE operator_action_plans SET created_at=NOW()-INTERVAL '2 minutes',expires_at=NOW()-INTERVAL '1 second' WHERE id=$1", [preview.body.planId]);
         const changedReplay = await submitIssue(preview.body, requestId, { ...issuance, sans: ["example.test", "other.example.test"] });
         assert.equal(changedReplay.status, 409);

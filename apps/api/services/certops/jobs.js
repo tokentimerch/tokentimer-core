@@ -2531,7 +2531,19 @@ async function listCertificateJobs(options) {
     params.push(options.certificateIdentityId);
     const identity = `$${params.length}`;
     conditions.push(`(certificate_identity_id = ${identity}::uuid OR
-      (subject_type IS DISTINCT FROM 'managed_certificate' AND subject_id = ${identity}::uuid::text))`);
+      (subject_type IS DISTINCT FROM 'managed_certificate' AND subject_id = ${identity}::uuid::text) OR
+      (subject_type = 'managed_certificate' AND operation = 'issue' AND certificate_identity_id IS NULL
+       AND subject_id = ${identity}::uuid::text AND EXISTS (
+         SELECT 1 FROM managed_certificates mc WHERE mc.workspace_id = certificate_jobs.workspace_id
+           AND mc.id = ${identity}::uuid AND mc.fingerprint_sha256 IS NULL
+           AND mc.source = 'agent_issuance' AND mc.status = 'provisioning'
+           AND EXISTS (SELECT 1 FROM certops_management_periods period
+             WHERE period.workspace_id = mc.workspace_id AND period.managed_certificate_id = mc.id
+               AND period.ended_at IS NULL AND period.current_identity_id IS NULL)
+           AND NOT EXISTS (SELECT 1 FROM certops_management_periods period
+             JOIN certops_management_associations association ON association.period_id = period.id
+             WHERE period.workspace_id = mc.workspace_id AND period.managed_certificate_id = mc.id)
+       )))`);
   }
 
   const createdSince = normalizeJobCreatedSince(options.createdSince);

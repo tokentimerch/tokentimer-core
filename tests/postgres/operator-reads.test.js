@@ -768,6 +768,7 @@ describe("operator read routes on PostgreSQL", { concurrency: false }, () => {
     });
 
     it("keeps the historical job under the certificate identity it ran against after rotation", async () => {
+      await pool.query("UPDATE certificate_jobs SET status='failed', error_code='fixture_failure' WHERE id=$1", [injectedJob]);
       const nextFingerprint = crypto.randomBytes(32).toString("hex");
       await pool.query("UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=clock_timestamp() WHERE id=$1", [injectedCert.managedId, nextFingerprint]);
       const current = await pool.query("SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2", [workspaceId, nextFingerprint]);
@@ -776,6 +777,10 @@ describe("operator read routes on PostgreSQL", { concurrency: false }, () => {
       assert.ok(oldJobs.body.items.some(item => item.id === injectedJob && item.subjectId === injectedCert.identityId));
       const currentJobs = await get(`/api/v1/operator/jobs${q({ subjectId: current.rows[0].id })}`);
       assert.ok(!currentJobs.body.items.some(item => item.id === injectedJob));
+      const oldExplanation = await get(`/api/v1/operator/certificates/${injectedCert.identityId}/explain`);
+      const currentExplanation = await get(`/api/v1/operator/certificates/${current.rows[0].id}/explain`);
+      assert.ok(oldExplanation.body.reasons.some(reason => reason.code === "last_job_failed"));
+      assert.ok(!currentExplanation.body.reasons.some(reason => reason.code === "last_job_failed"));
     });
   });
 });

@@ -354,11 +354,11 @@ async function explainCertificate({ workspaceId, identityId, now = Date.now() })
     }
   }
 
-  if (record.managedCertificateId) {
+  if (record.identityId || record.managedCertificateId) {
     try {
       const recent = await listCertificateJobs({
         workspaceId,
-        subjectId: record.managedCertificateId,
+        certificateIdentityId: record.identityId || record.managedCertificateId,
         limit: 10,
         offset: 0,
       });
