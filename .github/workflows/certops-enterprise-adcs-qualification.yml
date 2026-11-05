@@ -146,6 +146,15 @@ jobs:
         if: failure() && inputs.debug_mode
         shell: pwsh
         run: Add-Content -Path $env:GITHUB_ENV -Value 'HOLD_FOR_DIAGNOSIS=1'
+      - name: Publish sanitized failure report before resource cleanup
+        if: failure() && !inputs.debug_mode
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: disposable-enterprise-adcs-failure${{ matrix.artifactSuffix }}
+          path: qualification-results/enterprise-adcs-real.json
+          if-no-files-found: ignore
       - name: Destroy owned temporary resources
         # Only a failed diagnostic run keeps its lab; the script verifies the expiry tag so the hourly janitor
         # still removes it. Every other run is torn down.
