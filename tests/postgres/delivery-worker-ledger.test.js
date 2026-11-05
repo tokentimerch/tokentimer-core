@@ -333,8 +333,9 @@ test("delivery worker records ledger outcomes and notifications on a migrated da
     [mixedId],
   );
   const retry = verification.planManualRetry(mixedRow.channels, "email");
-  assert.equal(retry.ok, false);
-  assert.equal(retry.code, "NO_VERIFIED_RECIPIENTS");
+  assert.equal(retry.ok, true);
+  assert.deepEqual(retry.channels.retry, ["email"]);
+  assert.equal(retry.channels.outcomes.email, undefined);
   const reopen = verification.planManualRetry(mixedRow.channels, "webhooks");
   assert.equal(reopen.ok, true);
   assert.equal(reopen.channels.outcomes.email.reason, "eligibility");

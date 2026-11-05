@@ -755,6 +755,12 @@ function providerTerminalOutcome(outcome) {
   return outcome.terminal === true || outcome.state === "blocked";
 }
 
+function canRecheckRecipientOutcome(channel, outcome) {
+  return (channel === "email" || channel === "whatsapp")
+    && isEligibilityOutcome(outcome)
+    && (outcome.code === "NO_VERIFIED_RECIPIENTS" || outcome.code === "RECIPIENT_NOT_VERIFIED");
+}
+
 function planManualRetry(stored, requestedChannel) {
   const ledger = parseDeliveryLedger(stored);
   if (ledger.legacy) {
@@ -768,10 +774,12 @@ function planManualRetry(stored, requestedChannel) {
   }
   const outcomes = Object.assign(Object.create(null), ledger.outcomes);
   const known = ledger.required.length ? ledger.required.slice() : Object.keys(outcomes);
-  const eligible = ledger.retry.filter((channel) => {
+  const pending = ledger.retry.filter((channel) => {
     const outcome = outcomes[channel];
     return !outcome || (outcome.state !== "sent" && outcome.terminal !== true && outcome.state !== "blocked");
   });
+  const recheckable = known.filter((channel) => canRecheckRecipientOutcome(channel, outcomes[channel]));
+  const eligible = [...new Set([...pending, ...recheckable])];
   const permanent = known.filter((channel) => providerTerminalOutcome(outcomes[channel]));
   const channel = String(requestedChannel || "").trim() || (eligible.length === 1 ? eligible[0] : "");
   if (!channel) {
@@ -781,13 +789,18 @@ function planManualRetry(stored, requestedChannel) {
   }
   const outcome = outcomes[channel];
   if (outcome && outcome.state === "sent") return { ok: false, code: "ALREADY_DELIVERED", eligible, format: "ledger" };
-  if (isEligibilityOutcome(outcome)) {
+  const recheckRecipient = canRecheckRecipientOutcome(channel, outcome);
+  if (isEligibilityOutcome(outcome) && !recheckRecipient) {
     return { ok: false, code: outcome.code || "RECIPIENT_NOT_VERIFIED", eligible, format: "ledger" };
   }
   if (!known.includes(channel) && !eligible.includes(channel)) {
     return { ok: false, code: "CHANNEL_NOT_ELIGIBLE", eligible, format: "ledger" };
   }
-  if (providerTerminalOutcome(outcome)) {
+  if (recheckRecipient) {
+    // An eligibility result describes the previous attempt. The worker
+    // will read live consent before sending and retain prior delivery logs.
+    delete outcomes[channel];
+  } else if (providerTerminalOutcome(outcome)) {
     const next = {
       ...outcome,
       state: "failed",
