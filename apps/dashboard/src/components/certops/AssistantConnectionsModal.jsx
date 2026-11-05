@@ -89,7 +89,9 @@ export default function AssistantConnectionsModal({
                 <Text fontWeight='semibold' fontSize='sm'>
                   {data.frozenWorkspaceName
                     ? 'Connections in this workspace'
-                    : isAdmin ? 'Workspace connections' : 'Your connections'}
+                    : isAdmin
+                      ? 'Workspace connections'
+                      : 'Your connections'}
                 </Text>
                 <Stack spacing={3} divider={<Divider />}>
                   {!data.connections.length ? (
