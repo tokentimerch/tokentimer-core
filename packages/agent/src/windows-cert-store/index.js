@@ -1806,7 +1806,10 @@ async function removePendingRequestEntries({
   const hashes = new Set();
   for (const block of String(listing.stdout || "").split(/^=+.*=+\s*$/m)) {
     if (!exactContainer.test(block)) continue;
-    const hash = /\(sha1\)\s*:\s*([0-9a-f ]{40,59})\s*$/im.exec(block);
+    // Localized certutil output can contain a non-UTF-8 spacing byte before
+    // the colon, decoded by Node as U+FFFD. Accept it only as a separator;
+    // the exact container and a complete 40-hex thumbprint remain required.
+    const hash = /\(sha1\)(?:[^\S\r\n]|\uFFFD)*:(?:[^\S\r\n]|\uFFFD)*([0-9a-f ]{40,59})(?:[^\S\r\n]|\uFFFD)*$/im.exec(block);
     const normalized = hash ? hash[1].replace(/\s+/g, "").toUpperCase() : "";
     if (THUMBPRINT_PATTERN.test(normalized)) hashes.add(normalized);
   }
