@@ -8740,6 +8740,65 @@ paths:
           description: Security audit sink unavailable while rejecting private material
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/certops/agent/credential-rotation/prepare:
+    post:
+      tags: [CertOps Agent]
+      summary: Prepare a new agent credential
+      operationId: prepareCertOpsAgentCredentialRotation
+      description: >-
+        Disabled unless CERTOPS_AGENT_ROTATION_ALL_API_FENCED is true after all
+        API instances enforce credential fencing. The cooperating agent must
+        securely persist its candidate before this request. This does not
+        isolate an older privileged process on the same host.
+      security:
+        - agentCredentialAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId, candidatePrefix, candidateHash]
+              properties:
+                operationId: { type: string, pattern: '^[a-f0-9]{32}$' }
+                candidatePrefix: { type: string, pattern: '^ttagent_[a-f0-9]{16}$' }
+                candidateHash: { type: string, pattern: '^[a-f0-9]{64}$' }
+      responses:
+        "200": { description: Candidate prepared or matching operation already committed }
+        "400": { description: Invalid request }
+        "401": { description: Agent authentication failed }
+        "404": { description: Rotation disabled }
+        "409": { description: Conflicting operation }
+        "410": { description: Agent retired }
+        "429": { description: Machine-token rate limit exceeded }
+  /api/v1/certops/agent/credential-rotation/confirm:
+    post:
+      tags: [CertOps Agent]
+      summary: Confirm possession of a candidate agent credential
+      operationId: confirmCertOpsAgentCredentialRotation
+      description: >-
+        Authenticates the candidate bearer before atomic promotion and replay
+        invalidation. A retry with the same operation ID and the promoted bearer
+        succeeds after a lost response. Disabled unless the fleet is fenced.
+      security:
+        - agentRotationCandidateAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId]
+              properties:
+                operationId: { type: string, pattern: '^[a-f0-9]{32}$' }
+      responses:
+        "200": { description: Candidate committed or already committed }
+        "400": { description: Invalid request }
+        "401": { description: Candidate authentication failed }
+        "404": { description: Rotation disabled }
+        "429": { description: Machine-token rate limit exceeded }
   /api/v1/certops/agent/heartbeat:
     post:
       tags: [CertOps Agent]
@@ -9785,6 +9844,10 @@ components:
       type: http
       scheme: bearer
       description: Single-use, hashed, expiring bootstrap enrollment token used only by POST /api/v1/certops/agent/register. Exchanged for a per-agent credential at registration.
+    agentRotationCandidateAuth:
+      type: http
+      scheme: bearer
+      description: Candidate agent credential used only to confirm a prepared credential rotation.
     agentCredentialAuth:
       type: http
       scheme: bearer
