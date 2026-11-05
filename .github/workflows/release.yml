@@ -32,6 +32,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Resolve checked-out image source
+        id: source_identity
+        shell: bash
+        run: |
+          REVISION="$(git rev-parse --verify HEAD)"
+          EVENT_REVISION="$(git rev-parse --verify "${GITHUB_SHA}^{commit}")"
+          test "$REVISION" = "$EVENT_REVISION"
+          printf 'revision=%s\n' "$REVISION" >> "$GITHUB_OUTPUT"
+
       - name: Extract version from tag
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
@@ -54,6 +63,9 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/tokentimer-core-${{ matrix.component }}:${{ steps.get_version.outputs.VERSION }}
+          labels: |
+            org.opencontainers.image.revision=${{ steps.source_identity.outputs.revision }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
