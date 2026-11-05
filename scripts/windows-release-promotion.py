@@ -90,7 +90,8 @@ def _validate_staged(staged):
     if not isinstance(staged, tuple) or len(staged) != 3:
         raise ValueError("Invalid staged candidate")
     metadata, names, assets = staged
-    if not isinstance(metadata, bytes) or not isinstance(names, Mapping) or not isinstance(assets, Mapping):
+    if (not isinstance(metadata, bytes) or not 0 < len(metadata) <= 32768
+            or not isinstance(names, Mapping) or not isinstance(assets, Mapping)):
         raise ValueError("Invalid staged candidate")
     try:
         candidate = json.loads(metadata)
@@ -101,9 +102,14 @@ def _validate_staged(staged):
             raise ValueError("Incomplete staged asset mapping")
         names = {arch: dict(names[arch]) for arch in ARCHES}
         keys = [names[arch][role] for arch in ARCHES for role in evidence.ROLES]
-        if any(not isinstance(key, str) for key in keys) or len({key.lower() for key in keys}) != len(keys) or set(assets) != set(keys):
+        if (any(not isinstance(key, str) or not snapshot.NAME.fullmatch(key) or key.endswith(".")
+                or key.split(".", 1)[0].upper() in snapshot.RESERVED for key in keys)
+                or len({key.lower() for key in keys}) != len(keys) or set(assets) != set(keys)):
             raise ValueError("Invalid staged assets")
         captured = dict(assets)
+        if (any(not isinstance(data, bytes) or len(data) > snapshot.MAX_FILE for data in captured.values())
+                or sum(len(data) for data in captured.values()) > snapshot.MAX_TOTAL):
+            raise ValueError("Staged asset size exceeds bound")
         for arch in ARCHES:
             for role in evidence.ROLES:
                 data = captured[names[arch][role]]

@@ -124,6 +124,29 @@ class PromotionTests(unittest.TestCase):
                 promotion.verify_qualification((metadata + b" ", names, assets), runs, tokens)
             fetch.assert_not_called()
 
+    def test_forged_staged_inputs_keep_snapshot_size_and_name_bounds(self):
+        metadata, names, assets = self.stage()
+        slots = set(promotion.evidence.EDITION_REPOS) | set(promotion.evidence.NATIVE_SYSTEMS) | {"download-command"}
+        runs = {arch: {slot: 1 for slot in slots} for arch in promotion.ARCHES}
+        tokens = {edition: "test-token" for edition in promotion.evidence.EDITION_REPOS}
+        with patch.object(promotion.evidence, "fetch_trusted_edition_pin") as fetch:
+            with patch.object(promotion.snapshot, "MAX_FILE", 1):
+                with self.assertRaisesRegex(ValueError, "size"):
+                    promotion.verify_qualification((metadata, names, assets), runs, tokens)
+            with patch.object(promotion.snapshot, "MAX_TOTAL", 1):
+                with self.assertRaisesRegex(ValueError, "size"):
+                    promotion.verify_qualification((metadata, names, assets), runs, tokens)
+            with self.assertRaises(ValueError):
+                promotion.verify_qualification((b" " * 32769, names, assets), runs, tokens)
+            altered = {arch: dict(values) for arch, values in names.items()}
+            old = altered["amd64"]["signature"]
+            altered["amd64"]["signature"] = "../outside.p7"
+            replacement = dict(assets)
+            replacement["../outside.p7"] = replacement.pop(old)
+            with self.assertRaisesRegex(ValueError, "assets"):
+                promotion.verify_qualification((metadata, altered, replacement), runs, tokens)
+            fetch.assert_not_called()
+
     def test_mismatched_edition_and_missing_runs_fail_closed(self):
         staged = self.stage()
         slots = set(promotion.evidence.EDITION_REPOS) | set(promotion.evidence.NATIVE_SYSTEMS) | {"download-command"}
