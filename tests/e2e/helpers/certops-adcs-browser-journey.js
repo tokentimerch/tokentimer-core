@@ -21,7 +21,7 @@ const REQUIRED_SCENARIOS = Object.freeze([
 function assertMutationStatus(status, expectedStatus, pathname, responseCode) {
   if (status === expectedStatus) return;
   const operation = pathname.endsWith('/replace-management') ? 'ATTACH' : pathname.endsWith('/profiles') ? 'CREATE_PROFILE' : 'ISSUER';
-  const attachReasons = new Set(['CERTOPS_MANAGEMENT_ALREADY_OPEN','CERTOPS_MANAGEMENT_PERIOD_MISMATCH','CERTOPS_CERTIFICATE_RETIRED','CERTOPS_MUTATION_RUNNING','CERTOPS_MANAGED_CERT_LIMIT','CERTOPS_MANAGEMENT_SOURCE_UNAVAILABLE']);
+  const attachReasons = new Set(['CERTOPS_MANAGEMENT_ALREADY_OPEN','CERTOPS_MANAGEMENT_PERIOD_MISMATCH','CERTOPS_CERTIFICATE_RETIRED','CERTOPS_MUTATION_RUNNING','CERTOPS_MANAGED_CERT_LIMIT','CERTOPS_MANAGEMENT_SOURCE_UNAVAILABLE','CERTOPS_CERTIFICATE_NOT_RENEWABLE','CERTOPS_CERTIFICATE_PATH_IN_USE','CERTOPS_LIFECYCLE_DOWNGRADE','CERTOPS_CERTIFICATE_STILL_SERVING']);
   if (operation === 'ATTACH' && status === 409 && attachReasons.has(responseCode)) throw Object.assign(new Error('Browser attachment was refused'), {code:`CERTOPS_BROWSER_ATTACH_${responseCode.slice('CERTOPS_'.length)}`});
   throw Object.assign(new Error('Browser mutation returned an unexpected status'), {code: `CERTOPS_BROWSER_${operation}_HTTP_${Number.isInteger(status) && status >= 100 && status <= 599 ? status : 'OTHER'}`});
 }

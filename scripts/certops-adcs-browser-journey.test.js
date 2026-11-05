@@ -30,6 +30,9 @@ test("browser mutation failures expose only bounded operation and status", () =>
   assert.doesNotThrow(() => helper.assertMutationStatus(201, 201, "/profiles"));
   assert.throws(() => helper.assertMutationStatus(409, 201, "/private/replace-management"), error => error.code === "CERTOPS_BROWSER_ATTACH_HTTP_409" && !error.message.includes("private"));
   assert.throws(() => helper.assertMutationStatus(409, 201, "/private/replace-management", "CERTOPS_MANAGED_CERT_LIMIT"), error => error.code === "CERTOPS_BROWSER_ATTACH_MANAGED_CERT_LIMIT");
+  for (const code of ["CERTOPS_CERTIFICATE_NOT_RENEWABLE", "CERTOPS_CERTIFICATE_PATH_IN_USE", "CERTOPS_LIFECYCLE_DOWNGRADE", "CERTOPS_CERTIFICATE_STILL_SERVING"]) {
+    assert.throws(() => helper.assertMutationStatus(409, 201, "/private/replace-management", code), error => error.code === `CERTOPS_BROWSER_ATTACH_${code.slice("CERTOPS_".length)}`);
+  }
   assert.throws(() => helper.assertMutationStatus(409, 201, "/private/replace-management", "SECRET_TOKEN"), error => error.code === "CERTOPS_BROWSER_ATTACH_HTTP_409" && !String(error).includes("SECRET"));
   assert.throws(() => helper.assertMutationStatus(500, 201, "/private/profiles"), error => error.code === "CERTOPS_BROWSER_CREATE_PROFILE_HTTP_500");
 });
