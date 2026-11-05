@@ -311,3 +311,25 @@ test("background cleanup defers other-identity leaves only when they are indepen
     /Preserve unowned WebHosting key association/,
   );
 });
+
+test("other-source cleanup accepts only an exact owned enrollment, job, journal and public leaf", () => {
+  const crypto=require("node:crypto"),fs=require("node:fs"),path=require("node:path");
+  const pem=fs.readFileSync(path.resolve(__dirname,"../tests/fixtures/certops-owned-cn.txt"),"utf8");
+  const leaf=new crypto.X509Certificate(pem),id="55555555-5555-4555-8555-555555555555",workspaceId="11111111-1111-4111-8111-111111111111",certificateId="22222222-2222-4222-8222-222222222222",jobId="33333333-3333-4333-8333-333333333333";
+  const containerName=`tokentimer-enr-${id}`,thumbprint=leaf.fingerprint.replace(/:/g,"").toUpperCase();
+  const record={containerName,certificateId,jobId,status:"enrolled_by_agent",acceptedStore:"My",acceptedThumbprint:thumbprint};
+  const row={id,workspace_id:workspaceId,certificate_id:certificateId,state:"installed",job_ids:[jobId]};
+  const journal={kind:"valid",journal:{containerName,state:"installed",leafSha256:crypto.createHash("sha256").update(pem.endsWith("\n")?pem:`${pem}\n`).digest("hex")},artifacts:{leafPem:pem}};
+  const receipts=[{certificateId:"44444444-4444-4444-8444-444444444444",domain:"certops.example"}];
+  const collect=(r=record,rows=[row],j=journal)=>helper.collectOtherOwnedThumbprints(receipts,[id],()=>r,{workspaceId,rows,readJournal:()=>j});
+  assert.deepEqual([...collect()],[thumbprint]);
+  assert.throws(()=>collect(record,[{...row,workspace_id:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}]));
+  assert.throws(()=>collect(record,[{...row,certificate_id:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}]));
+  assert.throws(()=>collect(record,[{...row,job_ids:[]} ]));
+  assert.throws(()=>collect({...record,containerName:"foreign"}));
+  assert.throws(()=>collect({...record,acceptedThumbprint:"A".repeat(40)}));
+  assert.throws(()=>collect(record,[row],{...journal,journal:{...journal.journal,leafSha256:"a".repeat(64)}}));
+  assert.throws(()=>collect(record,[row],{...journal,journal:{...journal.journal,state:"pending"}}));
+  assert.deepEqual([...helper.collectOtherOwnedThumbprints([{...receipts[0],domain:"other.example"}],[id],()=>record,{workspaceId,rows:[row],readJournal:()=>journal})],[]);
+  assert.deepEqual([...helper.collectOtherOwnedThumbprints(receipts,[],()=>record,{workspaceId,rows:[row],readJournal:()=>journal})],[]);
+});
