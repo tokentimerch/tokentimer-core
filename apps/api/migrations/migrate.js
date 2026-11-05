@@ -4931,6 +4931,11 @@ const migrations = [
     name: "certops_issuance_job_identity",
     sql: fs.readFileSync(require("path").join(__dirname, "107-certops-issuance-job-identity.sql"), "utf8"),
   },
+  {
+    version: 108,
+    name: "certops_issuance_identity_transfer",
+    sql: fs.readFileSync(require("path").join(__dirname, "108-certops-issuance-identity-transfer.sql"), "utf8"),
+  },
 ];
 
 

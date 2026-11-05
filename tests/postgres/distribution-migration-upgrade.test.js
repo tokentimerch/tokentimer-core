@@ -80,6 +80,8 @@ test("an installation at main's AD CS migration 72 upgrades to distribution with
       { version: 104, name: "operator_inventory" },
       { version: 105, name: "operator_oauth_retention" },
       { version: 106, name: "operator_issuance" },
+      { version: 107, name: "certops_issuance_job_identity" },
+      { version: 108, name: "certops_issuance_identity_transfer" },
     ]);
     const constraints =
       await pool.query(`SELECT conname, pg_get_constraintdef(oid) AS definition
