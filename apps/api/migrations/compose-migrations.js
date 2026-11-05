@@ -140,6 +140,7 @@ function composeMigrations(migrations, recorded = []) {
       // lifecycle is integrated. Its committed append order remains immutable.
       [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason"],
       [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason", "pagerduty_operator_actions", "remove_pagerduty_rest_lookup"],
+      [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason", "pagerduty_operator_actions", "remove_pagerduty_rest_lookup", "agent_credential_rotations"],
     ];
     const recognized = seeds.some((seed) => {
       const names = [

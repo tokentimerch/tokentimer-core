@@ -16,6 +16,8 @@
 
 const router = require("express").Router;
 const { CERTOPS_AGENT_CREDENTIAL_STALE } = require("../services/certops/agentCredentialFence");
+const { prepareCredentialRotation, authenticateRotationCandidate, confirmCredentialRotation, isCredentialRotationEnabled } = require("../services/certops/agentCredentialRotation");
+const { bearerTokenFromRequest, hasSessionIdentity } = require("../middleware/api-token-auth");
 const {
   createAgentBootstrapTokenAuth,
   createAgentCredentialAuth,
@@ -411,6 +413,14 @@ function handleAgentRouteError(res, error) {
       });
     case CERTOPS_AGENT_CREDENTIAL_STALE:
       return res.status(401).json({ error: "CertOps agent authentication required", code: "CERTOPS_AGENT_UNAUTHORIZED" });
+    case "CERTOPS_AGENT_ROTATION_DISABLED":
+      return res.status(404).json({ error: "Endpoint not found", code: "NOT_FOUND" });
+    case "CERTOPS_AGENT_ROTATION_UNAUTHORIZED":
+      return res.status(401).json({ error: "CertOps agent authentication required", code: "CERTOPS_AGENT_UNAUTHORIZED" });
+    case "CERTOPS_AGENT_ROTATION_INVALID":
+      return res.status(400).json({ error: "Invalid rotation request", code: "CERTOPS_AGENT_ROTATION_INVALID" });
+    case "CERTOPS_AGENT_ROTATION_CONFLICT":
+      return res.status(409).json({ error: "Conflicting rotation request", code: "CERTOPS_AGENT_ROTATION_CONFLICT" });
     case CERTOPS_AGENT_SEQUENCE_REGRESSION:
       return res.status(409).json({
         error:
@@ -675,6 +685,68 @@ function createCertOpsAgentRouter(options = {}) {
     rejectPrivateMaterialMiddleware,
     certOpsEnabledMiddleware,
   ];
+
+  const requireRotationEnabled = (_req, res, next) => {
+    if (!isCredentialRotationEnabled(options.rotationEnv || process.env)) {
+      return res.status(404).json({ error: "Endpoint not found", code: "NOT_FOUND" });
+    }
+    return next();
+  };
+  certOpsAgentRouter.post(
+    "/api/v1/certops/agent/credential-rotation/prepare",
+    preAuthRateLimitFallback,
+    requireRotationEnabled,
+    ...credentialChain.slice(1),
+    requireNonRetiredAgent,
+    async (req, res) => {
+      try {
+        if (!req.body || typeof req.body !== "object" || Array.isArray(req.body) ||
+            Object.keys(req.body).sort().join(",") !== "candidateHash,candidatePrefix,operationId") {
+          const error = new Error("Invalid rotation request"); error.code = "CERTOPS_AGENT_ROTATION_INVALID"; throw error;
+        }
+        const result = await (options.prepareCredentialRotation || prepareCredentialRotation)({
+          dbPool: options.dbPool, agent: req.certopsAgent, env: options.rotationEnv, ...req.body,
+        });
+        return res.status(200).json(result);
+      } catch (error) { return handleAgentRouteError(res, error); }
+    },
+  );
+
+  // A candidate is not yet an ordinary agent credential. Rate-limit before
+  // parsing/authentication, then authenticate possession under the DB locks.
+  certOpsAgentRouter.post(
+    "/api/v1/certops/agent/credential-rotation/confirm",
+    preAuthRateLimitFallback,
+    requireRotationEnabled,
+    certOpsEnabledMiddleware,
+    async (req, res, next) => {
+      try {
+        if (hasSessionIdentity(req)) {
+          return res.status(401).json({ error: "CertOps agent authentication required", code: "CERTOPS_AGENT_UNAUTHORIZED" });
+        }
+        const bearer = bearerTokenFromRequest(req);
+        if (!bearer.ok) return res.status(401).json({ error: "CertOps agent authentication required", code: "CERTOPS_AGENT_UNAUTHORIZED" });
+        req.certopsAgent = await (options.authenticateRotationCandidate || authenticateRotationCandidate)({
+          dbPool: options.dbPool, operationId: req.body?.operationId, rawCandidate: bearer.rawToken, env: options.rotationEnv,
+        });
+        return next();
+      } catch (error) { return handleAgentRouteError(res, error); }
+    },
+    agentRateLimitIdentity,
+    rateLimitMiddleware,
+    rejectPrivateMaterialMiddleware,
+    async (req, res) => {
+      try {
+        if (!req.body || typeof req.body !== "object" || Array.isArray(req.body) || Object.keys(req.body).join(",") !== "operationId") {
+          const error = new Error("Invalid rotation request"); error.code = "CERTOPS_AGENT_ROTATION_INVALID"; throw error;
+        }
+        const result = await (options.confirmCredentialRotation || confirmCredentialRotation)({
+          dbPool: options.dbPool, operationId: req.body.operationId, rawCandidate: bearerTokenFromRequest(req).rawToken, env: options.rotationEnv,
+        });
+        return res.status(200).json(result);
+      } catch (error) { return handleAgentRouteError(res, error); }
+    },
+  );
 
   certOpsAgentRouter.post(
     CERTOPS_AGENT_HEARTBEAT_PATH,

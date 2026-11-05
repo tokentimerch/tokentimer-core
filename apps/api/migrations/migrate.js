@@ -4881,6 +4881,11 @@ const migrations = [
     name: "remove_pagerduty_rest_lookup",
     sql: fs.readFileSync(require("path").join(__dirname, "095-remove-pagerduty-rest-lookup.sql"), "utf8"),
   },
+  {
+    version: 96,
+    name: "agent_credential_rotations",
+    sql: fs.readFileSync(require("path").join(__dirname, "096-agent-credential-rotations.sql"), "utf8"),
+  },
 ];
 
 

@@ -715,6 +715,7 @@ module.exports = {
   generateAgentCredential,
   getBootstrapTokenById,
   listBootstrapTokens,
+  parseRawAgentCredential,
   revokeBootstrapToken,
   validateAgentCredential,
   validateBootstrapToken,
