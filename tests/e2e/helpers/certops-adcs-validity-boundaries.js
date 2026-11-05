@@ -11,7 +11,13 @@ function classifyRemainingKey({probe,requestListing,containerName}){
   if(probe?.ok!==true || typeof probe.shared!=="boolean")return "CERTOPS_VALIDITY_KEY_PROBE_FAILED";
   if(probe.shared===false)return "CERTOPS_VALIDITY_KEY_UNREFERENCED";
   if(typeof requestListing!=="string")return "CERTOPS_VALIDITY_KEY_REQUEST_PROBE_FAILED";
-  return requestListing.includes(containerName)?"CERTOPS_VALIDITY_KEY_REQUEST_REFERENCED":"CERTOPS_VALIDITY_KEY_OTHER_REFERENCE";
+  if(!requestListing.includes(containerName))return "CERTOPS_VALIDITY_KEY_OTHER_REFERENCE";
+  const escaped=containerName.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+  const exact=new RegExp(`^\\s*[^\\r\\n=:]*[=:]\\s*${escaped}\\s*$`,"im");
+  const blocks=requestListing.split(/^=+.*=+\s*$/m).filter(block=>exact.test(block));
+  if(!blocks.length)return "CERTOPS_VALIDITY_KEY_REQUEST_CONTAINER_UNPARSED";
+  if(!blocks.some(block=>{const hash=/\(sha1\)\s*:\s*([0-9a-f ]{40,59})\s*$/im.exec(block);return hash && /^[0-9a-f]{40}$/i.test(hash[1].replace(/\s+/g,""));}))return "CERTOPS_VALIDITY_KEY_REQUEST_HASH_UNPARSED";
+  return "CERTOPS_VALIDITY_KEY_REQUEST_MATCHED";
 }
 async function qualifyValidityBoundaries(context){
   const {gate,fixture,api,agentRowId,renewalFixture,configDir,preflight,until,ps,command,ownedEnrollmentIds,tlsAuthority}=context;
