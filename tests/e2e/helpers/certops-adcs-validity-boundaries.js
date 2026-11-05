@@ -11,7 +11,16 @@ function classifyRemainingKey({probe,requestListing,containerName}){
   if(probe?.ok!==true || typeof probe.shared!=="boolean")return "CERTOPS_VALIDITY_KEY_PROBE_FAILED";
   if(probe.shared===false)return "CERTOPS_VALIDITY_KEY_UNREFERENCED";
   if(typeof requestListing!=="string")return "CERTOPS_VALIDITY_KEY_REQUEST_PROBE_FAILED";
-  return requestListing.includes(containerName)?"CERTOPS_VALIDITY_KEY_REQUEST_REFERENCED":"CERTOPS_VALIDITY_KEY_OTHER_REFERENCE";
+  if(!requestListing.includes(containerName))return "CERTOPS_VALIDITY_KEY_OTHER_REFERENCE";
+  const escaped=containerName.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+  const exact=new RegExp(`^\\s*[^\\r\\n=:]*[=:]\\s*${escaped}\\s*$`,"im");
+  const blocks=requestListing.split(/^=+.*=+\s*$/m).filter(block=>exact.test(block));
+  if(!blocks.length)return "CERTOPS_VALIDITY_KEY_REQUEST_CONTAINER_UNPARSED";
+  if(!blocks.some(block=>{const hash=/\(sha1\)\s*:\s*([0-9a-f ]{40,59})\s*$/im.exec(block);return hash && /^[0-9a-f]{40}$/i.test(hash[1].replace(/\s+/g,""));}))return "CERTOPS_VALIDITY_KEY_REQUEST_HASH_UNPARSED";
+  return "CERTOPS_VALIDITY_KEY_REQUEST_MATCHED";
+}
+async function classifyRequestCleanupRetry(containerName,remove){
+  try{const retry=await remove({containerName});return retry.aborted?"CERTOPS_VALIDITY_KEY_REQUEST_RETRY_ABORTED":retry.removed>0?"CERTOPS_VALIDITY_KEY_REQUEST_RETRY_REMOVED":"CERTOPS_VALIDITY_KEY_REQUEST_RETRY_NO_REMOVAL";}catch{return "CERTOPS_VALIDITY_KEY_REQUEST_RETRY_ERROR";}
 }
 async function qualifyValidityBoundaries(context){
   const {gate,fixture,api,agentRowId,renewalFixture,configDir,preflight,until,ps,command,ownedEnrollmentIds,tlsAuthority}=context;
@@ -46,7 +55,14 @@ async function qualifyValidityBoundaries(context){
     const container=buildEnrollmentContainerName(admitted.body.enrollmentId);if(command("certutil.exe",["-csp","Microsoft Software Key Storage Provider","-key"]).includes(container)){
       const probe=await require("../../../packages/agent/src/windows-key-survivors").inspectMachineKeySurvivors({containerName:container});let requestListing;
       if(probe.ok===true && probe.shared===true){try{requestListing=command("certutil.exe",["-store","-silent","REQUEST"]);}catch{}}
-      throw Object.assign(new Error("Invalid unaccepted enrollment retained its exact CNG key"),{code:classifyRemainingKey({probe,requestListing,containerName:container})});
+      let code=classifyRemainingKey({probe,requestListing,containerName:container});
+      if(code==="CERTOPS_VALIDITY_KEY_REQUEST_MATCHED"){
+        // The terminal enrollment and exact container belong to this disposable fixture.
+        // Retry only its pending-entry cleanup after recording the failure; never delete the key here.
+        assert.ok(ownedEnrollmentIds.includes(admitted.body.enrollmentId));
+        code=await classifyRequestCleanupRetry(container,require("../../../packages/agent/src/windows-cert-store").removePendingRequestEntries);
+      }
+      throw Object.assign(new Error("Invalid unaccepted enrollment retained its exact CNG key"),{code});
     }
     const rejectedThumbprint=leaf.fingerprint.replace(/:/g,"");assert.equal(ps(`$foundCertificates=@();foreach($store in @('My','WebHosting')){$storePath='Cert:\\LocalMachine\\'+$store;if(Test-Path -LiteralPath $storePath){$foundCertificates+=@(Get-ChildItem -LiteralPath $storePath|Where-Object Thumbprint -eq '${rejectedThumbprint}')}};$foundCertificates.Count`),"0");
     assert.equal((await require("../../../packages/agent/src/windows-iis").queryCurrentBinding({binding})).thumbprint.toUpperCase(),outgoingThumbprint);assert.equal(await tlsFingerprint(),observed.fingerprint256);
@@ -54,4 +70,4 @@ async function qualifyValidityBoundaries(context){
   },{evidenceLevel:"real-host",oracle:"actual approved or issued CA-signed leaf evaluated by installed signed agent against public immutable validity policy; no clock/journal/phase rewriting, no accept, exact CNG cleanup and outgoing trusted TLS preserved"});
 }
 function authorityCertificate(authority){return new crypto.X509Certificate(Buffer.from(authority.certificateB64,"base64"));}
-module.exports={qualifyValidityBoundaries,classifyRemainingKey};
+module.exports={qualifyValidityBoundaries,classifyRemainingKey,classifyRequestCleanupRetry};
