@@ -29,6 +29,8 @@ const MAX_OUTBOUND_ENVELOPE_BYTES = 512 * 1024;
 const ROUTES = Object.freeze({
   REGISTER: "/api/v1/certops/agent/register",
   HEARTBEAT: "/api/v1/certops/agent/heartbeat",
+  ROTATION_PREPARE: "/api/v1/certops/agent/credential-rotation/prepare",
+  ROTATION_CONFIRM: "/api/v1/certops/agent/credential-rotation/confirm",
   CLAIM: "/api/v1/certops/agent/jobs/claim",
   RESULTS: "/api/v1/certops/agent/jobs/results",
   // B6: plain POST (no message envelope). Path is jobs/:jobId/lease.
@@ -85,6 +87,19 @@ const CREDENTIAL_PATTERN = /^ttagent_([A-Za-z0-9_.:-]{1,128})_([A-Za-z0-9._~+\/-
 
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+// Creates a candidate but does not persist or activate it. A caller must use
+// a protected, power-loss-safe preparation store before any rotation request.
+function createCredentialRotationCandidate() {
+  const operationId = crypto.randomBytes(16).toString("hex");
+  const candidatePrefix = `ttagent_${crypto.randomBytes(8).toString("hex")}`;
+  const candidateCredential = `${candidatePrefix}_${crypto.randomBytes(32).toString("hex")}`;
+  const candidate = { operationId, candidatePrefix,
+    candidateHash: crypto.createHash("sha256").update(candidateCredential).digest("hex") };
+  // Avoid putting the bearer into default JSON serialization or inspection.
+  Object.defineProperty(candidate, "candidateCredential", { value: candidateCredential, enumerable: false });
+  return candidate;
 }
 
 /**
@@ -661,6 +676,51 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     return validateRegistrationResponse(json, protocolVersion);
   }
 
+  // Transport only: callers must durably prepare the candidate and coordinate
+  // with in-flight heartbeats, claims, and effects before making either request.
+  // These calls do not join the sequenced send queue and do not isolate other
+  // processes with equal OS rights. No runtime path invokes them yet.
+  async function prepareCredentialRotation({ operationId, candidatePrefix, candidateHash } = {}) {
+    if (typeof operationId !== "string" || !/^[a-f0-9]{32}$/.test(operationId) ||
+        typeof candidatePrefix !== "string" || !/^ttagent_[a-f0-9]{16}$/.test(candidatePrefix) ||
+        typeof candidateHash !== "string" || !/^[a-f0-9]{64}$/.test(candidateHash)) {
+      throw new AgentProtocolError("invalid credential rotation preparation", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
+    }
+    let response;
+    try {
+      const token = await resolveCredential(getCredential);
+      response = await sendPlain(ROUTES.ROTATION_PREPARE, token, { operationId, candidatePrefix, candidateHash });
+    } catch (error) {
+      throw new AgentProtocolError("credential rotation preparation request failed",
+        error instanceof AgentProtocolError && error.code === AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR
+          ? AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR : AGENT_PROTOCOL_ERROR_CODES.NETWORK_ERROR,
+        { status: Number.isInteger(error?.status) ? error.status : undefined });
+    }
+    if (!response.ok) throw new AgentProtocolError("credential rotation preparation was rejected", AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status: response.status });
+    if (!isPlainObject(response.json) || Object.keys(response.json).length !== 1 || !["pending", "committed"].includes(response.json.state)) {
+      throw new AgentProtocolError("invalid credential rotation preparation response", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
+    }
+    return { state: response.json.state };
+  }
+
+  async function confirmCredentialRotation({ operationId, candidateCredential } = {}) {
+    if (typeof operationId !== "string" || !/^[a-f0-9]{32}$/.test(operationId) ||
+        typeof candidateCredential !== "string" || !/^ttagent_[a-f0-9]{16}_[a-f0-9]{64}$/.test(candidateCredential)) {
+      throw new AgentProtocolError("invalid credential rotation confirmation", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
+    }
+    let response;
+    try { response = await sendPlain(ROUTES.ROTATION_CONFIRM, candidateCredential, { operationId }); }
+    catch (error) { throw new AgentProtocolError("credential rotation confirmation request failed",
+      error instanceof AgentProtocolError && error.code === AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR
+        ? AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR : AGENT_PROTOCOL_ERROR_CODES.NETWORK_ERROR,
+      { status: Number.isInteger(error?.status) ? error.status : undefined }); }
+    if (!response.ok) throw new AgentProtocolError("credential rotation confirmation was rejected", AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status: response.status });
+    if (!isPlainObject(response.json) || Object.keys(response.json).length !== 1 || response.json.state !== "committed") {
+      throw new AgentProtocolError("invalid credential rotation confirmation response", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
+    }
+    return { state: "committed" };
+  }
+
   async function heartbeat({
     agentVersion,
     supportedOperations = undefined,
@@ -865,7 +925,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     return json ?? {};
   }
 
-  return { register, heartbeat, claim, renewLease, reportResult, reportEvidence, postJobLogs };
+  return { register, heartbeat, claim, renewLease, reportResult, reportEvidence, postJobLogs, prepareCredentialRotation, confirmCredentialRotation };
 }
 
 module.exports = {
@@ -886,5 +946,6 @@ module.exports = {
   withRetry,
   startPollLoop,
   createProtocolClient,
+  createCredentialRotationCandidate,
   readClaimLogStream,
 };

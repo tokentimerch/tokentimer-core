@@ -8,6 +8,7 @@ const { createCertOpsAgentRouter } = require("../../apps/api/routes/certops-agen
 const { createAgentCredentialAuth } = require("../../apps/api/middleware/agent-auth");
 const { createCertOpsMachineWritePreParserBoundary } = require("../../apps/api/middleware/certops-executor-body-parser");
 const { createCsrfExemptMiddleware, isCertOpsMachineTokenCsrfExemptPath } = require("../../apps/api/middleware/csrf-exempt");
+const { createProtocolClient } = require("../../packages/agent/src/protocol/index.js");
 const { migrations } = require("../../apps/api/migrations/migrate");
 const { generateAgentCredential, validateAgentCredential } = require("../../apps/api/services/certops/agentCredentials");
 const { prepareCredentialRotation, confirmCredentialRotation } = require("../../apps/api/services/certops/agentCredentialRotation");
@@ -88,6 +89,33 @@ describe("Agent credential rotation on migrated schema", function () {
     const malformed = generateAgentCredential().plaintextCredential;
     assert.equal((await supertest(limited).post(paths.confirm).set("Authorization", `Bearer ${malformed}`).send({ operationId })).status, 401);
     assert.equal((await supertest(limited).post(paths.confirm).set("Authorization", `Bearer ${malformed}`).send({ operationId })).status, 429);
+  });
+
+  it("client retries confirmation with the candidate after a real committed response is lost", async () => {
+    const email = `rotation-client-${randomUUID()}@example.test`;
+    const user = (await db.query("INSERT INTO users(email,email_original,display_name,password_hash,auth_method) VALUES ($1,$2,'Rotation Client','x','local') RETURNING id", [email,email])).rows[0];
+    const workspaceId = randomUUID(); await db.query("INSERT INTO workspaces (id,name,created_by,plan) VALUES ($1,'rotation client',$2,'oss')", [workspaceId,user.id]);
+    const old = generateAgentCredential(), next = generateAgentCredential(), agentId = `agent-${randomUUID()}`;
+    await db.query(`INSERT INTO certops_agents (workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)
+      VALUES ($1,$2,'0.18.2','1.0.0',$3,$4)`, [workspaceId,agentId,old.credentialPrefix,old.credentialHash]);
+    const app = express(); app.use(createCertOpsMachineWritePreParserBoundary());
+    app.use(createCertOpsAgentRouter({ dbPool: db, rotationEnv: { CERTOPS_AGENT_ROTATION_ALL_API_FENCED: "true" }, credentialAuthMiddleware: createAgentCredentialAuth({ client: db }), certOpsEnabledMiddleware: (_req,_res,nextMiddleware) => nextMiddleware() }));
+    const listener = await new Promise(resolve => { const srv = app.listen(0,"127.0.0.1",() => resolve(srv)); });
+    try {
+      let dropConfirmResponse = true;
+      const transport = async (url, options) => {
+        const response = await fetch(url, options);
+        if (url.endsWith("/credential-rotation/confirm") && dropConfirmResponse) { dropConfirmResponse = false; throw new Error("simulated lost response"); }
+        return response;
+      };
+      const client = createProtocolClient({ serverUrl: `http://127.0.0.1:${listener.address().port}`, allowInsecureLocalHttp: true, agentId, protocolVersion: "1.0.0", getCredential: () => old.plaintextCredential, fetchImpl: transport });
+      const operationId = randomUUID().replaceAll("-", "");
+      assert.deepEqual(await client.prepareCredentialRotation({ operationId, candidatePrefix: next.credentialPrefix, candidateHash: next.credentialHash }), { state: "pending" });
+      await assert.rejects(client.confirmCredentialRotation({ operationId, candidateCredential: next.plaintextCredential }), { code: "network_error" });
+      assert.equal((await validateAgentCredential({ client: db, rawCredential: old.plaintextCredential })).valid, false);
+      assert.deepEqual(await client.confirmCredentialRotation({ operationId, candidateCredential: next.plaintextCredential }), { state: "committed" });
+      assert.equal((await validateAgentCredential({ client: db, rawCredential: next.plaintextCredential })).agent.agentId, agentId);
+    } finally { await new Promise((resolve,reject) => listener.close(error => error ? reject(error) : resolve())); }
   });
 
 });
