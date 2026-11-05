@@ -15,6 +15,10 @@ test("early AD CS failure evidence is sanitized and cannot replace cleanup",()=>
  assert.ok(early>=0 && cleanup>early);assert.equal(steps[early].if,"failure() && !inputs.debug_mode");
  assert.equal(steps[early].with.path,"qualification-results/enterprise-adcs-real.json");assert.equal(steps[early]["continue-on-error"],true);
  assert.equal(steps[cleanup].if,"always()");
+ const name="certops-enterprise-adcs-qualification.yml";
+ assert.deepEqual(validateWorkflow(workflow,name),[]);
+ for(const change of [w=>w.jobs.lab.steps[early].with.path="qualification-results/other.json",w=>w.jobs.lab.steps[early].if="failure()",w=>w.jobs.lab.steps[early]["continue-on-error"]=false,w=>w.jobs.lab.steps[early]["timeout-minutes"]=3,w=>w.jobs.lab.steps.find(s=>s.with?.path==="qualification-results/enterprise-adcs-*.json").if="success()"]){const altered=structuredClone(workflow);change(altered);assert.ok(validateWorkflow(altered,name).length);}
+ assert.ok(validateWorkflow(workflow,"certops-other.yml").length);
 });
 
 test("Vault summary preserves main restriction while collecting failed cohort results",()=>{
