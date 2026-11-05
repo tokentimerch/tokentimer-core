@@ -5,6 +5,36 @@ const { test } = require("node:test"),
   assert = require("node:assert/strict");
 const h = require("../tests/e2e/helpers/certops-adcs-uncertain-operator-unique"),
   { proof } = require("./fixtures/certops-adcs-unique-candidate.cjs");
+test("recovery proof requires both preceding native scenarios to pass", () => {
+  const scenarios = h.REQUIRED_SCENARIOS.slice(0, 2).map((id) => ({ id, status: "passed" }));
+  h.assertRecoveryScenariosPassed({ scenarios });
+  for (const invalid of [
+    [],
+    scenarios.slice(0, 1),
+    [...scenarios, scenarios[0]],
+    [{ ...scenarios[0], status: "failed" }, scenarios[1]],
+    [scenarios[0], { ...scenarios[1], status: "failed" }],
+  ]) {
+    assert.throws(() => h.assertRecoveryScenariosPassed({ scenarios: invalid }));
+  }
+});
+test("terminal recovery failures expose only fixed categories", () => {
+  h.assertRecoveryJobNotTerminal({ status: "running" });
+  for (const [message, category] of [
+    ["could not acquire AD CS enrollment lock: SECRET", "LOCK"],
+    ["no local enrollment journal for enrollment SECRET", "JOURNAL_MISSING"],
+    ["local AD CS enrollment journal is corrupt: SECRET", "JOURNAL_CORRUPT"],
+    ["AD CS tier-2 SECRET", "RECONCILIATION"],
+    ["Local enrollment policy SECRET", "LOCAL_POLICY"],
+    ["SECRET", "OTHER"],
+  ]) {
+    assert.throws(() => h.assertRecoveryJobNotTerminal({ status: "failed", error_message: message }), (error) => {
+      assert.equal(error.code, `CERTOPS_RECOVERY_${category}`);
+      assert.doesNotMatch(error.message, /SECRET/);
+      return true;
+    });
+  }
+});
 test("single native candidate proof needs every exact recovery and custody fact", () => {
   h.verifyProof(proof());
   for (const key of Object.keys(proof())) {
