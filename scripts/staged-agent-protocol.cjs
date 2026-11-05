@@ -77,7 +77,7 @@ async function runStagedAgentProtocol(options) {
     passed("public-bootstrap-and-registration");
 
     const heartbeat = await machine("heartbeat", "heartbeat", {
-      agentVersion, ntpSynced: true, pinnedSigningKeyId: registration.body.signingKeyId, supportedActions: ["noop"],
+      agentVersion, ntpSynced: true, pinnedSigningKeyId: registration.body.signingKeyId, supportedOperations: ["noop"],
     });
     expectStatus(heartbeat, 200, "heartbeat");
     assert.equal(heartbeat.body?.status, "active");
