@@ -23,6 +23,7 @@ import (
 // authenticated enrollment and a verified TLS request; this store cannot
 // establish that provenance, authorize ACK, or fence old privileged work.
 const boundRotationKey = "CredentialRotationBoundV3"
+const boundProvisionPendingKey = "CredentialRotationProvisionPendingV4"
 
 var boundUUID = regexp.MustCompile(`^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$`)
 var boundAgent = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
@@ -123,6 +124,10 @@ func validBoundRotationState(b boundRotationState) bool {
 // All callers must hold the dedicated mutex. Unknown/old formats are retained
 // for explicit reconciliation and never automatically migrated or overwritten.
 func initializeBoundRotation(parent registry.Key, sddl string, trusted map[string]bool, initial boundRotationState) error {
+	return initializeBoundRotationWithFlush(parent, sddl, trusted, initial, flushCredentialKey)
+}
+
+func initializeBoundRotationWithFlush(parent registry.Key, sddl string, trusted map[string]bool, initial boundRotationState, flush func(registry.Key) error) error {
 	if !validBoundRotationState(initial) || initial.State.Phase != "active" || validateCredentialRegistryKey(parent, trusted) != nil {
 		return fmt.Errorf("invalid bound rotation state")
 	}
@@ -155,7 +160,7 @@ func initializeBoundRotation(parent registry.Key, sddl string, trusted map[strin
 	if disposition != 1 || validateCredentialRegistryKey(k, trusted) != nil || rejectRegistryLink(k) != nil {
 		return fmt.Errorf("rotation state exists or invalid")
 	}
-	return writeBoundRotation(k, initial, flushCredentialKey)
+	return writeBoundRotation(k, initial, flush)
 }
 
 func lockedInitializeBoundRotation(ctx context.Context, parent registry.Key, sddl string, trusted map[string]bool, initial boundRotationState) error {
@@ -225,6 +230,9 @@ func boundStartupCredential(ctx context.Context, parent registry.Key, trusted ma
 		if validateCredentialRegistryKey(parent, trusted) != nil {
 			return fmt.Errorf("rotation parent invalid")
 		}
+		if ensureNoBoundProvisionPending(parent) != nil {
+			return fmt.Errorf("provisioning requires reconciliation")
+		}
 		name, _ := windows.UTF16PtrFromString(boundRotationKey)
 		var handle windows.Handle
 		if windows.RegOpenKeyEx(windows.Handle(parent), name, 8, registry.QUERY_VALUE|registry.WOW64_64KEY|windows.READ_CONTROL, &handle) != nil {
@@ -243,4 +251,18 @@ func boundStartupCredential(ctx context.Context, parent registry.Key, trusted ma
 		return "", err
 	}
 	return credential, nil
+}
+
+func ensureNoBoundProvisionPending(parent registry.Key) error {
+	name, _ := windows.UTF16PtrFromString(boundProvisionPendingKey)
+	var h windows.Handle
+	err := windows.RegOpenKeyEx(windows.Handle(parent), name, 8, registry.QUERY_VALUE|registry.WOW64_64KEY|windows.READ_CONTROL, &h)
+	if err == nil {
+		windows.CloseHandle(h)
+		return fmt.Errorf("provisioning requires reconciliation")
+	}
+	if err != windows.ERROR_FILE_NOT_FOUND {
+		return fmt.Errorf("provisioning state unavailable")
+	}
+	return nil
 }
