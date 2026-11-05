@@ -36,12 +36,13 @@ type scratchForRun interface {
 	Close()
 }
 type executionDependencies struct {
-	nativeArch func() (string, error)
-	prepare    func(Candidate) (preparedForRun, error)
-	scratch    func() (scratchForRun, error)
-	beginGuard func(context.Context) (func() error, error)
-	scmDigest  func() (string, error)
-	invoke     func(context.Context, string, string, []string, string, string, string) error
+	nativeArch        func() (string, error)
+	prepare           func(Candidate) (preparedForRun, error)
+	scratch           func() (scratchForRun, error)
+	beginGuard        func(context.Context) (func() error, error)
+	scmDigest         func() (string, error)
+	invoke            func(context.Context, string, string, []string, string, string, string) error
+	abortBeforeInvoke func(preparedForRun, scratchForRun, ExecutionIntent) error
 }
 
 // RunCandidate requires the caller to independently authenticate the launcher
@@ -56,6 +57,9 @@ func RunCandidate(ctx context.Context, candidate Candidate, args []string, token
 		beginGuard: beginInstallGuard,
 		scmDigest:  currentSCMDigest,
 		invoke:     invokeInstaller,
+		abortBeforeInvoke: func(p preparedForRun, s scratchForRun, intent ExecutionIntent) error {
+			return abortBeforeInvocation(p.(*Prepared).staging, s.(*PrivateStaging), intent)
+		},
 	}
 	return runCandidate(ctx, candidate, args, token, d)
 }
@@ -95,6 +99,9 @@ func runCandidate(ctx context.Context, candidate Candidate, args []string, token
 				err = fmt.Errorf("%v; scratch cleanup: %w", err, e)
 			}
 		}
+		if p == nil {
+			return
+		}
 		if e := p.Cleanup(); e != nil {
 			p.Close()
 			err = fmt.Errorf("%v; payload cleanup: %w", err, e)
@@ -123,6 +130,9 @@ func runCandidate(ctx context.Context, candidate Candidate, args []string, token
 	if err != nil {
 		return result, fmt.Errorf("inspect service before execution: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
 	attempted = true
 	intent, err := p.BeginExecutionIntent(scmDigest)
 	if err != nil {
@@ -133,6 +143,15 @@ func runCandidate(ctx context.Context, candidate Candidate, args []string, token
 	}
 	if err := scratch.BeginScratchIntent(intent.ArchiveSHA256, scmDigest, intent.Transaction, intent.Secret); err != nil {
 		return result, fmt.Errorf("scratch intent not established: %w", err)
+	}
+	if err := ctx.Err(); err != nil && d.abortBeforeInvoke != nil {
+		if cleanupErr := d.abortBeforeInvoke(p, scratch, intent); cleanupErr == nil {
+			attempted = false
+			scratch = nil
+			p = nil
+			return result, err
+		}
+		return result, fmt.Errorf("%w; pre-invocation cleanup failed; quarantine retained", err)
 	}
 	if err := release(); err != nil {
 		guardHeld = false

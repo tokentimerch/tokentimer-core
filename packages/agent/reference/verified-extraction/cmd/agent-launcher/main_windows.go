@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -64,6 +65,7 @@ func bounded(path string, limit int64) ([]byte, error) {
 func main() {
 	inspect := flag.Bool("inspect-quarantine", false, "inspect retained staging without changing it")
 	inspectUpgrade := flag.Bool("inspect-upgrade-recovery", false, "inspect protected upgrade recovery without changing it")
+	inspectSCM := flag.Bool("inspect-scm-recovery", false, "inspect current service failure actions without changing them")
 	release := flag.String("release-quarantine-transaction", "", "unavailable until queued SCM actions can be excluded")
 	acknowledge := flag.Bool("acknowledge-external-actors-stopped", false, "confirm that an operator stopped and reviewed all external actors")
 	manifestPath := flag.String("manifest", "", "encapsulated signed CMS manifest")
@@ -76,7 +78,7 @@ func main() {
 		os.Exit(2)
 	}
 	if *release != "" || *acknowledge {
-		if *inspect || *inspectUpgrade || *manifestPath != "" || *archivePath != "" || *sbomPath != "" || len(flag.Args()) != 0 {
+		if *inspect || *inspectUpgrade || *inspectSCM || *manifestPath != "" || *archivePath != "" || *sbomPath != "" || len(flag.Args()) != 0 {
 			fmt.Fprintln(os.Stderr, "quarantine release does not accept package or installer arguments")
 			os.Exit(2)
 		}
@@ -86,6 +88,22 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Fprintln(os.Stdout, "Reviewed markers archived as", archive, "; staging directories remain in place.")
+		return
+	}
+	if *inspectSCM {
+		if *inspect || *inspectUpgrade || *manifestPath != "" || *archivePath != "" || *sbomPath != "" || len(flag.Args()) != 0 {
+			fmt.Fprintln(os.Stderr, "inspection does not accept package or installer arguments")
+			os.Exit(2)
+		}
+		report, err := verified.InspectServiceRecovery()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "service recovery inspection failed:", err)
+			os.Exit(1)
+		}
+		if json.NewEncoder(os.Stdout).Encode(report) != nil {
+			fmt.Fprintln(os.Stderr, "service recovery report could not be written")
+			os.Exit(1)
+		}
 		return
 	}
 	if *inspectUpgrade {
@@ -143,7 +161,9 @@ func main() {
 	candidate := verified.Candidate{CMS: cms, PublisherPin: policy.publisher, RuntimePublisherPin: policy.runtimePublisher, InstallerSHA256: policy.installer, SourceCommit: policy.commit, Version: policy.version, Architecture: policy.architecture, ArchiveName: filepath.Base(*archivePath), Archive: archive, SBOMName: filepath.Base(*sbomPath), SBOM: sbom}
 	// Installer flags follow --; the bootstrap token is read from a protected
 	// environment variable or prompted by the existing installer, never logged.
-	result, err := verified.RunCandidate(context.Background(), candidate, flag.Args(), os.Getenv("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN"))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	result, err := verified.RunCandidate(ctx, candidate, flag.Args(), os.Getenv("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN"))
 	if result.CleanupPending {
 		fmt.Fprintln(os.Stderr, "Protected staging retained; operator reconciliation is required.")
 	}

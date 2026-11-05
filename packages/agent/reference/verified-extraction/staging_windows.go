@@ -110,6 +110,12 @@ var stageNamePattern = regexp.MustCompile("^TokenTimer-Staging-[a-f0-9]{32}$")
 func (s *PrivateStaging) Cleanup() error {
 	s.intentMu.Lock()
 	defer s.intentMu.Unlock()
+	return s.cleanupLocked(false)
+}
+
+// cleanupLocked permits a retained intent only for a same-process abort before
+// installer invocation. The caller must hold its validated marker handle.
+func (s *PrivateStaging) cleanupLocked(preInvoke bool) error {
 	if s.ancestors == nil || s.staging == nil || !filepath.IsAbs(s.path) ||
 		!strings.EqualFold(filepath.Dir(s.path), s.parent) || !stageNamePattern.MatchString(filepath.Base(s.path)) {
 		return fmt.Errorf("staging ownership not established")
@@ -121,11 +127,13 @@ func (s *PrivateStaging) Cleanup() error {
 	// Once execution intent has been attempted, or a marker already exists,
 	// this instance cannot prove that external WMI/SCM actors have finished.
 	// Never interpret a malformed or unreadable marker as permission to delete.
-	if s.intentAttempted {
-		return ErrExecutionRecoveryPending
-	}
-	if _, err := os.Lstat(s.path + ".intent"); err == nil || !os.IsNotExist(err) {
-		return ErrExecutionRecoveryPending
+	if !preInvoke {
+		if s.intentAttempted {
+			return ErrExecutionRecoveryPending
+		}
+		if _, err := os.Lstat(s.path + ".intent"); err == nil || !os.IsNotExist(err) {
+			return ErrExecutionRecoveryPending
+		}
 	}
 	id, err := getDirectoryIdentity(s.path)
 	if err != nil || id != s.identity {
