@@ -1986,6 +1986,42 @@ describe("removeAbandonedKeyContainer", () => {
     assert.ok(seen.findIndex(s => s.startsWith("-delstore")) < seen.findIndex(s => s.startsWith("--key-survivors")));
   });
 
+  it("recognizes a localized request hash whose separator decodes with a replacement character", async () => {
+    const { removePendingRequestEntries } = require("./index");
+    const containerName = buildContainerName("localized-pending");
+    const other = buildContainerName("localized-other");
+    const ownHash = "AB".repeat(20), otherHash = "CD".repeat(20);
+    const listing = [
+      "================ Certificate 0 ================",
+      `Hach\uFFFD cert\uFFFD (sha1)\uFFFD: ${ownHash}`,
+      `  Conteneur de cl\uFFFD = ${containerName}`,
+      "================ Certificate 1 ================",
+      `Hach\uFFFD cert\uFFFD (sha1)\uFFFD: ${otherHash}`,
+      `  Conteneur de cl\uFFFD = ${other}`,
+    ].join("\r\n");
+    const deleted = [];
+    const result = await removePendingRequestEntries({
+      containerName,
+      execFileImpl(file,args,options,callback){
+        if(args[0]==="-store") return callback(null,listing,"");
+        if(args[0]==="-delstore"){deleted.push(args[2]);return callback(null,"","");}
+        throw new Error("Unexpected command");
+      },
+    });
+    assert.deepEqual(result,{removed:1,aborted:false});
+    assert.deepEqual(deleted,[ownHash]);
+  });
+
+  it("does not delete a localized request with a malformed hash", async () => {
+    const { removePendingRequestEntries } = require("./index");
+    const containerName = buildContainerName("malformed-localized");
+    const listing = `===== Certificate 0 =====\r\nHach\uFFFD (sha1)\uFFFD: ${"A".repeat(39)}\r\nKey Container = ${containerName}\r\n`;
+    const commands=[];
+    const result=await removePendingRequestEntries({containerName,execFileImpl(file,args,options,callback){commands.push(args[0]);callback(null,listing,"");}});
+    assert.deepEqual(result,{removed:0,aborted:false});
+    assert.deepEqual(commands,["-store"]);
+  });
+
   it("invokes certutil -csp <KSP> -delkey <containerName> without a shell", async () => {
     const execFileImpl = guardedStub({});
     const containerName = buildContainerName("job-99");

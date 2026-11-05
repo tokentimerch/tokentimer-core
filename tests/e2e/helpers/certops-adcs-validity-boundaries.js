@@ -16,7 +16,7 @@ function classifyRemainingKey({probe,requestListing,containerName}){
   const exact=new RegExp(`^\\s*[^\\r\\n=:]*[=:]\\s*${escaped}\\s*$`,"im");
   const blocks=requestListing.split(/^=+.*=+\s*$/m).filter(block=>exact.test(block));
   if(!blocks.length)return "CERTOPS_VALIDITY_KEY_REQUEST_CONTAINER_UNPARSED";
-  if(!blocks.some(block=>{const hash=/\(sha1\)\s*:\s*([0-9a-f ]{40,59})\s*$/im.exec(block);return hash && /^[0-9a-f]{40}$/i.test(hash[1].replace(/\s+/g,""));}))return "CERTOPS_VALIDITY_KEY_REQUEST_HASH_UNPARSED";
+  if(!blocks.some(block=>{const hash=/\(sha1\)(?:[^\S\r\n]|\uFFFD)*:(?:[^\S\r\n]|\uFFFD)*([0-9a-f ]{40,59})(?:[^\S\r\n]|\uFFFD)*$/im.exec(block);return hash && /^[0-9a-f]{40}$/i.test(hash[1].replace(/\s+/g,""));}))return "CERTOPS_VALIDITY_KEY_REQUEST_HASH_UNPARSED";
   return "CERTOPS_VALIDITY_KEY_REQUEST_MATCHED";
 }
 async function classifyRequestCleanupRetry(containerName,remove){
