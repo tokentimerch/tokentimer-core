@@ -22,7 +22,10 @@ const LOG_SECRET_KEY =
   /password|passwd|secret|token|credential|authorization|cookie|role[-_]?id/i;
 
 export function redactLogValue(value, depth = 0) {
-  if (value == null || typeof value !== 'object' || depth > 8) {
+  if (depth > 8) {
+    return '[REDACTED]';
+  }
+  if (value == null || typeof value !== 'object') {
     return value;
   }
   if (Array.isArray(value)) {
