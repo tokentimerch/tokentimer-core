@@ -1,7 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-06 against main 62ef05a7 (v0.19.0 draft). Other
-certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
+Last reviewed: 2026-11-06 against main 62ef05a7 (v0.19.0 release candidate).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -78,16 +77,6 @@ called stable while they are open.
 Accepted work that ships in 0.x stages on its own schedule. v1.0.0 can be
 called stable while it is open.
 
-- **Verifiable certificate lifecycle and real-host qualification**
-  ([#354](https://github.com/tokentimerch/tokentimer-core/issues/354)).
-  Cover Windows installation, services, CNG, certificate stores and IIS,
-  enterprise AD CS enrollment and recovery, ACME, Linux destinations and
-  edition integration. Use disposable hosted Windows runners and isolated
-  on-demand domain labs, with independent cleanup safeguards. Mandatory
-  execution reports must fail on missing prerequisites or skipped tests.
-  Implementation and focused local evidence are separate from hosted
-  execution and release qualification; see
-  [the qualification guide](.github/maintainers/certops/e2e-qualification.md).
 - **MCP operator interface**
   ([#502](https://github.com/tokentimerch/tokentimer-core/issues/502),
   implementation [PR #406](https://github.com/tokentimerch/tokentimer-core/pull/406)).
@@ -169,10 +158,8 @@ does not promise a version or add a v1.0.0 gate.
   [manual evidence #341](https://github.com/tokentimerch/tokentimer-core/issues/341)
   and [restore decommissioned identities #410](https://github.com/tokentimerch/tokentimer-core/issues/410).
   Scope each against the released lifecycle before implementation.
-- **Release confidence and qualification**:
-  [remaining host coverage #354](https://github.com/tokentimerch/tokentimer-core/issues/354)
-  and [release provenance #300](https://github.com/tokentimerch/tokentimer-core/issues/300).
-  Keep published AD CS baseline support separate from testing expansion.
+- **Release provenance**
+  ([#300](https://github.com/tokentimerch/tokentimer-core/issues/300)).
 
 Performance tests with regression budgets
 ([#235](https://github.com/tokentimerch/tokentimer-core/issues/235));
