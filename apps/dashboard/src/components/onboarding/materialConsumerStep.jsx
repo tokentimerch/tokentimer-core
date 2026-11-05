@@ -44,7 +44,13 @@ import {
   materialCertificateInput,
 } from './materialSetupModel.js';
 
-function VerificationRequest({ ctx, group, disabled, real = false }) {
+function VerificationRequest({
+  ctx,
+  group,
+  disabled,
+  real = false,
+  selectedAgentId,
+}) {
   const saved = certopsProgress(ctx);
   const field = real ? 'materialIisRollout' : 'materialVerification';
   const previous = saved[field];
@@ -53,6 +59,53 @@ function VerificationRequest({ ctx, group, disabled, real = false }) {
     [error, setError] = useState(''),
     [confirmed, setConfirmed] = useState(false);
   const observed = useObservedJob(ctx.workspaceId, current?.jobId);
+  const checkAssignments =
+    !real && !disabled && Boolean(group.publication) && !current?.jobId;
+  const [assignments, setAssignments] = useState({ rows: null, error: false });
+  useEffect(() => {
+    if (!checkAssignments) return undefined;
+    const abort = new AbortController();
+    let inFlight = false;
+    setAssignments({ rows: null, error: false });
+    const load = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const { consumers } = await readDistribution(
+          ctx.workspaceId,
+          group.id,
+          {
+            signal: abort.signal,
+          }
+        );
+        if (!abort.signal.aborted)
+          setAssignments({ rows: consumers, error: false });
+      } catch {
+        if (!abort.signal.aborted) setAssignments({ rows: null, error: true });
+      } finally {
+        inFlight = false;
+      }
+    };
+    load();
+    const timer = setInterval(load, 5000);
+    return () => {
+      abort.abort();
+      clearInterval(timer);
+    };
+  }, [checkAssignments, ctx.workspaceId, group.id]);
+
+  const activeConsumers = assignments.rows?.filter(
+    row =>
+      (row.binding_state ?? row.state) === 'active' && row.assigned_agent_id
+  );
+  const canVerify = activeConsumers?.some(
+    row => !selectedAgentId || row.assigned_agent_id === selectedAgentId
+  );
+  const requestBlocked =
+    disabled ||
+    !group.publication ||
+    Boolean(current?.jobId) ||
+    (real ? !confirmed : !canVerify);
   const canReset = real
     ? group.completed === true ||
       group.verified === true ||
@@ -68,7 +121,7 @@ function VerificationRequest({ ctx, group, disabled, real = false }) {
     };
   }, []);
   const request = async () => {
-    if (disabled || busy || !group.publication || (real && !confirmed)) return;
+    if (requestBlocked || busy) return;
     setBusy(true);
     setError('');
     try {
@@ -110,8 +163,24 @@ function VerificationRequest({ ctx, group, disabled, real = false }) {
       <Text fontSize='sm'>
         {real
           ? 'This real rollout imports the private key and changes IIS bindings. It is not a test.'
-          : 'The signed verification-only rollout fetches the exact pinned version and reads back the installed certificate, key, full chain and applicable TLS evidence. It does not install, import, bind or reload. Missing installation produces a failure, not a deployment.'}
+          : 'The signed verification-only rollout checks all active consumers in this publication. It fetches the exact pinned version and reads back the installed certificate, key, full chain and applicable TLS evidence. It does not install, import, bind or reload. Missing installation produces a failure, not a deployment.'}
       </Text>
+      {checkAssignments && assignments.error && (
+        <StatusPanel status='warning'>
+          Consumer assignments could not be read. Refresh before requesting
+          verification.
+        </StatusPanel>
+      )}
+      {checkAssignments && activeConsumers?.length === 0 && (
+        <StatusPanel status='warning' title='No consumer assigned'>
+          Assign a consumer before checking installed material.
+        </StatusPanel>
+      )}
+      {checkAssignments && activeConsumers?.length > 0 && !canVerify && (
+        <StatusPanel status='warning' title='Selected consumer is not assigned'>
+          Assign the selected consumer before checking installed material.
+        </StatusPanel>
+      )}
       {real && (
         <Checkbox
           isChecked={confirmed}
@@ -124,7 +193,7 @@ function VerificationRequest({ ctx, group, disabled, real = false }) {
       <PrimaryButton
         onClick={request}
         isLoading={busy}
-        isDisabled={disabled || (real && !confirmed) || Boolean(current?.jobId)}
+        isDisabled={requestBlocked}
       >
         {real
           ? 'Request real IIS deployment'
@@ -779,6 +848,9 @@ function MaterialConsumerForm({ ctx }) {
                 key={`check/${group.id}`}
                 ctx={ctx}
                 group={group}
+                selectedAgentId={
+                  platform === 'linux' ? firstAgentId : undefined
+                }
                 disabled={!ready || (platform === 'win32' && !wEnabled)}
               />
             )}

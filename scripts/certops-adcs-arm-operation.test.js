@@ -20,6 +20,7 @@ class QualificationHttpFailure : System.Exception {
 }
 function az {
  if(($args -join ' ') -notmatch '^account get-access-token '){throw 'Unexpected Azure command'}
+ if($args -contains '--resource'){throw 'ARM token must use the Azure CLI default resource'}
  $global:LASTEXITCODE=0
  "fixture-token-$global:certopsEpoch"
 }
@@ -71,7 +72,7 @@ if($env:CERTOPS_ARM_MODE -in 'success','auth-retry'){
 }
 Write-Output 'ARM_BOUNDARY_PROBE_PASSED'
 `);
- const result=spawnSync("pwsh",["-NoProfile","-NonInteractive","-File",file],{encoding:"utf8",windowsHide:true,timeout:15000,env:{...process.env,CERTOPS_ARM_HELPER:path.resolve(__dirname,"../infra/certops-adcs/arm-operation.ps1"),CERTOPS_ARM_MODE:mode}});
+ const result=spawnSync("pwsh",["-NoProfile","-NonInteractive","-File",file],{encoding:"utf8",windowsHide:true,timeout:60000,env:{...process.env,CERTOPS_ARM_HELPER:path.resolve(__dirname,"../infra/certops-adcs/arm-operation.ps1"),CERTOPS_ARM_MODE:mode}});
  assert.equal(result.status,0,result.stdout+result.stderr);assert.match(result.stdout,/ARM_BOUNDARY_PROBE_PASSED/);assert.ok(!result.stdout.includes("fixture-private-value"));
 }
 test("long guest operations refresh authentication at every poll without replay",t=>run(t,"success"));

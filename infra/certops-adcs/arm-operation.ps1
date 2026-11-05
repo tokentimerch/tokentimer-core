@@ -23,7 +23,7 @@ function Invoke-CertOpsArmRequest {
       # A network retry can outlive the token acquired for the first attempt.
       # Refresh at every read boundary, including a rejected authentication.
       & $RefreshAuthentication | ForEach-Object { Write-Host $_ }
-      $token=az account get-access-token --subscription $SubscriptionId --resource https://management.azure.com/ --query accessToken --output tsv --only-show-errors
+      $token=az account get-access-token --subscription $SubscriptionId --query accessToken --output tsv --only-show-errors
       if($LASTEXITCODE -ne 0 -or -not $token){throw 'Could not obtain fresh lab ARM access token'}
       $request.Headers.Authorization="Bearer $token"
       try { return (Invoke-WebRequest @request) } catch {
