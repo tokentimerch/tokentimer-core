@@ -65,14 +65,14 @@
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "b535df8f353fcb042417df0fa2f3ba1910242688cbe0c543db217d31d0abce1f"
+          "sha256": "7203b1ba9b7bebdd6e86a77bab422185bc07db54580112a16a5a68d8e6e4cbce"
         },
         {
           "id": "integration-openapi-spec",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "b535df8f353fcb042417df0fa2f3ba1910242688cbe0c543db217d31d0abce1f"
+          "sha256": "7203b1ba9b7bebdd6e86a77bab422185bc07db54580112a16a5a68d8e6e4cbce"
         },
         {
           "id": "auth-route-compat-contract",
@@ -316,7 +316,7 @@
           "kind": "spec",
           "path": "packages/contracts/api/certops-route-compat.contract.json",
           "status": "existing",
-          "sha256": "bc312b380dc1c67e93e6b034afc6094177edd30ca6b778b4dde5ab1bc61f3ab2"
+          "sha256": "4bb3e907e87bc234b72bcfe77a61ca4cec7a32cf8a96e4c3d22377609a573c98"
         },
         {
           "id": "certops-material-distribution-schema",

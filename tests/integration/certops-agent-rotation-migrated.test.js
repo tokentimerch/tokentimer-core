@@ -46,6 +46,64 @@ describe("Agent credential rotation on migrated schema", function () {
     assert.equal(events.rows.length, 1); assert.equal(events.rows[0].metadata.agentId, agentId);
     assert.equal(JSON.stringify(events.rows).includes(next.plaintextCredential), false);
   });
+  it("returns only the authenticated agent identity across workspaces", async () => {
+    const email = `identity-${randomUUID()}@example.test`;
+    const user = (await db.query("INSERT INTO users(email,email_original,display_name,password_hash,auth_method) VALUES ($1,$2,'Identity Test','x','local') RETURNING id", [email,email])).rows[0];
+    const workspaces = [randomUUID(),randomUUID()];
+    const identities = [];
+    for (const workspaceId of workspaces) {
+      await db.query("INSERT INTO workspaces (id,name,created_by,plan) VALUES ($1,'identity test',$2,'oss')", [workspaceId,user.id]);
+      const credential = generateAgentCredential(), agentId = `agent-${randomUUID()}`;
+      const row = (await db.query(`INSERT INTO certops_agents (workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)
+        VALUES ($1,$2,'0.18.2','1.0.0',$3,$4) RETURNING id`, [workspaceId,agentId,credential.credentialPrefix,credential.credentialHash])).rows[0];
+      identities.push({id:row.id,agentId,workspaceId,token:credential.plaintextCredential});
+    }
+    let preAuthCalls=0, blockPreAuth=false;
+    const app=express(); app.use(createCertOpsMachineWritePreParserBoundary({parserOptions:{limitBytes:256},preAuthRateLimitMiddleware:(_req,res,next)=>{preAuthCalls++; if(blockPreAuth) return res.status(429).json({error:"rate limited"}); return next();}}));
+    app.use(createCsrfExemptMiddleware((_req,res)=>res.status(403).json({error:"csrf"}), {allowPath:isCertOpsMachineTokenCsrfExemptPath}));
+    app.use(createCertOpsAgentRouter({dbPool:db, rotationEnv:{CERTOPS_AGENT_ROTATION_ALL_API_FENCED:"true"}, credentialAuthMiddleware:createAgentCredentialAuth({client:db}), certOpsEnabledMiddleware:(_req,_res,nextMiddleware)=>nextMiddleware()}));
+    const route="/api/v1/certops/agent/credential-rotation/identity";
+    const response=await supertest(app).post(route).query({workspaceId:identities[1].workspaceId}).set("Authorization",`Bearer ${identities[0].token}`).send({});
+    assert.equal(response.status,200);
+    assert.deepEqual(response.body,{id:identities[0].id,agentId:identities[0].agentId,workspaceId:identities[0].workspaceId});
+    assert.equal(response.headers["cache-control"],"no-store");
+    assert.equal((await supertest(app).post(route).set("Authorization","Bearer invalid").send({})).status,401);
+    assert.equal((await supertest(app).post(route).set("Authorization",`Bearer ${identities[0].token}`).send({workspaceId:identities[1].workspaceId})).status,400);
+    const previousPreAuthCalls=preAuthCalls;
+    assert.equal((await supertest(app).post(route).set("Authorization",`Bearer ${identities[0].token}`).send({x:"x".repeat(512)})).status,413);
+    assert.equal(preAuthCalls,previousPreAuthCalls+1);
+    blockPreAuth=true;
+    assert.equal((await supertest(app).post(route).set("Authorization",`Bearer ${identities[0].token}`).send({x:"x".repeat(512)})).status,429);
+  });
+  it("rejects identity requests authenticated before credential replacement or retirement commits", async () => {
+    for (const change of ["credential", "retired"]) {
+    const email = `identity-race-${randomUUID()}@example.test`;
+    const user = (await db.query("INSERT INTO users(email,email_original,display_name,password_hash,auth_method) VALUES ($1,$2,'Identity Race','x','local') RETURNING id",[email,email])).rows[0];
+    const workspaceId=randomUUID(); await db.query("INSERT INTO workspaces (id,name,created_by,plan) VALUES ($1,'race',$2,'oss')",[workspaceId,user.id]);
+    const old=generateAgentCredential(), replacement=generateAgentCredential(), agentId=`agent-${randomUUID()}`;
+    const row=(await db.query(`INSERT INTO certops_agents (workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)
+      VALUES ($1,$2,'0.18.2','1.0.0',$3,$4) RETURNING id`,[workspaceId,agentId,old.credentialPrefix,old.credentialHash])).rows[0];
+    const locker=await db.connect();
+    try {
+      await locker.query("BEGIN");
+      if (change === "credential") await locker.query("UPDATE certops_agents SET credential_prefix=$2,credential_hash=$3 WHERE id=$1",[row.id,replacement.credentialPrefix,replacement.credentialHash]);
+      else await locker.query("UPDATE certops_agents SET status='retired',retired_at=NOW() WHERE id=$1",[row.id]);
+      let authenticated;
+      const seen=new Promise(resolve=>{authenticated=resolve;});
+      const authenticate=createAgentCredentialAuth({client:db});
+      const auth=(req,res,next)=>authenticate(req,res,()=>{authenticated();next();});
+      const app=express(); app.use(createCertOpsMachineWritePreParserBoundary());
+      app.use(createCsrfExemptMiddleware((_req,res)=>res.status(403).json({error:"csrf"}), {allowPath:isCertOpsMachineTokenCsrfExemptPath}));
+      app.use(createCertOpsAgentRouter({dbPool:db,rotationEnv:{CERTOPS_AGENT_ROTATION_ALL_API_FENCED:"true"},credentialAuthMiddleware:auth,certOpsEnabledMiddleware:(_req,_res,next)=>next()}));
+      const pending=supertest(app).post("/api/v1/certops/agent/credential-rotation/identity").set("Authorization",`Bearer ${old.plaintextCredential}`).send({}).then(result=>result);
+      await seen;
+      await locker.query("COMMIT");
+      const response=await pending;
+      assert.equal(response.status,change === "credential" ? 401 : 410);
+      assert.equal(response.body.workspaceId,undefined);
+    } finally { try { await locker.query("ROLLBACK"); } catch {} locker.release(); }
+    }
+  });
   it("enforces HTTP gate, auth, body shape and pre-auth rate limit on both steps", async () => {
     const email = `rotation-http-${randomUUID()}@example.test`;
     const user = (await db.query("INSERT INTO users(email,email_original,display_name,password_hash,auth_method) VALUES ($1,$2,'Rotation HTTP','x','local') RETURNING id", [email,email])).rows[0];

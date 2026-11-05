@@ -1572,6 +1572,29 @@ const OLD_ROTATION_CREDENTIAL = `ttagent_${"1".repeat(16)}_${"2".repeat(64)}`;
 const NEW_ROTATION_CREDENTIAL = `ttagent_${"3".repeat(16)}_${"4".repeat(64)}`;
 const NEW_ROTATION_HASH = "a".repeat(64);
 
+test("rotation identity uses the enrolled bearer and rejects ambiguous replies", async () => {
+  const identity = { id:"11111111-1111-4111-8111-111111111111", agentId:"agent-a", workspaceId:"22222222-2222-4222-8222-222222222222" };
+  const calls = stubFetch([{status:200,json:identity},{status:200,json:{...identity,extra:true}}]);
+  const client = createProtocolClient({ serverUrl:"https://example.test", agentId:"agent-a", protocolVersion:"1.0.0", getCredential:()=>OLD_ROTATION_CREDENTIAL });
+  assert.deepEqual(await client.readCredentialRotationIdentity(),identity);
+  assert.equal(calls[0].init.method,"POST");
+  assert.equal(calls[0].init.redirect,"error");
+  assert.equal(calls[0].init.headers.authorization,`Bearer ${OLD_ROTATION_CREDENTIAL}`);
+  await assert.rejects(client.readCredentialRotationIdentity(),{code:AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE});
+});
+
+test("rotation identity rejects malformed agent and workspace identifiers", async () => {
+  for (const identity of [
+    {id:"bad",agentId:"agent-a",workspaceId:"22222222-2222-4222-8222-222222222222"},
+    {id:"11111111-1111-4111-8111-111111111111",agentId:"bad/agent",workspaceId:"22222222-2222-4222-8222-222222222222"},
+    {id:"11111111-1111-4111-8111-111111111111",agentId:"agent-a",workspaceId:"invalid"},
+  ]) {
+    stubFetch([{status:200,json:identity}]);
+    const client=createProtocolClient({serverUrl:"https://example.test",agentId:"agent-a",protocolVersion:"1.0.0",getCredential:()=>OLD_ROTATION_CREDENTIAL});
+    await assert.rejects(client.readCredentialRotationIdentity(),{code:AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE});
+  }
+});
+
 test("rotation transport prepares with old bearer and confirms with candidate bearer", async () => {
   const calls = stubFetch([{ status: 200, json: { state: "pending" } }, { status: 200, json: { state: "committed" } }]);
   const client = createProtocolClient({ serverUrl: "https://example.test", agentId: "agent-1", protocolVersion: "1.0.0", getCredential: () => OLD_ROTATION_CREDENTIAL });
