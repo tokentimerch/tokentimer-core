@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 type runFixture struct {
@@ -75,7 +76,7 @@ func (f scratchFixture) Cleanup() error { f.events = append(f.events, "scratch-c
 func (f scratchFixture) Close()         { f.events = append(f.events, "scratch-close") }
 
 func TestRunCandidateQuarantinesAfterIntent(t *testing.T) {
-	for _, scenario := range []string{"success", "intent", "scratch", "installer"} {
+	for _, scenario := range []string{"success", "intent", "scratch", "installer", "termination-failed"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := &runFixture{}
 			if scenario == "intent" {
@@ -86,6 +87,9 @@ func TestRunCandidateQuarantinesAfterIntent(t *testing.T) {
 			}
 			if scenario == "installer" {
 				f.installErr = errors.New("installer")
+			}
+			if scenario == "termination-failed" {
+				f.installErr = errors.Join(context.Canceled, errors.New("process job termination failed"))
 			}
 			deps := executionDependencies{
 				nativeArch: func() (string, error) { return runtime.GOARCH, nil },
@@ -123,7 +127,7 @@ func TestRunCandidateQuarantinesAfterIntent(t *testing.T) {
 					t.Fatalf("unsafe invocation: %v %s", err, joined)
 				}
 			}
-			if scenario == "installer" && (err != nil || res.InstallerErr == nil) {
+			if (scenario == "installer" || scenario == "termination-failed") && (err != nil || res.InstallerErr == nil) {
 				t.Fatalf("lost installer status: %v %v", err, res.InstallerErr)
 			}
 		})
@@ -158,5 +162,56 @@ func TestRunCandidateCancelledBeforeInvocationCleansFreshPair(t *testing.T) {
 	}
 	if strings.Join(f.events, ",") != "intent,scratch-intent,abort,release" {
 		t.Fatalf("unexpected events: %v", f.events)
+	}
+}
+
+func TestRunCandidateHoldsStagingWhileFailedTerminationWaits(t *testing.T) {
+	f := &runFixture{}
+	done := make(chan error, 1)
+	reported := make(chan struct{}, 1)
+	result := make(chan RunResult, 1)
+	runErr := make(chan error, 1)
+	terminationErr := errors.New("termination failure")
+	deps := executionDependencies{
+		nativeArch: func() (string, error) { return runtime.GOARCH, nil },
+		prepare:    func(Candidate) (preparedForRun, error) { return f, nil },
+		scratch:    func() (scratchForRun, error) { return scratchFixture{f}, nil },
+		beginGuard: func(context.Context) (func() error, error) {
+			return func() error { f.events = append(f.events, "release"); return nil }, nil
+		},
+		scmDigest: func() (string, error) { return strings.Repeat("c", 64), nil },
+		invoke: func(context.Context, string, string, []string, string, string, string) error {
+			return waitCanceledChild(context.Canceled, done, func() error { return terminationErr }, func() { reported <- struct{}{} })
+		},
+	}
+	go func() {
+		r, err := runCandidate(context.Background(), Candidate{Architecture: runtime.GOARCH}, nil, "", deps)
+		result <- r
+		runErr <- err
+	}()
+	select {
+	case <-reported:
+	case <-time.After(5 * time.Second):
+		t.Fatal("termination failure was not reported")
+	}
+	if events := strings.Join(f.events, ","); strings.Contains(events, "close") || strings.Contains(events, "cleanup") {
+		t.Fatalf("staging released while the child is still running: %s", events)
+	}
+	select {
+	case <-result:
+		t.Fatal("launcher returned while the child is still running")
+	default:
+	}
+	done <- nil
+	select {
+	case r := <-result:
+		if err := <-runErr; err != nil || !r.CleanupPending || !errors.Is(r.InstallerErr, context.Canceled) || !errors.Is(r.InstallerErr, terminationErr) {
+			t.Fatalf("unexpected result: %+v, %v", r, err)
+		}
+		if events := strings.Join(f.events, ","); strings.Contains(events, "cleanup") || !strings.Contains(events, "scratch-close,close") {
+			t.Fatalf("staging was not retained: %s", events)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("launcher did not finish after child exit")
 	}
 }

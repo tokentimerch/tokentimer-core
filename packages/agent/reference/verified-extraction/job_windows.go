@@ -4,7 +4,9 @@ package verifiedextraction
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"syscall"
 	"unsafe"
@@ -86,10 +88,25 @@ func runContained(ctx context.Context, cmd *exec.Cmd) error {
 	case <-ctx.Done():
 		// Terminate members on a best-effort basis and wait only for the direct
 		// child. Protected paths remain quarantined regardless of this result.
-		_ = windows.TerminateJobObject(job, 1)
-		<-done
-		return ctx.Err()
+		return waitCanceledChild(ctx.Err(), done, func() error { return windows.TerminateJobObject(job, 1) }, func() {
+			fmt.Fprintln(os.Stderr, "agent launcher: process job termination failed; protected staging remains locked while waiting for the installer")
+		})
 	}
+}
+
+// Do not return on a failed termination: RunCandidate retains its locked
+// staging until the direct child has exited. Surface the failure afterwards;
+// neither a successful call nor child exit proves SCM/WMI actors have ended.
+func waitCanceledChild(cause error, done <-chan error, terminate func() error, report func()) error {
+	err := terminate()
+	if err != nil {
+		report()
+	}
+	<-done
+	if err != nil {
+		return errors.Join(cause, fmt.Errorf("process job termination failed: %w", err))
+	}
+	return cause
 }
 
 func primaryThread(pid uint32) (windows.Handle, error) {
