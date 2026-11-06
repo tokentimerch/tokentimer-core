@@ -14262,6 +14262,28 @@ components:
         - createdAt
         - updatedAt
       properties:
+        observedRevocation: &observedRevocationSchema
+          type: object
+          nullable: true
+          additionalProperties: false
+          description: Latest observed revocation and local chain verification, separate from lifecycle status.
+          required: [verdict, chainStatus, checkedAt, validUntil, detail]
+          properties:
+            verdict: { type: string, enum: [good, revoked, issuer_revoked, unknown] }
+            chainStatus: { type: string, enum: [valid, invalid, unknown] }
+            checkedAt: { type: string, format: date-time }
+            validUntil: { type: string, format: date-time, nullable: true }
+            detail: { type: string, nullable: true, maxLength: 256 }
+            lastVerified:
+              type: object
+              additionalProperties: false
+              required: [verdict, chainStatus, checkedAt, validUntil, detail]
+              properties:
+                verdict: { type: string, enum: [good, revoked, issuer_revoked] }
+                chainStatus: { type: string, enum: [valid] }
+                checkedAt: { type: string, format: date-time }
+                validUntil: { type: string, format: date-time }
+                detail: { type: string, nullable: true, maxLength: 256 }
         schemaVersion:
           type: integer
           enum: [1]
@@ -14495,6 +14517,7 @@ components:
         - source
         - target
       properties:
+        observedRevocation: *observedRevocationSchema
         id:
           type: string
           format: uuid

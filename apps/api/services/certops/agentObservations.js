@@ -24,6 +24,7 @@ const {
   parsePublicCertificateMaterial,
   parseSubjectAltNames,
 } = require("./parser");
+const { normalizeObservedRevocation } = require("./observedRevocation");
 const {
   upsertManagedCertificateByMonitorSource,
   upsertAgentFilesystemTarget,
@@ -567,6 +568,7 @@ function normalizeAgentFilesystemObservation({
     windowsFields,
     keyPresent,
     publicCertificate,
+    observedRevocation: normalizeObservedRevocation(clientMeta, serverObservedAt),
     summary: optionalText(evidenceItem.summary || clientMeta.summary, "summary"),
     clientMetadata: clientMeta,
     observedAt,
@@ -788,6 +790,7 @@ async function upsertInventoryForObservation(client, observation) {
       locationSlot: observation.locationSlot,
       evidenceId: observation.evidenceId,
       observedAtServer: observation.observedAtServer,
+      ...(observation.observedRevocation ? { observedRevocation: observation.observedRevocation } : {}),
     },
   });
 
@@ -862,16 +865,29 @@ async function retainUnmanagedObservation(client, observation) {
   await client.query(
     `INSERT INTO certops_slot_observations(
        workspace_id, target_id, fingerprint_sha256, location_ref,
-       source, location_kind, source_ref, captured_at)
-     VALUES ($1, $8, $2, $3, $4, $5, $6, $7)
+       source, location_kind, source_ref, captured_at, observed_revocation)
+     VALUES ($1, $8, $2, $3, $4, $5, $6, $7, $9::jsonb)
      ON CONFLICT (workspace_id, target_id, fingerprint_sha256, location_ref)
      DO UPDATE SET captured_at = GREATEST(certops_slot_observations.captured_at,
-                                EXCLUDED.captured_at)`,
+                                EXCLUDED.captured_at),
+       observed_revocation = CASE
+         WHEN EXCLUDED.observed_revocation IS NULL THEN certops_slot_observations.observed_revocation
+         WHEN certops_slot_observations.observed_revocation IS NULL THEN EXCLUDED.observed_revocation
+         WHEN certops_slot_observations.observed_revocation->>'checkedAt' >= EXCLUDED.observed_revocation->>'checkedAt'
+           THEN certops_slot_observations.observed_revocation
+         WHEN EXCLUDED.observed_revocation->>'verdict' = 'unknown' THEN EXCLUDED.observed_revocation || CASE
+           WHEN certops_slot_observations.observed_revocation->>'verdict' <> 'unknown'
+             THEN jsonb_build_object('lastVerified', certops_slot_observations.observed_revocation - 'lastVerified')
+           WHEN certops_slot_observations.observed_revocation ? 'lastVerified'
+             THEN jsonb_build_object('lastVerified', certops_slot_observations.observed_revocation->'lastVerified')
+           ELSE '{}'::jsonb END
+         ELSE EXCLUDED.observed_revocation END`,
     [observation.workspaceId, observation.fingerprintSha256,
       observation.locationKind === "filesystem"
         ? `file://${observation.filePath}` : observation.locationRef,
       observation.source, observation.locationKind, certSourceRefFor(observation),
-      observation.observedAt, target.id],
+      observation.observedAt, target.id,
+      observation.observedRevocation ? JSON.stringify(observation.observedRevocation) : null],
   );
   return { unmanaged: true, certificateIdentityId: result.rows[0].id,
     managedCertificate: null, target, instance: null };

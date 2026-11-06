@@ -281,7 +281,7 @@
     {
       "id": "a0b75f0de8c699728470",
       "file": "packages/agent/scripts/pack-release.test.js",
-      "line": 207,
+      "line": 227,
       "name": "tracks install-agent.sh as executable in git (mode 100755)",
       "environment": "linux-filesystem",
       "workflowJob": "backend_quality"
@@ -289,7 +289,7 @@
     {
       "id": "efaa1f1fb388b4cd75cb",
       "file": "packages/agent/scripts/pack-release.test.js",
-      "line": 216,
+      "line": 236,
       "name": "assertExecutableEntries rejects a tarball whose installer lost the exec bit",
       "reason": "platform",
       "environment": "linux-filesystem",
@@ -487,7 +487,7 @@
     {
       "id": "3df89c260dedffe07e62",
       "file": "packages/agent/src/discovery/discovery.test.js",
-      "line": 308,
+      "line": 332,
       "name": "rejects symbolic-link certificate candidates",
       "reason": "platform",
       "environment": "linux-filesystem",
@@ -496,7 +496,7 @@
     {
       "id": "2c4e758114365ee067cc",
       "file": "packages/agent/src/discovery/discovery.test.js",
-      "line": 343,
+      "line": 367,
       "name": "parses a real self-signed certificate and extracts public fields, normalizing the fingerprint",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
@@ -505,7 +505,7 @@
     {
       "id": "177c1046e526e24a5883",
       "file": "packages/agent/src/discovery/discovery.test.js",
-      "line": 372,
+      "line": 396,
       "name": "never reads private key bytes into the returned certificate entry, even when it peeks the key",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
@@ -586,7 +586,7 @@
     {
       "id": "b45f65881e8f3ba572b1",
       "file": "packages/agent/src/index.test.js",
-      "line": 4215,
+      "line": 4245,
       "name": "refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",

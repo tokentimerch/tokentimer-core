@@ -636,6 +636,11 @@ describe("collectWindowsDiscoveryObservations", () => {
         "san-e2e.example.com",
         "alt.san-e2e.example.com",
       ]);
+      assert.equal(obs.certificatePem, undefined);
+      const withPublicCertificate = await collectWindowsDiscoveryObservations({ execFileImpl, spawn, includePublicCertificate: true });
+      const publicCert = new (require("node:crypto").X509Certificate)(withPublicCertificate[0].certificatePem);
+      assert.equal(publicCert.fingerprint256.replace(/:/g, "").toLowerCase(), obs.fingerprintSha256);
+      assert.doesNotMatch(withPublicCertificate[0].certificatePem, /PRIVATE KEY/);
     },
   );
 });
