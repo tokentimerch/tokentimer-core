@@ -27,6 +27,7 @@ param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][stri
   [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9]{1,49}$')][string]$Location)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'arm-operation.ps1')
+. (Join-Path $PSScriptRoot 'report-error.ps1')
 if($QualificationScope -eq 'operator-acceptance' -and ($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Operator acceptance cannot include fault experiments'}
 # A diagnostic shard runs a subset of the plain comprehensive journeys in its own lab. It is never release evidence.
 if($Shard -ne 'all' -and ($QualificationScope -ne 'comprehensive' -or $HierarchyRole -ne 'root' -or $PendingElapsedQualification -ne '0' -or $IssuerReassignment -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $RetentionCadencePrepare -ne '0')){throw 'A diagnostic shard only applies to the plain comprehensive scope'}
@@ -258,7 +259,7 @@ try {
       throw
     } finally {
       try { Invoke-Stage 'control-plane' (Join-Path $PSScriptRoot 'acceptance-worker.sh') 'CERTOPS_STAGE=acceptance-worker-stopped' @('action=stop') }
-      catch { if($workerExecutionFailure){Write-Warning 'Production acceptance worker teardown also failed; preserve the original execution failure'}else{throw} }
+      catch { if($workerExecutionFailure){Write-Warning 'Production acceptance worker teardown also failed; preserve the original execution failure' -WarningAction Continue}else{throw} }
     }
     }
   } catch {
@@ -271,12 +272,12 @@ try {
       if($IssuerReassignment -eq '0' -and $PendingElapsedQualification -eq '0' -and $HierarchyRole -eq 'root' -and $Shard -eq 'all' -and $WindowsVersion -eq '2022' -and $Language -eq 'en-US' -and $ResponseLossExperiment -eq '0' -and $JournalPhaseExperiment -eq 'none'){$kinds+='browser-enrollment';$kinds+='uncertain-abandon'}
     }
     if($runAcceptance){$kinds+=@('acceptance-worker','package-acceptance')}
-    foreach($kind in $kinds){try{& (Join-Path $PSScriptRoot 'read-report.ps1') -ResourceGroup $ResourceGroup -ReportKind $kind}catch{$reportErrors+=$kind}}
+    foreach($kind in $kinds){try{& (Join-Path $PSScriptRoot 'read-report.ps1') -ResourceGroup $ResourceGroup -ReportKind $kind}catch{$code=Get-CertOpsReportFailureCode $_;Write-Warning ("CERTOPS_REPORT_RETRIEVAL_FAILURE={0}:{1}" -f $kind,$code) -WarningAction Continue;$reportErrors+=$kind}}
     if($reportErrors.Count){
       # Missing reports are expected when an earlier mandatory stage never ran.
       # Keep that original failure, while still attempting every bounded report.
       $reportFailure="Guest execution report retrieval failed for: $($reportErrors -join ', ')"
-      if($nativeExecutionFailure){Write-Warning $reportFailure}else{throw $reportFailure}
+      if($nativeExecutionFailure){Write-Warning $reportFailure -WarningAction Continue}else{throw $reportFailure}
     }
   }
   $reportStatus = 'provisioned-and-native-scenarios-completed'
