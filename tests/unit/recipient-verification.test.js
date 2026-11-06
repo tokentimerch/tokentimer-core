@@ -1540,7 +1540,10 @@ describe("recipient verification", () => {
       },
     }, "webhooks");
     assert.equal(reopenedAgain.channels.outcomes.webhooks.retryGeneration, 2);
-    assert.equal(verification.planManualRetry(combined.ledger, "email").code, "NO_VERIFIED_RECIPIENTS");
+    const recheck = verification.planManualRetry(combined.ledger, "email");
+    assert.deepEqual(recheck.channels.retry, ["email"]);
+    assert.equal(recheck.channels.outcomes.email, undefined);
+    assert.equal(recheck.channels.outcomes.webhooks.state, "blocked");
     assert.deepEqual(verification.planManualRetry(["email", "webhooks"], "webhooks").channels, ["webhooks"]);
     assert.equal(verification.planManualRetry({
       version: 1,

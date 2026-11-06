@@ -1,6 +1,7 @@
 const { pool } = require("../db/database");
 const { currentWorkspaceAccessSql } = require("./rbac");
 const { resolvedTokenWorkspaceSql } = require("@tokentimer/alert-eligibility");
+const { bulkRequeueWebhookSql } = require("../../../packages/recipient-verification");
 
 /**
  * Requeue failed/blocked alerts for a user or a specific workspace.
@@ -32,7 +33,8 @@ async function requeueAlertsCore({
          RETURNING pi.id
        )
        UPDATE alert_queue aq
-       SET status = 'pending', attempts = 0, attempts_email = 0, attempts_webhooks = 0, attempts_whatsapp = 0,
+       SET channels = ${bulkRequeueWebhookSql()},
+           status = 'pending', attempts = 0, attempts_email = 0, attempts_webhooks = 0, attempts_whatsapp = 0,
            error_message = NULL, next_attempt_at = NOW(), updated_at = NOW()
        WHERE COALESCE(
          (SELECT ${resolvedTokenWorkspaceSql("t")} FROM tokens t WHERE t.id = aq.token_id),
@@ -67,7 +69,8 @@ async function requeueAlertsCore({
        RETURNING pi.id
      )
      UPDATE alert_queue aq
-     SET status = 'pending', attempts = 0, attempts_email = 0, attempts_webhooks = 0, attempts_whatsapp = 0,
+     SET channels = ${bulkRequeueWebhookSql()},
+         status = 'pending', attempts = 0, attempts_email = 0, attempts_webhooks = 0, attempts_whatsapp = 0,
          error_message = NULL, next_attempt_at = NOW(), updated_at = NOW()
      WHERE aq.user_id = $1
        AND (${currentWorkspaceAccessSql(workspaceAnchor, "$1")}

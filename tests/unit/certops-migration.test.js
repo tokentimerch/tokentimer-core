@@ -37,7 +37,7 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 74).name, "certops_material_distribution");
     assert.equal(migrations.find((entry) => entry.version === 75).name, "certops_distribution_review");
     assert.equal(migrations.find((entry) => entry.version === 76).name, "certops_distribution_transfer");
-    assert.equal(migrations.at(-1).version, 106);
+    assert.equal(migrations.at(-1).version, 108);
     assert.equal(migrations.find(entry => entry.version === 78).name, "certops_installed_file_distribution");
     assert.equal(migrations.find(entry => entry.version === 79).name, "auto_sync_provider_stats");
     assert.equal(migrations.find(entry => entry.version === 80).name, "auto_sync_run_metrics");
@@ -51,7 +51,9 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 80).name, "auto_sync_run_metrics");
     assert.equal(migrations.find((entry) => entry.version === 81).name, "auto_sync_metric_labels");
     assert.equal(migrations.find((entry) => entry.version === 84).name, "recipient_channel_verification");
-    assert.equal(migrations.at(-1).name, "operator_issuance");
+    assert.equal(migrations.find((entry) => entry.version === 106).name, "operator_issuance");
+    assert.equal(migrations.find((entry) => entry.version === 107).name, "certops_issuance_job_identity");
+    assert.equal(migrations.at(-1).name, "certops_issuance_identity_transfer");
     assert.equal(migrations.find(entry => entry.version === 95).name, "remove_pagerduty_rest_lookup");
     assert.throws(() => validateMigrationHistory([
       ...migrations.filter(entry => entry.version <= 78).map(({version, name}) => ({version, name})),
@@ -61,7 +63,7 @@ describe("operational notifications migration", () => {
     assert.match(migrations.find(entry => entry.version === 72).sql, /fk_certificate_profiles_issuer/);
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      [...Array.from({ length: 85 }, (_, index) => index + 1), 92, 93, 94, 95, 98, 99, 100, 101, 102, 103, 104, 105, 106],
+      [...Array.from({ length: 85 }, (_, index) => index + 1), 92, 93, 94, 95, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108],
     );
     assert.equal(migrations.find(entry => entry.version === 73).name, "certops_job_alert_context");
     assert.match(migrations.find(entry => entry.version === 72).sql, /ON DELETE SET NULL \(issuer_id\)/);
@@ -1896,10 +1898,10 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     const notificationVersions = [56, 57, 58, 59];
     const notificationCount = notificationVersions.filter((version) => sorted.includes(version)).length;
     assert.ok(notificationCount === 0 || notificationCount === 4);
-    const expected = [...Array.from({ length: 85 }, (_, index) => index + 1), 92, 93, 94, 95, 98, 99, 100, 101, 102, 103, 104, 105, 106]
+    const expected = [...Array.from({ length: 85 }, (_, index) => index + 1), 92, 93, 94, 95, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108]
       .filter((version) => notificationCount === 4 || !notificationVersions.includes(version));
     assert.deepEqual(sorted, expected);
-    assert.equal(sorted[sorted.length - 1], 106);
+    assert.equal(sorted[sorted.length - 1], 108);
   });
 });
 

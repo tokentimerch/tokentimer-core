@@ -303,7 +303,7 @@ test("MCP lifetime, inventory and retention upgrades preserve partial preview le
     assert.deepEqual(composeMigrations(integrated, plan), plan, "completed upgrade plan replays unchanged");
   };
   for (const history of histories) {
-    for (const lastVersion of [102, 103, 104, 105, 106]) {
+    for (const lastVersion of [102, 103, 104, 105, 106, 107, 108]) {
       const registry = migrations.filter((row) => row.version <= lastVersion);
       const oldPlan = composeMigrations(registry, history);
       const firstMcp = oldPlan.findIndex((row) => row.name === "operator_connections");
