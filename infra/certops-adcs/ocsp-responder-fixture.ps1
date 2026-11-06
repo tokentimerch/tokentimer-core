@@ -897,13 +897,53 @@ function Restore-OwnedOcspSigningTemplate($Owner) {
  }
 }
 
+function Open-OwnedOcspCertView {
+ $view=New-Object -ComObject CertificateAuthority.View
+ $previousCulture=$null;$previousLanguage=0;$changed=$false
+ try {
+  try { [void]$view.OpenConnection('tt-ca.lab.certops.test\TTQualificationRoot') }
+  catch {
+   $original=$_;$exception=$_.Exception;$fileNotFound=$false
+   for($i=0;$i -lt 8 -and $null -ne $exception;$i++) {
+    if([BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$exception.HResult),0) -eq [uint32]2147942402){$fileNotFound=$true;break}
+    $exception=$exception.InnerException
+   }
+   if(!$fileNotFound){throw}
+   try {
+    if(-not ('TTQualificationThreadLanguage' -as [type])) {
+     Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class TTQualificationThreadLanguage { [DllImport("kernel32.dll")] public static extern ushort GetThreadUILanguage(); [DllImport("kernel32.dll")] public static extern ushort SetThreadUILanguage(ushort language); }'
+    }
+    $previousCulture=[Threading.Thread]::CurrentThread.CurrentUICulture
+    $previousLanguage=[TTQualificationThreadLanguage]::GetThreadUILanguage()
+    if([TTQualificationThreadLanguage]::SetThreadUILanguage(1033) -eq 0){throw 'Thread language fallback unavailable'}
+    $changed=$true
+    [Threading.Thread]::CurrentThread.CurrentUICulture=[Globalization.CultureInfo]::GetCultureInfo('en-US')
+    [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view);$view=$null
+    $view=New-Object -ComObject CertificateAuthority.View
+    [void]$view.OpenConnection('tt-ca.lab.certops.test\TTQualificationRoot')
+   } catch { throw $original }
+  }
+  return @{view=$view;previousCulture=$previousCulture;previousLanguage=$previousLanguage;changed=$changed}
+ } catch {
+  try {if($view -and [Runtime.InteropServices.Marshal]::IsComObject($view)){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)}}
+  finally {if($changed){[Threading.Thread]::CurrentThread.CurrentUICulture=$previousCulture;[void][TTQualificationThreadLanguage]::SetThreadUILanguage($previousLanguage)}}
+  throw
+ }
+}
+function Close-OwnedOcspCertView($connection) {
+ try {
+  if($connection.view -and [Runtime.InteropServices.Marshal]::IsComObject($connection.view)){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($connection.view)}
+ } finally {
+  if($connection.changed){[Threading.Thread]::CurrentThread.CurrentUICulture=$connection.previousCulture;[void][TTQualificationThreadLanguage]::SetThreadUILanguage($connection.previousLanguage)}
+ }
+}
+
 function Get-OwnedOcspSignerRequest($Owner,[string]$CertificateSha256) {
  if($CertificateSha256 -cnotmatch '^[a-f0-9]{64}$') { throw 'Exact signer certificate digest required' }
  $subject='certops-adcs-'+$Owner.ownership.runId+'-ocspsigner.example.test'
- $view=$null
+ $view=$null;$connection=$null
  try {
-  $view=New-Object -ComObject CertificateAuthority.View
-  [void]$view.OpenConnection('tt-ca.lab.certops.test\TTQualificationRoot')
+  $connection=Open-OwnedOcspCertView;$view=$connection.view
   $columns=@()
   foreach($aliases in @(
    @('RequestID'),@('CommonName'),@('RequesterName'),
@@ -943,9 +983,7 @@ function Get-OwnedOcspSignerRequest($Owner,[string]$CertificateSha256) {
   }
   return [long]$values[0]
  } finally {
-  if($view -and [Runtime.InteropServices.Marshal]::IsComObject($view)) {
-   [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)
-  }
+  if($connection){Close-OwnedOcspCertView $connection}
  }
 }
 
