@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { X509Certificate } = require("node:crypto");
 const { createHash } = require("node:crypto");
-const { inspectStoreOnlyCertificate, observeStoreOnlyPredecessor, installStoreOnlyCertificate } = require("./store-only");
+const { inspectStoreOnlyCertificate, inspectPendingStoreRequest, observeStoreOnlyPredecessor, installStoreOnlyCertificate } = require("./store-only");
 const { storeSnapshotTargetError } = require("../adcs-windows-iis");
 
 const certificatePem = fs.readFileSync(path.join(__dirname, "../verify/fixtures/selfsigned.crt.pem"), "utf8");
@@ -53,6 +53,35 @@ test("invalid input is refused without invoking native commands", async () => {
   assert.equal((await inspectStoreOnlyCertificate({ certificatePem, containerName: "foreign", execFileImpl })).status, "error");
   assert.equal((await inspectStoreOnlyCertificate({ certificatePem: "broken", containerName, execFileImpl })).status, "error");
   assert.equal(calls, 0);
+});
+
+test("pending request observation binds the issued leaf to the journaled CSR key without authorizing acceptance", async () => {
+  const csrSpkiSha256 = createHash("sha256").update(cert.publicKey.export({ type: "spki", format: "der" })).digest("hex");
+  let assertions = 0;
+  const options = { certificatePem, containerName, csrSpkiSha256, assertHeld: () => { assertions++; }, execFileImpl: exec({ matchingRequests: 1, verified: true }) };
+  assert.deepEqual(await inspectPendingStoreRequest(options), { status: "observed", matchingRequests: 1, keyMatches: true, safeToAccept: false });
+  assert.equal(assertions, 2);
+  for (const response of [{ matchingRequests: 2, verified: true }, { matchingRequests: 0, verified: true }, {}, "not-json"]) {
+    assert.deepEqual(await inspectPendingStoreRequest({ ...options, execFileImpl: exec(response) }), { status: "unavailable", safeToAccept: false });
+  }
+  assert.deepEqual(await inspectPendingStoreRequest({ ...options, execFileImpl: exec({ matchingRequests: 0, verified: false }) }),
+    { status: "observed", matchingRequests: 0, keyMatches: false, safeToAccept: false });
+});
+
+test("pending request inspection refuses a foreign CSR key or lost authority", async () => {
+  const csrSpkiSha256 = createHash("sha256").update(cert.publicKey.export({ type: "spki", format: "der" })).digest("hex");
+  let calls = 0;
+  const execFileImpl = (...args) => { calls++; return exec({ matchingRequests: 1, verified: true })(...args); };
+  const options = { certificatePem, containerName, csrSpkiSha256, assertHeld() {}, execFileImpl };
+  assert.deepEqual(await inspectPendingStoreRequest({ ...options, csrSpkiSha256: "0".repeat(64) }), { status: "unavailable", safeToAccept: false });
+  assert.equal(calls, 0);
+  let assertions = 0;
+  assert.deepEqual(await inspectPendingStoreRequest({ ...options, assertHeld() { if (++assertions === 2) throw new Error("lost"); } }),
+    { status: "unavailable", safeToAccept: false });
+  assert.equal(calls, 1);
+  const controller = new AbortController(); controller.abort();
+  assert.deepEqual(await inspectPendingStoreRequest({ ...options, signal: controller.signal }), { status: "unavailable", safeToAccept: false });
+  assert.equal(calls, 1);
 });
 
 test("predecessor lookup requires the exact signed fingerprint and a readable key", async () => {

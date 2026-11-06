@@ -47,6 +47,40 @@ async function inspectStoreOnlyCertificate({ certificatePem, containerName, exec
   return { status: "complete", thumbprint, fingerprintSha256, notBefore: observed.notBefore, notAfter: observed.notAfter, serialNumber: observed.serialNumber };
 }
 
+// Diagnostic observation only. The caller holds the enrollment and machine
+// store locks and supplies the lease assertion. A matching snapshot cannot
+// authorize acceptance until its atomicity and native behavior are qualified.
+async function inspectPendingStoreRequest({ certificatePem, containerName, csrSpkiSha256,
+  assertHeld, execFileImpl = execFile, signal }) {
+  const failure = () => ({ status: "unavailable", safeToAccept: false });
+  if (!isAgentOwnedContainerName(containerName) || !/^[a-f0-9]{64}$/.test(csrSpkiSha256 || "") ||
+      typeof assertHeld !== "function" || signal?.aborted) return failure();
+  let certificate, script;
+  try {
+    certificate = new X509Certificate(certificatePem);
+    const { createHash } = require("node:crypto");
+    const spki = certificate.publicKey.export({ type: "spki", format: "der" });
+    if (createHash("sha256").update(spki).digest("hex") !== csrSpkiSha256) return failure();
+    script = fs.readFileSync(path.join(__dirname, "inspect-pending-request.ps1"), "utf8");
+  } catch { return failure(); }
+  const encoded = certificate.raw.toString("base64");
+  if (encoded.length > 16000) return failure();
+  try {
+    assertHeld();
+    if (signal?.aborted) return failure();
+    const command = `& {\n${script}\n} -CertificateBase64 '${encoded}' -Container '${containerName}'`;
+    const result = await inspectProcess(execFileImpl, command, signal);
+    assertHeld();
+    if (signal?.aborted || result.exitCode !== 0 || result.execError) return failure();
+    const observed = JSON.parse(result.stdout);
+    if (!observed || !Number.isSafeInteger(observed.matchingRequests) || observed.matchingRequests < 0 ||
+        observed.matchingRequests > 1 || typeof observed.verified !== "boolean" ||
+        (observed.verified && observed.matchingRequests !== 1)) return failure();
+    return { status: "observed", matchingRequests: observed.matchingRequests,
+      keyMatches: observed.verified, safeToAccept: false };
+  } catch { return failure(); }
+}
+
 // The predecessor fingerprint comes from the frozen signed enrollment, never
 // a name search. Explicit null means first issuance; missing is invalid.
 async function observeStoreOnlyPredecessor({ fingerprintSha256, execFileImpl = execFile, signal }) {
@@ -144,4 +178,4 @@ async function installStoreOnlyCertificate({ certificatePem, containerName, stat
   } finally { lock.release(); }
 }
 
-module.exports = { inspectStoreOnlyCertificate, observeStoreOnlyPredecessor, installStoreOnlyCertificate };
+module.exports = { inspectStoreOnlyCertificate, inspectPendingStoreRequest, observeStoreOnlyPredecessor, installStoreOnlyCertificate };
