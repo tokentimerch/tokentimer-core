@@ -278,7 +278,9 @@ export default function McpAuthorizePage({ session }) {
                 </Text>
                 <Text color={muted} fontSize='sm'>
                   Read token inventory, certificate and job status in this
-                  workspace. Private keys and credentials are never shared.
+                  workspace. Inventory results exclude private keys and stored
+                  credentials. Share sensitive URLs only with assistants you
+                  trust.
                 </Text>
               </Box>
               {canRequest ? (
@@ -360,7 +362,7 @@ export default function McpAuthorizePage({ session }) {
                     isDisabled={busy || expired}
                     onChange={event => setMemberInvite(event.target.checked)}
                   >
-                    Allow reviewed viewer invitations by email
+                    Review and invite viewers by email
                   </Checkbox>
                   <Checkbox
                     isChecked={issuance}

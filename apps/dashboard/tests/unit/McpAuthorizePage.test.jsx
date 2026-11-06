@@ -69,9 +69,7 @@ describe('remote MCP consent', () => {
     fireEvent.change(screen.getByRole('combobox', { name: /Workspace/ }), {
       target: { value: 'one' },
     });
-    const invite = screen.getByLabelText(
-      'Allow reviewed viewer invitations by email'
-    );
+    const invite = screen.getByLabelText('Review and invite viewers by email');
     expect(invite).not.toBeChecked();
     fireEvent.click(invite);
     fireEvent.change(screen.getByRole('combobox', { name: /Workspace/ }), {
@@ -81,7 +79,7 @@ describe('remote MCP consent', () => {
       target: { value: 'one' },
     });
     expect(
-      screen.getByLabelText('Allow reviewed viewer invitations by email')
+      screen.getByLabelText('Review and invite viewers by email')
     ).not.toBeChecked();
   });
   it('requires separate consent for contact groups and clears it on workspace change', async () => {

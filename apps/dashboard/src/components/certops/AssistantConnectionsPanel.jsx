@@ -733,7 +733,7 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                                     setMemberInvite(event.target.checked)
                                   }
                                 >
-                                  Allow reviewed viewer invitations by email
+                                  Review and invite viewers by email
                                 </Checkbox>
                                 <Checkbox
                                   isChecked={issuance}
@@ -801,11 +801,11 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                           Include agent health
                         </Checkbox>
                       ) : null}
-                      {renewals && canManage ? (
+                      {(renewals || issuance) && canManage ? (
                         <Text fontSize='sm' color={muted}>
-                          Renewal requests include agent health and follow
-                          CertOps Job approval. This never grants job approval
-                          or settings access.
+                          Renewal and issuance requests include agent health and
+                          follow CertOps Job approval. This never grants job
+                          approval or settings access.
                         </Text>
                       ) : null}
                       {inventoryImport && canManage ? (
