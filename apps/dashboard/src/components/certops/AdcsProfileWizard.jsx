@@ -211,8 +211,8 @@ export default function AdcsProfileWizard({
   const [issuerId, setIssuerId] = useState('');
   const [reference, setReference] = useState('');
   const [extraNames, setExtraNames] = useState('');
-  const [site, setSite] = useState('Default Web Site');
-  const [port, setPort] = useState('443');
+  const [site, setSite] = useState('');
+  const [port, setPort] = useState('');
   const [sniHost, setSniHost] = useState('');
   const [store, setStore] = useState('My');
   const [keyAlgorithm, setKeyAlgorithm] = useState('rsa');
@@ -236,8 +236,8 @@ export default function AdcsProfileWizard({
       setIssuerId('');
       setReference('');
       setExtraNames('');
-      setSite('Default Web Site');
-      setPort('443');
+      setSite('');
+      setPort('');
       setSniHost('');
       setStore('My');
       setKeyAlgorithm('rsa');

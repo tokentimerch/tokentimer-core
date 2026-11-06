@@ -18,6 +18,7 @@ import { Link as RouterLink } from 'react-router';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import CopyableId from '../CopyableId.jsx';
+import AcmeStoreRecovery from './AcmeStoreRecovery.jsx';
 import {
   formatDateTime,
   subjectTypeLabel,
@@ -143,6 +144,7 @@ function JobMetadataDetails({ job, agentsById }) {
         </MetadataField>
       ) : null}
       <ApprovedByLine job={job} />
+      <AcmeStoreRecovery job={job} />
       {job?.leaseExpiresAt ? (
         <MetadataField label='Lease expires'>
           <Text fontSize='xs'>{formatDateTime(job.leaseExpiresAt)}</Text>

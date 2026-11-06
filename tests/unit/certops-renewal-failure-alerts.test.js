@@ -13,9 +13,10 @@ const {
     "../../apps/api/services/certops/renewalFailureAlerts.js",
   ),
 );
-const { ingestResult } = require(
+const { ingestResult: ingestResultImpl } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/agentDispatch.js"),
 );
+const ingestResult = options => ingestResultImpl({ ...options, deps: { assertCurrentAgentCredential: async () => {}, ...options.deps } });
 
 const WORKSPACE_A = "11111111-1111-4111-8111-111111111111";
 

@@ -107,6 +107,22 @@ function evaluateAgentJobEligibility({
   now = Date.now(),
 } = {}) {
   if (!agent || !job) return result(false, "facts_unavailable", false);
+  if (job.operation === "adcs-installation-proof" && !hasFreshCapability({ declaredCapabilities: agent.declaredCapabilities,
+    capabilitiesUpdatedAt: agent.capabilitiesUpdatedAt, capability: "adcs-store-proof-only-v1", env, now })) {
+    return result(false, "adcs_proof_capability_unavailable");
+  }
+  // Existing IIS and AD CS declarations do not qualify this destination.
+  // The dedicated capability is withheld from ordinary builds until qualified.
+  if (job.payload?.target?.type === "windows-cert-store") {
+    const capability = job.issuerKind === "adcs" ? "windows-store-only-adcs-v1" :
+      job.issuerKind === "acme" ? "windows-store-only-acme-v1" : null;
+    if (!capability || !job.assignedAgentId || agent.platform !== "win32" ||
+        !hasFreshCapability({ declaredCapabilities: agent.declaredCapabilities,
+          capabilitiesUpdatedAt: agent.capabilitiesUpdatedAt,
+          capability, env, now })) {
+      return result(false, "windows_store_only_unavailable");
+    }
+  }
 
   const routing = resolveAgentJobRoutingRequirements(job);
   if (routing.executorKind !== "agent") {
@@ -148,8 +164,8 @@ function evaluateAgentJobEligibility({
     return result(false, "material_capability_unavailable");
   }
 
-  const needsClaimBoundEvidence =
-    job.operation === "issue" || job.subjectIsProvisioning === true;
+  const needsClaimBoundEvidence = job.operation === "issue" || job.subjectIsProvisioning === true ||
+    job.payload?.target?.type === "windows-cert-store";
   if (
     needsClaimBoundEvidence &&
     !hasFreshCapability({

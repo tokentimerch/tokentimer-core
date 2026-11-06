@@ -66,6 +66,7 @@ const CERTIFICATE_ACTIONS = Object.freeze([
   "revoke",
   "noop",
   "continue-enrollment",
+  "adcs-installation-proof",
   "deploy-from-store",
 ]);
 const PROTOCOL_SMOKE_ACTION = "protocol_smoke";

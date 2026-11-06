@@ -9022,6 +9022,129 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/workspaces/{id}/certops/enrollments/{enrollmentId}/recover-installation-proof:
+    post:
+      tags: [CertOps]
+      operationId: recoverCertOpsAdcsInstallationProof
+      summary: Inspect an uncertain AD CS installation
+      description: >-
+        Requires a human session and certops.issuer.manage. The original job must
+        have an unknown outcome and the same agent must have recorded the expected
+        certificate identity under its original live claim. This action only queues
+        an inspection of the Windows certificate store; it never contacts the CA,
+        creates a key, or installs a certificate. A qualified original agent is
+        required to queue inspection. Workspace pause blocks this action. CSRF is required.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+        - in: path
+          name: enrollmentId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [orphanedJobId, reason]
+              properties:
+                orphanedJobId: { type: string, format: uuid }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        "201":
+          description: A new inspection job was queued. created describes the intent, not the job.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsAdcsProofRecovery" }
+        "200":
+          description: No expected identity, an intent awaiting an eligible agent, or an existing queued inspection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsAdcsProofRecovery" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { description: Rate limit exceeded }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/workspaces/{id}/certops/acme-store-enrollments/by-job/{jobId}:
+    get:
+      tags: [CertOps]
+      operationId: getCertOpsAcmeStoreEnrollmentByJob
+      summary: Inspect ACME store recovery availability
+      description: Requires a human session and certops.issuer.manage. Returns only an enrollment whose original or current job matches the requested job in this workspace.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: jobId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Enrollment and current recovery eligibility.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [enrollmentId, state, outcomeUncertain, recoveryAvailable]
+                properties:
+                  enrollmentId: { type: string, format: uuid }
+                  state: { type: string, enum: [keygen_intent, prepared, submitting, issued, installing, installed, uncertain] }
+                  outcomeUncertain: { type: boolean }
+                  recoveryAvailable: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { description: Rate limit exceeded }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/workspaces/{id}/certops/acme-store-enrollments/{enrollmentId}/recover:
+    post:
+      tags: [CertOps]
+      operationId: recoverCertOpsAcmeStoreEnrollment
+      summary: Continue an uncertain ACME store enrollment
+      description: >-
+        Requires a human session, certops.issuer.manage, an explicit acknowledgement
+        and the exact uncertain job. The continuation stays on the original active
+        agent and recovers the existing order; it cannot create a replacement order
+        when the outcome is unknown. Workspace pause blocks this action. CSRF is required.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+        - in: path
+          name: enrollmentId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [orphanedJobId, acknowledgeUnknownEffect, reason]
+              properties:
+                orphanedJobId: { type: string, format: uuid }
+                acknowledgeUnknownEffect: { type: boolean, enum: [true] }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        "201":
+          description: A new audited continuation was created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsRecoveryJob" }
+        "200":
+          description: The existing continuation was returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsRecoveryJob" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { description: Rate limit exceeded }
+        "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/workspaces/{id}/certops/enrollments/{enrollmentId}/recover:
     post:
       tags: [CertOps]
@@ -9132,7 +9255,7 @@ paths:
           name: operation
           schema:
             type: string
-            enum: [issue, renew, deploy, deploy-from-store, reload, revoke, noop, protocol_smoke, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
+            enum: [issue, renew, deploy, deploy-from-store, reload, revoke, noop, protocol_smoke, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight, adcs-installation-proof]
         - in: query
           name: source
           schema:
@@ -15001,6 +15124,41 @@ components:
             - type: number
             - type: integer
             - type: boolean
+    CertOpsRecoveryJob:
+      type: object
+      additionalProperties: false
+      required: [jobId, created]
+      properties:
+        jobId: { type: string, format: uuid }
+        created: { type: boolean }
+    CertOpsAdcsProofRecovery:
+      type: object
+      additionalProperties: false
+      required: [state, created]
+      properties:
+        state:
+          type: string
+          enum: [expected_identity_unavailable, transport_unavailable, queued]
+        created:
+          type: boolean
+          description: Whether the recovery intent was created in this request.
+        intentId: { type: string, format: uuid }
+        job:
+          type: object
+          additionalProperties: true
+          required: [id, workspaceId, operation, status, source, assignedAgentId, createdAt, updatedAt]
+          properties:
+            id: { type: string, format: uuid }
+            workspaceId: { type: string, format: uuid }
+            operation: { type: string, enum: [adcs-installation-proof] }
+            status: { type: string }
+            source: { type: string, enum: [api] }
+            assignedAgentId: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+      description: >-
+        expected_identity_unavailable has no intentId or job; transport_unavailable
+        has an intentId and no job; queued has both intentId and job.
     CertOpsJob:
       type: object
       additionalProperties: false
@@ -15022,7 +15180,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
+          enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight, adcs-installation-proof]
         status:
           type: string
           enum:
@@ -15462,7 +15620,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
+          enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight, adcs-installation-proof]
         status:
           type: string
           enum:
@@ -18187,7 +18345,7 @@ components:
                   maxItems: 16
                   items:
                     type: string
-                    enum: [renew, deploy, reload, revoke, noop, continue-enrollment, protocol_smoke, distribute-trust, revoke-trust, adcs-preflight, deploy-from-store]
+                    enum: [renew, deploy, reload, revoke, noop, continue-enrollment, adcs-installation-proof, protocol_smoke, distribute-trust, revoke-trust, adcs-preflight, deploy-from-store]
     CertOpsAgentClaimResponse:
       type: object
       description: Signed claimed jobs. Each job is the signed dispatch payload the agent verifies before execution.

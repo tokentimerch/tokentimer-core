@@ -54,12 +54,15 @@ describe('Windows infrastructure option', () => {
     expect(win.detail).toMatch(/No IIS needed/);
   });
 
-  it('describes the HTTPS listener for automate and AD CS', () => {
-    for (const objective of ['automate', 'adcs']) {
-      const win = infrastructuresFor(objective).find(i => i.id === 'windows');
-      expect(win.detail).toMatch(/HTTPS listener, typically an IIS site/);
-      expect(win.detail).not.toMatch(/No IIS needed/);
-    }
+  it('describes IIS as optional for AD CS and required for the IIS automate path', () => {
+    const automate = infrastructuresFor('automate').find(
+      i => i.id === 'windows'
+    );
+    const adcs = infrastructuresFor('adcs').find(i => i.id === 'windows');
+    expect(automate.detail).toMatch(/HTTPS listener, typically an IIS site/);
+    expect(adcs.detail).toMatch(
+      /machine store, or bind to an existing IIS listener/
+    );
   });
 
   it('renders the goal-aware detail in the picker', () => {
@@ -118,12 +121,12 @@ describe('Windows configuration copy', () => {
     expect(note).toMatch(/does not create sites/);
   });
 
-  it('labels the AD CS binding and warns that it is replaced', () => {
+  it('prepares AD CS access without asking for an IIS binding', () => {
     mount(ConfigStep, makeCtx('certops_adcs', windows({ objective: 'adcs' })));
-    expect(screen.getByText('HTTPS binding (IIS site)')).toBeInTheDocument();
-    expect(screen.queryByText('IIS site')).toBeNull();
-    expect(screen.getByTestId('binding-note').textContent).toMatch(
-      /replaces the certificate currently bound/
+    expect(screen.queryByText('HTTPS binding (IIS site)')).toBeNull();
+    expect(screen.queryByTestId('binding-note')).toBeNull();
+    expect(screen.getByTestId('adcs-preparation-note').textContent).toMatch(
+      /prepares access to the CA/
     );
   });
 
@@ -190,7 +193,55 @@ describe('Windows issuance and AD CS step copy', () => {
       })
     );
     expect(container.textContent).toMatch(
-      /the HTTPS binding \(IIS site\) and the certificate name/
+      /For IIS, choose the confirmed issuer, site binding and certificate name/
+    );
+  });
+
+  it('shows the store option and reports installation without claiming service activation', () => {
+    const { container } = mount(
+      AdcsStep,
+      makeCtx(
+        'certops_adcs',
+        windows({
+          objective: 'adcs',
+          storeIssueJobId: 'job',
+          chosenAgentId: 'agent',
+          chosenIssuerId: 'issuer',
+        }),
+        {
+          certops: {
+            agents: {
+              items: [
+                {
+                  platform: 'win32',
+                  livenessState: 'live',
+                  declaredCapabilities: [
+                    'adcs-enroll-v1',
+                    'windows-store-only-adcs-v1',
+                  ],
+                },
+              ],
+            },
+            adcs: {
+              issuers: [],
+              profiles: 0,
+              storeIssuance: {
+                requested: true,
+                installed: true,
+                jobId: 'job',
+                agentId: 'agent',
+                issuerId: 'issuer',
+                jobStatus: 'succeeded',
+              },
+            },
+          },
+        }
+      )
+    );
+    expect(screen.getByText('Issue into Windows store')).toBeInTheDocument();
+    expect(container.textContent).toMatch(/Installed in Windows store/);
+    expect(container.textContent).toMatch(
+      /Service activation and automatic renewal are separate steps/
     );
   });
 });

@@ -32,7 +32,8 @@ const {
 const { PREFLIGHT_PER_HOUR } = require("../../apps/api/services/certops/enrollmentLifecycle");
 const { validateSignedJob } = require("../../packages/contracts/certops/validate-signed-job.cjs");
 const { migrations } = require("../../apps/api/migrations/migrate");
-const { claimJobs } = require("../../apps/api/services/certops/agentDispatch");
+const { claimJobs: claimJobsImpl } = require("../../apps/api/services/certops/agentDispatch");
+const claimJobs = options => claimJobsImpl({ ...options, deps: { assertCurrentAgentCredential: async () => {}, ...options.deps } });
 const Ajv = require("ajv");
 const addFormats = require("ajv-formats");
 const jobPayloadSchema = require("../../packages/contracts/certops/job-payload.schema.json");
@@ -60,6 +61,12 @@ function snapshotInput() {
 }
 
 describe("AD CS enrollment lifecycle", () => {
+  it("freezes the destination and exact predecessor, including null for first issue", () => {
+    const store = { destinationType: "windows-cert-store", destinationSha256: "cd".repeat(32), predecessorFingerprintSha256: null };
+    assert.equal(freezeSnapshot({ ...snapshotInput(), ...store }).snapshot.predecessorFingerprintSha256, null);
+    assert.equal(freezeSnapshot({ ...snapshotInput(), ...store, predecessorFingerprintSha256: "ef".repeat(32) }).snapshot.predecessorFingerprintSha256, "ef".repeat(32));
+    assert.throws(() => freezeSnapshot({ ...snapshotInput(), destinationType: "windows-cert-store", predecessorFingerprintSha256: null }));
+  });
   it("fails closed on an unknown issuer kind", () => {
     assert.equal(assertIssuerKind("acme"), "acme");
     assert.equal(assertIssuerKind("adcs"), "adcs");

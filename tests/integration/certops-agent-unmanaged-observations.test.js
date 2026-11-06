@@ -7,6 +7,7 @@ const { join } = require("node:path");
 const { Client, Pool } = require("pg");
 const { migrations } = require("../../apps/api/migrations/migrate");
 const { persistAgentDiscoveryEvidenceBatch } = require("../../apps/api/services/certops/agentObservations");
+const { bindAuthenticatedCredential } = require("../../apps/api/services/certops/agentCredentialFence");
 const { listCertificateIdentities, retireCertificateIdentity, stopManagingSource } = require("../../apps/api/services/certops/certificateIdentity");
 const { countActiveManagedCertificatesWithClient, importPublicCertificates } = require("../../apps/api/services/certops/inventory");
 
@@ -49,7 +50,7 @@ describe("Quota-blocked agent observations on real PostgreSQL", function () {
       VALUES($1,$2,'test','1.0.0',$3,$4) RETURNING id`,
     [workspaceId, agentId, `ttagent_${randomUUID().replaceAll("-", "").slice(0, 16)}`,
       createHash("sha256").update(agentId).digest("hex")])).rows[0];
-    return { id: row.id, workspaceId, agentId, hostname: "observation.example.test" };
+    return bindAuthenticatedCredential({ id: row.id, workspaceId, agentId, hostname: "observation.example.test" }, agentId);
   }
   function observation(filePath, overrides = {}) {
     return {

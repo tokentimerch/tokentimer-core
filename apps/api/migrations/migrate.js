@@ -5271,6 +5271,76 @@ migrations.push({
   `,
 });
 
+migrations.push({
+  version: 109,
+  name: "store_issuance_explicit_renewal_consent",
+  sql: `
+    CREATE OR REPLACE FUNCTION certops_sync_open_management_automation()
+    RETURNS trigger AS $certops$
+    BEGIN
+      UPDATE certops_management_periods
+         SET renewal_profile_id = NEW.profile_id,
+             automation_enabled = CASE
+               WHEN NEW.source = 'agent_issuance'
+                AND NEW.public_metadata #>> '{issuance,target,type}' = 'windows-cert-store'
+               THEN automation_enabled AND NEW.profile_id IS NOT NULL
+               ELSE NEW.profile_id IS NOT NULL END
+       WHERE workspace_id = NEW.workspace_id
+         AND managed_certificate_id = NEW.id AND ended_at IS NULL;
+      RETURN NEW;
+    END;
+    $certops$ LANGUAGE plpgsql;
+  `,
+});
+
+migrations.push({
+  version: 110,
+  name: "certops_acme_store_enrollment_identity",
+  sql: `
+    CREATE TABLE IF NOT EXISTS certops_acme_store_enrollments (
+      id UUID PRIMARY KEY,
+      workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      certificate_id UUID NOT NULL,
+      agent_id UUID NOT NULL,
+      original_job_id UUID NOT NULL,
+      current_job_id UUID NOT NULL,
+      container_name TEXT NOT NULL CHECK (container_name ~ '^tokentimer-enr-[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$'),
+      request_bytes BYTEA NOT NULL,
+      request_sha256 TEXT NOT NULL CHECK (request_sha256 ~ '^[a-f0-9]{64}$'),
+      state TEXT NOT NULL CHECK (state IN ('keygen_intent','prepared','submitting','issued','installing','installed','uncertain')),
+      csr_sha256 TEXT CHECK (csr_sha256 IS NULL OR csr_sha256 ~ '^[a-f0-9]{64}$'),
+      csr_spki_sha256 TEXT CHECK (csr_spki_sha256 IS NULL OR csr_spki_sha256 ~ '^[a-f0-9]{64}$'),
+      fingerprint_sha256 TEXT CHECK (fingerprint_sha256 IS NULL OR fingerprint_sha256 ~ '^[a-f0-9]{64}$'),
+      order_reference_sha256 TEXT CHECK (order_reference_sha256 IS NULL OR order_reference_sha256 ~ '^[a-f0-9]{64}$'),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, id), UNIQUE (workspace_id, original_job_id),
+      FOREIGN KEY (workspace_id, certificate_id) REFERENCES managed_certificates(workspace_id, id),
+      FOREIGN KEY (workspace_id, agent_id) REFERENCES certops_agents(workspace_id, id),
+      FOREIGN KEY (workspace_id, original_job_id) REFERENCES certificate_jobs(workspace_id, id),
+      FOREIGN KEY (workspace_id, current_job_id) REFERENCES certificate_jobs(workspace_id, id)
+    );
+    CREATE TABLE IF NOT EXISTS certops_acme_store_receipts (
+      workspace_id UUID NOT NULL,
+      enrollment_id UUID NOT NULL,
+      receipt_id UUID NOT NULL,
+      evidence_sha256 TEXT NOT NULL CHECK (evidence_sha256 ~ '^[a-f0-9]{64}$'),
+      resulting_state TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (workspace_id, enrollment_id, receipt_id),
+      FOREIGN KEY (workspace_id, enrollment_id) REFERENCES certops_acme_store_enrollments(workspace_id, id) ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_acme_store_open_certificate
+      ON certops_acme_store_enrollments(workspace_id, certificate_id)
+      WHERE state <> 'installed';
+  `,
+});
+
+migrations.push({
+  version: 111,
+  name: "certops_adcs_expected_identity_receipts",
+  sql: fs.readFileSync(require("path").join(__dirname, "111-certops-adcs-expected-identity.sql"), "utf8"),
+});
+
 // Main may already contain v60 when PR #140's v58-v59 migrations arrive.
 // Apply by version rather than declaration position so each dependency exists.
 migrations.sort((a, b) => a.version - b.version);

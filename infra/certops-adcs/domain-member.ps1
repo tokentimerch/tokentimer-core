@@ -3,7 +3,8 @@ Join the newly provisioned disposable Windows member to the qualification forest
 temporary lab credential and requires a subsequent real reboot/domain verification before installed-
 agent tests.
 #>
-param([Parameter(Mandatory)][string]$DomainPassword)
+param([Parameter(Mandatory)][string]$DomainPassword,
+  [ValidateSet('required','absent')][string]$IisMode = 'required')
 $ErrorActionPreference = 'Stop'
 $phase = 'membership'
 trap {
@@ -21,9 +22,16 @@ if ($addresses.Count -ne 1) { throw 'Expected exactly one qualification member I
 Set-DnsClientServerAddress -InterfaceIndex $addresses[0].InterfaceIndex -ServerAddresses '10.64.0.4'
 $phase = 'dns-lookup'
 Resolve-DnsName -Name '_ldap._tcp.dc._msdcs.lab.certops.test' -Type SRV -ErrorAction Stop | Out-Null
-$phase = 'iis-install'
-$role = Install-WindowsFeature Web-Server,Web-Scripting-Tools -IncludeManagementTools
-if (-not $role.Success) { throw 'IIS installation failed' }
+if ($IisMode -eq 'absent') {
+  # Refuse an unsuitable image rather than silently removing installed roles.
+  $phase = 'iis-check'
+  $role = Get-WindowsFeature -Name Web-Server -ErrorAction Stop
+  if ($null -eq $role -or $role.Installed) { throw 'A Windows member without IIS is required' }
+} else {
+  $phase = 'iis-install'
+  $role = Install-WindowsFeature Web-Server,Web-Scripting-Tools -IncludeManagementTools
+  if (-not $role.Success) { throw 'IIS installation failed' }
+}
 $phase = 'domain-join'
 $credential = [PSCredential]::new('TTQUAL\tt-lab-admin', (ConvertTo-SecureString $DomainPassword -AsPlainText -Force))
 Add-Computer -DomainName 'lab.certops.test' -Credential $credential -Force

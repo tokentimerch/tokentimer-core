@@ -262,6 +262,7 @@ async function findCertificatesDueForRenewal({
             mc.subject_alt_names,
             mc.not_after,
             mc.key_mode,
+            mc.deployed_agent_id,
             mc.profile_id,
             cp.name AS profile_name,
             cp.key_mode AS profile_key_mode,
@@ -444,13 +445,22 @@ async function createAutomaticAdcsRenewal({
   // Declaring the target is not enough: the agent must hold a fresh, safe
   // adcs-preflight against this CA, so a renewal never goes to an agent that
   // cannot reach the CA. Renewal health applies the same check.
-  const [agent] = await loadQualifyingAdcsAgents({
+  const eligibleAgents = await loadQualifyingAdcsAgents({
     db: dbPool,
     workspaceId: certificate.workspace_id,
     issuerId: certificate.profile_issuer_id,
     reference: fields.target.reference,
     version,
   });
+  const storeOnly = fields.target.type === "windows-cert-store";
+  if (storeOnly && !certificate.deployed_agent_id) {
+    const error = new Error("the Windows store installation has no owning agent");
+    error.code = CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE;
+    throw error;
+  }
+  const agent = storeOnly
+    ? eligibleAgents.find(candidate => String(candidate.id) === String(certificate.deployed_agent_id))
+    : eligibleAgents[0];
   if (!agent) {
     const declared = await dbPool.query(
       `SELECT 1
@@ -458,12 +468,13 @@ async function createAutomaticAdcsRenewal({
         WHERE workspace_id = $1
           AND status = 'active'
           AND declared_target_selectors @> jsonb_build_array($2::text)
+          AND ($3::uuid IS NULL OR id = $3::uuid)
         LIMIT 1`,
-      [certificate.workspace_id, fields.target.reference],
+      [certificate.workspace_id, fields.target.reference, storeOnly ? certificate.deployed_agent_id : null],
     );
     const error = new Error(
       declared.rows[0]
-        ? "no agent has a safe adcs-preflight for this CA within the preflight freshness window; run the CA check from the agent"
+        ? (storeOnly ? "the owning agent needs a fresh safe AD CS preflight; run the CA check on that agent" : "no agent has a safe adcs-preflight for this CA within the preflight freshness window; run the CA check from the agent")
         : "no active agent declares this AD CS renewal target",
     );
     error.code = declared.rows[0]
@@ -502,18 +513,7 @@ async function createAutomaticAdcsRenewal({
       mode,
       env,
       idempotencyKey,
-      target: {
-        type: "windows-iis",
-        reference: fields.target.reference,
-        store: fields.target.store,
-        binding: {
-          site: fields.target.binding.site,
-          port: fields.target.binding.port,
-          ...(fields.target.binding.sniHost
-            ? { sniHost: fields.target.binding.sniHost }
-            : {}),
-        },
-      },
+      target: fields.target,
       authorizedDnsNames: fields.authorizedDnsNames,
       keyAlgorithm: fields.keyAlgorithm,
       keySize: fields.keySize,
@@ -598,7 +598,9 @@ async function createRenewalJobForCertificate({
       env,
     });
 
-    const outcome = await jobCreator({
+    const storeOnly = payload.target?.type === "windows-cert-store";
+    const creator = storeOnly ? require("./acmeStoreIssuance").createAcmeStoreRenewalTx : jobCreator;
+    const outcome = await creator({
       client,
       workspaceId: certificate.workspace_id,
       operation: "renew",
@@ -611,7 +613,8 @@ async function createRenewalJobForCertificate({
         certificate.id,
         certificate.not_after,
       ),
-      payload,
+      payload: storeOnly ? { reason: "scheduled-renewal" } : payload,
+      ...(storeOnly ? { transactionOwned: true, assignedAgentId: certificate.deployed_agent_id } : {}),
       ...(payload.publication ? { assignedAgentId: (await client.query(
         "SELECT issuer_agent_id FROM certops_distribution_groups WHERE workspace_id=$1 AND id=$2 AND state='active'",
         [certificate.workspace_id, payload.publication.groupId])).rows[0]?.issuer_agent_id } : {}),

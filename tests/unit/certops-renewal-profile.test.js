@@ -71,6 +71,22 @@ function validProfile(overrides = {}) {
 }
 
 describe("certops renewal profile", () => {
+  it("preserves the machine-store destination and requires the original agent", () => {
+    const target = { type: "windows-cert-store", reference: "app.example.com", store: "My" };
+    const profile = validProfile({ target, deploymentTargets: [], verification: { host: null, port: null, requireMatch: false } });
+    const certificate = { id: "cert-1", profile_id: "profile-1", common_name: "app.example.com", subject_alt_names: ["app.example.com"],
+      key_mode: "os-store-managed", not_after: new Date("2027-01-01T00:00:00Z"), profile_public_metadata: { renewalProfile: profile } };
+    assert.throws(() => buildRenewalJobPayload({ certificate }), /owning agent/);
+    const payload = buildRenewalJobPayload({ certificate: { ...certificate, deployed_agent_id: "agent-1" } });
+    assert.deepEqual(payload.target, target);
+    assert.equal(payload.keyMode, "os-store-managed");
+    assert.equal(payload.keyRotation, true);
+    assert.equal(payload.certPath, undefined);
+    assert.equal(payload.deploymentTargets, undefined);
+    assert.throws(() => validateRenewalProfile({ ...profile, keyRotationPolicy: { rotateOnRenew: false } }), /KEY_REUSE/);
+    assert.throws(() => validateRenewalProfile({ ...profile, target: { ...target, binding: { site: "IIS" } } }));
+    assert.throws(() => validateRenewalProfile({ ...profile, verification: { host: "web.example.com", port: 443, requireMatch: true } }));
+  });
   it("validates a complete schemaVersion 1 profile", () => {
     const profile = validateRenewalProfile(validProfile());
     assert.equal(profile.schemaVersion, 1);
@@ -189,6 +205,30 @@ describe("certops renewal profile", () => {
       assert.equal(validate({ ...profile, target: { ...profile.target, ...patch } }), false);
     }
     assert.equal(validate(validProfile({ keyRotationPolicy: { rotateOnRenew: false } })), true);
+  });
+
+  it("describes a store-only profile without service verification or additional targets", () => {
+    const Ajv = require("ajv");
+    const ajv = new Ajv({ strict: false });
+    require("ajv-formats")(ajv);
+    const validate = ajv.compile(require("../../packages/contracts/certops/renewal-profile.schema.json"));
+    const target = { type: "windows-cert-store", reference: "app.example.com", store: "My" };
+    const input = validProfile({
+      target,
+      deploymentTargets: [],
+      verification: { host: null, port: null, requireMatch: false },
+      keyRotationPolicy: { rotateOnRenew: true },
+    });
+    assert.equal(validate(input), true, JSON.stringify(validate.errors));
+    for (const invalid of [
+      { ...input, target: { ...target, store: "Root" } },
+      { ...input, target: { ...target, binding: { site: "site", port: 443 } } },
+      { ...input, target: { ...target, certPath: "/tmp/cert.pem" } },
+      { ...input, deploymentTargets: [{ type: "domain", reference: "other" }] },
+      { ...input, verification: { host: "app.example.com", requireMatch: true } },
+      { ...input, keyRotationPolicy: { rotateOnRenew: false } },
+    ]) assert.equal(validate(invalid), false, JSON.stringify(invalid));
+    assert.deepEqual(validateRenewalProfile(input).target, target);
   });
 
   it("refuses explicit Windows reuse without rewriting stored intent, preserving Linux reuse", () => {

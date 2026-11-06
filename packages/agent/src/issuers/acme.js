@@ -100,7 +100,7 @@ function createAcmeIssuer({
   signal = null,
   info = () => {},
 }) {
-  async function submit({ csrPem, domains }) {
+  async function submit({ csrPem, domains, signal: operationSignal }) {
     fs.mkdirSync(scratchDir, { recursive: true });
     const csrPath = path.join(scratchDir, `${jobId}.csr.pem`);
     const stagedCertPath = path.join(scratchDir, `${jobId}.cert.pem`);
@@ -114,7 +114,7 @@ function createAcmeIssuer({
         kind: acmeKind,
         commandProfile: { argv },
         execFileImpl,
-        signal,
+        signal: signal && operationSignal ? AbortSignal.any([signal, operationSignal]) : signal || operationSignal,
       });
       const renewalOpts = {
         caEndpoint,

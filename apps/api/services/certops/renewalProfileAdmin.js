@@ -734,25 +734,29 @@ function normalizeAdcsProfileInput(body) {
   const target = body?.target;
   const binding = target?.binding;
   const reference = adcsHost(target?.reference, "certificate name");
-  if (!target || target.type !== "windows-iis") {
-    throw profileError("target must be a windows-iis binding");
+  if (!target || !["windows-iis", "windows-cert-store"].includes(target.type)) {
+    throw profileError("target must be a Windows certificate destination");
   }
   if (typeof target.store !== "string" || !ADCS_STORE_PATTERN.test(target.store.trim())) {
     throw profileError("store must name a Windows certificate store, usually My");
   }
-  if (
+  if (target.type === "windows-cert-store" &&
+      (target.store !== "My" || Object.keys(target).some(key => !["type", "reference", "store"].includes(key)))) {
+    throw profileError("store-only destination must use LocalMachine\\My without binding fields");
+  }
+  if (target.type === "windows-iis" && (
     !binding ||
     typeof binding.site !== "string" ||
     !ADCS_SITE_PATTERN.test(binding.site.trim())
-  ) {
+  )) {
     throw profileError("IIS site name is invalid");
   }
-  const port = Number(binding.port);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+  const port = target.type === "windows-iis" ? Number(binding.port) : null;
+  if (target.type === "windows-iis" && (!Number.isInteger(port) || port < 1 || port > 65535)) {
     throw profileError("IIS port must be an integer from 1 to 65535");
   }
   const sniHost =
-    binding.sniHost == null || binding.sniHost === ""
+    binding?.sniHost == null || binding.sniHost === ""
       ? null
       : adcsHost(binding.sniHost, "SNI hostname");
   const extraNames = Array.isArray(body?.dnsNames) ? body.dnsNames : [];
@@ -780,14 +784,14 @@ function normalizeAdcsProfileInput(body) {
     renewBeforeDays: normalizeRenewBeforeDays(body?.renewBeforeDays ?? 30),
     renewalProfile: {
       target: {
-        type: "windows-iis",
+        type: target.type,
         reference,
         store: target.store.trim(),
-        binding: {
+        ...(target.type === "windows-iis" ? { binding: {
           site: binding.site.trim(),
           port,
           ...(sniHost ? { sniHost } : {}),
-        },
+        } } : {}),
       },
       sanPolicy: { sans: dnsNames },
       keyAlgorithm,

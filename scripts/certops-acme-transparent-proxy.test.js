@@ -3,6 +3,7 @@
 const { test } = require("node:test"),
   assert = require("node:assert/strict");
 const { Readable } = require("node:stream");
+const fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto");
 const h = require("../tests/e2e/helpers/certops-acme-transparent-proxy");
 const request = (rawPath, method = "POST") => ({
   authority: "127.0.0.1:14443",
@@ -125,4 +126,23 @@ test("finalization readiness binds the actual order and every one of its authori
       finalize: "https://outside.test/finalize-order/foreign",
     }),
   );
+});
+
+test("independent proxy counts every order containing the run DNS and attributes only the returned leaf", () => {
+  const observer = h.createOrderObserver({ authority: request("/dir").authority, upstreamDirectory: request("/dir").upstreamDirectory });
+  const order = (id, names) => ({ finalize: `https://127.0.0.1:14443/finalize-order/${id}`,
+    authorizations: [`https://127.0.0.1:14443/authZ/${id}`], identifiers: names.map(value => ({ type: "dns", value })) });
+  observer.observe(h.route(request("/order-plz")), 201, order("one", ["run.example.test"]), { location: "https://127.0.0.1:14443/my-order/one" });
+  observer.observe(h.route(request("/order-plz")), 201, order("two", ["run.example.test", "extra.example.test"]), { location: "https://127.0.0.1:14443/my-order/two" });
+  observer.observe(h.route(request("/order-plz")), 201, order("other", ["other.example.test"]), { location: "https://127.0.0.1:14443/my-order/other" });
+  assert.equal(observer.ordersForDns("run.example.test").length, 2);
+  observer.observe(h.route(request("/my-order/one")), 200, { status: "valid", certificate: "https://127.0.0.1:14443/certZ/one" });
+  const pem = fs.readFileSync(path.join(__dirname, "../tests/fixtures/certops-public-observation.txt"));
+  observer.observe(h.route(request("/certZ/one")), 200, null, { bytes: pem });
+  const rows = observer.ordersForDns("run.example.test");
+  assert.equal(rows.filter(row => row.finalized).length, 1);
+  assert.equal(rows[0].fingerprintSha256, crypto.createHash("sha256").update(new crypto.X509Certificate(pem).raw).digest("hex"));
+  assert.notEqual(rows[0].orderId, rows[1].orderId);
+  assert.throws(() => observer.ordersForDns("run.example.test/foreign"));
+  assert.throws(() => observer.observe(h.route(request("/my-order/two")), 200, { status: "valid", certificate: "https://127.0.0.1:14443/certZ/one" }));
 });
