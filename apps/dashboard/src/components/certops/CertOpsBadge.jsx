@@ -1,6 +1,9 @@
 import { Badge } from '@chakra-ui/react';
-import { forwardRef } from 'react';
-import { certificateLifecycleDescriptor } from './certopsFormat.js';
+import { forwardRef, useEffect, useState } from 'react';
+import {
+  certificateLifecycleDescriptor,
+  observedRevocationDescriptor,
+} from './certopsFormat.js';
 import {
   badgeColorScheme,
   dashboardBadgeBaseStyle,
@@ -34,3 +37,38 @@ export const CertificateLifecycleBadge = forwardRef(
     );
   }
 );
+
+export function ObservedRevocationBadge({ result, ...props }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const expiry = Date.parse(result?.validUntil);
+    let timer;
+    const update = () => {
+      const current = Date.now();
+      setNow(current);
+      if (Number.isFinite(expiry) && expiry > current)
+        timer = setTimeout(update, Math.min(expiry - current + 1, 2147483647));
+    };
+    update();
+    return () => clearTimeout(timer);
+  }, [result?.validUntil]);
+  const descriptor = observedRevocationDescriptor(result, now);
+  return (
+    <CertOpsBadge
+      colorScheme={descriptor.scheme}
+      title={descriptor.help}
+      {...props}
+    >
+      {descriptor.label}
+    </CertOpsBadge>
+  );
+}
+
+export function hasObservedRevocationContext(value) {
+  return (
+    Boolean(value?.observedRevocation || value?.revocationObservable) ||
+    ['agent_filesystem', 'agent_windows', 'agent_issuance'].includes(
+      value?.source
+    )
+  );
+}

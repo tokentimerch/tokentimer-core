@@ -1,5 +1,7 @@
 import CertOpsBadge, {
   CertificateLifecycleBadge,
+  ObservedRevocationBadge,
+  hasObservedRevocationContext,
 } from '../../components/certops/CertOpsBadge.jsx';
 import { useCallback, useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
@@ -968,6 +970,12 @@ export default function CertOpsCertificates() {
                             certificate={certificate}
                           />
                         )}
+                        {hasObservedRevocationContext(certificate) ? (
+                          <ObservedRevocationBadge
+                            result={certificate.observedRevocation}
+                            ml={2}
+                          />
+                        ) : null}
                         {certificate.reconciliationReason ? (
                           <Tooltip
                             label={`Facts on this certificate may be stale: ${certificate.reconciliationReason}`}

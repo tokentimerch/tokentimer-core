@@ -4936,6 +4936,11 @@ const migrations = [
     name: "certops_issuance_identity_transfer",
     sql: fs.readFileSync(require("path").join(__dirname, "108-certops-issuance-identity-transfer.sql"), "utf8"),
   },
+  {
+    version: 112,
+    name: "certops_observed_revocation",
+    sql: fs.readFileSync(require("path").join(__dirname, "112-certops-observed-revocation.sql"), "utf8"),
+  },
 ];
 
 

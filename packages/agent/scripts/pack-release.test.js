@@ -11,6 +11,7 @@ const {
   sha256File,
   assertNoPrivateKeyMaterial,
   assertExecutableEntries,
+  setArchiveExecutableEntries,
 } = require("./pack-release.js");
 
 const packageJsonPath = path.resolve(__dirname, "..", "package.json");
@@ -46,6 +47,7 @@ describe("pack-release (H10)", () => {
       `${result.digest}  ${path.basename(result.tarballPath)}`,
     );
     assert.equal(sha256File(result.tarballPath), result.digest);
+    assert.doesNotThrow(() => assertExecutableEntries(result.tarballPath));
   });
 
   it("the real packed tarball contains no private-key material (fixtures excluded)", () => {
@@ -66,6 +68,18 @@ describe("pack-release (H10)", () => {
     assert.match(list.stdout,/package\/src\/windows-material\/connector\.ps1/);
     assert.match(list.stdout,/package\/src\/windows-material\/MaterialImport\.cs/);
     assert.match(list.stdout,/package\/src\/material-store\/azure\.js/);
+  });
+
+  it("rejects archive mode normalization when required executables are missing", () => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "tt-agent-mode-missing-"));
+    try {
+      const input = path.join(scratch, "input");
+      fs.mkdirSync(input);
+      fs.writeFileSync(path.join(input, "other"), "public");
+      const archive = path.join(scratch, "bad.tgz");
+      assert.equal(spawnSync("tar", ["-czf", archive, "-C", input, "."]).status, 0);
+      assert.throws(() => setArchiveExecutableEntries(archive), /entries missing/);
+    } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
   });
 
   it("ships Windows service host binaries under package/bin, not --out-dir", () => {
@@ -101,6 +115,10 @@ describe("pack-release (H10)", () => {
       );
     for (const arch of ["amd64", "arm64"])
       assert.ok(list.stdout.includes(`package/bin/tokentimer-adcs-cmc-${arch}.exe`));
+    for (const arch of ["amd64", "arm64"]) {
+      assert.ok(list.stdout.includes(`package/bin/tokentimer-observed-revocation-windows-${arch}.exe`));
+      assert.ok(list.stdout.includes(`package/bin/tokentimer-observed-revocation-linux-${arch}`));
+    }
     assert.doesNotMatch(list.stdout, /reference\/adcs-chain\/dist/);
     assert.doesNotMatch(
       list.stdout,
@@ -111,8 +129,8 @@ describe("pack-release (H10)", () => {
       .filter((file) => file.endsWith(".exe"));
     assert.equal(
       executableEntries.length,
-      6,
-      "Only two service hosts, two chain helpers and two CMC helpers may ship",
+      8,
+      "Only service hosts, chain helpers, CMC helpers and revocation helpers may ship",
     );
     const extracted = path.join(outDir, "extracted");
     fs.mkdirSync(extracted);
@@ -128,6 +146,8 @@ describe("pack-release (H10)", () => {
       ["x64", "amd64"],
       ["arm64", "arm64"],
     ]) {
+      const observed = path.join(extracted, "package", "bin", `tokentimer-observed-revocation-windows-${arch}.exe`);
+      assertPeArchitecture(observed, arch);
       const cmc = path.join(extracted, "package", "bin", `tokentimer-adcs-cmc-${arch}.exe`);
       assertPeArchitecture(cmc, arch);
       assert.deepEqual(require("../src/issuers/adcs-enrollment").resolveAdcsCmcHelperPath({
@@ -224,6 +244,13 @@ describe("pack-release (H10)", () => {
       fs.mkdirSync(script, { recursive: true });
       const installer = path.join(script, "install-agent.sh");
       fs.writeFileSync(installer, "#!/bin/sh\n");
+      const binaryDir = path.join(scratchDir, "package", "bin");
+      fs.mkdirSync(binaryDir, { recursive: true });
+      for (const arch of ["amd64", "arm64"]) {
+        const helper = path.join(binaryDir, `tokentimer-observed-revocation-linux-${arch}`);
+        fs.writeFileSync(helper, "fixture");
+        fs.chmodSync(helper, 0o755);
+      }
       const pack = (name) => {
         const tarball = path.join(scratchDir, name);
         const result = spawnSync(

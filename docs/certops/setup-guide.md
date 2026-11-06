@@ -28,3 +28,5 @@ Continue with [Linux](agent/install-linux.md), [Windows/IIS](agent/install-windo
 ## Start again
 
 **Preferences → Setup guide → Start over** resets progress, not inventory or job history. For a new distribution, leave existing-distribution reuse off. Reusing an earlier verified distribution is a separate explicit choice; an idempotent replay can return an older job rather than create fresh work.
+
+To distribute public CA trust to domain clients, see [Distribute AD CS trust with Group Policy](./adcs-gpo-trust.md).

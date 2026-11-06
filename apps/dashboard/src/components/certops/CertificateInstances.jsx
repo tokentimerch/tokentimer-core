@@ -1,4 +1,7 @@
-import CertOpsBadge from './CertOpsBadge.jsx';
+import CertOpsBadge, {
+  ObservedRevocationBadge,
+  hasObservedRevocationContext,
+} from './CertOpsBadge.jsx';
 import { useMemo, useState, Fragment } from 'react';
 import {
   Button,
@@ -197,6 +200,12 @@ function InstanceRow({ instance, border, muted, indent = false }) {
         <CertOpsBadge colorScheme={statusScheme(instance.status)}>
           {instance.status || 'unknown'}
         </CertOpsBadge>
+        {hasObservedRevocationContext(instance) ? (
+          <ObservedRevocationBadge
+            result={instance.observedRevocation}
+            ml={2}
+          />
+        ) : null}
       </Td>
     </Tr>
   );
@@ -340,6 +349,12 @@ export default function CertificateInstances({ instances, available, error }) {
                     <CertOpsBadge colorScheme={statusScheme(current.status)}>
                       {current.status || 'unknown'}
                     </CertOpsBadge>
+                    {hasObservedRevocationContext(current) ? (
+                      <ObservedRevocationBadge
+                        result={current.observedRevocation}
+                        ml={2}
+                      />
+                    ) : null}
                     {rotated ? (
                       <CertOpsBadge ml={2} colorScheme='purple'>
                         Renewed

@@ -3,7 +3,10 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 
 import CertificateInstances from '../../src/components/certops/CertificateInstances.jsx';
-import { formatDateTime } from '../../src/components/certops/certopsFormat';
+import {
+  formatDateTime,
+  observedRevocationDescriptor,
+} from '../../src/components/certops/certopsFormat';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
 function renderInstances(props) {
@@ -30,6 +33,58 @@ function instance(overrides = {}) {
 }
 
 describe('CertificateInstances', () => {
+  it('shows external revocation independently of location presence', () => {
+    const now = Date.now();
+    renderInstances({
+      instances: [
+        instance({
+          source: 'agent_windows',
+          observedRevocation: {
+            verdict: 'revoked',
+            chainStatus: 'valid',
+            checkedAt: new Date(now - 1000).toISOString(),
+            validUntil: new Date(now + 60000).toISOString(),
+          },
+        }),
+      ],
+    });
+    expect(screen.getByText('active')).toBeInTheDocument();
+    expect(screen.getByText('Revoked')).toBeInTheDocument();
+  });
+
+  it('never presents stale or unavailable verification as healthy', () => {
+    const good = {
+      verdict: 'good',
+      chainStatus: 'valid',
+      checkedAt: '2026-01-01T00:00:00Z',
+      validUntil: '2026-01-01T01:00:00Z',
+    };
+    expect(
+      observedRevocationDescriptor(good, Date.parse('2026-01-01T00:30:00Z'))
+        .scheme
+    ).toBe('green');
+    expect(
+      observedRevocationDescriptor(good, Date.parse('2026-01-01T01:00:00Z'))
+        .label
+    ).toBe('Revocation check stale');
+    expect(
+      observedRevocationDescriptor(
+        {
+          verdict: 'unknown',
+          chainStatus: 'unknown',
+          checkedAt: good.checkedAt,
+          lastVerified: {
+            verdict: 'issuer_revoked',
+            checkedAt: good.checkedAt,
+          },
+        },
+        Date.parse('2026-01-01T00:30:00Z')
+      ).label
+    ).toBe('Last known CA revoked');
+    expect(observedRevocationDescriptor(null).label).toBe(
+      'Revocation not checked'
+    );
+  });
   it('shows the empty state when there are no instances', () => {
     renderInstances({ instances: [] });
 

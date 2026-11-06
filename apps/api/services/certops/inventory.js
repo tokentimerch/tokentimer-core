@@ -370,6 +370,7 @@ function toInventoryRecord(row) {
     workspaceId: row.workspace_id,
     identityId: row.identity_id || null,
     lifecycleStatus: row.lifecycle_status || null,
+    observedRevocation: row.observed_revocation || null,
     tokenId: row.token_id,
     profileId: row.profile_id,
     status: row.status,
@@ -432,6 +433,7 @@ function toInstanceRecord(row) {
     observedNotAfter: dateToIso(row.observed_not_after),
     deploymentReference: row.deployment_reference,
     observedAt: dateToIso(row.observed_at),
+    observedRevocation: row.public_metadata?.observedRevocation || null,
     createdAt: dateToIso(row.created_at),
     updatedAt: dateToIso(row.updated_at),
     // Present only when the query joined certificate_targets (both list
@@ -1329,7 +1331,23 @@ async function upsertAgentFilesystemInstance(client, options) {
        observed_not_before = EXCLUDED.observed_not_before, observed_not_after = EXCLUDED.observed_not_after,
        deployment_reference = EXCLUDED.deployment_reference, observed_at = EXCLUDED.observed_at,
        location_kind = EXCLUDED.location_kind,
-       public_metadata = EXCLUDED.public_metadata, updated_at = NOW()
+       public_metadata = (EXCLUDED.public_metadata - 'observedRevocation') || CASE
+         WHEN NOT (EXCLUDED.public_metadata ? 'observedRevocation')
+           THEN CASE WHEN certificate_instances.public_metadata ? 'observedRevocation'
+             THEN jsonb_build_object('observedRevocation', certificate_instances.public_metadata->'observedRevocation') ELSE '{}'::jsonb END
+         WHEN certificate_instances.public_metadata ? 'observedRevocation'
+          AND certificate_instances.public_metadata->'observedRevocation'->>'checkedAt' >= EXCLUDED.public_metadata->'observedRevocation'->>'checkedAt'
+           THEN jsonb_build_object('observedRevocation', certificate_instances.public_metadata->'observedRevocation')
+         WHEN EXCLUDED.public_metadata->'observedRevocation'->>'verdict' = 'unknown'
+          AND certificate_instances.public_metadata ? 'observedRevocation'
+           THEN jsonb_build_object('observedRevocation', (EXCLUDED.public_metadata->'observedRevocation') || CASE
+             WHEN certificate_instances.public_metadata->'observedRevocation'->>'verdict' <> 'unknown'
+               THEN jsonb_build_object('lastVerified', (certificate_instances.public_metadata->'observedRevocation') - 'lastVerified')
+             WHEN certificate_instances.public_metadata->'observedRevocation' ? 'lastVerified'
+               THEN jsonb_build_object('lastVerified', certificate_instances.public_metadata->'observedRevocation'->'lastVerified')
+             ELSE '{}'::jsonb END)
+         ELSE jsonb_build_object('observedRevocation', EXCLUDED.public_metadata->'observedRevocation') END,
+       updated_at = NOW()
      RETURNING *`,
     [
       options.workspaceId,
@@ -1464,6 +1482,25 @@ const MANAGED_CERTIFICATE_STATUS_SQL = `CASE
   WHEN identity.lifecycle_status IN ('revoked', 'decommissioned') THEN identity.lifecycle_status
   ELSE mc.status END`;
 
+// Select the most concerning current agent location for the same certificate.
+// Presence and lifecycle remain independent facts; a newer good observation
+// at another location must not hide a revoked, unavailable or stale location.
+const OBSERVED_REVOCATION_SQL = `(SELECT ci.public_metadata->'observedRevocation'
+  FROM certificate_instances ci
+  WHERE ci.workspace_id = mc.workspace_id AND ci.managed_certificate_id = mc.id
+    AND ci.observed_fingerprint_sha256 = mc.fingerprint_sha256
+    AND ci.source IN ('agent_filesystem', 'agent_windows')
+    AND ci.presence_state IS DISTINCT FROM 'confirmed_absent'
+  ORDER BY CASE
+    WHEN ci.public_metadata->'observedRevocation'->>'verdict' = 'revoked' THEN 0
+    WHEN ci.public_metadata->'observedRevocation'->>'verdict' = 'issuer_revoked' THEN 1
+    WHEN ci.public_metadata->'observedRevocation'->>'chainStatus' = 'invalid' THEN 2
+    WHEN COALESCE(ci.public_metadata->'observedRevocation'->>'verdict', 'unknown') <> 'good' THEN 3
+    ELSE 4 END,
+    ci.public_metadata->'observedRevocation'->>'validUntil' ASC NULLS FIRST,
+    ci.observed_at DESC NULLS LAST, ci.id ASC
+  LIMIT 1)`;
+
 const MANAGED_CERTIFICATE_LIST_FROM = `
        FROM managed_certificates mc
        LEFT JOIN certops_certificate_identities identity
@@ -1534,7 +1571,7 @@ async function listManagedCertificates(options = {}) {
 
   const pageParams = [...params, normalizedLimit, normalizedOffset];
   const result = await db.query(
-    `SELECT mc.*, identity.id AS identity_id, identity.lifecycle_status,
+    `SELECT mc.*, identity.id AS identity_id, identity.lifecycle_status, ${OBSERVED_REVOCATION_SQL} AS observed_revocation,
             ${MANAGED_CERTIFICATE_STATUS_SQL} AS status${MANAGED_CERTIFICATE_LIST_FROM}
       WHERE ${where}
       ORDER BY ${orderBy}
@@ -1554,7 +1591,7 @@ async function listManagedCertificates(options = {}) {
 
 async function getManagedCertificate({ workspaceId, certId }) {
   const result = await pool.query(
-    `SELECT mc.*, identity.id AS identity_id, identity.lifecycle_status,
+    `SELECT mc.*, identity.id AS identity_id, identity.lifecycle_status, ${OBSERVED_REVOCATION_SQL} AS observed_revocation,
             ${MANAGED_CERTIFICATE_STATUS_SQL} AS status${MANAGED_CERTIFICATE_LIST_FROM}
       WHERE mc.workspace_id = $1
         AND mc.id = $2
