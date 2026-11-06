@@ -126,9 +126,12 @@ async function exerciseInterruptedUpgrade(mode) {
   }
 }
 
+// skip-reason: platform
 test("restores the original application after a process dies between renames", { skip: process.platform !== "win32", timeout: 30000 }, () => exerciseInterruptedUpgrade("interrupt"));
+// skip-reason: platform
 test("restores the original application and service after activation", { skip: process.platform !== "win32", timeout: 30000 }, () => exerciseInterruptedUpgrade("interrupt-after-activation"));
 
+// skip-reason: platform
 test("recovery refuses any quarantined launcher intent and enumeration errors", { skip: process.platform !== "win32" }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
   const root = fs.mkdtempSync(path.join(tempParent, "tt537-intent-"));
@@ -158,6 +161,7 @@ exit 0
   }
 });
 
+// skip-reason: platform
 test("launcher authorization fails closed on missing or unrelated intent", { skip: process.platform !== "win32" }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
   const root = fs.mkdtempSync(path.join(tempParent, "tt537-auth-"));
@@ -196,6 +200,7 @@ exit 0
   }
 });
 
+// skip-reason: platform
 test("launcher authorization rejects an invalid inherited handle before package Node is used", { skip: process.platform !== "win32" }, () => {
   const installer = fs.readFileSync(path.join(__dirname, "install-agent.ps1"), "utf8");
   const guardCall = installer.search(/\s+Assert-AuthorizedLauncherOrNoIntent\r?\n/);
@@ -239,6 +244,7 @@ exit 0
   }
 });
 
+// skip-reason: platform
 test("launcher intent ACL validation rejects a user-owned marker", { skip: process.platform !== "win32" }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
   const root = fs.mkdtempSync(path.join(tempParent, "tt537-intent-acl-"));
@@ -266,6 +272,7 @@ exit 0
   }
 });
 
+// skip-reason: platform
 test("launcher-associated recovery refuses replay even if its markers disappeared", { skip: process.platform !== "win32" }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
   const root = fs.mkdtempSync(path.join(tempParent, "tt537-recovery-"));
@@ -300,6 +307,7 @@ exit 0
   }
 });
 
+// skip-reason: platform
 test("upgrade journal persists the authorized launcher transaction", { skip: process.platform !== "win32" }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
   const root = fs.mkdtempSync(path.join(tempParent, "tt537-record-"));
@@ -341,6 +349,7 @@ if (-not $refused -or (Test-Path -LiteralPath (Join-Path $StateDir 'upgrade-reco
   }
 });
 
+// skip-reason: platform
 test("launcher-backed health failure preserves application and backup", { skip: process.platform !== "win32" }, () => {
   const script = String.raw`
 $ErrorActionPreference='Stop'
@@ -363,6 +372,7 @@ exit 0
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
+// skip-reason: platform
 test("launcher-backed healthy upgrade retains recovery journal and backup", { skip: process.platform !== "win32" }, () => {
   const script = String.raw`
 $ErrorActionPreference='Stop'
@@ -385,6 +395,7 @@ exit 0
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
+// skip-reason: platform
 test("launcher-backed activation failure preserves both staged directories", { skip: process.platform !== "win32" }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
   const root = fs.mkdtempSync(path.join(tempParent, "tt537-activation-"));
@@ -416,6 +427,7 @@ exit 0
   }
 });
 
+// skip-reason: platform
 test("uninstall refuses an existing recovery barrier even without launcher markers", { skip: process.platform !== "win32" }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
   const root = fs.mkdtempSync(path.join(tempParent, "tt537-uninstall-"));
@@ -449,6 +461,7 @@ exit 0
   }
 });
 
+// skip-reason: platform
 test("uninstall fails closed on journal access error but permits the absent case", { skip: process.platform !== "win32" }, () => {
   const script = String.raw`
 $ErrorActionPreference='Stop'
@@ -483,6 +496,7 @@ exit 0
   }
 });
 
+// skip-reason: platform
 test("rejects an oversized recovery record before touching the existing application", { skip: process.platform !== "win32", timeout: 30000 }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
   const fixture = fs.mkdtempSync(path.join(tempParent, "tt542-journal-size-"));
@@ -505,6 +519,7 @@ test("rejects an oversized recovery record before touching the existing applicat
   }
 });
 
+// skip-reason: platform
 test("installer Node helper rejects inherited preloads and restores the caller environment", { skip: process.platform !== "win32" }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
   const fixture = fs.mkdtempSync(path.join(tempParent, "tt542-preload-"));
@@ -538,6 +553,7 @@ if ($env:NODE_OPTIONS -ne $ttOldOptions -or $env:NODE_PATH -ne $ttOldPath) { thr
   }
 });
 
+// skip-reason: platform
 test("runtime package marker selects bundled Node and rejects incomplete bundles", { skip: process.platform !== "win32", timeout: 30000 }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
   const fixture = fs.mkdtempSync(path.join(tempParent, "tt542-runtime-"));
@@ -611,6 +627,7 @@ Invoke-Expression $ttSource.Substring($ttStart,$ttEnd-$ttStart)
   }
 });
 
+// skip-reason: platform
 test("service health requires the expected child to survive a second observation", { skip: process.platform !== "win32" }, () => {
   const script = String.raw`
 $ttTokens=$null; $ttErrors=$null
@@ -639,6 +656,7 @@ if (Test-ServiceChildStable -ExpectedNodePath $script:ExpectedNode) { throw 'Exi
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
+// skip-reason: platform
 test("bundled bootstrap rejects ancestor permissions that can alter a reparse point", { skip: process.platform !== "win32" }, () => {
   const script = String.raw`
 $ErrorActionPreference='Stop'
@@ -679,6 +697,7 @@ foreach ($mask in @(0x2,0x100)) {
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
+// skip-reason: platform
 test("bundled bootstrap rejects a user-owned extraction directory", { skip: process.platform !== "win32" }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
   const fixture = fs.mkdtempSync(path.join(tempParent, "tt542-untrusted-"));
@@ -709,6 +728,7 @@ if (-not $ttRejected) { throw 'Untrusted extraction directory was accepted' }
   }
 });
 
+// skip-reason: platform
 test("recovery refuses a journal with inherited, unprotected ACL", { skip: process.platform !== "win32", timeout: 30000 }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
   const fixture = fs.mkdtempSync(path.join(tempParent, "tt542-journal-acl-"));
@@ -743,10 +763,12 @@ Assert-UpgradeRecoveryAcl -JournalPath $env:TT542_JOURNAL
   }
 });
 
+// skip-reason: platform
 test("validated bundled runtime stays locked against replacement during bootstrap", { skip: process.platform !== "win32", timeout: 30000 }, async (t) => {
   const expectedHash = "9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de";
   const actualHash = crypto.createHash("sha256").update(fs.readFileSync(process.execPath)).digest("hex");
   if (process.version !== "v24.18.0" || process.arch !== "x64" || actualHash !== expectedHash) {
+    // skip-reason: prerequisite
     t.skip("test requires the pinned Windows Node runtime fixture");
     return;
   }

@@ -43,7 +43,7 @@ function environmentFor(site) {
   if (site.file.startsWith("packages/mcp/")) return /Windows/i.test(site.name) ? "mcp-windows-filesystem" : "mcp-posix-filesystem";
   if (dedicatedSuites[site.file]) return dedicatedSuites[site.file][0];
   if (["packages/agent/scripts/install-agent-sh.test.js", "packages/agent/scripts/pack-release.test.js", "packages/agent/src/material-preflight.test.js"].includes(site.file)) return "linux-filesystem";
-  if (site.file === "packages/agent/src/index.test.js") return "windows-elevated";
+  if (["packages/agent/src/index.test.js", "packages/agent/scripts/windows-upgrade-recovery.test.js", "packages/agent/src/protocol/bound-rotation-startup.test.js", "packages/agent/src/protocol/credential-pipe.test.js"].includes(site.file)) return "windows-elevated";
   if (site.file === "packages/agent/src/issuers/adcs-enrollment-reconcile.test.js") return "openssl-fixtures";
   if (site.file === "packages/agent/src/material-store/material-store.test.js" && site.name.startsWith("real ")) return "distribution-vault-adapter";
   if (site.file === windowsPathFile) return "windows-powershell-filesystem";

@@ -14,10 +14,12 @@ test("bound startup refuses an already-cancelled operation before contacting the
 });
 
 test("bound startup refuses a live IPv6 endpoint before opening the credential pipe", async t=>{
+  // skip-reason: platform
   if(process.platform!=="win32") return t.skip("requires Windows named pipes");
   let networkConnections=0, pipeConnections=0;
   const ipv6=net.createServer(socket=>{networkConnections++;socket.destroy();});
   try { await new Promise((resolve,reject)=>ipv6.listen(0,"::1",resolve).once("error",reject)); }
+  // skip-reason: prerequisite
   catch (_error) { return t.skip("IPv6 loopback unavailable"); }
   const name=`\\\\.\\pipe\\TokenTimerCredential-${crypto.randomBytes(32).toString("hex")}`,key=crypto.randomBytes(32),prefix=Buffer.alloc(2);
   prefix.writeUInt16BE(Buffer.byteLength(name));
@@ -32,6 +34,7 @@ test("bound startup refuses a live IPv6 endpoint before opening the credential p
 
 test("bound startup requires matching protected context, TLS CA and remote workspace", async t=>{
   const dir=process.env.TT_TEST_TLS_DIR;
+  // skip-reason: platform
   if(process.platform!=="win32" || !dir) return t.skip("requires Windows and disposable TLS fixture");
   const read=name=>fs.readFileSync(path.join(dir,name),"utf8"), ca=read("ca.pem"), wrong=read("wrong.pem");
   let httpCalls=0, remoteIdentity=identity;
