@@ -112,7 +112,9 @@ func TestNetworkCRLAndOCSP(t *testing.T) {
 	check := func(want string) {
 		t.Helper()
 		if !linuxOnly {
-			got := CheckChain(context.Background(), chains[0], []string{origin}, []*x509.Certificate{root}, now)
+			// Each probe can launch an agent and database, so the response may be
+			// produced well after fixture creation. Verify it at the current time.
+			got := CheckChain(context.Background(), chains[0], []string{origin}, []*x509.Certificate{root}, time.Now().UTC())
 			if got.Verdict != want {
 				t.Fatalf("got %+v, want %s", got, want)
 			}
