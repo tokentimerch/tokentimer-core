@@ -382,6 +382,7 @@
           "stored-copy uncertainty requires acknowledgment and decommissioned rediscovery stays visible",
           "late claimed results cannot update a re-added provisioning source or a rotated active source",
           "filters grouped inventory by Windows observation source",
+          "keeps an active renewal profile representative when later discovery observes the same leaf",
           "searches every associated managed certificate's public properties",
           "transfers several tokens with managed certificate histories atomically",
           "refuses transfer during an active AD CS enrollment without moving any token",

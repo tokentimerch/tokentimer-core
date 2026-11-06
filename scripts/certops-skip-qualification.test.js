@@ -206,3 +206,14 @@ test("stored skip defaults preserve all facts and cannot conceal routing or qual
   const missing = {sites: [{kind: "one"}, {}]}; assert.deepEqual(expand(compact(missing)), missing);
   for (const siteDefaults of [null, [], {id: "foreign"}]) assert.throws(() => expand({...stored, siteDefaults}));
 });
+
+test("MCP credential skips select real platform jobs without claiming execution", () => {
+  const sites = generate().sites.filter(site => site.file.startsWith("packages/mcp/"));
+  assert.ok(sites.length > 0);
+  for (const site of sites) {
+    const windows = /Windows/i.test(site.name);
+    assert.equal(site.workflowJob, windows ? "windows_agent_quality" : "operator_interface");
+    assert.equal(site.workflowStatus, "file-selected-not-qualified");
+    assert.equal(site.executionStatus, "not-qualified");
+  }
+});

@@ -1,6 +1,6 @@
 {
   "name": "@tokentimer/api",
-  "version": "0.18.2",
+  "version": "0.19.1",
   "private": true,
   "description": "TokenTimer API Service",
   "license": "AGPL-3.0-or-later",
@@ -23,6 +23,7 @@
     "@tokentimer/alert-eligibility": "workspace:*",
     "@tokentimer/contracts": "workspace:*",
     "@tokentimer/log-scrub": "workspace:*",
+    "@tokentimer/mcp": "workspace:*",
     "@tokentimer/node-compat": "workspace:*",
     "@tokentimer/webhook-safety": "workspace:*",
     "ajv": "8.18.0",

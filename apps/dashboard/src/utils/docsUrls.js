@@ -1,4 +1,5 @@
 export const SELF_HOSTED_DOCS_BASE = 'https://tokentimer.ch/docs/self-hosted';
+export const MCP_SETUP_DOCS = 'https://tokentimer.ch/docs/api/mcp-setup';
 
 // Anchors match docs/certops/agent/adcs.md. The hosted page is published from that file.
 const ADCS_DOCS_PAGE = `${SELF_HOSTED_DOCS_BASE}/certops/adcs`;

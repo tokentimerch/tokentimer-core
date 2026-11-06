@@ -25,7 +25,7 @@ api:
   image:
     registry: ""
     repository: tokentimer-core-api
-    tag: "0.18.2"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.19.1"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""    # takes precedence over tag; pin from release-manifest.json for reproducible deploys (:latest is not the source of truth)
     pullPolicy: IfNotPresent
 
@@ -93,6 +93,8 @@ api:
   # SUBFINDER_BIN; see docs/CONFIGURATION.md).
   # Recipient verification stays off until RECIPIENT_VERIFICATION_MODE=enforce
   # or shadow. Set the same value on the worker. See docs/recipient-verification.md.
+  # Set advanced invitation/test limits here using their documented environment
+  # names; weekly-digest retry tuning belongs in worker.env.
   env: {}
   # Extra envFrom entries. configMapRef.name / secretRef.name support Helm tpl
   # (e.g. '{{ .Release.Name }}-overlay-env').
@@ -115,7 +117,7 @@ dashboard:
   image:
     registry: ""
     repository: tokentimer-core-dashboard
-    tag: "0.18.2"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.19.1"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""
     pullPolicy: IfNotPresent
 
@@ -162,7 +164,7 @@ worker:
   image:
     registry: ""
     repository: tokentimer-core-worker
-    tag: "0.18.2"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.19.1"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""
     pullPolicy: IfNotPresent
 
@@ -315,7 +317,7 @@ certops:
     image:
       registry: ""
       repository: tokentimer-core-k8s-controller
-      tag: "0.18.2"  # align with Chart.appVersion; release workflow updates this per tag
+      tag: "0.19.1"  # align with Chart.appVersion; release workflow updates this per tag
       digest: ""
       pullPolicy: IfNotPresent
 
@@ -356,6 +358,12 @@ ingress:
     - host: tokentimer.local
       paths:
         - path: /api
+          pathType: Prefix
+          service: api
+        - path: /.well-known/oauth-protected-resource
+          pathType: Prefix
+          service: api
+        - path: /.well-known/oauth-authorization-server
           pathType: Prefix
           service: api
         - path: /auth
@@ -552,6 +560,15 @@ config:
   # Bytes of new console lines each workspace may store per UTC day.
   # Empty or 0 = no cap. Counted across API replicas.
   certopsAgentLogDailyBytes: ""
+  # Assistant (MCP) access. All three flags default off. Interface enables
+  # connection management; remote enables HTTP and browser sign-in. Writes also
+  # need an owner or workspace manager to allow renewals in Workspace controls.
+  mcpOperatorInterfaceEnabled: false
+  mcpOperatorRemoteEnabled: false
+  mcpOperatorWritesEnabled: false
+  # Exact external HTTPS endpoint, ending /api/v1/operator/mcp.
+  mcpPublicUrl: ""
+  mcpAllowedOrigins: ""
 
   # CertOps encryption keys. Each must be 64 hex chars (32 bytes).
   # These wrap, at rest, the job-signing private keys and the agent

@@ -5,12 +5,12 @@ capability, independently of schema availability. Tracks Core #248.
 
 ## Decision
 
-Extend the distribution lifecycle introduced in PR #329. Issuance, customer
+Extend the distribution lifecycle introduced in PR #329. Issuance, local
 key custody and deployment remain separate outcomes. Agents alone publish or
 retrieve bundles; API/worker code stores public references and evidence. Do
 not reuse the control-plane Azure inventory client, or add network clients
 to orchestration. The existing `vault-managed` custody value and `vault:`
-opaque reference scheme continue to mean customer secret-store custody;
+opaque reference scheme continue to mean operator-managed secret-store custody;
 `material_store_provider` now identifies the actual provider explicitly.
 
 `createMaterialStore` selects Vault KV v2, OpenBao KV v2 or Azure Key Vault.
@@ -48,10 +48,10 @@ before PUT. After a lost response, reconcile by enumerating then reading the
 exact version. An absent object after an uncertain write never authorizes a
 second PUT or a fresh CA order. Proven authentication/configuration rejection
 can clear the write marker; an ambiguous result cannot. This detects
-conflicting writers but does not claim Azure provides atomic CAS. Customers
+conflicting writers but does not claim Azure provides atomic CAS. Operators
 must exclude other writers from the publication namespace.
 
-Azure authentication is customer-local: workload federation, Azure IMDS
+Azure authentication is host-local: workload federation, Azure IMDS
 managed identity, or a protected renewable access-token sink. Renew identities
 before expiry, reread token sinks on each request, use the fixed public Azure
 authority/resource, and bound GET retries. Never follow redirects, challenge
@@ -68,7 +68,7 @@ SIDs, `rebind` activation, preflight, import, activate, verify and reconciliatio
 Issue #366's broader service connector framework is still open; arbitrary
 Windows services and restart/script actions are outside this contract.
 
-Build an encrypted PKCS#12 import bundle inside the customer agent using
+Build an encrypted PKCS#12 import bundle inside the local agent using
 Node's PKCS#8 encryption and RFC 7292 password integrity. Stage inputs under
 verified owner/SYSTEM ACLs. A fixed installed PowerShell/C# helper imports
 using native Crypt32 with machine/CNG flags and without export/overwrite
@@ -98,7 +98,7 @@ Protected PFX input files are removed after helpers finish and swept only while
 the global connector mutex proves no live helper owns them. Hard-killed
 binding-lock files require the existing operator reconciliation procedure.
 JavaScript strings and platform crypto memory do not provide guaranteed
-zeroization; custody remains inside customer-controlled hosts.
+zeroization; custody remains inside operator-controlled hosts.
 
 ## Compatibility and qualification
 
@@ -113,7 +113,7 @@ Migration 78 follows all supported Core histories without rewriting old ledger
 rows. Editions must compose this migration and the widened contracts together;
 their release pins are not changed by this implementation. Cloud's older
 independent migration/route overlay needs review on adoption; Enterprise inherits
-these base services. Neither edition gains customer provider credentials.
+these base services. Neither edition gains provider credentials.
 
 ## Sources
 

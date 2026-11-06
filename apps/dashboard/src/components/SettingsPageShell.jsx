@@ -313,6 +313,7 @@ export function SettingsActionRow({
   description,
   status = null,
   note = null,
+  footer = null,
   showDivider = false,
   children,
 }) {
@@ -361,6 +362,7 @@ export function SettingsActionRow({
             </Box>
           ) : null}
         </HStack>
+        {footer ? <Box mt={3}>{footer}</Box> : null}
       </Box>
       {showDivider ? <Divider opacity={0.65} /> : null}
     </>

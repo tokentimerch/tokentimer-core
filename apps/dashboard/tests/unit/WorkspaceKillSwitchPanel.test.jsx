@@ -204,7 +204,9 @@ describe('WorkspaceKillSwitchPanel with a shared controller', () => {
       <WorkspaceKillSwitchPanel controller={killSwitchState()} />
     );
     expect(
-      screen.getByText('Certificate operations are running for this workspace.')
+      screen.getByText(
+        'Certificate operations are running for this workspace.'
+      )
     ).toBeInTheDocument();
     expect(screen.getByText('Active')).toBeInTheDocument();
     expect(
@@ -261,7 +263,7 @@ describe('WorkspaceKillSwitchPanel row mode', () => {
     expect(screen.getByText('Certificate operations')).toBeInTheDocument();
     expect(screen.getByText('Active')).toBeInTheDocument();
     expect(
-      screen.getByText('Certificate operations are running for this workspace.')
+      screen.getByText('Pause new certificate jobs and commands during an incident.')
     ).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'Pause certificate operations' })
@@ -272,10 +274,12 @@ describe('WorkspaceKillSwitchPanel row mode', () => {
     row({ certOpsPaused: true });
     expect(screen.getByText('Paused')).toBeInTheDocument();
     expect(
-      screen.getByText('Certificate operations are paused for this workspace.')
+      screen.getByText('New certificate jobs and commands are paused.')
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Already-leased jobs keep running, and agents can still/)
+      screen.getByText(
+        /Running jobs continue. Monitoring and evidence reporting/
+      )
     ).toBeInTheDocument();
     expect(
       screen.getAllByRole('button', { name: 'Resume certificate operations' })

@@ -48,7 +48,7 @@ Enterprise. Enforce it in multiple layers:
 
 The single private key the platform holds is the **platform operational signing
 key** (ADR-0003), which signs jobs and is never used for certificate issuance or
-customer key custody.
+local key custody.
 
 ## Alternatives considered
 

@@ -20,6 +20,9 @@ function verifyShardReport(report, expectedShard) {
   const owner = createShard(expectedShard);
   const expected = owner.select(require("./certops-qualification-manifest").suites["enterprise-adcs-real"]);
   const known = new Set(expected);
+  // Every non-core phase builds the actual RSA renewal fixture before its own scenarios.
+  const sharedSetup = owner.runs("core") ? null : "adcs-real-rsa2048-issued-cng-iis";
+  if (sharedSetup) known.add(sharedSetup);
   const passed = new Set();
   for (const scenario of Array.isArray(report.scenarios) ? report.scenarios : []) {
     if (!known.has(scenario?.id)) errors.push("Unexpected scenario in shard report");
@@ -28,13 +31,15 @@ function verifyShardReport(report, expectedShard) {
     else errors.push(`Scenario did not complete: ${String(scenario?.id).slice(0, 120)}`);
   }
   const required = Array.isArray(report.requiredScenarios) ? report.requiredScenarios : [];
-  if (required.length !== expected.length || new Set(required).size !== expected.length || required.some(id => !known.has(id))) errors.push("Shard requirements differ from committed native inventory");
+  const owned = new Set(expected);
+  if (required.length !== expected.length || new Set(required).size !== expected.length || required.some(id => !owned.has(id))) errors.push("Shard requirements differ from committed native inventory");
   for (const id of required) {
     if (!owner.owns(id)) errors.push(`Scenario outside the shard: ${String(id).slice(0, 120)}`);
   }
   for (const id of expected) {
     if (!passed.has(id)) errors.push(`Missing required scenario: ${String(id).slice(0, 120)}`);
   }
+  if (sharedSetup && !passed.has(sharedSetup)) errors.push(`Missing required shared setup: ${sharedSetup}`);
   return errors;
 }
 

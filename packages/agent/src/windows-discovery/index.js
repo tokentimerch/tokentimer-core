@@ -781,6 +781,7 @@ function parseAppcmdSiteListOutput(stdout) {
 async function listIisSites({
   execFileImpl = childProcess.execFile,
   appcmdPath = `${process.env.SystemRoot || "C:\\Windows"}\\System32\\inetsrv\\appcmd.exe`,
+  powershellPath = "powershell.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
   assertSafeArgvElements("appcmdPath", [appcmdPath]);
@@ -792,15 +793,61 @@ async function listIisSites({
   if (exitCode !== 0) {
     return { ok: true, sites: [] };
   }
-  return { ok: true, sites: parseAppcmdSiteListOutput(stdoutText) };
+  const sites = parseAppcmdSiteListOutput(stdoutText);
+  if (!sites.some((site) => site.bindings.some((binding) => binding.protocol.toLowerCase() === "https"))) {
+    return { ok: true, sites };
+  }
+
+  // Appcmd's site summary omits sslFlags. Resolve them separately so a
+  // hostname-bearing non-SNI site is not confused with an SNI binding.
+  // If IIS metadata cannot be read, leave flags unknown and preserve the
+  // conservative existing behavior for host-header/IP associations.
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "Import-Module WebAdministration -ErrorAction Stop",
+    "$items = @(foreach ($site in @(Get-Website)) {",
+    "  foreach ($binding in @(Get-WebBinding -Name $site.Name)) {",
+    "    if ($binding.protocol -eq 'https') {",
+    "      @{ site = $site.Name; bindingInformation = $binding.bindingInformation; sslFlags = $binding.sslFlags }",
+    "    }",
+    "  }",
+    "})",
+    "ConvertTo-Json -InputObject @{ items = $items } -Compress -Depth 4",
+  ].join("\n");
+  const psArgv = [powershellPath, "-NoProfile", "-NonInteractive", "-Command"];
+  assertSafeArgvElements("powershellPath", psArgv);
+  const metadata = await execWithoutShell(execFileImpl, [...psArgv, script], timeoutMs, { env: buildPowerShellEnv() });
+  if (metadata.exitCode !== 0) return { ok: true, sites };
+  let items;
+  try {
+    items = JSON.parse(String(metadata.stdout ?? "")).items;
+  } catch {
+    return { ok: true, sites };
+  }
+  if (!Array.isArray(items)) return { ok: true, sites };
+  const flags = new Map();
+  for (const item of items) {
+    if (typeof item?.site !== "string" || typeof item.bindingInformation !== "string" || !Number.isSafeInteger(item.sslFlags) || item.sslFlags < 0 || item.sslFlags > 0xffffffff) continue;
+    const key = `${item.site}\0${item.bindingInformation}`.toLowerCase();
+    // Conflicting metadata is ambiguous and cannot establish a non-SNI match.
+    if (flags.has(key) && flags.get(key) !== item.sslFlags) flags.set(key, null);
+    else if (!flags.has(key)) flags.set(key, item.sslFlags);
+  }
+  for (const site of sites) {
+    for (const binding of site.bindings) {
+      if (binding.protocol.toLowerCase() !== "https") continue;
+      const key = `${site.name}\0${binding.address}:${binding.port}:${binding.hostHeader}`.toLowerCase();
+      if (Number.isSafeInteger(flags.get(key))) binding.sslFlags = flags.get(key);
+    }
+  }
+  return { ok: true, sites };
 }
 
 /**
  * Resolves the IIS site name(s) whose bindings match a given http.sys
  * binding, by port plus either host header (hostname-keyed / SNI bindings)
- * or address (IP-keyed bindings restricted to sites with no host header,
- * since an IP-keyed cert binding carries no SNI signal to disambiguate
- * between sites sharing a wildcard address). Returns `[]` when no site's
+ * or address (IP-keyed bindings include host-header sites only when IIS
+ * explicitly reports that SNI is disabled). Returns `[]` when no site's
  * bindings match, which is a normal outcome (e.g. a binding created
  * directly via `netsh` with no matching IIS site), not a parse failure.
  *
@@ -818,11 +865,16 @@ function findSitesForBinding(sites, binding) {
   const matches = [];
   for (const site of sites) {
     const matched = site.bindings.some((siteBinding) => {
+      if (siteBinding.protocol.toLowerCase() !== "https") return false;
       if (siteBinding.port !== port) return false;
+      // Centralized certificate store bindings select a certificate outside
+      // this HTTP.sys IP/hostname binding and cannot be attributed to it.
+      if (Number.isSafeInteger(siteBinding.sslFlags) && (siteBinding.sslFlags & 2) !== 0) return false;
       if (binding.keyedBy === "hostnameport") {
+        if (Number.isSafeInteger(siteBinding.sslFlags) && (siteBinding.sslFlags & 1) === 0) return false;
         return siteBinding.hostHeader.toLowerCase() === addressOrHost.toLowerCase();
       }
-      if (siteBinding.hostHeader) return false;
+      if (siteBinding.hostHeader && (!Number.isSafeInteger(siteBinding.sslFlags) || (siteBinding.sslFlags & 1) !== 0)) return false;
       return (
         siteBinding.address === "*" ||
         siteBinding.address === addressOrHost ||

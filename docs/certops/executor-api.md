@@ -5,7 +5,7 @@
 Certificate Lifecycle Management (CLM) uses the existing CertOps machine API. In code and API references, `certops` paths, `certops:*` token scopes, and `CERTOPS_*` configuration names refer to this same certificate lifecycle capability; use those technical identifiers as documented.
 
 Reference for external systems that report certificate lifecycle events and
-for the customer-side cert-manager controller. These machine transports are separate from the native
+for the in-cluster cert-manager controller. These machine transports are separate from the native
 agent protocol. See
 `.github/maintainers/certops/CONTEXT.md` for domain language and ADR-0006 for where the
 executor jobs/evidence UI lives in the dashboard.
@@ -332,7 +332,7 @@ request; approval releases eligible work and rejection prevents execution.
 
 ## 9. Kubernetes controller routes
 
-The customer-cluster controller uses dedicated, additive transports. They do
+The in-cluster controller uses dedicated, additive transports. They do
 not register an agent or implement heartbeats, general job claims, attempts,
 leases, signatures, or nonces.
 

@@ -49,6 +49,7 @@ test("command barrier publishes its receipt only after all bytes are written", {
   const proof=JSON.parse(fs.readFileSync(receipt,"utf8"));
   assert.equal(proof.token,token);assert.equal(proof.pid,child.pid);
   assert.equal(fs.existsSync(marker),false);
+  await until(()=>!fs.readdirSync(directory).some(name=>/^process\.json\..*\.tmp$/.test(name)));
   child.kill("SIGTERM");await exited;
   assert.equal(fs.existsSync(marker),false);
   assert.equal(fs.readdirSync(directory).some(name=>/^process\.json\..*\.tmp$/.test(name)),false);

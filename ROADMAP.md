@@ -1,11 +1,10 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-02 against main 5bc9b519 (v0.18.2). Other
-certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
+Last reviewed: 2026-11-06 against main 8212ea40 (v0.19.1 release candidate).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
-without gating v1.0.0, and what v1.0.0 itself changes for compatibility. Customer-facing feature cards and voting
+without gating v1.0.0, and what v1.0.0 itself changes for compatibility. Public feature cards and voting
 live on the [public feature roadmap](https://tokentimer.featurebase.app/en/roadmap).
 Release history lives in [CHANGELOG.md](CHANGELOG.md). Owners, acceptance
 criteria, and evidence live in the linked GitHub issues.
@@ -37,19 +36,19 @@ called stable while they are open.
 
 - **CLM destinations: store issued material and distribute it**
   ([#248](https://github.com/tokentimerch/tokentimer-core/issues/248)).
-  Name filesystem, IIS, or customer Vault locations on a certificate.
+  Name filesystem, IIS, or Vault locations on a certificate.
   One issuance can deploy to those destinations. The control plane
   never stores private keys. Shared-key Vault mode is explicit opt-in.
   [PR #329](https://github.com/tokentimerch/tokentimer-core/pull/329) adds
-  customer Vault publication and independent consumer rollouts for any shared
+  publication through your Vault and independent consumer rollouts for any shared
   certificate, including ordinary and wildcard certificates, shipped in 0.18.0
   (see [CHANGELOG.md](CHANGELOG.md)); the remaining destination scope stays
   open on the issue.
-  Active, unmerged increments are [PR #498](https://github.com/tokentimerch/tokentimer-core/pull/498)
-  for the distribution lifecycle and [PR #460](https://github.com/tokentimerch/tokentimer-core/pull/460)
-  for Windows/IIS shared material and provider extensions. Functional
+  The distribution lifecycle remains open in [PR #498](https://github.com/tokentimerch/tokentimer-core/pull/498).
+  Windows/IIS shared material and provider extensions merged in
+  [PR #460](https://github.com/tokentimerch/tokentimer-core/pull/460). Functional
   implementation is separate from remaining fleet/protected qualification;
-  neither PR completes every #248 requirement.
+  these increments do not complete every #248 requirement.
   Provider extensions cover OpenBao KV v2 and Azure Key Vault Secrets exact
   versions. Azure and Windows/IIS remain subject to independent production
   qualification; see [implementation and evidence](docs/certops/distribution-extensions-qualification.md).
@@ -78,23 +77,12 @@ called stable while they are open.
 Accepted work that ships in 0.x stages on its own schedule. v1.0.0 can be
 called stable while it is open.
 
-- **Verifiable certificate lifecycle and real-host qualification**
-  ([#354](https://github.com/tokentimerch/tokentimer-core/issues/354)).
-  Cover Windows installation, services, CNG, certificate stores and IIS,
-  enterprise AD CS enrollment and recovery, ACME, Linux destinations and
-  edition integration. Use disposable hosted Windows runners and isolated
-  on-demand domain labs, with independent cleanup safeguards. Mandatory
-  execution reports must fail on missing prerequisites or skipped tests.
-  Implementation and focused local evidence are separate from hosted
-  execution and release qualification; see
-  [the qualification guide](.github/maintainers/certops/e2e-qualification.md).
 - **MCP operator interface**
   ([#502](https://github.com/tokentimerch/tokentimer-core/issues/502),
   implementation [PR #406](https://github.com/tokentimerch/tokentimer-core/pull/406)).
-  Workspace-scoped queries, secure enrollment and approval-gated renewal
-  requests are in development, not released. General token CRUD and
-  text-to-token extraction are later follow-ons. Cloud and Enterprise
-  adoption is separate.
+  Scoped inventory queries and updates, contact and invitation actions,
+  remote sign-in, and ACME issuance and renewal requests ship in 0.19.0.
+  Deletes and provider-side actions remain follow-on work.
 
 ---
 
@@ -170,10 +158,8 @@ does not promise a version or add a v1.0.0 gate.
   [manual evidence #341](https://github.com/tokentimerch/tokentimer-core/issues/341)
   and [restore decommissioned identities #410](https://github.com/tokentimerch/tokentimer-core/issues/410).
   Scope each against the released lifecycle before implementation.
-- **Release confidence and qualification**:
-  [remaining host coverage #354](https://github.com/tokentimerch/tokentimer-core/issues/354)
-  and [release provenance #300](https://github.com/tokentimerch/tokentimer-core/issues/300).
-  Keep published AD CS baseline support separate from testing expansion.
+- **Release provenance**
+  ([#300](https://github.com/tokentimerch/tokentimer-core/issues/300)).
 
 Performance tests with regression budgets
 ([#235](https://github.com/tokentimerch/tokentimer-core/issues/235));

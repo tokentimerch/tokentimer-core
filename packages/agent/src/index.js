@@ -6867,11 +6867,12 @@ async function registerIfNeeded({
 }
 
 function createCandidateAgentId(hostname = os.hostname(), pid = process.pid) {
-  const normalizedHostname = String(hostname || "host")
+  const cleanedHostname = String(hostname || "host")
     .normalize("NFKD")
-    .replace(/[^A-Za-z0-9_.:-]+/g, "-")
-    .replace(/[-_.:]+$/g, "")
-    .slice(0, 96) || "host";
+    .replace(/[^A-Za-z0-9_.:-]+/g, "-");
+  let end = cleanedHostname.length;
+  while (end > 0 && "-_.:".includes(cleanedHostname[end - 1])) end -= 1;
+  const normalizedHostname = cleanedHostname.slice(0, Math.min(end, 96)) || "host";
   const normalizedPid = Number.isInteger(pid) && pid >= 0 ? String(pid) : "0";
   return `candidate-${normalizedHostname}-${normalizedPid}`.slice(0, 128);
 }

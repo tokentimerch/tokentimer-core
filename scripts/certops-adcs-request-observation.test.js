@@ -45,3 +45,11 @@ test("unparenthesized casts reproduce the original remote Boolean binding failur
   assert.equal(child.status, 2, child.stderr || child.error?.message);
   assert.match(JSON.parse(child.stdout).error, /^ParameterArgumentTransformationError/);
 });
+test("localized CA-view retry remains restricted and restores thread state", () => {
+  const source = fs.readFileSync(path.resolve(__dirname, "../infra/certops-adcs/owned-request-observation.ps1"), "utf8");
+  assert.match(source, /2147942402/);
+  assert.match(source, /if\(-not \$fileNotFound\)\{throw\}/);
+  assert.match(source, /catch \{throw \$originalFailure\}/);
+  assert.match(source, /SetThreadUILanguage\(\$previousThreadLanguage\)/);
+  assert.match(source, /CurrentUICulture=\$previousUiCulture/);
+});

@@ -149,6 +149,10 @@ the agent configuration and restart the agent:
 "observedRevocation": { "enabled": true, "allowedOrigins": ["http://pki.example.test"] }
 ```
 
+Each reported observation is retained as workspace evidence; the inventory shows
+the latest result and, when a check fails, the last verified result. Evidence
+has no separate revocation retention setting and is deleted with the workspace.
+
 `discovery` block:
 
 | Field | Type | Default | Notes |
@@ -169,7 +173,7 @@ the agent configuration and restart the agent:
 
 ## Related
 
-`materialStores` and `materialBindings` are protected customer-local execution
+`materialStores` and `materialBindings` are protected host-local execution
 configuration. See [distribution provider and Windows examples](../distribution-extensions.md)
 for provider selection, Azure identities, exact IIS selectors and key permissions.
 

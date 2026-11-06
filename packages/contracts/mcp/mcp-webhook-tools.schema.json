@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/mcp/mcp-webhook-tools.schema.json",
+  "title": "MCP reviewed webhook creation",
+  "definitions": {
+    "tt_preview_webhook_create_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["webhook"],
+      "properties": {
+        "webhook": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "url"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+            "url": { "type": "string", "minLength": 1, "maxLength": 2048 },
+            "kind": { "type": "string", "enum": ["generic", "slack", "teams", "discord", "pagerduty"] },
+            "routingKey": { "type": "string", "maxLength": 256 }
+          }
+        }
+      }
+    },
+    "tt_preview_webhook_create_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planId", "planHash", "expiresAt", "effect"],
+      "properties": {
+        "planId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+        "planHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "expiresAt": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/timestamp" },
+        "effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "host", "kind", "destinationPathHidden", "routingKeyRequired", "deliveryMayStart", "verified"],
+          "properties": {
+            "name": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/untrustedText" },
+            "host": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/untrustedText" },
+            "kind": { "type": "string", "enum": ["generic", "slack", "teams", "discord", "pagerduty"] },
+            "destinationPathHidden": { "const": true },
+            "routingKeyRequired": { "type": "boolean" },
+            "deliveryMayStart": { "const": true },
+            "verified": { "const": false }
+          }
+        }
+      }
+    },
+    "tt_create_webhook_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planId", "planHash", "requestId", "url"],
+      "properties": {
+        "planId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+        "planHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "requestId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+        "url": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "routingKey": { "type": "string", "maxLength": 256 }
+      }
+    },
+    "tt_create_webhook_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "requestId", "planId", "state", "replayed"],
+      "properties": {
+        "operation": { "const": "create_webhook" },
+        "requestId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+        "planId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+        "state": { "const": "succeeded" },
+        "replayed": { "type": "boolean" }
+      }
+    }
+  }
+}

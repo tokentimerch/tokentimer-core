@@ -156,8 +156,9 @@ Write-Output 'CERTOPS_STAGE=enterprise-ca-service-running'
  $script:captureCaDescendant=$true
  try{
   $receipt=@(Invoke-CaBootstrapProcess -Script $env:CA_CHILD -Password 'private-fixture-password' -Role root -Seconds 3 -GraceSeconds 0)
+  # Termination is asynchronous; wait on the captured owned handle, within the total bound.
+  if(-not $script:caDescendant.WaitForExit(2000)){throw 'Descendant survived owned cleanup'}
   if($clock.Elapsed.TotalSeconds -gt 6){throw 'Descendant output exceeded its deadline'}
-  if(-not $script:caDescendant.WaitForExit(0)){throw 'Descendant survived owned cleanup'}
  }finally{if($script:caDescendant){$script:caDescendant.Dispose()}}
  if($receipt.Count -ne 1 -or $receipt[0] -cne 'CERTOPS_STAGE=enterprise-ca-service-running'){throw 'Descendant cleanup changed the success receipt'}
  $script:captureCaDescendant=$false

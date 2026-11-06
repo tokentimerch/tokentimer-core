@@ -55,6 +55,8 @@ Architecture decisions are accepted but amendable before GA through ADRs.
 | [0011](0011-certops-machine-initiated-audit-events.md) | CertOps machine-initiated lifecycle events are audited | Accepted |
 | [0012](0012-certops-windows-execution-surface-and-trust-anchors.md) | Windows execution surface, trust-anchor operations, signed-dispatch envelope, and CNG-vs-PFX custody | Accepted, amended 2026-08-03 |
 | [0014](0014-certops-adcs-issuer-and-async-enrollment.md) | Microsoft AD CS issuer and asynchronous enrollment lifecycle | Accepted |
+| [0015](0015-certops-material-providers-and-windows-consumers.md) | CertOps material providers and Windows consumers | Proposed |
+| [0017](0017-mcp-operator-interface.md) | MCP operator interface | Proposed |
 
 ### Alerting
 
@@ -120,11 +122,18 @@ Windows-specific questions it lists before it was accepted; its release gate
 still holds back any production release until every case passes on real
 hosts.
 
+ADR-0017 proposes workspace-scoped MCP assistant access through remote HTTP or
+an optional local adapter. The REST API enforces delegated authority for token
+metadata, create-only inventory import and certificate renewal requests.
+Renewals follow workspace Job approval; an assistant cannot approve its own
+work. The contracts live under `packages/contracts/mcp/`, and deployment flags
+default to off. See the ADR for the implemented boundaries and deferred actions.
+
 Changing a published contract or an accepted invariant is a new or updated ADR,
 not a silent code edit.
 
 [ADR-0015](0015-certops-material-providers-and-windows-consumers.md) defines
 provider identity and opaque Azure version pins, shared OpenBao/Vault execution,
 and the constrained Windows/IIS shared-material connector. Provider credentials
-and private keys remain customer-local; independent qualification gates govern
+and private keys remain host-local; independent qualification gates govern
 production advertisement.
