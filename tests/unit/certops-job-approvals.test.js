@@ -508,6 +508,7 @@ describe("agentDispatch.claimJobs approval-hash guard", () => {
     return bindAuthenticatedAgent({
       id: "agent-row-1",
       workspaceId: WORKSPACE_A,
+      agentId: "agent-01",
       status: "active",
       protocolVersion: "1.0.0",
       agentVersion: "1.0.0",
