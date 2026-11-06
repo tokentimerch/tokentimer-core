@@ -11,6 +11,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.19.1] - 2026-11-06
 
+### Fixed
+
+- **Helm example ingress routes.** Recipient verification and Twilio inbound requests now reach the API when using the external database or full test example. **Operator action:** reapply the updated example values if you use either ingress configuration.
+
 ### Security
 
 - **Subfinder dependencies.** Update Brotli and zstd to address denial-of-service vulnerabilities ([GO-2026-6888](https://osv.dev/vulnerability/GO-2026-6888), [GO-2026-6865](https://osv.dev/vulnerability/GO-2026-6865)). **Operator action:** upgrade API images that include subfinder.
