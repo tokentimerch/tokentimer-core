@@ -23,13 +23,15 @@ test("routine probe successes are quiet while failures and other requests remain
             : ["/health", "/metrics"].includes(pathname)
               ? { path: pathname }
               : undefined;
-        res.statusCode = req.url.includes("fail=1")
-          ? 503
-          : req.method === "POST"
-            ? 405
-            : pathname === "/missing"
-              ? 404
-              : 200;
+        res.statusCode = req.url.includes("notmodified=1")
+          ? 304
+          : req.url.includes("fail=1")
+            ? 503
+            : req.method === "POST"
+              ? 405
+              : pathname === "/missing"
+                ? 404
+                : 200;
         res.end("ok");
       }),
     );
@@ -50,6 +52,7 @@ test("routine probe successes are quiet while failures and other requests remain
   await fetch(base + "/health", { method: "POST" });
   await fetch(base + "/api/items/123?token=private");
   await fetch(base + "/missing?token=private");
+  await fetch(base + "/cached?notmodified=1&token=private");
   assert.deepEqual(
     records.map((r) => [r.method, r.statusCode, r.route]),
     [
@@ -57,11 +60,15 @@ test("routine probe successes are quiet while failures and other requests remain
       ["POST", 405, "/health"],
       ["GET", 200, "/api/items/:id"],
       ["GET", 404, "unmatched"],
+      ["GET", 304, "unmatched"],
     ],
   );
   for (const record of records) {
     assert.equal(record.message, "HTTP request completed");
     assert.match(record.correlationId, /^[0-9a-f-]{36}$/);
-    assert.doesNotMatch(JSON.stringify(record), /private|123/);
+    assert.doesNotMatch(
+      JSON.stringify(record),
+      /token=private|\/api\/items\/123/,
+    );
   }
 });
