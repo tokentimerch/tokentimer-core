@@ -29,6 +29,7 @@ test("bootstrap uses bounded dedicated stdin and keeps capability non-enumerable
 });
 
 test("pipe sends a credential only after authenticating the server", async t => {
+  // skip-reason: platform
   if (process.platform !== "win32") return t.skip("Windows named pipe test");
   const name = pipeName(), key = crypto.randomBytes(32), session = await makeSession(name,key);
   const secret = "ttagent_"+"1".repeat(16)+"_"+"2".repeat(64);
@@ -55,6 +56,7 @@ test("pipe sends a credential only after authenticating the server", async t => 
 });
 
 test("a fake server cannot receive a credential without a valid proof", async t => {
+  // skip-reason: platform
   if (process.platform !== "win32") return t.skip("Windows named pipe test");
   const name=pipeName(), key=crypto.randomBytes(32), session=await makeSession(name,key);
   const secret="ttagent_"+"3".repeat(16)+"_"+"4".repeat(64);
@@ -76,6 +78,7 @@ test("a fake server cannot receive a credential without a valid proof", async t 
 });
 
 test("a pipe impersonator after host process death receives no credential", async t => {
+  // skip-reason: platform
   if (process.platform !== "win32") return t.skip("Windows named pipe test");
   const name=pipeName(), key=crypto.randomBytes(32), session=await makeSession(name,key);
   const secret="ttagent_"+"5".repeat(16)+"_"+"6".repeat(64);
@@ -94,6 +97,7 @@ test("a pipe impersonator after host process death receives no credential", asyn
 });
 
 test("authenticated responses must match the operation, credential hash and phase", async t => {
+  // skip-reason: platform
   if (process.platform !== "win32") return t.skip("Windows named pipe test");
   const secret="ttagent_"+"7".repeat(16)+"_"+"8".repeat(64), operation="b".repeat(32);
   const hash=crypto.createHash("sha256").update(secret).digest("hex");
@@ -124,6 +128,7 @@ test("authenticated responses must match the operation, credential hash and phas
 });
 
 test("socket failure after proof is sanitized and does not escape as an unhandled error", async t => {
+  // skip-reason: platform
   if (process.platform !== "win32") return t.skip("Windows named pipe test");
   const name=pipeName(), key=crypto.randomBytes(32), session=await makeSession(name,key);
   const secret="ttagent_"+"a".repeat(16)+"_"+"b".repeat(64);
@@ -139,6 +144,7 @@ test("socket failure after proof is sanitized and does not escape as an unhandle
 });
 
 test("disposing an in-flight session refuses a proof made with the cleared key and sends no credential", async t => {
+  // skip-reason: platform
   if (process.platform !== "win32") return t.skip("Windows named pipe test");
   const name=pipeName(), key=crypto.randomBytes(32), session=await makeSession(name,key);
   const secret="ttagent_"+"a".repeat(16)+"_"+"b".repeat(64);
