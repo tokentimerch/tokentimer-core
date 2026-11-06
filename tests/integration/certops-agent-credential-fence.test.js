@@ -53,6 +53,17 @@ describe("Agent credential fencing on PostgreSQL", function () {
     return { agent: auth.agent, credential };
   }
 
+  it("rejects tenant and agent substitution after authentication", async () => {
+    for (const field of ["workspaceId", "agentId", "id"]) {
+      const { agent } = await fixture();
+      agent[field] = field === "agentId" ? "other-agent" : randomUUID();
+      await assert.rejects(lockCurrentAgentCredential(db, agent), { code: "CERTOPS_AGENT_CREDENTIAL_STALE" });
+    }
+    const { agent } = await fixture();
+    await db.query("UPDATE certops_agents SET agent_id = $2 WHERE id = $1", [agent.id, "other-" + randomUUID()]);
+    await assert.rejects(lockCurrentAgentCredential(db, agent), { code: "CERTOPS_AGENT_CREDENTIAL_STALE" });
+  });
+
   it("serializes credential replacement against in-flight transactions", async () => {
     const { agent } = await fixture();
     const first = await db.connect(), rotation = await db.connect();

@@ -8,26 +8,26 @@ const credentials = new WeakMap();
 const CERTOPS_AGENT_CREDENTIAL_STALE = "CERTOPS_AGENT_CREDENTIAL_STALE";
 
 function bindAuthenticatedAgent(agent, hash) {
-  if (!agent || typeof agent !== "object" || !/^[a-f0-9]{64}$/.test(hash)) {
+  if (!agent || typeof agent !== "object" || !agent.id || !agent.workspaceId || !agent.agentId || !/^[a-f0-9]{64}$/.test(hash)) {
     throw new Error("Invalid authenticated agent credential snapshot");
   }
-  credentials.set(agent, Buffer.from(hash, "hex"));
+  credentials.set(agent, { hash: Buffer.from(hash, "hex"), id: agent.id, workspaceId: agent.workspaceId, agentId: agent.agentId });
   return agent;
 }
 
 async function lockCurrentAgentCredential(client, agent) {
   const snapshot = agent && credentials.get(agent);
-  if (!snapshot || !agent.id) {
+  if (!snapshot || agent.id !== snapshot.id || agent.workspaceId !== snapshot.workspaceId || agent.agentId !== snapshot.agentId) {
     const error = new Error("Agent credential no longer valid");
     error.code = CERTOPS_AGENT_CREDENTIAL_STALE;
     throw error;
   }
   const result = await client.query(
-    "SELECT credential_hash, status FROM certops_agents WHERE id = $1 FOR UPDATE", [agent.id],
+    "SELECT credential_hash, status FROM certops_agents WHERE id = $1 AND workspace_id = $2 AND agent_id = $3 FOR UPDATE", [snapshot.id, snapshot.workspaceId, snapshot.agentId],
   );
   const current = result.rows[0]?.credential_hash;
   if (typeof current !== "string" || !/^[a-f0-9]{64}$/.test(current) ||
-      !crypto.timingSafeEqual(snapshot, Buffer.from(current, "hex"))) {
+      !crypto.timingSafeEqual(snapshot.hash, Buffer.from(current, "hex"))) {
     const error = new Error("Agent credential no longer valid");
     error.code = CERTOPS_AGENT_CREDENTIAL_STALE;
     throw error;
