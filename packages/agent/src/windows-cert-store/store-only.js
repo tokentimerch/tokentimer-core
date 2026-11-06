@@ -48,13 +48,26 @@ async function inspectStoreOnlyCertificate({ certificatePem, containerName, exec
 }
 
 // Diagnostic observation only. The caller holds the enrollment and machine
-// store locks and supplies the lease assertion. A matching snapshot cannot
+// store locks and supplies the lease assertion. The local receipt is not an
+// independently authenticated ownership proof. A matching snapshot cannot
 // authorize acceptance until its atomicity and native behavior are qualified.
 async function inspectPendingStoreRequest({ certificatePem, containerName, csrSpkiSha256,
-  assertHeld, execFileImpl = execFile, signal }) {
+  stateDir, originalJobId, certificateId, assertHeld, readReceiptImpl = readIssuedContainerRecord,
+  execFileImpl = execFile, signal }) {
   const failure = () => ({ status: "unavailable", safeToAccept: false });
   if (!isAgentOwnedContainerName(containerName) || !/^[a-f0-9]{64}$/.test(csrSpkiSha256 || "") ||
-      typeof assertHeld !== "function" || signal?.aborted) return failure();
+      typeof stateDir !== "string" || !stateDir.trim() ||
+      typeof originalJobId !== "string" || !originalJobId.trim() ||
+      typeof certificateId !== "string" || !certificateId.trim() ||
+      typeof readReceiptImpl !== "function" || typeof assertHeld !== "function" || signal?.aborted) return failure();
+  const readBoundReceipt = () => {
+    const receipt = readReceiptImpl({ stateDir, containerName });
+    if (!receipt || receipt.containerName !== containerName || receipt.jobId !== originalJobId ||
+        receipt.certificateId !== certificateId || receipt.status !== "generated" ||
+        receipt.acceptedThumbprint !== null || receipt.acceptedStore !== null || receipt.acceptedAt !== null ||
+        typeof receipt.issuedAt !== "string" || !Number.isFinite(Date.parse(receipt.issuedAt))) return null;
+    return receipt.issuedAt;
+  };
   let certificate, script;
   try {
     certificate = new X509Certificate(certificatePem);
@@ -68,10 +81,17 @@ async function inspectPendingStoreRequest({ certificatePem, containerName, csrSp
   try {
     assertHeld();
     if (signal?.aborted) return failure();
+    const issuedAt = readBoundReceipt();
+    if (!issuedAt) return failure();
+    assertHeld();
+    if (signal?.aborted) return failure();
     const command = `& {\n${script}\n} -CertificateBase64 '${encoded}' -Container '${containerName}'`;
     const result = await inspectProcess(execFileImpl, command, signal);
     assertHeld();
     if (signal?.aborted || result.exitCode !== 0 || result.execError) return failure();
+    if (readBoundReceipt() !== issuedAt) return failure();
+    assertHeld();
+    if (signal?.aborted) return failure();
     const observed = JSON.parse(result.stdout);
     if (!observed || !Number.isSafeInteger(observed.matchingRequests) || observed.matchingRequests < 0 ||
         observed.matchingRequests > 1 || typeof observed.verified !== "boolean" ||

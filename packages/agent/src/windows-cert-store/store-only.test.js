@@ -58,9 +58,13 @@ test("invalid input is refused without invoking native commands", async () => {
 test("pending request observation binds the issued leaf to the journaled CSR key without authorizing acceptance", async () => {
   const csrSpkiSha256 = createHash("sha256").update(cert.publicKey.export({ type: "spki", format: "der" })).digest("hex");
   let assertions = 0;
-  const options = { certificatePem, containerName, csrSpkiSha256, assertHeld: () => { assertions++; }, execFileImpl: exec({ matchingRequests: 1, verified: true }) };
+  const receipt = { containerName, jobId: "original-job", certificateId: "certificate", status: "generated",
+    acceptedThumbprint: null, acceptedStore: null, acceptedAt: null, issuedAt: "2026-01-01T00:00:00.000Z" };
+  const options = { certificatePem, containerName, csrSpkiSha256, stateDir: "state", originalJobId: receipt.jobId,
+    certificateId: receipt.certificateId, readReceiptImpl: () => ({ ...receipt }),
+    assertHeld: () => { assertions++; }, execFileImpl: exec({ matchingRequests: 1, verified: true }) };
   assert.deepEqual(await inspectPendingStoreRequest(options), { status: "observed", matchingRequests: 1, keyMatches: true, safeToAccept: false });
-  assert.equal(assertions, 2);
+  assert.equal(assertions, 4);
   for (const response of [{ matchingRequests: 2, verified: true }, { matchingRequests: 0, verified: true }, {}, "not-json"]) {
     assert.deepEqual(await inspectPendingStoreRequest({ ...options, execFileImpl: exec(response) }), { status: "unavailable", safeToAccept: false });
   }
@@ -72,16 +76,58 @@ test("pending request inspection refuses a foreign CSR key or lost authority", a
   const csrSpkiSha256 = createHash("sha256").update(cert.publicKey.export({ type: "spki", format: "der" })).digest("hex");
   let calls = 0;
   const execFileImpl = (...args) => { calls++; return exec({ matchingRequests: 1, verified: true })(...args); };
-  const options = { certificatePem, containerName, csrSpkiSha256, assertHeld() {}, execFileImpl };
+  const receipt = { containerName, jobId: "original-job", certificateId: "certificate", status: "generated",
+    acceptedThumbprint: null, acceptedStore: null, acceptedAt: null, issuedAt: "2026-01-01T00:00:00.000Z" };
+  const options = { certificatePem, containerName, csrSpkiSha256, stateDir: "state", originalJobId: receipt.jobId,
+    certificateId: receipt.certificateId, readReceiptImpl: () => ({ ...receipt }), assertHeld() {}, execFileImpl };
   assert.deepEqual(await inspectPendingStoreRequest({ ...options, csrSpkiSha256: "0".repeat(64) }), { status: "unavailable", safeToAccept: false });
   assert.equal(calls, 0);
   let assertions = 0;
-  assert.deepEqual(await inspectPendingStoreRequest({ ...options, assertHeld() { if (++assertions === 2) throw new Error("lost"); } }),
+  assert.deepEqual(await inspectPendingStoreRequest({ ...options, assertHeld() { if (++assertions === 3) throw new Error("lost"); } }),
     { status: "unavailable", safeToAccept: false });
   assert.equal(calls, 1);
   const controller = new AbortController(); controller.abort();
   assert.deepEqual(await inspectPendingStoreRequest({ ...options, signal: controller.signal }), { status: "unavailable", safeToAccept: false });
   assert.equal(calls, 1);
+});
+
+test("pending request observation rejects missing, foreign, accepted or changing ownership receipts", async () => {
+  const csrSpkiSha256 = createHash("sha256").update(cert.publicKey.export({ type: "spki", format: "der" })).digest("hex");
+  const receipt = { containerName, jobId: "original-job", certificateId: "certificate", status: "generated",
+    acceptedThumbprint: null, acceptedStore: null, acceptedAt: null, issuedAt: "2026-01-01T00:00:00.000Z" };
+  let calls = 0;
+  const options = { certificatePem, containerName, csrSpkiSha256, stateDir: "state", originalJobId: receipt.jobId,
+    certificateId: receipt.certificateId, assertHeld() {}, execFileImpl: (...args) => { calls++; return exec({ matchingRequests: 1, verified: true })(...args); } };
+  for (const value of [null, { ...receipt, jobId: "other" }, { ...receipt, certificateId: "other" },
+    { ...receipt, containerName: "other" }, { ...receipt, status: "enrolled_by_agent" },
+    { ...receipt, acceptedThumbprint: "foreign" }, { ...receipt, acceptedStore: "My" },
+    { ...receipt, acceptedAt: receipt.issuedAt }, { ...receipt, issuedAt: "bad" }]) {
+    assert.deepEqual(await inspectPendingStoreRequest({ ...options, readReceiptImpl: () => value }), { status: "unavailable", safeToAccept: false });
+  }
+  assert.equal(calls, 0);
+  let reads = 0;
+  assert.deepEqual(await inspectPendingStoreRequest({ ...options, readReceiptImpl: () => ++reads === 1 ? receipt : { ...receipt, issuedAt: "2026-01-02T00:00:00.000Z" } }),
+    { status: "unavailable", safeToAccept: false });
+  assert.equal(calls, 1);
+});
+
+test("pending observation rejects a receipt change or authority loss after the native read", async () => {
+  const csrSpkiSha256 = createHash("sha256").update(cert.publicKey.export({ type: "spki", format: "der" })).digest("hex");
+  const receipt = { containerName, jobId: "original-job", certificateId: "certificate", status: "generated",
+    acceptedThumbprint: null, acceptedStore: null, acceptedAt: null, issuedAt: "2026-01-01T00:00:00.000Z" };
+  for (const changed of [{ ...receipt, jobId: "replacement" }, { ...receipt, status: "enrolled_by_agent" }, null]) {
+    let reads = 0;
+    const result = await inspectPendingStoreRequest({ certificatePem, containerName, csrSpkiSha256, stateDir: "state",
+      originalJobId: receipt.jobId, certificateId: receipt.certificateId, assertHeld() {},
+      readReceiptImpl: () => ++reads === 1 ? receipt : changed, execFileImpl: exec({ matchingRequests: 1, verified: true }) });
+    assert.deepEqual(result, { status: "unavailable", safeToAccept: false });
+  }
+  let assertions = 0;
+  const result = await inspectPendingStoreRequest({ certificatePem, containerName, csrSpkiSha256, stateDir: "state",
+    originalJobId: receipt.jobId, certificateId: receipt.certificateId,
+    assertHeld() { if (++assertions === 4) throw new Error("lease lost"); },
+    readReceiptImpl: () => receipt, execFileImpl: exec({ matchingRequests: 1, verified: true }) });
+  assert.deepEqual(result, { status: "unavailable", safeToAccept: false });
 });
 
 test("predecessor lookup requires the exact signed fingerprint and a readable key", async () => {
