@@ -66,9 +66,26 @@ public sealed class TTSanPublicFile : IDisposable {
 '@
   if(-not ('TTSanPublicFile' -as [type])){Add-Type -TypeDefinition $publicFileSource}
   $view=New-Object -ComObject CertificateAuthority.View;$ownedFile=$null
+  $previousUiCulture=$null;$previousThreadLanguage=0;$threadLanguageChanged=$false
   $file="C:\ttqualification\san-mismatch-$RunId-$RequestId.der"
   try {
-    $null=$view.OpenConnection('tt-ca.lab.certops.test\TTQualificationRoot')
+    try {$null=$view.OpenConnection('tt-ca.lab.certops.test\TTQualificationRoot')}
+    catch {
+      $originalFailure=$_;$exception=$_.Exception;$fileNotFound=$false
+      for($i=0;$i -lt 8 -and $null -ne $exception;$i++){
+        if([BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$exception.HResult),0) -eq [uint32]2147942402){$fileNotFound=$true;break}
+        $exception=$exception.InnerException
+      }
+      if(-not $fileNotFound){throw}
+      try {
+        if(-not ('TTQualificationThreadLanguage' -as [type])){Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class TTQualificationThreadLanguage { [DllImport("kernel32.dll")] public static extern ushort GetThreadUILanguage(); [DllImport("kernel32.dll")] public static extern ushort SetThreadUILanguage(ushort language); }'}
+        $previousUiCulture=[Threading.Thread]::CurrentThread.CurrentUICulture;$previousThreadLanguage=[TTQualificationThreadLanguage]::GetThreadUILanguage()
+        if([TTQualificationThreadLanguage]::SetThreadUILanguage(1033) -eq 0){throw 'Thread language fallback unavailable'}
+        $threadLanguageChanged=$true;[Threading.Thread]::CurrentThread.CurrentUICulture=[Globalization.CultureInfo]::GetCultureInfo('en-US')
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view);$view=$null;$view=New-Object -ComObject CertificateAuthority.View
+        $null=$view.OpenConnection('tt-ca.lab.certops.test\TTQualificationRoot')
+      } catch {throw $originalFailure}
+    }
     $names=@('RequestID','CommonName','RequesterName','Disposition','RawRequest','CertificateTemplate');$view.SetResultColumnCount($names.Count)
     foreach($name in $names){$view.SetResultColumn($view.GetColumnIndex($false,$name))}
     $view.SetRestriction($view.GetColumnIndex($false,'RequestID'),1,0,[int]$RequestId)
@@ -87,6 +104,7 @@ public sealed class TTSanPublicFile : IDisposable {
     if($LASTEXITCODE -ne 0){throw 'Owned native SAN extension mutation failed'}
     @{requestId=$RequestId;wrongDnsName=$wrong;csrDerSha256=$actual;templateOid=$TemplateOid;nativePendingOwnershipVerified=$true}|ConvertTo-Json -Compress
   } finally {
-    try{if($ownedFile){$ownedFile.VerifyAndDelete()}}finally{if($ownedFile){$ownedFile.Dispose()};if($view){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)}}
+    try {try{if($ownedFile){$ownedFile.VerifyAndDelete()}}finally{if($ownedFile){$ownedFile.Dispose()};if($view){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)}}}
+    finally {if($null -ne $previousUiCulture){[Threading.Thread]::CurrentThread.CurrentUICulture=$previousUiCulture};if($threadLanguageChanged){[void][TTQualificationThreadLanguage]::SetThreadUILanguage($previousThreadLanguage)}}
   }
 }
