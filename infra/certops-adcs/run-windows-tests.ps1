@@ -3,7 +3,7 @@ Guest SYSTEM test entry point called only by provision-lab.ps1 after domain/tool
 the exact candidate runtime and test-only controller keys, selects the dedicated report, and invokes
 the real API-agent/native harness. It clears the officer password after execution.
 #>
-param([ValidateSet('acceptance','focused','experiment')][string]$Scope='focused',[Parameter(Mandatory)][string]$DomainPassword,[ValidateSet('en-US','de-DE','fr-FR')][string]$Language='en-US',[ValidateSet('0','1')][string]$ResponseLossExperiment='0',[ValidateSet('none','keygen_intent','prepared','submitting','issued','installing','accepted-before-bind','bound-before-complete')][string]$JournalPhaseExperiment='none',[ValidateSet('0','1')][string]$PendingElapsedQualification='0',[ValidateSet('0','1')][string]$IssuerReassignment='0',[ValidateSet('root','subordinate')][string]$HierarchyRole='root',[string]$RootCertificateBase64,[ValidateSet('0','1')][string]$Retention24hPrepare='0',[string]$Retention24hNonce,[string]$Retention24hCreatedAt,[string]$Retention24hRunId,[string]$Retention24hRunAttempt,[ValidateSet('0','1')][string]$ContinueOnFailure='1',[ValidateSet('0','1')][string]$DebugDetail='0',[ValidateSet('all','issuance','renewals','pending-and-ca','templates-and-uncertain','uncertain-recovery')][string]$Shard='all')
+param([ValidateSet('acceptance','focused','experiment')][string]$Scope='focused',[ValidateSet('0','1')][string]$BundledWindowsRuntime='0',[Parameter(Mandatory)][string]$DomainPassword,[ValidateSet('en-US','de-DE','fr-FR')][string]$Language='en-US',[ValidateSet('0','1')][string]$ResponseLossExperiment='0',[ValidateSet('none','keygen_intent','prepared','submitting','issued','installing','accepted-before-bind','bound-before-complete')][string]$JournalPhaseExperiment='none',[ValidateSet('0','1')][string]$PendingElapsedQualification='0',[ValidateSet('0','1')][string]$IssuerReassignment='0',[ValidateSet('root','subordinate')][string]$HierarchyRole='root',[string]$RootCertificateBase64,[ValidateSet('0','1')][string]$Retention24hPrepare='0',[string]$Retention24hNonce,[string]$Retention24hCreatedAt,[string]$Retention24hRunId,[string]$Retention24hRunAttempt,[ValidateSet('0','1')][string]$ContinueOnFailure='1',[ValidateSet('0','1')][string]$DebugDetail='0',[ValidateSet('all','issuance','renewals','pending-and-ca','templates-and-uncertain','uncertain-recovery')][string]$Shard='all')
 $ErrorActionPreference = 'Stop'
 if($ResponseLossExperiment -eq '1' -and $JournalPhaseExperiment -ne 'none'){throw 'Only one fault experiment may own an execution'}
 if($Scope -eq 'acceptance' -and ($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Package acceptance must run without fault injection'}
@@ -11,6 +11,7 @@ if($Scope -eq 'experiment' -and -not (($ResponseLossExperiment -eq '1' -and $Jou
 if ((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test') { throw 'Tests require isolated domain member' }
 $runtime=Get-Content 'C:\ttqualification\runtime.json' -Raw | ConvertFrom-Json
 $env:PATH=$runtime.path
+$env:CERTOPS_EXPECT_BUNDLED_WINDOWS_RUNTIME=$BundledWindowsRuntime
 $env:NODE_ENV='test'
 $env:CERTOPS_ENABLED='true'
 # Isolated Compose fixture keys must match the API when controller-side services sign jobs.
@@ -67,7 +68,7 @@ try {
 }
 if ($testExitCode -ne 0) { throw 'Native enterprise AD CS scenarios failed' }
 if($Scope -eq 'acceptance'){
-  & $runtime.node scripts/certops-agent-package.js verify-adcs 'C:\ttqualification\adcs-package-acceptance.json' $runtime.agentPackageReceipt $runtime.candidateSha
+  & $runtime.node scripts/certops-agent-package.js verify-adcs 'C:\ttqualification\adcs-package-acceptance.json' $runtime.agentPackageReceipt $runtime.candidateSha $(if($BundledWindowsRuntime -eq '1'){'bundled'}else{'generic'})
   if($LASTEXITCODE -ne 0){throw 'Package acceptance evidence is incomplete or mismatched'}
 }
 if($Scope -eq 'experiment'){
