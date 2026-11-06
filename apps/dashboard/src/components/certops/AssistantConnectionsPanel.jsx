@@ -749,9 +749,18 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                                     setRenewals(event.target.checked)
                                   }
                                 >
-                                  Allow renewal requests
+                                  Allow certificate renewal requests
                                 </Checkbox>
                               </>
+                            ) : null}
+                            {canManage ? (
+                              <Checkbox
+                                isChecked={agentHealth || renewals || issuance}
+                                isDisabled={renewals || issuance}
+                                onChange={e => setAgentHealth(e.target.checked)}
+                              >
+                                View CertOps agent health
+                              </Checkbox>
                             ) : null}
                           </Stack>
                         </FormControl>
@@ -791,15 +800,6 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                             Keep this connection active until I revoke it.
                           </Checkbox>
                         </Stack>
-                      ) : null}
-                      {canManage ? (
-                        <Checkbox
-                          isChecked={agentHealth || renewals || issuance}
-                          isDisabled={renewals || issuance}
-                          onChange={e => setAgentHealth(e.target.checked)}
-                        >
-                          Include agent health
-                        </Checkbox>
                       ) : null}
                       {(renewals || issuance) && canManage ? (
                         <Text fontSize='sm' color={muted}>

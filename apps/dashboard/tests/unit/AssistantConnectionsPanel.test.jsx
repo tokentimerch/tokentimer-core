@@ -166,7 +166,7 @@ describe('MCP assistant setup', () => {
       screen.getByRole('radio', { name: 'Local adapter (stdio)' })
     );
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    expect(screen.getByLabelText('Allow renewal requests')).not.toBeChecked();
+    expect(screen.getByLabelText('Allow certificate renewal requests')).not.toBeChecked();
     expect(screen.getByLabelText('Access level')).toHaveValue('read-only');
     expect(
       screen.getByRole('button', { name: 'Create setup code' })
@@ -201,7 +201,7 @@ describe('MCP assistant setup', () => {
   it('can include manager-only agent reads without granting renewal permission', async () => {
     render(ui());
     await openSetup();
-    fireEvent.click(screen.getByLabelText('Include agent health'));
+    fireEvent.click(screen.getByLabelText('View CertOps agent health'));
     fireEvent.click(screen.getByRole('button', { name: 'Create setup code' }));
     await screen.findByLabelText('One-time setup code');
     const input = mocks.create.mock.calls[0][1];
@@ -267,7 +267,7 @@ describe('MCP assistant setup', () => {
     fireEvent.change(screen.getByLabelText('Connection expires after'), {
       target: { value: '7' },
     });
-    fireEvent.click(screen.getByLabelText('Allow renewal requests'));
+    fireEvent.click(screen.getByLabelText('Allow certificate renewal requests'));
     fireEvent.click(screen.getByRole('button', { name: 'Create setup code' }));
     await screen.findByLabelText('One-time setup code');
     expect(mocks.create).toHaveBeenCalledWith(
@@ -286,7 +286,7 @@ describe('MCP assistant setup', () => {
     render(ui());
     await openSetup();
     expect(
-      screen.queryByLabelText('Allow renewal requests')
+      screen.queryByLabelText('Allow certificate renewal requests')
     ).not.toBeInTheDocument();
     expect(
       screen.queryByLabelText('Allow MCP renewal requests')
@@ -318,7 +318,7 @@ describe('MCP assistant setup', () => {
       target: { value: 'read-write' },
     });
     fireEvent.click(
-      screen.getByRole('checkbox', { name: /Allow renewal requests/ })
+      screen.getByRole('checkbox', { name: /Allow certificate renewal requests/ })
     );
     fireEvent.change(screen.getByLabelText('Access level'), {
       target: { value: 'read-only' },
@@ -394,7 +394,7 @@ describe('MCP assistant setup', () => {
     await openSetup();
     const access = screen.getByLabelText('Access level');
     expect(access).toHaveValue('read-only');
-    fireEvent.click(screen.getByLabelText('Allow renewal requests'));
+    fireEvent.click(screen.getByLabelText('Allow certificate renewal requests'));
     expect(access).toHaveValue('read-write');
     expect(
       screen.getByText(/Renewal and issuance requests include agent health/)
@@ -403,7 +403,7 @@ describe('MCP assistant setup', () => {
       screen.queryByText(/Read-write adds reviewed inventory metadata imports/)
     ).not.toBeInTheDocument();
     fireEvent.change(access, { target: { value: 'read-only' } });
-    expect(screen.getByLabelText('Allow renewal requests')).not.toBeChecked();
+    expect(screen.getByLabelText('Allow certificate renewal requests')).not.toBeChecked();
     expect(
       screen.queryByText(/Renewal and issuance requests include agent health/)
     ).not.toBeInTheDocument();

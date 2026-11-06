@@ -52,7 +52,7 @@ describe('remote MCP consent', () => {
     const issue = screen.getByLabelText('Allow certificate issuance requests');
     expect(issue).not.toBeChecked();
     fireEvent.click(issue);
-    expect(screen.getByLabelText('Include agent health')).toBeChecked();
+    expect(screen.getByLabelText('View CertOps agent health')).toBeChecked();
     fireEvent.change(screen.getByRole('combobox', { name: /Workspace/ }), {
       target: { value: 'two' },
     });
@@ -184,7 +184,7 @@ describe('remote MCP consent', () => {
     expect(screen.getByRole('combobox', { name: /Workspace/ })).toHaveValue(
       'one'
     );
-    expect(screen.getByLabelText('Allow renewal requests')).toBeChecked();
+    expect(screen.getByLabelText('Allow certificate renewal requests')).toBeChecked();
     expect(screen.getByLabelText('Access expires after')).toHaveValue('7');
     expect(mocks.post).not.toHaveBeenCalled();
     fireEvent.change(screen.getByRole('combobox', { name: /Workspace/ }), {
@@ -240,8 +240,8 @@ describe('remote MCP consent', () => {
     fireEvent.change(screen.getByRole('combobox', { name: /Workspace/ }), {
       target: { value: 'one' },
     });
-    expect(screen.getByLabelText('Allow renewal requests')).not.toBeChecked();
-    expect(screen.getByLabelText('Include agent health')).not.toBeChecked();
+    expect(screen.getByLabelText('Allow certificate renewal requests')).not.toBeChecked();
+    expect(screen.getByLabelText('View CertOps agent health')).not.toBeChecked();
     fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
     await screen.findByText(/plan does not include MCP/);
     expect(mocks.post).toHaveBeenCalledWith(
@@ -291,14 +291,14 @@ describe('remote MCP consent', () => {
     fireEvent.change(screen.getByRole('combobox', { name: /Workspace/ }), {
       target: { value: 'one' },
     });
-    fireEvent.click(screen.getByLabelText('Allow renewal requests'));
-    expect(screen.getByLabelText('Include agent health')).toBeChecked();
-    expect(screen.getByLabelText('Include agent health')).toBeDisabled();
+    fireEvent.click(screen.getByLabelText('Allow certificate renewal requests'));
+    expect(screen.getByLabelText('View CertOps agent health')).toBeChecked();
+    expect(screen.getByLabelText('View CertOps agent health')).toBeDisabled();
     fireEvent.change(screen.getByRole('combobox', { name: /Workspace/ }), {
       target: { value: 'two' },
     });
     expect(
-      screen.queryByLabelText('Allow renewal requests')
+      screen.queryByLabelText('Allow certificate renewal requests')
     ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
     await waitFor(() =>
@@ -353,7 +353,7 @@ describe('remote MCP consent', () => {
       target: { value: 'read-write' },
     });
     fireEvent.click(
-      screen.getByRole('checkbox', { name: /Allow renewal requests/ })
+      screen.getByRole('checkbox', { name: /Allow certificate renewal requests/ })
     );
     fireEvent.change(screen.getByLabelText('Access level'), {
       target: { value: 'read-only' },
@@ -379,7 +379,7 @@ describe('remote MCP consent', () => {
     });
     const access = screen.getByLabelText('Access level');
     expect(access).toHaveValue('read-only');
-    fireEvent.click(screen.getByLabelText('Allow renewal requests'));
+    fireEvent.click(screen.getByLabelText('Allow certificate renewal requests'));
     expect(access).toHaveValue('read-write');
     expect(
       screen.getByText(
@@ -387,7 +387,7 @@ describe('remote MCP consent', () => {
       )
     ).toBeInTheDocument();
     fireEvent.change(access, { target: { value: 'read-only' } });
-    expect(screen.getByLabelText('Allow renewal requests')).not.toBeChecked();
+    expect(screen.getByLabelText('Allow certificate renewal requests')).not.toBeChecked();
     expect(
       screen.getByText('Read-only cannot import inventory or request renewals.')
     ).toBeInTheDocument();

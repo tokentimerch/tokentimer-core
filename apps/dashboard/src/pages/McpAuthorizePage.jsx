@@ -372,18 +372,18 @@ export default function McpAuthorizePage({ session }) {
                     Allow certificate issuance requests
                   </Checkbox>
                   <Checkbox
-                    isChecked={agentHealth || renewals || issuance}
-                    isDisabled={busy || expired || renewals || issuance}
-                    onChange={event => setAgentHealth(event.target.checked)}
-                  >
-                    Include agent health
-                  </Checkbox>
-                  <Checkbox
                     isChecked={renewals}
                     isDisabled={busy || expired}
                     onChange={event => setRenewals(event.target.checked)}
                   >
-                    Allow renewal requests
+                    Allow certificate renewal requests
+                  </Checkbox>
+                  <Checkbox
+                    isChecked={agentHealth || renewals || issuance}
+                    isDisabled={busy || expired || renewals || issuance}
+                    onChange={event => setAgentHealth(event.target.checked)}
+                  >
+                    View CertOps agent health
                   </Checkbox>
                   <Text fontSize='sm' color={muted}>
                     Renewal and issuance permissions include agent health.
