@@ -7,12 +7,15 @@ as `packages/log-scrub` or `apps/api`.
 
 These vendor copies keep the shipped package self-contained.
 
-**Synced copies** (byte-for-byte from the monorepo):
+**Synced copies** (from the monorepo, with attribution headers where applicable):
 
 | Vendored file | Upstream source of truth |
 | --- | --- |
+| `log-scrub/agent-log-text.js` | `packages/log-scrub/agent-log-text.js` (`@tokentimer/log-scrub`) |
 | `log-scrub/secret-material.js` | `packages/log-scrub/secret-material.js` (`@tokentimer/log-scrub`) |
 | `contracts/canonical-json.cjs` | `packages/contracts/certops/canonical-json.cjs` (`@tokentimer/contracts`) |
+| `contracts/adcs-preflight-freshness.cjs` | `packages/contracts/certops/adcs-preflight-freshness.cjs` |
+| `contracts/material-provider.cjs` | `packages/contracts/certops/material-provider.cjs` |
 | `contracts/agent-protocol.schema.json` | `packages/contracts/certops/agent-protocol.schema.json` (`@tokentimer/contracts`; byte-identical, no attribution header) |
 
 **Generated artifacts** (compiled from the vendored schema above, not copied):
@@ -33,7 +36,7 @@ Refresh with (from `packages/agent`):
 pnpm run sync-vendor      # node scripts/sync-vendor.js
 ```
 
-`sync-vendor` copies the three synced files and then chains into
+`sync-vendor` copies the six synced files and then chains into
 `build-protocol-validator.js` automatically, so the generated validator can
 never lag the schema it was compiled from.
 
