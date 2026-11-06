@@ -126,8 +126,8 @@ export function ImportModalStep({ ctx, stepId, reviewing = false }) {
           title='Import complete'
           testId='import-done'
         >
-          {importedCount} asset{importedCount === 1 ? '' : 's'} imported in this setup.
-          You can import more or continue.
+          {importedCount} asset{importedCount === 1 ? '' : 's'} imported in this
+          setup. You can import more or continue.
         </StatusPanel>
       ) : (
         <StatusPanel status='info' title='Ready to import'>

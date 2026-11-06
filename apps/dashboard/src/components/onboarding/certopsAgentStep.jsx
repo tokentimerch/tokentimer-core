@@ -809,10 +809,11 @@ export function AgentStep({ ctx }) {
                 in config.json, then restart with {agentRestartCommandFor(os)}.
                 <DetailsSection summary='If the profile still does not appear'>
                   <Text fontSize='sm'>
-                    Current agents publish profiles at check-in and do not need to
-                    register again. Older builds publish only on registration:
-                    upgrade the agent, or register it again with a one-time token
-                    and retire its old entry in Certificate Management.
+                    Current agents publish profiles at check-in and do not need
+                    to register again. Older builds publish only on
+                    registration: upgrade the agent, or register it again with a
+                    one-time token and retire its old entry in Certificate
+                    Management.
                   </Text>
                 </DetailsSection>
               </StatusPanel>
