@@ -153,15 +153,25 @@ func runCandidate(ctx context.Context, candidate Candidate, args []string, token
 		}
 		return result, fmt.Errorf("%w; pre-invocation cleanup failed; quarantine retained", err)
 	}
+	// Resolving this path cannot start the installer. Keep the install guard
+	// until it succeeds so a failure can safely abort the fresh intent pair.
+	installer, err := p.InstallerPath()
+	if err != nil {
+		if d.abortBeforeInvoke != nil {
+			if cleanupErr := d.abortBeforeInvoke(p, scratch, intent); cleanupErr == nil {
+				attempted = false
+				scratch = nil
+				p = nil
+				return result, err
+			}
+		}
+		return result, fmt.Errorf("%w; pre-invocation cleanup failed; quarantine retained", err)
+	}
 	if err := release(); err != nil {
 		guardHeld = false
 		return result, fmt.Errorf("release install guard: %w", err)
 	}
 	guardHeld = false
-	installer, err := p.InstallerPath()
-	if err != nil {
-		return result, err
-	}
 	result.InstallerErr = d.invoke(ctx, installer, scratch.Root(), args, token, intent.Transaction, intent.Secret)
 	return result, nil
 }

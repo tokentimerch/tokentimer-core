@@ -15,9 +15,9 @@ import (
 )
 
 type runFixture struct {
-	beginErr, scratchErr, installErr error
-	events                           []string
-	afterScratch                     func()
+	beginErr, scratchErr, installErr, pathErr error
+	events                                    []string
+	afterScratch                              func()
 }
 
 func TestInstallerReceivesInheritedIntentPipe(t *testing.T) {
@@ -57,7 +57,7 @@ func (f *runFixture) BeginExecutionIntent(string) (ExecutionIntent, error) {
 }
 func (f *runFixture) InstallerPath() (string, error) {
 	f.events = append(f.events, "installer")
-	return `C:\private\install.ps1`, nil
+	return `C:\private\install.ps1`, f.pathErr
 }
 func (f *runFixture) Cleanup() error { f.events = append(f.events, "cleanup"); return nil }
 func (f *runFixture) Close()         { f.events = append(f.events, "close") }
@@ -119,7 +119,7 @@ func TestRunCandidateQuarantinesAfterIntent(t *testing.T) {
 			if strings.Contains(joined, "cleanup") || !strings.Contains(joined, "scratch-close,close") {
 				t.Fatalf("unsafe cleanup %s", joined)
 			}
-			if scenario == "success" && (err != nil || res.InstallerErr != nil || !strings.Contains(joined, "release,installer,invoke")) {
+			if scenario == "success" && (err != nil || res.InstallerErr != nil || !strings.Contains(joined, "installer,release,invoke")) {
 				t.Fatalf("unexpected result: %v %v %s", err, res.InstallerErr, joined)
 			}
 			if scenario == "intent" || scenario == "scratch" {
@@ -213,5 +213,50 @@ func TestRunCandidateHoldsStagingWhileFailedTerminationWaits(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("launcher did not finish after child exit")
+	}
+}
+
+// No installer process exists on this path; clean only while the guard is held.
+func TestRunCandidatePathFailureAbortsOnlyUnderGuard(t *testing.T) {
+	for _, cleanupFails := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cleanup-fails-%t", cleanupFails), func(t *testing.T) {
+			f := &runFixture{pathErr: errors.New("path unavailable")}
+			held := false
+			deps := executionDependencies{
+				nativeArch: func() (string, error) { return runtime.GOARCH, nil },
+				prepare:    func(Candidate) (preparedForRun, error) { return f, nil },
+				scratch:    func() (scratchForRun, error) { return scratchFixture{f}, nil },
+				beginGuard: func(context.Context) (func() error, error) {
+					held = true
+					return func() error { held = false; f.events = append(f.events, "release"); return nil }, nil
+				},
+				scmDigest: func() (string, error) { return strings.Repeat("c", 64), nil },
+				invoke: func(context.Context, string, string, []string, string, string, string) error {
+					t.Fatal("installer invoked")
+					return nil
+				},
+				abortBeforeInvoke: func(preparedForRun, scratchForRun, ExecutionIntent) error {
+					if !held {
+						t.Fatal("guard not held")
+					}
+					f.events = append(f.events, "abort")
+					if cleanupFails {
+						return errors.New("cleanup failed")
+					}
+					return nil
+				},
+			}
+			result, err := runCandidate(context.Background(), Candidate{Architecture: runtime.GOARCH}, nil, "", deps)
+			if err == nil || result.CleanupPending != cleanupFails {
+				t.Fatalf("unexpected result: %+v %v", result, err)
+			}
+			events := strings.Join(f.events, ",")
+			if cleanupFails && (!strings.Contains(events, "scratch-close,close") || strings.Contains(events, "cleanup")) {
+				t.Fatalf("quarantine not retained: %s", events)
+			}
+			if !cleanupFails && events != "intent,scratch-intent,installer,abort,release" {
+				t.Fatalf("unexpected events: %s", events)
+			}
+		})
 	}
 }
