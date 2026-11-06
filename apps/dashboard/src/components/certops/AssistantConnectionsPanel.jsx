@@ -630,11 +630,7 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                           />
                         </FormControl>
                       ) : null}
-                      <Stack
-                        direction={{ base: 'column', sm: 'row' }}
-                        align='start'
-                        spacing={4}
-                      >
+                      <Stack direction='column' align='stretch' spacing={4}>
                         <FormControl>
                           <FormLabel
                             id='mcp-access-label'
@@ -729,8 +725,7 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                                     setGroupCreate(event.target.checked)
                                   }
                                 >
-                                  Allow reviewed contact group creation and
-                                  listing recipient names
+                                  Create contact groups and list recipient names
                                 </Checkbox>
                                 <Checkbox
                                   isChecked={memberInvite}

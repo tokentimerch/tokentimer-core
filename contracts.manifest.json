@@ -437,7 +437,7 @@
           "kind": "module",
           "path": "apps/dashboard/src/pages/McpAuthorizePage.jsx",
           "status": "existing",
-          "sha256": "573eebbeeef008f95fdf8e463e68b984e3587edc648418cdc3db0489006b46c5"
+          "sha256": "5bef4c2c7b7ca638e14f474126e7f84a016096dbe6639834b0444e04a3db817f"
         },
         {
           "id": "mcp-remote-return-route",
@@ -451,7 +451,7 @@
           "kind": "module",
           "path": "apps/dashboard/src/components/certops/AssistantConnectionsPanel.jsx",
           "status": "existing",
-          "sha256": "8e80837e5c1438d0a432594ed9ecfb2a13c4282f8ced06e7b88a2b4a23cad18c"
+          "sha256": "4391ac9e64db519d9b5b44a4b2c2cd7c35c0217e3a1e02acba5505f0814f5e03"
         },
         {
           "id": "mcp-workspace-policy",

@@ -353,8 +353,7 @@ export default function McpAuthorizePage({ session }) {
                     isDisabled={busy || expired}
                     onChange={event => setGroupCreate(event.target.checked)}
                   >
-                    Allow reviewed contact group creation and listing recipient
-                    names
+                    Create contact groups and list recipient names
                   </Checkbox>
                   <Checkbox
                     isChecked={memberInvite}

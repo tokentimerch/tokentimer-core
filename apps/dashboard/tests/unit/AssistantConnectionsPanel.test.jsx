@@ -114,7 +114,7 @@ describe('MCP assistant setup', () => {
     render(ui());
     await openSetup();
     const group = screen.getByLabelText(
-      'Allow reviewed contact group creation and listing recipient names'
+      'Create contact groups and list recipient names'
     );
     expect(group).not.toBeChecked();
     fireEvent.click(group);

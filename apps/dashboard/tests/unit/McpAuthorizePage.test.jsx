@@ -91,7 +91,7 @@ describe('remote MCP consent', () => {
       target: { value: 'one' },
     });
     const group = screen.getByLabelText(
-      'Allow reviewed contact group creation and listing recipient names'
+      'Create contact groups and list recipient names'
     );
     expect(group).not.toBeChecked();
     fireEvent.click(group);
@@ -102,9 +102,7 @@ describe('remote MCP consent', () => {
       target: { value: 'one' },
     });
     expect(
-      screen.getByLabelText(
-        'Allow reviewed contact group creation and listing recipient names'
-      )
+      screen.getByLabelText('Create contact groups and list recipient names')
     ).not.toBeChecked();
   });
   it('requires separate consent to create webhooks and clears it with read-only access', async () => {
