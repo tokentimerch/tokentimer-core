@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "scope": "cleanup-completion-functional-support",
+  "nativeAgentQualified": false,
+  "provider": "vault-kv2",
+  "candidateSha": "8a8cb8cd545d0473eace90058956466765978fd5",
+  "dirty": true,
+  "startedAt": "2026-11-03T10:47:25.487Z",
+  "status": "passed",
+  "logs": [
+    "migration.log",
+    "tests.log"
+  ],
+  "tests": [
+    "tests/postgres/distribution-cleanup.test.js",
+    "tests/postgres/distribution-cleanup-provider.test.js"
+  ],
+  "command": "node --test --test-force-exit --test-concurrency=1 tests/postgres/distribution-cleanup.test.js tests/postgres/distribution-cleanup-provider.test.js",
+  "counts": {
+    "tests": 15,
+    "pass": 15,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0
+  },
+  "finishedAt": "2026-11-03T10:49:47.943Z",
+  "cleanup": "passed",
+  "provenanceNote": "Product source at 8a8cb8cd; documentation and evidence-only refinements dirty during execution; includes migration 97; source functional support, not native artifact qualification"
+}

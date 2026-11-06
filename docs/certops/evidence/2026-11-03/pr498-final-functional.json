@@ -1,0 +1,211 @@
+{
+  "schemaVersion": 1,
+  "scope": "pr498-composed-supported-functional-acceptance",
+  "productSourceSha": "e66add8559733bfd8bd6d753b1ce6db604b7bfbb",
+  "runtimeCandidateSha": "b996f96904257c40178f0716ef00990441cae14b",
+  "productAndDependencyTreesIdentical": true,
+  "helperWorkingTreeChanges": "Current provider-aware onboarding assertions; SHA-256 retained below and committed with this evidence.",
+  "nativeAgentQualified": false,
+  "allFeaturesQualified": false,
+  "strictFreshCampaignPassed": false,
+  "productionCapabilitiesPromoted": [],
+  "connectedJourney": {
+    "passedScenarios": [
+      {
+        "id": "distribution-setup",
+        "status": "passed"
+      },
+      {
+        "id": "distribution-publish",
+        "status": "passed"
+      },
+      {
+        "id": "distribution-bindings",
+        "status": "passed"
+      },
+      {
+        "id": "distribution-validation",
+        "status": "passed"
+      },
+      {
+        "id": "distribution-scanner",
+        "status": "passed"
+      },
+      {
+        "id": "distribution-rejection",
+        "status": "passed"
+      },
+      {
+        "id": "distribution-authorization",
+        "status": "passed"
+      },
+      {
+        "id": "distribution-recovery",
+        "status": "passed"
+      },
+      {
+        "id": "distribution-deployment-recovery",
+        "status": "passed"
+      },
+      {
+        "id": "distribution-qualification",
+        "status": "passed"
+      },
+      {
+        "id": "distribution-security",
+        "status": "passed"
+      },
+      {
+        "id": "distribution-runtime-controls",
+        "status": "passed"
+      }
+    ],
+    "passingScenarioCount": 12,
+    "publicProductChecks": 41,
+    "databaseInjection": false,
+    "executionPlane": "Enrolled source agents, real customer-local Vault, Pebble DNS-01 CA, nginx/HAProxy and independent trusted TLS in isolated Linux containers; Windows Node/browser harness.",
+    "failedStrictAggregate": {
+      "status": "failed",
+      "phase": "distribution-browser",
+      "reason": "Legacy Vault-only onboarding selector/step contract; subsequent focused current-provider UI assertions passed."
+    }
+  },
+  "focusedRemainder": {
+    "status": "passed",
+    "startedAt": "2026-11-03T15:28:39.873Z",
+    "finishedAt": "2026-11-03T15:29:38.387Z",
+    "transferCompleted": true,
+    "onboarding": {
+      "scenario": "owner-material-store-start-over-explicit-reuse",
+      "passed": true,
+      "fixtureSource": {
+        "file": "tests/wildcard-vault/ux-lab/onboarding-redo.cjs",
+        "sha256": "bc975b2782910e0f07013b1c79c6ca91b2d12301e7b16dd246805a9a377df08e"
+      },
+      "counts": {
+        "jobs": 70,
+        "originalJobs": 68,
+        "signedDryRunJobs": 2,
+        "groups": 2,
+        "materialVersions": 4,
+        "consumers": 3,
+        "acmeOrders": 3
+      },
+      "browserRuntimeErrors": 0,
+      "unexpectedProductWrites": 0,
+      "databaseInjection": false,
+      "responseInterception": false,
+      "installationQualified": false,
+      "publishedReleaseQualified": false
+    },
+    "privacy": {
+      "status": "passed",
+      "coreDatabaseAndLogsScanned": true,
+      "customerAgentLogsScanned": true,
+      "privateKeys": 8,
+      "credentials": 13,
+      "historicalVaultCredentialsChecked": 10,
+      "historicalVaultVersionsChecked": 3,
+      "privateNeedlesExported": false,
+      "dnsCredentialQualification": false,
+      "candidateSha": "b996f96904257c40178f0716ef00990441cae14b",
+      "certificateMode": "san",
+      "project": "tt-wildcard-ux-qual-pr498-scope-20261103"
+    }
+  },
+  "retention": {
+    "httpStatus": 200,
+    "versions": 4,
+    "protectedVersions": 4,
+    "cleanupAvailable": false
+  },
+  "cleanupRuns": [
+    {
+      "provider": "vault-kv2",
+      "candidateSha": "e66add8559733bfd8bd6d753b1ce6db604b7bfbb",
+      "dirty": false,
+      "counts": {
+        "tests": 15,
+        "pass": 15,
+        "fail": 0,
+        "skipped": 0,
+        "cancelled": 0
+      },
+      "cleanup": "passed",
+      "command": "node --test --test-force-exit --test-concurrency=1 tests/postgres/distribution-cleanup.test.js tests/postgres/distribution-cleanup-provider.test.js"
+    },
+    {
+      "provider": "openbao-kv2",
+      "candidateSha": "e66add8559733bfd8bd6d753b1ce6db604b7bfbb",
+      "dirty": false,
+      "counts": {
+        "tests": 15,
+        "pass": 15,
+        "fail": 0,
+        "skipped": 0,
+        "cancelled": 0
+      },
+      "cleanup": "passed",
+      "command": "node --test --test-force-exit --test-concurrency=1 tests/postgres/distribution-cleanup.test.js tests/postgres/distribution-cleanup-provider.test.js"
+    }
+  ],
+  "automated": {
+    "canonicalUnit": {
+      "passed": 3197,
+      "failed": 0,
+      "skipped": 0,
+      "source": "e66add8559733bfd8bd6d753b1ce6db604b7bfbb",
+      "command": "TEST_CONCURRENCY=1 pnpm run test:unit"
+    },
+    "realPostgres": {
+      "lifecycleCleanupStaging": 74,
+      "lifecycleUpgrade": 1,
+      "migrationConcurrencyHistories": 30,
+      "pagerDutyHistories": 7,
+      "pagerDutyLifecycle": 77,
+      "failed": 0,
+      "skipped": 0,
+      "command": "node scripts/run-distribution-lifecycle-postgres.cjs"
+    },
+    "reviewAuthorityRegression": {
+      "passed": 39,
+      "failed": 0,
+      "skipped": 0,
+      "suite": "tests/wildcard-vault/pr329-review.test.cjs"
+    },
+    "focusedAgent": {
+      "passed": 171,
+      "failed": 0,
+      "skipped": 0
+    },
+    "dashboard": {
+      "passed": 112,
+      "files": 5
+    },
+    "contracts": {
+      "passed": 47,
+      "filesVerified": 52
+    },
+    "ciGuards": {
+      "passed": 18,
+      "failed": 0,
+      "environment": "Isolated Linux container; Node 24.22.2 with Bash/OpenSSL/jq",
+      "command": "node scripts/ci-guards/run-all.cjs",
+      "windowsAttempt": "Shell/toolchain failures retained; no guard changed or skipped"
+    },
+    "distributionReportTests": {
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "command": "node --test scripts/certops-distribution-report.test.js"
+    }
+  },
+  "fixtureCleanup": "All three owned journey projects stopped; evidence and named volumes retained. Provider/database helper containers removed under ownership checks.",
+  "limitations": [
+    "Composed supporting functional evidence; the interrupted strict campaign is not relabelled as a complete fresh qualification pass.",
+    "No production native artifact qualification or capability promotion.",
+    "Cleanup publication metadata is synthetic; real provider deletion, signed dispatch/receipt and reconciliation are genuine.",
+    "Live external-channel delivery and wider customer fleet acceptance remain separate.",
+    "Original historical valid-receipt exception unavailable; its precise cause remains unconfirmed."
+  ]
+}

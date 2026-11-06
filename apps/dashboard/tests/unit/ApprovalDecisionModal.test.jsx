@@ -1,341 +1,400 @@
-import {
-  render,
-  screen,
-  fireEvent,
-  waitFor,
-  cleanup,
-} from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, within, waitFor, act } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
-import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import ApprovalDecisionModal from '../../src/components/certops/ApprovalDecisionModal.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
-import { getApprovalReview } from '../../src/components/certops/certopsJobsApi.js';
 
+const { getJobMock } = vi.hoisted(() => ({ getJobMock: vi.fn() }));
 vi.mock('../../src/components/certops/certopsJobsApi.js', () => ({
-  getApprovalReview: vi.fn(),
+  getJob: getJobMock,
 }));
-const review = () => ({
-  current: true,
-  canApprove: true,
-  reviewHash: 'a'.repeat(64),
-  requester: { id: '2', name: '<script>Requester</script>' },
-  connection: {
-    id: 'connection-123',
-    label: 'Untrusted client',
-    expiresAt: new Date(Date.now() + 60000).toISOString(),
-  },
-  approvalExpiresAt: new Date(Date.now() + 30000).toISOString(),
-  previewExpiresAt: new Date(Date.now() - 10000).toISOString(),
-  effect: {
-    operation: 'renew',
-    renewalProfile: {
-      ca: { endpoint: 'https://ca.example.test' },
-      sanPolicy: { sans: ['app.example.test'] },
-      deploymentTargets: [{ certPath: '/srv/tls/cert.pem' }],
-    },
-    standingRenewal: 'Creates no new automatic-renewal authority.',
-  },
+vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
+  useWorkspace: () => ({ workspaceId: 'review-workspace' }),
+}));
+beforeEach(() => {
+  getJobMock.mockReset();
 });
-function show(props = {}) {
+
+const cleanup = {
+  groupId: 'cleanup-group',
+  managementPeriodId: 'owned-period',
+  materialVersionId: 'a7de2e19-a22f-5195-9ff5-e4d3e5ef0df7',
+  provider: 'vault-kv2',
+  providerVersion: 1,
+  materialStoreRef: 'vault-retention',
+  profileRevision: 2,
+  policyRevision: 3,
+  scopeHash: 'frozen-cleanup-scope',
+  expiresAt: '2026-11-04T07:17:20.114Z',
+  operation: 'soft-delete',
+  retentionPolicy: {
+    minimumSeconds: 0,
+    minimumVersions: 2,
+    rollbackSeconds: 0,
+    cleanupEnabled: true,
+    reportOnly: false,
+    requiresApproval: true,
+  },
+};
+const binding = {
+  bindingId: 'destination-file',
+  agentId: 'agent-file',
+  profileRef: 'file-profile',
+  profileRevision: 4,
+  authorizationRevision: 7,
+  required: false,
+  wave: 0,
+  verificationPolicy: 'installed',
+  freshnessSeconds: 3600,
+  activationPolicy: {
+    method: 'none',
+    disruptive: false,
+    requiresApproval: true,
+    timezone: 'Europe/Berlin',
+    windows: [{ days: [0, 1], start: '01:00', end: '03:00' }],
+    blackouts: [{ start: '2026-11-05T00:00:00Z', end: '2026-11-06T00:00:00Z' }],
+    validUntil: '2026-11-20T00:00:00Z',
+    emergency: {
+      start: '2026-11-03T09:00:00Z',
+      end: '2026-11-03T10:00:00Z',
+      reference: 'incident-42',
+    },
+  },
+};
+async function show(
+  payload,
+  { operation = 'noop', decision = 'approve', load } = {}
+) {
   const onDecide = vi.fn();
-  const view = render(
+  getJobMock.mockImplementation(
+    load ||
+      (() =>
+        Promise.resolve({
+          job: {
+            id: 'review-job',
+            workspaceId: 'review-workspace',
+            operation,
+            status: 'pending_approval',
+            payload,
+          },
+        }))
+  );
+  render(
     <ChakraProvider>
       <DashboardThemeProvider>
         <ApprovalDecisionModal
           isOpen
           onClose={vi.fn()}
-          workspaceId='ws'
-          job={{
-            id: 'job-1',
-            operation: 'renew',
-            requestedByConnectionId: 'connection-123',
-          }}
-          decision='approve'
+          workspaceId='review-workspace'
+          job={{ id: 'review-job', operation, payload }}
+          decision={decision}
           onDecide={onDecide}
-          {...props}
         />
       </DashboardThemeProvider>
     </ChakraProvider>
   );
-  onDecide.view = view;
-  return onDecide;
+  const dialog = within(screen.getByRole('dialog'));
+  await waitFor(() =>
+    expect(
+      dialog.queryByText('Loading approval scope...')
+    ).not.toBeInTheDocument()
+  );
+  return dialog;
 }
-beforeEach(() => {
-  vi.mocked(getApprovalReview).mockResolvedValue({ review: review() });
-});
-afterEach(() => {
-  cleanup();
-  vi.clearAllMocks();
-});
-describe('independent assistant request review', () => {
-  it('shows issuance names, issuer and destination to the independent approver', async () => {
-    const value = review();
-    value.effect = {
-      operation: 'issue',
-      issuance: {
-        target: { type: 'domain', reference: 'app.example.test' },
-        sans: ['app.example.test'],
-        caEndpoint: 'https://ca.example.test/directory',
-        certPath: '/srv/tls/issued.pem',
-        dnsZone: 'example.test',
-        dnsProvider: 'cloudflare',
-        commandRef: 'certbot',
-      },
-      executionRouting: { assignedAgentId: 'issuer-agent' },
-      standingRenewal:
-        'A successful issuance can create an active renewal profile.',
-    };
-    getApprovalReview.mockResolvedValue({ review: value });
-    show({
-      job: {
-        id: 'issue-job',
-        operation: 'issue',
-        requestedByConnectionId: 'connection-123',
-      },
-    });
-    await waitFor(() =>
-      expect(screen.getByText('/srv/tls/issued.pem')).toBeVisible()
+
+describe('immutable distribution approval review', () => {
+  it('shows the exact cleanup object, provider reference and all authorization bounds before approval', async () => {
+    const dialog = await show(
+      { materialCleanup: cleanup },
+      { operation: 'cleanup-from-store' }
     );
-    expect(screen.getByText('https://ca.example.test/directory')).toBeVisible();
-    expect(screen.getByText('issuer-agent')).toBeVisible();
-    expect(
-      screen.getByText(/can create an active renewal profile/)
-    ).toBeVisible();
-  });
-  it('shows the effective cutoff when the connection expires before the approval window', async () => {
-    const value = review();
-    value.connection.expiresAt = new Date(Date.now() + 10000).toISOString();
-    getApprovalReview.mockResolvedValue({ review: value });
-    show();
-    await screen.findByText('Connection expires first');
-    expect(screen.getByLabelText('Important summary')).toHaveTextContent(
-      new Date(value.connection.expiresAt).toLocaleString()
-    );
-    expect(screen.getByText('Approval window ends :')).toBeInTheDocument();
+    for (const value of [
+      cleanup.materialVersionId,
+      cleanup.scopeHash,
+      cleanup.expiresAt,
+      cleanup.materialStoreRef,
+      cleanup.managementPeriodId,
+      'Soft delete one store version',
+      'Provider version',
+      'Local profile revision',
+      'Policy revision',
+      'Minimum retained versions',
+      'Minimum age (seconds)',
+      'Rollback protection (seconds)',
+      'Report only',
+    ]) {
+      expect(dialog.getByText(value, { exact: true })).toBeInTheDocument();
+    }
+    expect(dialog.getByRole('button', { name: 'Approve' })).toBeEnabled();
   });
 
-  it('uses the approval deadline for a non-expiring connection and still requires acknowledgement', async () => {
-    const value = review();
-    value.connection.expiresAt = null;
-    getApprovalReview.mockResolvedValue({ review: value });
-    const decide = show();
-    await screen.findByText('No expiry');
-    expect(
-      screen.getByRole('button', { name: 'Approve', exact: true })
-    ).toBeDisabled();
-    fireEvent.click(screen.getByRole('checkbox'));
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Approve', exact: true })
-    );
-    await waitFor(() =>
-      expect(decide).toHaveBeenCalledWith(undefined, 'a'.repeat(64))
+  it('reviews frozen rollout destinations, exact Azure version, wave zero and local activation calendars', async () => {
+    const dialog = await show({
+      distributionRollout: {
+        workspaceId: 'rollout-workspace',
+        groupId: 'rollout-group',
+        materialVersionId: 'retained-version',
+        managementPeriodId: 'rollout-period',
+        materialStoreRef: 'azure-store',
+        provider: 'azure-key-vault',
+        providerVersion: '00112233445566778899aabbccddeeff',
+        fingerprintSha256: 'exact-fingerprint',
+        issuanceProfileRevision: 3,
+        generation: 8,
+        maxParallel: 1,
+        verificationOnly: true,
+        bindings: [
+          binding,
+          {
+            ...binding,
+            bindingId: 'destination-web',
+            agentId: 'agent-web',
+            profileRef: 'web-profile',
+            required: true,
+            wave: 2,
+            activationPolicy: null,
+          },
+        ],
+      },
+    });
+    for (const value of [
+      'Verification only',
+      'retained-version',
+      '00112233445566778899aabbccddeeff',
+      'exact-fingerprint',
+      'destination-file',
+      'destination-web',
+      'agent-file',
+      'web-profile',
+      'Europe/Berlin',
+      'Sun, Mon: 01:00–03:00',
+      '2026-11-05T00:00:00Z – 2026-11-06T00:00:00Z',
+      'incident-42',
+      '2026-11-20T00:00:00Z',
+    ])
+      expect(dialog.getByText(value, { exact: true })).toBeInTheDocument();
+    expect(dialog.getAllByText('0', { exact: true }).length).toBeGreaterThan(0);
+    expect(dialog.getAllByText('No', { exact: true }).length).toBeGreaterThan(
+      0
     );
   });
 
-  it('retries a failed review without reopening the dialog', async () => {
-    getApprovalReview.mockRejectedValueOnce(new Error('offline'));
-    show();
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Retry review' })
-    );
-    expect(await screen.findByRole('checkbox')).not.toBeChecked();
-    expect(
-      screen.getByRole('button', { name: 'Approve', exact: true })
-    ).toBeDisabled();
-  });
-  it('clears the previous job review and reason when switching jobs in place', async () => {
-    const decide = show();
-    fireEvent.click(await screen.findByRole('checkbox'));
-    fireEvent.change(screen.getByLabelText('Reason (optional)'), {
-      target: { value: 'First job only' },
+  it('exposes the standing grant scope, source authority, reviewer membership and fixed failure behavior', async () => {
+    const dialog = await show({
+      distributionPolicyApproval: {
+        groupId: 'standing-group',
+        revision: 6,
+        scopeHash: 'standing-scope',
+        expiresAt: '2026-11-21T00:00:00Z',
+        scope: {
+          workspaceId: 'standing-workspace',
+          groupId: 'standing-group',
+          managementPeriodId: 'standing-period',
+          materialStoreRef: 'approved-store',
+          issuerAgentId: 'approved-issuer',
+          issuanceProfileRef: 'approved-source',
+          profileRevision: 9,
+          workspaceAuthorizationRevision: '12',
+          workspaceRequiresApproval: true,
+          workspaceOwner: 10,
+          reviewers: [{ user_id: 11, role: 'workspace_manager' }],
+          policy: {
+            mode: 'preauthorized',
+            maxParallel: 2,
+            authorizationExpiresAt: '2026-11-21T00:00:00Z',
+          },
+          bindings: [binding],
+          rolloutBehavior: {
+            requiredFailure: 'pause',
+            optionalFailure: 'degraded',
+            waveOrder: 'ascending',
+            rollback: 'explicit_approval',
+            verificationBeforeNextWave: true,
+          },
+        },
+      },
     });
-    getApprovalReview.mockReturnValue(new Promise(() => {}));
-    decide.view.rerender(
+    for (const value of [
+      'Standing distribution authorization',
+      'standing-scope',
+      'approved-store',
+      'approved-issuer',
+      'approved-source',
+      'Workspace authorization revision',
+      'workspace_manager',
+      'preauthorized',
+      'pause',
+      'degraded',
+      'ascending',
+      'explicit_approval',
+      'destination-file',
+    ]) {
+      expect(dialog.getByText(value, { exact: true })).toBeInTheDocument();
+    }
+  });
+
+  it('never dumps arbitrary job or store fields', async () => {
+    const dialog = await show(
+      {
+        privateKey: 'TOP-LEVEL-SECRET',
+        materialCleanup: {
+          ...cleanup,
+          credentials: 'STORE-SECRET',
+          retentionPolicy: {
+            ...cleanup.retentionPolicy,
+            token: 'NESTED-SECRET',
+          },
+        },
+      },
+      { operation: 'cleanup-from-store' }
+    );
+    expect(dialog.getByText(cleanup.materialVersionId)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/TOP-LEVEL-SECRET|STORE-SECRET|NESTED-SECRET/)
+    ).not.toBeInTheDocument();
+  });
+
+  it('does not expose unrecognized destination or calendar fields in a standing grant', async () => {
+    const dialog = await show({
+      distributionPolicyApproval: {
+        groupId: 'standing-group',
+        scopeHash: 'frozen-scope',
+        scope: {
+          credentials: 'SOURCE-SECRET',
+          policy: { mode: 'preauthorized', token: 'POLICY-SECRET' },
+          bindings: [
+            {
+              ...binding,
+              tokenFile: 'BINDING-SECRET',
+              activationPolicy: {
+                ...binding.activationPolicy,
+                credentials: 'CALENDAR-SECRET',
+                windows: [
+                  {
+                    ...binding.activationPolicy.windows[0],
+                    token: 'WINDOW-SECRET',
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    });
+    expect(dialog.getByText('destination-file')).toBeInTheDocument();
+    expect(dialog.getByText('Sun, Mon: 01:00–03:00')).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        /SOURCE-SECRET|POLICY-SECRET|BINDING-SECRET|CALENDAR-SECRET|WINDOW-SECRET/
+      )
+    ).not.toBeInTheDocument();
+  });
+
+  it('refuses approval when the exact cleanup intent is unavailable, but still permits rejection', async () => {
+    const dialog = await show({}, { operation: 'cleanup-from-store' });
+    expect(dialog.getByRole('button', { name: 'Approve' })).toBeDisabled();
+    expect(
+      dialog.getByText(/Exact cleanup scope is unavailable/)
+    ).toBeInTheDocument();
+  });
+
+  it('keeps rejection available when cleanup scope is unavailable', async () => {
+    const dialog = await show(
+      {},
+      { operation: 'cleanup-from-store', decision: 'reject' }
+    );
+    expect(dialog.getByRole('button', { name: 'Reject' })).toBeEnabled();
+  });
+
+  it('does not enable approval while detail is loading and ignores a late response for another job', async () => {
+    let resolveOld, resolveNew;
+    getJobMock.mockImplementation(
+      (workspace, id) =>
+        new Promise(resolve => {
+          if (id === 'old-job') resolveOld = resolve;
+          else resolveNew = resolve;
+        })
+    );
+    const view = id => (
       <ChakraProvider>
         <DashboardThemeProvider>
           <ApprovalDecisionModal
             isOpen
             onClose={vi.fn()}
-            workspaceId='ws'
-            job={{
-              id: 'job-2',
-              operation: 'renew',
-              requestedByConnectionId: 'connection-123',
-            }}
+            workspaceId='review-workspace'
+            job={{ id, operation: 'cleanup-from-store' }}
             decision='approve'
-            onDecide={decide}
+            onDecide={vi.fn()}
           />
         </DashboardThemeProvider>
       </ChakraProvider>
     );
-    expect(screen.getByRole('status')).toHaveTextContent('Loading');
-    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
-    expect(screen.getByLabelText('Reason (optional)')).toHaveValue('');
+    const rendered = render(view('old-job'));
     expect(
-      screen.getByRole('button', { name: 'Approve', exact: true })
+      within(screen.getByRole('dialog')).getByRole('button', {
+        name: 'Approve',
+      })
     ).toBeDisabled();
-    expect(decide).not.toHaveBeenCalled();
-  });
-  it('keeps distinct legacy destinations and all settings reviewable', async () => {
-    const value = review();
-    value.effect.renewalProfile.target = { certPath: '/srv/other/cert.pem' };
-    value.effect.renewalProfile.keyRotationPolicy = { rotateOnRenew: false };
-    value.effect.executionRouting = { assignedAgentId: 'agent-one' };
-    value.effect.futureField = 'future-value';
-    getApprovalReview.mockResolvedValue({ review: value });
-    show();
-    await waitFor(() =>
-      expect(screen.getByText('/srv/tls/cert.pem')).toBeVisible()
-    );
-    expect(screen.getByText('/srv/other/cert.pem')).toBeVisible();
-    expect(screen.getByText('agent-one')).toBeVisible();
-    const details = screen
-      .getByText('Renewal settings and request details')
-      .closest('details');
-    details.open = true;
-    expect(screen.getByText('No')).toBeVisible();
-    expect(screen.getByText('future-value')).toBeVisible();
-  });
-  it('shows an identical legacy destination once', async () => {
-    const value = review();
-    value.effect.renewalProfile.target =
-      value.effect.renewalProfile.deploymentTargets[0];
-    getApprovalReview.mockResolvedValue({ review: value });
-    show();
-    await screen.findByText('/srv/tls/cert.pem');
-    expect(screen.getAllByText('/srv/tls/cert.pem')).toHaveLength(1);
-  });
-
-  it('requires the complete review and acknowledgement, then submits its binding', async () => {
-    const decide = show();
-    expect(
-      screen.getByRole('button', { name: 'Approve', exact: true })
-    ).toBeDisabled();
-    await screen.findByText('Requested by');
-    expect(screen.getByText('<script>Requester</script>')).toBeInTheDocument();
-    expect(document.querySelector('script')).toBeNull();
-    expect(screen.getByText('/srv/tls/cert.pem')).toBeInTheDocument();
-    expect(
-      screen
-        .getAllByText('https://ca.example.test')
-        .some(node => !node.closest('details'))
-    ).toBe(true);
-    // The preview expired after submission, but the approval window is open.
-    fireEvent.click(screen.getByRole('checkbox'));
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Approve', exact: true })
-    );
-    await waitFor(() =>
-      expect(decide).toHaveBeenCalledWith(undefined, 'a'.repeat(64))
-    );
-  });
-  it.each([
-    'missing',
-    'failed',
-    'expired',
-    'changed',
-    'connection expired',
-    'malformed',
-    'missing permission',
-  ])('fails closed on %s review', async kind => {
-    const value = review();
-    if (kind === 'expired')
-      value.approvalExpiresAt = new Date(Date.now() - 1).toISOString();
-    if (kind === 'changed') value.current = false;
-    if (kind === 'malformed') delete value.connection;
-    if (kind === 'missing permission') delete value.canApprove;
-    if (kind === 'connection expired')
-      value.connection.expiresAt = new Date(Date.now() - 1).toISOString();
-    if (kind === 'failed')
-      getApprovalReview.mockRejectedValue(new Error('offline'));
-    else
-      getApprovalReview.mockResolvedValue({
-        review: kind === 'missing' ? null : value,
-      });
-    const decide = show();
-    await screen.findByRole('alert');
-    expect(
-      screen.getByRole('button', { name: 'Approve', exact: true })
-    ).toBeDisabled();
-    expect(decide).not.toHaveBeenCalled();
-  });
-  it('still permits rejection when review cannot load', async () => {
-    getApprovalReview.mockRejectedValue(new Error('offline'));
-    const decide = show({ decision: 'reject' });
-    await screen.findByRole('alert');
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Reject', exact: true })
-    );
-    await waitFor(() =>
-      expect(decide).toHaveBeenCalledWith(undefined, undefined)
-    );
-  });
-  it('disables self-approval before any decision request', async () => {
-    getApprovalReview.mockResolvedValue({
-      review: { ...review(), canApprove: false },
-    });
-    const decide = show();
-    await screen.findByText(/You requested this job/);
-    expect(
-      screen.getByRole('button', { name: 'Approve', exact: true })
-    ).toBeDisabled();
-    expect(decide).not.toHaveBeenCalled();
-  });
-  it('expires an acknowledged review while the dialog stays open', async () => {
-    getApprovalReview.mockResolvedValue({
-      review: {
-        ...review(),
-        approvalExpiresAt: new Date(Date.now() + 1200).toISOString(),
-      },
-    });
-    show();
-    fireEvent.click(await screen.findByRole('checkbox'));
-    expect(
-      screen.getByRole('button', { name: 'Approve', exact: true })
-    ).toBeEnabled();
-    await waitFor(
-      () =>
-        expect(
-          screen.getByRole('button', { name: 'Approve', exact: true })
-        ).toBeDisabled(),
-      { timeout: 3000 }
-    );
-  });
-  it('discards acknowledgement after the server refuses the displayed review', async () => {
-    show({ onDecide: vi.fn().mockResolvedValue(false) });
-    fireEvent.click(await screen.findByRole('checkbox'));
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Approve', exact: true })
-    );
-    await screen.findByRole('alert');
-    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Approve', exact: true })
-    ).toBeDisabled();
-  });
-  it('ignores a late result from a different job and resets acknowledgement', async () => {
-    let finish;
-    getApprovalReview.mockReturnValue(
-      new Promise(resolve => {
-        finish = resolve;
+    rendered.rerender(view('new-job'));
+    await act(async () =>
+      resolveOld({
+        job: {
+          id: 'old-job',
+          workspaceId: 'review-workspace',
+          status: 'pending_approval',
+          payload: {
+            materialCleanup: { ...cleanup, materialVersionId: 'stale-version' },
+          },
+        },
       })
     );
-    show();
-    cleanup();
-    getApprovalReview.mockResolvedValue({
-      review: { ...review(), current: false },
-    });
-    show({
-      job: {
-        id: 'job-2',
-        operation: 'renew',
-        requestedByConnectionId: 'other',
-      },
-    });
-    finish({ review: review() });
-    await screen.findByRole('alert');
+    expect(screen.queryByText('stale-version')).not.toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Approve', exact: true })
+      within(screen.getByRole('dialog')).getByRole('button', {
+        name: 'Approve',
+      })
     ).toBeDisabled();
+    await act(async () =>
+      resolveNew({
+        job: {
+          id: 'new-job',
+          workspaceId: 'review-workspace',
+          status: 'pending_approval',
+          payload: { materialCleanup: cleanup },
+        },
+      })
+    );
+    expect(screen.getByText(cleanup.materialVersionId)).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('dialog')).getByRole('button', {
+        name: 'Approve',
+      })
+    ).toBeEnabled();
   });
+
+  it.each(['unavailable', 'wrong workspace', 'already decided'])(
+    'refuses approval when detail is %s',
+    async scenario => {
+      const load = () =>
+        scenario === 'unavailable'
+          ? Promise.reject(new Error('offline'))
+          : Promise.resolve({
+              job: {
+                id: 'review-job',
+                workspaceId:
+                  scenario === 'wrong workspace'
+                    ? 'other-workspace'
+                    : 'review-workspace',
+                status:
+                  scenario === 'already decided'
+                    ? 'rejected'
+                    : 'pending_approval',
+                payload: { materialCleanup: cleanup },
+              },
+            });
+      const dialog = await show({}, { operation: 'cleanup-from-store', load });
+      expect(dialog.getByRole('button', { name: 'Approve' })).toBeDisabled();
+      expect(dialog.getByRole('alert')).toBeInTheDocument();
+    }
+  );
 });

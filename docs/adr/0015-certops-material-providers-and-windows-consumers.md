@@ -117,6 +117,12 @@ these base services. Neither edition gains provider credentials.
 
 ## Sources
 
+Implementation/qualification update, 2026-11-03: the
+[per-capability execution record](../certops/pr498-production-qualification-20261103.md)
+documents current native Windows source results, fresh packaged baseline
+Vault/OpenBao journeys and the remaining exact native artifact/approval gaps.
+All five extension gates remain disabled; no release promotion is implied.
+
 - [Azure Set Secret](https://learn.microsoft.com/en-us/rest/api/keyvault/secrets/set-secret/set-secret): every successful set creates a version.
 - [Azure version enumeration](https://learn.microsoft.com/en-us/rest/api/keyvault/secrets/get-secret-versions/get-secret-versions): list permission and public identifiers.
 - [OpenBao KV v2](https://openbao.org/docs/secrets/kv/kv-v2/): CAS and pinned-version semantics.

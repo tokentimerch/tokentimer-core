@@ -1,6 +1,7 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-06 against main 8212ea40 (v0.19.1 release candidate).
+Last reviewed: 2026-11-06 against main 2f508142 (v0.19.1) and PR #498’s scope. Other
+certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -44,14 +45,26 @@ called stable while they are open.
   certificate, including ordinary and wildcard certificates, shipped in 0.18.0
   (see [CHANGELOG.md](CHANGELOG.md)); the remaining destination scope stays
   open on the issue.
-  The distribution lifecycle remains open in [PR #498](https://github.com/tokentimerch/tokentimer-core/pull/498).
-  Windows/IIS shared material and provider extensions merged in
-  [PR #460](https://github.com/tokentimerch/tokentimer-core/pull/460). Functional
-  implementation is separate from remaining fleet/protected qualification;
-  these increments do not complete every #248 requirement.
-  Provider extensions cover OpenBao KV v2 and Azure Key Vault Secrets exact
-  versions. Azure and Windows/IIS remain subject to independent production
-  qualification; see [implementation and evidence](docs/certops/distribution-extensions-qualification.md).
+  [PR #460](https://github.com/tokentimerch/tokentimer-core/pull/460) is merged:
+  explicit OpenBao KV v2, Azure Key Vault Secrets exact versions and Windows/IIS
+  shared-material execution exist. [PR #498](https://github.com/tokentimerch/tokentimer-core/pull/498)
+  integrates that code with consumer management, exact-version independent
+  approvals, reviewed automation, canary waves, maintenance calendars, supported
+  activation, recurring verification/drift incidents, durable recovery/PagerDuty,
+  preflight and retention management. These #498 increments are implemented,
+  unreleased work, not missing future connectors. See the
+  [completion and evidence matrix](docs/certops/pr498-merge-readiness-20261103.md).
+  OpenBao distribution is supported. Azure storage, shared Windows/IIS material
+  deployment, independent Linux preparation/staging and exact-version Vault/OpenBao
+  cleanup exist but remain absent from the production qualification manifest.
+  Their exact artifact/native evidence must pass the existing protected gates
+  before promotion. The [2026-11-03 qualification record](docs/certops/pr498-production-qualification-20261103.md)
+  records two complete packaged baseline journeys and each remaining native or
+  authorization dependency; no extension capability was promoted.
+  Retention preview remains report-only by default; publication,
+  staging and approval are not proof of installation or live service use.
+  Broader Windows connectors and unsupported activation methods remain later
+  work under #504/#366/#369/#376; they are not new merge requirements for #498.
 - **Shared outbound policy**
   ([#233](https://github.com/tokentimerch/tokentimer-core/issues/233)).
   Wire offline mode and outbound allowlists into API and worker egress.
@@ -134,8 +147,12 @@ does not promise a version or add a v1.0.0 gate.
   ([#504](https://github.com/tokentimerch/tokentimer-core/issues/504)):
   service discovery, typed connectors, controlled activation and fleet
   operations build on shipped Windows/IIS and AD CS support.
-  #498 provides metadata/contract groundwork; #460 covers Windows/IIS shared
-  material under #248. Additional service executors remain separate.
+  #498 provides stable consumer discovery/contract groundwork and supported
+  lifecycle controls; merged #460 covers Windows/IIS shared material under #248,
+  with its production capability still gated. SQL Server (#374), Exchange (#371),
+  RDP/WinRM (#368), RDS (#367), NPS (#372), LDAPS (#375) and AD FS/WAP (#373)
+  remain backlog. Windows independent staging and unsupported restart/refresh
+  stay under #376/#366; no additional executor is required to merge #498.
 - **Workspace readiness and actionable recovery**
   ([#505](https://github.com/tokentimerch/tokentimer-core/issues/505)):
   persistent readiness, safe diagnostics, verified recipes and contributor

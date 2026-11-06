@@ -60,7 +60,7 @@ function VerificationRequest({
     [confirmed, setConfirmed] = useState(false);
   const observed = useObservedJob(ctx.workspaceId, current?.jobId);
   const checkAssignments =
-    !real && !disabled && Boolean(group.publication) && !current?.jobId;
+    !disabled && Boolean(group.publication) && !current?.jobId;
   const [assignments, setAssignments] = useState({ rows: null, error: false });
   useEffect(() => {
     if (!checkAssignments) return undefined;
@@ -98,14 +98,11 @@ function VerificationRequest({
     row =>
       (row.binding_state ?? row.state) === 'active' && row.assigned_agent_id
   );
-  const canVerify = activeConsumers?.some(
+  const hasAssignedConsumer = activeConsumers?.some(
     row => !selectedAgentId || row.assigned_agent_id === selectedAgentId
   );
   const requestBlocked =
-    disabled ||
-    !group.publication ||
-    Boolean(current?.jobId) ||
-    (real ? !confirmed : !canVerify);
+    !checkAssignments || !hasAssignedConsumer || (real && !confirmed);
   const canReset = real
     ? group.completed === true ||
       group.verified === true ||
@@ -153,34 +150,44 @@ function VerificationRequest({
   };
   return (
     <VStack align='stretch' spacing={3}>
+      {real ? (
+        <StatusPanel status='warning' title='Real IIS deployment'>
+          This rollout imports the private key and changes IIS bindings.
+        </StatusPanel>
+      ) : (
+        <Text fontSize='sm'>
+          Checks installed material and applicable TLS evidence for all active
+          consumers in this publication without deploying or reloading. Missing
+          material fails the check.
+        </Text>
+      )}
       <Text fontSize='sm'>
-        Pinned material version:{' '}
+        Pinned version:{' '}
         {current?.versionId ||
           group.publication?.materialVersionId ||
           'No active publication'}
-        .
-      </Text>
-      <Text fontSize='sm'>
-        {real
-          ? 'This real rollout imports the private key and changes IIS bindings. It is not a test.'
-          : 'The signed verification-only rollout checks all active consumers in this publication. It fetches the exact pinned version and reads back the installed certificate, key, full chain and applicable TLS evidence. It does not install, import, bind or reload. Missing installation produces a failure, not a deployment.'}
       </Text>
       {checkAssignments && assignments.error && (
         <StatusPanel status='warning'>
-          Consumer assignments could not be read. Refresh before requesting
-          verification.
+          Consumer assignments could not be read. Refresh before continuing.
         </StatusPanel>
       )}
       {checkAssignments && activeConsumers?.length === 0 && (
         <StatusPanel status='warning' title='No consumer assigned'>
-          Assign a consumer before checking installed material.
+          Assign a consumer before requesting{' '}
+          {real ? 'deployment' : 'verification'}.
         </StatusPanel>
       )}
-      {checkAssignments && activeConsumers?.length > 0 && !canVerify && (
-        <StatusPanel status='warning' title='Selected consumer is not assigned'>
-          Assign the selected consumer before checking installed material.
-        </StatusPanel>
-      )}
+      {checkAssignments &&
+        activeConsumers?.length > 0 &&
+        !hasAssignedConsumer && (
+          <StatusPanel
+            status='warning'
+            title='Selected consumer is not assigned'
+          >
+            Assign the selected consumer before checking installed material.
+          </StatusPanel>
+        )}
       {real && (
         <Checkbox
           isChecked={confirmed}
@@ -499,11 +506,13 @@ function IisBindingGuide({ ctx, setup, agents, enabled }) {
         <FormLabel>Existing IIS site name (local configuration only)</FormLabel>
         <Input value={site} onChange={e => setSite(e.target.value)} />
       </FormControl>
-      {requirements.map(reason => (
-        <Text key={reason} fontSize='sm'>
-          {reason}
-        </Text>
-      ))}
+      {requirements.length > 0 && (
+        <StatusPanel status='warning' title='Agent requirements not met'>
+          {requirements.map(reason => (
+            <Text key={reason}>{reason}</Text>
+          ))}
+        </StatusPanel>
+      )}
       <PrimaryButton
         isDisabled={
           !enabled || agent?.platform !== 'win32' || !agent?.wireAgentId
@@ -597,6 +606,10 @@ function MaterialConsumerForm({ ctx }) {
     configurable.find(a => a.id === saved.vaultConsumerAgentId)?.id ||
     configurable[0]?.id ||
     '';
+  const selectedAgent = configurable.find(a => a.id === firstAgentId);
+  const selectedAgentProblems = selectedAgent
+    ? agentRequirements(selectedAgent, setup.provider, 'consumer')
+    : [];
   const config = {
     provider: setup.provider,
     materialStoreRef: setup.materialStoreRef,
@@ -676,13 +689,6 @@ function MaterialConsumerForm({ ctx }) {
             <ConsumerBootstrapToken workspaceId={ctx.workspaceId} />
           </DetailsSection>
         )}
-        {consumers.map(a => (
-          <Text key={a.id} fontSize='sm'>
-            {a.name || a.id}:{' '}
-            {agentRequirements(a, setup.provider, 'consumer').join('; ') ||
-              'Required capabilities declared and fresh'}
-          </Text>
-        ))}
         {platform === 'linux' ? (
           <>
             {configurable.length > 0 && (
@@ -710,10 +716,23 @@ function MaterialConsumerForm({ ctx }) {
                   {configurable.map(a => (
                     <option key={a.id} value={a.id}>
                       {a.name || a.hostname || a.wireAgentId}
+                      {agentRequirements(a, setup.provider, 'consumer').length
+                        ? ' — setup required'
+                        : ' — ready'}
                     </option>
                   ))}
                 </Select>
               </FormControl>
+            )}
+            {selectedAgentProblems.length > 0 && (
+              <StatusPanel
+                status='warning'
+                title={`${selectedAgent.name || 'Selected agent'}: requirements not met`}
+              >
+                {selectedAgentProblems.map(reason => (
+                  <Text key={reason}>{reason}</Text>
+                ))}
+              </StatusPanel>
             )}
             <Text fontSize='sm'>
               The installer/service account needs only the configured write
@@ -821,11 +840,10 @@ function MaterialConsumerForm({ ctx }) {
                 approvalRequired={required}
               />
             ) : (
-              <StatusPanel status='info'>
-                Before assigning consumers, check the provider, agent
-                requirements and local configuration.{' '}
-                {local.problems?.join(' ')}
-              </StatusPanel>
+              <Text fontSize='sm'>
+                {local.problems?.join(' ') ||
+                  'Check the provider and agent requirements before assigning consumers.'}
+              </Text>
             )}
           </>
         ) : (
@@ -855,22 +873,19 @@ function MaterialConsumerForm({ ctx }) {
               />
             )}
             <Text fontSize='sm'>
-              Completion comes only from the backend consumer matrix and current
-              rollout generation. A coordinator job, a dry-run result, a stale
-              receipt or an inactive binding cannot finish this step. Use Deploy
-              the selected version only when you intend a real installation.
+              This step completes when current consumer evidence confirms the
+              selected version. Deploy only when you intend a real installation.
             </Text>
-            <Text fontSize='sm'>
-              On failure, inspect the job timeline and safe error code. For
-              missing capabilities or authorization revisions, repair the
-              protected host configuration and refresh. For
-              orphaned_unknown_effect, preserve the journal, reconcile the
-              actual filesystem/IIS/listener state locally, then retry the
-              original deployment with the existing recovery action. Resume a
-              paused rollout only after required consumers recover. Rollback is
-              a separate explicitly approved operation in Certificate
-              Management; this guide never silently rolls back.
-            </Text>
+            <DetailsSection summary='If verification or deployment fails'>
+              <Text fontSize='sm'>
+                Inspect the job timeline and error code, repair the host
+                configuration or authorization, and refresh. For
+                orphaned_unknown_effect, preserve the journal and reconcile the
+                filesystem, IIS or listener locally before retrying the original
+                deployment. Resume only after required consumers recover.
+                Rollback requires separate approval in Certificate Management.
+              </Text>
+            </DetailsSection>
             <DashboardActionButton
               variant='outline'
               onClick={() =>

@@ -10,7 +10,8 @@ function providerOf(intent) {
   // #498 use it for an operation. Recognize only the pinned legacy operation;
   // unknown types and contradictory explicit identities still fail closed.
   const legacyCleanup = intent?.type === VAULT_SOFT_DELETE;
-  const operationProvider = cleanupOperationOf(intent) === VAULT_SOFT_DELETE ? "vault-kv2" : null;
+  const operationProvider = cleanupOperationOf(intent) === OPENBAO_SOFT_DELETE ? "openbao-kv2"
+    : cleanupOperationOf(intent) === VAULT_SOFT_DELETE ? "vault-kv2" : null;
   const provider = intent?.provider ?? (legacyCleanup ? "vault-kv2" : intent?.type) ?? "vault-kv2";
   if ((operationProvider && provider !== operationProvider) ||
       (intent?.type && !legacyCleanup && intent.type !== provider) ||
@@ -18,11 +19,13 @@ function providerOf(intent) {
   return provider;
 }
 const VAULT_SOFT_DELETE = "vault-kv2-soft-delete";
+const OPENBAO_SOFT_DELETE = "openbao-kv2-soft-delete";
 function cleanupOperationOf(intent) {
   const operation = intent?.operation;
   // Canonical operation identity is provider-independent. Preserve the earlier
   // explicit method spelling and legacy signed type without rewriting either.
   if (operation !== undefined && operation !== "soft-delete" && operation !== VAULT_SOFT_DELETE) return null;
+  if (operation === "soft-delete" && intent?.type == null && intent?.provider === "openbao-kv2") return OPENBAO_SOFT_DELETE;
   if (intent?.type === VAULT_SOFT_DELETE || operation === "soft-delete" || operation === VAULT_SOFT_DELETE) return VAULT_SOFT_DELETE;
   return null;
 }
@@ -52,6 +55,7 @@ module.exports = {
   PROVIDERS,
   providerOf,
   VAULT_SOFT_DELETE,
+  OPENBAO_SOFT_DELETE,
   cleanupOperationOf,
   providerCapability,
   validProviderVersion,

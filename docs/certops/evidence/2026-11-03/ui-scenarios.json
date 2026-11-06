@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "scenarios": [
+    {
+      "name": "distribution-overview",
+      "expected": "Consumer desired/observed proof remains unknown until verified; no installation is inferred from publication.",
+      "actual": "Rendered by the real dashboard using the running API and PostgreSQL",
+      "status": "PASS",
+      "screenshot": "distribution-overview.png",
+      "limitation": "Disposable fixtures; this does not establish complete fleet/operator or native artifact acceptance.",
+      "repository": "tokentimerch/tokentimer-core",
+      "candidateSha": "8a8cb8cd545d0473eace90058956466765978fd5",
+      "sourceState": "Product source at candidate SHA; fixture helper/UI export changes uncommitted during capture",
+      "environment": "Owned loopback API, dashboard and disposable PostgreSQL; synthetic publication metadata, genuine cleanup",
+      "action": "Open distribution overview in the running application"
+    },
+    {
+      "name": "maintenance-policy",
+      "expected": "Maintenance approval, calendar and unsupported connector controls are visible.",
+      "actual": "Rendered by the real dashboard using the running API and PostgreSQL",
+      "status": "PASS",
+      "screenshot": "maintenance-policy.png",
+      "limitation": "Disposable fixtures; this does not establish complete fleet/operator or native artifact acceptance.",
+      "repository": "tokentimerch/tokentimer-core",
+      "candidateSha": "8a8cb8cd545d0473eace90058956466765978fd5",
+      "sourceState": "Product source at candidate SHA; fixture helper/UI export changes uncommitted during capture",
+      "environment": "Owned loopback API, dashboard and disposable PostgreSQL; synthetic publication metadata, genuine cleanup",
+      "action": "Open maintenance policy in the running application"
+    },
+    {
+      "name": "retention-cleanup",
+      "expected": "The genuine completed cleanup is visible alongside exact material IDs and retention protection reasons.",
+      "actual": "Rendered by the real dashboard using the running API and PostgreSQL",
+      "status": "PASS",
+      "screenshot": "retention-cleanup.png",
+      "limitation": "Disposable fixtures; this does not establish complete fleet/operator or native artifact acceptance.",
+      "repository": "tokentimerch/tokentimer-core",
+      "candidateSha": "8a8cb8cd545d0473eace90058956466765978fd5",
+      "sourceState": "Product source at candidate SHA; fixture helper/UI export changes uncommitted during capture",
+      "environment": "Owned loopback API, dashboard and disposable PostgreSQL; synthetic publication metadata, genuine cleanup",
+      "action": "Open retention cleanup in the running application"
+    },
+    {
+      "name": "exact-rollout-request",
+      "expected": "The exact selected material and destinations are presented before requesting execution.",
+      "actual": "Rendered by the real dashboard using the running API and PostgreSQL",
+      "status": "PASS",
+      "screenshot": "exact-rollout-request.png",
+      "limitation": "Disposable fixtures; this does not establish complete fleet/operator or native artifact acceptance.",
+      "repository": "tokentimerch/tokentimer-core",
+      "candidateSha": "8a8cb8cd545d0473eace90058956466765978fd5",
+      "sourceState": "Product source at candidate SHA; fixture helper/UI export changes uncommitted during capture",
+      "environment": "Owned loopback API, dashboard and disposable PostgreSQL; synthetic publication metadata, genuine cleanup",
+      "action": "Open exact rollout request in the running application"
+    },
+    {
+      "name": "pending-rollout-approval",
+      "expected": "The approved-scope request is visibly pending; it is not represented as completed installation.",
+      "actual": "Rendered by the real dashboard using the running API and PostgreSQL",
+      "status": "PASS",
+      "screenshot": "pending-rollout-approval.png",
+      "limitation": "Disposable fixtures; this does not establish complete fleet/operator or native artifact acceptance.",
+      "repository": "tokentimerch/tokentimer-core",
+      "candidateSha": "8a8cb8cd545d0473eace90058956466765978fd5",
+      "sourceState": "Product source at candidate SHA; fixture helper/UI export changes uncommitted during capture",
+      "environment": "Owned loopback API, dashboard and disposable PostgreSQL; synthetic publication metadata, genuine cleanup",
+      "action": "Open pending rollout approval in the running application"
+    },
+    {
+      "name": "jobs-cleanup-and-approval",
+      "expected": "Real completed cleanup and pending rollout jobs are shown by the application.",
+      "actual": "Rendered by the real dashboard using the running API and PostgreSQL",
+      "status": "PASS",
+      "screenshot": "jobs-cleanup-and-approval.png",
+      "limitation": "Disposable fixtures; this does not establish complete fleet/operator or native artifact acceptance.",
+      "repository": "tokentimerch/tokentimer-core",
+      "candidateSha": "8a8cb8cd545d0473eace90058956466765978fd5",
+      "sourceState": "Product source at candidate SHA; fixture helper/UI export changes uncommitted during capture",
+      "environment": "Owned loopback API, dashboard and disposable PostgreSQL; synthetic publication metadata, genuine cleanup",
+      "action": "Open jobs cleanup and approval in the running application"
+    },
+    {
+      "name": "exact-pending-review",
+      "expected": "Fresh job detail presents the pending version, destination and activation policy for independent review.",
+      "actual": "Rendered by the real dashboard using the running API and PostgreSQL",
+      "status": "PASS",
+      "screenshot": "exact-pending-review.png",
+      "limitation": "Disposable fixtures; this does not establish complete fleet/operator or native artifact acceptance.",
+      "repository": "tokentimerch/tokentimer-core",
+      "candidateSha": "8a8cb8cd545d0473eace90058956466765978fd5",
+      "sourceState": "Product source at candidate SHA; fixture helper/UI export changes uncommitted during capture",
+      "environment": "Owned loopback API, dashboard and disposable PostgreSQL; synthetic publication metadata, genuine cleanup",
+      "action": "Open exact pending review in the running application"
+    }
+  ]
+}

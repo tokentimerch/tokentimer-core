@@ -208,6 +208,11 @@ DB_SSL: {{ .Values.postgresql.external.sslMode | quote }}
 ALERT_THRESHOLDS: {{ .Values.config.alertThresholds | quote }}
 {{- end }}
 CERTOPS_ENABLED: {{ ternary "true" "false" (not (eq .Values.config.certopsEnabled false)) | quote }}
+CERTOPS_MATERIAL_CLEANUP_ENABLED: {{ .Values.config.certopsMaterialCleanupEnabled | default false | quote }}
+CERTOPS_SWEEP_DISTRIBUTION_SCHEDULER_ENABLED: {{ ternary "true" "false" (not (eq .Values.config.certopsDistributionSchedulerEnabled false)) | quote }}
+CERTOPS_SWEEP_DISTRIBUTION_SCHEDULER_TIMEOUT_MS: {{ .Values.config.certopsDistributionSchedulerTimeoutMs | default 120000 | quote }}
+CERTOPS_SWEEP_DISTRIBUTION_MONITORING_ENABLED: {{ ternary "true" "false" (not (eq .Values.config.certopsDistributionMonitoringEnabled false)) | quote }}
+CERTOPS_SWEEP_DISTRIBUTION_MONITORING_TIMEOUT_MS: {{ .Values.config.certopsDistributionMonitoringTimeoutMs | default 120000 | quote }}
 {{- /* Both assistant flags fail closed: only an explicit true turns them on. */}}
 {{- if eq .Values.config.mcpOperatorInterfaceEnabled true }}
 MCP_OPERATOR_INTERFACE_ENABLED: "true"
@@ -351,6 +356,9 @@ TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN: {{ .Values.twilio.alertContentS
 {{- end }}
 {{- if .Values.twilio.alertContentSidEndpointRecovered }}
 TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED: {{ .Values.twilio.alertContentSidEndpointRecovered | quote }}
+{{- end }}
+{{- if .Values.twilio.alertContentSidDistribution }}
+TWILIO_WHATSAPP_ALERT_CONTENT_SID_DISTRIBUTION: {{ .Values.twilio.alertContentSidDistribution | quote }}
 {{- end }}
 {{- if .Values.twilio.weeklyDigestContentSid }}
 TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID: {{ .Values.twilio.weeklyDigestContentSid | quote }}

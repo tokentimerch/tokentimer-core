@@ -103,9 +103,22 @@ function composeMigrations(migrations, recorded = []) {
     for (const append of [priorAppend, priorAppendWithAuthority]) {
       for (let length = 0; length <= append.length; length++) {
         const appliedAppend = append.slice(0, length);
-        const names = [...priorMcpNames, ...appliedAppend, ...extensions.map((entry) => entry.name).filter((name) => !priorMcpNames.includes(name) && !appliedAppend.includes(name))];
-        const versions = [...priorMcpVersions, ...names.slice(priorMcpNames.length).map((_name, index) => 97 + index)];
-        if (rows.every((row, index) => row.name === names[index] && row.version === versions[index])) { priorOrder = names; break; }
+        const remaining = extensions.map((entry) => entry.name).filter((name) => !priorMcpNames.includes(name) && !appliedAppend.includes(name));
+        const lifecycle = new Set([
+          "certops_distribution_lifecycle", "certops_distribution_incident_delivery",
+          "certops_stable_consumer_discovery", "certops_material_cleanup",
+          "certops_consumer_verification_failures", "certops_distribution_resolution_delivery",
+          "certops_consumer_staging", "certops_review_authority_epochs",
+        ]);
+        // Keep the existing MCP preview append order when no later lifecycle
+        // migration has been applied, but recognize either historical ordering.
+        const mainFirst = [...remaining.filter((name) => !lifecycle.has(name)), ...remaining.filter((name) => lifecycle.has(name))];
+        for (const tail of [mainFirst, remaining]) {
+          const names = [...priorMcpNames, ...appliedAppend, ...tail];
+          const versions = [...priorMcpVersions, ...names.slice(priorMcpNames.length).map((_name, index) => 97 + index)];
+          if (rows.every((row, index) => row.name === names[index] && row.version === versions[index])) { priorOrder = names; break; }
+        }
+        if (priorOrder) break;
       }
       if (priorOrder) break;
     }
@@ -254,6 +267,8 @@ function composeMigrations(migrations, recorded = []) {
     certops_distribution_resolution_delivery: [
       "certops_distribution_incident_delivery",
     ],
+    certops_consumer_staging: ["certops_distribution_lifecycle"],
+    certops_review_authority_epochs: ["certops_distribution_lifecycle"],
   };
   const seen = new Set();
   for (const row of rows) {

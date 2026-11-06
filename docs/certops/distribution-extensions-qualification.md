@@ -1,5 +1,13 @@
 # Distribution extension qualification
 
+The [2026-11-03 per-capability audit and execution record](pr498-production-qualification-20261103.md)
+adds two complete packaged baseline journeys (Vault and OpenBao, 15 strict phases
+and 41 product checks each) at `037a8d2c`. Current-head Server 2022/2025 source CI
+actually executed all 16 native cohorts with zero skips. Exact installed shared
+IIS/Azure/staging/cleanup native release qualification remains incomplete, and all
+five extension gates stay closed. These results do not promote the baseline
+qualification-only package or replace the historical reports below.
+
 2026-10-27: the [real Azure development campaign](https://github.com/tokentimerch/tokentimer-core/actions/runs/40486274037)
 passed **18/18 mandatory scenarios**, with no failures/skips/pending cases and
 completed owned-resource/database cleanup. Source `a53d063460eb0f447cc4fd821dd75c7abe46bb95`

@@ -65,14 +65,14 @@
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "362287517fc9f332a7b7d134a3aa19bdc59ca33759ae3e78f279d4c255a0e770"
+          "sha256": "f5b267616359b704b33ffeb7b08d4e5616aeae5645047695bf8f3a4bae7a4a93"
         },
         {
           "id": "integration-openapi-spec",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "362287517fc9f332a7b7d134a3aa19bdc59ca33759ae3e78f279d4c255a0e770"
+          "sha256": "f5b267616359b704b33ffeb7b08d4e5616aeae5645047695bf8f3a4bae7a4a93"
         },
         {
           "id": "auth-route-compat-contract",
@@ -328,7 +328,33 @@
           "id": "certops-material-provider-module",
           "kind": "module",
           "path": "packages/contracts/certops/material-provider.cjs",
+          "status": "existing",
+          "sha256": "eda4ced87c86af6741db27847dbad9ed56ef845fd87c1a96fe383a38f068281a"
+        },
+        {
+          "id": "certops-distribution-lifecycle-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/distribution-lifecycle.schema.json",
           "status": "existing"
+        },
+        {
+          "id": "certops-activation-calendar-module",
+          "kind": "module",
+          "path": "packages/contracts/certops/activation-calendar.cjs",
+          "status": "existing"
+        },
+        {
+          "id": "certops-service-connectors-module",
+          "kind": "module",
+          "path": "packages/contracts/certops/service-connectors.cjs",
+          "status": "existing"
+        },
+        {
+          "id": "certops-material-cleanup-identity",
+          "kind": "module",
+          "path": "packages/contracts/certops/material-cleanup.cjs",
+          "status": "existing",
+          "sha256": "b22f78f232e99a329558cc9acdd5391b9021946df19fd7206deb7c30b64f4708"
         }
       ]
     },

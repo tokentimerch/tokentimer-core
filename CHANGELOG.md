@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Certificate distribution lifecycle (PR #498; unreleased).** Adds consumer administration, exact-version review and reviewed automation, canary/calendar controls, recurring verification, incident recovery, safe resumption after partial success, public preflight and retention management. Independent Linux preparation and exact-version Vault/OpenBao cleanup are implemented behind separate closed production capability gates; Azure and shared Windows/IIS material deployment retain their gates. Unsupported service connectors and restart/refresh methods remain backlog. **Operator action:** apply the composed migrations through 108 before matching API/workers; migration 97 requires fresh independent review of existing distribution authorizations. See the [scope and evidence matrix](docs/certops/pr498-merge-readiness-20261103.md) and [per-capability qualification status](docs/certops/pr498-production-qualification-20261103.md); no extension capability has been promoted.
+
 ## [0.19.1] - 2026-11-06
 
 ### Fixed

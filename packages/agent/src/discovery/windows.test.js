@@ -456,7 +456,7 @@ describe("collectWindowsDiscoveryObservations", () => {
     },
   );
 
-  it("reports each IIS site sharing an HTTP.sys binding with stable site identities", async () => {
+  it("preserves every IIS service backed by one HTTP.sys binding without treating store presence as service proof", async () => {
     const certificate = new (require("node:crypto").X509Certificate)(fs.readFileSync(path.join(__dirname, "../verify/fixtures/leaf.crt.pem")));
     const thumbprint = "1122334455667788990011223344556677889900";
     const execFileImpl = makeExecFileImplRouter({
@@ -469,7 +469,10 @@ describe("collectWindowsDiscoveryObservations", () => {
     const observations = await collectWindowsDiscoveryObservations({ execFileImpl,
       spawn: () => fakeSpawnResult({ stdout: rawDataJson(thumbprint, certificate.raw.toString("base64")) }) });
     const services = observations.filter(value => value.locationKind === "iis_binding");
-    assert.deepEqual(services.map(value => value.locationSlot).sort(), ["First Service:443", "Second Service:443"]);
+    assert.deepEqual(
+      services.map(value => value.locationSlot).sort(),
+      ["First Service:443@10.0.0.5", "Second Service:443@10.0.0.5"],
+    );
     assert.equal(observations.filter(value => value.locationKind === "windows_store").length, 1);
   });
 
