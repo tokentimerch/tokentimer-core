@@ -3,6 +3,8 @@ import {
   Alert,
   AlertDescription,
   AlertIcon,
+  AlertTitle,
+  Box,
   Button,
   FormControl,
   FormHelperText,
@@ -666,11 +668,18 @@ export default function AdcsProfileWizard({
                   borderRadius='md'
                 >
                   <AlertIcon />
-                  <AlertDescription fontSize='sm'>
-                    {created?.agentDeclaresName
-                      ? 'An active agent already declares this certificate name. Run the CA check on that agent if you have not already. The check stores the CA certificate and template OID there.'
-                      : 'The profile is saved. No active agent declares this certificate name yet. Add the name to the agent target selectors and restart the agent. The next heartbeat publishes it. Until then the renewal sweep skips this certificate.'}
-                  </AlertDescription>
+                  <Box>
+                    <AlertTitle fontSize='sm'>
+                      {created?.agentDeclaresName
+                        ? 'Agent found'
+                        : 'Agent configuration needed'}
+                    </AlertTitle>
+                    <AlertDescription fontSize='sm'>
+                      {created?.agentDeclaresName
+                        ? 'Run the CA check on the agent if needed. It stores the CA certificate and template OID.'
+                        : 'Add this name to the agent target selectors and restart the agent. Its next heartbeat publishes the name; renewal skips this certificate until then.'}
+                    </AlertDescription>
+                  </Box>
                 </Alert>
                 {matchesLoading ? (
                   <Text fontSize='sm'>

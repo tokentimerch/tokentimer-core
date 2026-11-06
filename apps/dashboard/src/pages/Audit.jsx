@@ -37,6 +37,10 @@ import { useDashboardShellProps } from '../hooks/useDashboardShellProps';
 import SEO from '../components/SEO.jsx';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import TruncatedText from '../components/TruncatedText';
+import {
+  DashboardState,
+  DashboardErrorAlert,
+} from '../components/DashboardPrimitives';
 import apiClient, {
   API_ENDPOINTS,
   alertAPI,
@@ -2733,17 +2737,21 @@ export default function Audit({ session, onLogout, onAccountClick }) {
                 </Flex>
 
                 {error ? (
-                  <Text color='red.500' p={{ base: 4, md: 6 }}>
-                    {error}
-                  </Text>
+                  <Box p={{ base: 4, md: 6 }}>
+                    <DashboardErrorAlert>{error}</DashboardErrorAlert>
+                  </Box>
                 ) : loading && filtered.length === 0 ? (
-                  <Text color={muted} p={{ base: 4, md: 6 }}>
-                    Loading audit events...
-                  </Text>
+                  <DashboardState
+                    type='loading'
+                    py={6}
+                    title='Loading audit events...'
+                  />
                 ) : filtered.length === 0 ? (
-                  <Text color={muted} p={{ base: 4, md: 6 }}>
-                    No audit events found.
-                  </Text>
+                  <DashboardState
+                    py={6}
+                    title='No audit events found.'
+                    description='Try adjusting the filters or date range.'
+                  />
                 ) : (
                   <>
                     <Box

@@ -71,6 +71,7 @@ import DashboardPageLayout from '../components/DashboardPageLayout';
 import {
   DashboardActionButton,
   DashboardPanel,
+  DashboardState,
   DashboardPanelHeader,
 } from '../components/DashboardPrimitives';
 import {
@@ -3644,9 +3645,11 @@ export default function AlertPreferences({
                 data-tour='preferences-webhooks-list'
               >
                 {webhookUrls.filter(isSavedWebhook).length === 0 ? (
-                  <Text fontSize='sm' color={bodySecondary}>
-                    No webhooks configured.
-                  </Text>
+                  <DashboardState
+                    py={4}
+                    title='No webhooks configured.'
+                    description='Add a webhook to deliver notifications to another service.'
+                  />
                 ) : (
                   webhookUrls.map((webhook, index) => {
                     if (!isSavedWebhook(webhook)) return null;

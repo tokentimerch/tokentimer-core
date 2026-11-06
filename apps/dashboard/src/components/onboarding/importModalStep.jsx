@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Text, VStack } from '@chakra-ui/react';
 import { DashboardActionButton } from '../DashboardPrimitives';
-import { useDashboardTheme } from '../../hooks/useDashboardTheme';
+import { StatusPanel } from './panels.jsx';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import ImportTokensModal from '../ImportTokensModal.jsx';
@@ -36,7 +35,6 @@ const COPY = {
  * against the real asset count by the planner.
  */
 export function ImportModalStep({ ctx, stepId, reviewing = false }) {
-  const { muted } = useDashboardTheme();
   const copy = COPY[stepId];
   const [open, setOpen] = useState(!reviewing);
   const [imported, setImported] = useState(0);
@@ -77,7 +75,11 @@ export function ImportModalStep({ ctx, stepId, reviewing = false }) {
     [stepId]
   );
 
-  const done = imported > 0;
+  const savedCount = (ctx.session?.progress?.imported || [])
+    .filter(item => item.step === stepId)
+    .reduce((sum, item) => sum + (item.count || 0), 0);
+  const importedCount = Math.max(imported, savedCount);
+  const done = importedCount > 0;
   // Keep the finished step on screen until the person chooses to continue,
   // so the dialog is never pulled away mid-flow.
   useEffect(() => {
@@ -118,19 +120,21 @@ export function ImportModalStep({ ctx, stepId, reviewing = false }) {
         </>
       }
     >
-      <VStack align='stretch' spacing={2}>
-        {done ? (
-          <Text fontSize='sm' data-testid='import-done'>
-            {imported} asset{imported === 1 ? '' : 's'} imported in this
-            session. You can import more or continue.
-          </Text>
-        ) : (
-          <Text fontSize='sm' color={muted}>
-            Nothing imported yet. Close the dialog any time and reopen it with
-            the button below.
-          </Text>
-        )}
-      </VStack>
+      {done ? (
+        <StatusPanel
+          status='success'
+          title='Import complete'
+          testId='import-done'
+        >
+          {importedCount} asset{importedCount === 1 ? '' : 's'} imported in this setup.
+          You can import more or continue.
+        </StatusPanel>
+      ) : (
+        <StatusPanel status='info' title='Ready to import'>
+          Nothing imported yet. You can reopen the import dialog using the
+          button below.
+        </StatusPanel>
+      )}
       <ImportTokensModal
         hideDocs
         embeddedWorkspaceId={ctx.workspaceId}

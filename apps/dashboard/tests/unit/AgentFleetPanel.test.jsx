@@ -8,6 +8,7 @@ import {
 } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
+import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
 import AgentFleetPanel from '../../src/components/certops/AgentFleetPanel.jsx';
 
@@ -64,7 +65,9 @@ vi.mock('../../src/utils/apiClient', async () => {
 function renderWithProviders(ui, initialEntries = ['/']) {
   return render(
     <ChakraProvider>
-      <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>
+      <DashboardThemeProvider>
+        <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>
+      </DashboardThemeProvider>
     </ChakraProvider>
   );
 }
@@ -737,9 +740,11 @@ describe('AgentFleetPanel', () => {
 
     rerender(
       <ChakraProvider>
-        <MemoryRouter>
-          <AgentFleetPanel refreshSignal={1} />
-        </MemoryRouter>
+        <DashboardThemeProvider>
+          <MemoryRouter>
+            <AgentFleetPanel refreshSignal={1} />
+          </MemoryRouter>
+        </DashboardThemeProvider>
       </ChakraProvider>
     );
     expect(useCertOpsAgentsMock).toHaveBeenLastCalledWith(1, {

@@ -799,28 +799,34 @@ export function AgentStep({ ctx }) {
             </Text>
             <AgentCheckIn workspaceId={ctx.workspaceId} agent={target} />
             {lacksProfile ? (
-              <WarnText data-testid='lacks-profile-note'>
-                This agent has not reported the {wantedProfileName} command
-                profile yet, usually because it was set up for discovery only.
-                Save the configuration above on the server, keeping the agentId
-                line already in config.json, then restart the agent with{' '}
-                {agentRestartCommandFor(os)}. The agent publishes its command
-                profiles when it checks in, so it does not need to register
-                again. An older agent build reports them only when it registers:
-                upgrade it, or create a one-time token, register it again and
-                retire the old entry in Certificate Management.
-              </WarnText>
+              <StatusPanel
+                status='warning'
+                title='Agent configuration needed'
+                testId='lacks-profile-note'
+              >
+                The agent has not reported the {wantedProfileName} command
+                profile. Save the configuration above, keep the existing agentId
+                in config.json, then restart with {agentRestartCommandFor(os)}.
+                <DetailsSection summary='If the profile still does not appear'>
+                  <Text fontSize='sm'>
+                    Current agents publish profiles at check-in and do not need to
+                    register again. Older builds publish only on registration:
+                    upgrade the agent, or register it again with a one-time token
+                    and retire its old entry in Certificate Management.
+                  </Text>
+                </DetailsSection>
+              </StatusPanel>
             ) : null}
             {verdict.problems.map(p => (
               <WarnText key={p}>{p}</WarnText>
             ))}
           </VStack>
         ) : (
-          <Text fontSize='xs' color={muted}>
-            No agent has registered for this setup yet. Checking every few
-            seconds. If it stays empty: check outbound HTTPS to this address,
-            that the token has not expired, and the service log.
-          </Text>
+          <StatusPanel status='info' title='Waiting for an agent'>
+            No agent has registered yet. TokenTimer checks every few seconds. If
+            registration takes too long, check outbound HTTPS, the token expiry,
+            and the service log.
+          </StatusPanel>
         )}
       </VStack>
     </StepFrame>
