@@ -89,6 +89,9 @@ describe('MCP assistant setup', () => {
     const issue = screen.getByLabelText('Allow certificate issuance requests');
     expect(issue).not.toBeChecked();
     fireEvent.click(issue);
+    expect(
+      screen.getByText(/Renewal and issuance requests include agent health/)
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /create setup code/i }));
     await screen.findByLabelText('One-time setup code');
     const scopes = mocks.create.mock.calls[0][1].scopes;
@@ -99,9 +102,7 @@ describe('MCP assistant setup', () => {
   it('grants viewer invitations only when explicitly selected', async () => {
     render(ui());
     await openSetup();
-    const invite = screen.getByLabelText(
-      'Allow reviewed viewer invitations by email'
-    );
+    const invite = screen.getByLabelText('Review and invite viewers by email');
     expect(invite).not.toBeChecked();
     fireEvent.click(invite);
     fireEvent.click(screen.getByRole('button', { name: 'Create setup code' }));
@@ -114,7 +115,7 @@ describe('MCP assistant setup', () => {
     render(ui());
     await openSetup();
     const group = screen.getByLabelText(
-      'Allow reviewed contact group creation and listing recipient names'
+      'Create contact groups and list recipient names'
     );
     expect(group).not.toBeChecked();
     fireEvent.click(group);
@@ -165,7 +166,7 @@ describe('MCP assistant setup', () => {
       screen.getByRole('radio', { name: 'Local adapter (stdio)' })
     );
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    expect(screen.getByLabelText('Allow renewal requests')).not.toBeChecked();
+    expect(screen.getByLabelText('Allow certificate renewal requests')).not.toBeChecked();
     expect(screen.getByLabelText('Access level')).toHaveValue('read-only');
     expect(
       screen.getByRole('button', { name: 'Create setup code' })
@@ -200,7 +201,7 @@ describe('MCP assistant setup', () => {
   it('can include manager-only agent reads without granting renewal permission', async () => {
     render(ui());
     await openSetup();
-    fireEvent.click(screen.getByLabelText('Include agent health'));
+    fireEvent.click(screen.getByLabelText('View CertOps agent health'));
     fireEvent.click(screen.getByRole('button', { name: 'Create setup code' }));
     await screen.findByLabelText('One-time setup code');
     const input = mocks.create.mock.calls[0][1];
@@ -266,7 +267,7 @@ describe('MCP assistant setup', () => {
     fireEvent.change(screen.getByLabelText('Connection expires after'), {
       target: { value: '7' },
     });
-    fireEvent.click(screen.getByLabelText('Allow renewal requests'));
+    fireEvent.click(screen.getByLabelText('Allow certificate renewal requests'));
     fireEvent.click(screen.getByRole('button', { name: 'Create setup code' }));
     await screen.findByLabelText('One-time setup code');
     expect(mocks.create).toHaveBeenCalledWith(
@@ -285,7 +286,7 @@ describe('MCP assistant setup', () => {
     render(ui());
     await openSetup();
     expect(
-      screen.queryByLabelText('Allow renewal requests')
+      screen.queryByLabelText('Allow certificate renewal requests')
     ).not.toBeInTheDocument();
     expect(
       screen.queryByLabelText('Allow MCP renewal requests')
@@ -317,7 +318,7 @@ describe('MCP assistant setup', () => {
       target: { value: 'read-write' },
     });
     fireEvent.click(
-      screen.getByRole('checkbox', { name: /Allow renewal requests/ })
+      screen.getByRole('checkbox', { name: /Allow certificate renewal requests/ })
     );
     fireEvent.change(screen.getByLabelText('Access level'), {
       target: { value: 'read-only' },
@@ -393,18 +394,18 @@ describe('MCP assistant setup', () => {
     await openSetup();
     const access = screen.getByLabelText('Access level');
     expect(access).toHaveValue('read-only');
-    fireEvent.click(screen.getByLabelText('Allow renewal requests'));
+    fireEvent.click(screen.getByLabelText('Allow certificate renewal requests'));
     expect(access).toHaveValue('read-write');
     expect(
-      screen.getByText(/Renewal requests include agent health/)
+      screen.getByText(/Renewal and issuance requests include agent health/)
     ).toBeInTheDocument();
     expect(
       screen.queryByText(/Read-write adds reviewed inventory metadata imports/)
     ).not.toBeInTheDocument();
     fireEvent.change(access, { target: { value: 'read-only' } });
-    expect(screen.getByLabelText('Allow renewal requests')).not.toBeChecked();
+    expect(screen.getByLabelText('Allow certificate renewal requests')).not.toBeChecked();
     expect(
-      screen.queryByText(/Renewal requests include agent health/)
+      screen.queryByText(/Renewal and issuance requests include agent health/)
     ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Create setup code' }));
     await screen.findByLabelText('One-time setup code');
@@ -531,6 +532,31 @@ describe('MCP assistant setup', () => {
       screen.queryByLabelText('One-time setup code')
     ).not.toBeInTheDocument();
     await screen.findByRole('button', { name: 'Connect an MCP assistant' });
+  });
+  it('shows agent health in the connection permission summary', async () => {
+    mocks.load.mockResolvedValue({
+      ...empty(),
+      connections: [
+        {
+          id: 'agent-only',
+          name: 'Agent reader',
+          status: 'active',
+          scopes: ['mcp:agents:read'],
+          expiresAt: null,
+          lastUsedAt: null,
+        },
+      ],
+    });
+    render(ui());
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Manage connections' })
+    );
+    expect(screen.getByText(/Read \+ agent health/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Revoke connection' })
+      ).toBeEnabled()
+    );
   });
   it('shows last use and revocation for an active connection', async () => {
     mocks.load.mockResolvedValue({

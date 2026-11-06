@@ -630,11 +630,7 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                           />
                         </FormControl>
                       ) : null}
-                      <Stack
-                        direction={{ base: 'column', sm: 'row' }}
-                        align='start'
-                        spacing={4}
-                      >
+                      <Stack direction='column' align='stretch' spacing={4}>
                         <FormControl>
                           <FormLabel
                             id='mcp-access-label'
@@ -729,8 +725,7 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                                     setGroupCreate(event.target.checked)
                                   }
                                 >
-                                  Allow reviewed contact group creation and
-                                  listing recipient names
+                                  Create contact groups and list recipient names
                                 </Checkbox>
                                 <Checkbox
                                   isChecked={memberInvite}
@@ -738,7 +733,7 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                                     setMemberInvite(event.target.checked)
                                   }
                                 >
-                                  Allow reviewed viewer invitations by email
+                                  Review and invite viewers by email
                                 </Checkbox>
                                 <Checkbox
                                   isChecked={issuance}
@@ -754,9 +749,18 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                                     setRenewals(event.target.checked)
                                   }
                                 >
-                                  Allow renewal requests
+                                  Allow certificate renewal requests
                                 </Checkbox>
                               </>
+                            ) : null}
+                            {canManage ? (
+                              <Checkbox
+                                isChecked={agentHealth || renewals || issuance}
+                                isDisabled={renewals || issuance}
+                                onChange={e => setAgentHealth(e.target.checked)}
+                              >
+                                View CertOps agent health
+                              </Checkbox>
                             ) : null}
                           </Stack>
                         </FormControl>
@@ -797,20 +801,11 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                           </Checkbox>
                         </Stack>
                       ) : null}
-                      {canManage ? (
-                        <Checkbox
-                          isChecked={agentHealth || renewals || issuance}
-                          isDisabled={renewals || issuance}
-                          onChange={e => setAgentHealth(e.target.checked)}
-                        >
-                          Include agent health
-                        </Checkbox>
-                      ) : null}
-                      {renewals && canManage ? (
+                      {(renewals || issuance) && canManage ? (
                         <Text fontSize='sm' color={muted}>
-                          Renewal requests include agent health and follow
-                          CertOps Job approval. This never grants job approval
-                          or settings access.
+                          Renewal and issuance requests include agent health and
+                          follow CertOps Job approval. This never grants job
+                          approval or settings access.
                         </Text>
                       ) : null}
                       {inventoryImport && canManage ? (

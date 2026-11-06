@@ -278,7 +278,9 @@ export default function McpAuthorizePage({ session }) {
                 </Text>
                 <Text color={muted} fontSize='sm'>
                   Read token inventory, certificate and job status in this
-                  workspace. Private keys and credentials are never shared.
+                  workspace. Inventory results exclude private keys and stored
+                  credentials. Share sensitive URLs only with assistants you
+                  trust.
                 </Text>
               </Box>
               {canRequest ? (
@@ -353,15 +355,14 @@ export default function McpAuthorizePage({ session }) {
                     isDisabled={busy || expired}
                     onChange={event => setGroupCreate(event.target.checked)}
                   >
-                    Allow reviewed contact group creation and listing recipient
-                    names
+                    Create contact groups and list recipient names
                   </Checkbox>
                   <Checkbox
                     isChecked={memberInvite}
                     isDisabled={busy || expired}
                     onChange={event => setMemberInvite(event.target.checked)}
                   >
-                    Allow reviewed viewer invitations by email
+                    Review and invite viewers by email
                   </Checkbox>
                   <Checkbox
                     isChecked={issuance}
@@ -371,18 +372,18 @@ export default function McpAuthorizePage({ session }) {
                     Allow certificate issuance requests
                   </Checkbox>
                   <Checkbox
-                    isChecked={agentHealth || renewals || issuance}
-                    isDisabled={busy || expired || renewals || issuance}
-                    onChange={event => setAgentHealth(event.target.checked)}
-                  >
-                    Include agent health
-                  </Checkbox>
-                  <Checkbox
                     isChecked={renewals}
                     isDisabled={busy || expired}
                     onChange={event => setRenewals(event.target.checked)}
                   >
-                    Allow renewal requests
+                    Allow certificate renewal requests
+                  </Checkbox>
+                  <Checkbox
+                    isChecked={agentHealth || renewals || issuance}
+                    isDisabled={busy || expired || renewals || issuance}
+                    onChange={event => setAgentHealth(event.target.checked)}
+                  >
+                    View CertOps agent health
                   </Checkbox>
                   <Text fontSize='sm' color={muted}>
                     Renewal and issuance permissions include agent health.
