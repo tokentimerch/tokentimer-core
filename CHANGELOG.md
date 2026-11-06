@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Update subfinder's Brotli and zstd dependencies to address denial-of-service vulnerabilities. **Operator action:** rebuild and upgrade API images containing subfinder.
+
 ## [0.19.0] - 2026-11-06
 
 ### Added

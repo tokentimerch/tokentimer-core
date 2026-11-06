@@ -14,11 +14,15 @@ RUN go get \
       golang.org/x/net@v0.62.0 \
       golang.org/x/sys@v0.49.0 \
       github.com/cloudflare/circl@v1.6.3 \
-      github.com/klauspost/compress@v1.18.7 && \
+      github.com/andybalholm/brotli@v1.2.7 \
+      github.com/klauspost/compress@v1.20.2 && \
     go mod tidy && \
     go list -m all > /tmp/subfinder-modules && \
     ! grep -q '^golang.org/x/crypto/openpgp ' /tmp/subfinder-modules && \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /go/bin/subfinder .
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /go/bin/subfinder . && \
+    go version -m /go/bin/subfinder > /tmp/subfinder-build-info && \
+    grep -Eq 'github.com/andybalholm/brotli[[:space:]]+v1[.]2[.]7([[:space:]]|$)' /tmp/subfinder-build-info && \
+    grep -Eq 'github.com/klauspost/compress[[:space:]]+v1[.]20[.]2([[:space:]]|$)' /tmp/subfinder-build-info
 
 FROM node:22.23.4-slim
 
