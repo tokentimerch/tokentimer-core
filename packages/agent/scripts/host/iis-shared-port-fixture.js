@@ -21,6 +21,7 @@
  */
 const assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),crypto=require("node:crypto");
 const {deployIisBinding,checkSniPrecedenceConflict}=require("../../src/windows-iis");
+const {listHttpSysBindings}=require("../../src/windows-discovery");
 const {freePort,expectServed}=require("./iis-fixture");
 const FLAGS=["twoSitesSamePort","distinctHostnameSelectors","primaryCutoverPeerUnchanged","primaryRollbackPeerUnchanged","peerCutoverPrimaryUnchanged","peerRollbackPrimaryUnchanged","sameCertificateReplayVerified","independentAuthenticatedTls","ownedCleanupVerified"];
 function verifyIsolationFacts(facts){assert.equal(facts.siteCount,2);assert.equal(facts.hostnameCount,2);assert.equal(facts.certificateStore,"My");for(const field of FLAGS)assert.equal(facts[field],true,field);return true;}
@@ -41,7 +42,7 @@ async function qualifySamePortSni({powershell,run,workDir}){
  const assertPair=async(primaryCertificate,peerCertificate)=>{assert.equal(bindingState(targets[0]).hash,primaryCertificate.thumbprint);assert.equal(bindingState(targets[1]).hash,peerCertificate.thumbprint);await served(targets[0],primaryCertificate);await served(targets[1],peerCertificate);};
  try{
   fs.mkdirSync(directory);fs.writeFileSync(path.join(directory,"index.htm"),"Owned same-port SNI fixture");
-  for(const target of targets){powershell(`Import-Module WebAdministration;if(Test-Path 'IIS:\\Sites\\${target.site}'){throw 'Refuse existing IIS site'};& netsh.exe http show sslcert hostnameport=${target.sniHost}:${port}|Out-Null;if($LASTEXITCODE -eq 0){throw 'Refuse existing hostname endpoint'}`);assert.equal(await checkSniPrecedenceConflict({binding:target}),undefined,"Refuse existing concrete-IP shadow of the owned fixture");}
+  for(const target of targets){powershell(`Import-Module WebAdministration;if(Test-Path 'IIS:\\Sites\\${target.site}'){throw 'Refuse existing IIS site'}`);const listing=await listHttpSysBindings({});assert.equal(listing.ok,true,"Complete HTTP.sys inventory required");assert.ok(!listing.bindings.some(row=>row.keyedBy==="hostnameport"&&row.ipPort.toLowerCase()===`${target.sniHost}:${port}`.toLowerCase()),"Refuse existing hostname endpoint");assert.equal(await checkSniPrecedenceConflict({binding:target}),undefined,"Refuse existing concrete-IP shadow of the owned fixture");}
   for(let index=0;index<5;index++){
    const subject=`CN=CertOpsSni-${token}-${index}`,receipt=path.join(directory,`certificate-${index}.receipt`),keyReceipt=path.join(directory,`certificate-${index}.key-receipt`);
    assert.equal(powershell(`[bool](Get-ChildItem Cert:\\LocalMachine\\My|Where-Object Subject -eq '${subject}')`),"False");subjects.add(subject);
@@ -65,7 +66,12 @@ async function qualifySamePortSni({powershell,run,workDir}){
  }catch(error){primary=error;}
  finally{
   const clean=action=>{try{action();}catch(error){errors.push(error);}};
-  for(const name of sslOwned)clean(()=>powershell(`& netsh.exe http show sslcert hostnameport=${name}:${port}|Out-Null;if($LASTEXITCODE -eq 0){& netsh.exe http delete sslcert hostnameport=${name}:${port}|Out-Null;if($LASTEXITCODE -ne 0){throw 'Owned SSL cleanup failed'}};& netsh.exe http show sslcert hostnameport=${name}:${port}|Out-Null;if($LASTEXITCODE -eq 0){throw 'Owned SSL selector remains'}`));
+  for(const name of sslOwned)try{
+   const selector=`${name}:${port}`.toLowerCase();
+   const read=async()=>{const listing=await listHttpSysBindings({});assert.equal(listing.ok,true,"Complete HTTP.sys inventory required for cleanup");const matches=listing.bindings.filter(row=>row.keyedBy==="hostnameport"&&row.ipPort.toLowerCase()===selector);assert.ok(matches.length<=1,"Ambiguous hostname endpoint");return matches[0];};
+   const existing=await read();if(existing){assert.ok(certificates.some(c=>c.thumbprint===existing.thumbprint),"Preserve foreign SSL endpoint");run("netsh.exe",["http","delete","sslcert",`hostnameport=${name}:${port}`]);}
+   assert.equal(await read(),undefined,"Owned SSL selector remains");
+  }catch(error){errors.push(error);}
   for(const site of siteOwned)clean(()=>powershell(`Import-Module WebAdministration;if(Test-Path 'IIS:\\Sites\\${site}'){Remove-Website -Name '${site}'};if(Test-Path 'IIS:\\Sites\\${site}'){throw 'Owned site remains'}`));
   // Receipts recover names even if certificate creation/JSON parsing failed.
   if(fs.existsSync(directory))for(const file of fs.readdirSync(directory).filter(name=>/^certificate-\d+\.key-receipt$/.test(name)))clean(()=>{const name=fs.readFileSync(path.join(directory,file),"utf8").trim();assert.match(name,/^[A-Za-z0-9_{}.-]{1,256}$/);keyNames.add(name);});

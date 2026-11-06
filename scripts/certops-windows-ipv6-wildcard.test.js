@@ -97,7 +97,7 @@ test("wildcard parent admission follows completed concrete cleanup and precedes 
       "utf8",
     ),
     first = source.indexOf("windows-iis-ipv6-native-shadow-rollback"),
-    second = source.indexOf("windows-iis-ipv6-wildcard-shadow-rollback"),
+    second = source.indexOf("windows-iis-ipv6-wildcard-sni-precedence"),
     destructive = source.indexOf("windows-iis-rollback-failure");
   assert.ok(first >= 0 && second > first && destructive > second);
   assert.ok(source.includes("await fixture.qualifyIpv6Wildcard("));
