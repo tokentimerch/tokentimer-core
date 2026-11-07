@@ -1,5 +1,8 @@
 "use strict";
 
+const { bindAuthenticatedAgent } = require("../../apps/api/services/certops/agentCredentialFence");
+const FIXTURE_CREDENTIAL_HASH = "a".repeat(64);
+
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
@@ -317,6 +320,8 @@ function createMockPool(handler) {
     query: async (text, params) => {
       if (String(typeof text === "string" ? text : text?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
       const sql = typeof text === "string" ? text : text?.text || "";
+      if (sql.includes("to_regclass('certops_agent_credential_rotations')")) return { rows: [{ rotation_table: null }] };
+      if (sql.includes("SELECT credential_hash, status FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH, status: "active" }] };
       state.queries.push({ text: sql, params });
       const trimmed = sql.trim().toUpperCase();
       if (
@@ -366,13 +371,13 @@ function createMockPool(handler) {
 }
 
 function agentFixture(overrides = {}) {
-  return {
+  return bindAuthenticatedAgent({
     id: "agent-row-1",
     workspaceId: WORKSPACE_A,
     agentId: "agent-01",
     status: "active",
     ...overrides,
-  };
+  }, FIXTURE_CREDENTIAL_HASH);
 }
 
 function lockedJobRow(overrides = {}) {

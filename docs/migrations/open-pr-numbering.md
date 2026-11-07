@@ -36,6 +36,10 @@ are reservations, not no-op migrations. They do not install another feature.
 | 104 | operator_inventory | MCP inventory metadata import (#406) |
 | 105 | operator_oauth_retention | MCP token retention (#406) |
 | 106 | operator_issuance | MCP certificate issuance (#406) |
+| 107 | certops_issuance_job_identity | Main; unchanged |
+| 108 | certops_issuance_identity_transfer | Main; unchanged |
+| 109 | agent_credential_rotations | Credential rotation preparation and receipt |
+| 110 | agent_credential_rotation_ack | Credential rotation acknowledgement |
 
 Use the normal runner with these canonical identities. Independent feature tails
 may leave unapplied reservations absent; never install no-op SQL to fill them.

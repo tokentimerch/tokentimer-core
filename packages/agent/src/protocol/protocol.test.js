@@ -13,6 +13,7 @@ const {
   startPollLoop,
   createCaAwareFetch,
   createProtocolClient,
+  createCredentialRotationCandidate,
   parseServerUrl,
   readClaimLogStream,
 } = require("./index.js");
@@ -1564,4 +1565,114 @@ test("heartbeat: command profile removal and replacement remain explicit", async
   assert.deepEqual(calls[2].parsedBody.body.declaredCommandProfileNames, []);
   await assert.rejects(client.heartbeat({ agentVersion: "0.1.0", declaredCommandProfileNames: ["unsafe command"] }));
   assert.equal(calls.length, 3);
+});
+
+const ROTATION_OPERATION = "0123456789abcdef0123456789abcdef";
+const OLD_ROTATION_CREDENTIAL = `ttagent_${"1".repeat(16)}_${"2".repeat(64)}`;
+const NEW_ROTATION_CREDENTIAL = `ttagent_${"3".repeat(16)}_${"4".repeat(64)}`;
+const NEW_ROTATION_HASH = "a".repeat(64);
+
+test("rotation identity uses the enrolled bearer and rejects ambiguous replies", async () => {
+  const identity = { id:"11111111-1111-4111-8111-111111111111", agentId:"agent-a", workspaceId:"22222222-2222-4222-8222-222222222222" };
+  const calls = stubFetch([{status:200,json:identity},{status:200,json:{...identity,extra:true}}]);
+  const client = createProtocolClient({ serverUrl:"https://example.test", agentId:"agent-a", protocolVersion:"1.0.0", getCredential:()=>OLD_ROTATION_CREDENTIAL });
+  assert.deepEqual(await client.readCredentialRotationIdentity(),identity);
+  assert.equal(calls[0].init.method,"POST");
+  assert.equal(calls[0].init.redirect,"error");
+  assert.equal(calls[0].init.headers.authorization,`Bearer ${OLD_ROTATION_CREDENTIAL}`);
+  await assert.rejects(client.readCredentialRotationIdentity(),{code:AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE});
+});
+
+test("rotation identity rejects malformed agent and workspace identifiers", async () => {
+  for (const identity of [
+    {id:"bad",agentId:"agent-a",workspaceId:"22222222-2222-4222-8222-222222222222"},
+    {id:"11111111-1111-4111-8111-111111111111",agentId:"bad/agent",workspaceId:"22222222-2222-4222-8222-222222222222"},
+    {id:"11111111-1111-4111-8111-111111111111",agentId:"agent-a",workspaceId:"invalid"},
+  ]) {
+    stubFetch([{status:200,json:identity}]);
+    const client=createProtocolClient({serverUrl:"https://example.test",agentId:"agent-a",protocolVersion:"1.0.0",getCredential:()=>OLD_ROTATION_CREDENTIAL});
+    await assert.rejects(client.readCredentialRotationIdentity(),{code:AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE});
+  }
+});
+
+test("rotation transport prepares with old bearer and confirms with candidate bearer", async () => {
+  const calls = stubFetch([{ status: 200, json: { state: "pending" } }, { status: 200, json: { state: "committed" } }]);
+  const client = createProtocolClient({ serverUrl: "https://example.test", agentId: "agent-1", protocolVersion: "1.0.0", getCredential: () => OLD_ROTATION_CREDENTIAL });
+  assert.deepEqual(await client.prepareCredentialRotation({ operationId: ROTATION_OPERATION, candidatePrefix: `ttagent_${"3".repeat(16)}`, candidateHash: NEW_ROTATION_HASH }), { state: "pending" });
+  assert.deepEqual(await client.confirmCredentialRotation({ operationId: ROTATION_OPERATION, candidateCredential: NEW_ROTATION_CREDENTIAL }), { state: "committed" });
+  assert.equal(calls[0].init.headers.authorization, `Bearer ${OLD_ROTATION_CREDENTIAL}`);
+  assert.equal(calls[1].init.headers.authorization, `Bearer ${NEW_ROTATION_CREDENTIAL}`);
+  assert.deepEqual(calls[0].parsedBody, { operationId: ROTATION_OPERATION, candidatePrefix: `ttagent_${"3".repeat(16)}`, candidateHash: NEW_ROTATION_HASH });
+  assert.deepEqual(calls[1].parsedBody, { operationId: ROTATION_OPERATION });
+  assert.equal(JSON.stringify(calls.map(call => call.parsedBody)).includes(NEW_ROTATION_CREDENTIAL), false);
+});
+
+test("rotation confirmation can retry the same operation after a lost response without leaking secrets", async () => {
+  const calls = stubFetch([{ throws: new Error(`secret ${NEW_ROTATION_CREDENTIAL}`) }, { status: 200, json: { state: "committed" } }]);
+  const client = createProtocolClient({ serverUrl: "https://example.test", agentId: "agent-1", protocolVersion: "1.0.0" });
+  const params = { operationId: ROTATION_OPERATION, candidateCredential: NEW_ROTATION_CREDENTIAL };
+  await assert.rejects(client.confirmCredentialRotation(params), error => {
+    assert.equal(error.code, AGENT_PROTOCOL_ERROR_CODES.NETWORK_ERROR);
+    assert.equal(JSON.stringify(error).includes(NEW_ROTATION_CREDENTIAL), false);
+    assert.equal(String(error).includes(NEW_ROTATION_CREDENTIAL), false);
+    assert.equal(error.cause, undefined);
+    return true;
+  });
+  assert.deepEqual(await client.confirmCredentialRotation(params), { state: "committed" });
+  assert.deepEqual(calls[0].parsedBody, calls[1].parsedBody);
+  assert.equal(calls[0].init.headers.authorization, calls[1].init.headers.authorization);
+});
+
+test("rotation transport refuses malformed input and ambiguous success responses", async () => {
+  const calls = stubFetch([{ status: 200, json: { state: "committed", extra: "unexpected" } }]);
+  const client = createProtocolClient({ serverUrl: "https://example.test", agentId: "agent-1", protocolVersion: "1.0.0", getCredential: () => OLD_ROTATION_CREDENTIAL });
+  await assert.rejects(client.prepareCredentialRotation({ operationId: ROTATION_OPERATION.toUpperCase(), candidatePrefix: `ttagent_${"3".repeat(16)}`, candidateHash: NEW_ROTATION_HASH }), { code: AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE });
+  await assert.rejects(client.confirmCredentialRotation({ operationId: ROTATION_OPERATION, candidateCredential: OLD_ROTATION_CREDENTIAL + "x" }), { code: AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE });
+  assert.equal(calls.length, 0);
+  await assert.rejects(client.confirmCredentialRotation({ operationId: ROTATION_OPERATION, candidateCredential: NEW_ROTATION_CREDENTIAL }), { code: AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE });
+});
+
+test("rotation candidate uses bounded random identifiers and hashes the full credential", () => {
+  const candidate = createCredentialRotationCandidate();
+  assert.match(candidate.operationId, /^[a-f0-9]{32}$/);
+  assert.match(candidate.candidatePrefix, /^ttagent_[a-f0-9]{16}$/);
+  assert.match(candidate.candidateCredential, /^ttagent_[a-f0-9]{16}_[a-f0-9]{64}$/);
+  assert.equal(candidate.candidateCredential.startsWith(`${candidate.candidatePrefix}_`), true);
+  assert.equal(candidate.candidateHash, require("node:crypto").createHash("sha256").update(candidate.candidateCredential).digest("hex"));
+  assert.equal(JSON.stringify(candidate).includes(candidate.candidateCredential), false);
+  assert.equal(require("node:util").inspect(candidate).includes(candidate.candidateCredential), false);
+});
+
+test("rotation transport never exposes server response contents in errors or logs", async () => {
+  const calls = stubFetch([{ status: 401, json: { error: NEW_ROTATION_CREDENTIAL } }]);
+  const client = createProtocolClient({ serverUrl: "https://example.test", agentId: "agent-1", protocolVersion: "1.0.0" });
+  const seen = [];
+  const originalError = console.error, originalWarn = console.warn, originalLog = console.log;
+  console.error = (...args) => seen.push(args); console.warn = (...args) => seen.push(args); console.log = (...args) => seen.push(args);
+  try {
+    await assert.rejects(client.confirmCredentialRotation({ operationId: ROTATION_OPERATION, candidateCredential: NEW_ROTATION_CREDENTIAL }), error => {
+      assert.equal(error.status, 401);
+      assert.equal(JSON.stringify(error).includes(NEW_ROTATION_CREDENTIAL), false);
+      assert.equal(String(error).includes(NEW_ROTATION_CREDENTIAL), false);
+      return true;
+    });
+    assert.equal(JSON.stringify(seen).includes(NEW_ROTATION_CREDENTIAL), false);
+    assert.equal(JSON.stringify(calls[0].parsedBody).includes(NEW_ROTATION_CREDENTIAL), false);
+  } finally { console.error = originalError; console.warn = originalWarn; console.log = originalLog; }
+});
+
+test("rotation acknowledgement retries with the candidate bearer without exposing errors", async () => {
+  const calls = stubFetch([{ throws: new Error(`lost ${NEW_ROTATION_CREDENTIAL}`) }, { status: 200, json: { state: "acknowledged" } }]);
+  const client = createProtocolClient({ serverUrl: "https://example.test", agentId: "agent-1", protocolVersion: "1.0.0" });
+  const params = { operationId: ROTATION_OPERATION, candidateCredential: NEW_ROTATION_CREDENTIAL };
+  await assert.rejects(client.acknowledgeCredentialRotation(params), error => {
+    assert.equal(error.code, AGENT_PROTOCOL_ERROR_CODES.NETWORK_ERROR);
+    assert.equal(String(error).includes(NEW_ROTATION_CREDENTIAL), false);
+    assert.equal(error.cause, undefined);
+    return true;
+  });
+  assert.deepEqual(await client.acknowledgeCredentialRotation(params), { state: "acknowledged" });
+  assert.deepEqual(calls[0].parsedBody, { operationId: ROTATION_OPERATION });
+  assert.equal(calls[0].init.headers.authorization, `Bearer ${NEW_ROTATION_CREDENTIAL}`);
+  assert.equal(calls[0].init.headers.authorization, calls[1].init.headers.authorization);
 });

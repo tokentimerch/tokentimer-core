@@ -3,3 +3,7 @@ module github.com/tokentimerch/tokentimer-core/packages/agent/windows-service-ho
 go 1.25.0
 
 require golang.org/x/sys v0.47.0
+
+require tokentimer-verified-extraction v0.0.0
+
+replace tokentimer-verified-extraction => ../reference/verified-extraction

@@ -1,5 +1,8 @@
 "use strict";
 
+const { bindAuthenticatedAgent } = require("../../apps/api/services/certops/agentCredentialFence");
+const FIXTURE_CREDENTIAL_HASH = "a".repeat(64);
+
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -701,7 +704,7 @@ describe("enrollment rows", () => {
     assert.equal(request.payload.enrollment, undefined, "stored payload must not carry enrollment");
 
     const stored = db.enrollments.get(ENROLLMENT);
-    const agent = {
+    const agent = bindAuthenticatedAgent({
       id: stored.agent_id,
       workspaceId: WORKSPACE,
       agentId: "agent-01",
@@ -712,7 +715,7 @@ describe("enrollment rows", () => {
       pinnedSigningKeyId: null,
       lastSeenAt: null,
       retiredAt: null,
-    };
+    }, FIXTURE_CREDENTIAL_HASH);
     const claimRow = {
       id: JOB_ID,
       workspace_id: WORKSPACE,
@@ -745,6 +748,8 @@ describe("enrollment rows", () => {
           assert.deepEqual(params, [WORKSPACE, ENROLLMENT, stored.certificate_id, stored.agent_id, JOB_ID]);
           return { rows: [{ state: stored.state }] };
         }
+        if (sql.includes("to_regclass('certops_agent_credential_rotations')")) return { rows: [{ rotation_table: null }] };
+      if (sql.includes("SELECT credential_hash, status FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH, status: "active" }] };
         if (sql.includes("SELECT last_sequence")) return { rows: [{ last_sequence: 0 }] };
         if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
         if (sql.includes("SELECT declared_target_selectors")) {

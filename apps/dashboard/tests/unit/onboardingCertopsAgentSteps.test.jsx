@@ -82,6 +82,8 @@ describe('package download and verification', () => {
 
   it('verifies the SHA-256 before extracting (Windows)', () => {
     const cmd = buildPackageCommand('windows');
+    expect(cmd).toContain('tokentimer-agent-$Version.tgz');
+    expect(cmd).not.toContain('-windows-$Architecture.tgz');
     expect(cmd).toContain('Get-FileHash $Archive -Algorithm SHA256');
     expect(cmd).toContain("throw 'Agent archive checksum mismatch'");
     expect(cmd.indexOf('Get-FileHash')).toBeLessThan(cmd.indexOf('tar -xzf'));

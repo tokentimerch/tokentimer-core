@@ -2274,10 +2274,13 @@ router.post(
         : null;
 
       const outcome = await withCertOpsTransaction(async (client) => {
+        // Claims and credential changes lock the agent before any job row.
+        // Hold that lock through the lease check and retirement transaction.
         const existing = await getAgentById({
           client,
           workspaceId: req.workspace.id,
           agentId,
+          forUpdate: true,
         });
         if (!existing) return { notFound: true };
 

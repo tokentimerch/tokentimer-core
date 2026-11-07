@@ -32,6 +32,10 @@ const WORKSPACE_A = "11111111-1111-4111-8111-111111111111";
 
 const AGENT_PATHS = [
   "/api/v1/certops/agent/register",
+  "/api/v1/certops/agent/credential-rotation/prepare",
+  "/api/v1/certops/agent/credential-rotation/identity",
+  "/api/v1/certops/agent/credential-rotation/confirm",
+  "/api/v1/certops/agent/credential-rotation/acknowledge",
   "/api/v1/certops/agent/heartbeat",
   "/api/v1/certops/agent/jobs/claim",
   "/api/v1/certops/agent/jobs/job-1/lease",
@@ -767,6 +771,16 @@ describe("Register handler", () => {
 });
 
 describe("handleAgentRouteError", () => {
+  it("returns a generic unauthorized response for a stale credential", () => {
+    const res = createResponse();
+    const error = new Error("sensitive internal detail");
+    error.code = "CERTOPS_AGENT_CREDENTIAL_STALE";
+    _test.handleAgentRouteError(res, error);
+    assert.equal(res.statusCode, 401);
+    assert.equal(res.body.code, "CERTOPS_AGENT_UNAUTHORIZED");
+    assert.equal(res.body.error, "CertOps agent authentication required");
+    assert.equal(JSON.stringify(res.body).includes("sensitive internal detail"), false);
+  });
   it("maps an uncoded Error to a generic 500 without leaking the message", () => {
     const res = createResponse();
     const error = new Error("internal sql detail should stay off the wire");

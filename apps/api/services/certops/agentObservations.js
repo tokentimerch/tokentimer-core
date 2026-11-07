@@ -19,6 +19,7 @@ const { isIP } = require("node:net");
  */
 
 const { pool } = require("../../db/database");
+const { lockCurrentAgentCredential } = require("./agentCredentialFence");
 const { assertNoPrivateKeyMaterial } = require("../../utils/secretMaterial");
 const {
   parsePublicCertificateMaterial,
@@ -996,6 +997,7 @@ async function persistAgentDiscoveryEvidenceBatch({
   const client = await dbPool.connect();
   try {
     await client.query("BEGIN");
+    await lockCurrentAgentCredential(client, agent);
     await enforceSequence({
       client,
       agentRowId: agent.id,
@@ -1057,6 +1059,7 @@ async function persistAgentJobEvidenceBatch({
   const client = await dbPool.connect();
   try {
     await client.query("BEGIN");
+    await lockCurrentAgentCredential(client, agent);
     await enforceSequence({
       client,
       agentRowId: agent.id,
