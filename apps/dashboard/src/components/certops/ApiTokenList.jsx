@@ -17,7 +17,10 @@ import {
   Text,
 } from '@chakra-ui/react';
 import DashboardPagination from '../DashboardPagination.jsx';
-import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
+import {
+  DashboardErrorAlert,
+  DashboardState,
+} from '../DashboardPrimitives.jsx';
 import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
 import {
   CERTOPS_PAGE_SIZE_OPTIONS,
@@ -135,18 +138,15 @@ export default function ApiTokenList() {
               </Button>
             </>
           ) : (
-            <>
-              <Text fontSize='sm' fontWeight='semibold' color={titleColor}>
-                No machine tokens yet.
-              </Text>
-              {canManage ? (
-                <Text fontSize='sm' color={muted} mt={1}>
-                  Create one to let an external executor report certificate
-                  lifecycle events, or a cert-manager controller drive
-                  provisioning.
-                </Text>
-              ) : null}
-            </>
+            <DashboardState
+              py={0}
+              title='No machine tokens yet.'
+              description={
+                canManage
+                  ? 'Create a token for an external executor or cert-manager controller.'
+                  : 'A workspace manager can create a machine token.'
+              }
+            />
           )}
         </Box>
       ) : null}

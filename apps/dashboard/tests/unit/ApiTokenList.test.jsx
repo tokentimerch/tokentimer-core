@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
+import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
 import ApiTokenList from '../../src/components/certops/ApiTokenList.jsx';
 
@@ -42,7 +43,9 @@ vi.mock('../../src/components/certops/certopsTokensApi.js', async () => {
 function renderWithProviders(ui, { initialEntries = ['/'] } = {}) {
   return render(
     <ChakraProvider>
-      <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>
+      <DashboardThemeProvider>
+        <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>
+      </DashboardThemeProvider>
     </ChakraProvider>
   );
 }
@@ -91,7 +94,9 @@ describe('ApiTokenList', () => {
     renderWithProviders(<ApiTokenList />);
 
     expect(screen.getByText('Loading API tokens...')).toBeInTheDocument();
-    expect(screen.queryByText('No machine tokens yet.')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('No machine tokens yet.')
+    ).not.toBeInTheDocument();
   });
 
   it('shows an empty state with manager-only helper copy', () => {
@@ -103,7 +108,7 @@ describe('ApiTokenList', () => {
     expect(screen.getByText('No machine tokens yet.')).toBeInTheDocument();
     expect(
       screen.getByText(
-        'Create one to let an external executor report certificate lifecycle events, or a cert-manager controller drive provisioning.'
+        'Create a token for an external executor or cert-manager controller.'
       )
     ).toBeInTheDocument();
   });
@@ -123,7 +128,9 @@ describe('ApiTokenList', () => {
   it('shows an error alert distinct from the empty/loading states', () => {
     useCertOpsCanManageMock.mockReturnValue(true);
     useCertOpsApiTokensMock.mockReturnValue(
-      tokensState({ error: 'Could not load certificate operations API tokens.' })
+      tokensState({
+        error: 'Could not load certificate operations API tokens.',
+      })
     );
 
     renderWithProviders(<ApiTokenList />);
@@ -219,7 +226,9 @@ describe('ApiTokenList', () => {
         ],
       })
     );
-    revokeApiTokenMock.mockResolvedValue({ token: { id: 'tok-1', status: 'revoked' } });
+    revokeApiTokenMock.mockResolvedValue({
+      token: { id: 'tok-1', status: 'revoked' },
+    });
 
     renderWithProviders(<ApiTokenList />);
 
@@ -228,7 +237,9 @@ describe('ApiTokenList', () => {
 
     const dialog = screen.getByRole('alertdialog');
     fireEvent.click(
-      screen.getAllByRole('button', { name: 'Revoke' }).find(btn => dialog.contains(btn))
+      screen
+        .getAllByRole('button', { name: 'Revoke' })
+        .find(btn => dialog.contains(btn))
     );
 
     await waitFor(() => expect(revokeApiTokenMock).toHaveBeenCalledTimes(1));

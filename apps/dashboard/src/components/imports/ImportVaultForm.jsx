@@ -22,6 +22,10 @@ import {
   Spinner,
   Radio,
   RadioGroup,
+  Alert,
+  AlertIcon,
+  AlertTitle,
+  AlertDescription,
 } from '@chakra-ui/react';
 import { FiEye, FiEyeOff, FiHelpCircle, FiRefreshCw } from 'react-icons/fi';
 import { vaultAPI, integrationAPI } from '../../utils/apiClient';
@@ -705,16 +709,18 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
               </Text>
             ) : null}
             {cleanupObsolete ? (
-              <Text fontSize='xs' color='red.400' pl={6}>
-                Deletes previously imported items of the asset kinds scanned
-                above (KV, PKI, or both) that no longer appear anywhere in this
-                scan's results, regardless of which items you select for import
-                below. Mounts you did not scan, or that this scan couldn't fully
-                complete, are never affected -- and neither is a category
-                (certificates / secrets &amp; keys) you left unchecked above:
-                cleanup only ever considers the categories this specific scan
-                was run with. This cannot be undone.
-              </Text>
+              <Alert status='warning' borderRadius='md' alignItems='start'>
+                <AlertIcon mt='1' />
+                <Box>
+                  <AlertTitle fontSize='sm'>Items will be deleted</AlertTitle>
+                  <AlertDescription fontSize='sm'>
+                    Previously imported items missing from this scan will be
+                    deleted, even if they are not selected below. This cannot be
+                    undone. Only fully scanned mounts and selected asset kinds
+                    are affected.
+                  </AlertDescription>
+                </Box>
+              </Alert>
             ) : null}
           </VStack>
         </Box>

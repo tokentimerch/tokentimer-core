@@ -1318,9 +1318,19 @@ export default function CertOpsAdcs({
                 </Checkbox>
               ) : null}
               {visibleIssuers.length === 0 ? (
-                <Text fontSize='sm' color={muted}>
-                  No issuers yet.
-                </Text>
+                <DashboardState
+                  py={4}
+                  title={
+                    rejectedIssuers.length
+                      ? 'No issuers in view'
+                      : 'No issuers yet.'
+                  }
+                  description={
+                    rejectedIssuers.length
+                      ? 'Unsafe issuers are hidden. Use the control above to review them.'
+                      : 'Create an issuer to connect your private CA and verify its configuration.'
+                  }
+                />
               ) : (
                 <VStack align='stretch' spacing={1}>
                   {visibleIssuers.map(issuer => (

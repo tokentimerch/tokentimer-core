@@ -548,6 +548,8 @@ describe('observedDoneStep', () => {
   });
 
   it('leaves forms and acknowledgements to move on at once', () => {
+    expect(finishesByItself('file_import', {})).toBe(true);
+    expect(finishesByItself('integration', {})).toBe(true);
     expect(finishesByItself('monitor', { goal: 'monitor_https' })).toBe(false);
     expect(finishesByItself('certops_config', {})).toBe(false);
     expect(finishesByItself('recipients', { goal: 'import_file' })).toBe(false);
