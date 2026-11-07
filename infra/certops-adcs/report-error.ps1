@@ -3,6 +3,7 @@ function Get-CertOpsReportFailureCode([System.Management.Automation.ErrorRecord]
   $status=$ErrorRecord.Exception.Data['CertOpsArmHttpStatus']
   if($status -is [int] -and $status -ge 400 -and $status -le 599){return "arm-http-$status"}
   switch -Exact ($ErrorRecord.Exception.Message) {
+    'Could not obtain fresh lab ARM access token' { return 'arm-token-unavailable' }
     'Could not retrieve sanitized guest execution evidence' { return 'guest-execution' }
     'Guest report length receipt absent' { return 'length-receipt-missing' }
     'Guest report exceeds bounded evidence size' { return 'length-out-of-bounds' }
