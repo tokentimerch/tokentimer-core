@@ -37,6 +37,22 @@ test("browser mutation failures expose only bounded operation and status", () =>
   assert.throws(() => helper.assertMutationStatus(500, 201, "/private/profiles"), error => error.code === "CERTOPS_BROWSER_CREATE_PROFILE_HTTP_500");
 });
 
+test("browser confirms only the independently rechecked owned management period", async () => {
+  const selectedSource = { id: crypto.randomUUID(), periodId: crypto.randomUUID() };
+  const response = (status, body) => ({ status: () => status, json: async () => body });
+  const conflict = response(409, { code: "CERTOPS_MANAGEMENT_ALREADY_OPEN", currentPeriod: { periodId: selectedSource.periodId } });
+  let confirmed = 0;
+  const invoke = (reply, current) => helper.confirmOwnedAttachmentConflict({ response: reply, selectedSource, reloadSource: async () => current, confirm: async () => { confirmed++; } });
+  await invoke(conflict, selectedSource);
+  assert.equal(confirmed, 1);
+  for (const current of [null, { ...selectedSource, id: crypto.randomUUID() }, { ...selectedSource, periodId: crypto.randomUUID() }]) {
+    await assert.rejects(invoke(conflict, current));
+  }
+  await assert.rejects(invoke(response(409, { code: "CERTOPS_MANAGEMENT_ALREADY_OPEN", currentPeriod: { periodId: crypto.randomUUID() } }), selectedSource));
+  await assert.rejects(invoke(response(409, { code: "CERTOPS_MANAGED_CERT_LIMIT" }), selectedSource));
+  assert.equal(confirmed, 1);
+});
+
 test("native browser selects a current owned IIS source without another open enrollment", () => {
   const original = crypto.randomUUID(), observed = crypto.randomUUID();
   const identityId = crypto.randomUUID(), periodId = crypto.randomUUID();

@@ -26,7 +26,7 @@ const iis = require("../../src/windows-iis"),
   platform = require("../../src/platform");
 const SCOPE = "native-ipv6-sni-shadow-rollback-with-ipv4-sibling";
 const WILDCARD_SCOPE =
-  "native-ipv6-wildcard-sni-shadow-rollback-with-ipv4-sibling";
+  "native-ipv6-wildcard-sni-precedence-with-ipv4-sibling";
 function variantContract(variant) {
   assert.ok(
     variant === "concrete" ||
@@ -37,7 +37,7 @@ function variantContract(variant) {
   if (variant === "ipv4-wildcard")
     return {
       address: "0.0.0.0",
-      scope: "native-ipv4-wildcard-sni-shadow-rollback-with-ipv4-sibling",
+      scope: "native-ipv4-wildcard-sni-precedence-with-ipv4-sibling",
     };
   return variant === "concrete"
     ? { address: "[::1]", scope: SCOPE }
@@ -68,11 +68,8 @@ const REQUIRED_SOURCES = Object.freeze([
 ]);
 const guardName = ".preserve-ipv6-shadow.json";
 function flagsForVariant(variant) {
-  return variant === "ipv4-wildcard"
-    ? FLAGS.map((k) =>
-        k.replaceAll("Ipv6", "Ipv4").replace("trustedIpv6", "trustedIpv4"),
-      )
-    : FLAGS;
+  if (variant === "concrete") return FLAGS;
+  return [variant === "ipv4-wildcard" ? "actualIpv4LoopbackAvailable" : "actualIpv6LoopbackAvailable", "borrowedCertificatesVerified", "actualWildcardBindingObserved", "sniPrecedenceObserved", "actualProductionCutover", "nativeHostnameEndpointUpdated", "trustedSniAfterCutover", "trustedSniAfterWildcardRemoval", "ipv4SiblingUnchanged", "ownedSitesAndEndpointsRemoved"];
 }
 function verifyVariantProof(p, variant) {
   const flags = flagsForVariant(variant);
@@ -468,6 +465,28 @@ async function qualifyIpv6ShadowVariant(
     ]);
     assertOwnedEndpoint(await endpoint(shadowSelector), shadowPolicy);
     const warning = await iis.checkSniPrecedenceConflict({ binding });
+    if (variant !== "concrete") {
+      assert.equal(warning, undefined, "Wildcard must not report an exact-SNI shadow");
+      await expectTls(targetHost, port, baseline);
+      await expectTls("127.0.0.1", siblingPortValue, baseline);
+      const result = await iis.deployIisBinding({ binding, certificatePem: pem(incoming), verifyTimeoutMs: 3000 });
+      assert.equal(result.ok, true);
+      assert.equal(result.outgoingThumbprint, baseline.thumbprint);
+      const updated = await endpoint(hostSelector);
+      assert.equal(updated?.thumbprint, incoming.thumbprint);
+      assert.equal(String(updated.storeName).toLowerCase(), "my");
+      assert.match(updated.appId, /^\{?[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}\}?$/);
+      baselinePolicy.appIds.push(updated.appId);
+      assertOwnedEndpoint(updated, { ...baselinePolicy, thumbprints: [incoming.thumbprint] });
+      assertOwnedEndpoint(await endpoint(v4Selector), v4Policy);
+      await expectTls(targetHost, port, incoming);
+      await expectTls("127.0.0.1", siblingPortValue, baseline);
+      assertOwnedEndpoint(await endpoint(shadowSelector), shadowPolicy);
+      run("netsh.exe", ["http", "delete", "sslcert", shadowSelector]);
+      assert.equal(await endpoint(shadowSelector), undefined);
+      await expectTls(targetHost, port, incoming);
+      await expectTls("127.0.0.1", siblingPortValue, baseline);
+    } else {
     assert.ok(warning?.includes(shadowSelector));
     assert.ok(warning.includes(hostSelector));
     await expectTls(targetHost, port, shadow);
@@ -501,6 +520,7 @@ async function qualifyIpv6ShadowVariant(
     assert.equal(await endpoint(shadowSelector), undefined);
     await expectTls(targetHost, port, baseline);
     await expectTls("127.0.0.1", siblingPortValue, baseline);
+    }
     Object.assign(
       proof,
       Object.fromEntries(
