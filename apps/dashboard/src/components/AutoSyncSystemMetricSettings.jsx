@@ -137,6 +137,11 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
             </FormControl>
             {policy.locked ? <Badge>Set by environment</Badge> : null}
           </HStack>
+          <Text fontSize='xs' color={muted}>
+            Applies the selected metrics to every integration and locks its
+            metric controls. Turn off and save to restore each integration’s
+            saved choices. Environment restrictions take priority.
+          </Text>
           <Checkbox
             isChecked={policy.enabled === true}
             isDisabled={saving || !policy.override_metrics || policy.locked}
@@ -226,6 +231,11 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
               <Badge>Set by environment</Badge>
             ) : null}
           </HStack>
+          <Text fontSize='xs' color={muted}>
+            Applies this group to every integration and locks its group control.
+            Turn off and save to restore each integration’s saved group.
+            Environment settings take priority.
+          </Text>
           <FormControl>
             <FormLabel fontSize='sm'>Monitoring group label</FormLabel>
             <Input

@@ -48,7 +48,10 @@ import {
 import CopyableId from '../CopyableId.jsx';
 import AgentShellConsole from './AgentShellConsole.jsx';
 import { listAgentFleetLog, listAgentJobLog } from './certopsJobsApi';
-import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
+import {
+  DashboardErrorAlert,
+  DashboardState,
+} from '../DashboardPrimitives.jsx';
 import DashboardPagination from '../DashboardPagination.jsx';
 import {
   CERTOPS_DEFAULT_PAGE_SIZE,
@@ -1288,16 +1291,15 @@ export default function AgentFleetPanel({
               </Button>
             </>
           ) : (
-            <>
-              <Text fontSize='sm' fontWeight='semibold' color={titleColor}>
-                No agents yet.
-              </Text>
-              <Text fontSize='sm' color={muted} mt={1}>
-                {canManage
+            <DashboardState
+              py={0}
+              title='No agents yet.'
+              description={
+                canManage
                   ? 'Use the Deploy an agent button on this page to install your first agent.'
-                  : 'A workspace manager can deploy agents from this page.'}
-              </Text>
-            </>
+                  : 'A workspace manager can deploy agents from this page.'
+              }
+            />
           )}
         </Box>
       ) : null}

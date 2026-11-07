@@ -15,6 +15,7 @@ import {
   AlertIcon,
   AlertDescription,
   useColorModeValue,
+  VisuallyHidden,
 } from '@chakra-ui/react';
 import SEO from '../components/SEO.jsx';
 import apiClient from '../utils/apiClient.js';
@@ -216,6 +217,40 @@ export default function Register() {
                     setForm(prev => ({ ...prev, password: e.target.value }))
                   }
                 />
+                <VStack
+                  as='ul'
+                  align='stretch'
+                  spacing={1}
+                  mt={2}
+                  fontSize='sm'
+                  listStyleType='none'
+                >
+                  {[
+                    ['At least 12 characters', form.password.length >= 12],
+                    [
+                      'Uppercase and lowercase letters',
+                      /[a-z]/.test(form.password) &&
+                        /[A-Z]/.test(form.password),
+                    ],
+                    ['A number', /[0-9]/.test(form.password)],
+                    [
+                      'A special character',
+                      /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(form.password),
+                    ],
+                  ].map(([label, met]) => (
+                    <Text
+                      as='li'
+                      key={label}
+                      color={met ? 'green.400' : undefined}
+                    >
+                      <span aria-hidden='true'>{met ? '✓' : '○'}</span>{' '}
+                      <VisuallyHidden>
+                        {met ? 'Met: ' : 'Not yet met: '}
+                      </VisuallyHidden>
+                      {label}
+                    </Text>
+                  ))}
+                </VStack>
                 <FormErrorMessage>{errors.password}</FormErrorMessage>
               </FormControl>
 

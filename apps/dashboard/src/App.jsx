@@ -42,6 +42,12 @@ import {
   Alert,
   AlertIcon,
   AlertDescription,
+  AlertDialog,
+  AlertDialogOverlay,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogBody,
+  AlertDialogFooter,
   Menu,
   MenuButton,
   MenuList,
@@ -3871,6 +3877,9 @@ function DashboardView({
 
   const [assetPage, setAssetPage] = useState(1);
   const [selectedTokenIds, setSelectedTokenIds] = useState([]);
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
+  const [bulkDeleteBusy, setBulkDeleteBusy] = useState(false);
+  const bulkDeleteCancelRef = useRef(null);
 
   useEffect(() => {
     setSelectedCategories(prev => {
@@ -3971,6 +3980,12 @@ function DashboardView({
   } = useDisclosure();
   // Form collapse state - collapsed by default for cleaner UI
   const [isCreateTokenModalOpen, setCreateTokenModalOpen] = useState(false);
+  const createTokenErrorRef = useRef(null);
+  useEffect(() => {
+    if (isCreateTokenModalOpen && formErrors.submit) {
+      createTokenErrorRef.current?.focus();
+    }
+  }, [isCreateTokenModalOpen, formErrors.submit]);
 
   useEffect(() => {
     const handleOpenCreate = () => setCreateTokenModalOpen(true);
@@ -3989,7 +4004,7 @@ function DashboardView({
     );
   };
 
-  const handleBulkDelete = async () => {
+  const handleBulkDelete = async (confirmed = false) => {
     if (isViewer) return;
     const selectedIds = selectedVisibleTokenIds;
     if (selectedIds.length === 0) return;
@@ -4007,32 +4022,23 @@ function DashboardView({
     }
     // Managed cert tokens cannot be hard-deleted; exclude them from bulk delete
     // (they must be revoked/decommissioned individually).
-    const managedSelected = selectedIds.filter(
-      id => getCertOpsForToken(id).hasManagedLinks
-    );
     const bulkDeleteIds = selectedIds.filter(
       id => !getCertOpsForToken(id).hasManagedLinks
     );
     if (bulkDeleteIds.length === 0) {
       try {
-        showSuccessMessage(
+        toast.error(
           'Selected certificates are managed and cannot be deleted. Revoke or decommission them individually.'
         );
       } catch (_) {}
       return;
     }
-    const managedNote =
-      managedSelected.length > 0
-        ? ` ${managedSelected.length} managed certificate(s) will be skipped (revoke/decommission those individually).`
-        : '';
-    if (
-      !window.confirm(
-        `Delete ${bulkDeleteIds.length} selected on this page? Any linked endpoint monitors will also be deleted.${managedNote}`
-      )
-    ) {
+    if (!confirmed) {
+      setBulkDeleteConfirmOpen(true);
       return;
     }
 
+    setBulkDeleteBusy(true);
     try {
       const response = await apiClient.delete('/api/tokens/bulk', {
         data: { ids: bulkDeleteIds },
@@ -4050,7 +4056,7 @@ function DashboardView({
 
       // Clear deleted ids from selection (other pages may retain selection)
       setSelectedTokenIds(prev =>
-        prev.filter(id => !bulkDeleteIds.includes(id))
+        prev.filter(id => !deletedIds.includes(String(id)))
       );
 
       // Notify user
@@ -4082,6 +4088,9 @@ function DashboardView({
     } catch (error) {
       console.error('Bulk delete error:', error);
       alert('Failed to delete tokens. Please try again.');
+    } finally {
+      setBulkDeleteBusy(false);
+      setBulkDeleteConfirmOpen(false);
     }
   };
 
@@ -4854,7 +4863,7 @@ function DashboardView({
   );
 
   const inventoryBulkActions =
-    !isViewer && selectedVisibleTokenIds.length > 0 ? (
+    !isViewer && selectedTokenIds.length > 0 ? (
       <Flex
         mb={4}
         gap={3}
@@ -4868,15 +4877,24 @@ function DashboardView({
         borderRadius='md'
       >
         <Text color={text} fontSize='sm'>
-          {selectedVisibleTokenIds.length} asset(s) selected
+          {selectedTokenIds.length} asset(s) selected in total ·{' '}
+          {selectedVisibleTokenIds.length} on this page
         </Text>
         <HStack spacing={2} flexWrap='wrap'>
+          <Button
+            size='xs'
+            variant='outline'
+            onClick={() => setSelectedTokenIds([])}
+          >
+            Clear selection
+          </Button>
           <Button
             size='xs'
             colorScheme='red'
             variant='outline'
             leftIcon={<FiTrash2 />}
-            onClick={handleBulkDelete}
+            onClick={() => handleBulkDelete()}
+            isDisabled={selectedVisibleTokenIds.length === 0}
           >
             Delete selected on this page
           </Button>
@@ -4988,6 +5006,7 @@ function DashboardView({
           onToggleSelect={toggleTokenSelection}
           onToggleSelectAll={handleToggleSelectAll}
           bulkActions={inventoryBulkActions}
+          onClearFilters={handleClearAllFilters}
           paginationControls={renderAssetPaginationControls()}
           visibleCount={sortedVisibleTokens.length}
           tokensLoading={tokensLoading}
@@ -5901,6 +5920,20 @@ function DashboardView({
                             placeholderColor={dashboardModalTokens.muted}
                           />
                         </FormControl>
+                        {formErrors.submit && (
+                          <Alert
+                            ref={createTokenErrorRef}
+                            tabIndex={-1}
+                            status='error'
+                            mt={4}
+                            role='alert'
+                          >
+                            <AlertIcon />
+                            <AlertDescription>
+                              {formErrors.submit}
+                            </AlertDescription>
+                          </Alert>
+                        )}
                       </form>
                     </Box>
                   </ModalBody>
@@ -5952,6 +5985,58 @@ function DashboardView({
         fetchGlobalFacets={fetchGlobalFacets}
         fetchTokensForCategoryReset={fetchTokensForCategoryReset}
       />
+
+      <AlertDialog
+        isOpen={bulkDeleteConfirmOpen}
+        leastDestructiveRef={bulkDeleteCancelRef}
+        onClose={() => !bulkDeleteBusy && setBulkDeleteConfirmOpen(false)}
+      >
+        <AlertDialogOverlay />
+        <AlertDialogContent>
+          <AlertDialogHeader>Delete selected assets?</AlertDialogHeader>
+          <AlertDialogBody>
+            <Text>{selectedVisibleTokenIds.length} selected on this page.</Text>
+            <Text mt={2}>
+              {
+                selectedVisibleTokenIds.filter(
+                  id => !getCertOpsForToken(id).hasManagedLinks
+                ).length
+              }{' '}
+              eligible for deletion.{' '}
+              {
+                selectedVisibleTokenIds.filter(
+                  id => getCertOpsForToken(id).hasManagedLinks
+                ).length
+              }{' '}
+              {selectedVisibleTokenIds.filter(
+                id => getCertOpsForToken(id).hasManagedLinks
+              ).length === 1
+                ? 'managed certificate'
+                : 'managed certificates'}{' '}
+              will be skipped.
+            </Text>
+            <Text mt={2}>
+              Linked endpoint monitors for deleted assets will also be deleted.
+            </Text>
+          </AlertDialogBody>
+          <AlertDialogFooter gap={3}>
+            <Button
+              ref={bulkDeleteCancelRef}
+              onClick={() => setBulkDeleteConfirmOpen(false)}
+              isDisabled={bulkDeleteBusy}
+            >
+              Cancel
+            </Button>
+            <Button
+              colorScheme='red'
+              isLoading={bulkDeleteBusy}
+              onClick={() => handleBulkDelete(true)}
+            >
+              Delete eligible assets
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <RetireCertificateModal
         isOpen={isRetireModalOpen}

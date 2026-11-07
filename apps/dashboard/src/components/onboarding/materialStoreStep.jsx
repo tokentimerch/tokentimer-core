@@ -83,6 +83,10 @@ export function LocalStoreFields({
             onChange={e => setCaFile(e.target.value)}
             placeholder='/etc/tokentimer-agent/store-ca.pem'
           />
+          <Text fontSize='xs' mt={1}>
+            TLS trust: Use the store's CA certificate when the agent needs a
+            custom trust anchor.
+          </Text>
         </FormControl>
       )}
       <Text fontSize='sm'>
@@ -426,14 +430,23 @@ function MaterialStoreForm({ ctx }) {
           defaultOpen={!setup.groupId || Boolean(jobId && !done)}
         >
           <VStack align='stretch' spacing={3}>
-            <Text fontSize='sm'>
-              This issues a certificate and writes private material to the
-              customer store. It is real work, not a test. Use your staging CA
-              first. Finish the signed check, stop the issuing agent, then queue
-              this job. Apply the returned group ID and policy before restarting
-              with local execution.dryRun false. Approval and admission checks
-              still apply.
-            </Text>
+            <StatusPanel status='warning' title='Real certificate issuance'>
+              This job issues a certificate and writes private material to the
+              customer store. Use your staging CA first. Approval and admission
+              checks still apply.
+            </StatusPanel>
+            <VStack align='stretch' spacing={1} fontSize='sm'>
+              <Text fontWeight='semibold'>Prepare publication</Text>
+              <Text>
+                1. Finish the signed check and stop the issuing agent.
+              </Text>
+              <Text>
+                2. Queue this job, then apply its group ID and policy.
+              </Text>
+              <Text>
+                3. Restart the agent with local execution.dryRun false.
+              </Text>
+            </VStack>
             <ApprovalPolicyNote required={required} />
             <Checkbox
               isChecked={stopped}
@@ -534,13 +547,17 @@ function MaterialStoreForm({ ctx }) {
                 setCaFile,
               }}
             />
-            <Text fontSize='sm'>
-              Group ID: {setup.groupId || 'returned by the publication request'}
-              . Merge these fields into the protected existing agent
-              configuration; retain its identity. Use owner-only files and
-              directories. Configure the DNS credential file on the issuer
-              locally.
-            </Text>
+            <VStack align='stretch' spacing={1} fontSize='sm'>
+              <Text>
+                <strong>Agent identity:</strong> Merge these fields into the
+                protected existing configuration and retain its identity. Group
+                ID: {setup.groupId || 'returned by the publication request'}.
+              </Text>
+              <Text>
+                <strong>Host protection:</strong> Use owner-only files and
+                directories. Configure the issuer's DNS credential file locally.
+              </Text>
+            </VStack>
             {setup.provider === 'azure-key-vault' ? (
               <Text fontSize='sm'>
                 The example uses VM managed identity (IMDS). Workload identity
@@ -551,13 +568,21 @@ function MaterialStoreForm({ ctx }) {
                 KiB. Production use stays gated.
               </Text>
             ) : (
-              <Text fontSize='sm'>
-                Enable KV v2. Use Vault Agent or OpenBao Agent to renew a
-                protected token sink. Issuer: create/read on the group bundles
-                path; consumers: read only. OpenBao namespaces, KV v1 and PKI
-                are outside this adapter. Never grant delete/destroy/purge to
-                distribution identities.
-              </Text>
+              <VStack align='stretch' spacing={1} fontSize='sm'>
+                <Text>
+                  <strong>Authentication:</strong> Enable KV v2. Use Vault Agent
+                  or OpenBao Agent to renew a protected token sink.
+                </Text>
+                <Text>
+                  <strong>Access:</strong> Give the issuer create/read on the
+                  group bundles path and consumers read only. Never grant
+                  delete, destroy or purge.
+                </Text>
+                <Text>
+                  <strong>Scope:</strong> OpenBao namespaces, KV v1 and PKI are
+                  outside this adapter.
+                </Text>
+              </VStack>
             )}
             {policies && (
               <>
@@ -581,10 +606,10 @@ function MaterialStoreForm({ ctx }) {
               ))
             )}
             <Text fontSize='sm'>
-              For an uncertain publication, preserve the local checkpoint and
-              complete the runbook reconciliation before choosing Retry original
-              publication above. Azure never blindly retries a write. Do not
-              delete a pinned object or create a new order to hide uncertainty.
+              <strong>Uncertain publication:</strong> Preserve the local
+              checkpoint and complete runbook reconciliation before retrying.
+              Azure never blindly retries a write. Do not delete a pinned object
+              or create a new order to hide uncertainty.
             </Text>
           </VStack>
         </DetailsSection>

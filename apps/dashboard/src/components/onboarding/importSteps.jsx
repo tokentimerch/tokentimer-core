@@ -123,13 +123,26 @@ export function FileImportStep({ ctx, reviewing = false }) {
         {host.error ? (
           <DashboardErrorAlert>{host.error}</DashboardErrorAlert>
         ) : null}
-        <Text fontSize='sm'>
-          Required fields per row: name, category, type, expiresAt. Dates look
-          like 2030-01-31. Rows missing any of them are listed in the preview
-          and left out. A file can have up to 5000 rows and 5 MB, so split
-          larger inventories. Importing the same file again updates existing
-          rows instead of duplicating them when a location is present.
-        </Text>
+        <VStack align='stretch' spacing={1} fontSize='sm'>
+          <Text fontWeight='semibold'>File requirements</Text>
+          <Text>
+            <strong>Required fields:</strong> name, category, type and
+            expiresAt. Use dates like 2030-01-31.
+          </Text>
+          <Text>
+            <strong>File limits:</strong> Up to 5000 rows and 5 MB. Split larger
+            inventories.
+          </Text>
+          <Text>
+            <strong>Preview:</strong> Rows missing required fields are listed
+            and left out.
+          </Text>
+          <Text>
+            <strong>Repeat imports:</strong> When a location is present,
+            importing the same file again updates existing rows instead of
+            duplicating them.
+          </Text>
+        </VStack>
         <Box>
           <Text fontSize='xs' color={muted} mb={1}>
             Example CSV (header row, then one asset). Category is cert,

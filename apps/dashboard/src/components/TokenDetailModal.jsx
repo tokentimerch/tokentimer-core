@@ -230,10 +230,15 @@ function TokenDetailModal({
     { multiline = false, type = 'text', inputProps = {} } = {}
   ) => {
     return (
-      <DashboardModalDetailRow label={label} tokens={modalTokens}>
+      <DashboardModalDetailRow
+        label={label}
+        tokens={modalTokens}
+        htmlFor={isEditing ? `token-edit-${key}` : undefined}
+      >
         {isEditing ? (
           multiline ? (
             <Textarea
+              id={`token-edit-${key}`}
               value={editData[key] ?? ''}
               onChange={e =>
                 setEditData(d => ({ ...d, [key]: e.target.value }))
@@ -243,6 +248,7 @@ function TokenDetailModal({
             />
           ) : (
             <Input
+              id={`token-edit-${key}`}
               type={type}
               value={editData[key] ?? ''}
               onChange={e =>

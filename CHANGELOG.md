@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Dashboard usability.** Review recipient confirmations in a dedicated dialog, with clearer setup guidance and recovery states throughout the dashboard.
+
 ### Fixed
 
 - **API logging.** Successful health and metrics probes no longer generate completion logs; failed probes remain logged with their matching `X-Request-Id`. Background logs no longer inherit an unrelated request ID after its response ends.

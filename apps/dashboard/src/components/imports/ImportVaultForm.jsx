@@ -22,6 +22,10 @@ import {
   Spinner,
   Radio,
   RadioGroup,
+  Alert,
+  AlertIcon,
+  AlertTitle,
+  AlertDescription,
 } from '@chakra-ui/react';
 import { FiEye, FiEyeOff, FiHelpCircle, FiRefreshCw } from 'react-icons/fi';
 import { vaultAPI, integrationAPI } from '../../utils/apiClient';
@@ -459,11 +463,15 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
     <VStack align='stretch' spacing={3}>
       <Box>
         <Text fontSize='sm' color={helpTextColor}>
-          Scans KV v2 and PKI engines to extract expirations. Base64
-          certificates are decoded to read expiry. Authenticate with a static
-          token or AppRole (role ID and secret ID). TokenTimer does not mint or
-          rotate those credentials. The Vault host must have a valid TLS
-          certificate for the import to work.
+          <strong>Scope:</strong> Scans KV v2 and PKI engines to extract
+          expirations. Base64 certificates are decoded to read expiry. <br />
+          <strong>Access:</strong> Authenticate with a static token or AppRole
+          (role ID and secret ID). <br />
+          <strong>Credentials:</strong> Used for scanning and stored encrypted
+          if auto-sync is enabled. TokenTimer does not mint or rotate them.{' '}
+          <br />
+          <strong>TLS:</strong> The Vault host must have a valid TLS certificate
+          for the import to work.
         </Text>
         {hideDocs ? null : (
           <LearnMorePanel
@@ -697,24 +705,36 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
                 what that scan covered.
               </Text>
             ) : summary.some(s => s.complete === false) ? (
-              <Text fontSize='xs' color='orange.400' pl={6}>
-                The last scan didn't fully complete for every mount above (see
-                the errors below). The backend will only clean up mounts and
-                asset kinds it confirmed were fully scanned; nothing incomplete,
-                truncated, or errored is ever touched.
+              <Text
+                fontSize='sm'
+                color='orange.400'
+                pl={6}
+                role='alert'
+                p={3}
+                borderWidth='1px'
+                borderRadius='md'
+                _light={{ color: 'orange.800', bg: 'orange.50' }}
+                _dark={{ color: 'orange.100', bg: 'orange.900' }}
+              >
+                <strong>Incomplete scan:</strong> Some mounts did not finish.
+                See errors below. Cleanup affects only fully scanned mounts and
+                asset kinds; incomplete, truncated, or failed results are
+                excluded.
               </Text>
             ) : null}
             {cleanupObsolete ? (
-              <Text fontSize='xs' color='red.400' pl={6}>
-                Deletes previously imported items of the asset kinds scanned
-                above (KV, PKI, or both) that no longer appear anywhere in this
-                scan's results, regardless of which items you select for import
-                below. Mounts you did not scan, or that this scan couldn't fully
-                complete, are never affected -- and neither is a category
-                (certificates / secrets &amp; keys) you left unchecked above:
-                cleanup only ever considers the categories this specific scan
-                was run with. This cannot be undone.
-              </Text>
+              <Alert status='warning' borderRadius='md' alignItems='start'>
+                <AlertIcon mt='1' />
+                <Box>
+                  <AlertTitle fontSize='sm'>Items will be deleted</AlertTitle>
+                  <AlertDescription fontSize='sm'>
+                    Previously imported items missing from this scan will be
+                    deleted, even if they are not selected below. This cannot be
+                    undone. Only fully scanned mounts and selected asset kinds
+                    are affected.
+                  </AlertDescription>
+                </Box>
+              </Alert>
             ) : null}
           </VStack>
         </Box>
@@ -823,10 +843,9 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
                     size='sm'
                   />
                   <Text fontSize='xs' color={helpTextColor} mt={1}>
-                    Folder inside each KV engine (e.g., prod/api) or an exact
-                    secret path. Leave empty to scan all. Do not include the
-                    engine name itself, use the secrets engines picker above for
-                    that.
+                    Enter a folder such as prod/api or an exact secret path.
+                    Leave blank to scan all paths. Choose the engine above; do
+                    not include its name here.
                   </Text>
                 </Box>
               </VStack>

@@ -123,7 +123,7 @@ it('opens saved details for successful runs without an error', () => {
   fireEvent.click(screen.getByRole('button', { name: /Details for/ }));
   expect(screen.getByText('Run ID: run')).toBeVisible();
   expect(screen.getByText(/Generation: 7/)).toBeVisible();
-  expect(screen.getByText(/cleanup_obsolete/)).toBeVisible();
+  expect(screen.getByText(/cleanup obsolete: false/)).toBeVisible();
   expect(screen.getByRole('button', { name: /Details for/ })).toHaveAttribute(
     'aria-expanded',
     'true'
@@ -175,4 +175,17 @@ it('fetches a cursor page only once and uses cached pages when going back', asyn
   fireEvent.click(screen.getByRole('button', { name: 'Newer runs' }));
   fireEvent.click(screen.getByRole('button', { name: 'Earlier runs' }));
   expect(load).toHaveBeenCalledOnce();
+});
+
+it('offers a retry for a failed history request instead of showing an empty state', () => {
+  const retry = vi.fn();
+  render(
+    <ChakraProvider>
+      <AutoSyncRecentRuns error onRetry={retry} />
+    </ChakraProvider>
+  );
+  expect(screen.getByText('Run history could not be loaded.')).toBeVisible();
+  expect(screen.queryByText('No runs yet')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(retry).toHaveBeenCalledTimes(1);
 });
