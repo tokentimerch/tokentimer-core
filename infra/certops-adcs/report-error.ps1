@@ -15,6 +15,15 @@ function Get-CertOpsReportFailureCode([System.Management.Automation.ErrorRecord]
     'Guest report chunk length mismatch' { return 'chunk-length-mismatch' }
     'Reconstructed guest evidence checksum mismatch' { return 'checksum-mismatch' }
     'Production worker ownership or drain evidence incomplete' { return 'worker-evidence-incomplete' }
-    default { return 'unclassified' }
+    default {
+      # Only fixed type categories are returned; never include exception text,
+      # paths, parameter names, response bodies or arbitrary type names.
+      if($ErrorRecord.Exception -is [System.Management.Automation.ParameterBindingException]){return 'parameter-binding'}
+      if($ErrorRecord.Exception -is [System.Management.Automation.PSSecurityException]){return 'execution-security'}
+      if($ErrorRecord.Exception -is [System.Management.Automation.CommandNotFoundException]){return 'command-unavailable'}
+      if($ErrorRecord.Exception -is [System.UnauthorizedAccessException]){return 'access-denied'}
+      if($ErrorRecord.Exception -is [System.IO.IOException]){return 'local-io'}
+      return 'unclassified'
+    }
   }
 }
