@@ -454,18 +454,29 @@ function IisBindingGuide({ ctx, setup, agents, enabled }) {
         claim-evidence capabilities. Linux endpoint targets and installed-only
         assurance are forbidden for IIS.
       </StatusPanel>
-      <Text fontSize='sm'>
-        Use a member Windows Server 2019 or later with IIS Management
-        Scripts/Tools, Windows PowerShell 5.1, .NET 4.8 and the fixed connector
-        permitted by application-control policy. Run the agent as LocalSystem.
-        Pre-create the exact HTTPS binding; shared selectors and Centralized
-        Certificate Store are unsupported. The connector requires non-exportable
-        machine CNG keys, exact protected ACLs and signing association before
-        reuse. Resolve service-account SIDs locally; never grant Everyone or
-        Users. Before activation, provision approved roots in LocalMachine\Root
-        and intermediates in LocalMachine\CA. The probe CA file does not
-        configure Windows trust stores.
-      </Text>
+      <VStack align='stretch' spacing={2} fontSize='sm'>
+        <Text fontWeight='semibold'>Prepare the Windows consumer</Text>
+        <Text>
+          <strong>Host:</strong> Use a member Windows Server 2019 or later with
+          IIS Management Scripts/Tools, Windows PowerShell 5.1, .NET 4.8 and the
+          fixed connector permitted by application-control policy. Run the agent
+          as LocalSystem.
+        </Text>
+        <Text>
+          <strong>Binding:</strong> Pre-create the exact HTTPS binding. Shared
+          selectors and Centralized Certificate Store are unsupported.
+        </Text>
+        <Text>
+          <strong>Keys and access:</strong> Use non-exportable machine CNG keys,
+          exact protected ACLs and signing association before reuse. Resolve
+          service-account SIDs locally; never grant Everyone or Users.
+        </Text>
+        <Text>
+          <strong>Trust:</strong> Before activation, provision approved roots in
+          LocalMachine\Root and intermediates in LocalMachine\CA. The probe CA
+          file does not configure Windows trust stores.
+        </Text>
+      </VStack>
       <FormControl>
         <FormLabel>Windows consumer agent</FormLabel>
         <Select
@@ -774,13 +785,23 @@ function MaterialConsumerForm({ ctx }) {
                 </Select>
               </FormControl>
             )}
-            <Text fontSize='sm'>
-              Installed assurance securely reads back the leaf certificate,
-              private key, fingerprint and complete chain. It does not prove a
-              service uses those files. Served and trust require listener
-              probes; trust also validates the chain and hostname. Their real
-              deployment path can reload the service.
-            </Text>
+            <VStack align='stretch' spacing={1} fontSize='sm'>
+              <Text fontWeight='semibold'>What each assurance checks</Text>
+              <Text>
+                <strong>Installed:</strong> Reads back the leaf certificate,
+                private key, fingerprint and complete chain. It does not prove a
+                service uses those files.
+              </Text>
+              <Text>
+                <strong>Served:</strong> Checks the listener with probes. Its
+                real deployment path can reload the service.
+              </Text>
+              <Text>
+                <strong>Trust:</strong> Checks the listener and validates the
+                chain and hostname. Its real deployment path can reload the
+                service.
+              </Text>
+            </VStack>
             {assurance !== 'installed' && (
               <FormControl>
                 <FormLabel>TLS issuer CA file on consumer (optional)</FormLabel>
@@ -860,17 +881,26 @@ function MaterialConsumerForm({ ctx }) {
               receipt or an inactive binding cannot finish this step. Use Deploy
               the selected version only when you intend a real installation.
             </Text>
-            <Text fontSize='sm'>
-              On failure, inspect the job timeline and safe error code. For
-              missing capabilities or authorization revisions, repair the
-              protected host configuration and refresh. For
-              orphaned_unknown_effect, preserve the journal, reconcile the
-              actual filesystem/IIS/listener state locally, then retry the
-              original deployment with the existing recovery action. Resume a
-              paused rollout only after required consumers recover. Rollback is
-              a separate explicitly approved operation in Certificate
-              Management; this guide never silently rolls back.
-            </Text>
+            <VStack align='stretch' spacing={1} fontSize='sm'>
+              <Text fontWeight='semibold'>Recovery</Text>
+              <Text>
+                <strong>Check the failure:</strong> Inspect the job timeline and
+                safe error code. For missing capabilities or authorization
+                revisions, repair the protected host configuration and refresh.
+              </Text>
+              <Text>
+                <strong>Uncertain effect:</strong> For orphaned_unknown_effect,
+                preserve the journal and reconcile the actual filesystem, IIS
+                and listener state locally. Then retry the original deployment
+                with the existing recovery action.
+              </Text>
+              <Text>
+                <strong>Resume or roll back:</strong> Resume a paused rollout
+                only after required consumers recover. Rollback is a separate
+                explicitly approved operation in Certificate Management; this
+                guide never silently rolls back.
+              </Text>
+            </VStack>
             <DashboardActionButton
               variant='outline'
               onClick={() =>

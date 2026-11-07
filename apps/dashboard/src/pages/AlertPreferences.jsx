@@ -59,6 +59,8 @@ import apiClient, { alertAPI, workspaceAPI } from '../utils/apiClient';
 import ContactVerificationControls from './ContactVerificationControls';
 import {
   canTestSavedWhatsApp,
+  channelStatus,
+  verificationControlsVisible,
   formatRetry,
   groupChannelHint,
   groupEligibilityNote,
@@ -966,7 +968,33 @@ export default function AlertPreferences({
   const [newContactDetails, setNewContactDetails] = useState({});
   const [testingContact, setTestingContact] = useState(null);
   const [verificationBusy, setVerificationBusy] = useState('');
+  const [confirmationContactId, setConfirmationContactId] = useState('');
+  const {
+    isOpen: isConfirmationOpen,
+    onOpen: onConfirmationOpen,
+    onClose: onConfirmationClose,
+  } = useDisclosure();
   const [whatsappShareLinks, setWhatsappShareLinks] = useState({});
+
+  const confirmationContacts = contacts.filter(
+    contact =>
+      channelStatus(contact, 'email') || channelStatus(contact, 'whatsapp')
+  );
+  const unconfirmedCount = confirmationContacts.filter(contact =>
+    ['email', 'whatsapp'].some(channel => {
+      const status = channelStatus(contact, channel);
+      return status && status.status !== 'verified';
+    })
+  ).length;
+  const confirmationContact =
+    confirmationContacts.find(
+      contact => String(contact.id) === String(confirmationContactId)
+    ) || confirmationContacts[0];
+  function openConfirmation(contact) {
+    setConfirmationContactId(String(contact?.id || ''));
+    onConfirmationOpen();
+  }
+
   const [contactPhoneError, setContactPhoneError] = useState('');
   const [editingContactId, setEditingContactId] = useState(null);
   const [editContactFirstName, setEditContactFirstName] = useState('');
@@ -1007,6 +1035,7 @@ export default function AlertPreferences({
   const [webhookDraft, setWebhookDraft] = useState(createEmptyWebhookDraft);
   const [testingWebhookDraft, setTestingWebhookDraft] = useState(false);
   const [savingWebhookEditor, setSavingWebhookEditor] = useState(false);
+  const [confirmingWebhookSave, setConfirmingWebhookSave] = useState(false);
   const [webhookEditorError, setWebhookEditorError] = useState('');
   const addWebhookTriggerRef = useRef(null);
   const [webhookSaveAttempted, setWebhookSaveAttempted] = useState(false);
@@ -1149,6 +1178,20 @@ export default function AlertPreferences({
     editContactPhoneE164,
     recipientVerificationMode
   );
+  const editWhatsAppTestHint = !editContactPhone.trim()
+    ? 'Add and save a phone number before testing WhatsApp.'
+    : !isEditContactPhoneValid
+      ? 'Enter a valid phone number before testing WhatsApp.'
+      : editContactPhoneE164 !== String(editingContact?.phone_e164 || '').trim()
+        ? recipientVerificationMode === 'enforce'
+          ? 'Save this number and ask the contact to confirm WhatsApp before testing.'
+          : 'Save this number before testing WhatsApp.'
+        : recipientVerificationMode === 'enforce' &&
+            !canTestEditingContactWhatsApp
+          ? channelStatus(editingContact, 'whatsapp')?.status === 'opted_out'
+            ? 'This contact opted out of WhatsApp. A test cannot be sent to this number.'
+            : 'Open confirmation status to share a WhatsApp link. The contact must opt in before testing.'
+          : '';
 
   useEffect(() => {
     const hasActiveCooldown = () =>
@@ -2132,6 +2175,7 @@ export default function AlertPreferences({
 
   function updateWebhookDraft(field, value) {
     if (isViewer || testingWebhookDraft || savingWebhookEditor) return;
+    setWebhookEditorError('');
     if (field === 'name') {
       setWebhookDraft(prev => ({
         ...prev,
@@ -2208,7 +2252,7 @@ export default function AlertPreferences({
         _verifiedSnapshot: null,
       }));
       const message = e?.message || 'Webhook test failed';
-      setWebhookEditorError(message);
+      setWebhookEditorError(`Test failed. ${message}`);
       showError(message);
     } finally {
       setTestingWebhookDraft(false);
@@ -2257,6 +2301,7 @@ export default function AlertPreferences({
           await workspaceAPI.updateAlertSettings(workspaceId, {
             webhook_urls: [...existing, webhookPayloadForSave(built)],
           });
+        setConfirmingWebhookSave(true);
         const confirmed = await workspaceAPI.getAlertSettings(workspaceId);
         const saved = (confirmed.webhook_urls || []).find(
           webhook =>
@@ -2293,6 +2338,7 @@ export default function AlertPreferences({
             webhook: webhookPayloadForSave(built),
           }
         );
+        setConfirmingWebhookSave(true);
         const confirmed = await workspaceAPI.getAlertSettings(workspaceId);
         setWebhookUrls(
           (confirmed.webhook_urls || []).map(w =>
@@ -2308,12 +2354,13 @@ export default function AlertPreferences({
       resetWebhookEditor();
       onWebhookEditorClose();
     } catch (e) {
+      const detail =
+        e?.response?.data?.error || e?.message || 'Please try again.';
       setWebhookEditorError(
-        e?.response?.data?.error ||
-          e?.message ||
-          'Failed to save webhook. Your draft is still here; try again.'
+        `Test passed, but saving was not confirmed. ${detail}`
       );
     } finally {
+      setConfirmingWebhookSave(false);
       setSavingWebhookEditor(false);
     }
   }
@@ -2807,7 +2854,7 @@ export default function AlertPreferences({
         /* The visible, selectable link remains available. */
       }
       showSuccess(
-        'Confirmation link ready in Contacts. Copy it and send it through a channel you already trust.'
+        'Confirmation link ready below. Copy it and send it through a channel you already trust.'
       );
       await refreshContacts();
     } catch (error) {
@@ -2927,20 +2974,6 @@ export default function AlertPreferences({
             details={detailDisplay}
             labelColor={bodySecondary}
             valueColor={text}
-          />
-          <ContactVerificationControls
-            contact={contact}
-            sharedInvitation={
-              whatsappShareLinks[
-                [workspaceId, contact?.id, contact?.phone_e164].join(':')
-              ]
-            }
-            mode={recipientVerificationMode}
-            isViewer={isViewer}
-            busyKey={verificationBusy}
-            onInviteEmail={handleInviteEmail}
-            onShareWhatsApp={handleShareWhatsApp}
-            onRevoke={handleRevokeVerification}
           />
 
           <Stack direction={{ base: 'column', sm: 'row' }} spacing={2}>
@@ -3340,7 +3373,7 @@ export default function AlertPreferences({
             <DashboardPanel data-tour='preferences-contacts' minW={0}>
               <PreferencesPanelHeader
                 title='Contacts'
-                description={verificationIntro(recipientVerificationMode)}
+                description='Manage people who can receive workspace alerts.'
                 muted={bodySecondary}
                 action={
                   <HStack>
@@ -3368,6 +3401,59 @@ export default function AlertPreferences({
                 }
               />
               <VStack align='stretch' spacing={4}>
+                {verificationControlsVisible(recipientVerificationMode) && (
+                  <SettingsNestedSurface p={{ base: 3, md: 4 }}>
+                    <Stack
+                      direction={{ base: 'column', sm: 'row' }}
+                      align={{ base: 'stretch', sm: 'center' }}
+                      justify='space-between'
+                      spacing={3}
+                    >
+                      <Box>
+                        <HStack spacing={2} flexWrap='wrap'>
+                          <Text fontWeight='semibold' fontSize='sm'>
+                            Recipient confirmations
+                          </Text>
+                          {unconfirmedCount > 0 && (
+                            <Badge colorScheme='orange'>
+                              {unconfirmedCount} need attention
+                            </Badge>
+                          )}
+                        </HStack>
+                        <Text fontSize='sm' color={bodySecondary} mt={1}>
+                          {recipientVerificationMode === 'shadow'
+                            ? 'Confirmation is recorded; delivery continues.'
+                            : 'Email and WhatsApp alerts wait for confirmation.'}
+                        </Text>
+                      </Box>
+                      <Button
+                        size='sm'
+                        variant='outline'
+                        alignSelf={{ base: 'flex-start', sm: 'center' }}
+                        onClick={() =>
+                          openConfirmation(
+                            confirmationContacts.find(contact =>
+                              ['email', 'whatsapp'].some(channel => {
+                                const status = channelStatus(contact, channel);
+                                return status && status.status !== 'verified';
+                              })
+                            ) || confirmationContacts[0]
+                          )
+                        }
+                        isDisabled={
+                          confirmationContacts.length === 0 || contactsLoadError
+                        }
+                      >
+                        Review confirmations
+                      </Button>
+                    </Stack>
+                  </SettingsNestedSurface>
+                )}
+                {recipientVerificationMode === 'off' && (
+                  <Text fontSize='sm' color={bodySecondary}>
+                    {verificationIntro(recipientVerificationMode)}
+                  </Text>
+                )}
                 {contactsLoadError && (
                   <Alert status='error' borderRadius='md'>
                     <AlertIcon />
@@ -3481,7 +3567,6 @@ export default function AlertPreferences({
                       <Tbody>
                         {sortedContacts.map(c => {
                           const detailFields = getContactDetailFields(c);
-
                           return (
                             <Tr key={c.id}>
                               <Td
@@ -3492,22 +3577,6 @@ export default function AlertPreferences({
                                 <Text fontSize='sm' fontWeight='medium'>
                                   {c.first_name} {c.last_name}
                                 </Text>
-                                <ContactVerificationControls
-                                  contact={c}
-                                  sharedInvitation={
-                                    whatsappShareLinks[
-                                      [workspaceId, c?.id, c?.phone_e164].join(
-                                        ':'
-                                      )
-                                    ]
-                                  }
-                                  mode={recipientVerificationMode}
-                                  isViewer={isViewer}
-                                  busyKey={verificationBusy}
-                                  onInviteEmail={handleInviteEmail}
-                                  onShareWhatsApp={handleShareWhatsApp}
-                                  onRevoke={handleRevokeVerification}
-                                />
                               </Td>
                               <Td
                                 pr={2}
@@ -3932,14 +4001,25 @@ export default function AlertPreferences({
                   mb={2}
                   lineHeight='1.5'
                 >
-                  Select per-contact which channels to use.{' '}
-                  {groupChannelHint(recipientVerificationMode)}
-                  {whatsappAvailable
-                    ? ' Each person can have both email and WhatsApp.'
-                    : ''}
-                  {memberCap !== Infinity &&
-                    ` (Limit: ${memberCap} people total)`}{' '}
-                  Webhooks are unlimited.
+                  <Text as='span' display='block'>
+                    Select channels for each contact.
+                  </Text>
+                  <Text as='span' display='block'>
+                    {groupChannelHint(recipientVerificationMode)}
+                  </Text>
+                  {whatsappAvailable && (
+                    <Text as='span' display='block'>
+                      Each person can use email and WhatsApp.
+                    </Text>
+                  )}
+                  {memberCap !== Infinity && (
+                    <Text as='span' display='block'>
+                      Limit: {memberCap} people total.
+                    </Text>
+                  )}
+                  <Text as='span' display='block'>
+                    Webhooks are unlimited.
+                  </Text>
                 </Text>
                 {groupCreationOnly && (
                   <Button
@@ -4380,6 +4460,15 @@ export default function AlertPreferences({
                   <AlertDescription>{webhookEditorError}</AlertDescription>
                 </Alert>
               )}
+              {(testingWebhookDraft || savingWebhookEditor) && (
+                <Text role='status' fontSize='sm' color={bodySecondary}>
+                  {testingWebhookDraft
+                    ? 'Testing delivery…'
+                    : confirmingWebhookSave
+                      ? 'Confirming saved webhook…'
+                      : 'Saving webhook…'}
+                </Text>
+              )}
               <Box
                 as='fieldset'
                 disabled={testingWebhookDraft || savingWebhookEditor}
@@ -4548,7 +4637,12 @@ export default function AlertPreferences({
                 {contactPhoneError ? (
                   <FormErrorMessage>{contactPhoneError}</FormErrorMessage>
                 ) : (
-                  <Text fontSize='xs' color={modalTokens.subtleText} mt={1}>
+                  <Text
+                    id='new-whatsapp-test-hint'
+                    fontSize='sm'
+                    color={modalTokens.subtleText}
+                    mt={1}
+                  >
                     {addContactTestHint(recipientVerificationMode)}
                   </Text>
                 )}
@@ -4563,6 +4657,10 @@ export default function AlertPreferences({
                     }
                     isLoading={testingContact === ADD_CONTACT_WHATSAPP_TEST_KEY}
                     isDisabled
+                    disabledReason={addContactTestHint(
+                      recipientVerificationMode
+                    )}
+                    aria-describedby='new-whatsapp-test-hint'
                     cooldownUntil={
                       waContactCooldowns[ADD_CONTACT_WHATSAPP_TEST_KEY] || 0
                     }
@@ -4664,6 +4762,90 @@ export default function AlertPreferences({
       </Modal>
 
       <Modal
+        isOpen={isConfirmationOpen}
+        onClose={onConfirmationClose}
+        isCentered
+        scrollBehavior='inside'
+      >
+        <ModalOverlay {...overlayProps} />
+        <DashboardModalFrame
+          maxW={{ base: 'calc(100vw - 24px)', md: '600px' }}
+          maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
+        >
+          <ModalHeader {...headerProps}>
+            <DashboardModalTitle color={modalTokens.text}>
+              Recipient confirmations
+            </DashboardModalTitle>
+            <DashboardModalDescription>
+              Review each contact&apos;s delivery status and confirmation
+              actions.
+            </DashboardModalDescription>
+          </ModalHeader>
+          <ModalCloseButton {...closeButtonProps} />
+          <ModalBody {...bodyProps}>
+            <VStack align='stretch' spacing={4}>
+              <FormControl>
+                <FormLabel>Contact</FormLabel>
+                <Select
+                  value={confirmationContact?.id || ''}
+                  onChange={event =>
+                    setConfirmationContactId(event.target.value)
+                  }
+                >
+                  {confirmationContacts.map(contact => (
+                    <option key={contact.id} value={contact.id}>
+                      {getContactDisplayName(contact)}
+                      {['email', 'whatsapp'].some(channel => {
+                        const status = channelStatus(contact, channel);
+                        return status && status.status !== 'verified';
+                      })
+                        ? ' — needs attention'
+                        : ' — confirmed'}
+                    </option>
+                  ))}
+                </Select>
+              </FormControl>
+              {confirmationContact ? (
+                <SettingsNestedSurface p={4}>
+                  <Text fontWeight='semibold'>
+                    {getContactDisplayName(confirmationContact)}
+                  </Text>
+                  <ContactVerificationControls
+                    key={confirmationContact.id}
+                    contact={confirmationContact}
+                    sharedInvitation={
+                      whatsappShareLinks[
+                        [
+                          workspaceId,
+                          confirmationContact.id,
+                          confirmationContact.phone_e164,
+                        ].join(':')
+                      ]
+                    }
+                    mode={recipientVerificationMode}
+                    isViewer={isViewer}
+                    busyKey={verificationBusy}
+                    onInviteEmail={handleInviteEmail}
+                    onShareWhatsApp={handleShareWhatsApp}
+                    onRevoke={handleRevokeVerification}
+                  />
+                </SettingsNestedSurface>
+              ) : (
+                <Text fontSize='sm' color={bodySecondary}>
+                  No contact channels to review.
+                </Text>
+              )}
+            </VStack>
+          </ModalBody>
+          <ModalFooter {...footerProps}>
+            <Button {...outlineButtonProps} onClick={onConfirmationClose}>
+              Close
+            </Button>
+          </ModalFooter>
+        </DashboardModalFrame>
+      </Modal>
+
+      <Modal
         isOpen={isEditContactOpen}
         onClose={handleCloseEditContact}
         isCentered
@@ -4687,24 +4869,19 @@ export default function AlertPreferences({
           <ModalCloseButton {...closeButtonProps} />
           <ModalBody {...bodyProps}>
             <VStack align='stretch' spacing={4}>
-              <ContactVerificationControls
-                contact={editingContact}
-                sharedInvitation={
-                  whatsappShareLinks[
-                    [
-                      workspaceId,
-                      editingContact?.id,
-                      editingContact?.phone_e164,
-                    ].join(':')
-                  ]
-                }
-                mode={recipientVerificationMode}
-                isViewer={isViewer}
-                busyKey={verificationBusy}
-                onInviteEmail={handleInviteEmail}
-                onShareWhatsApp={handleShareWhatsApp}
-                onRevoke={handleRevokeVerification}
-              />
+              {editingContact &&
+                verificationControlsVisible(recipientVerificationMode) &&
+                (channelStatus(editingContact, 'email') ||
+                  channelStatus(editingContact, 'whatsapp')) && (
+                  <Button
+                    size='sm'
+                    variant='outline'
+                    alignSelf='flex-start'
+                    onClick={() => openConfirmation(editingContact)}
+                  >
+                    Manage confirmation status
+                  </Button>
+                )}
               <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
                 <FormControl>
                   <FormLabel>First name</FormLabel>
@@ -4755,8 +4932,14 @@ export default function AlertPreferences({
                 {editContactPhoneError ? (
                   <FormErrorMessage>{editContactPhoneError}</FormErrorMessage>
                 ) : (
-                  <Text fontSize='xs' color={modalTokens.subtleText} mt={1}>
-                    {testNumberHint(recipientVerificationMode)}
+                  <Text
+                    id='edit-whatsapp-test-hint'
+                    fontSize='sm'
+                    color={modalTokens.subtleText}
+                    mt={1}
+                  >
+                    {editWhatsAppTestHint ||
+                      testNumberHint(recipientVerificationMode)}
                   </Text>
                 )}
                 {whatsappAvailable ? (
@@ -4777,11 +4960,41 @@ export default function AlertPreferences({
                       !isEditContactPhoneValid ||
                       !canTestEditingContactWhatsApp
                     }
+                    disabledReason={editWhatsAppTestHint}
+                    aria-describedby={
+                      !editContactPhoneError
+                        ? 'edit-whatsapp-test-hint'
+                        : undefined
+                    }
                     cooldownUntil={
                       waContactCooldowns[EDIT_CONTACT_WHATSAPP_TEST_KEY] || 0
                     }
                   />
                 ) : null}
+                {recipientVerificationMode === 'enforce' &&
+                  !isViewer &&
+                  !canTestEditingContactWhatsApp &&
+                  isEditContactPhoneValid &&
+                  editContactPhoneE164 ===
+                    String(editingContact?.phone_e164 || '').trim() &&
+                  channelStatus(editingContact, 'whatsapp')?.status !==
+                    'opted_out' && (
+                    <Button
+                      size='xs'
+                      variant='outline'
+                      ml={2}
+                      mt={3}
+                      onClick={refreshContacts}
+                      isLoading={refreshingContacts}
+                    >
+                      Refresh confirmation status
+                    </Button>
+                  )}
+                {contactsLoadError && (
+                  <Text role='alert' fontSize='sm' mt={2}>
+                    Could not refresh confirmation status. Try again.
+                  </Text>
+                )}
               </FormControl>
               <Button
                 size='sm'

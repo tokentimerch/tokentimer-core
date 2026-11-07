@@ -885,12 +885,20 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                   <Text fontSize='sm' fontWeight='semibold'>
                     3. Add your client and verify
                   </Text>
-                  <Text fontSize='sm'>
-                    Enrollment prints the command, arguments and environment for
-                    your MCP client. Save that configuration, restart the client
-                    and ask it to run tt_whoami. Confirm the workspace and role
-                    before asking for certificate details.
-                  </Text>
+                  <Stack as='ol' pl={5} spacing={1} fontSize='sm'>
+                    <Text as='li'>
+                      Save the command, arguments and environment printed by
+                      enrollment in your MCP client.
+                    </Text>
+                    <Text as='li'>
+                      Restart the client and ask it to run{' '}
+                      <Text as='code'>tt_whoami</Text>.
+                    </Text>
+                    <Text as='li'>
+                      Confirm the workspace and role before asking for
+                      certificate details.
+                    </Text>
+                  </Stack>
                   <Text fontSize='xs' color={muted}>
                     Renewal tools also need TOKENTIMER_MCP_ENABLE_WRITES=true in
                     the client environment. Closing this dialog hides the code;

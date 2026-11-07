@@ -771,16 +771,22 @@ export function ConfigStep({ ctx }) {
                     </option>
                   ))}
                 </Select>
-                <Text fontSize='xs' mt={1}>
-                  The agent runs a check command, then{' '}
-                  <code>systemctl reload</code>, both as its own unprivileged
-                  user. The installer command in the next step grants only that
-                  reload for the server you choose. It is allowed to run exactly
-                  those two commands, nothing else. Your server must already be
-                  set up to read the certificate path above and the key the
-                  agent writes next to it (the same path with .key added). The
-                  request step shows the exact lines for your server.
-                </Text>
+                {form.reloadService ? (
+                  <VStack align='stretch' spacing={1} mt={1} fontSize='xs'>
+                    <Text>
+                      <strong>Commands:</strong> The agent runs a check, then{' '}
+                      <code>systemctl reload</code> as its unprivileged user.
+                      The installer grants only these two commands for the
+                      selected server.
+                    </Text>
+                    <Text>
+                      <strong>Certificate files:</strong> Configure your server
+                      to read the certificate path above and its adjacent key
+                      (the same path with .key added). The request step shows
+                      the exact lines for your server.
+                    </Text>
+                  </VStack>
+                ) : null}
                 {form.reloadService === 'nginx' ? (
                   <Box as='details' mt={1} data-testid='reload-nginx-panel'>
                     <Box
@@ -792,16 +798,24 @@ export function ConfigStep({ ctx }) {
                       One-time nginx setup, so a reload tests the configuration
                     </Box>
                     <VStack align='stretch' spacing={2} mt={2}>
-                      <Text fontSize='xs' data-testid='reload-nginx-note'>
-                        nginx cannot test its own configuration as an
-                        unprivileged user (nginx -t has to write /run/nginx.pid
-                        and its error log), so for nginx the agent only checks
-                        that the service is running. The stock nginx unit does
-                        not test the configuration on reload either, so run this
-                        once on the server. It makes every reload test the
-                        configuration as root first and fail when the test
-                        fails.
-                      </Text>
+                      <VStack
+                        align='stretch'
+                        spacing={1}
+                        fontSize='xs'
+                        data-testid='reload-nginx-note'
+                      >
+                        <Text>
+                          <strong>Agent check:</strong> nginx -t needs to write
+                          /run/nginx.pid and its error log, so the unprivileged
+                          agent only checks that nginx is running.
+                        </Text>
+                        <Text>
+                          <strong>One-time setup:</strong> The stock nginx unit
+                          does not test configuration on reload. Run this once
+                          on the server so every reload tests the configuration
+                          as root and fails if the test fails.
+                        </Text>
+                      </VStack>
                       <CopyBlock
                         label='One-time nginx setup'
                         text={NGINX_RELOAD_DROPIN}

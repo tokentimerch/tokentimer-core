@@ -32,9 +32,10 @@ function controls({
   );
 }
 describe('WhatsApp invitation recovery', () => {
-  it('keeps the generated link visible, read-only and selected on focus without clipboard permission', () => {
+  it('keeps the generated link visible, read-only and selected on focus without clipboard permission', async () => {
     controls();
-    const input = screen.getByRole('textbox', {
+    fireEvent.click(screen.getByRole('button', { name: 'View confirmation link' }));
+    const input = await screen.findByRole('textbox', {
       name: 'WhatsApp confirmation link',
     });
     expect(input).toHaveValue(url);
@@ -42,7 +43,7 @@ describe('WhatsApp invitation recovery', () => {
     fireEvent.focus(input);
     expect(input.selectionStart).toBe(0);
     expect(input.selectionEnd).toBe(url.length);
-    expect(screen.getByText(/before leaving the page/)).toBeInTheDocument();
+    expect(screen.getByText(/before leaving this page/)).toBeInTheDocument();
   });
   for (const status of ['verified', 'revoked', 'opted_out'])
     it('hides the link after consent becomes ' + status, () => {
@@ -56,6 +57,15 @@ describe('WhatsApp invitation recovery', () => {
   it('hides a superseded invitation', () => {
     controls({ serverExpiry: new Date(Date.now() + 7200000).toISOString() });
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+  });
+  it('explains shadow mode without claiming confirmation blocks delivery', () => {
+    controls({ mode: 'shadow' });
+    fireEvent.click(screen.getByRole('button', { name: 'View confirmation link' }));
+    expect(screen.getByText(/does not block alerts or tests/)).toBeInTheDocument();
+  });
+  it('hides confirmation controls when verification is off', () => {
+    controls({ mode: 'off' });
+    expect(screen.queryByText('WhatsApp')).not.toBeInTheDocument();
   });
   it('does not show the manager link to a viewer', () => {
     controls({ isViewer: true });

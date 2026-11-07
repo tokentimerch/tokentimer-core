@@ -337,11 +337,17 @@ function ConfirmKeys({ issuer, busyKey, paused, muted, onConfirm }) {
   return (
     <Stack spacing={3}>
       <Text fontSize='sm'>
-        Choose the CA certificate that should sign new enrollments. A CA keeps
-        older certificates after a renewal, so the newest is listed first.
-        Choosing one pins that public key. A later renewal that uses a different
-        key stops enrollments until you choose the new certificate.
+        Choose the CA certificate that should sign new enrollments. The newest
+        certificate is listed first, followed by earlier certificates.
       </Text>
+      <Alert status='warning' borderRadius='md' alignItems='start'>
+        <AlertIcon />
+        <AlertDescription fontSize='sm'>
+          <Text fontWeight='semibold'>The public key will be pinned</Text>
+          If the CA later renews with a different key, enrollments stop until
+          you select the new certificate.
+        </AlertDescription>
+      </Alert>
       <Stack spacing={2}>
         {groups.map((group, index) => {
           const inUse = chosenKey === group.keySha256;

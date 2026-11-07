@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Dashboard usability.** Review recipient confirmations in a dedicated dialog, with clearer setup guidance and recovery states throughout the dashboard.
+
 ## [0.19.1] - 2026-11-06
 
 ### Fixed

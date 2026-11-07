@@ -110,7 +110,15 @@ export function DashboardState({
   const isLoading = type === 'loading';
 
   return (
-    <VStack spacing={3} py={py} px={4} textAlign='center'>
+    <VStack
+      spacing={3}
+      py={py}
+      px={4}
+      textAlign='center'
+      role={isLoading ? 'status' : undefined}
+      aria-live={isLoading ? 'polite' : undefined}
+      aria-label={isLoading && !title ? 'Loading' : undefined}
+    >
       {isLoading ? <Spinner size='md' color='blue.400' /> : null}
       {title ? (
         <Text color='inherit' fontSize='sm' fontWeight='semibold'>

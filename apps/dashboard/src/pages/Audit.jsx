@@ -2851,6 +2851,34 @@ export default function Audit({ session, onLogout, onAccountClick }) {
                                   text={formatMetadata(ev)}
                                   maxLines={3}
                                 />
+                                <Box as='details' mt={2}>
+                                  <Box
+                                    as='summary'
+                                    cursor='pointer'
+                                    fontSize='sm'
+                                  >
+                                    View event details
+                                  </Box>
+                                  <VStack align='stretch' spacing={2} mt={2}>
+                                    <Text fontSize='sm'>
+                                      Time: {formatDateTime(ev.occurred_at)}
+                                    </Text>
+                                    <Text fontSize='sm' wordBreak='break-word'>
+                                      Action: {ev.action}
+                                    </Text>
+                                    {getMetadataEntries(ev).map(
+                                      (entry, index) => (
+                                        <Text
+                                          key={index}
+                                          fontSize='sm'
+                                          wordBreak='break-word'
+                                        >
+                                          {entry.label}: {entry.value}
+                                        </Text>
+                                      )
+                                    )}
+                                  </VStack>
+                                </Box>
                               </Td>
                             </Tr>
                           ))}
