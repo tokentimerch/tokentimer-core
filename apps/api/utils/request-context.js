@@ -4,7 +4,8 @@ const { randomUUID } = require("node:crypto");
 const requestContext = new AsyncLocalStorage();
 
 function getRequestContext() {
-  return requestContext.getStore();
+  const state = requestContext.getStore();
+  return state?.active ? state.context : undefined;
 }
 
 function attachRequestContext(record) {
@@ -28,7 +29,14 @@ function requestCorrelation(req, res, next) {
   const correlationId = randomUUID();
   req.correlationId = correlationId;
   res.setHeader("X-Request-Id", correlationId);
-  requestContext.run(Object.freeze({ correlationId }), next);
+  const state = { context: Object.freeze({ correlationId }), active: true };
+  if (typeof res.once === "function") {
+    // Sockets and other async resources can outlive the request that created them.
+    const endRequest = () => { state.active = false; };
+    res.once("finish", endRequest);
+    res.once("close", endRequest);
+  }
+  requestContext.run(state, next);
 }
 
 function requestCompletionLogger(logger) {
