@@ -39,6 +39,11 @@ function Invoke-CertOpsArmRequest {
         if($httpStatus -ge 100 -and $httpStatus -le 599){Write-Host ("CERTOPS_ARM_HTTP_FAILURE={0}:{1}" -f $Method,$httpStatus)}
         $requestFailure=[InvalidOperationException]::new('Lab ARM request failed; private response withheld')
         $requestFailure.Data['CertOpsArmHttpStatus']=$httpStatus
+        # An exhausted busy submission is terminal for the whole operation.
+        # Keep its HTTP status on the cause so outer callers cannot retry it again.
+        if($runCommandSubmission -and $httpStatus -eq 409 -and $attempt -eq $maxAttempts){
+          throw [InvalidOperationException]::new('Lab ARM busy retry limit exhausted', $requestFailure)
+        }
         throw $requestFailure
       }
     }

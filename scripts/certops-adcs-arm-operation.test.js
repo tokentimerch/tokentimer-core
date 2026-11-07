@@ -74,6 +74,9 @@ try {
 }catch{
  $failed=$true
  if($_.Exception.Message.Contains('fixture-private-value')){throw 'Private error escaped'}
+ if($env:CERTOPS_ARM_MODE -eq 'submission-busy-exhausted'){
+   if($_.Exception.Data.Contains('CertOpsArmHttpStatus') -or $_.Exception.InnerException.Data['CertOpsArmHttpStatus'] -ne 409){throw 'Busy retry exhaustion must remain terminal while preserving its cause'}
+ }
 }
 if($env:CERTOPS_ARM_MODE -in 'success','auth-retry','submission-busy'){
  if($failed -or $result.value[0].message -ne 'CERTOPS_STAGE=probe-passed'){throw 'Fresh polling did not return guest receipt'}
