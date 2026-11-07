@@ -11,7 +11,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- **API request correlation.** Background logs no longer inherit an unrelated request ID after its response ends. Request and failed health-check logs retain their matching `X-Request-Id`.
+- **API logging.** Successful health and metrics probes no longer generate completion logs; failed probes remain logged with their matching `X-Request-Id`. Background logs no longer inherit an unrelated request ID after its response ends.
 
 ## [0.19.1] - 2026-11-06
 
