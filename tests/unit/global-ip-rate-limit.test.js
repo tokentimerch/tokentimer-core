@@ -108,3 +108,19 @@ test("domain lookup fallback isolates IPs in the same workspace", async () => {
   assert.equal((await ip(request(endpoint(app)).post("/lookup"), "203.0.113.40").send({ domain: "example.com" })).status, 429);
   assert.equal((await ip(request(endpoint(app)).post("/lookup"), "203.0.113.41").send({ domain: "example.com" })).status, 204);
 });
+
+test("machine IP windows reject Node timer overflow and accept its maximum", () => {
+  const { createCertOpsMachineIpRateLimit } = require("../../apps/api/middleware/machine-ip-rate-limit");
+  for (const name of ["CERTOPS_MACHINE_IP_RATE_LIMIT_WINDOW_MS", "CERTOPS_MACHINE_IP_SLOWDOWN_WINDOW_MS"]) {
+    const previous = process.env[name];
+    try {
+      process.env[name] = "2147483648";
+      assert.throws(() => createCertOpsMachineIpRateLimit(), new RegExp(name));
+      process.env[name] = "2147483647";
+      assert.doesNotThrow(() => createCertOpsMachineIpRateLimit());
+    } finally {
+      if (previous === undefined) delete process.env[name];
+      else process.env[name] = previous;
+    }
+  }
+});
