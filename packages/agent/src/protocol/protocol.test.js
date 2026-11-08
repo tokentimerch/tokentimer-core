@@ -46,6 +46,7 @@ function stubFetch(responses) {
     return Promise.resolve({
       ok: entry.status >= 200 && entry.status < 300,
       status: entry.status,
+      headers: { get: (name) => entry.headers?.[name.toLowerCase()] ?? null },
       json: () => Promise.resolve(entry.json ?? {}),
     });
   };
@@ -1385,6 +1386,16 @@ test("createCaAwareFetch: https request against an untrusted-by-bundle endpoint 
   await assert.rejects(
     caFetch("https://127.0.0.1:1/never-listens", { method: "POST", body: "{}" }),
   );
+});
+
+test("renewLease: preserves a rate-limit retry delay", async () => {
+  stubFetch([{ status: 429, json: { code: "CERTOPS_MACHINE_RATE_LIMITED" }, headers: { "retry-after": "8" } }]);
+  const client = createProtocolClient({ serverUrl: "https://example.test", agentId: "agent-1", protocolVersion: "1.0.0", getCredential: () => CREDENTIAL });
+  await assert.rejects(() => client.renewLease({ jobId: "job-1", claimId: "claim-1" }), (err) => {
+    assert.equal(err.status, 429);
+    assert.equal(err.retryAfterMs, 8_000);
+    return true;
+  });
 });
 
 test("renewLease: other non-2xx still throws AgentProtocolError", async () => {

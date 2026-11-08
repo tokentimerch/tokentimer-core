@@ -672,9 +672,9 @@ function extractLeaseExpiresAtMs(response, nowMs) {
 /**
  * B6 lease renew with fail-closed semantics.
  *
- * - `required: true` (first accept confirmation): ANY failure aborts:
- *   network/transient, 5xx, 409/410, ownership mismatch. Execution must not
- *   proceed past a failed first confirmation.
+ * - `required: true`: a first confirmation still fails closed on any error.
+ *   After a prior confirmation, a bounded HTTP 429 Retry-After may be retried
+ *   before the confirmed expiry; execution never proceeds without a fresh success.
  * - Subsequent renews (`required: false`): 409/410/ownership loss abort
  *   immediately with no retry. Transient network/5xx may retry a bounded
  *   number of times only while the next attempt is still before the last
@@ -688,8 +688,9 @@ function extractLeaseExpiresAtMs(response, nowMs) {
  * @param {string|null} params.claimId
  * @param {(msg: string) => void} [params.log]
  * @param {object} [params.leaseState] from createLeaseState()
- * @param {boolean} [params.required] when true, any failure aborts
+ * @param {boolean} [params.required] require successful confirmation before proceeding
  * @param {() => number} [params.now]
+ * @param {(ms: number) => Promise<void>} [params.sleep] retry timer
  * @returns {Promise<{ ok: true, skipped?: boolean, softFailure?: boolean, response?: object }|{ ok: false, retired: boolean, abort: { status: "blocked", errorMessage: string, retired?: boolean } }>}
  */
 async function renewJobLeaseOrAbort({
@@ -700,6 +701,7 @@ async function renewJobLeaseOrAbort({
   leaseState = null,
   required = false,
   now = () => Date.now(),
+  sleep = sleepMs,
 } = {}) {
   if (!leaseClient || typeof leaseClient.renewLease !== "function") {
     if (required) {
@@ -722,11 +724,26 @@ async function renewJobLeaseOrAbort({
     return { ok: true, skipped: true };
   }
 
+  let mandatoryRateLimitRetries = 0;
   while (true) {
     let response;
     try {
       response = await leaseClient.renewLease({ jobId, claimId });
     } catch (err) {
+      // A 429 is an explicit temporary refusal, not permission to proceed.
+      // Retry only with a previously confirmed live lease and require a fresh
+      // successful confirmation before returning to the side-effecting caller.
+      const deadline = leaseState?.lastConfirmedExpiresAtMs;
+      const retryAfter = err?.retryAfterMs;
+      const delay = Number.isFinite(retryAfter) ? Math.max(200, retryAfter) : null;
+      if (required && err?.status === 429 && delay !== null && delay <= 60_000 &&
+          Number.isFinite(deadline) && !leaseState.abort && now() + delay < deadline &&
+          mandatoryRateLimitRetries < MAX_LEASE_TRANSIENT_RETRIES) {
+        mandatoryRateLimitRetries += 1;
+        await sleep(delay);
+        if (leaseState.abort) return { ok: false, retired: leaseState.abort.retired === true, abort: leaseState.abort };
+        if (now() < deadline) continue;
+      }
       if (required) {
         emitLog(
           log,
