@@ -65,6 +65,45 @@ describe("HTTP retirement concurrent with claim on PostgreSQL", function () {
     assert.equal(retired.status, 410, JSON.stringify(retired.body));
     assert.equal(retired.body.code, "CERTOPS_AGENT_RETIRED");
   });
+  it("requires a real operator session and workspace access to retire an agent", async () => {
+    const bcrypt = require("bcryptjs");
+    const session = require("express-session");
+    const passport = require("passport");
+    const { requireAuth } = require("../../../apps/api/middleware/auth");
+    const { loadWorkspace, requireWorkspaceMembership } = require("../../../apps/api/services/rbac");
+    process.env.SESSION_SECRET = "test-session-secret-for-isolated-postgres-only";
+    const authRouter = require("../../../apps/api/routes/auth");
+    const realApp = express();
+    realApp.use(express.json());
+    realApp.use(session({ secret: process.env.SESSION_SECRET, resave: false, saveUninitialized: false }));
+    realApp.use(passport.initialize());
+    realApp.use(passport.session());
+    realApp.use(authRouter);
+    realApp.use("/api/v1/workspaces/:id", requireAuth, loadWorkspace, requireWorkspaceMembership);
+    realApp.use(require("../../../apps/api/routes/certops"));
+    const password = "FixturePassword123!";
+    const hash = await bcrypt.hash(password, 10);
+    const email = `session-retire-${randomUUID()}@example.test`;
+    const owner = (await db.query("INSERT INTO users(email,email_original,display_name,password_hash,auth_method,email_verified) VALUES ($1,$2,'Session Owner',$3,'local',TRUE) RETURNING id", [email, email, hash])).rows[0].id;
+    const realWorkspace = randomUUID();
+    await db.query("INSERT INTO workspaces (id,name,created_by,plan) VALUES ($1,'Real session',$2,'oss')", [realWorkspace, owner]);
+    const credential = generateAgentCredential();
+    const agentId = (await db.query(`INSERT INTO certops_agents (workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)
+      VALUES ($1,$2,'0.18.2','1.0.0',$3,$4) RETURNING id`, [realWorkspace, `session-agent-${randomUUID()}`, credential.credentialPrefix, credential.credentialHash])).rows[0].id;
+    const route = `/api/v1/workspaces/${realWorkspace}/certops/agents/${agentId}/retire`;
+    assert.equal((await request(realApp).post(route).send({})).status, 401);
+    const outsiderEmail = `session-outsider-${randomUUID()}@example.test`;
+    await db.query("INSERT INTO users(email,email_original,display_name,password_hash,auth_method,email_verified) VALUES ($1,$2,'Session Outsider',$3,'local',TRUE)", [outsiderEmail, outsiderEmail, hash]);
+    const outsider = request.agent(realApp);
+    assert.equal((await outsider.post("/auth/login").send({ email: outsiderEmail, password })).status, 200);
+    assert.equal((await outsider.post(route).send({})).status, 403);
+    const operator = request.agent(realApp);
+    const login = await operator.post("/auth/login").send({ email, password });
+    assert.equal(login.status, 200, JSON.stringify(login.body));
+    const retirement = await operator.post(route).send({});
+    assert.equal(retirement.status, 200, JSON.stringify(retirement.body));
+    assert.equal((await db.query("SELECT status FROM certops_agents WHERE id=$1", [agentId])).rows[0].status, "retired");
+  });
   it("serializes a waiting HTTP retirement before a real claim", async () => {
     const credential = generateAgentCredential();
     const agentId = (await db.query(`INSERT INTO certops_agents (workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)
