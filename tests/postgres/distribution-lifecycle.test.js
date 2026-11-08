@@ -543,6 +543,7 @@ test("HTTP management exposes uncertain failed jobs and scheduler preserves the 
   assert.equal(response.status,200,JSON.stringify(response.body));
   const consumer=response.body.consumers.find(row=>row.binding_id===f.bindingId);
   assert.equal(consumer.latest_deployment.needsOperatorReconciliation,true);assert.equal(consumer.health_status,"uncertain_external_effects");
+  await operations.setRolloutState({...f,rolloutId:failed.rollout.id,state:"retired",actorUserId:f.actor});
   await verificationDue(f);assert.equal((await verificationTick(f)).reason,"unresolved_uncertain_effects");
   assert.equal((await pool.query("SELECT needs_operator_reconciliation FROM certificate_jobs WHERE id=$1",[failed.child.job_id])).rows[0].needs_operator_reconciliation,true);
 });
