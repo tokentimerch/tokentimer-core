@@ -146,3 +146,10 @@ test("independent proxy counts every order containing the run DNS and attributes
   assert.throws(() => observer.ordersForDns("run.example.test/foreign"));
   assert.throws(() => observer.observe(h.route(request("/my-order/two")), 200, { status: "valid", certificate: "https://127.0.0.1:14443/certZ/one" }));
 });
+
+test("an uncertain forwarded order response cannot be counted as no order", () => {
+  const observer = h.createOrderObserver({ authority: request("/dir").authority, upstreamDirectory: request("/dir").upstreamDirectory });
+  for (const status of [200, 400, 429, 500, 503]) {
+    assert.throws(() => observer.observe(h.route(request("/order-plz")), status, {}), /outcome is uncertain/);
+  }
+});

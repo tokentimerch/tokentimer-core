@@ -1123,7 +1123,7 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
       const target = row.deploy_target;
       if (!validAdcsTarget(target)) {
         throw serviceError(
-          "enrollment is missing its IIS deployment target",
+          "enrollment is missing its Windows certificate destination",
           "CERTOPS_SNAPSHOT_INVALID",
         );
       }

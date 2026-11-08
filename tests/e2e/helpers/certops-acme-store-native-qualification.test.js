@@ -13,7 +13,7 @@ function sample(phase) {
   const dnsName = "tt-acme-0123456789abcdef01234567.example.test";
   const containerName = "tokentimer-enr-11111111-1111-1111-1111-111111111111";
   const counter = (orders, keygens, accepts) => ({ captureId: "d".repeat(32), coverageComplete: true, orders, keygens, accepts });
-  const ca = { source: "independent-ca", dnsName, orderId: "order-1", ordersForDns: 1, finalizedOrdersForDns: 1, fingerprintSha256: fp };
+  const ca = { source: "independent-ca", coverageComplete: true, coverageId: "f".repeat(32), dnsName, orderId: "order-1", ordersForDns: 1, finalizedOrdersForDns: 1, fingerprintSha256: fp };
   const saved = phase === "after-save-upload-lost";
   return {
     phase, dnsName, candidateSha256: archive, before: counter(0, 0, 0), atFault: counter(1, 1, 0),
@@ -38,6 +38,7 @@ test("both interruption boundaries require a continuous independent trace", () =
     ["atFault", "orders", 2], ["after", "orders", 2], ["after", "keygens", 2],
     ["before", "coverageComplete", false], ["after", "captureId", "e".repeat(32)],
     ["caAfter", "ordersForDns", 2], ["caAfter", "orderId", "different"],
+    ["caAfter", "coverageComplete", false], ["caAfter", "coverageId", "e".repeat(32)],
     ["fault", "nativeProcessDrained", false], ["fault", "noIis", false],
     ["fault", "keySpkiSha256", "e".repeat(64)], ["fault", "evidenceUploadDropped", false],
     ["recovered", "outcome", "uncertain"], ["inventory", "promotions", 2],

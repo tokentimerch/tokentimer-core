@@ -127,6 +127,10 @@ function createOrderObserver({ authority, upstreamDirectory }) {
   };
   return {
     observe(selected, status, parsed, { location, bytes } = {}) {
+      // A forwarded new-order response other than 201 cannot prove that the
+      // CA created no order. Fail the observation instead of undercounting.
+      if (selected.stage === "new-order")
+        assert.equal(status, 201, "Forwarded new-order outcome is uncertain");
       if (selected.stage === "new-order" && status === 201) {
         assert.ok(orders.size < 64);
         const finalize = nativePath(parsed.finalize);
@@ -262,15 +266,19 @@ async function startOwnedAcmeProxy({
     lastRefusedFinalize = null,
     failure = null,
     closed = false,
-    failed = false;
+    failed = false,
+    activeRequests = 0;
   const server = https.createServer(
     { cert: certificatePem, key: privateKeyPem },
     (request, response) => {
-      handle(request, response).catch(() => {
-        failed = true;
-        if (!response.headersSent) response.writeHead(502);
-        response.end();
-      });
+      activeRequests++;
+      handle(request, response)
+        .catch(() => {
+          failed = true;
+          if (!response.headersSent) response.writeHead(502);
+          response.end();
+        })
+        .finally(() => { activeRequests--; });
     },
   );
   server.on("connection", (socket) => {
@@ -471,6 +479,9 @@ async function startOwnedAcmeProxy({
           perStage,
           lastRefusedFinalize,
           transportFailed: failed,
+          activeRequests,
+          activeConnections: sockets.size,
+          activeUpstreamRequests: upstreamRequests.size,
         }),
       );
     },

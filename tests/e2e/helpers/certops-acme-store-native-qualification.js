@@ -54,10 +54,8 @@ function verifyCrashRecovery({ phase, dnsName, candidateSha256, before, atFault,
   validateCounter(before, atFault, after);
   for (const ca of [caAtFault, caAfter]) {
     assert.ok(["independent-ca", "isolated-ca-proxy"].includes(ca?.source));
-    if (ca.source === "isolated-ca-proxy") {
-      assert.equal(ca.coverageComplete, true, "The proxy must have complete independently verified coverage");
-      assert.match(ca.coverageId, CAPTURE);
-    }
+    assert.equal(ca.coverageComplete, true, "CA observation must have complete independently verified coverage");
+    assert.match(ca.coverageId, CAPTURE);
     assert.equal(ca.dnsName, dnsName);
     assert.equal(ca.ordersForDns, 1, "Count all CA orders for this unique DNS name");
     assert.equal(ca.finalizedOrdersForDns, 1);
@@ -67,7 +65,7 @@ function verifyCrashRecovery({ phase, dnsName, candidateSha256, before, atFault,
   assert.equal(caAtFault.orderId, caAfter.orderId);
   assert.equal(caAtFault.fingerprintSha256, caAfter.fingerprintSha256);
   assert.equal(caAtFault.source, caAfter.source);
-  if (caAtFault.source === "isolated-ca-proxy") assert.equal(caAtFault.coverageId, caAfter.coverageId);
+  assert.equal(caAtFault.coverageId, caAfter.coverageId);
   assert.equal(fault?.phase, phase);
   assert.equal(fault.candidateSha256, candidateSha256);
   assert.equal(fault.nativeIdentity, "LocalSystem");
