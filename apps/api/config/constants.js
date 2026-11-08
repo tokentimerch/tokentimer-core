@@ -1,6 +1,7 @@
 const { parseLimits } = require("../services/planLimits");
 const { logger } = require("../utils/logger");
 const { webhookHostAllowed, postWebhook } = require("../utils/webhookSafety");
+const { isTeamsWorkflowHost } = require("@tokentimer/webhook-safety");
 
 const normalizeUrl = (value) => String(value || "").replace(/\/$/, "");
 const APP_URL = normalizeUrl(process.env.APP_URL) || "http://localhost:5173";
@@ -38,7 +39,11 @@ async function testWebhookUrl(
     const target = new URL(url);
     if (!/^https?:$/.test(target.protocol))
       return { success: false, error: "Webhook URL must be http(s)" };
-    const lowerKind = String(kind || "generic").toLowerCase();
+    const configuredKind = String(kind || "generic").toLowerCase();
+    const lowerKind =
+      configuredKind === "generic" && isTeamsWorkflowHost(target.hostname)
+        ? "teams"
+        : configuredKind;
     if (lowerKind !== "generic" && !webhookHostAllowed(target.hostname)) {
       return { success: false, error: "Webhook host not allowed for provider" };
     }
@@ -56,11 +61,32 @@ async function testWebhookUrl(
       payload = { content: `\u{1F514} ${text}` };
     } else if (lowerKind === "teams") {
       payload = {
-        "@type": "MessageCard",
-        "@context": "https://schema.org/extensions",
-        summary: "TokenTimer Test",
-        themeColor: "0078D4",
-        sections: [{ activityTitle: text }],
+        type: "message",
+        attachments: [
+          {
+            contentType: "application/vnd.microsoft.card.adaptive",
+            content: {
+              type: "AdaptiveCard",
+              $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+              version: "1.4",
+              body: [
+                {
+                  type: "TextBlock",
+                  text: "TokenTimer Test",
+                  weight: "Bolder",
+                  size: "Large",
+                  wrap: true,
+                },
+                {
+                  type: "TextBlock",
+                  text,
+                  wrap: true,
+                  spacing: "Small",
+                },
+              ],
+            },
+          },
+        ],
       };
     } else if (lowerKind === "pagerduty") {
       payload = {
@@ -97,7 +123,7 @@ async function testWebhookUrl(
       };
     }
     if (lowerKind === "teams") {
-      if (status === 200) return { success: true };
+      if (status >= 200 && status < 300) return { success: true };
       return {
         success: false,
         error: `Teams responded ${status}: ${bodyText}`,

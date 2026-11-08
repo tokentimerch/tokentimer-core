@@ -122,6 +122,18 @@ describe("detectWebhookProviderKind", () => {
     assert.equal(detectWebhookProviderKind("notdiscord.com"), null);
     assert.equal(detectWebhookProviderKind("webhook.office.com"), "teams");
     assert.equal(detectWebhookProviderKind("office.com"), null);
+    assert.equal(
+      detectWebhookProviderKind("prod-00.westus.logic.azure.com"),
+      "teams",
+    );
+    assert.equal(
+      detectWebhookProviderKind("example.environment.api.powerplatform.com."),
+      "teams",
+    );
+    assert.equal(
+      detectWebhookProviderKind("example.logic.azure.com.invalid"),
+      null,
+    );
     assert.equal(detectWebhookProviderKind("events.pagerduty.com"), "pagerduty");
   });
 });

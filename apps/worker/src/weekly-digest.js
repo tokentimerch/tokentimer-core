@@ -17,6 +17,7 @@ import {
   pushMetrics,
 } from "./metrics.js";
 import { computeDaysLeft } from "./shared/thresholds.js";
+import { resolveWebhookProviderKind } from "./shared/webhookProviderKind.js";
 import { confirmDigestConsent, destinationAllowed, verificationMode } from "./shared/recipientDeliveryGate.js";
 import {
   buildWeeklyDigestWhatsAppTemplateVariables,
@@ -457,63 +458,98 @@ function buildTeamsDigestPayload(
   workspaceName,
 ) {
   const groupNames = formatGroupNames(contributingGroupNames);
-  const facts = [
-    { name: "📊 Workspace", value: workspaceName },
-    { name: "🔢 Tokens Count", value: String(count) },
+  const summaryFacts = [
+    { title: "📊 Workspace", value: workspaceName },
+    { title: "🔢 Tokens Count", value: String(count) },
   ];
   if (groupNames.length > 0) {
-    facts.splice(1, 0, {
-      name: "👥 Contact groups",
+    summaryFacts.splice(1, 0, {
+      title: "👥 Contact groups",
       value: groupNames.join(", "),
     });
   }
 
-  const sections = [
+  const body = [
     {
-      activityTitle: `📊 Weekly Digest: ${count} token(s) expiring soon`,
-      activitySubtitle: workspaceName,
+      type: "TextBlock",
+      text: `📊 Weekly Digest: ${count} token(s) expiring soon`,
+      weight: "Bolder",
+      size: "Large",
+      wrap: true,
+    },
+    {
+      type: "TextBlock",
+      text: workspaceName,
+      weight: "Bolder",
+      size: "Medium",
+      wrap: true,
+      spacing: "Small",
+    },
+    {
+      type: "TextBlock",
       text: `You have **${count}** token(s) expiring soon. Review them below:`,
-      facts,
-      markdown: true,
+      wrap: true,
+      spacing: "Small",
+    },
+    {
+      type: "FactSet",
+      facts: summaryFacts,
+      spacing: "Medium",
     },
   ];
 
   const displayTokens = tokensList.slice(0, 10);
   for (const t of displayTokens) {
-    sections.push({
-      activityTitle: t.name,
-      facts: [
-        { name: "📋 Type", value: t.type },
-        { name: "⏰ Expires in", value: `${t.days_until} day(s)` },
-        { name: "📅 Expiration Date", value: t.expiration },
-      ],
-      markdown: true,
-    });
+    body.push(
+      {
+        type: "TextBlock",
+        text: t.name,
+        weight: "Bolder",
+        size: "Medium",
+        wrap: true,
+        spacing: "Large",
+        separator: true,
+      },
+      {
+        type: "FactSet",
+        facts: [
+          { title: "📋 Type", value: t.type },
+          { title: "⏰ Expires in", value: `${t.days_until} day(s)` },
+          { title: "📅 Expiration Date", value: t.expiration },
+        ],
+        spacing: "Small",
+      },
+    );
   }
 
   if (count > 10) {
-    sections.push({
-      activitySubtitle: `_...and ${count - 10} more token(s)_`,
-      markdown: true,
+    body.push({
+      type: "TextBlock",
+      text: `_...and ${count - 10} more token(s)_`,
+      wrap: true,
+      isSubtle: true,
+      spacing: "Medium",
     });
   }
 
   return {
-    "@type": "MessageCard",
-    "@context": "https://schema.org/extensions",
-    summary: `Weekly Digest: ${count} token(s) expiring soon`,
-    themeColor: "FFA500", // Orange
-    sections,
-    potentialAction: [
+    type: "message",
+    attachments: [
       {
-        "@type": "OpenUri",
-        name: "View in TokenTimer",
-        targets: [
-          {
-            os: "default",
-            uri: `${APP_URL}/dashboard`,
-          },
-        ],
+        contentType: "application/vnd.microsoft.card.adaptive",
+        content: {
+          type: "AdaptiveCard",
+          $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+          version: "1.4",
+          body,
+          actions: [
+            {
+              type: "Action.OpenUrl",
+              title: "View in TokenTimer",
+              url: `${APP_URL}/dashboard`,
+            },
+          ],
+        },
       },
     ],
   };
@@ -719,7 +755,9 @@ async function deliverRecipientDigest({
       url: row.recipientKey,
       kind: "generic",
     };
-    const kind = (wh.kind || "generic").toLowerCase();
+    const configuredKind = (wh.kind || "generic").toLowerCase();
+    const kind =
+      resolveWebhookProviderKind(wh) === "teams" ? "teams" : configuredKind;
     const tokensList = webhookTokensList(tokens);
     let payload;
     if (kind === "slack") {

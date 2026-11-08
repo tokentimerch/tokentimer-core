@@ -192,6 +192,8 @@ Run the standard migration runner, including when verification is `off`; do not 
 
 ## Alerts, limits, and webhooks
 
+For Microsoft Teams, create a Teams Workflows incoming webhook and enter its URL in Alert Preferences. TokenTimer sends Adaptive Cards for alerts, weekly digests, and test messages. Replace any Office 365 Connector URL with the new Workflow URL, then send a test from Alert Preferences.
+
 | Variable                                  | Description                                                                 | Default value                         | Scope                |
 | ----------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------- | -------------------- |
 | `ALERT_THRESHOLDS`                        | Default workspace alert thresholds as whole-number days relative to expiry (overridden by workspace preferences). Range **-365 to 730**: positive = days before, `0` = day of expiry, negative = days after (for example `-1`). | `30,14,7,1,0`                         | Alerts               |
