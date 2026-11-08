@@ -56,11 +56,32 @@ async function testWebhookUrl(
       payload = { content: `\u{1F514} ${text}` };
     } else if (lowerKind === "teams") {
       payload = {
-        "@type": "MessageCard",
-        "@context": "https://schema.org/extensions",
-        summary: "TokenTimer Test",
-        themeColor: "0078D4",
-        sections: [{ activityTitle: text }],
+        type: "message",
+        attachments: [
+          {
+            contentType: "application/vnd.microsoft.card.adaptive",
+            content: {
+              type: "AdaptiveCard",
+              $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+              version: "1.4",
+              body: [
+                {
+                  type: "TextBlock",
+                  text: "TokenTimer Test",
+                  weight: "Bolder",
+                  size: "Large",
+                  wrap: true,
+                },
+                {
+                  type: "TextBlock",
+                  text,
+                  wrap: true,
+                  spacing: "Small",
+                },
+              ],
+            },
+          },
+        ],
       };
     } else if (lowerKind === "pagerduty") {
       payload = {

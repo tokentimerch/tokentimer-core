@@ -14,7 +14,9 @@ export function detectWebhookProviderKind(host) {
     h === "webhook.office.com" ||
     h === "office365.com" ||
     h.endsWith(".office365.com") ||
-    h.endsWith(".office.com")
+    h.endsWith(".office.com") ||
+    h.endsWith(".logic.azure.com") ||
+    h.endsWith(".environment.api.powerplatform.com")
   ) {
     return "teams";
   }

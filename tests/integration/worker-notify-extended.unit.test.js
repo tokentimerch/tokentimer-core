@@ -57,7 +57,9 @@ describe("Worker notify extended unit coverage", () => {
     expect(genericPayload).to.have.property("content");
     expect(slackPayload).to.have.property("blocks");
     expect(discordPayload).to.have.property("embeds");
-    expect(teamsPayload).to.have.property("@type");
+    expect(teamsPayload).to.have.property("type", "message");
+    expect(teamsPayload).to.have.property("attachments");
+    expect(teamsPayload.attachments[0]).to.have.property("contentType", "application/vnd.microsoft.card.adaptive");
     expect(pagerdutyPayload).to.have.property("event_action");
     expect(pagerdutyPayload.payload).to.have.property("severity", "critical");
   });
