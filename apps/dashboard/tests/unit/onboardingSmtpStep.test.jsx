@@ -97,13 +97,18 @@ describe('SmtpStep wording', () => {
   });
 });
 
-describe('NotificationsStep footnote', () => {
-  it('defines delivery windows and weekly digests instead of naming them bare', async () => {
-    wrap(<NotificationsStep ctx={{ ...ctxOf(), workspaceId: 'ws' }} />);
-    await waitFor(() =>
-      expect(screen.getByText(/delivery window \(the hours/)).toBeVisible()
+describe('NotificationsStep guidance', () => {
+  it('explains delivery and verification and opens the current workspace preferences', async () => {
+    wrap(<NotificationsStep ctx={{ ...ctxOf(), workspaceId: 'ws/a?' }} />);
+    expect(await screen.findByText(/Choose the hours when alerts may/)).toBeVisible();
+    expect(screen.getByText(/Receive one summary of what expires/)).toBeVisible();
+    expect(screen.getByText(/Each recipient must confirm their number/)).toBeVisible();
+    expect(screen.getByRole('link', { name: /Open Alert Preferences/ })).toHaveAttribute(
+      'href', '/workspace-preferences?workspace=ws%2Fa%3F'
     );
-    expect(screen.getByText(/weekly digest \(one summary/)).toBeVisible();
+    expect(screen.getByRole('link', { name: /Open Alert Preferences/ })).toHaveAttribute(
+      'target', '_blank'
+    );
   });
 });
 

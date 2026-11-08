@@ -82,6 +82,12 @@ describe('retiring a certificate that an endpoint checker still sees', () => {
     const list = await screen.findByTestId('serving-locations');
     expect(list).toHaveTextContent('https://app.example');
     expect(list).toHaveTextContent('endpoint checker');
+    expect(
+      screen.getByText(/linked monitor data is deleted/)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/certificate stays on the host/)
+    ).toBeInTheDocument();
 
     fireEvent.click(
       screen.getByRole('button', {

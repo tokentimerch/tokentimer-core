@@ -4307,7 +4307,7 @@ function csrRoute(work) {
       if (err?.status && err?.code) {
         return res.status(err.status).json({ error: err.message, code: err.code });
       }
-      if (err?.statusCode && /^CERTOPS_(MATERIAL|DISTRIBUTION|BINDING|ROLLOUT|DEPLOYMENT|PUBLICATION|CONSUMER)_/.test(err.code || "")) {
+      if (err?.statusCode && /^CERTOPS_(MATERIAL|DISTRIBUTION|BINDING|ROLLOUT|DEPLOYMENT|PUBLICATION|CONSUMER|LIFECYCLE)_/.test(err.code || "")) {
         return res.status(err.statusCode).json({ error:err.code,code:err.code });
       }
       const handled = handleCertOpsError(res, err);

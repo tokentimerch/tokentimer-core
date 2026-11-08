@@ -727,15 +727,22 @@ export function VaultStep({ ctx }) {
             </Select>
           </FormControl>
           <VStack align='stretch' spacing={3}>
-            <Text fontSize='sm'>
-              With local execution enabled and dryRun true, send a signed test
-              to the issuer here. If you already tested it in this guide, its
-              existing result is shown. This does not issue or deploy
-              certificates. Consumer checks belong to their assigned host
-              configurations in part 6. After the issuer check completes, stop
-              the issuing TokenTimer service while you prepare the
-              group-specific configuration below.
-            </Text>
+            <VStack align='stretch' spacing={1} fontSize='sm'>
+              <Text fontWeight='semibold'>Check the issuing agent</Text>
+              <Text>
+                With local execution enabled and dryRun true, send a signed test
+                here. An existing result from this guide is shown instead of
+                repeating it.
+              </Text>
+              <Text>
+                This test does not issue or deploy certificates. Consumer checks
+                belong to their assigned host configurations in part 6.
+              </Text>
+              <Text>
+                After the check completes, stop the issuing TokenTimer service
+                while preparing the group-specific configuration below.
+              </Text>
+            </VStack>
             <VaultAgentTest
               key={`issuer/${issuerId}`}
               ctx={ctx}
@@ -921,13 +928,24 @@ export function VaultStep({ ctx }) {
                 </ErrorText>
               ))}
             </FormErrorMessage>
-            <Text fontSize='xs' mt={1} color={muted} _light={{ color: muted }}>
-              Needed when the certificate comes from a private CA or a test CA
-              such as the Let&apos;s Encrypt staging CA: the consumer&apos;s
-              trust check validates the chain against this file and fails
-              without it. Use the root of the issuing CA, readable by
-              tokentimer-agent on the consumer host.
-            </Text>
+            <VStack
+              align='stretch'
+              spacing={1}
+              fontSize='xs'
+              mt={1}
+              color={muted}
+              _light={{ color: muted }}
+            >
+              <Text>
+                <strong>When needed:</strong> Supply this file for a private or
+                test CA, including the Let&apos;s Encrypt staging CA. The
+                consumer&apos;s trust check fails without it.
+              </Text>
+              <Text>
+                <strong>Which file:</strong> Use the issuing CA root, readable
+                by tokentimer-agent on the consumer host.
+              </Text>
+            </VStack>
           </FormControl>
           <DashboardActionButton
             {...VAULT_ACTION_LAYOUT}
@@ -987,34 +1005,57 @@ export function VaultStep({ ctx }) {
               title='Prepare the issuing server'
               who='root (sudo) on the issuing server, then the agent user'
             >
-              <Text fontSize='xs' color={muted} _light={{ color: muted }}>
-                Both configs name an agent by its wire id (agentId, and the
-                consumer repeats it in materialBindings). Choose each id before
-                the agent registers by setting agentId in its config.json, or
-                read it from the registered agent&apos;s config.json and merge
-                these keys into that file instead of replacing it. No Vault
-                token is ever entered here. Both agents start in dry run.
-              </Text>
+              <VStack
+                align='stretch'
+                spacing={1}
+                fontSize='xs'
+                color={muted}
+                _light={{ color: muted }}
+              >
+                <Text fontWeight='semibold'>
+                  Agent identity and configuration
+                </Text>
+                <Text>
+                  Both configs use the wire id as agentId; the consumer repeats
+                  it in materialBindings. Choose each id in config.json before
+                  registration, or read it from the registered agent&apos;s
+                  config.json.
+                </Text>
+                <Text>
+                  Merge these keys into the existing file instead of replacing
+                  it. No Vault token is entered here. Both agents start in dry
+                  run.
+                </Text>
+              </VStack>
               <CopyBlock
                 label='Issuer agent config.json (merge into the existing file)'
                 text={JSON.stringify(issuerOut.issuer, null, 2)}
                 language='json'
               />
-              <Text
+              <VStack
+                align='stretch'
+                spacing={1}
                 fontSize='xs'
                 color={muted}
                 _light={{ color: muted }}
                 data-testid='vault-auth-note'
               >
-                Authentication to Vault: each agent reads a Vault token from a
-                file (tokenFile) and has no login of its own, so AppRole,
-                Kubernetes or other auth methods are handled by Vault Agent,
-                which keeps that file fresh. The file must be owned by the agent
-                user with mode 0600. The example uses AppRole: create the role
-                with the policy above, put its role id and secret id in two
-                files readable only by the user that runs Vault Agent, and run
-                Vault Agent as the agent user.
-              </Text>
+                <Text fontWeight='semibold'>Vault authentication</Text>
+                <Text>
+                  Each agent reads a Vault token from tokenFile and has no login
+                  of its own. Vault Agent handles AppRole, Kubernetes or another
+                  authentication method and keeps the token fresh.
+                </Text>
+                <Text>
+                  The token file must belong to the agent user with mode 0600.
+                </Text>
+                <Text>
+                  For this AppRole example, create the role using the policy
+                  above, save its role id and secret id in separate files
+                  readable only by the Vault Agent user, and run Vault Agent as
+                  the agent user.
+                </Text>
+              </VStack>
               <CopyBlock
                 label='Vault Agent config (AppRole, writes the issuer token file)'
                 text={buildVaultAgentConfig({

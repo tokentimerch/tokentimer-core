@@ -1239,13 +1239,17 @@ export function VaultRolloutGuide({
             </Select>
           </FormControl>
         </SimpleGrid>
-        <Text fontSize='sm' data-testid='vault-dry-run-note'>
-          A rollout itself has no dry run: deployment changes the configured
-          certificate files{filesOnly ? '.' : ' and reloads the service.'} A
-          signed test job only checks dispatch and local planning. Before
-          deployment, set local dryRun to false and restart the prepared
-          consumers.
-        </Text>
+        <StatusPanel
+          status='warning'
+          title='Deployment changes live files'
+          testId='vault-dry-run-note'
+        >
+          A rollout itself has no dry run. Deployment changes the configured
+          certificate files
+          {filesOnly ? '.' : ' and reloads the service.'} A signed test job
+          checks dispatch and local planning only. Before deployment, set local
+          dryRun to false and restart the prepared consumers.
+        </StatusPanel>
         <ApprovalPolicyNote required={approvalRequired} noun='rollout' />
         <PrimaryButton
           {...actionLayout}

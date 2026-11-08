@@ -4,7 +4,8 @@ const { randomUUID } = require("node:crypto");
 const requestContext = new AsyncLocalStorage();
 
 function getRequestContext() {
-  return requestContext.getStore();
+  const state = requestContext.getStore();
+  return state?.active ? state.context : undefined;
 }
 
 function attachRequestContext(record) {
@@ -28,7 +29,45 @@ function requestCorrelation(req, res, next) {
   const correlationId = randomUUID();
   req.correlationId = correlationId;
   res.setHeader("X-Request-Id", correlationId);
-  requestContext.run(Object.freeze({ correlationId }), next);
+  const state = { context: Object.freeze({ correlationId }), active: true };
+  if (typeof res.once === "function") {
+    // Sockets and other async resources can outlive the request that created them.
+    const endRequest = () => { state.active = false; };
+    res.once("finish", endRequest);
+    res.once("close", endRequest);
+  }
+  requestContext.run(state, next);
+}
+
+function requestCompletionLogger(logger) {
+  return (req, res, next) => {
+    res.once("finish", () => {
+      // Only suppress successful exact probe routes. Never log raw URLs, which
+      // can contain credentials; use the path solely for this comparison.
+      const path =
+        typeof req.originalUrl === "string"
+          ? req.originalUrl.split("?", 1)[0]
+          : "";
+      const route =
+        typeof req.route?.path === "string" ? req.route.path : "unmatched";
+      const probe =
+        (path === "/health" || path === "/metrics") && route === path;
+      if (
+        probe &&
+        (req.method === "GET" || req.method === "HEAD") &&
+        res.statusCode >= 200 &&
+        res.statusCode < 400
+      )
+        return;
+      logger.info("HTTP request completed", {
+        correlationId: req.correlationId,
+        method: req.method,
+        statusCode: res.statusCode,
+        route,
+      });
+    });
+    next();
+  };
 }
 
 module.exports = {
@@ -36,4 +75,5 @@ module.exports = {
   attachRequestContext,
   captureRequestContext,
   requestCorrelation,
+  requestCompletionLogger,
 };

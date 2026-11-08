@@ -473,21 +473,21 @@ def browser_job_approval_fields(proof):
 
 def ipv4_wildcard_fields(proof):
     """Native IPv4 wildcard only; no concrete or IPv6 scope substitution."""
-    flags = ['actualIpv4LoopbackAvailable', 'borrowedCertificatesVerified', 'actualIpv4ShadowObserved', 'productionPrecedenceWarning', 'actualProductionVerifyFailed', 'actualProductionRollback', 'nativeHostnameEndpointRestored', 'trustedIpv4ShadowObserved', 'trustedIpv4BaselineRecovered', 'ipv4SiblingUnchanged', 'ownedSitesAndEndpointsRemoved']
-    if (not isinstance(proof, dict) or proof.get("scope") != 'native-ipv4-wildcard-sni-shadow-rollback-with-ipv4-sibling'
+    flags = ['actualIpv4LoopbackAvailable', 'borrowedCertificatesVerified', 'actualWildcardBindingObserved', 'sniPrecedenceObserved', 'actualProductionCutover', 'nativeHostnameEndpointUpdated', 'trustedSniAfterCutover', 'trustedSniAfterWildcardRemoval', 'ipv4SiblingUnchanged', 'ownedSitesAndEndpointsRemoved']
+    if (not isinstance(proof, dict) or proof.get("scope") != 'native-ipv4-wildcard-sni-precedence-with-ipv4-sibling'
             or proof.get("installedAgentQualified") is not False or proof.get("caQualified") is not False
             or any(proof.get(key) is not True for key in flags)):
-        raise ValueError("Incomplete native IPv4 wildcard rollback evidence")
+        raise ValueError("Incomplete native IPv4 wildcard precedence evidence")
     return {"scope": proof["scope"], "installedAgentQualified": False, "caQualified": False, **dict.fromkeys(flags, True)}
 
 
 def ipv6_wildcard_fields(proof):
     """Native IPv6 wildcard only; no concrete-only or IPv4 wildcard substitution."""
-    flags = ['actualIpv6LoopbackAvailable', 'borrowedCertificatesVerified', 'actualIpv6ShadowObserved', 'productionPrecedenceWarning', 'actualProductionVerifyFailed', 'actualProductionRollback', 'nativeHostnameEndpointRestored', 'trustedIpv6ShadowObserved', 'trustedIpv6BaselineRecovered', 'ipv4SiblingUnchanged', 'ownedSitesAndEndpointsRemoved']
-    if (not isinstance(proof, dict) or proof.get("scope") != 'native-ipv6-wildcard-sni-shadow-rollback-with-ipv4-sibling'
+    flags = ['actualIpv6LoopbackAvailable', 'borrowedCertificatesVerified', 'actualWildcardBindingObserved', 'sniPrecedenceObserved', 'actualProductionCutover', 'nativeHostnameEndpointUpdated', 'trustedSniAfterCutover', 'trustedSniAfterWildcardRemoval', 'ipv4SiblingUnchanged', 'ownedSitesAndEndpointsRemoved']
+    if (not isinstance(proof, dict) or proof.get("scope") != 'native-ipv6-wildcard-sni-precedence-with-ipv4-sibling'
             or proof.get("installedAgentQualified") is not False or proof.get("caQualified") is not False
             or any(proof.get(key) is not True for key in flags)):
-        raise ValueError("Incomplete native IPv6 wildcard rollback evidence")
+        raise ValueError("Incomplete native IPv6 wildcard precedence evidence")
     return {"scope": proof["scope"], "installedAgentQualified": False, "caQualified": False, **dict.fromkeys(flags, True)}
 
 
@@ -1552,8 +1552,8 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             result["nativeCngJournalAcl"] = cng_journal_acl_fields(value.get("nativeCngJournalAcl"))
             result["supportingConfiguredRetentionTimer"] = configured_retention_timer_fields(value.get("supportingConfiguredRetentionTimer"))
             result["nativeIpv6SniShadow"] = ipv6_shadow_fields(value.get("nativeIpv6SniShadow"))
-            result["nativeIpv6WildcardShadow"] = ipv6_wildcard_fields(value.get("nativeIpv6WildcardShadow"))
-            result["nativeIpv4WildcardShadow"] = ipv4_wildcard_fields(value.get("nativeIpv4WildcardShadow"))
+            result["nativeIpv6WildcardPrecedence"] = ipv6_wildcard_fields(value.get("nativeIpv6WildcardPrecedence"))
+            result["nativeIpv4WildcardPrecedence"] = ipv4_wildcard_fields(value.get("nativeIpv4WildcardPrecedence"))
             proof = value.get("nativeRetentionAtomicReplace")
             fields = ("nativeFileHandleHeld", "nativeFileIdentityMatched", "actualAtomicReplaceRefused", "priorRowBytesPreserved", "priorRowIdentityPreserved", "failedTemporaryFileRemoved", "nativeHandleReleased", "ownedChildDrained", "actualReplacementSucceeded", "freshProcessReadExactReplacement", "restrictivePermissionsVerified", "ownedTemporaryFixtureRemoved")
             if not isinstance(proof, dict) or any(proof.get(field) is not True for field in fields):

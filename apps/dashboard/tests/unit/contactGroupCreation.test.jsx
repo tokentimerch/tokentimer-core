@@ -154,6 +154,33 @@ beforeEach(() => {
 });
 
 describe('Inline contact group creation', () => {
+
+  it.each(['enforce', 'shadow', 'off'])('presents confirmation appropriately in %s mode', async mode => {
+    settings.whatsapp_available = true;
+    apiClient.get.mockResolvedValue({ data: {
+      items: [{ id: 'person', first_name: 'Demo', phone_e164: '+12025550123', details: { email: 'demo@example.invalid' } }],
+      verification_summary: { mode },
+    } });
+    const { container } = render(
+      <ChakraProvider><DashboardThemeProvider><MemoryRouter>
+        <AlertPreferences />
+      </MemoryRouter></DashboardThemeProvider></ChakraProvider>
+    );
+    await waitFor(() => expect(container.querySelector('table')).not.toBeNull());
+    await waitFor(() => expect(within(container.querySelector('table')).getByText('Demo')).toBeInTheDocument());
+    expect(within(container.querySelector('table')).queryByText('Pending')).not.toBeInTheDocument();
+    if (mode === 'off') {
+      expect(screen.queryByRole('button', { name: 'Review confirmations' })).not.toBeInTheDocument();
+      return;
+    }
+    const review = screen.getByRole('button', { name: 'Review confirmations' });
+    expect(review).toBeEnabled();
+    if (mode === 'shadow') expect(screen.getByText(/delivery continues/i)).toBeInTheDocument();
+    fireEvent.click(review);
+    const dialog = await screen.findByRole('dialog', { name: /Recipient confirmations/ });
+    expect(within(dialog).getAllByText('Pending')).toHaveLength(2);
+  });
+
   it('creates and assigns the first group from the endpoint form without losing its draft', async () => {
     settings.contact_groups = [];
     settings.default_contact_group_id = null;
@@ -818,7 +845,7 @@ describe('webhook creation inside the shared group modal', () => {
     // Text can mount before the nested modal's entrance transition finishes.
     await waitFor(() =>
       expect(
-        within(dialog).getByText('Receiver unavailable; check the URL.')
+        within(dialog).getByText('Test failed. Receiver unavailable; check the URL.')
       ).toBeVisible()
     );
     expect(
@@ -877,7 +904,7 @@ describe('webhook creation inside the shared group modal', () => {
     // Text can mount before the nested modal's entrance transition finishes.
     await waitFor(() =>
       expect(
-        within(dialog).getByText('Connection lost after save')
+        within(dialog).getByText('Test passed, but saving was not confirmed. Connection lost after save')
       ).toBeVisible()
     );
     fireEvent.click(
@@ -901,6 +928,7 @@ describe('webhook creation inside the shared group modal', () => {
     fireEvent.click(
       within(dialog).getByRole('button', { name: 'Test', exact: true })
     );
+    expect(within(dialog).getByRole('status')).toHaveTextContent('Testing delivery');
     expect(within(dialog).getByPlaceholderText('https://...')).toBeDisabled();
     expect(
       within(dialog).getByRole('button', { name: 'Cancel' })

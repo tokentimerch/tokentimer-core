@@ -253,6 +253,21 @@ test("WebHosting fixture persists its exact source and verifies trigger-created 
  }
 });
 
+test("background receipts record enrollments and leaves only for their own certificate identity", () => {
+  const own = "33333333-3333-4333-8333-333333333333";
+  const other = "44444444-4444-4444-8444-444444444444";
+  const enrollmentId = "55555555-5555-4555-8555-555555555555";
+  const thumbprint = "A".repeat(40);
+  const receipt = { certificateId: own, enrollmentIds: [], thumbprints: [] };
+  helper.recordBackgroundReceiptOwnership(receipt, other, { enrollmentId, thumbprint });
+  assert.deepEqual(receipt.enrollmentIds, []);
+  assert.deepEqual(receipt.thumbprints, []);
+  helper.recordBackgroundReceiptOwnership(receipt, own, { enrollmentId });
+  helper.recordBackgroundReceiptOwnership(receipt, own, { enrollmentId, thumbprint });
+  assert.deepEqual(receipt.enrollmentIds, [enrollmentId]);
+  assert.deepEqual(receipt.thumbprints, [thumbprint]);
+});
+
 test("background cleanup defers other-identity leaves only when they are independently owned thumbprints", () => {
   const domain = "certops-adcs-0123456789-rsa2048.example.test";
   const certificateId = "33333333-3333-4333-8333-333333333333";

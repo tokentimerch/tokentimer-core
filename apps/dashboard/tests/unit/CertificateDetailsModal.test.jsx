@@ -139,6 +139,30 @@ describe('CertificateDetailsModal', () => {
     updateTokenMock.mockReset();
   });
 
+  it('associates each editable certificate field with its visible label', () => {
+    renderModal();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+
+    for (const label of [
+      'Name',
+      'Section',
+      'Asset expiration',
+      'Domains',
+      'Issuer',
+      'Serial number',
+      'Subject',
+      'Contacts / key custodian',
+      'Renewal URL',
+    ]) {
+      const field = screen.getByLabelText(label, { exact: true });
+      expect(field.labels[0]).toHaveTextContent(label);
+    }
+    expect(
+      screen.getByRole('button', { name: 'Contact groups' })
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Notes')).toBeInTheDocument();
+  });
+
   it('hides location observations in the dashboard token view even when populated', () => {
     renderModal({ showObservedLocations: false });
     expect(

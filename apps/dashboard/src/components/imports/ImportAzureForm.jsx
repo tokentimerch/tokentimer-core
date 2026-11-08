@@ -319,10 +319,12 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
       {!autoSyncManageMode ? (
         <Box>
           <Text fontSize='sm' color={helpTextColor}>
-            Scans Azure Key Vault for secrets, certificates, and keys. Inventory
-            uses list metadata only, so Key Vault Reader is enough. Pasted
-            tokens and Entra app client credentials are stored encrypted if
-            auto-sync is enabled.
+            <strong>Scope:</strong> Scans Azure Key Vault for secrets,
+            certificates, and keys. <br />
+            <strong>Access:</strong> Inventory uses list metadata only, so Key
+            Vault Reader is enough. <br />
+            <strong>Credentials:</strong> Pasted tokens and Entra app client
+            credentials are stored encrypted if auto-sync is enabled.
           </Text>
           {hideDocs ? null : (
             <LearnMorePanel
@@ -410,20 +412,38 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
               what that scan covered.
             </Text>
           ) : azureSummary.some(s => s.complete === false) ? (
-            <Text fontSize='xs' color='orange.400' pl={6}>
-              The last scan didn't fully complete for every item type above (see
-              the errors below). The backend will only clean up secrets,
-              certificates, or keys it confirmed were fully scanned; nothing
-              incomplete or errored is ever touched.
+            <Text
+              fontSize='sm'
+              color='orange.400'
+              pl={6}
+              role='alert'
+              p={3}
+              borderWidth='1px'
+              borderRadius='md'
+              _light={{ color: 'orange.800', bg: 'orange.50' }}
+              _dark={{ color: 'orange.100', bg: 'orange.900' }}
+            >
+              <strong>Incomplete scan:</strong> Some item types did not finish.
+              See errors below. Cleanup affects only fully scanned secrets,
+              certificates, and keys; incomplete or failed types are excluded.
             </Text>
           ) : null}
           {cleanupObsolete ? (
-            <Text fontSize='xs' color='red.400' pl={6}>
-              Deletes previously imported secrets, certificates, and keys from
-              this Key Vault that no longer appear anywhere in this scan's
-              results, regardless of which items you select for import below.
-              Item types this scan couldn't fully complete are never affected.
-              This cannot be undone.
+            <Text
+              fontSize='sm'
+              color='red.400'
+              pl={6}
+              role='alert'
+              p={3}
+              borderWidth='1px'
+              borderRadius='md'
+              _light={{ color: 'red.800', bg: 'red.50' }}
+              _dark={{ color: 'red.100', bg: 'red.900' }}
+            >
+              <strong>Permanent deletion:</strong> Permanently deletes
+              previously imported Key Vault secrets, certificates, and keys
+              missing from this scan, regardless of selections below. Incomplete
+              types are excluded. This cannot be undone.
             </Text>
           ) : null}
         </VStack>

@@ -3343,7 +3343,7 @@
         "windows-2025"
       ],
       "implementation": "packages/agent/scripts/host/windows-host.test.js; packages/agent/scripts/host/ipv6-shadow-fixture.js; packages/agent/scripts/host/ipv6-wildcard-fixture.js; packages/agent/scripts/host/ipv4-wildcard-fixture.js",
-      "remainingCoverage": "Concrete IPv4 loopback shadow source remains in the SNI fixture. Mandatory supporting native source additionally owns a concrete IPv6 loopback SNI site and [::1] HTTP.sys shadow, requires real production VERIFY_FAILED plus successful rollback, independently restores the native hostname endpoint and trusted IPv6 TLS, and preserves a separate IPv4 sibling endpoint/TLS. Exact site IDs/protocol/flags/path and endpoint certificate/store/application identity gate cleanup; unresolved guards preserve borrowed keys. Native IPv6 execution remains pending. A distinct mandatory IPv6 [::] wildcard source repeats real warning, failure, rollback and trusted IPv6 recovery with both-stack target-port availability and the same owned cleanup guard. Concrete-only evidence cannot satisfy its proof. Native wildcard execution remains pending. A separate mandatory IPv4 wildcard source now repeats the actual 0.0.0.0 precedence warning, production verification failure/rollback, independent 127.0.0.1 trusted TLS recovery and unchanged different-port IPv4 sibling under the same exact native ownership guards. Source is implemented; native execution remains pending. Additional client address combinations remain separately scoped. Current public Windows target construction does not expose an explicit IPv6 selector; supporting native concrete/wildcard IPv6 coverage cannot be relabelled a public installed IPv6 job. The actual public IPv4 renewal shadow/verify-rollback composition has its own mandatory proof."
+      "remainingCoverage": "Concrete IPv4 and IPv6 selectors exercise native shadowing, verification failure and rollback. Separate IPv4 and IPv6 wildcard fixtures verify exact SNI precedence, successful cutover, trusted TLS and an unchanged sibling, with owned cleanup. Native Windows matrix execution remains pending. Additional client address combinations remain separately scoped; supporting IPv6 evidence does not qualify a public installed IPv6 job."
     },
     {
       "id": "windows-iis.flags-preserved",
@@ -6585,14 +6585,14 @@
         "windows-native-orphan-corrupt-journal-protected",
         "windows-native-orphan-closed-journal-and-untracked-key",
         "windows-iis-ipv6-native-shadow-rollback",
-        "windows-iis-ipv6-wildcard-shadow-rollback",
+        "windows-iis-ipv6-wildcard-sni-precedence",
         "windows-retention-policy-168-expiry-wins",
         "windows-retention-policy-168-interrupted-delete",
         "windows-retention-policy-720-expiry-wins",
         "windows-retention-policy-720-interrupted-delete",
         "windows-retention-ledger-native-read-denied",
         "windows-retention-ledger-root-native-list-denied",
-        "windows-iis-ipv4-wildcard-shadow-rollback",
+        "windows-iis-ipv4-wildcard-sni-precedence",
         "windows-native-cng-journal-read-denied-protected",
         "windows-native-cng-journal-root-list-denied-protected",
         "windows-retention-configured-real-timer-empty-ledger",

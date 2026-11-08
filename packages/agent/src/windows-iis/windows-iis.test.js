@@ -1355,18 +1355,15 @@ describe("checkSniPrecedenceConflict", () => {
     assert.equal(await check(execFileImpl), undefined);
   });
 
-  it("warns when a non-SNI IPv4 wildcard (0.0.0.0) binding exists on the same port", async () => {
-    const warning = await check(makeExecStub(() => bindingsOutput({ ipPort: "0.0.0.0:8443", thumbprint: OTHER_THUMBPRINT })));
-    assert.match(warning, /ipport=0\.0\.0\.0:8443/);
-    assert.match(warning, /hostnameport=www\.example\.com:8443/);
+  it("does not warn for a non-SNI IPv4 wildcard on the same port", async () => {
+    assert.equal(await check(makeExecStub(() => bindingsOutput({ ipPort: "0.0.0.0:8443", thumbprint: OTHER_THUMBPRINT }))), undefined);
   });
 
-  it("warns when a non-SNI IPv6 wildcard ([::]) binding exists on the same port", async () => {
-    const warning = await check(makeExecStub(() => bindingsOutput({ ipPort: "[::]:8443", thumbprint: OTHER_THUMBPRINT })));
-    assert.match(warning, /ipport=\[::\]:8443/);
+  it("does not warn for a non-SNI IPv6 wildcard on the same port", async () => {
+    assert.equal(await check(makeExecStub(() => bindingsOutput({ ipPort: "[::]:8443", thumbprint: OTHER_THUMBPRINT }))), undefined);
   });
 
-  it("reports a wildcard before a concrete address when both shadow the binding", async () => {
+  it("reports a concrete address when a wildcard also exists", async () => {
     const warning = await check(
       makeExecStub(() =>
         bindingsOutput(
@@ -1375,7 +1372,7 @@ describe("checkSniPrecedenceConflict", () => {
         ),
       ),
     );
-    assert.match(warning, /ipport=\[::\]:8443/);
+    assert.match(warning, /ipport=192\.0\.2\.10:8443/);
   });
 
   it("swallows a query error rather than throwing or warning", async () => {
@@ -1416,10 +1413,10 @@ describe("deployIisBinding precedenceWarning wiring", () => {
     site: "SNI Site",
   });
 
-  it("attaches precedenceWarning on a successful SNI deploy when a wildcard non-SNI binding shadows it", async () => {
+  it("attaches precedenceWarning on a successful SNI deploy when a concrete IP binding shadows it", async () => {
     // Nothing is bound at the SNI selector itself yet.
     const execFileImpl = makeExecStub((key) => {
-      if (key === "query") return bindingsOutput({ ipPort: "0.0.0.0:8443", thumbprint: OTHER_THUMBPRINT });
+      if (key === "query") return bindingsOutput({ ipPort: "192.0.2.10:8443", thumbprint: OTHER_THUMBPRINT });
       return { error: null, stdout: "" };
     });
     const connectImpl = makeConnectStub({ peerDer: fixtureX509.raw });
@@ -1432,7 +1429,7 @@ describe("deployIisBinding precedenceWarning wiring", () => {
     });
 
     assert.equal(result.ok, true);
-    assert.match(result.precedenceWarning, /ipport=0\.0\.0\.0:8443/);
+    assert.match(result.precedenceWarning, /ipport=192\.0\.2\.10:8443/);
   });
 
   it("does NOT attach precedenceWarning for a non-SNI binding deploy (the check only applies to SNI deploys)", async () => {

@@ -169,12 +169,25 @@ export default function PagerDutyIncidentActions({ tokenId, enabled }) {
           <ModalHeader>Resolve PagerDuty incident?</ModalHeader>
           <ModalCloseButton isDisabled={busy} />
           <ModalBody>
-            <Text fontSize='sm' mb={3}>
-              This resolves this TokenTimer alert in PagerDuty without changing
-              the asset expiration. Grouped incidents can remain open for other
-              alerts. Later thresholds for this expiration cycle will not reopen
-              it.
-            </Text>
+            <VStack
+              as='ul'
+              align='stretch'
+              spacing={2}
+              pl={5}
+              mb={3}
+              fontSize='sm'
+            >
+              <Text as='li'>
+                This resolves the TokenTimer alert in PagerDuty without changing
+                the asset expiration.
+              </Text>
+              <Text as='li'>
+                Grouped incidents can remain open for other alerts.
+              </Text>
+              <Text as='li'>
+                Later thresholds for this expiration cycle will not reopen it.
+              </Text>
+            </VStack>
             <FormControl isRequired>
               <FormLabel>Reason</FormLabel>
               <Textarea

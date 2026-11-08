@@ -40,8 +40,14 @@ export default function WebhookForm({
   const { muted } = useDashboardTheme();
   const [draft, setDraft] = useState(EMPTY);
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const set = key => e => setDraft(d => ({ ...d, [key]: e.target.value }));
+  const [phase, setPhase] = useState('');
+  const [testedDraft, setTestedDraft] = useState(null);
+  const busy = Boolean(phase);
+  const set = key => e => {
+    setTestedDraft(null);
+    setError('');
+    setDraft(d => ({ ...d, [key]: e.target.value }));
+  };
   const kind = WEBHOOK_KINDS[draft.kind] || WEBHOOK_KINDS.generic;
 
   const testAndSave = async () => {
@@ -50,17 +56,33 @@ export default function WebhookForm({
       setError(check.problems.join(' '));
       return;
     }
-    setBusy(true);
+    let testPassed = testedDraft === draft;
     setError('');
     try {
-      await alertAPI.testWebhook(draft.url.trim(), draft.kind, {
-        routingKey: draft.routingKey || undefined,
-      });
+      if (!testPassed) {
+        setPhase('testing');
+        await alertAPI.testWebhook(draft.url.trim(), draft.kind, {
+          routingKey: draft.routingKey || undefined,
+        });
+        testPassed = true;
+        setTestedDraft(draft);
+      }
+      setPhase('saving');
       // The PUT replaces the whole list, so append to the live one.
       const fresh = await onboardingActions.getAlertSettings(workspaceId);
+      const freshCheck = validateWebhookDraft(
+        draft,
+        Array.isArray(fresh.webhook_urls) ? fresh.webhook_urls : []
+      );
+      if (!freshCheck.ok) {
+        throw new Error(
+          `${freshCheck.problems.join(' ')} Check Alert Preferences before retrying.`
+        );
+      }
       await onboardingActions.putAlertSettings(workspaceId, {
         webhook_urls: appendWebhook(fresh.webhook_urls, draft),
       });
+      setPhase('confirming');
       const after = await onboardingActions.getAlertSettings(workspaceId);
       if (!hasWebhook(after, draft.name.trim())) {
         throw new Error(
@@ -69,22 +91,38 @@ export default function WebhookForm({
       }
       const name = draft.name.trim();
       setDraft(EMPTY);
+      setTestedDraft(null);
       onSaved(name);
     } catch (e) {
-      setError(
+      const detail =
         e?.message ||
-          'The test message failed. Check the URL and that the receiver is reachable.'
+        (testPassed
+          ? 'Check Alert Preferences before retrying.'
+          : 'Check the URL and that the receiver is reachable.');
+      setError(
+        testPassed
+          ? `Test passed, but saving was not confirmed. ${detail}`
+          : `Test failed. ${detail}`
       );
     } finally {
-      setBusy(false);
+      setPhase('');
     }
   };
 
   return (
     <VStack align='stretch' spacing={3} data-testid='webhook-form'>
       {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
+      {phase ? (
+        <Text role='status' fontSize='sm'>
+          {phase === 'testing'
+            ? 'Testing delivery…'
+            : phase === 'saving'
+              ? 'Saving webhook…'
+              : 'Confirming saved webhook…'}
+        </Text>
+      ) : null}
       <HStack align='start' spacing={3} flexWrap='wrap'>
-        <FormControl flex='1 1 150px'>
+        <FormControl flex='1 1 150px' isDisabled={busy}>
           <FormLabel fontSize='sm'>Type</FormLabel>
           <Select size='sm' value={draft.kind} onChange={set('kind')}>
             {Object.entries(WEBHOOK_KINDS).map(([id, k]) => (
@@ -94,7 +132,7 @@ export default function WebhookForm({
             ))}
           </Select>
         </FormControl>
-        <FormControl flex='1 1 180px' isRequired>
+        <FormControl flex='1 1 180px' isRequired isDisabled={busy}>
           <FormLabel fontSize='sm'>Name</FormLabel>
           <Input
             size='sm'
@@ -105,7 +143,7 @@ export default function WebhookForm({
           />
         </FormControl>
       </HStack>
-      <FormControl isRequired>
+      <FormControl isRequired isDisabled={busy}>
         <FormLabel fontSize='sm'>Webhook URL</FormLabel>
         <Input
           size='sm'
@@ -120,7 +158,7 @@ export default function WebhookForm({
         </Text>
       </FormControl>
       {kind.needsRouting ? (
-        <FormControl isRequired>
+        <FormControl isRequired isDisabled={busy}>
           <FormLabel fontSize='sm'>Routing key</FormLabel>
           <Input
             size='sm'
@@ -132,11 +170,16 @@ export default function WebhookForm({
         </FormControl>
       ) : null}
       <HStack justify='flex-end'>
-        <DashboardActionButton variant='outline' size='sm' onClick={onCancel}>
+        <DashboardActionButton
+          variant='outline'
+          size='sm'
+          onClick={onCancel}
+          isDisabled={busy}
+        >
           Cancel
         </DashboardActionButton>
         <PrimaryButton size='sm' onClick={testAndSave} isLoading={busy}>
-          Send test and save
+          {testedDraft === draft ? 'Retry save' : 'Send test and save'}
         </PrimaryButton>
       </HStack>
     </VStack>

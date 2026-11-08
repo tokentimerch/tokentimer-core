@@ -249,6 +249,14 @@ test("real HTTP routes preserve session, manager, emergency-admin, tenant and pr
   assert.equal((await request(app).get(`${base}/management`).set("X-Test-Session",String(other.actor))).status,403);
   const saved=await request(app).put(`${base}/policy`).set("X-Test-Session",String(f.approver)).send({policy:structuredClone(lifecycle.DEFAULT_POLICY),expectedRevision:0});
   assert.equal(saved.status,200,JSON.stringify(saved.body));
+  const update=async(policy,expectedRevision)=>request(app).put(`${base}/policy`).set("X-Test-Session",String(f.actor)).send({policy,expectedRevision});
+  const stale=await update(structuredClone(lifecycle.DEFAULT_POLICY),0);
+  assert.equal(stale.status,409);assert.equal(stale.body.code,"CERTOPS_LIFECYCLE_POLICY_REVISION_CHANGED");
+  for(const policy of [{...structuredClone(lifecycle.DEFAULT_POLICY),maxParallel:0},{...structuredClone(lifecycle.DEFAULT_POLICY),authorizationExpiresAt:"invalid"}]){
+    const invalid=await update(policy,1);assert.equal(invalid.status,422);assert.match(invalid.body.code,/^CERTOPS_LIFECYCLE_/);
+  }
+  const current=await update({...structuredClone(lifecycle.DEFAULT_POLICY),maxParallel:2},1);
+  assert.equal(current.status,200,JSON.stringify(current.body));
   assert.equal((await request(app).post(`${base}/cleanups`).set("X-Test-Session",String(f.approver)).send({materialVersionId:f.materialVersionId,expectedRevision:1})).status,403,"Cleanup requests require an administrator, independently of manager access");
   assert.equal((await request(app).post(`${base}/cleanups`).set("X-Test-Session",String(f.actor)).send({materialVersionId:f.materialVersionId,expectedRevision:1,token:"forbidden-field"})).status,422);
   assert.equal((await request(app).post(`${base}/cleanups`).set("X-Test-Session",String(f.actor)).send({materialVersionId:f.materialVersionId,expectedRevision:1})).status,409,"Disabled cleanup never creates an executable operation");
@@ -261,7 +269,7 @@ test("real HTTP routes preserve session, manager, emergency-admin, tenant and pr
   const refused=await request(app).put(`${base}/policy`).set("X-Test-Session",String(f.actor)).send({policy:{...structuredClone(lifecycle.DEFAULT_POLICY),privateKeyPem:"synthetic-forbidden-field"},expectedRevision:1});
   assert.equal(refused.status,422);
   await pool.query("UPDATE workspace_memberships SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[f.workspaceId,f.approver]);
-  assert.equal((await request(app).put(`${base}/policy`).set("X-Test-Session",String(f.approver)).send({policy:structuredClone(lifecycle.DEFAULT_POLICY),expectedRevision:1})).status,403);
+  assert.equal((await request(app).put(`${base}/policy`).set("X-Test-Session",String(f.approver)).send({policy:structuredClone(lifecycle.DEFAULT_POLICY),expectedRevision:2})).status,403);
 });
 test("pending retained-version approvals protect an otherwise eligible old material version",async()=>{
   const f=await fixture(),crypto=require("node:crypto"),{createCertificateJob}=require("../../apps/api/services/certops/jobs");
@@ -523,6 +531,20 @@ test("recovery incidents retain failed evidence and resolve only after fresh cur
   await proveVerification(f);await monitor();
   assert.ok((await pool.query("SELECT resolved_at FROM certops_distribution_incidents WHERE id=$1",[incident.id])).rows[0].resolved_at);
   assert.equal((await pool.query("SELECT state FROM certops_distribution_rollouts WHERE workspace_id=$1 AND state='degraded'",[f.workspaceId])).rowCount,1);
+});
+test("HTTP management exposes uncertain failed jobs and scheduler preserves the reconciliation fence",async()=>{
+  const f=await prepareVerification();await verificationTick(f);
+  const failed=await failVerification(f,{status:"failed",reconciliation:true});
+  const express=require("../../apps/api/node_modules/express"),app=express();app.use(express.json());
+  app.use((req,_res,next)=>{req.user={id:f.actor,auth_method:"local"};req.isAuthenticated=()=>true;next();});
+  const auth=require("../../apps/api/middleware/auth"),rbac=require("../../apps/api/services/rbac");
+  app.use("/api/v1/workspaces/:id",auth.requireAuth,rbac.loadWorkspace,rbac.requireWorkspaceMembership);app.use(require("../../apps/api/routes/certops"));
+  const response=await request(app).get(`/api/v1/workspaces/${f.workspaceId}/certops/distribution-groups/${f.groupId}/management`);
+  assert.equal(response.status,200,JSON.stringify(response.body));
+  const consumer=response.body.consumers.find(row=>row.binding_id===f.bindingId);
+  assert.equal(consumer.latest_deployment.needsOperatorReconciliation,true);assert.equal(consumer.health_status,"uncertain_external_effects");
+  await verificationDue(f);assert.equal((await verificationTick(f)).reason,"unresolved_uncertain_effects");
+  assert.equal((await pool.query("SELECT needs_operator_reconciliation FROM certificate_jobs WHERE id=$1",[failed.child.job_id])).rows[0].needs_operator_reconciliation,true);
 });
 test("fresh later proof cannot clear an older job's unresolved operator reconciliation fence",async()=>{
   const f=await prepareVerification();await verificationTick(f);

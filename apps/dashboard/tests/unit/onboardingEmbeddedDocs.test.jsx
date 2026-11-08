@@ -111,7 +111,7 @@ describe('Import forms embedded in an onboarding step', () => {
     expect(allPanels()).toHaveLength(1);
 
     fireEvent.click(screen.getByRole('button', { name: 'Choose a file' }));
-    await screen.findByText(/Upload a file in/);
+    await screen.findByText('Formats:');
 
     expect(allPanels()).toHaveLength(1);
     expect(screen.getAllByText('Learn more', { selector: 'p' }).length).toBe(1);
@@ -134,7 +134,7 @@ describe('Import forms embedded in an onboarding step', () => {
   it('keeps the file goal on the file source', async () => {
     mount(<FileImportStep ctx={makeCtx()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Choose a file' }));
-    await screen.findByText(/Upload a file in/);
+    await screen.findByText('Formats:');
 
     expect(
       screen.getByRole('button', { name: 'File import', hidden: true })

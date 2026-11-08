@@ -127,7 +127,8 @@ export default function AssistantConnectionsModal({
                           </Badge>
                         </HStack>
                         <Text fontSize='xs' color={muted}>
-                          {item.scopes.includes('mcp:renew:request') ||
+                          {item.scopes.includes('mcp:agents:read') ||
+                          item.scopes.includes('mcp:renew:request') ||
                           item.scopes.includes('mcp:inventory:import') ||
                           item.scopes.includes('mcp:inventory:update') ||
                           item.scopes.includes('mcp:contacts:create') ||
@@ -137,6 +138,8 @@ export default function AssistantConnectionsModal({
                           item.scopes.includes('mcp:issue:request')
                             ? [
                                 'Read',
+                                item.scopes.includes('mcp:agents:read') &&
+                                  'agent health',
                                 item.scopes.includes('mcp:inventory:import') &&
                                   'inventory import',
                                 item.scopes.includes('mcp:inventory:update') &&
@@ -156,7 +159,7 @@ export default function AssistantConnectionsModal({
                               ]
                                 .filter(Boolean)
                                 .join(' + ')
-                            : 'Read only'}{' '}
+                            : 'Read-only'}{' '}
                           ·{' '}
                           {item.expiresAt
                             ? `expires ${dateLabel(item.expiresAt)}`
