@@ -42,6 +42,7 @@ import {
   Tr,
 } from '@chakra-ui/react';
 import {
+  DashboardActionButton,
   DashboardPanel,
   DashboardPanelHeader,
   DashboardState,
@@ -84,14 +85,7 @@ const viewFragments = [
 function OverviewMetric({ name, value, detail }) {
   const { dashboard } = useDashboardTheme();
   return (
-    <Box
-      bg={dashboard.bg.nested}
-      border='1px solid'
-      borderColor={dashboard.border.subtle}
-      borderRadius='lg'
-      p={2}
-      minW={0}
-    >
+    <Box minW={0}>
       <Text
         color={dashboard.text.muted}
         fontSize='xs'
@@ -142,6 +136,7 @@ function JobLink({ workspaceId, id, children }) {
 }
 
 function PolicyForm({ data, disabled, onSave }) {
+  const { dashboard } = useDashboardTheme();
   const [policy, setPolicy] = useState(() =>
     structuredClone(data.policy?.policy || data.defaults)
   );
@@ -160,7 +155,10 @@ function PolicyForm({ data, disabled, onSave }) {
       }}
     >
       <Stack spacing={4}>
-        <SimpleGrid columns={{ base: 1, md: 3 }} spacing={3}>
+        <Text as='h3' fontSize='sm' fontWeight='semibold'>
+          Rollout authority
+        </Text>
+        <SimpleGrid columns={{ base: 1, md: 2, xl: 3 }} spacing={3}>
           <Field name='After publication'>
             <Select
               aria-label='After publication'
@@ -197,6 +195,16 @@ function PolicyForm({ data, disabled, onSave }) {
           authorization invalidate that approval. Mandatory workspace approval
           still applies.
         </Text>
+        <Text
+          as='h3'
+          fontSize='sm'
+          fontWeight='semibold'
+          pt={4}
+          borderTop='1px solid'
+          borderColor={dashboard.border.subtle}
+        >
+          Verification
+        </Text>
         <Checkbox
           isChecked={policy.verification.enabled}
           onChange={event =>
@@ -205,7 +213,7 @@ function PolicyForm({ data, disabled, onSave }) {
         >
           Recurring verification
         </Checkbox>
-        <SimpleGrid columns={{ base: 1, md: 3 }} spacing={3}>
+        <SimpleGrid columns={{ base: 1, md: 2, xl: 3 }} spacing={3}>
           <NumberField
             name='Verification interval (seconds)'
             value={policy.verification.intervalSeconds}
@@ -224,14 +232,31 @@ function PolicyForm({ data, disabled, onSave }) {
             max={20}
             onChange={value => set('verification', 'failureThreshold', value)}
           />
+          <NumberField
+            name='Stale verification job threshold (seconds)'
+            value={policy.verification.staleJobSeconds}
+            min={300}
+            max={86400}
+            onChange={value => set('verification', 'staleJobSeconds', value)}
+          />
         </SimpleGrid>
+        <Text
+          as='h3'
+          fontSize='sm'
+          fontWeight='semibold'
+          pt={4}
+          borderTop='1px solid'
+          borderColor={dashboard.border.subtle}
+        >
+          Incident notifications
+        </Text>
         <Checkbox
           isChecked={policy.alerts.enabled}
           onChange={event => set('alerts', 'enabled', event.target.checked)}
         >
           Distribution incidents and notifications
         </Checkbox>
-        <SimpleGrid columns={{ base: 1, md: 3 }} spacing={3}>
+        <SimpleGrid columns={{ base: 1, md: 2, xl: 3 }} spacing={3}>
           <NumberField
             name='Offline threshold (seconds)'
             value={policy.alerts.offlineSeconds}
@@ -263,16 +288,15 @@ function PolicyForm({ data, disabled, onSave }) {
             min={3600}
             onChange={value => set('alerts', 'repeatSeconds', value)}
           />
-          <NumberField
-            name='Stale verification job threshold (seconds)'
-            value={policy.verification.staleJobSeconds}
-            min={300}
-            max={86400}
-            onChange={value => set('verification', 'staleJobSeconds', value)}
-          />
         </SimpleGrid>
         <Field name='Notification contact groups (workspace default when none selected)'>
           <Stack>
+            {!data.contactGroups?.length ? (
+              <Text fontSize='sm' color={dashboard.text.secondary}>
+                No contact groups available. Configure an eligible workspace
+                contact group for notifications.
+              </Text>
+            ) : null}
             {data.contactGroups?.map(group => (
               <Checkbox
                 key={group.id}
@@ -299,7 +323,17 @@ function PolicyForm({ data, disabled, onSave }) {
           delivery rules. Incidents resolve only after fresh consumer
           verification.
         </Text>
-        <SimpleGrid columns={{ base: 1, md: 3 }} spacing={3}>
+        <Text
+          as='h3'
+          fontSize='sm'
+          fontWeight='semibold'
+          pt={4}
+          borderTop='1px solid'
+          borderColor={dashboard.border.subtle}
+        >
+          Retention and cleanup
+        </Text>
+        <SimpleGrid columns={{ base: 1, md: 2, xl: 3 }} spacing={3}>
           <NumberField
             name='Minimum retention (seconds)'
             value={policy.retention.minimumSeconds}
@@ -343,14 +377,14 @@ function PolicyForm({ data, disabled, onSave }) {
           independent approval for each exact version. Referenced material stays
           protected. Destructive approval is always required.
         </Text>
-        <Button
+        <DashboardActionButton
           alignSelf='start'
           type='submit'
           colorScheme='blue'
           isDisabled={disabled}
         >
           Save distribution policy
-        </Button>
+        </DashboardActionButton>
       </Stack>
     </Box>
   );
@@ -916,6 +950,16 @@ function Management({
     );
   const selectedVersion =
     version || data.group.latest_material_version_id || '';
+  const latestPublishedVersion = data.versions.find(
+    item =>
+      item.id === data.group.latest_material_version_id &&
+      item.state === 'published'
+  );
+  const publicationState = latestPublishedVersion
+    ? 'published'
+    : data.group.latest_material_version_id
+      ? 'current published version unavailable'
+      : 'not published';
   const retained = selectedVersion !== data.group.latest_material_version_id;
   const activeConsumers = data.consumers.filter(
     value => value.binding_state === 'active'
@@ -926,6 +970,10 @@ function Management({
   const openIncidents = data.incidents.filter(
     incident => !incident.resolved_at
   ).length;
+  const currentPolicy = data.policy?.policy || data.defaults;
+  const verificationEnabled = currentPolicy?.verification?.enabled;
+  const alertsEnabled = currentPolicy?.alerts?.enabled;
+  const cleanupPolicy = currentPolicy?.retention;
   const activeRollouts = data.rollouts.filter(rollout =>
     ['pending', 'deploying', 'paused'].includes(rollout.state)
   ).length;
@@ -1101,19 +1149,19 @@ function Management({
               <DashboardPanel
                 id='distribution-publication'
                 scrollMarginTop='80px'
-                borderRadius='xl'
+                borderRadius='md'
               >
                 <DashboardPanelHeader
                   title='Publication and rollout'
                   description={`Customer-local store: ${data.group.material_store_ref}. Publication does not prove service activation.`}
                   action={
-                    <Button
-                      size='sm'
+                    <DashboardActionButton
+                      variant='outline'
                       onClick={state.refresh}
                       isLoading={state.refreshing}
                     >
                       Refresh
-                    </Button>
+                    </DashboardActionButton>
                   }
                 />
                 <Stack spacing={2} mt={3}>
@@ -1126,8 +1174,7 @@ function Management({
                     </Text>
                   </Box>
                   <Text fontSize='sm'>
-                    Latest publication:{' '}
-                    {data.versions[0]?.state || 'Not published'} · Evaluated{' '}
+                    Latest publication: {publicationState} · Evaluated{' '}
                     {formatDateTime(data.evaluated_at)}
                   </Text>
                   <Field name='Exact published version'>
@@ -1170,7 +1217,7 @@ function Management({
                   <HStack flexWrap='wrap' spacing={2} rowGap={2}>
                     {canManage ? (
                       <>
-                        <Button
+                        <DashboardActionButton
                           isDisabled={disabled || !selectedPublishedVersion}
                           colorScheme='blue'
                           onClick={() =>
@@ -1186,16 +1233,18 @@ function Management({
                           {retained
                             ? 'Request rollback approval'
                             : 'Request rollout'}
-                        </Button>
-                        <Button
+                        </DashboardActionButton>
+                        <DashboardActionButton
+                          variant='outline'
                           isDisabled={disabled || !selectedPublishedVersion}
                           onClick={() => requestRollout(true)}
                         >
                           Verify only
-                        </Button>
+                        </DashboardActionButton>
                       </>
                     ) : null}
-                    <Button
+                    <DashboardActionButton
+                      variant='outline'
                       isDisabled={busy}
                       onClick={() =>
                         run(async () => {
@@ -1209,14 +1258,16 @@ function Management({
                       }
                     >
                       Run safe preflight
-                    </Button>
+                    </DashboardActionButton>
                   </HStack>
-                  <SimpleGrid columns={{ base: 2, md: 4 }} spacing={2}>
-                    <OverviewMetric
-                      name='Publication'
-                      value={label(data.versions[0]?.state || 'Not published')}
-                      detail='Publication is not activation.'
-                    />
+                  <SimpleGrid
+                    columns={{ base: 1, sm: 3 }}
+                    spacing={3}
+                    borderTop='1px solid'
+                    borderColor={dashboard.border.subtle}
+                    pt={3}
+                    mt={2}
+                  >
                     <OverviewMetric
                       name='Destinations'
                       value={activeConsumers}
@@ -1290,20 +1341,19 @@ function Management({
               <DashboardPanel
                 id='distribution-consumers'
                 scrollMarginTop='80px'
-                borderRadius='xl'
+                borderRadius='md'
               >
                 <DashboardPanelHeader
                   title='Consumers'
                   description='Installed files, served identity, trust and proof freshness are separate evidence.'
                   action={
                     canManage ? (
-                      <Button
-                        size='sm'
+                      <DashboardActionButton
                         isDisabled={disabled}
                         onClick={() => setEditor({})}
                       >
                         Add consumer
-                      </Button>
+                      </DashboardActionButton>
                     ) : null
                   }
                 />
@@ -1315,11 +1365,11 @@ function Management({
                 ) : (
                   <TableContainer
                     whiteSpace='normal'
-                    overflowX={{ base: 'visible', md: 'auto' }}
+                    overflowX={{ base: 'visible', lg: 'auto' }}
                   >
-                    <Table size='sm' display={{ base: 'block', md: 'table' }}>
+                    <Table size='sm' display={{ base: 'block', lg: 'table' }}>
                       <Thead
-                        display={{ base: 'none', md: 'table-header-group' }}
+                        display={{ base: 'none', lg: 'table-header-group' }}
                       >
                         <Tr>
                           <Th>Consumer / agent</Th>
@@ -1329,25 +1379,25 @@ function Management({
                           <Th>Actions</Th>
                         </Tr>
                       </Thead>
-                      <Tbody display={{ base: 'block', md: 'table-row-group' }}>
+                      <Tbody display={{ base: 'block', lg: 'table-row-group' }}>
                         {data.consumers.map(consumer => (
                           <Tr
                             key={consumer.binding_id}
-                            display={{ base: 'block', md: 'table-row' }}
-                            borderWidth={{ base: '1px', md: 0 }}
+                            display={{ base: 'block', lg: 'table-row' }}
+                            borderWidth={{ base: '1px', lg: 0 }}
                             borderColor={dashboard.border.subtle}
-                            borderRadius={{ base: 'lg', md: 0 }}
-                            mb={{ base: 3, md: 0 }}
+                            borderRadius={{ base: 'lg', lg: 0 }}
+                            mb={{ base: 3, lg: 0 }}
                           >
                             <Td
-                              display={{ base: 'block', md: 'table-cell' }}
+                              display={{ base: 'block', lg: 'table-cell' }}
                               whiteSpace='normal'
                               overflowWrap='anywhere'
-                              borderBottomWidth={{ base: 0, md: '1px' }}
-                              py={{ base: 2, md: 3 }}
+                              borderBottomWidth={{ base: 0, lg: '1px' }}
+                              py={{ base: 2, lg: 3 }}
                             >
                               <Text
-                                display={{ base: 'block', md: 'none' }}
+                                display={{ base: 'block', lg: 'none' }}
                                 fontSize='xs'
                                 fontWeight='bold'
                                 color={dashboard.text.muted}
@@ -1366,14 +1416,14 @@ function Management({
                               </Text>
                             </Td>
                             <Td
-                              display={{ base: 'block', md: 'table-cell' }}
+                              display={{ base: 'block', lg: 'table-cell' }}
                               whiteSpace='normal'
                               overflowWrap='anywhere'
-                              borderBottomWidth={{ base: 0, md: '1px' }}
-                              py={{ base: 2, md: 3 }}
+                              borderBottomWidth={{ base: 0, lg: '1px' }}
+                              py={{ base: 2, lg: 3 }}
                             >
                               <Text
-                                display={{ base: 'block', md: 'none' }}
+                                display={{ base: 'block', lg: 'none' }}
                                 fontSize='xs'
                                 fontWeight='bold'
                                 color={dashboard.text.muted}
@@ -1424,14 +1474,14 @@ function Management({
                               ) : null}
                             </Td>
                             <Td
-                              display={{ base: 'block', md: 'table-cell' }}
+                              display={{ base: 'block', lg: 'table-cell' }}
                               whiteSpace='normal'
                               overflowWrap='anywhere'
-                              borderBottomWidth={{ base: 0, md: '1px' }}
-                              py={{ base: 2, md: 3 }}
+                              borderBottomWidth={{ base: 0, lg: '1px' }}
+                              py={{ base: 2, lg: 3 }}
                             >
                               <Text
-                                display={{ base: 'block', md: 'none' }}
+                                display={{ base: 'block', lg: 'none' }}
                                 fontSize='xs'
                                 fontWeight='bold'
                                 color={dashboard.text.muted}
@@ -1451,14 +1501,14 @@ function Management({
                               </Text>
                             </Td>
                             <Td
-                              display={{ base: 'block', md: 'table-cell' }}
+                              display={{ base: 'block', lg: 'table-cell' }}
                               whiteSpace='normal'
                               overflowWrap='anywhere'
-                              borderBottomWidth={{ base: 0, md: '1px' }}
-                              py={{ base: 2, md: 3 }}
+                              borderBottomWidth={{ base: 0, lg: '1px' }}
+                              py={{ base: 2, lg: 3 }}
                             >
                               <Text
-                                display={{ base: 'block', md: 'none' }}
+                                display={{ base: 'block', lg: 'none' }}
                                 fontSize='xs'
                                 fontWeight='bold'
                                 color={dashboard.text.muted}
@@ -1477,14 +1527,14 @@ function Management({
                               </Text>
                             </Td>
                             <Td
-                              display={{ base: 'block', md: 'table-cell' }}
+                              display={{ base: 'block', lg: 'table-cell' }}
                               whiteSpace='normal'
                               overflowWrap='anywhere'
-                              borderBottomWidth={{ base: 0, md: '1px' }}
-                              py={{ base: 2, md: 3 }}
+                              borderBottomWidth={{ base: 0, lg: '1px' }}
+                              py={{ base: 2, lg: 3 }}
                             >
                               <Text
-                                display={{ base: 'block', md: 'none' }}
+                                display={{ base: 'block', lg: 'none' }}
                                 fontSize='xs'
                                 fontWeight='bold'
                                 color={dashboard.text.muted}
@@ -1630,67 +1680,100 @@ function Management({
               <DashboardPanel
                 id='distribution-rollouts'
                 scrollMarginTop='80px'
-                borderRadius='xl'
+                borderRadius='md'
               >
                 <DashboardPanelHeader
                   title='Rollouts and approvals'
                   description='A request or approval is distinct from completed consumer verification.'
                 />
                 {!data.rollouts.length ? (
-                  <Text>No rollouts yet.</Text>
+                  <Text fontSize='sm'>No rollouts in the recent history.</Text>
                 ) : (
-                  <Stack spacing={3}>
+                  <Stack
+                    as='ul'
+                    listStyleType='none'
+                    m={0}
+                    spacing={0}
+                    borderTop='1px solid'
+                    borderColor={dashboard.border.subtle}
+                  >
                     {data.rollouts.map(rollout => (
-                      <HStack key={rollout.id} flexWrap='wrap'>
-                        <Badge>{rollout.state}</Badge>
-                        <Text fontSize='sm'>
-                          Generation {rollout.generation} ·{' '}
-                          {rollout.verification_only
-                            ? 'Verification only'
-                            : 'Deployment'}
-                        </Text>
-                        <JobLink
-                          workspaceId={workspaceId}
-                          id={rollout.approval_job_id}
-                        />
-                        {canManage &&
-                        ['pending', 'deploying', 'paused'].includes(
-                          rollout.state
-                        ) ? (
-                          <Button
-                            size='xs'
-                            isDisabled={
-                              busy ||
-                              Boolean(state.error) ||
-                              (rollout.state === 'paused' &&
-                                (paused || pauseUnresolved))
-                            }
-                            onClick={() =>
-                              confirm(
-                                rollout.state === 'paused'
-                                  ? 'Resume rollout'
-                                  : 'Pause rollout',
-                                'Resuming revalidates current revisions, generation, policy and maintenance authorization.',
-                                () =>
-                                  run(
+                      <Box
+                        as='li'
+                        key={rollout.id}
+                        py={3}
+                        borderBottom='1px solid'
+                        borderColor={dashboard.border.subtle}
+                      >
+                        <Stack
+                          direction={{ base: 'column', md: 'row' }}
+                          align={{ base: 'start', md: 'center' }}
+                          justify='space-between'
+                          spacing={2}
+                        >
+                          <HStack flexWrap='wrap' spacing={2}>
+                            <CertOpsBadge
+                              colorScheme={
+                                rollout.state === 'paused' ? 'orange' : 'gray'
+                              }
+                            >
+                              {label(rollout.state)}
+                            </CertOpsBadge>
+                            <Text fontSize='sm' fontWeight='semibold'>
+                              Generation {rollout.generation} ·{' '}
+                              {rollout.verification_only
+                                ? 'Verification only'
+                                : 'Deployment'}
+                            </Text>
+                          </HStack>
+                          <HStack spacing={3} flexWrap='wrap'>
+                            <JobLink
+                              workspaceId={workspaceId}
+                              id={rollout.approval_job_id}
+                            />
+                            {canManage &&
+                            ['pending', 'deploying', 'paused'].includes(
+                              rollout.state
+                            ) ? (
+                              <Button
+                                size='sm'
+                                variant='outline'
+                                isDisabled={
+                                  busy ||
+                                  Boolean(state.error) ||
+                                  (rollout.state === 'paused' &&
+                                    (paused || pauseUnresolved))
+                                }
+                                onClick={() =>
+                                  confirm(
+                                    rollout.state === 'paused'
+                                      ? 'Resume rollout'
+                                      : 'Pause rollout',
+                                    'Resuming revalidates current revisions, generation, policy and maintenance authorization.',
                                     () =>
-                                      distributionApi.state(
-                                        workspaceId,
-                                        groupId,
-                                        rollout.id,
-                                        rollout.state === 'paused'
-                                          ? 'deploying'
-                                          : 'paused'
-                                      ),
-                                    'Rollout state updated.'
+                                      run(
+                                        () =>
+                                          distributionApi.state(
+                                            workspaceId,
+                                            groupId,
+                                            rollout.id,
+                                            rollout.state === 'paused'
+                                              ? 'deploying'
+                                              : 'paused'
+                                          ),
+                                        'Rollout state updated.'
+                                      )
                                   )
-                              )
-                            }
-                          >
-                            {rollout.state === 'paused' ? 'Resume' : 'Pause'}
-                          </Button>
-                        ) : null}
-                      </HStack>
+                                }
+                              >
+                                {rollout.state === 'paused'
+                                  ? 'Resume'
+                                  : 'Pause'}
+                              </Button>
+                            ) : null}
+                          </HStack>
+                        </Stack>
+                      </Box>
                     ))}
                   </Stack>
                 )}
@@ -1712,7 +1795,7 @@ function Management({
               <DashboardPanel
                 id='distribution-incidents'
                 scrollMarginTop='80px'
-                borderRadius='xl'
+                borderRadius='md'
               >
                 <DashboardPanelHeader
                   title='Incidents and recovery'
@@ -1801,7 +1884,7 @@ function Management({
                 id='distribution-discovery'
                 tabIndex={-1}
                 scrollMarginTop='80px'
-                borderRadius='xl'
+                borderRadius='md'
               >
                 <DashboardPanelHeader
                   title='Discovery coverage'
@@ -1903,15 +1986,14 @@ function Management({
               <DashboardPanel
                 id='distribution-policy'
                 scrollMarginTop='80px'
-                borderRadius='xl'
+                borderRadius='md'
               >
                 <DashboardPanelHeader
                   title='Automation, verification and alert policy'
-                  description={`Policy revision ${data.policy?.revision || 0}. Authority: ${label(data.authorization?.state || data.policy?.policy.mode || 'manual')}. Recurring verification: ${label(data.schedule?.last_outcome || 'disabled')}.`}
+                  description={`Policy revision ${data.policy?.revision || 0}. Authority: ${label(data.authorization?.state || currentPolicy?.mode || 'manual')}. Recurring verification: ${verificationEnabled === true ? 'enabled' : verificationEnabled === false ? 'disabled' : 'unknown'}.`}
                   action={
                     canManage ? (
-                      <Button
-                        size='sm'
+                      <DashboardActionButton
                         variant='outline'
                         aria-expanded={policyOpen}
                         aria-controls='distribution-policy-settings'
@@ -1920,10 +2002,28 @@ function Management({
                         {policyOpen
                           ? 'Hide policy settings'
                           : 'Edit policy settings'}
-                      </Button>
+                      </DashboardActionButton>
                     ) : null
                   }
                 />
+                <Text fontSize='sm' color={dashboard.text.secondary} mb={3}>
+                  Incident notifications:{' '}
+                  {alertsEnabled === true
+                    ? 'enabled'
+                    : alertsEnabled === false
+                      ? 'disabled'
+                      : 'unknown'}{' '}
+                  · Cleanup policy:{' '}
+                  {cleanupPolicy
+                    ? cleanupPolicy.reportOnly
+                      ? 'report-only'
+                      : cleanupPolicy.cleanupEnabled
+                        ? 'approval requests enabled'
+                        : 'disabled'
+                    : 'unknown'}{' '}
+                  · Last verification outcome:{' '}
+                  {label(data.schedule?.last_outcome || 'not reported')}.
+                </Text>
                 {data.policy?.approval_job_id ? (
                   <Text mb={3}>
                     Standing authorization:{' '}
@@ -1970,14 +2070,14 @@ function Management({
                 id='distribution-retention'
                 tabIndex={-1}
                 scrollMarginTop='80px'
-                borderRadius='xl'
+                borderRadius='md'
               >
                 <DashboardPanelHeader
                   title='Retention and cleanup preview'
                   description='Referenced material, pending approvals, paused rollouts and uncertain operations remain protected.'
                 />
-                <Button
-                  size='sm'
+                <DashboardActionButton
+                  variant='outline'
                   isDisabled={busy}
                   onClick={() =>
                     run(async () => {
@@ -1989,7 +2089,7 @@ function Management({
                   }
                 >
                   Preview retained versions
-                </Button>
+                </DashboardActionButton>
                 {retention ? (
                   <Stack mt={3} spacing={2}>
                     <Text fontSize='sm'>

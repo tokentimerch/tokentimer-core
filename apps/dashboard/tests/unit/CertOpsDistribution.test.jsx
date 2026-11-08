@@ -37,6 +37,14 @@ describe('Distribution Management',()=>{
     data.versions=[];data.group.latest_material_version_id=null;page();
     expect(await screen.findByText(/Publish a certificate before requesting a rollout/)).toBeInTheDocument();
   });
+  it('reports the current published version even when a newer version is a draft',async()=>{
+    data.versions.unshift({id:'new-draft',state:'publishing',provider_version:3});page();
+    expect(await screen.findByText(/Latest publication: published/)).toBeInTheDocument();
+  });
+  it('does not claim a published version when the current reference is missing from the returned history',async()=>{
+    data.versions=[];page();
+    expect(await screen.findByText(/Latest publication: current published version unavailable/)).toBeInTheDocument();
+  });
   it('recommends selecting an available version when the current version is fenced',async()=>{
     data.versions[0].cleanup_state='fenced';page();
     expect(await screen.findByText(/Choose an available published version/)).toBeInTheDocument();
@@ -152,6 +160,21 @@ describe('Distribution Management',()=>{
     await openView('Overview');
     await openView('Policy');
     expect(screen.getByLabelText('After publication')).toHaveValue('approval_request');
+  });
+  it('summarizes the active policy and groups related controls',async()=>{
+    page();await openView('Policy');
+    expect(screen.getByText(/Recurring verification: disabled/)).toBeInTheDocument();
+    expect(screen.getByText(/Incident notifications: disabled · Cleanup policy: report-only/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'Edit policy settings'}));
+    for(const name of ['Rollout authority','Verification','Incident notifications','Retention and cleanup'])
+      expect(screen.getByRole('heading',{name})).toBeInTheDocument();
+  });
+  it('distinguishes configured verification from its last outcome and does not imply notification delivery without a contact group',async()=>{
+    data.contactGroups=[];data.schedule={last_outcome:'success'};page();await openView('Policy');
+    expect(screen.getByText(/Recurring verification: disabled/)).toBeInTheDocument();
+    expect(screen.getByText(/Last verification outcome: success/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'Edit policy settings'}));
+    expect(screen.getByText(/Configure an eligible workspace contact group for notifications/)).toBeInTheDocument();
   });
   it('saves policy through revision checks and keeps manual automation defaults',async()=>{
     page();await openView('Policy');fireEvent.click(screen.getByRole('button',{name:'Edit policy settings'}));const mode=await screen.findByLabelText('After publication');expect(mode).toHaveValue('manual');
