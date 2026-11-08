@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Clock3, Search, ShieldAlert } from 'lucide-react';
 import {
   Link as RouterLink,
   useLocation,
@@ -41,7 +40,6 @@ import {
   Th,
   Thead,
   Tr,
-  useColorModeValue,
 } from '@chakra-ui/react';
 import {
   DashboardPanel,
@@ -833,7 +831,6 @@ function Management({
     [workspaceId, groupId]
   );
   const { dashboard } = useDashboardTheme();
-  const navigationBackground = useColorModeValue('#ffffff', '#1e293b');
   const location = useLocation();
   const navigate = useNavigate();
   const [activeView, setActiveView] = useState(
@@ -1037,17 +1034,18 @@ function Management({
         colorScheme='blue'
       >
         <Box
-          bg={navigationBackground}
+          bg={dashboard.bg.panel}
           border='1px solid'
           borderColor={dashboard.border.subtle}
-          borderRadius='xl'
+          borderRadius='md'
           overflowX='auto'
+          w={{ base: '100%', md: 'fit-content' }}
         >
           <TabList
             aria-label='Distribution views'
             minW='max-content'
-            p={1}
-            gap={1}
+            p={0}
+            gap={0}
           >
             {[
               ['Overview', null],
@@ -1065,18 +1063,21 @@ function Management({
                   : null,
               ],
               ['Policy & retention', null],
-            ].map(([name, attention]) => (
+            ].map(([name, attention], index) => (
               <Tab
                 key={name}
                 aria-label={attention ? `${name}: ${attention}` : name}
-                borderRadius='lg'
-                px={{ base: 3, md: 4 }}
-                py={2.5}
+                px={{ base: 2, sm: 3 }}
+                py={1.5}
                 fontSize='sm'
-                fontWeight='semibold'
+                fontWeight='medium'
                 color={dashboard.text.secondary}
+                borderLeftWidth={index === 0 ? 0 : '1px'}
+                borderColor={dashboard.border.subtle}
+                _hover={{ bg: dashboard.bg.panelHover }}
+                _focusVisible={{ boxShadow: 'outline', zIndex: 1 }}
                 _selected={{
-                  color: dashboard.accent.interactiveForeground,
+                  color: dashboard.accent.navActive,
                   bg: dashboard.accent.interactiveSurface,
                 }}
               >
@@ -1718,37 +1719,83 @@ function Management({
                   description='Source renewal cannot resolve a consumer incident. Fresh evidence must prove the relevant condition cleared.'
                 />
                 {!data.incidents.length ? (
-                  <Text>No distribution incidents recorded.</Text>
+                  <Text fontSize='sm'>No incidents in the recent history.</Text>
                 ) : (
-                  <Stack spacing={2}>
+                  <Stack
+                    as='ul'
+                    listStyleType='none'
+                    m={0}
+                    spacing={0}
+                    borderTop='1px solid'
+                    borderColor={dashboard.border.subtle}
+                  >
                     {data.incidents.map(incident => (
-                      <Box key={incident.id}>
-                        <Badge
-                          colorScheme={
-                            incident.resolved_at ? 'green' : 'orange'
-                          }
+                      <Box
+                        as='li'
+                        key={incident.id}
+                        py={3}
+                        borderBottom='1px solid'
+                        borderColor={dashboard.border.subtle}
+                      >
+                        <SimpleGrid
+                          columns={{ base: 1, md: 3 }}
+                          spacing={2}
+                          alignItems='center'
                         >
-                          {incident.resolved_at ? 'Resolved' : 'Open'}
-                        </Badge>{' '}
-                        {label(incident.code)}
-                        <Text fontSize='xs'>
-                          Opened {formatDateTime(incident.opened_at)} · updated{' '}
-                          {formatDateTime(incident.updated_at)}
-                        </Text>
-                        <JobLink
-                          workspaceId={workspaceId}
-                          id={incident.evidence?.jobId}
-                        />
+                          <HStack minW={0} spacing={2} flexWrap='wrap'>
+                            <Text
+                              fontSize='sm'
+                              fontWeight='semibold'
+                              overflowWrap='anywhere'
+                            >
+                              {label(incident.code)}
+                            </Text>
+                            <CertOpsBadge
+                              colorScheme={
+                                incident.resolved_at ? 'green' : 'orange'
+                              }
+                            >
+                              {incident.resolved_at ? 'Resolved' : 'Open'}
+                            </CertOpsBadge>
+                          </HStack>
+                          <Box color={dashboard.text.secondary} fontSize='sm'>
+                            <Text>
+                              Opened {formatDateTime(incident.opened_at)}
+                            </Text>
+                            <Text>
+                              Updated {formatDateTime(incident.updated_at)}
+                            </Text>
+                          </Box>
+                          <Box>
+                            <JobLink
+                              workspaceId={workspaceId}
+                              id={incident.evidence?.jobId}
+                            >
+                              View affected job
+                            </JobLink>
+                          </Box>
+                        </SimpleGrid>
                       </Box>
                     ))}
                   </Stack>
                 )}
-                <Text mt={3} fontSize='sm'>
-                  Recovery: inspect the affected job and public evidence; run
-                  preflight; reconcile locally without stealing a live lock;
-                  retry the original signed job; resume when authorized; obtain
-                  fresh consumer verification.
-                </Text>
+                <Box as='details' mt={3}>
+                  <Text
+                    as='summary'
+                    cursor='pointer'
+                    fontSize='sm'
+                    fontWeight='semibold'
+                    color={dashboard.accent.interactiveForeground}
+                  >
+                    Recovery guidance
+                  </Text>
+                  <Text mt={2} fontSize='sm' color={dashboard.text.secondary}>
+                    Inspect the affected job and public evidence; run preflight;
+                    reconcile locally without stealing a live lock; retry the
+                    original signed job; resume when authorized; obtain fresh
+                    consumer verification.
+                  </Text>
+                </Box>
               </DashboardPanel>
               <DashboardPanel
                 id='distribution-discovery'
@@ -1760,14 +1807,12 @@ function Management({
                   title='Discovery coverage'
                   description='Coverage is partial. A certificate in a machine store does not establish that every service has been discovered.'
                 />
+                <Text mb={3} fontSize='sm' color={dashboard.text.secondary}>
+                  All entries are read-only configuration observations; served
+                  certificates are unverified.
+                </Text>
                 {!data.discoveries.length ? (
-                  <Box
-                    bg={dashboard.bg.nested}
-                    border='1px solid'
-                    borderColor={dashboard.border.subtle}
-                    borderRadius='lg'
-                    p={4}
-                  >
+                  <Box>
                     <Text fontWeight='semibold' fontSize='sm'>
                       No service relationships observed
                     </Text>
@@ -1777,101 +1822,73 @@ function Management({
                     </Text>
                   </Box>
                 ) : (
-                  <Stack spacing={3}>
+                  <Stack
+                    as='ul'
+                    listStyleType='none'
+                    m={0}
+                    spacing={0}
+                    borderTop='1px solid'
+                    borderColor={dashboard.border.subtle}
+                  >
                     {data.discoveries.map(service => (
                       <Box
-                        as='article'
+                        as='li'
                         key={service.id}
-                        bg={dashboard.bg.nested}
-                        border='1px solid'
+                        py={3}
+                        borderBottom='1px solid'
                         borderColor={dashboard.border.subtle}
-                        borderRadius='lg'
-                        p={4}
                       >
-                        <HStack
-                          align='start'
-                          justify='space-between'
-                          flexWrap='wrap'
+                        <SimpleGrid
+                          columns={{ base: 1, md: 3 }}
                           spacing={2}
+                          alignItems='center'
                         >
-                          <HStack align='start' minW={0} spacing={3}>
-                            <Box
-                              p={2}
-                              borderRadius='md'
-                              bg={dashboard.accent.interactiveSurface}
-                              color={dashboard.accent.interactiveForeground}
-                              flexShrink={0}
+                          <Box minW={0}>
+                            <Text
+                              fontSize='sm'
+                              fontWeight='semibold'
+                              overflowWrap='anywhere'
                             >
-                              <Search size={16} aria-hidden='true' />
-                            </Box>
-                            <Box minW={0}>
-                              <Text
-                                fontSize='xs'
-                                fontWeight='bold'
-                                color={dashboard.text.muted}
-                                textTransform='uppercase'
-                                letterSpacing='wide'
-                              >
-                                {label(service.source_kind)}
-                              </Text>
-                              <Text
-                                fontWeight='semibold'
-                                overflowWrap='anywhere'
-                              >
-                                {service.service_identity}
-                              </Text>
-                            </Box>
-                          </HStack>
-                          <CertOpsBadge
-                            colorScheme={
-                              service.confidence === 'stale' ? 'orange' : 'gray'
-                            }
-                          >
-                            {label(service.confidence)}
-                          </CertOpsBadge>
-                        </HStack>
-                        <HStack
-                          mt={3}
-                          align='start'
-                          spacing={2}
-                          color={dashboard.text.secondary}
-                        >
-                          <Box flexShrink={0} mt={0.5}>
-                            <Clock3 size={14} aria-hidden='true' />
+                              {service.service_identity}
+                            </Text>
+                            <Text
+                              fontSize='xs'
+                              color={dashboard.text.secondary}
+                            >
+                              Source: {label(service.source_kind)}
+                            </Text>
                           </Box>
-                          <Text fontSize='sm'>
+                          <Box>
+                            <CertOpsBadge
+                              colorScheme={
+                                service.confidence === 'stale'
+                                  ? 'orange'
+                                  : 'gray'
+                              }
+                            >
+                              {label(service.confidence)}
+                            </CertOpsBadge>
+                          </Box>
+                          <Text fontSize='sm' color={dashboard.text.secondary}>
                             Last observed{' '}
                             {formatDateTime(service.last_observed_at)}
                           </Text>
-                        </HStack>
-                        <HStack
-                          mt={1}
-                          align='start'
-                          spacing={2}
-                          color={dashboard.text.secondary}
-                        >
-                          <Box flexShrink={0} mt={0.5}>
-                            <ShieldAlert size={14} aria-hidden='true' />
-                          </Box>
-                          <Text fontSize='sm'>
-                            Read-only configuration observation; served
-                            certificate unverified.
-                          </Text>
-                        </HStack>
+                        </SimpleGrid>
                       </Box>
                     ))}
                   </Stack>
                 )}
-                <Box
-                  mt={4}
-                  borderTop='1px solid'
-                  borderColor={dashboard.border.subtle}
-                  pt={4}
-                >
-                  <Text fontWeight='semibold' fontSize='sm'>
+                <Box as='details' mt={3}>
+                  <Text
+                    as='summary'
+                    cursor='pointer'
+                    fontSize='sm'
+                    fontWeight='semibold'
+                    color={dashboard.accent.interactiveForeground}
+                  >
                     Supported targets
                   </Text>
-                  <Text mt={1} fontSize='sm' color={dashboard.text.secondary}>
+                  <Text mt={2} fontSize='sm' color={dashboard.text.secondary}>
                     Linux file installation and allowlisted reload are
                     supported. IIS rebind is implemented and requires a
                     production-qualified agent. SQL Server, RDP and generic
@@ -2133,62 +2150,58 @@ export default function CertOpsDistribution() {
       : groups[0]?.id;
   return (
     <Stack spacing={4}>
-      <DashboardPanel borderRadius='xl' p={{ base: 4, md: 5 }}>
-        <SimpleGrid
-          columns={{ base: 1, md: 2 }}
-          spacing={{ base: 3, md: 6 }}
-          alignItems='start'
-        >
-          <Box>
-            <DashboardPanelHeader
-              title='Distribution Management'
-              description='Manage certificate destinations, rollouts and verification.'
-              mb={2}
-            />
-            <Text fontSize='sm'>
-              Shared private keys require explicit opt-in. Store credentials
-              remain on customer agents; enter only store and deployment profile
-              aliases here.
-            </Text>
-          </Box>
-          <Box>
-            {groups.length ? (
-              <Box minW={0}>
-                <Field name='Distribution source'>
-                  <Select
-                    aria-label='Distribution source'
-                    value={groupId}
-                    onChange={event => {
-                      const next = new URLSearchParams(params);
-                      next.set('group', event.target.value);
-                      navigate({
-                        pathname: location.pathname,
-                        search: `?${next}`,
-                        hash: location.hash,
-                      });
-                    }}
-                  >
-                    {groups.map(group => (
-                      <option key={group.id} value={group.id}>
-                        {group.material_store_ref} · {group.id} ({group.state})
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              </Box>
-            ) : null}
+      <DashboardPanel>
+        <DashboardPanelHeader
+          title='Distribution Management'
+          description='Manage certificate destinations, rollouts and verification.'
+          mb={3}
+          action={
             <Link
               as={RouterLink}
               to={onboardingPath({ workspaceId, area: 'certops' })}
               color='blue.500'
-              display='inline-block'
               fontSize='sm'
-              mt={2}
             >
               Open first-distribution setup guide
             </Link>
-          </Box>
-        </SimpleGrid>
+          }
+        />
+        <Stack
+          direction={{ base: 'column', md: 'row' }}
+          spacing={3}
+          align={{ base: 'stretch', md: 'end' }}
+        >
+          {groups.length ? (
+            <Box w={{ base: '100%', md: '420px' }} maxW='100%'>
+              <Field name='Distribution source'>
+                <Select
+                  aria-label='Distribution source'
+                  value={groupId}
+                  onChange={event => {
+                    const next = new URLSearchParams(params);
+                    next.set('group', event.target.value);
+                    navigate({
+                      pathname: location.pathname,
+                      search: `?${next}`,
+                      hash: location.hash,
+                    });
+                  }}
+                >
+                  {groups.map(group => (
+                    <option key={group.id} value={group.id}>
+                      {group.material_store_ref} · {group.id} ({group.state})
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </Box>
+          ) : null}
+          <Text fontSize='sm' flex='1' pb={{ base: 0, md: 1 }}>
+            Shared private keys require explicit opt-in. Store credentials
+            remain on customer agents; enter only store and deployment profile
+            aliases here.
+          </Text>
+        </Stack>
       </DashboardPanel>
       {state.loading ? (
         <DashboardState type='loading' title='Loading distribution sources' />

@@ -90,26 +90,38 @@ describe('Distribution Management',()=>{
     expect(screen.queryByRole('button',{name:'Add consumer'})).not.toBeInTheDocument();expect(screen.queryByRole('button',{name:'Request rollout'})).not.toBeInTheDocument();
     await openView('Issues');expect(screen.getByText(/A certificate in a machine store does not establish/)).toBeInTheDocument();
   });
-  it('presents each discovery as an observation with its confidence and served-certificate caveat',async()=>{
+  it('presents discovery observations with explicit confidence and a shared served-certificate caveat',async()=>{
     data.discoveries=[
       {id:'one',source_kind:'custom_service',service_identity:'edge/frontend',confidence:'stale',last_observed_at:'2026-01-02T00:00:00Z'},
       {id:'two',source_kind:'other_source',service_identity:'db/listener',confidence:'unknown',last_observed_at:null},
     ];
     page();await openView('Issues');
-    const first=within(screen.getByText('edge/frontend').closest('article'));
-    expect(first.getByText('custom service')).toBeInTheDocument();
+    const first=within(screen.getByText('edge/frontend').closest('li'));
+    expect(first.getByText('Source: custom service')).toBeInTheDocument();
     expect(first.getByText('stale')).toBeInTheDocument();
     expect(first.getByText(/Last observed/)).toBeInTheDocument();
-    expect(first.getByText(/served certificate unverified/)).toBeInTheDocument();
-    const second=within(screen.getByText('db/listener').closest('article'));
+    expect(screen.getByText(/All entries are read-only configuration observations; served certificates are unverified/)).toBeInTheDocument();
+    const second=within(screen.getByText('db/listener').closest('li'));
     expect(second.getByText('unknown')).toBeInTheDocument();
-    expect(second.getByText(/served certificate unverified/)).toBeInTheDocument();
+    expect(second.getByText('Source: other source')).toBeInTheDocument();
   });
   it('keeps the empty discovery state and coverage limitation explicit',async()=>{
     page();await openView('Issues');
     expect(screen.getByText('No service relationships observed')).toBeInTheDocument();
     expect(screen.getByText(/unknown coverage is not healthy coverage/)).toBeInTheDocument();
     expect(screen.getByText(/IIS rebind is implemented and requires a production-qualified agent/)).toBeInTheDocument();
+  });
+  it('keeps recovery and supported-target guidance available in disclosures',async()=>{
+    data.incidents=[{id:'incident',code:'consumer_offline',resolved_at:null,opened_at:'2026-01-02T00:00:00Z',updated_at:'2026-01-03T00:00:00Z',evidence:{jobId:'job'}}];
+    page();await openView('Issues');
+    expect(screen.getByText('consumer offline')).toBeInTheDocument();
+    expect(screen.getByRole('link',{name:'View affected job'})).toHaveAttribute('href','/certops/jobs?workspace=workspace&job=job');
+    for(const title of ['Recovery guidance','Supported targets']){
+      const summary=screen.getByText(title),disclosure=summary.closest('details');
+      expect(disclosure).not.toHaveAttribute('open');fireEvent.click(summary);expect(disclosure).toHaveAttribute('open');
+    }
+    expect(screen.getByText(/retry the original signed job/)).toBeVisible();
+    expect(screen.getByText(/production-qualified agent/)).toBeVisible();
   });
   it('selects an exact retained version and requests approval only after confirmation',async()=>{
     page();const select=await screen.findByLabelText('Exact published version');fireEvent.change(select,{target:{value:retained}});
