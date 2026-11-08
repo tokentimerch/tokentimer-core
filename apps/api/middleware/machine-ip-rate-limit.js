@@ -24,7 +24,7 @@ function createCertOpsMachineIpRateLimit() {
     keyGenerator: requestIpKey,
     message: { error: "CertOps machine IP rate limit exceeded", code: "CERTOPS_MACHINE_IP_RATE_LIMITED" },
   });
-  const delayMs = positiveEnv("CERTOPS_MACHINE_IP_SLOWDOWN_DELAY_MS", 500);
+  const delayMs = positiveEnv("CERTOPS_MACHINE_IP_SLOWDOWN_DELAY_MS", 500, MAX_TIMER_MS);
   const slowdown = slowDown({
     windowMs: positiveEnv("CERTOPS_MACHINE_IP_SLOWDOWN_WINDOW_MS", 900_000, MAX_TIMER_MS),
     delayAfter: positiveEnv("CERTOPS_MACHINE_IP_SLOWDOWN_DELAY_AFTER", 30_000),
