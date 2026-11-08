@@ -16,7 +16,7 @@ Set `CERTOPS_WINDOWS_LANGUAGE_ASSETS` to a JSON object keyed by OS/language, for
 
 The serial comprehensive campaign uses Azure Managed Run Command with a 190-minute guest limit and a 180-minute Node test limit; the workflow allows 300 minutes for provisioning, execution, package acceptance and cleanup. Managed provisioning alone cannot pass the stage: the collector polls execution state and requires a zero exit code, then verifies the usual scenario report. The default resource lifetime is eight hours. Diagnostic shards retain their 55-minute test window and never become release evidence. See [Azure Managed Run Command](https://learn.microsoft.com/en-us/azure/virtual-machines/windows/run-command-managed).
 
-For recovery failures that may depend on the preceding uncertain-submission journey, select `uncertain-sequence`. It runs both phases in order in one diagnostic lab with the longer managed-command limit; it is excluded from `parallel` and is not release evidence.
+For recovery failures that may depend on earlier CA rotation or uncertain-submission journeys, select `uncertain-sequence`. It runs the required capacity, pending, CA and recovery phases in order in one diagnostic lab with the longer managed-command limit; it is excluded from `parallel` and is not release evidence.
 
 Read the run summary and sanitized JSON artifacts. Missing prerequisites or mandatory scenarios fail the run. Fixture results never substitute for native evidence. Collect completed core native runs using `certops-release-qualification.yml` with the exact main candidate SHA and run IDs. Its verdict lists omitted environments and cannot claim full coverage.
 

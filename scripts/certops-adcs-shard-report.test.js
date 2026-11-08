@@ -119,6 +119,8 @@ test("the 15 minute lease fixtures are split so no shard holds more than two (60
   assert.equal(phaseOf("adcs-real-browser-uncertain-abandon-confirmation"), "uncertain");
   const recovery = createShard("uncertain-recovery");
   const sequence = createShard("uncertain-sequence");
+  for (const phase of ["capacity", "pending", "ca"]) assert.equal(sequence.runs(phase), true);
+  assert.ok(sequence.owns("adcs-real-ca-revalidation-recovers-confirmed-new-key"));
   assert.equal(sequence.runs("uncertain"), true);
   assert.equal(sequence.runs("recovery"), true);
   for (const id of Object.keys(waits)) assert.ok(sequence.owns(id));
