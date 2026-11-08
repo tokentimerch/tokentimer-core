@@ -14269,9 +14269,11 @@ components:
           description: Latest observed revocation and local chain verification, separate from lifecycle status.
           required: [verdict, chainStatus, checkedAt, validUntil, detail]
           properties:
-            verdict: { type: string, enum: [good, revoked, issuer_revoked, unknown] }
+            verdict: { type: string, enum: [good, revoked, issuer_revoked, unknown, not_configured, disabled, invalid_observation] }
             chainStatus: { type: string, enum: [valid, invalid, unknown] }
-            checkedAt: { type: string, format: date-time }
+            checkedAt: { type: string, format: date-time, nullable: true }
+            reportedAt: { type: string, format: date-time, description: Server observation time for a configuration state; not a check time. }
+            revision: { type: integer, minimum: 1, maximum: 9007199254740991, description: Agent scan ordering revision. }
             validUntil: { type: string, format: date-time, nullable: true }
             detail: { type: string, nullable: true, maxLength: 256 }
             lastVerified:
@@ -14284,6 +14286,7 @@ components:
                 checkedAt: { type: string, format: date-time }
                 validUntil: { type: string, format: date-time }
                 detail: { type: string, nullable: true, maxLength: 256 }
+                revision: { type: integer, minimum: 1, maximum: 9007199254740991 }
         schemaVersion:
           type: integer
           enum: [1]

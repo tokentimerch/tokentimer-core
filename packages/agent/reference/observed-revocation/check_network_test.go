@@ -108,9 +108,15 @@ func TestNetworkCRLAndOCSP(t *testing.T) {
 		}
 		mu.Unlock()
 	}
-	databaseChecked := false
-	check := func(want string) {
+	type scanBatch struct {
+		Scenario string          `json:"scenario"`
+		Verdict  string          `json:"verdict"`
+		Items    json.RawMessage `json:"items"`
+	}
+	var batches []scanBatch
+	check := func(scenario, want string) {
 		t.Helper()
+		captured := false
 		if !linuxOnly {
 			// Each probe can launch an agent and database, so the response may be
 			// produced well after fixture creation. Verify it at the current time.
@@ -159,17 +165,12 @@ func TestNetworkCRLAndOCSP(t *testing.T) {
 				if e != nil {
 					t.Fatalf("agent scan: %v: %s", e, output)
 				}
-				if !databaseChecked && want == "revoked" && os.Getenv("CERTOPS_REVOCATION_TEST_DB_PROBE") == "1" {
-					probe, e := filepath.Abs("../../../../tests/integration/observed-revocation-agent-probe.cjs")
-					if e != nil {
-						t.Fatal(e)
+				if !captured && os.Getenv("CERTOPS_REVOCATION_TEST_DB_PROBE") == "1" {
+					if !json.Valid(output) {
+						t.Fatalf("invalid agent JSON for %s", scenario)
 					}
-					persist := exec.Command("node", probe)
-					persist.Stdin = bytes.NewReader(output)
-					if result, e := persist.CombinedOutput(); e != nil {
-						t.Fatalf("agent to console persistence: %v: %s", e, result)
-					}
-					databaseChecked = true
+					batches = append(batches, scanBatch{scenario, want, append(json.RawMessage(nil), output...)})
+					captured = true
 				}
 			}
 			if helper := os.Getenv("CERTOPS_REVOCATION_TEST_HELPER"); helper != "" {
@@ -186,24 +187,42 @@ func TestNetworkCRLAndOCSP(t *testing.T) {
 	}
 	set("/root.crl", makeCRL(root, rootKey, nil, now.Add(time.Hour)))
 	set("/inter.crl", makeCRL(inter, interKey, nil, now.Add(time.Hour)))
-	check("good")
+	check("good", "good")
 	set("/inter.crl", makeCRL(inter, interKey, leaf.SerialNumber, now.Add(time.Hour)))
-	check("revoked")
+	check("leaf-crl", "revoked")
 	set("/inter.crl", makeCRL(inter, interKey, nil, now.Add(time.Hour)))
 	set("/root.crl", makeCRL(root, rootKey, inter.SerialNumber, now.Add(time.Hour)))
-	check("issuer_revoked")
+	check("issuer-crl", "issuer_revoked")
 	set("/root.crl", makeCRL(root, rootKey, nil, now.Add(time.Hour)))
 	ocspDER, err := ocsp.CreateResponse(inter, inter, ocsp.Response{Status: ocsp.Revoked, SerialNumber: leaf.SerialNumber, ThisUpdate: now.Add(-time.Minute), NextUpdate: now.Add(time.Hour), RevokedAt: now.Add(-time.Minute)}, interKey)
 	if err != nil {
 		t.Fatal(err)
 	}
 	set("/ocsp", ocspDER)
-	check("revoked")
+	check("leaf-ocsp", "revoked")
 	set("/ocsp", nil)
 	set("/inter.crl", makeCRL(inter, interKey, nil, now.Add(-time.Second)))
-	check("unknown")
+	check("expired-crl", "unknown")
 	set("/inter.crl", nil)
-	check("unknown")
+	check("missing-crl", "unknown")
+	if os.Getenv("CERTOPS_REVOCATION_TEST_DB_PROBE") == "1" {
+		if len(batches) != 6 {
+			t.Fatal("database probe requires the agent probe and a configured helper for all six scenarios")
+		}
+		probe, e := filepath.Abs("../../../../tests/integration/observed-revocation-agent-probe.cjs")
+		if e != nil {
+			t.Fatal(e)
+		}
+		input, e := json.Marshal(batches)
+		if e != nil {
+			t.Fatal(e)
+		}
+		persist := exec.Command("node", probe)
+		persist.Stdin = bytes.NewReader(input)
+		if result, e := persist.CombinedOutput(); e != nil {
+			t.Fatalf("agent to console persistence: %v: %s", e, result)
+		}
+	}
 	if _, err := FetchPublicStatus(context.Background(), origin+"/root.crl", nil, nil, []*x509.Certificate{root}); err == nil {
 		t.Fatal(fmt.Errorf("unapproved origin accepted"))
 	}

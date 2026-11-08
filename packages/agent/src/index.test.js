@@ -24,6 +24,7 @@ const {
   resolveJobMode,
   isValidCertificateId,
   runDiscoveryScan,
+  runRevisionedDiscoveryScan,
   runWindowsDiscoveryScan,
   registerIfNeeded,
   createCandidateAgentId,
@@ -313,7 +314,7 @@ describe("runDiscoveryScan", () => {
     fs.writeFileSync(path.join(dir, "server.crt"), TEST_CERT_PEM, "utf8");
     const client = createRecordingClient();
     let seen;
-    await runDiscoveryScan({ directories: [dir], client, checkRevocation: async (item) => {
+    await runDiscoveryScan({ directories: [dir], client, observationRevision: 42, checkRevocation: async (item) => {
       seen = item;
       return { verdict: "revoked", chainStatus: "valid", checkedAt: new Date(Date.now() - 1000).toISOString(), validUntil: new Date(Date.now() + 60000).toISOString() };
     } });
@@ -321,6 +322,7 @@ describe("runDiscoveryScan", () => {
     const item = client.calls.reportEvidence[0].evidenceItems[0];
     const metadata = Object.fromEntries(item.metadata.map(({ name, value }) => [name, value]));
     assert.equal(metadata.observedRevocationVerdict, "revoked");
+    assert.equal(metadata.observedRevocationRevision, "42");
     assert.equal(metadata.observedChainStatus, "valid");
     assert.doesNotMatch(JSON.stringify(item), /BEGIN CERTIFICATE|PRIVATE KEY/);
   });
@@ -452,9 +454,10 @@ describe("runWindowsDiscoveryScan", () => {
       assert.equal(includePublicCertificate, true);
       return [{ locationKind: "windows_store", locationSlot: "LocalMachine/My/test", fingerprintSha256, certificatePem: TEST_CERT_PEM, subject: "CN=test", issuer: "CN=test", thumbprint: WINDOWS_THUMBPRINT, storeLocation: "LocalMachine", storeName: "My" }];
     };
-    await runWindowsDiscoveryScan({ client, collect, checkRevocation: async () => ({ verdict: "issuer_revoked", chainStatus: "valid", checkedAt: new Date(Date.now() - 1000).toISOString(), validUntil: new Date(Date.now() + 60000).toISOString() }) });
+    await runWindowsDiscoveryScan({ client, collect, observationRevision: 43, checkRevocation: async () => ({ verdict: "issuer_revoked", chainStatus: "valid", checkedAt: new Date(Date.now() - 1000).toISOString(), validUntil: new Date(Date.now() + 60000).toISOString() }) });
     const item = client.calls.reportEvidence[0].evidenceItems[0];
     assert.equal(item.metadata.find((entry) => entry.name === "observedRevocationVerdict").value, "issuer_revoked");
+    assert.equal(item.metadata.find((entry) => entry.name === "observedRevocationRevision").value, "43");
     assert.doesNotMatch(JSON.stringify(item), /BEGIN CERTIFICATE|PRIVATE KEY/);
   });
 
@@ -6651,3 +6654,34 @@ describe("executeTrustJob / executeJob dispatch wiring for distribute-trust/revo
   });
 });
 
+
+
+describe("discovery scan ordering", () => {
+  it("reserves revisions before concurrent checks and keeps them across restart", async () => {
+    const { createSequenceAllocator } = require("./config");
+    const directory = makeTempConfigDir();
+    try {
+      const allocator = createSequenceAllocator(directory);
+      let finishFilesystem;
+      const gate = new Promise((resolve) => { finishFilesystem = resolve; });
+      const run = (name, checkerFactory) => runRevisionedDiscoveryScan({
+        sequenceAllocator: allocator,
+        config: {},
+        checkerFactory,
+        scan: async ({ observationRevision }) => ({ name, observationRevision }),
+      });
+      const filesystem = run("filesystem", async () => { await gate; return () => {}; });
+      const windows = await run("windows", async () => () => {});
+      // The same allocator is used for message envelopes between scans.
+      const outboundMessageRevision = allocator.next();
+      finishFilesystem();
+      const earlier = await filesystem;
+      assert.ok(earlier.observationRevision < windows.observationRevision);
+      assert.ok(windows.observationRevision < outboundMessageRevision);
+      const restarted = createSequenceAllocator(directory);
+      assert.ok(restarted.next() > outboundMessageRevision);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});

@@ -9,9 +9,12 @@ const { validateObservedRevocation, readCertificateBundle, freshSystemRoots, loa
 
 const cert = fs.readFileSync(path.join(__dirname, "../verify/fixtures/chain-leaf.crt.pem"), "utf8");
 
-test("network checks are disabled by default and require exact authorized origins", () => {
+test("legacy configurations remain disabled and enabled checks require authorized origins", () => {
   assert.equal(validateObservedRevocation().enabled, false);
-  assert.throws(() => validateObservedRevocation({ enabled: true }), /allowedOrigins/);
+  assert.equal(validateObservedRevocation().explicitlyDisabled, true);
+  assert.deepEqual(validateObservedRevocation({ enabled: true }).allowedOrigins, []);
+  assert.equal(validateObservedRevocation({ enabled: true }).enabled, true);
+  assert.equal(validateObservedRevocation({ enabled: false, allowedOrigins: ["https://pki.example"] }).enabled, false);
   for (const origin of ["https://pki.example/a.crl", "http://u:p@pki.example", "file:///tmp/a", "https://pki.example/#fragment"]) {
     assert.throws(() => validateObservedRevocation({ enabled: true, allowedOrigins: [origin] }));
   }

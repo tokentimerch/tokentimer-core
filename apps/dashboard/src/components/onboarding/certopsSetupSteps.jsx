@@ -44,6 +44,7 @@ import {
   NGINX_RELOAD_DROPIN,
   AGENT_KEYS_DIR,
   buildObserveConfig,
+  parseRevocationOrigins,
   buildPreseedSteps,
   buildLinuxCredentialPrep,
   dnsCredentialsExample,
@@ -77,6 +78,7 @@ const FIELD_NAMES = {
   caName: 'the CA name',
   template: 'the template',
   dnsScopes: 'the allowed DNS scopes',
+  revocationOrigins: 'the revocation responder origins',
 };
 
 const STAGING_WARNING =
@@ -325,6 +327,7 @@ export function ConfigStep({ ctx }) {
     template: saved.template || 'WebServer',
     dnsScopes: saved.dnsScopes || '',
     directories: saved.directories || '/etc/ssl/certs',
+    revocationOrigins: saved.revocationOrigins || '',
   });
   const [error, setError] = useState('');
   // Errors appear only after the operator has typed in, or left, a field.
@@ -371,6 +374,24 @@ export function ConfigStep({ ctx }) {
       result.config.policy.allowedPaths = [AGENT_KEYS_DIR];
     }
   }
+  const revocation = parseRevocationOrigins(form.revocationOrigins);
+  if (!revocation.ok) {
+    result = {
+      ...result,
+      ok: false,
+      fieldErrors: {
+        ...(result.fieldErrors || {}),
+        revocationOrigins: [
+          'Enter HTTP or HTTPS origins without paths or credentials.',
+        ],
+      },
+    };
+  } else if (result.ok) {
+    result.config.observedRevocation = {
+      enabled: true,
+      allowedOrigins: revocation.origins,
+    };
+  }
   const fieldErrors = result.fieldErrors || {};
   const shown = key => (touched[key] ? fieldErrors[key] || [] : []);
   // Why the main button is off, said once and without red until the person
@@ -408,6 +429,7 @@ export function ConfigStep({ ctx }) {
         template: form.template,
         dnsScopes: form.dnsScopes,
         directories: form.directories,
+        revocationOrigins: form.revocationOrigins,
         configReviewed: true,
       });
     } catch (e) {
@@ -839,6 +861,26 @@ export function ConfigStep({ ctx }) {
             ) : null}
           </>
         )}
+        <FormControl isInvalid={shown('revocationOrigins').length > 0}>
+          <FormLabel fontSize='sm'>
+            Permitted CRL/OCSP origins (optional)
+          </FormLabel>
+          <Textarea
+            size='sm'
+            rows={2}
+            value={form.revocationOrigins}
+            onChange={set('revocationOrigins')}
+            onBlur={blur('revocationOrigins')}
+            placeholder='http://pki.example.com'
+          />
+          <FormErrorMessage fontSize='xs'>
+            {errorLines(shown('revocationOrigins'))}
+          </FormErrorMessage>
+          <Text fontSize='xs' mt={1}>
+            Enter the HTTP or HTTPS origins your agent may contact, one per
+            line. Until you add them, revocation is not checked.
+          </Text>
+        </FormControl>
         {!result.ok ? (
           <Text fontSize='xs' color={muted} data-testid='config-missing'>
             The button below stays disabled until these are filled in correctly:{' '}

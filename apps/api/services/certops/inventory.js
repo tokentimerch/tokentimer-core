@@ -1336,16 +1336,29 @@ async function upsertAgentFilesystemInstance(client, options) {
            THEN CASE WHEN certificate_instances.public_metadata ? 'observedRevocation'
              THEN jsonb_build_object('observedRevocation', certificate_instances.public_metadata->'observedRevocation') ELSE '{}'::jsonb END
          WHEN certificate_instances.public_metadata ? 'observedRevocation'
-          AND certificate_instances.public_metadata->'observedRevocation'->>'checkedAt' >= EXCLUDED.public_metadata->'observedRevocation'->>'checkedAt'
+          AND (
+            ( certificate_instances.public_metadata->'observedRevocation' ? 'revision' AND EXCLUDED.public_metadata->'observedRevocation' ? 'revision'
+              AND (certificate_instances.public_metadata->'observedRevocation'->>'revision')::numeric >= (EXCLUDED.public_metadata->'observedRevocation'->>'revision')::numeric
+              AND EXCLUDED.public_metadata->'observedRevocation'->>'verdict' NOT IN ('disabled', 'not_configured', 'invalid_observation') )
+            OR ( certificate_instances.public_metadata->'observedRevocation' ? 'revision' AND NOT (EXCLUDED.public_metadata->'observedRevocation' ? 'revision')
+              AND EXCLUDED.public_metadata->'observedRevocation'->>'verdict' = 'good' )
+            OR ( NOT (certificate_instances.public_metadata->'observedRevocation' ? 'revision') AND NOT (EXCLUDED.public_metadata->'observedRevocation' ? 'revision')
+              AND EXCLUDED.public_metadata->'observedRevocation'->>'verdict' NOT IN ('disabled', 'not_configured', 'invalid_observation')
+              AND ( ( certificate_instances.public_metadata->'observedRevocation'->>'verdict' IN ('disabled', 'not_configured', 'invalid_observation') AND EXCLUDED.public_metadata->'observedRevocation'->>'verdict' = 'good' )
+                OR certificate_instances.public_metadata->'observedRevocation'->>'checkedAt' >= EXCLUDED.public_metadata->'observedRevocation'->>'checkedAt' ) )
+          )
            THEN jsonb_build_object('observedRevocation', certificate_instances.public_metadata->'observedRevocation')
-         WHEN EXCLUDED.public_metadata->'observedRevocation'->>'verdict' = 'unknown'
+         WHEN certificate_instances.public_metadata->'observedRevocation' ? 'revision' AND NOT (EXCLUDED.public_metadata->'observedRevocation' ? 'revision')
+          AND EXCLUDED.public_metadata->'observedRevocation'->>'verdict' IN ('revoked', 'issuer_revoked')
+           THEN jsonb_build_object('observedRevocation', EXCLUDED.public_metadata->'observedRevocation' || jsonb_build_object('revision', certificate_instances.public_metadata->'observedRevocation'->'revision'))
+         WHEN EXCLUDED.public_metadata->'observedRevocation'->>'verdict' IN ('unknown', 'not_configured', 'disabled', 'invalid_observation')
           AND certificate_instances.public_metadata ? 'observedRevocation'
            THEN jsonb_build_object('observedRevocation', (EXCLUDED.public_metadata->'observedRevocation') || CASE
-             WHEN certificate_instances.public_metadata->'observedRevocation'->>'verdict' <> 'unknown'
+             WHEN certificate_instances.public_metadata->'observedRevocation'->>'verdict' NOT IN ('unknown', 'not_configured', 'disabled', 'invalid_observation')
                THEN jsonb_build_object('lastVerified', (certificate_instances.public_metadata->'observedRevocation') - 'lastVerified')
              WHEN certificate_instances.public_metadata->'observedRevocation' ? 'lastVerified'
                THEN jsonb_build_object('lastVerified', certificate_instances.public_metadata->'observedRevocation'->'lastVerified')
-             ELSE '{}'::jsonb END)
+             ELSE '{}'::jsonb END || CASE WHEN certificate_instances.public_metadata->'observedRevocation' ? 'revision' AND (NOT (EXCLUDED.public_metadata->'observedRevocation' ? 'revision') OR (certificate_instances.public_metadata->'observedRevocation'->>'revision')::numeric > (EXCLUDED.public_metadata->'observedRevocation'->>'revision')::numeric) THEN jsonb_build_object('revision', certificate_instances.public_metadata->'observedRevocation'->'revision') ELSE '{}'::jsonb END)
          ELSE jsonb_build_object('observedRevocation', EXCLUDED.public_metadata->'observedRevocation') END,
        updated_at = NOW()
      RETURNING *`,

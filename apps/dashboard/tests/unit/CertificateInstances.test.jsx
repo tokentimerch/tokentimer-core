@@ -84,6 +84,33 @@ describe('CertificateInstances', () => {
     expect(observedRevocationDescriptor(null).label).toBe(
       'Revocation not checked'
     );
+    expect(
+      observedRevocationDescriptor({ verdict: 'not_configured' }).label
+    ).toBe('Revocation not checked');
+    expect(observedRevocationDescriptor({ verdict: 'disabled' }).label).toBe(
+      'Revocation disabled'
+    );
+    expect(
+      observedRevocationDescriptor({
+        verdict: 'disabled',
+        lastVerified: { verdict: 'revoked' },
+      }).label
+    ).toBe('Last known revoked');
+  });
+  it('keeps revoked alerts red with future clock skew or malformed later evidence', () => {
+    const now = Date.parse('2026-01-01T00:00:00Z');
+    for (const verdict of ['revoked', 'issuer_revoked']) {
+      const future = observedRevocationDescriptor({ verdict, chainStatus: 'valid', checkedAt: '2026-01-01T00:01:00Z', validUntil: '2026-01-01T01:00:00Z' }, now);
+      expect(future.scheme).toBe('red');
+      expect(future.help).toMatch(/clock/);
+      expect(observedRevocationDescriptor({ verdict: 'unknown', checkedAt: '2026-01-01T00:01:00Z', lastVerified: { verdict } }, now).scheme).toBe('red');
+      const invalid = observedRevocationDescriptor({ verdict: 'invalid_observation', lastVerified: { verdict } }, now);
+      expect(invalid.scheme).toBe('red');
+      expect(invalid.help).toMatch(/invalid/);
+    }
+    const invalid = observedRevocationDescriptor({ verdict: 'invalid_observation' }, now);
+    expect(invalid.scheme).toBe('orange');
+    expect(invalid.label).toBe('Revocation unknown');
   });
   it('shows the empty state when there are no instances', () => {
     renderInstances({ instances: [] });

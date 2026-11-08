@@ -6,7 +6,11 @@ const { checkObservedCertificate } = require("./helper");
 const { createHash } = require("node:crypto");
 
 async function createScanChecker(config, { load = loadTrustMaterial, check = checkObservedCertificate } = {}) {
-  if (!config?.enabled) return null;
+  if (!config?.enabled) return config?.explicitlyDisabled ? async () => ({ state: "disabled" }) : null;
+  // Report the policy state without making a network request or inventing a
+  // check time. This also supersedes a formerly good observation when an
+  // operator removes all permitted responder origins.
+  if (!config.allowedOrigins?.length) return async () => ({ state: "not_configured" });
   let material;
   try { material = await load(config); } catch (_) { return async () => ({ verdict: "unknown", chainStatus: "unknown", detail: "local trust material unavailable" }); }
   return (certificate) => check({ ...certificate, roots: material.roots, intermediates: [...material.intermediates, ...(certificate.intermediateCertificates || [])], allowedOrigins: config.allowedOrigins });
@@ -14,7 +18,7 @@ async function createScanChecker(config, { load = loadTrustMaterial, check = che
 
 // Keep network work bounded and reuse a single check when one certificate is
 // observed in a store and one or more bindings during the same scan.
-async function enrichObservedItems(entries, check, { concurrency = 4, now = () => Date.now() } = {}) {
+async function enrichObservedItems(entries, check, { concurrency = 4, now = () => Date.now(), revision = null } = {}) {
   if (typeof check !== "function") return;
   const pending = new Map();
   let next = 0;
@@ -27,6 +31,7 @@ async function enrichObservedItems(entries, check, { concurrency = 4, now = () =
         const attemptedAt = new Date(now()).toISOString();
         let result;
         try { result = await check({ certificatePem: entry.certificatePem, fingerprintSha256, intermediateCertificates: chain }); } catch (_) { result = null; }
+        if (["not_configured", "disabled"].includes(result?.state)) return { state: result.state };
         const checked = revocationStatus(result, now());
         const chainStatus = ["valid", "invalid", "unknown"].includes(result?.chainStatus) ? result.chainStatus : "unknown";
         return {
@@ -40,6 +45,14 @@ async function enrichObservedItems(entries, check, { concurrency = 4, now = () =
     }
     const result = await pending.get(cacheKey);
     const metadata = entry.item.metadata || (entry.item.metadata = []);
+    if (revision !== null) {
+      if (!Number.isSafeInteger(revision) || revision < 1) throw new Error("Invalid observation revision");
+      metadata.push({ name: "observedRevocationRevision", value: String(revision) });
+    }
+    if (result.state) {
+      metadata.push({ name: "observedRevocationState", value: result.state });
+      return;
+    }
     metadata.push({ name: "observedRevocationVerdict", value: result.verdict });
     metadata.push({ name: "observedRevocationCheckedAt", value: result.checkedAt });
     metadata.push({ name: "observedChainStatus", value: result.chainStatus });

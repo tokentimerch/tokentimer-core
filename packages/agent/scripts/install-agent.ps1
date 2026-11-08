@@ -862,22 +862,15 @@ if ((Test-Path -LiteralPath $configPath) -and -not $script:DryRun) {
     $lines = New-Object System.Collections.Generic.List[string]
     $lines.Add("{")
     $lines.Add("  `"serverUrl`": `"$($script:ApiUrl)`",")
-    if ($caBundleDest -or $script:AllowInsecureLocalHttp) {
-        $lines.Add("  `"workspaceId`": `"$($script:WorkspaceId)`",")
-    } else {
-        $lines.Add("  `"workspaceId`": `"$($script:WorkspaceId)`"")
-    }
+    $lines.Add("  `"workspaceId`": `"$($script:WorkspaceId)`",")
     if ($caBundleDest) {
         $caBundleDestJson = $caBundleDest.Replace('\', '\\')
-        if ($script:AllowInsecureLocalHttp) {
-            $lines.Add("  `"caBundlePath`": `"$caBundleDestJson`",")
-        } else {
-            $lines.Add("  `"caBundlePath`": `"$caBundleDestJson`"")
-        }
+        $lines.Add("  `"caBundlePath`": `"$caBundleDestJson`",")
     }
     if ($script:AllowInsecureLocalHttp) {
-        $lines.Add("  `"allowInsecureLocalHttp`": true")
+        $lines.Add("  `"allowInsecureLocalHttp`": true,")
     }
+    $lines.Add('  "observedRevocation": { "enabled": true, "allowedOrigins": [] }')
     $lines.Add("}")
     $configContent = ($lines -join "`n") + "`n"
     [System.IO.File]::WriteAllText($configTmp, $configContent, (New-Object System.Text.UTF8Encoding($false)))

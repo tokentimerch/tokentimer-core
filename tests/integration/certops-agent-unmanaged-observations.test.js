@@ -302,6 +302,92 @@ describe("Quota-blocked agent observations on real PostgreSQL", function () {
     assert.ok(evidence.every((entry) => entry.created_by_agent_id === principal.id));
   });
 
+  it("replaces a prior good result when policy is removed or disabled, while preserving history", async () => {
+    for (const limit of [0, 1]) {
+      const principal = await agent(limit);
+      const base = Date.now();
+      const report = (state, offset = -60000, revision = null) => {
+        const item = observation(`/etc/ssl/policy-${limit}.pem`);
+        if (revision !== null) item.metadata.push({ name: "observedRevocationRevision", value: String(revision) });
+        if (["good", "revoked"].includes(state)) item.metadata.push(
+          { name: "observedRevocationVerdict", value: state },
+          { name: "observedChainStatus", value: "valid" },
+          { name: "observedRevocationCheckedAt", value: new Date(base + offset).toISOString() },
+          { name: "observedRevocationValidUntil", value: new Date(base + 3600000).toISOString() },
+        );
+        else item.metadata.push({ name: "observedRevocationState", value: state });
+        return item;
+      };
+      const result = async () => limit
+        ? (await rows("certificate_instances", principal.workspaceId))[0].public_metadata.observedRevocation
+        : (await rows("certops_slot_observations", principal.workspaceId))[0].observed_revocation;
+      await send(principal, 1, [report("good", 240000, 10)]);
+      await send(principal, 2, [report("not_configured", -240000, 11)]);
+      assert.equal((await result()).verdict, "not_configured");
+      assert.equal((await result()).checkedAt, null);
+      assert.equal((await result()).lastVerified.verdict, "good");
+      await send(principal, 3, [report("disabled", -240000, 12)]);
+      assert.equal((await result()).verdict, "disabled");
+      assert.equal((await result()).checkedAt, null);
+      assert.equal((await result()).lastVerified.verdict, "good");
+      await send(principal, 4, [report("good", 240000, 10)]);
+      assert.equal((await result()).verdict, "disabled", "late good evidence must not override the policy state despite clock skew");
+      await send(principal, 5, [report("good", 240000)]);
+      assert.equal((await result()).verdict, "disabled", "revisionless old agents cannot clear the fence");
+      await send(principal, 6, [report("revoked", -240000, 13)]);
+      assert.equal((await result()).verdict, "revoked");
+      await send(principal, 7, [report("disabled", -240000, 1)]);
+      assert.equal((await result()).verdict, "disabled");
+      assert.equal((await result()).lastVerified.verdict, "revoked", "policy changes preserve the last verified revocation");
+      assert.equal((await result()).revision, 13, "a reset allocator must not weaken the fence");
+      await send(principal, 8, [report("good", 240000, 10)]);
+      assert.equal((await result()).verdict, "disabled", "old good stays fenced after allocator reset");
+      const grouped = await listCertificateIdentities({ workspaceId: principal.workspaceId, client: db, canReadTopology: false });
+      assert.equal(grouped.items[0].observedRevocation.verdict, "disabled");
+    }
+  });
+
+  it("fails closed on malformed observations and accepts revisionless revocations", async () => {
+    for (const limit of [0, 1]) {
+      const principal = await agent(limit);
+      const now = Date.now();
+      const item = (entries) => {
+        const value = observation(`/etc/ssl/invalid-${limit}.pem`);
+        value.metadata.push(...entries.map(([name, value]) => ({ name, value })));
+        return value;
+      };
+      const check = (verdict, offset = -1000, revision = null) => item([
+        ["observedRevocationVerdict", verdict], ["observedChainStatus", "valid"],
+        ["observedRevocationCheckedAt", new Date(now + offset).toISOString()],
+        ["observedRevocationValidUntil", new Date(now + 3600000).toISOString()],
+        ...(revision === null ? [] : [["observedRevocationRevision", revision]]),
+      ]);
+      const result = async () => limit
+        ? (await rows("certificate_instances", principal.workspaceId))[0].public_metadata.observedRevocation
+        : (await rows("certops_slot_observations", principal.workspaceId))[0].observed_revocation;
+      await send(principal, 1, [item([["observedRevocationState", "disabled"]])]);
+      await send(principal, 2, [check("revoked")]);
+      assert.equal((await result()).verdict, "revoked");
+      await send(principal, 3, [item([["observedRevocationState", "disabled"]])]);
+      await send(principal, 4, [check("issuer_revoked")]);
+      assert.equal((await result()).verdict, "issuer_revoked");
+      await send(principal, 5, [check("good", -1000, "50")]);
+      await send(principal, 6, [check("good", -1000, "broken")]);
+      assert.equal((await result()).verdict, "invalid_observation");
+      assert.equal((await result()).checkedAt, null);
+      assert.equal((await result()).revision, 50);
+      assert.equal((await result()).lastVerified.verdict, "good");
+      await send(principal, 7, [check("good", -1000, "49")]);
+      assert.equal((await result()).verdict, "invalid_observation");
+      await send(principal, 8, [check("revoked", -1000, "51")]);
+      await send(principal, 9, [check("good", 600000, "52")]);
+      assert.equal((await result()).verdict, "invalid_observation");
+      assert.equal((await result()).checkedAt, null);
+      assert.equal((await result()).lastVerified.verdict, "revoked");
+      assert.equal((await result()).revision, 52);
+    }
+  });
+
   it("retains unmanaged agent revocation and exposes it without topology access", async () => {
     const principal = await agent();
     const now = Date.now();

@@ -6556,7 +6556,15 @@ async function executeTrustJob({
  * @param {(msg: string) => void} [params.log]
  * @returns {Promise<{ observed: number, warnings: number }>}
  */
-async function runDiscoveryScan({ directories, client, log = null, checkRevocation = null }) {
+// Reserve before any asynchronous work so concurrent scans remain ordered by
+// their start even if an older scan completes after a newer configuration.
+async function runRevisionedDiscoveryScan({ sequenceAllocator, config, scan, checkerFactory = createScanChecker }) {
+  const observationRevision = sequenceAllocator.next();
+  const checkRevocation = await checkerFactory(config);
+  return scan({ observationRevision, checkRevocation });
+}
+
+async function runDiscoveryScan({ directories, client, log = null, checkRevocation = null, observationRevision = null }) {
   const { certificates, warnings, truncated } = discoverCertificates(directories, {
     onWarning: (message) => emitLog(log, message),
     includePublicCertificate: typeof checkRevocation === "function",
@@ -6602,7 +6610,7 @@ async function runDiscoveryScan({ directories, client, log = null, checkRevocati
     revocationEntries.push({ item: items[items.length - 1], certificatePem: cert.certificatePem, intermediateCertificates: cert.intermediateCertificates });
   }
 
-  await enrichObservedItems(revocationEntries, checkRevocation);
+  await enrichObservedItems(revocationEntries, checkRevocation, { revision: observationRevision });
 
   const EVIDENCE_CHUNK_SIZE = 16;
   for (let start = 0; start < items.length; start += EVIDENCE_CHUNK_SIZE) {
@@ -6647,6 +6655,7 @@ async function runWindowsDiscoveryScan({
   log = null,
   collect = collectWindowsDiscoveryObservations,
   checkRevocation = null,
+  observationRevision = null,
 }) {
   const warnings = [];
   const observations = await collect({
@@ -6722,7 +6731,7 @@ async function runWindowsDiscoveryScan({
     revocationEntries.push({ item: items[items.length - 1], certificatePem: observation.certificatePem });
   }
 
-  await enrichObservedItems(revocationEntries, checkRevocation);
+  await enrichObservedItems(revocationEntries, checkRevocation, { revision: observationRevision });
 
   const EVIDENCE_CHUNK_SIZE = 16;
   for (let start = 0; start < items.length; start += EVIDENCE_CHUNK_SIZE) {
@@ -7285,12 +7294,16 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
         intervalMs: config.discovery.intervalMs,
         signal: controller.signal,
         startImmediately: true,
-        onTick: async () =>
-          runDiscoveryScan({
+        onTick: () => runRevisionedDiscoveryScan({
+          sequenceAllocator,
+          config: config.observedRevocation,
+          scan: ({ observationRevision, checkRevocation }) => runDiscoveryScan({
             directories: config.discovery.directories,
             client,
-            checkRevocation: await createScanChecker(config.observedRevocation),
+            observationRevision,
+            checkRevocation,
           }),
+        }),
       }),
     );
   }
@@ -7343,10 +7356,15 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
         intervalMs: config.windowsDiscovery.intervalMs,
         signal: controller.signal,
         startImmediately: true,
-        onTick: async () => runWindowsDiscoveryScan({
-          client,
-          stores: config.windowsDiscovery.stores,
-          checkRevocation: await createScanChecker(config.observedRevocation),
+        onTick: () => runRevisionedDiscoveryScan({
+          sequenceAllocator,
+          config: config.observedRevocation,
+          scan: ({ observationRevision, checkRevocation }) => runWindowsDiscoveryScan({
+            client,
+            stores: config.windowsDiscovery.stores,
+            observationRevision,
+            checkRevocation,
+          }),
         }),
       }),
     );
@@ -7388,6 +7406,7 @@ module.exports = {
   resolveJobMode,
   isValidCertificateId,
   runDiscoveryScan,
+  runRevisionedDiscoveryScan,
   runWindowsRetentionSweep,
   runWindowsDiscoveryScan,
   reconcileOrphanedWindowsCngContainers,

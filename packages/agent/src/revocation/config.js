@@ -8,7 +8,7 @@ const { promisify } = require("node:util");
 const execFileAsync = promisify(execFile);
 
 function validateObservedRevocation(value) {
-  if (value === undefined || value === null) return { enabled: false, allowedOrigins: [], trustAnchorFiles: [], intermediateFiles: [] };
+  if (value === undefined || value === null) return { enabled: false, explicitlyDisabled: true, allowedOrigins: [], trustAnchorFiles: [], intermediateFiles: [] };
   if (typeof value !== "object" || Array.isArray(value)) throw new Error("observedRevocation must be an object");
   const supported = new Set(["enabled", "allowedOrigins", "trustAnchorFiles", "intermediateFiles"]);
   if (Object.keys(value).some((key) => !supported.has(key))) throw new Error("observedRevocation contains an unknown property");
@@ -24,7 +24,7 @@ function validateObservedRevocation(value) {
     if (!["http:", "https:"].includes(u.protocol) || u.username || u.password || u.search || u.hash || u.pathname !== "/") throw new Error("observedRevocation.allowedOrigins must contain HTTP(S) origins without paths or credentials");
   }
   const result = { enabled: value.enabled === true, allowedOrigins, trustAnchorFiles: list("trustAnchorFiles", 32), intermediateFiles: list("intermediateFiles", 32) };
-  if (result.enabled && allowedOrigins.length === 0) throw new Error("observedRevocation.enabled requires an explicit allowedOrigins list");
+  if (!result.enabled) result.explicitlyDisabled = true;
   return result;
 }
 

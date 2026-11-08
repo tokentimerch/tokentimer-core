@@ -7,7 +7,17 @@ test("disabled or unavailable local trust never starts a network check", async (
   let calls = 0;
   const check = async () => { calls++; return { verdict: "good" }; };
   assert.equal(await createScanChecker({ enabled: false }, { check }), null);
-  const checker = await createScanChecker({ enabled: true, allowedOrigins: [] }, { load: async () => { throw new Error("store inaccessible"); }, check });
+  let loads = 0;
+  const noPolicy = await createScanChecker({ enabled: true, allowedOrigins: [] }, { load: async () => { loads++; }, check });
+  const entries = [{ certificatePem: "public", item: { fingerprintSha256: "a".repeat(64), metadata: [] } }];
+  await enrichObservedItems(entries, noPolicy);
+  assert.deepEqual(entries[0].item.metadata, [{ name: "observedRevocationState", value: "not_configured" }]);
+  const disabled = await createScanChecker({ enabled: false, explicitlyDisabled: true }, { load: async () => { loads++; }, check });
+  const disabledEntries = [{ certificatePem: "public", item: { fingerprintSha256: "b".repeat(64), metadata: [] } }];
+  await enrichObservedItems(disabledEntries, disabled);
+  assert.deepEqual(disabledEntries[0].item.metadata, [{ name: "observedRevocationState", value: "disabled" }]);
+  assert.equal(loads, 0);
+  const checker = await createScanChecker({ enabled: true, allowedOrigins: ["http://pki.example"] }, { load: async () => { throw new Error("store inaccessible"); }, check });
   assert.equal((await checker({})).verdict, "unknown");
   assert.equal(calls, 0);
 });

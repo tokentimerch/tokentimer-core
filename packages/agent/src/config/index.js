@@ -1692,6 +1692,9 @@ function createSequenceAllocator(configDir) {
   return {
     next() {
       const candidate = lastAllocated + 1;
+      if (!Number.isSafeInteger(candidate) || candidate > Number.MAX_SAFE_INTEGER - SEQUENCE_RESERVATION_BLOCK + 1) {
+        throw new Error("Agent sequence exhausted");
+      }
       if (candidate > reservedThrough) {
         // Durable write FIRST, allocation second: a crash between the two
         // wastes a block but can never reuse a value.

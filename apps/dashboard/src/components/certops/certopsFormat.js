@@ -55,20 +55,65 @@ export function observedRevocationDescriptor(result, now = Date.now()) {
     return {
       label: 'Revocation not checked',
       scheme: 'gray',
-      help: 'No revocation check has been reported.',
+      help: 'No revocation check has been reported. Configure monitoring and permitted responder origins on the agent.',
     };
+  if (['not_configured', 'disabled', 'invalid_observation'].includes(result.verdict)) {
+    const previous = result.lastVerified;
+    if (previous && ['revoked', 'issuer_revoked'].includes(previous.verdict))
+      return {
+        label:
+          previous.verdict === 'revoked'
+            ? 'Last known revoked'
+            : 'Last known CA revoked',
+        scheme: 'red',
+        help:
+          result.verdict === 'disabled'
+            ? 'Revocation monitoring is disabled on the agent.'
+            : result.verdict === 'invalid_observation'
+              ? 'The latest revocation observation was invalid; check the agent clock and configuration.'
+              : 'Revocation is not currently checked: configure permitted responder origins on the agent.',
+      };
+    return {
+      label:
+        result.verdict === 'disabled'
+          ? 'Revocation disabled'
+          : result.verdict === 'invalid_observation'
+            ? 'Revocation unknown'
+            : 'Revocation not checked',
+      scheme: result.verdict === 'invalid_observation' ? 'orange' : 'gray',
+      help:
+        result.verdict === 'disabled'
+          ? 'Enable revocation monitoring on the agent to start checking.'
+          : result.verdict === 'invalid_observation'
+            ? 'The latest revocation observation was invalid; check the agent clock and configuration.'
+            : 'Configure permitted CRL/OCSP responder origins on the agent to start checking.',
+    };
+  }
   const checkedAt = Date.parse(result.checkedAt);
   const validUntil = Date.parse(result.validUntil);
   const checked = Number.isFinite(checkedAt)
     ? formatDateTime(result.checkedAt)
     : 'unknown';
   const reason = result.detail ? ` ${result.detail}` : '';
-  if (Number.isFinite(checkedAt) && checkedAt > now)
+  if (Number.isFinite(checkedAt) && checkedAt > now) {
+    const lastRevoked = ['revoked', 'issuer_revoked'].includes(result.verdict)
+      ? result.verdict
+      : result.lastVerified?.verdict;
+    if (['revoked', 'issuer_revoked'].includes(lastRevoked))
+      return {
+        label:
+          lastRevoked === 'revoked'
+            ? 'Last known revoked'
+            : 'Last known CA revoked',
+        scheme: 'red',
+        help: 'The verification time is in the future; check the agent clock.',
+      };
     return {
       label: 'Revocation unknown',
       scheme: 'orange',
       help: 'The verification time is in the future; check the agent clock.',
     };
+  }
   if (result.chainStatus === 'invalid')
     return {
       label: 'Chain untrusted',

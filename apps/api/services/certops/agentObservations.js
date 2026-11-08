@@ -873,14 +873,27 @@ async function retainUnmanagedObservation(client, observation) {
        observed_revocation = CASE
          WHEN EXCLUDED.observed_revocation IS NULL THEN certops_slot_observations.observed_revocation
          WHEN certops_slot_observations.observed_revocation IS NULL THEN EXCLUDED.observed_revocation
-         WHEN certops_slot_observations.observed_revocation->>'checkedAt' >= EXCLUDED.observed_revocation->>'checkedAt'
+         WHEN (
+            ( certops_slot_observations.observed_revocation ? 'revision' AND EXCLUDED.observed_revocation ? 'revision'
+              AND (certops_slot_observations.observed_revocation->>'revision')::numeric >= (EXCLUDED.observed_revocation->>'revision')::numeric
+              AND EXCLUDED.observed_revocation->>'verdict' NOT IN ('disabled', 'not_configured', 'invalid_observation') )
+            OR ( certops_slot_observations.observed_revocation ? 'revision' AND NOT (EXCLUDED.observed_revocation ? 'revision')
+              AND EXCLUDED.observed_revocation->>'verdict' = 'good' )
+            OR ( NOT (certops_slot_observations.observed_revocation ? 'revision') AND NOT (EXCLUDED.observed_revocation ? 'revision')
+              AND EXCLUDED.observed_revocation->>'verdict' NOT IN ('disabled', 'not_configured', 'invalid_observation')
+              AND ( ( certops_slot_observations.observed_revocation->>'verdict' IN ('disabled', 'not_configured', 'invalid_observation') AND EXCLUDED.observed_revocation->>'verdict' = 'good' )
+                OR certops_slot_observations.observed_revocation->>'checkedAt' >= EXCLUDED.observed_revocation->>'checkedAt' ) )
+          )
            THEN certops_slot_observations.observed_revocation
-         WHEN EXCLUDED.observed_revocation->>'verdict' = 'unknown' THEN EXCLUDED.observed_revocation || CASE
-           WHEN certops_slot_observations.observed_revocation->>'verdict' <> 'unknown'
+         WHEN certops_slot_observations.observed_revocation ? 'revision' AND NOT (EXCLUDED.observed_revocation ? 'revision')
+          AND EXCLUDED.observed_revocation->>'verdict' IN ('revoked', 'issuer_revoked')
+           THEN EXCLUDED.observed_revocation || jsonb_build_object('revision', certops_slot_observations.observed_revocation->'revision')
+         WHEN EXCLUDED.observed_revocation->>'verdict' IN ('unknown', 'not_configured', 'disabled', 'invalid_observation') THEN EXCLUDED.observed_revocation || CASE
+           WHEN certops_slot_observations.observed_revocation->>'verdict' NOT IN ('unknown', 'not_configured', 'disabled', 'invalid_observation')
              THEN jsonb_build_object('lastVerified', certops_slot_observations.observed_revocation - 'lastVerified')
            WHEN certops_slot_observations.observed_revocation ? 'lastVerified'
              THEN jsonb_build_object('lastVerified', certops_slot_observations.observed_revocation->'lastVerified')
-           ELSE '{}'::jsonb END
+           ELSE '{}'::jsonb END || CASE WHEN certops_slot_observations.observed_revocation ? 'revision' AND (NOT (EXCLUDED.observed_revocation ? 'revision') OR (certops_slot_observations.observed_revocation->>'revision')::numeric > (EXCLUDED.observed_revocation->>'revision')::numeric) THEN jsonb_build_object('revision', certops_slot_observations.observed_revocation->'revision') ELSE '{}'::jsonb END
          ELSE EXCLUDED.observed_revocation END`,
     [observation.workspaceId, observation.fingerprintSha256,
       observation.locationKind === "filesystem"
