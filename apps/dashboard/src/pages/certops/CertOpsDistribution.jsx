@@ -33,12 +33,14 @@ import {
   Th,
   Thead,
   Tr,
+  useColorModeValue,
 } from '@chakra-ui/react';
 import {
   DashboardPanel,
   DashboardPanelHeader,
   DashboardState,
 } from '../../components/DashboardPrimitives';
+import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { onboardingPath } from '../../utils/onboardingPath.js';
 import {
@@ -56,6 +58,36 @@ import { formatDateTime } from '../../components/certops/certopsFormat.js';
 const label = value => String(value || 'Unknown').replaceAll('_', ' ');
 const jobsLink = (workspaceId, id) =>
   `/certops/jobs?workspace=${encodeURIComponent(workspaceId)}&job=${encodeURIComponent(id)}`;
+function OverviewMetric({ name, value, detail }) {
+  const { dashboard } = useDashboardTheme();
+  return (
+    <Box
+      bg={dashboard.bg.nested}
+      border='1px solid'
+      borderColor={dashboard.border.subtle}
+      borderRadius='lg'
+      p={3}
+      minW={0}
+    >
+      <Text
+        color={dashboard.text.muted}
+        fontSize='xs'
+        fontWeight='bold'
+        textTransform='uppercase'
+        letterSpacing='wide'
+      >
+        {name}
+      </Text>
+      <Text mt={1} fontSize='lg' fontWeight='bold' overflowWrap='anywhere'>
+        {value}
+      </Text>
+      <Text mt={1} color={dashboard.text.secondary} fontSize='sm'>
+        {detail}
+      </Text>
+    </Box>
+  );
+}
+
 function Field({ name, children }) {
   return (
     <FormControl>
@@ -775,7 +807,10 @@ function Management({
     },
     [workspaceId, groupId]
   );
+  const { dashboard } = useDashboardTheme();
+  const navigationBackground = useColorModeValue('#ffffff', '#1e293b');
   const state = useDistributionRead(`${workspaceId}/${groupId}`, read);
+  const [policyOpen, setPolicyOpen] = useState(false);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [notice, setNotice] = useState('');
@@ -830,6 +865,18 @@ function Management({
   const selectedVersion =
     version || data.group.latest_material_version_id || '';
   const retained = selectedVersion !== data.group.latest_material_version_id;
+  const activeConsumers = data.consumers.filter(
+    value => value.binding_state === 'active'
+  ).length;
+  const pendingApprovals = data.approvals.filter(
+    job => job.status === 'pending_approval'
+  ).length;
+  const openIncidents = data.incidents.filter(
+    incident => !incident.resolved_at
+  ).length;
+  const activeRollouts = data.rollouts.filter(rollout =>
+    ['pending', 'deploying', 'paused'].includes(rollout.state)
+  ).length;
   const requestRollout = verificationOnly => {
     const signature = `${groupId}:${selectedVersion}:${verificationOnly}:${data.group.generation}`;
     if (!keys.current.has(signature))
@@ -890,7 +937,113 @@ function Management({
           {notice}
         </Alert>
       ) : null}
-      <DashboardPanel>
+      <DashboardPanel p={{ base: 3, md: 4 }} borderRadius='xl'>
+        <HStack
+          justify='space-between'
+          align='start'
+          flexWrap='wrap'
+          spacing={3}
+          mb={3}
+        >
+          <Box>
+            <Text
+              color={dashboard.text.muted}
+              fontSize='xs'
+              fontWeight='bold'
+              letterSpacing='wide'
+              textTransform='uppercase'
+            >
+              Distribution overview
+            </Text>
+          </Box>
+          <Badge
+            colorScheme={
+              paused || pauseUnresolved
+                ? 'orange'
+                : data.group.state === 'active'
+                  ? 'green'
+                  : 'gray'
+            }
+          >
+            {pauseUnresolved
+              ? 'Pause status unknown'
+              : paused
+                ? 'Workspace paused'
+                : label(data.group.state)}
+          </Badge>
+        </HStack>
+        <SimpleGrid columns={{ base: 2, md: 4 }} spacing={2}>
+          <OverviewMetric
+            name='Publication'
+            value={label(data.versions[0]?.state || 'Not published')}
+            detail='Publication is not activation.'
+          />
+          <OverviewMetric
+            name='Destinations'
+            value={activeConsumers}
+            detail='Active consumers'
+          />
+          <OverviewMetric
+            name='Recent ongoing rollouts'
+            value={activeRollouts}
+            detail={`${pendingApprovals} recent pending approval${pendingApprovals === 1 ? '' : 's'} · includes paused rollouts`}
+          />
+          <OverviewMetric
+            name='Recent open incidents'
+            value={openIncidents}
+            detail='From the latest 100 incidents'
+          />
+        </SimpleGrid>
+      </DashboardPanel>
+      <DashboardPanel
+        position='sticky'
+        bg={navigationBackground}
+        top={0}
+        zIndex='sticky'
+        p={2}
+        borderRadius='lg'
+        boxShadow='sm'
+      >
+        <HStack
+          as='nav'
+          aria-label='Distribution sections'
+          spacing={1}
+          overflowX='auto'
+          whiteSpace='nowrap'
+          pb={1}
+        >
+          {[
+            ['Publication & rollout', 'distribution-publication'],
+            ['Consumers', 'distribution-consumers'],
+            ['Rollouts', 'distribution-rollouts'],
+            ['Incidents', 'distribution-incidents'],
+            ['Policy', 'distribution-policy'],
+            ['Discovery', 'distribution-discovery'],
+            ['Retention', 'distribution-retention'],
+          ].map(([name, id]) => (
+            <Link
+              key={id}
+              href={`#${id}`}
+              px={3}
+              py={1.5}
+              flexShrink={0}
+              borderRadius='md'
+              fontSize='sm'
+              fontWeight='semibold'
+              color={dashboard.accent.interactiveForeground}
+              bg={dashboard.accent.interactiveSurface}
+              _hover={{ textDecoration: 'underline' }}
+            >
+              {name}
+            </Link>
+          ))}
+        </HStack>
+      </DashboardPanel>
+      <DashboardPanel
+        id='distribution-publication'
+        scrollMarginTop='80px'
+        borderRadius='xl'
+      >
         <DashboardPanelHeader
           title='Publication and rollout'
           description={`Customer-local store: ${data.group.material_store_ref}. Publication does not prove service activation.`}
@@ -1026,7 +1179,11 @@ function Management({
           ) : null}
         </Stack>
       </DashboardPanel>
-      <DashboardPanel>
+      <DashboardPanel
+        id='distribution-consumers'
+        scrollMarginTop='80px'
+        borderRadius='xl'
+      >
         <DashboardPanelHeader
           title='Consumers'
           description='Installed files, served identity, trust and proof freshness are separate evidence.'
@@ -1253,7 +1410,11 @@ function Management({
           </Box>
         ) : null}
       </DashboardPanel>
-      <DashboardPanel>
+      <DashboardPanel
+        id='distribution-rollouts'
+        scrollMarginTop='80px'
+        borderRadius='xl'
+      >
         <DashboardPanelHeader
           title='Rollouts and approvals'
           description='A request or approval is distinct from completed consumer verification.'
@@ -1325,45 +1486,11 @@ function Management({
             </Text>
           ))}
       </DashboardPanel>
-      <DashboardPanel>
-        <DashboardPanelHeader
-          title='Automation, verification and alert policy'
-          description={`Policy revision ${data.policy?.revision || 0}. Authority: ${label(data.authorization?.state || data.policy?.policy.mode || 'manual')}. Recurring verification: ${label(data.schedule?.last_outcome || 'disabled')}.`}
-        />
-        {data.policy?.approval_job_id ? (
-          <Text mb={3}>
-            Standing authorization:{' '}
-            <JobLink workspaceId={workspaceId} id={data.policy.approval_job_id}>
-              Review policy approval in Jobs
-            </JobLink>
-          </Text>
-        ) : null}
-        {canManage ? (
-          <PolicyForm
-            key={`${groupId}/${data.policy?.revision || 0}`}
-            data={data}
-            disabled={disabled}
-            onSave={(policy, revision) =>
-              run(
-                () =>
-                  distributionApi.policy(
-                    workspaceId,
-                    groupId,
-                    policy,
-                    revision
-                  ),
-                'Distribution policy saved. Review any pending policy approval in Jobs.'
-              )
-            }
-          />
-        ) : (
-          <Text>
-            Mode: {label(data.policy?.policy.mode || 'manual')}. A workspace
-            manager can configure automation and maintenance.
-          </Text>
-        )}
-      </DashboardPanel>
-      <DashboardPanel>
+      <DashboardPanel
+        id='distribution-incidents'
+        scrollMarginTop='80px'
+        borderRadius='xl'
+      >
         <DashboardPanelHeader
           title='Incidents and recovery'
           description='Source renewal cannot resolve a consumer incident. Fresh evidence must prove the relevant condition cleared.'
@@ -1397,7 +1524,68 @@ function Management({
           verification.
         </Text>
       </DashboardPanel>
-      <DashboardPanel>
+      <DashboardPanel
+        id='distribution-policy'
+        scrollMarginTop='80px'
+        borderRadius='xl'
+      >
+        <DashboardPanelHeader
+          title='Automation, verification and alert policy'
+          description={`Policy revision ${data.policy?.revision || 0}. Authority: ${label(data.authorization?.state || data.policy?.policy.mode || 'manual')}. Recurring verification: ${label(data.schedule?.last_outcome || 'disabled')}.`}
+          action={
+            canManage ? (
+              <Button
+                size='sm'
+                variant='outline'
+                aria-expanded={policyOpen}
+                aria-controls='distribution-policy-settings'
+                onClick={() => setPolicyOpen(open => !open)}
+              >
+                {policyOpen ? 'Hide policy settings' : 'Edit policy settings'}
+              </Button>
+            ) : null
+          }
+        />
+        {data.policy?.approval_job_id ? (
+          <Text mb={3}>
+            Standing authorization:{' '}
+            <JobLink workspaceId={workspaceId} id={data.policy.approval_job_id}>
+              Review policy approval in Jobs
+            </JobLink>
+          </Text>
+        ) : null}
+        {canManage ? (
+          <Box id='distribution-policy-settings' pt={2} hidden={!policyOpen}>
+            <PolicyForm
+              key={`${groupId}/${data.policy?.revision || 0}`}
+              data={data}
+              disabled={disabled}
+              onSave={(policy, revision) =>
+                run(
+                  () =>
+                    distributionApi.policy(
+                      workspaceId,
+                      groupId,
+                      policy,
+                      revision
+                    ),
+                  'Distribution policy saved. Review any pending policy approval in Jobs.'
+                )
+              }
+            />
+          </Box>
+        ) : (
+          <Text>
+            Mode: {label(data.policy?.policy.mode || 'manual')}. A workspace
+            manager can configure automation and maintenance.
+          </Text>
+        )}
+      </DashboardPanel>
+      <DashboardPanel
+        id='distribution-discovery'
+        scrollMarginTop='80px'
+        borderRadius='xl'
+      >
         <DashboardPanelHeader
           title='Discovery coverage'
           description='Coverage is partial. A certificate in a machine store does not establish that every service has been discovered.'
@@ -1424,7 +1612,11 @@ function Management({
           unsupported.
         </Text>
       </DashboardPanel>
-      <DashboardPanel>
+      <DashboardPanel
+        id='distribution-retention'
+        scrollMarginTop='80px'
+        borderRadius='xl'
+      >
         <DashboardPanelHeader
           title='Retention and cleanup preview'
           description='Referenced material, pending approvals, paused rollouts and uncertain operations remain protected.'
@@ -1591,44 +1783,60 @@ export default function CertOpsDistribution() {
       : groups[0]?.id;
   return (
     <Stack spacing={4}>
-      <DashboardPanel>
-        <DashboardPanelHeader
-          title='Distribution Management'
-          description='Configure destinations, coordinate approved activation and monitor consumer evidence.'
-        />
-        <Link
-          as={RouterLink}
-          to={onboardingPath({ workspaceId, area: 'certops' })}
-          color='blue.500'
+      <DashboardPanel borderRadius='xl' p={{ base: 4, md: 5 }}>
+        <SimpleGrid
+          columns={{ base: 1, md: 2 }}
+          spacing={{ base: 3, md: 6 }}
+          alignItems='start'
         >
-          Open first-distribution setup guide
-        </Link>
-        <Text fontSize='sm' mt={2}>
-          Shared private keys require explicit opt-in in the setup guide. Store
-          credentials remain on customer agents. Enter only store and deployment
-          profile aliases here.
-        </Text>
-        {groups.length ? (
-          <Field name='Distribution source'>
-            <Select
-              aria-label='Distribution source'
-              value={groupId}
-              onChange={event =>
-                setParams(previous => {
-                  const next = new URLSearchParams(previous);
-                  next.set('group', event.target.value);
-                  return next;
-                })
-              }
+          <Box>
+            <DashboardPanelHeader
+              title='Distribution Management'
+              description='Manage certificate destinations, rollouts and verification.'
+              mb={2}
+            />
+            <Text fontSize='sm'>
+              Shared private keys require explicit opt-in. Store credentials
+              remain on customer agents; enter only store and deployment profile
+              aliases here.
+            </Text>
+          </Box>
+          <Box>
+            {groups.length ? (
+              <Box minW={0}>
+                <Field name='Distribution source'>
+                  <Select
+                    aria-label='Distribution source'
+                    value={groupId}
+                    onChange={event =>
+                      setParams(previous => {
+                        const next = new URLSearchParams(previous);
+                        next.set('group', event.target.value);
+                        return next;
+                      })
+                    }
+                  >
+                    {groups.map(group => (
+                      <option key={group.id} value={group.id}>
+                        {group.material_store_ref} · {group.id} ({group.state})
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              </Box>
+            ) : null}
+            <Link
+              as={RouterLink}
+              to={onboardingPath({ workspaceId, area: 'certops' })}
+              color='blue.500'
+              display='inline-block'
+              fontSize='sm'
+              mt={2}
             >
-              {groups.map(group => (
-                <option key={group.id} value={group.id}>
-                  {group.material_store_ref} · {group.id} ({group.state})
-                </option>
-              ))}
-            </Select>
-          </Field>
-        ) : null}
+              Open first-distribution setup guide
+            </Link>
+          </Box>
+        </SimpleGrid>
       </DashboardPanel>
       {state.loading ? (
         <DashboardState type='loading' title='Loading distribution sources' />

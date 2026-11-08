@@ -22,6 +22,16 @@ beforeEach(()=>{vi.clearAllMocks();manage.mockReturnValue(true);admin.mockReturn
   api.preflight.mockResolvedValue({consumers:[{bindingId:'binding',diagnostics:[{code:'CERTOPS_AGENT_OFFLINE'},{code:'CERTOPS_CUSTOMER_LOCAL_PREFLIGHT_REQUIRED'}]}]});
   api.retention.mockResolvedValue({versions:[{id:latest,provider_version:2,retainedReasons:['desired_consumer_version']}]});});
 describe('Distribution Management',()=>{
+  it('labels bounded recent counts and includes paused rollouts without implying global totals',async()=>{
+    data.rollouts=[{id:'r1',state:'paused',generation:1},{id:'r2',state:'completed',generation:2}];
+    data.approvals=[{id:'a1',status:'pending_approval'},{id:'a2',status:'completed'}];
+    data.incidents=[{id:'i1',code:'offline',resolved_at:null},{id:'i2',code:'offline',resolved_at:'2026-01-01'}];
+    page();const rollouts=await screen.findByText('Recent ongoing rollouts');
+    expect(within(rollouts.parentElement).getByText('1')).toBeInTheDocument();
+    expect(within(rollouts.parentElement).getByText(/1 recent pending approval · includes paused rollouts/)).toBeInTheDocument();
+    expect(within(screen.getByText('Recent open incidents').parentElement).getByText('1')).toBeInTheDocument();
+    expect(screen.getByText('From the latest 100 incidents')).toBeInTheDocument();
+  });
   it('keeps completed preparation separate from installed and served evidence',async()=>{
     Object.assign(data.consumers[0],{health_status:'unknown_coverage',verification_method:null,observed_at:null,observed_valid_to:null,
       latest_deployment:{stage:'staged',stagingReceipt:{staged:true,installed:false,servedVerified:false,observedAt:new Date().toISOString()}}});
@@ -61,8 +71,15 @@ describe('Distribution Management',()=>{
     fireEvent.change(screen.getByLabelText('Customer-local deployment profile'),{target:{value:'web_secondary'}});fireEvent.click(screen.getByRole('button',{name:'Save consumer'}));
     await waitFor(()=>expect(api.consumer).toHaveBeenCalledWith('workspace','group',expect.any(String),expect.objectContaining({agentId:'agent',deploymentProfileRef:'web_secondary',required:true,wave:0,verificationPolicy:'served'})));
   });
+  it('keeps policy edits when its settings are collapsed and reopened',async()=>{
+    page();fireEvent.click(await screen.findByRole('button',{name:'Edit policy settings'}));
+    const mode=screen.getByLabelText('After publication');fireEvent.change(mode,{target:{value:'approval_request'}});
+    fireEvent.click(screen.getByRole('button',{name:'Hide policy settings'}));
+    fireEvent.click(screen.getByRole('button',{name:'Edit policy settings'}));
+    expect(screen.getByLabelText('After publication')).toHaveValue('approval_request');
+  });
   it('saves policy through revision checks and keeps manual automation defaults',async()=>{
-    page();const mode=await screen.findByLabelText('After publication');expect(mode).toHaveValue('manual');
+    page();fireEvent.click(await screen.findByRole('button',{name:'Edit policy settings'}));const mode=await screen.findByLabelText('After publication');expect(mode).toHaveValue('manual');
     fireEvent.change(mode,{target:{value:'approval_request'}});fireEvent.click(screen.getByRole('button',{name:'Save distribution policy'}));
     await waitFor(()=>expect(api.policy).toHaveBeenCalledWith('workspace','group',expect.objectContaining({mode:'approval_request'}),0));
   });
@@ -71,10 +88,10 @@ describe('Distribution Management',()=>{
     fireEvent.click(screen.getByRole('button',{name:'Preview retained versions'}));await screen.findByText(/desired consumer version/);expect(api.rollout).not.toHaveBeenCalled();
   });
   it('disables mutations when workspace operations are paused',async()=>{
-    page({paused:true});expect(await screen.findByRole('button',{name:'Request rollout'})).toBeDisabled();expect(screen.getByRole('button',{name:'Save distribution policy'})).toBeDisabled();
+    page({paused:true});expect(await screen.findByRole('button',{name:'Request rollout'})).toBeDisabled();fireEvent.click(screen.getByRole('button',{name:'Edit policy settings'}));expect(screen.getByRole('button',{name:'Save distribution policy'})).toBeDisabled();
   });
   it('waits for workspace pause authority before enabling mutations',async()=>{
-    page({resolved:false});expect(await screen.findByRole('button',{name:'Request rollout'})).toBeDisabled();expect(screen.getByRole('button',{name:'Save distribution policy'})).toBeDisabled();
+    page({resolved:false});expect(await screen.findByRole('button',{name:'Request rollout'})).toBeDisabled();fireEvent.click(screen.getByRole('button',{name:'Edit policy settings'}));expect(screen.getByRole('button',{name:'Save distribution policy'})).toBeDisabled();
     expect(screen.getByRole('button',{name:'Run safe preflight'})).toBeEnabled();
   });
   it('requests exact-version cleanup approval only after administrator confirmation',async()=>{
