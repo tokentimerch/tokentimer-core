@@ -1,5 +1,6 @@
 const rateLimit = require("express-rate-limit");
-const { ipKeyGenerator } = require("express-rate-limit");
+const { requestIpKey } = require("./request-ip-key");
+const { hasCertOpsExecutorPreAuthLimit } = require("./machine-boundary-marker");
 const slowDown = require("express-slow-down");
 const { logger, resolveClientIp } = require("../utils/logger");
 const { getRuntimeLabels } = require("../config/runtime-labels");
@@ -37,16 +38,22 @@ const globalLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: isDevOrTest,
   skipFailedRequests: false,
-  keyGenerator: (req) => require("../services/operator/remoteForwarding").remoteRateKey(req) || ipKeyGenerator(req),
+  keyGenerator: (req) => require("../services/operator/remoteForwarding").remoteRateKey(req) || requestIpKey(req),
 });
 
-const speedLimiter = slowDown({
-  keyGenerator: (req) => require("../services/operator/remoteForwarding").remoteRateKey(req) || ipKeyGenerator(req),
+const interactiveSpeedLimiter = slowDown({
+  keyGenerator: (req) => require("../services/operator/remoteForwarding").remoteRateKey(req) || requestIpKey(req),
   windowMs: intEnv("GLOBAL_SLOWDOWN_WINDOW_MS", 15 * 60 * 1000),
   delayAfter: intEnv("GLOBAL_SLOWDOWN_DELAY_AFTER", 50),
   delayMs: () => intEnv("GLOBAL_SLOWDOWN_DELAY_MS", 500),
   validate: { delayMs: false },
 });
+
+// The exact machine POST boundary already applied its aggregate IP slowdown.
+function speedLimiter(req, res, next) {
+  if (hasCertOpsExecutorPreAuthLimit(req)) return next();
+  return interactiveSpeedLimiter(req, res, next);
+}
 
 const loginLimiter = rateLimit({
   windowMs: intEnv("LOGIN_RATE_LIMIT_WINDOW_MS", 15 * 60 * 1000),
@@ -56,7 +63,7 @@ const loginLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: isDevOrTest,
   keyGenerator: (req) => {
-    const ip = resolveClientIp(req) || ipKeyGenerator(req);
+    const ip = requestIpKey(req);
     logger.info("Rate limiting key generated", { type: "login", ip });
     return ip;
   },
@@ -82,7 +89,7 @@ const loginEmailLimiter = rateLimit({
   keyGenerator: (req) => {
     const email = normalizeEmail(req.body?.email);
     if (email) return `email:${email}`;
-    return `ip:${ipKeyGenerator(req)}`;
+    return `ip:${requestIpKey(req)}`;
   },
   handler: (req, res) => {
     logger.warn("RATE_LIMIT_EXCEEDED", {
@@ -106,7 +113,7 @@ const passwordResetLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: false,
   keyGenerator: (req) => {
-    const ip = resolveClientIp(req) || ipKeyGenerator(req);
+    const ip = requestIpKey(req);
     logger.info("Rate limiting key generated", { type: "password_reset", ip });
     return ip;
   },
@@ -161,7 +168,7 @@ const emailVerificationLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: true,
   keyGenerator: (req) => {
-    const ip = resolveClientIp(req) || ipKeyGenerator(req);
+    const ip = requestIpKey(req);
     logger.info("Rate limiting key generated", {
       type: "email_verification",
       ip,
@@ -202,7 +209,7 @@ function createApiLimiter(max, label) {
         });
         return `user-${req.user.id}`;
       }
-      const ip = resolveClientIp(req) || ipKeyGenerator(req);
+      const ip = requestIpKey(req);
       logger.info("Rate limiting key generated", {
         type: `api_ip_${label}`,
         ip,
@@ -252,7 +259,7 @@ const testApiLimiter = rateLimit({
       });
       return `user-${req.user.id}`;
     }
-    const ip = resolveClientIp(req) || ipKeyGenerator(req);
+    const ip = requestIpKey(req);
     logger.info("Rate limiting key generated", { type: "test_api_ip", ip });
     return ip;
   },
@@ -291,7 +298,7 @@ const domainCheckerLookupLimiter = rateLimit({
     if (req.user && req.user.id) {
       return `domain-checker:${workspaceId}:user-${req.user.id}`;
     }
-    return `domain-checker:${workspaceId}:ip-${ipKeyGenerator(req)}`;
+    return `domain-checker:${workspaceId}:ip-${requestIpKey(req)}`;
   },
   handler: (req, res) => {
     const windowMs = intEnv(
@@ -439,7 +446,7 @@ function createCsrfTokenLimiter({ windowMs, max } = {}) {
     legacyHeaders: false,
     skipSuccessfulRequests: false,
     keyGenerator: (req) => {
-      const ip = resolveClientIp(req) || ipKeyGenerator(req);
+      const ip = requestIpKey(req);
       return `csrf-token:${ip}`;
     },
     handler: (req, res) => {
@@ -475,7 +482,7 @@ const recipientVerificationPageLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: false,
   keyGenerator: (req) => {
-    const ip = resolveClientIp(req) || ipKeyGenerator(req);
+    const ip = requestIpKey(req);
     return `recipient-verify:${ip}`;
   },
   handler: (req, res) => {
@@ -527,7 +534,7 @@ const twilioWebhookLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: false,
   keyGenerator: (req) => {
-    const ip = resolveClientIp(req) || ipKeyGenerator(req);
+    const ip = requestIpKey(req);
     return `twilio-webhook:${ip}`;
   },
   handler: (req, res) => {
@@ -568,6 +575,8 @@ function getTwilioWebhookLimiter() {
  * @param {import("express").NextFunction} next
  */
 function applyGlobalRateLimit(req, res, next) {
+  // Only the pre-parser can set this marker, after applying the machine IP guard.
+  if (hasCertOpsExecutorPreAuthLimit(req)) return next();
   if (req.path.startsWith("/auth/")) return next();
   if (req.path === "/api/session" || req.path === "/api/csrf-token")
     return next();

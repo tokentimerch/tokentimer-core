@@ -206,6 +206,11 @@ Run the standard migration runner, including when verification is `off`; do not 
 | `GLOBAL_SLOWDOWN_WINDOW_MS`               | Global slowdown window in ms                                                | `900000`                              | API rate limiting    |
 | `GLOBAL_SLOWDOWN_DELAY_AFTER`             | Requests before delay is applied                                            | `50`                                  | API rate limiting    |
 | `GLOBAL_SLOWDOWN_DELAY_MS`                | Added delay per request after threshold                                     | `500`                                 | API rate limiting    |
+| `CERTOPS_MACHINE_IP_RATE_LIMIT_MAX` | Aggregate machine POST requests per source IP and window | `3000` | API rate limiting |
+| `CERTOPS_MACHINE_IP_RATE_LIMIT_WINDOW_MS` | Aggregate machine IP window in milliseconds | `60000` | API rate limiting |
+| `CERTOPS_MACHINE_IP_SLOWDOWN_DELAY_AFTER` | Aggregate machine requests before slowdown | `30000` | API rate limiting |
+| `CERTOPS_MACHINE_IP_SLOWDOWN_WINDOW_MS` | Aggregate machine slowdown window in milliseconds | `900000` | API rate limiting |
+| `CERTOPS_MACHINE_IP_SLOWDOWN_DELAY_MS` | Delay after the machine slowdown threshold | `500` | API rate limiting |
 | `CSRF_TOKEN_RATE_LIMIT_WINDOW_MS`         | Per-IP limiter window for `GET /api/csrf-token`. Helm: `config.csrfTokenRateLimitWindowMs`. | `900000`                              | API rate limiting    |
 | `CSRF_TOKEN_RATE_LIMIT_MAX`               | Per-IP max `GET /api/csrf-token` requests per window. If clients return 429 `CSRF_TOKEN_RATE_LIMITED`, raise this value. Counters are per API replica. Helm: `config.csrfTokenRateLimitMax`. | `60` (prod) / `1000` (dev,test) | API rate limiting    |
 | `LOGIN_RATE_LIMIT_WINDOW_MS`              | Login limiter window in ms                                                  | `900000`                              | Auth rate limiting   |
@@ -261,6 +266,8 @@ Run the standard migration runner, including when verification is `off`; do not 
 | `CONTACT_GROUP_MEMBER_LIMITS`             | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Contact groups       |
 | `WORKSPACE_PLAN_LIMITS`                   | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspaces           |
 | `MEMBER_PLAN_LIMITS`                      | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspace members    |
+
+**Operator guidance:** Exact CertOps machine POSTs share a separate IP limit and slowdown across agents behind a NAT, per API replica and in addition to per-credential limits. Size `CERTOPS_MACHINE_IP_RATE_LIMIT_MAX` and `CERTOPS_MACHINE_IP_SLOWDOWN_DELAY_AFTER` for peak polling and job traffic; raising them reduces flood protection. Compose forwards these settings from `.env`; Helm accepts them through `api.env`.
 
 The three operational notification settings accept integers of at least `1`.
 `ALERT_DEGRADED_ATTEMPTS_THRESHOLD` is read by the delivery worker,
