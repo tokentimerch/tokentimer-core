@@ -124,11 +124,11 @@ describe("detectWebhookProviderKind", () => {
     assert.equal(detectWebhookProviderKind("office.com"), null);
     assert.equal(
       detectWebhookProviderKind("prod-00.westus.logic.azure.com"),
-      "teams",
+      null,
     );
     assert.equal(
       detectWebhookProviderKind("example.environment.api.powerplatform.com."),
-      "teams",
+      null,
     );
     assert.equal(
       detectWebhookProviderKind("example.logic.azure.com.invalid"),

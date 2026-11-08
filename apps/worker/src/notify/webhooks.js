@@ -115,6 +115,7 @@ function buildAdaptiveCard({ title, subtitle, statusText, facts, actions, color 
     attachments: [
       {
         contentType: "application/vnd.microsoft.card.adaptive",
+        contentUrl: null,
         content: {
           type: "AdaptiveCard",
           $schema: "http://adaptivecards.io/schemas/adaptive-card.json",

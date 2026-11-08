@@ -12,7 +12,6 @@ const {
 } = require("../services/rbac");
 const { testWebhookUrl } = require("../config/constants");
 const { webhookHostAllowed, postWebhook, validateWebhookConfiguration } = require("../utils/webhookSafety");
-const { isTeamsWorkflowHost } = require("@tokentimer/webhook-safety");
 const { isValidEmail } = require("../utils/emailAddress");
 const systemSettings = require("../services/systemSettings");
 const {
@@ -1812,11 +1811,7 @@ router.post(
       // Friendly provider allowlist check (shared with worker delivery via
       // @tokentimer/webhook-safety, honors WEBHOOK_EXTRA_PROVIDER_HOSTS /
       // WEBHOOK_PROVIDER_HOSTS and WEBHOOK_ALLOW_ALL_HOSTS).
-      const configuredKind = String(kind || "generic").toLowerCase();
-      const providerKind =
-        configuredKind === "generic" && isTeamsWorkflowHost(target.hostname)
-          ? "teams"
-          : configuredKind;
+      const providerKind = String(kind || "generic").toLowerCase();
       if (providerKind !== "generic") {
         const allowed = webhookHostAllowed(target.hostname);
         if (!allowed) {
@@ -1957,6 +1952,7 @@ router.post(
             attachments: [
               {
                 contentType: "application/vnd.microsoft.card.adaptive",
+                contentUrl: null,
                 content: {
                   type: "AdaptiveCard",
                   $schema: "http://adaptivecards.io/schemas/adaptive-card.json",

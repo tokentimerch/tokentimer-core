@@ -435,6 +435,7 @@ function buildCertRenewalFailedWebhookPayload(
       attachments: [
         {
           contentType: "application/vnd.microsoft.card.adaptive",
+          contentUrl: null,
           content: {
             type: "AdaptiveCard",
             $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
@@ -784,6 +785,7 @@ function buildEndpointHealthWebhookPayload(
       attachments: [
         {
           contentType: "application/vnd.microsoft.card.adaptive",
+          contentUrl: null,
           content: {
             type: "AdaptiveCard",
             $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
@@ -1206,6 +1208,7 @@ function buildAgentHealthWebhookPayload(
       attachments: [
         {
           contentType: "application/vnd.microsoft.card.adaptive",
+          contentUrl: null,
           content: {
             type: "AdaptiveCard",
             $schema: "http://adaptivecards.io/schemas/adaptive-card.json",

@@ -64,6 +64,7 @@ describe("Worker notify extended unit coverage", () => {
       "contentType",
       "application/vnd.microsoft.card.adaptive",
     );
+    expect(teamsAttachment).to.have.property("contentUrl", null);
     expect(teamsAttachment.content).to.have.property("type", "AdaptiveCard");
     expect(teamsAttachment.content.actions).to.deep.include({
       type: "Action.OpenUrl",

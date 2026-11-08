@@ -192,7 +192,7 @@ Run the standard migration runner, including when verification is `off`; do not 
 
 ## Alerts, limits, and webhooks
 
-For Microsoft Teams, create a Teams Workflows incoming webhook and enter its URL in Alert Preferences. TokenTimer sends Adaptive Cards for alerts, weekly digests, and test messages. Replace any Office 365 Connector URL with the new Workflow URL, then send a test from Alert Preferences.
+For Microsoft Teams, create a Teams Workflows incoming webhook with the trigger authentication set to Anyone and enter its URL in Alert Preferences using the Microsoft Teams type. TokenTimer does not send a bearer token. TokenTimer sends Adaptive Cards for alerts, weekly digests, and test messages. Replace any Office 365 Connector URL with the new Workflow URL, then send a test from Alert Preferences.
 
 | Variable                                  | Description                                                                 | Default value                         | Scope                |
 | ----------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------- | -------------------- |

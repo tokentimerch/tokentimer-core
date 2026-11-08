@@ -1,5 +1,3 @@
-import webhookSafety from "@tokentimer/webhook-safety";
-
 export function detectWebhookProviderKind(host) {
   const h = String(host || "").toLowerCase();
   if (h === "hooks.slack.com") return "slack";
@@ -16,8 +14,7 @@ export function detectWebhookProviderKind(host) {
     h === "webhook.office.com" ||
     h === "office365.com" ||
     h.endsWith(".office365.com") ||
-    h.endsWith(".office.com") ||
-    webhookSafety.isTeamsWorkflowHost(h)
+    h.endsWith(".office.com")
   ) {
     return "teams";
   }

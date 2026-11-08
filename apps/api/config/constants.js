@@ -1,7 +1,6 @@
 const { parseLimits } = require("../services/planLimits");
 const { logger } = require("../utils/logger");
 const { webhookHostAllowed, postWebhook } = require("../utils/webhookSafety");
-const { isTeamsWorkflowHost } = require("@tokentimer/webhook-safety");
 
 const normalizeUrl = (value) => String(value || "").replace(/\/$/, "");
 const APP_URL = normalizeUrl(process.env.APP_URL) || "http://localhost:5173";
@@ -39,11 +38,7 @@ async function testWebhookUrl(
     const target = new URL(url);
     if (!/^https?:$/.test(target.protocol))
       return { success: false, error: "Webhook URL must be http(s)" };
-    const configuredKind = String(kind || "generic").toLowerCase();
-    const lowerKind =
-      configuredKind === "generic" && isTeamsWorkflowHost(target.hostname)
-        ? "teams"
-        : configuredKind;
+    const lowerKind = String(kind || "generic").toLowerCase();
     if (lowerKind !== "generic" && !webhookHostAllowed(target.hostname)) {
       return { success: false, error: "Webhook host not allowed for provider" };
     }
@@ -65,6 +60,7 @@ async function testWebhookUrl(
         attachments: [
           {
             contentType: "application/vnd.microsoft.card.adaptive",
+            contentUrl: null,
             content: {
               type: "AdaptiveCard",
               $schema: "http://adaptivecards.io/schemas/adaptive-card.json",

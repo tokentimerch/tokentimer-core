@@ -537,6 +537,7 @@ function buildTeamsDigestPayload(
     attachments: [
       {
         contentType: "application/vnd.microsoft.card.adaptive",
+        contentUrl: null,
         content: {
           type: "AdaptiveCard",
           $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
