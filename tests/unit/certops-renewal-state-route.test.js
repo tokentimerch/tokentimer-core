@@ -99,14 +99,30 @@ describe("CertOps certificate renewal-state derivation", () => {
     assert.equal(renewal.renewsFrom, "2026-08-16T00:00:00.000Z");
   });
 
-  it("ignores a non-positive profile override and falls back to the deployment threshold", () => {
+  it("preserves a stored zero-day profile override as renewal at expiry", () => {
     const renewal = deriveCertificateRenewalState(
       certificateRow({ profile_renew_before_days: 0 }),
       { env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "21" } },
     );
 
     assert.equal(renewal.state, "auto");
-    assert.equal(renewal.renewBeforeDays, 21);
+    assert.equal(renewal.renewBeforeDays, 0);
+    assert.equal(renewal.renewsFrom, "2026-09-30T00:00:00.000Z");
+  });
+
+  it("adapts the renewal window to a 45-day certificate unless an override is set", () => {
+    const row = certificateRow({
+      not_before: new Date("2026-08-16T00:00:00.000Z"),
+    });
+    const adaptive = deriveCertificateRenewalState(row, { env: {} });
+    assert.equal(adaptive.renewBeforeDays, 14);
+    assert.equal(adaptive.renewsFrom, "2026-09-16T00:00:00.000Z");
+
+    const configured = deriveCertificateRenewalState(row, {
+      env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "30" },
+    });
+    assert.equal(configured.renewBeforeDays, 30);
+    assert.equal(configured.renewsFrom, "2026-08-31T00:00:00.000Z");
   });
 
   it("reports not-configured when an agent-deployable certificate has no linked profile", () => {

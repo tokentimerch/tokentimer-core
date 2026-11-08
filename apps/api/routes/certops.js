@@ -140,8 +140,11 @@ const {
   RENEWAL_JOB_TERMINAL_STATUSES,
   countInFlightRenewalJobsByCaEndpoint,
   loadCertificateRenewalRows,
-  resolveRenewalThresholdDays,
 } = require("../services/certops/renewalScheduler");
+const {
+  resolveCertificateRenewalThresholdDays,
+  resolveRenewalThresholdPolicy,
+} = require("../services/certops/renewalThreshold");
 const { resolveRenewalPerCaCap } = require("../services/certops/renewalCapacity");
 const {
   CERTOPS_RENEWAL_OVERRIDE_INVALID,
@@ -3202,17 +3205,6 @@ const RENEWAL_MOOT_CERTIFICATE_STATUSES = new Set([
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-/**
- * Effective renewal lead time: the per-profile override when it is a usable
- * positive integer, else the deployment-wide threshold. Matches the
- * COALESCE(cp.renew_before_days, threshold) the scheduler scans with.
- */
-function effectiveRenewBeforeDays(profileRenewBeforeDays, env) {
-  const parsed = Number.parseInt(profileRenewBeforeDays, 10);
-  if (Number.isSafeInteger(parsed) && parsed > 0) return parsed;
-  return resolveRenewalThresholdDays(env);
-}
-
 function renewalWindowStart(notAfter, renewBeforeDays) {
   if (!notAfter) return null;
   const expiry = new Date(notAfter);
@@ -3279,10 +3271,7 @@ function deriveCertificateRenewalState(
     };
   }
 
-  const renewBeforeDays = effectiveRenewBeforeDays(
-    row?.profile_renew_before_days,
-    env,
-  );
+  const renewBeforeDays = resolveCertificateRenewalThresholdDays(row, env);
 
   // Deliberate operator intent, so it is reported before profile completeness:
   // a switched-off certificate is not misconfigured and telling the operator to
@@ -3330,7 +3319,9 @@ function deriveCertificateRenewalState(
     };
   }
 
-  const renewsFrom = renewalWindowStart(row?.not_after, renewBeforeDays);
+  const renewsFrom = row?.renews_from
+    ? new Date(row.renews_from).toISOString()
+    : renewalWindowStart(row?.not_after, renewBeforeDays);
   if (!renewsFrom) {
     // The scheduler only scans rows with a not_after, so a complete profile
     // still never produces a job without a recorded expiry.
@@ -3364,6 +3355,7 @@ function renewalRowFromInventoryRecord(certificate) {
     status: certificate?.status,
     key_mode: certificate?.keyMode,
     key_reference: certificate?.keyReference,
+    not_before: certificate?.notBefore,
     not_after: certificate?.notAfter,
     common_name: certificate?.commonName,
     subject_alt_names: certificate?.subjectAltNames,
@@ -3809,7 +3801,7 @@ router.get(
         offset: req.query.offset,
         sort: req.query.sort,
         direction: req.query.direction,
-        thresholdDays: resolveRenewalThresholdDays(process.env),
+        ...resolveRenewalThresholdPolicy(process.env),
       });
       return res.json(result);
     } catch (err) {

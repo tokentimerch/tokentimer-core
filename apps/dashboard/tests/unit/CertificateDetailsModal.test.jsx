@@ -320,6 +320,22 @@ describe('CertificateDetailsModal', () => {
     );
   });
 
+  it('shows alert threshold suggestions for a short certificate lifetime', () => {
+    renderModal({
+      certOps: {
+        certificateCount: 1,
+        certificate: {
+          ...certificate,
+          notBefore: '2026-08-16T00:00:00.000Z',
+          notAfter: '2026-09-30T00:00:00.000Z',
+        },
+      },
+    });
+
+    expect(screen.getByText('Suggested alert thresholds')).toBeInTheDocument();
+    expect(screen.getByText('14, 9, 4, 1, 0')).toBeInTheDocument();
+  });
+
   it('groups certificate alert state, history and upcoming delivery in one disclosure', async () => {
     renderModal({
       token: {

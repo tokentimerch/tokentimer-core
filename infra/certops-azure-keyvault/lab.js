@@ -6,6 +6,7 @@ const fs = require("node:fs"),
   crypto = require("node:crypto");
 const policy = require("./policy");
 const ARM = "https://management.azure.com";
+const KEY_VAULT_ARM_API_VERSION = "2026-02-01";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function privateRoot(env = process.env) {
   if (
@@ -289,7 +290,7 @@ async function provision(env = process.env) {
   await verifyOwned(p, env);
   arm(
     "PUT",
-    vaultId(p) + "?api-version=2023-07-01",
+    vaultId(p) + `?api-version=${KEY_VAULT_ARM_API_VERSION}`,
     {
       location: p.location,
       tags: p.tags,
@@ -315,7 +316,7 @@ async function provision(env = process.env) {
   const deadline = Date.now() + 600000;
   let vault;
   do {
-    vault = arm("GET", vaultId(p) + "?api-version=2023-07-01");
+    vault = arm("GET", vaultId(p) + `?api-version=${KEY_VAULT_ARM_API_VERSION}`);
     if (vault.properties?.provisioningState === "Succeeded") break;
     await sleep(5000);
   } while (Date.now() < deadline);
