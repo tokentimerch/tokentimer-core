@@ -21,6 +21,7 @@ describe("HTTP retirement concurrent with claim on PostgreSQL", function () {
     await admin.connect(); try { await admin.query(`CREATE DATABASE ${database}`); } finally { await admin.end(); }
     db = new Pool({ ...connection, database });
     for (const migration of migrations) await db.query(migration.sql);
+    for (const migration of migrations) if (migration.postCommitSql) await db.query(migration.postCommitSql);
     process.env.DB_NAME = database;
     process.env.DB_PASSWORD = connection.password;
     process.env.CERTOPS_ENABLED = "true";
@@ -86,6 +87,50 @@ describe("HTTP retirement concurrent with claim on PostgreSQL", function () {
       gate.release();
       if (retirement) await retirement;
       if (claim) await claim;
+    }
+  });
+  it("blocks HTTP retirement after a real claim acquires the agent lock", async () => {
+    const credential = generateAgentCredential();
+    const agentId = (await db.query(`INSERT INTO certops_agents (workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)
+      VALUES ($1,$2,'0.18.2','1.0.0',$3,$4) RETURNING id`, [workspaceId, `agent-${randomUUID()}`, credential.credentialPrefix, credential.credentialHash])).rows[0].id;
+    const jobId = (await db.query(`INSERT INTO certificate_jobs (workspace_id,operation,status,requested_by_user_id,executor_kind,mode)
+      VALUES ($1,'noop','pending',$2,'agent','real') RETURNING id`, [workspaceId, userId])).rows[0].id;
+    const agent = (await validateAgentCredential({ client: db, rawCredential: credential.plaintextCredential })).agent;
+    let resolveClaimClient, signalLocked, releaseClaim;
+    const claimClientReady = new Promise(resolve => { resolveClaimClient = resolve; });
+    const claimLocked = new Promise(resolve => { signalLocked = resolve; });
+    const claimMayProceed = new Promise(resolve => { releaseClaim = resolve; });
+    const claimPool = { connect: async () => { const client = await db.connect(); resolveClaimClient(client); return client; } };
+    const claim = claimJobs({ dbPool: claimPool, agent, body: { supportedActions: ["noop"] }, deps: {
+      enforceAgentSequence: async () => { signalLocked(); await claimMayProceed; },
+      signJobForDispatch: async ({ job }) => job,
+    } }).then(value => ({ value }), error => ({ error }));
+    let retirement;
+    try {
+      const claimClient = await claimClientReady;
+      await claimLocked;
+      retirement = request(app).post(`/api/v1/workspaces/${workspaceId}/certops/agents/${agentId}/retire`).send({}).then(result => result);
+      let httpWaiting = false;
+      for (let i = 0; i < 100; i++) {
+        const waiting = await db.query("SELECT 1 FROM pg_stat_activity WHERE datname=$1 AND $2=ANY(pg_blocking_pids(pid))", [database, claimClient.processID]);
+        if (waiting.rowCount) { httpWaiting = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      assert.equal(httpWaiting, true, "retirement route did not wait for the claim");
+      releaseClaim();
+      const claimResult = await claim;
+      assert.equal(claimResult.error, undefined, String(claimResult.error));
+      assert.equal(claimResult.value.jobs.length, 1);
+      const result = await retirement;
+      assert.equal(result.status, 409, JSON.stringify(result.body));
+      assert.equal(result.body.code, "CERTOPS_AGENT_RETIRE_BLOCKED");
+      const state = await db.query("SELECT a.status AS agent_status,j.status AS job_status FROM certops_agents a JOIN certificate_jobs j ON j.id=$2 WHERE a.id=$1", [agentId, jobId]);
+      assert.equal(state.rows[0].agent_status, "active");
+      assert.equal(state.rows[0].job_status, "claimed");
+    } finally {
+      releaseClaim();
+      await claim;
+      if (retirement) await retirement;
     }
   });
 });
