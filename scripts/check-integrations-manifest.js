@@ -93,17 +93,50 @@ function validateManifest(manifest, root = ROOT) {
         integration.api_version === null || isText(integration.api_version),
         "api_version must be a string or null",
       );
-      const { code_locations, sources, sdks = [] } = integration;
+      const { code_locations, sources, sdks = [], base_urls, endpoints, webhook_formats } = integration;
+      if (base_urls !== undefined) {
+        requireValue(Array.isArray(base_urls) && base_urls.length > 0, "Invalid base_urls list");
+        for (const value of base_urls) {
+          requireValue(isText(value), "Invalid base URL");
+          checkSourceUrl(value.replace(/<[a-zA-Z0-9-]+>/g, "example"));
+        }
+      }
+      if (endpoints !== undefined) {
+        requireValue(Array.isArray(endpoints) && endpoints.length > 0, "Invalid endpoints list");
+        for (const endpoint of endpoints) {
+          requireValue(isObject(endpoint) && ["GET", "POST", "PUT", "PATCH", "DELETE"].includes(endpoint.method) &&
+            isText(endpoint.pattern) && endpoint.pattern.startsWith("/") && !/\s/.test(endpoint.pattern), "Invalid endpoint");
+        }
+      }
+      if (webhook_formats !== undefined) {
+        requireValue(isObject(webhook_formats) && Object.keys(webhook_formats).length > 0, "Invalid webhook formats");
+        for (const [direction, formats] of Object.entries(webhook_formats)) {
+          requireValue(["sent", "received"].includes(direction) && Array.isArray(formats) &&
+            formats.length > 0 && formats.every(isText), "Invalid webhook formats");
+        }
+      }
       requireValue(Array.isArray(code_locations) && code_locations.length, "No code locations");
       requireValue(Array.isArray(sources) && sources.length, "No sources");
       requireValue(Array.isArray(sdks), "Invalid SDK list");
       for (const location of code_locations) {
         checkCodeLocation(root, location, integration.api_version);
       }
+      if (integration.api_version !== null) {
+        const inCode = code_locations.some((location) =>
+          Array.isArray(location.contains) && location.contains.some((item) =>
+            typeof item === "string" && item.includes("{api_version}")));
+        const documented = sources.some((source) =>
+          isObject(source) && source.documented_version === integration.api_version);
+        requireValue(inCode || documented, "api_version requires code evidence or a documented source version");
+      }
       for (const source of sources) {
         requireValue(isObject(source) && isText(source.type), "Invalid source entry");
         checkSourceUrl(source.url);
         if (source.feed !== undefined) checkSourceUrl(source.feed);
+        if (source.documented_version !== undefined) {
+          requireValue(isText(source.documented_version) && source.documented_version === integration.api_version,
+            "Invalid documented source version");
+        }
       }
       for (const sdk of sdks) {
         requireValue(

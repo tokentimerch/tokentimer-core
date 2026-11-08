@@ -46,6 +46,7 @@ integrations:
     sources:
       - url: https://www.rfc-editor.org/rfc/rfc8555
         type: api-policy
+        documented_version: 'RFC 8555'
       - url: https://letsencrypt.org/upcoming-features/
         type: deprecation
       - url: https://letsencrypt.org/blog/
@@ -79,6 +80,18 @@ integrations:
         type: api-policy
       - url: https://www.rfc-editor.org/rfc/rfc2136
         type: api-policy
+      - url: https://github.com/acme-dns/acme-dns
+        type: api-policy
+      - url: https://community.exoscale.com/reference/api/dns/
+        type: api-policy
+      - url: https://docs.hetzner.cloud/reference/cloud
+        type: api-policy
+      - url: https://developer.infomaniak.com/docs/api
+        type: api-policy
+      - url: https://api.ovh.com/console/
+        type: api-policy
+      - url: https://doc.powerdns.com/authoritative/http-api/zone.html
+        type: api-policy
   kubernetes-cert-manager:
     id: kubernetes-cert-manager
     name: Kubernetes and cert-manager
@@ -110,6 +123,8 @@ integrations:
     api_version: v1
     code_locations:
       - path: apps/api/services/vaultIntegration.js
+        contains:
+          - /{api_version}/sys/mounts
         functions:
           - scanVault
           - scanKvV2
@@ -270,6 +285,7 @@ integrations:
     sources:
       - url: https://docs.github.com/en/rest/about-the-rest-api/api-versions
         type: api-policy
+        documented_version: '2022-11-28'
       - url: https://docs.github.com/en/rest/about-the-rest-api/breaking-changes
         type: changelog
   gitlab:
@@ -316,6 +332,7 @@ integrations:
     sources:
       - url: https://developer.pagerduty.com/docs/events-api-v2/overview/
         type: api-policy
+        documented_version: 'v2'
       - url: https://developer.pagerduty.com/docs/changes/
         type: changelog
   slack:
@@ -402,7 +419,7 @@ integrations:
     auth_method: Twilio account SID and authentication token
     endpoints:
       - method: POST
-        pattern: /2010-04-01/Accounts/{AccountSid}/Messages.json
+        pattern: /Accounts/{AccountSid}/Messages.json
     webhook_formats:
       received:
         - Signed Twilio WhatsApp inbound messages
