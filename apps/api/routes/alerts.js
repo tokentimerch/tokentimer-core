@@ -1948,19 +1948,48 @@ router.post(
                 ? "warning"
                 : "accent";
           payload = {
-            "@type": "MessageCard",
-            "@context": "https://schema.org/extensions",
-            summary: template || "TokenTimer Test",
-            themeColor: theme,
-            sections: [
+            type: "message",
+            attachments: [
               {
-                activityTitle: template || "TokenTimer Test",
-                activitySubtitle: `${testTokenData.name} expires in ${testTokenData.daysLeft} day(s)`,
-                facts: [
-                  { name: "Type", value: testTokenData.type },
-                  { name: "Expiration Date", value: testTokenData.expiration },
-                  { name: "Severity", value: sev },
-                ],
+                contentType: "application/vnd.microsoft.card.adaptive",
+                content: {
+                  type: "AdaptiveCard",
+                  $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+                  version: "1.4",
+                  body: [
+                    {
+                      type: "Container",
+                      style: "emphasis",
+                      items: [
+                        {
+                          type: "TextBlock",
+                          text: template || "TokenTimer Test",
+                          weight: "bolder",
+                          size: "large",
+                          wrap: true,
+                        },
+                      ],
+                    },
+                    {
+                      type: "TextBlock",
+                      text: `${testTokenData.name} expires in ${testTokenData.daysLeft} day(s)`,
+                      wrap: true,
+                      spacing: "small",
+                    },
+                    {
+                      type: "FactSet",
+                      facts: [
+                        { title: "Type", value: testTokenData.type },
+                        { title: "Expiration Date", value: testTokenData.expiration },
+                        { title: "Severity", value: sev },
+                      ],
+                      spacing: "medium",
+                    },
+                  ],
+                  msteams: {
+                    width: "Full",
+                  },
+                },
               },
             ],
           };
