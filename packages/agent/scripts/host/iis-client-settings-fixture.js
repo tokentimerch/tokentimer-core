@@ -49,13 +49,14 @@ async function qualifyClientSettings({ binding, certificates, powershell, run, u
   const read = port => JSON.parse(powershell(`$k=Get-Item -LiteralPath 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\HTTP\\Parameters\\SslBindingInfo\\127.0.0.1:${port}'; $values=@{};foreach($name in $k.GetValueNames()|Sort-Object){$value=$k.GetValue($name);$values[$name]=@{kind=[string]$k.GetValueKind($name);value=$value}}; @{checkMode=[uint32]$k.GetValue('DefaultSslCertCheckMode',0);freshness=[uint32]$k.GetValue('DefaultSslRevocationFreshnessTime',0);retrievalTimeout=[uint32]$k.GetValue('DefaultSslRevocationUrlRetrievalTimeout',0);flags=[uint32]$k.GetValue('DefaultFlags',0);thumb=[BitConverter]::ToString([byte[]]$k.GetValue('SslCertHash')).Replace('-','');values=$values}|ConvertTo-Json -Depth 8 -Compress`));
   const unrelated = read(unrelatedPort);
   const flags = read(binding.port).flags;
+  assert.equal(flags, 0x410, "Expected owned HTTP/2 and legacy TLS flags before client-policy setup");
   const candidatePem = fs.readFileSync(path.resolve(__dirname, "../../src/verify/fixtures/chain-leaf.crt.pem"), "utf8");
   const candidateThumb = new crypto.X509Certificate(candidatePem).fingerprint.replace(/:/g, "");
   const assertCandidateAbsent = () => assert.equal(powershell(`@(Get-ChildItem Cert:\\LocalMachine -Recurse -ErrorAction Stop | Where-Object { $_ -is [Security.Cryptography.X509Certificates.X509Certificate2] -and $_.Thumbprint -eq '${candidateThumb}' }).Count`), "0", "Rollback candidate must genuinely be absent from every machine store");
   assertCandidateAbsent();
   const cases = [];
   for (const item of CASES) {
-    run("netsh.exe", ["http", "update", "sslcert", endpoint, `certhash=${certificates[0].thumbprint}`, `appid={${crypto.randomUUID()}}`, "certstorename=My", `verifyclientcertrevocation=${item.revocation ? "enable" : "disable"}`, `verifyrevocationwithcachedclientcertonly=${item.cachedOnly ? "enable" : "disable"}`, `usagecheck=${item.usage ? "enable" : "disable"}`, `revocationfreshnesstime=${item.freshness}`, `urlretrievaltimeout=${item.retrievalTimeout}`]);
+    run("netsh.exe", ["http", "update", "sslcert", endpoint, `certhash=${certificates[0].thumbprint}`, `appid={${crypto.randomUUID()}}`, "certstorename=My", "disablehttp2=enable", "disablelegacytls=enable", `verifyclientcertrevocation=${item.revocation ? "enable" : "disable"}`, `verifyrevocationwithcachedclientcertonly=${item.cachedOnly ? "enable" : "disable"}`, `usagecheck=${item.usage ? "enable" : "disable"}`, `revocationfreshnesstime=${item.freshness}`, `urlretrievaltimeout=${item.retrievalTimeout}`]);
     const observe = async thumb => {
       const actual = read(binding.port);
       // Independent raw HTTP.sys bit constants: NO_REVOCATION=1,

@@ -30,13 +30,9 @@
  * real interface this module's own post-bind verification handshake
  * dials, it does NOT restrict which IP the SNI binding applies to. A
  * binding WITHOUT `sniHost` scopes by the literal `(address, port)` pair
- * (or by "every IP" for the three wildcard address forms) and, per
- * http.sys's own documented precedence rule, always wins over any SNI
- * binding on the same port for a client connecting to that address --
- * deployIisBinding surfaces this as a non-fatal `precedenceWarning` when
- * it detects the shape most likely to trip an operator up (deploying an
- * SNI binding while a wildcard non-SNI binding already exists on the same
- * port).
+ * (or by "every IP" for wildcard forms). HTTP.sys selects an exact IP
+ * binding before SNI, and an exact SNI match before an IP wildcard.
+ * deployIisBinding warns when a concrete IP binding may shadow SNI.
  *
  * Verification reuses ../verify's verifyDeployedCertificate (fingerprint
  * pinning over a real TLS handshake, rejectUnauthorized: false is correct
@@ -1054,7 +1050,7 @@ async function attemptRollback({
 }
 
 /**
- * Non-SNI (`ipport=`) bindings take precedence over SNI (`hostnameport=`)
+ * Concrete non-SNI (`ipport=`) bindings take precedence over SNI (`hostnameport=`)
  * bindings for any client connecting to an IP that also has its own
  * ipport binding on the same port -- confirmed http.sys/IIS platform
  * behavior (Microsoft's own SNI-scalability docs, corroborated by
@@ -1067,21 +1063,9 @@ async function attemptRollback({
  * This module cannot prevent that precedence rule (it is http.sys's, not
  * this module's), only detect when it may be silently shadowing the SNI
  * binding just deployed, and surface that as a non-fatal warning rather
- * than staying silent about a real, non-obvious gotcha. Checks THREE
- * shapes of shadowing ipport binding:
- *   1. The IPv4 wildcard (0.0.0.0) -- shadows every hostnameport binding
- *      on that port for every IPv4 client.
- *   2. The IPv6 wildcard ([::]) -- same, for every IPv6 client.
- *   3. Any OTHER, concrete-IP ipport binding on the same port -- shadows
- *      the SNI binding only for clients connecting to that exact IP, but
- *      is otherwise the identical precedence rule (a PR review found,
- *      2026-08-07, that checking only the two wildcard forms misses this
- *      shape entirely, even though this module's own binding-scope doc
- *      comment on deployIisBinding already explains specific-IP bindings
- *      take precedence too).
- * All three come from one full binding listing (../windows-discovery's
- * listHttpSysBindings), since a concrete conflicting address is not known
- * in advance; wildcards are reported first.
+ * than staying silent about a real, non-obvious gotcha. It checks concrete
+ * IP bindings from the full inventory. IP wildcards are fallback selectors
+ * and do not take precedence over an exact SNI hostname match.
  *
  * A query failure here is swallowed (no warning returned): this check is
  * purely informational and must never fail an otherwise-successful SNI
@@ -1113,17 +1097,8 @@ async function checkSniPrecedenceConflict({
   const shadowingAddresses = listed.bindings.flatMap((existing) => {
     if (existing.keyedBy !== "ipport" || !existing.thumbprint || !existing.ipPort) return [];
     const parsed = splitIpPortLiteral(canonicalSelectorValue(existing.ipPort));
-    return parsed && parsed.port === binding.port ? [parsed.address] : [];
+    return parsed && parsed.port === binding.port && !["0.0.0.0", "[::]"].includes(parsed.address) ? [parsed.address] : [];
   });
-  const wildcardAddress = ["0.0.0.0", "[::]"].find((address) => shadowingAddresses.includes(address));
-  if (wildcardAddress) {
-    return (
-      `an existing non-SNI certificate binding at ipport=${wildcardAddress}:${binding.port} may take ` +
-      `precedence over this SNI binding (hostnameport=${binding.sniHost}:${binding.port}) for clients ` +
-      `connecting over that address family: http.sys evaluates ipport bindings before hostnameport ` +
-      `bindings on the same port, regardless of the client's SNI value`
-    );
-  }
   const concreteAddress = shadowingAddresses[0];
   if (concreteAddress) {
     return (
@@ -1185,7 +1160,7 @@ function splitIpPortLiteral(ipPort) {
  *     does NOT scope which IP the SNI binding itself applies to. There
  *     is no netsh syntax this module uses that restricts a hostnameport
  *     binding to one IP.
- *   - Precedence gotcha (see checkSniPrecedenceConflict): a non-SNI
+ *   - Precedence gotcha (see checkSniPrecedenceConflict): a concrete non-SNI
  *     binding on the same port takes precedence over ANY SNI binding on
  *     that port for a client connecting to that non-SNI binding's IP,
  *     REGARDLESS of the SNI value sent. Surfaced as `precedenceWarning`

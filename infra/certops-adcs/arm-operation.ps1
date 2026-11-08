@@ -16,9 +16,11 @@ function Invoke-CertOpsArmRequest {
   try {
     $request=@{Uri=$Uri;Method=$Method;Headers=@{};TimeoutSec=60;MaximumRedirection=0;ErrorAction='Stop';UseBasicParsing=$true}
     if($Body){$request.Body=$Body;$request.ContentType='application/json'}
-    # Read-only polls are idempotent: a transient network timeout or 5xx/429 must not
-    # abandon a guest action that is still running. Submissions (POST/PUT) are never replayed.
-    $maxAttempts=if($Method -eq 'GET'){8}else{1}
+    # GET polls may be retried. A Run Command POST is retried only when Azure
+    # explicitly rejects it with HTTP 409 before accepting the action; uncertain
+    # responses and all other submissions are never replayed.
+    $runCommandSubmission=($Method -eq 'POST' -and $Uri.AbsolutePath -match '/providers/Microsoft\.Compute/virtualMachines/[^/]+/runCommand$')
+    $maxAttempts=if($Method -eq 'GET'){8}elseif($runCommandSubmission){13}else{1}
     for($attempt=1;$attempt -le $maxAttempts;$attempt++){
       # A network retry can outlive the token acquired for the first attempt.
       # Refresh at every read boundary, including a rejected authentication.
@@ -28,15 +30,20 @@ function Invoke-CertOpsArmRequest {
       $request.Headers.Authorization="Bearer $token"
       try { return (Invoke-WebRequest @request) } catch {
         $httpStatus=if($_.Exception.Response){[int]$_.Exception.Response.StatusCode}else{0}
-        $transient=($httpStatus -eq 0 -or $httpStatus -eq 401 -or $httpStatus -eq 408 -or $httpStatus -eq 429 -or $httpStatus -ge 500)
+        $transient=if($Method -eq 'GET'){($httpStatus -eq 0 -or $httpStatus -eq 401 -or $httpStatus -eq 408 -or $httpStatus -eq 429 -or $httpStatus -ge 500)}else{($runCommandSubmission -and $httpStatus -eq 409)}
         if($attempt -lt $maxAttempts -and $transient){
-          Write-Host ("CERTOPS_ARM_POLL_RETRY={0}:{1}" -f $attempt,$httpStatus)
+          if($Method -eq 'GET'){Write-Host ("CERTOPS_ARM_POLL_RETRY={0}:{1}" -f $attempt,$httpStatus)}else{Write-Host ("CERTOPS_ARM_BUSY_RETRY={0}" -f $attempt)}
           Start-Sleep -Seconds ([Math]::Min(30,5*$attempt))
           continue
         }
         if($httpStatus -ge 100 -and $httpStatus -le 599){Write-Host ("CERTOPS_ARM_HTTP_FAILURE={0}:{1}" -f $Method,$httpStatus)}
         $requestFailure=[InvalidOperationException]::new('Lab ARM request failed; private response withheld')
         $requestFailure.Data['CertOpsArmHttpStatus']=$httpStatus
+        # An exhausted busy submission is terminal for the whole operation.
+        # Keep its HTTP status on the cause so outer callers cannot retry it again.
+        if($runCommandSubmission -and $httpStatus -eq 409 -and $attempt -eq $maxAttempts){
+          throw [InvalidOperationException]::new('Lab ARM busy retry limit exhausted', $requestFailure)
+        }
         throw $requestFailure
       }
     }

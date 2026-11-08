@@ -38,10 +38,9 @@ const wrap = ui =>
 describe('file import step', () => {
   it('uses the same required fields as the import dialog and shows a header row', () => {
     wrap(<FileImportStep ctx={ctx} />);
+    expect(screen.getByText('Required fields:')).toBeVisible();
     expect(
-      screen.getByText(
-        /Required fields per row: name, category, type, expiresAt\./
-      )
+      screen.getByText(/name, category, type and expiresAt\./)
     ).toBeVisible();
     const example = screen.getByTestId('csv-example').textContent;
     expect(example.split('\n')[0]).toBe(

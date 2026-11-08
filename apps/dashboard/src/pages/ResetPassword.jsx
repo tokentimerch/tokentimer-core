@@ -27,6 +27,7 @@ function ResetPassword() {
   const [step, setStep] = useState('request'); // 'request' or 'reset'
   const [email, setEmail] = useState('');
   const [token, setToken] = useState('');
+  const [tokenFromLink, setTokenFromLink] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [resetTwoFactor, setResetTwoFactor] = useState(false);
@@ -54,6 +55,7 @@ function ResetPassword() {
 
     if (tokenFromUrl) {
       setToken(tokenFromUrl);
+      setTokenFromLink(true);
       if (emailFromUrl) {
         setEmail(emailFromUrl);
       }
@@ -76,7 +78,7 @@ function ResetPassword() {
       });
 
       setMessage(response.data.message);
-      setStep('reset');
+      setStep('sent');
     } catch (error) {
       logger.error('Password reset request error:', error);
       let errorMessage = 'Failed to request password reset. Please try again.';
@@ -175,20 +177,24 @@ function ResetPassword() {
             />
           </Box>
           <Heading as='h1' size='xl' color={headingColor} mb={2}>
-            {step === 'request' ? 'Reset Password' : 'Enter New Password'}
+            {step === 'request'
+              ? 'Reset Password'
+              : step === 'sent'
+                ? 'Check your email'
+                : 'Enter New Password'}
           </Heading>
           <Text color={subtextColor}>
             {step === 'request'
               ? 'Enter your email to receive a password reset link'
-              : token
-                ? 'Enter your new password below'
-                : 'Enter the token from your email and your new password'}
+              : step === 'sent'
+                ? 'Open the link in the email to choose a new password.'
+                : token
+                  ? 'Enter your new password below'
+                  : 'Enter the token from your email and your new password'}
           </Text>
           {step === 'reset' && (
             <Text mt={2} fontSize='sm' color={textColor}>
-              For security, the reset link is valid for 5 minutes. If you lost
-              access to your authenticator app, you can reset two-factor
-              authentication when setting your new password.
+              For security, the reset link is valid for 5 minutes.
             </Text>
           )}
         </Box>
@@ -243,6 +249,40 @@ function ResetPassword() {
               </VStack>
             </form>
           </Box>
+        ) : step === 'sent' ? (
+          <Box
+            bg={cardBg}
+            border='1px solid'
+            borderColor={cardBorder}
+            borderRadius='md'
+            p={6}
+          >
+            <VStack spacing={4} align='stretch'>
+              <Text color={textColor}>
+                Open the reset link in your email to continue.
+              </Text>
+              <Button
+                variant='outline'
+                onClick={() => {
+                  setStep('request');
+                  setMessage('');
+                  setError('');
+                }}
+              >
+                Request another link
+              </Button>
+              <Button
+                variant='ghost'
+                onClick={() => {
+                  setStep('reset');
+                  setMessage('');
+                  setError('');
+                }}
+              >
+                Enter a reset token manually
+              </Button>
+            </VStack>
+          </Box>
         ) : (
           <Box
             bg={cardBg}
@@ -253,32 +293,19 @@ function ResetPassword() {
           >
             <form onSubmit={handleResetPassword}>
               <VStack spacing={4}>
-                <FormControl isRequired>
-                  <FormLabel>Email Address</FormLabel>
-                  <Input
-                    type='email'
-                    autoComplete='username'
-                    value={email}
-                    onChange={e => setEmail(e.target.value)}
-                    placeholder='Enter your email address'
-                    isReadOnly={!!email}
-                    bg={inputBg}
-                    borderColor={inputBorder}
-                  />
-                </FormControl>
-
-                <FormControl isRequired>
-                  <FormLabel>Reset Token</FormLabel>
-                  <Input
-                    type='text'
-                    value={token}
-                    onChange={e => setToken(e.target.value)}
-                    placeholder='Enter the token from your email'
-                    isReadOnly={!!token}
-                    bg={inputBg}
-                    borderColor={inputBorder}
-                  />
-                </FormControl>
+                {!tokenFromLink && (
+                  <FormControl isRequired>
+                    <FormLabel>Reset Token</FormLabel>
+                    <Input
+                      type='text'
+                      value={token}
+                      onChange={e => setToken(e.target.value)}
+                      placeholder='Enter the token from your email'
+                      bg={inputBg}
+                      borderColor={inputBorder}
+                    />
+                  </FormControl>
+                )}
 
                 <FormControl isRequired>
                   <FormLabel>New Password</FormLabel>
@@ -314,6 +341,10 @@ function ResetPassword() {
                 >
                   Also reset two-factor authentication (authenticator app)
                 </Checkbox>
+                <Text fontSize='sm' color={subtextColor} alignSelf='flex-start'>
+                  Choose this if you no longer have access to your authenticator
+                  app.
+                </Text>
 
                 <Button
                   type='submit'
@@ -336,6 +367,7 @@ function ResetPassword() {
                   onClick={() => {
                     setStep('request');
                     setToken('');
+                    setTokenFromLink(false);
                     setNewPassword('');
                     setConfirmPassword('');
                     setResetTwoFactor(false);

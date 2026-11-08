@@ -5,7 +5,7 @@ import {
 } from './CertOpsBadge.jsx';
 import Section from '../DashboardDetailsSection.jsx';
 import AutoSyncProvenance from '../AutoSyncProvenance.jsx';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import {
   Box,
   Grid,
@@ -87,6 +87,7 @@ function listLabel(value) {
 
 function DetailRow({
   label,
+  htmlFor,
   children,
   value,
   muted = false,
@@ -120,6 +121,8 @@ function DetailRow({
       minW={0}
     >
       <Text
+        as={htmlFor ? 'label' : undefined}
+        htmlFor={htmlFor}
         pr={{ base: 0, sm: showLabelDivider ? 3 : 0 }}
         fontSize='xs'
         fontWeight='semibold'
@@ -246,6 +249,7 @@ export default function CertificateDetailsModal({
     primaryButtonProps,
     tokens: modalTokens,
   } = useDashboardModalProps();
+  const editFieldId = useId();
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [isEditing, setIsEditing] = useState(false);
@@ -621,10 +625,15 @@ export default function CertificateDetailsModal({
                 <DetailRow label='Category' value={categoryLabel} />
               ) : null}
               {isEditing || hasValue(token.name) ? (
-                <DetailRow label='Name' valueTitle={token.name}>
+                <DetailRow
+                  label='Name'
+                  htmlFor={isEditing ? `${editFieldId}-name` : undefined}
+                  valueTitle={token.name}
+                >
                   {isEditing ? (
                     <Input
                       {...commonInputProps}
+                      id={`${editFieldId}-name`}
                       value={editData.name}
                       onChange={updateField('name')}
                       maxLength={255}
@@ -635,10 +644,15 @@ export default function CertificateDetailsModal({
                 </DetailRow>
               ) : null}
               {isEditing || hasValue(sections) ? (
-                <DetailRow label='Section' valueTitle={sections}>
+                <DetailRow
+                  label='Section'
+                  htmlFor={isEditing ? `${editFieldId}-section` : undefined}
+                  valueTitle={sections}
+                >
                   {isEditing ? (
                     <Input
                       {...commonInputProps}
+                      id={`${editFieldId}-section`}
                       value={editData.section}
                       onChange={updateField('section')}
                       maxLength={255}
@@ -666,10 +680,14 @@ export default function CertificateDetailsModal({
                 )}
               </DetailRow>
               {isEditing ? (
-                <DetailRow label='Asset expiration'>
+                <DetailRow
+                  label='Asset expiration'
+                  htmlFor={isEditing ? `${editFieldId}-expiresAt` : undefined}
+                >
                   {isEditing ? (
                     <Input
                       {...commonInputProps}
+                      id={`${editFieldId}-expiresAt`}
                       type='date'
                       value={editData.expiresAt}
                       onChange={updateField('expiresAt')}
@@ -728,10 +746,15 @@ export default function CertificateDetailsModal({
                 propertyValueRows={propertyValueRows}
               >
                 {isEditing || hasValue(domains) ? (
-                  <DetailRow label='Domains' valueTitle={domains}>
+                  <DetailRow
+                    label='Domains'
+                    htmlFor={isEditing ? `${editFieldId}-domains` : undefined}
+                    valueTitle={domains}
+                  >
                     {isEditing ? (
                       <Input
                         {...commonInputProps}
+                        id={`${editFieldId}-domains`}
                         value={editData.domains}
                         onChange={updateField('domains')}
                         maxLength={500}
@@ -745,10 +768,15 @@ export default function CertificateDetailsModal({
                   </DetailRow>
                 ) : null}
                 {isEditing || hasValue(certificateIssuer) ? (
-                  <DetailRow label='Issuer' valueTitle={certificateIssuer}>
+                  <DetailRow
+                    label='Issuer'
+                    htmlFor={isEditing ? `${editFieldId}-issuer` : undefined}
+                    valueTitle={certificateIssuer}
+                  >
                     {isEditing ? (
                       <Input
                         {...commonInputProps}
+                        id={`${editFieldId}-issuer`}
                         value={editData.issuer}
                         onChange={updateField('issuer')}
                         maxLength={255}
@@ -760,10 +788,16 @@ export default function CertificateDetailsModal({
                   </DetailRow>
                 ) : null}
                 {isEditing || hasValue(certificateSerialNumber) ? (
-                  <DetailRow label='Serial number'>
+                  <DetailRow
+                    label='Serial number'
+                    htmlFor={
+                      isEditing ? `${editFieldId}-serial_number` : undefined
+                    }
+                  >
                     {isEditing ? (
                       <Input
                         {...commonInputProps}
+                        id={`${editFieldId}-serial_number`}
                         value={editData.serial_number}
                         onChange={updateField('serial_number')}
                         maxLength={255}
@@ -779,10 +813,15 @@ export default function CertificateDetailsModal({
                   </DetailRow>
                 ) : null}
                 {isEditing || hasValue(certificateSubject) ? (
-                  <DetailRow label='Subject' valueTitle={certificateSubject}>
+                  <DetailRow
+                    label='Subject'
+                    htmlFor={isEditing ? `${editFieldId}-subject` : undefined}
+                    valueTitle={certificateSubject}
+                  >
                     {isEditing ? (
                       <Textarea
                         {...commonInputProps}
+                        id={`${editFieldId}-subject`}
                         minH='64px'
                         value={editData.subject}
                         onChange={updateField('subject')}
@@ -799,11 +838,13 @@ export default function CertificateDetailsModal({
                 {isEditing || hasValue(token.contacts) ? (
                   <DetailRow
                     label='Contacts / key custodian'
+                    htmlFor={isEditing ? `${editFieldId}-contacts` : undefined}
                     valueTitle={token.contacts}
                   >
                     {isEditing ? (
                       <Input
                         {...commonInputProps}
+                        id={`${editFieldId}-contacts`}
                         value={editData.contacts}
                         onChange={updateField('contacts')}
                         list='certificate-workspace-contacts'
@@ -816,10 +857,17 @@ export default function CertificateDetailsModal({
                   </DetailRow>
                 ) : null}
                 {isEditing || hasValue(token.renewal_url) ? (
-                  <DetailRow label='Renewal URL' valueTitle={token.renewal_url}>
+                  <DetailRow
+                    label='Renewal URL'
+                    htmlFor={
+                      isEditing ? `${editFieldId}-renewal_url` : undefined
+                    }
+                    valueTitle={token.renewal_url}
+                  >
                     {isEditing ? (
                       <Input
                         {...commonInputProps}
+                        id={`${editFieldId}-renewal_url`}
                         type='url'
                         value={editData.renewal_url}
                         onChange={updateField('renewal_url')}

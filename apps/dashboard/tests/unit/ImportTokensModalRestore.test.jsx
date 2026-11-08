@@ -11,7 +11,11 @@ import {
 import { ChakraProvider } from '@chakra-ui/react';
 
 import ImportTokensModal from '../../src/components/ImportTokensModal.jsx';
-import { tokenAPI, integrationAPI } from '../../src/utils/apiClient';
+import {
+  tokenAPI,
+  integrationAPI,
+  azureADAPI,
+} from '../../src/utils/apiClient';
 import { IMPORT_DOCS } from '../../src/utils/docsUrls.js';
 
 const { apiGetMock, apiDeleteMock, gitlabFormProps, githubFormProps, wsCtx } =
@@ -556,9 +560,35 @@ describe('ImportTokensModal docs panel', () => {
     ).toHaveAttribute('href', IMPORT_DOCS.entraId);
   });
 
+  it('shows Entra scan scope and separates incomplete-scan and cleanup warnings', async () => {
+    azureADAPI.scan.mockResolvedValue({
+      items: [],
+      scan_id: 'scan-1',
+      summary: [{ type: 'App Registrations', found: 0, complete: false }],
+    });
+    render(renderModal({ provider: 'azure-ad' }));
+    expect(
+      await screen.findByText(/Application.Read.All is the/)
+    ).toBeInTheDocument();
+    fireEvent.change(
+      screen.getByPlaceholderText(
+        'Paste access token with Application.Read.All permission'
+      ),
+      { target: { value: 'synthetic-token' } }
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Scan' }));
+    expect(await screen.findByText(/Incomplete scan:/)).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: /Remove previously imported items no longer found/,
+      })
+    );
+    expect(screen.getByText(/Permanent deletion:/)).toBeInTheDocument();
+  });
+
   it('renders no panel when the host already shows its own', async () => {
     render(renderModal(null, { hideDocs: true }));
-    await screen.findByText(/Upload a file in/);
+    await screen.findByText(/CSV, XLSX, JSON or YAML/);
     expect(screen.queryByRole('note', { name: 'Learn more' })).toBeNull();
   });
 });
@@ -587,7 +617,7 @@ describe('ImportTokensModal file preview', () => {
     ['an empty json array', '[]', 'empty.json'],
   ])('explains an unreadable file: %s', async (_label, body, name) => {
     render(renderModal(null));
-    await screen.findByText(/Upload a file in/);
+    await screen.findByText(/CSV, XLSX, JSON or YAML/);
     upload(body, name);
     expect(await screen.findByText(NO_ROWS)).toBeInTheDocument();
     expect(
@@ -597,7 +627,7 @@ describe('ImportTokensModal file preview', () => {
 
   it('shows the preview without the message for a readable file', async () => {
     render(renderModal(null));
-    await screen.findByText(/Upload a file in/);
+    await screen.findByText(/CSV, XLSX, JSON or YAML/);
     upload(
       'name,category,type,expiresAt\nweb,cert,ssl_cert,2030-01-01\n',
       'ok.csv'
@@ -610,7 +640,7 @@ describe('ImportTokensModal file preview', () => {
 
   it('joins the sections of a row with a comma and a space', async () => {
     render(renderModal(null));
-    await screen.findByText(/Upload a file in/);
+    await screen.findByText(/CSV, XLSX, JSON or YAML/);
     upload(
       JSON.stringify([
         {
@@ -629,7 +659,7 @@ describe('ImportTokensModal file preview', () => {
 
   it('lists the rows left out and what each one is missing', async () => {
     render(renderModal(null));
-    await screen.findByText(/Upload a file in/);
+    await screen.findByText(/CSV, XLSX, JSON or YAML/);
     upload(
       [
         'name,category,type,expiresAt',
@@ -650,7 +680,7 @@ describe('ImportTokensModal file preview', () => {
 
   it('numbers rows of a JSON file from 1 because it has no header row', async () => {
     render(renderModal(null));
-    await screen.findByText(/Upload a file in/);
+    await screen.findByText(/CSV, XLSX, JSON or YAML/);
     upload(
       JSON.stringify([
         {
@@ -678,7 +708,7 @@ describe('ImportTokensModal file preview', () => {
 
   it('refuses a file with more than 5000 rows and says why', async () => {
     render(renderModal(null));
-    await screen.findByText(/Upload a file in/);
+    await screen.findByText(/CSV, XLSX, JSON or YAML/);
     const lines = ['name,category,type,expiresAt'];
     for (let i = 0; i < 5001; i += 1) {
       lines.push(`a${i},cert,ssl_cert,2030-01-01`);
@@ -692,7 +722,7 @@ describe('ImportTokensModal file preview', () => {
 
   it('refuses a file over 5 MB before reading it', async () => {
     render(renderModal(null));
-    await screen.findByText(/Upload a file in/);
+    await screen.findByText(/CSV, XLSX, JSON or YAML/);
     const input = document.querySelector('input[type="file"]');
     const file = new File(['x'], 'huge.csv', { type: 'text/csv' });
     Object.defineProperty(file, 'size', { value: 6 * 1024 * 1024 });
@@ -710,7 +740,7 @@ describe('ImportTokensModal file preview', () => {
     });
     window.history.pushState({}, '', '/?workspace=ws-1');
     render(renderModal(null));
-    await screen.findByText(/Upload a file in/);
+    await screen.findByText(/CSV, XLSX, JSON or YAML/);
     upload(
       [
         'name,category,type,expiresAt',
@@ -736,7 +766,7 @@ describe('ImportTokensModal file preview', () => {
     tokenAPI.createToken.mockRejectedValueOnce(new Error('Invalid date'));
     window.history.pushState({}, '', '/?workspace=ws-1');
     render(renderModal(null));
-    await screen.findByText(/Upload a file in/);
+    await screen.findByText(/CSV, XLSX, JSON or YAML/);
     upload(
       [
         'name,category,type,expiresAt',
@@ -773,7 +803,7 @@ describe('ImportTokensModal workspace resolution', () => {
 
   const importCsv = async extraProps => {
     render(renderModal(null, extraProps));
-    await screen.findByText(/Upload a file in/);
+    await screen.findByText(/CSV, XLSX, JSON or YAML/);
     const input = document.querySelector('input[type="file"]');
     const file = new File([CSV], 'ok.csv', { type: 'text/plain' });
     file.text = () => Promise.resolve(CSV);

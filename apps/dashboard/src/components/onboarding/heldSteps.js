@@ -8,6 +8,8 @@ import { canTickGoal } from './groupAttachment.js';
 
 const WAITING_STEPS = new Set([
   'recipients',
+  'file_import',
+  'integration',
   'certops_agent',
   'certops_execution',
   'certops_first',
@@ -18,7 +20,7 @@ const WAITING_STEPS = new Set([
 ]);
 
 // These render their own Continue (it is disabled until the step is done).
-const OWN_CONTINUE = new Set(['recipients']);
+const OWN_CONTINUE = new Set(['recipients', 'file_import', 'integration']);
 
 /**
  * Whether this step can turn done without a click on the step itself.

@@ -1,4 +1,5 @@
 import CertOpsBadge from './CertOpsBadge.jsx';
+import { DashboardState } from '../DashboardPrimitives.jsx';
 import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
@@ -250,7 +251,11 @@ export default function CsrWorkflowPanel({
           CSR requests
         </Text>
         {items.length === 0 ? (
-          <Text fontSize='sm'>No CSR requests yet.</Text>
+          <DashboardState
+            py={4}
+            title='No CSR requests yet'
+            description='Save a CSR above to begin tracking its request.'
+          />
         ) : (
           items.map(item => (
             <HStack key={item.id} justify='space-between' py={1}>

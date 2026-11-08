@@ -1,8 +1,8 @@
 /*
- * Qualification notes: ipv6-wildcard-shadow-rollback
+ * Qualification notes: ipv6-wildcard-sni-precedence
  * Shared setup, dispatch and evidence rules: .github/maintainers/certops/e2e-qualification.md.
- * Actual [::] wildcard shadow must produce independently observed trusted-TLS precedence and
- * production rollback while preserving unrelated binding and original CNG custody. Require IPv6
+ * Actual [::] wildcard and exact SNI must demonstrate trusted-TLS precedence and
+ * successful production cutover while preserving the unrelated binding and CNG custody. Require IPv6
  * availability and exact native tuple ownership, remove only explicit fixture
  * selector/site/certificate resources and independently confirm absence. It does not permit broad
  * wildcard cleanup, substitute IPv4 proof, or qualify installed public multi-target behavior; portable
@@ -16,14 +16,14 @@
 const assert = require("node:assert/strict"),
   base = require("./ipv6-shadow-fixture");
 const SCOPE = base.WILDCARD_SCOPE;
-const SCENARIOS = Object.freeze(["windows-iis-ipv6-wildcard-shadow-rollback"]);
+const SCENARIOS = Object.freeze(["windows-iis-ipv6-wildcard-sni-precedence"]);
 const REQUIRED_SOURCES = Object.freeze([
   ...new Set([
     "packages/agent/scripts/host/ipv6-wildcard-fixture.js",
     ...base.REQUIRED_SOURCES,
   ]),
 ]);
-const FLAGS = base.FLAGS;
+const FLAGS = Object.freeze(base.flagsForVariant("wildcard"));
 function verifyProof(proof) {
   return base.verifyVariantProof(proof, "wildcard");
 }

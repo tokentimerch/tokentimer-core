@@ -59,6 +59,8 @@ export function useControlCenterData(initialWorkspaceId = '') {
   const { workspaceId, selectWorkspace } = useWorkspace();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [requeueState, setRequeueState] = useState(null);
+  const requeueInFlightRef = useRef(false);
   const [error, setError] = useState('');
   const [unauthorized, setUnauthorized] = useState(false);
   const [queue, setQueue] = useState([]);
@@ -84,6 +86,8 @@ export function useControlCenterData(initialWorkspaceId = '') {
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState(
     initialWorkspaceId || workspaceId || ''
   );
+  const selectedWorkspaceRef = useRef(selectedWorkspaceId);
+  selectedWorkspaceRef.current = selectedWorkspaceId;
   const [isAdminAny, setIsAdminAny] = useState(false);
   const [hasManagerOrViewerRole, setHasManagerOrViewerRole] = useState(false);
   const [planInfo, setPlanInfo] = useState({
@@ -526,18 +530,46 @@ export function useControlCenterData(initialWorkspaceId = '') {
       }`
     : !selectedWorkspaceId
       ? 'Select a workspace first'
-      : 'Requeue failed or plan-limit blocked alerts for this workspace';
+      : !eligibleWorkspaces.some(
+            workspace => workspace.id === selectedWorkspaceId
+          )
+        ? 'Manager or admin access is required for this workspace.'
+        : 'Requeue failed or plan-limit blocked alerts for this workspace';
 
   const requeueAlerts = useCallback(async () => {
+    if (!canRequeue || requeueInFlightRef.current) return;
+    const targetWorkspaceId = selectedWorkspaceId;
+    requeueInFlightRef.current = true;
+    setRequeueState({
+      workspaceId: targetWorkspaceId,
+      pending: true,
+      message: '',
+    });
     try {
-      await alertAPI.requeueAlerts({
-        workspaceId: selectedWorkspaceId || null,
+      const result = await alertAPI.requeueAlerts({
+        workspaceId: targetWorkspaceId,
       });
-      await loadData(true);
+      const count = Number(result?.updated || 0);
+      setRequeueState({
+        workspaceId: targetWorkspaceId,
+        pending: false,
+        message: count
+          ? `Requeued ${count} alert${count === 1 ? '' : 's'}.`
+          : 'No eligible alerts to requeue.',
+      });
+      if (selectedWorkspaceRef.current === targetWorkspaceId)
+        await loadData(true);
     } catch (err) {
       logger.warn('Failed to requeue alerts', err);
+      setRequeueState({
+        workspaceId: targetWorkspaceId,
+        pending: false,
+        message: 'Could not requeue alerts. Try again.',
+      });
+    } finally {
+      requeueInFlightRef.current = false;
     }
-  }, [loadData, selectedWorkspaceId]);
+  }, [canRequeue, loadData, selectedWorkspaceId]);
 
   const loadMoreAlertActivity = useCallback(async () => {
     const activityWorkspaceId = alertActivityWorkspaceIdRef.current;
@@ -646,6 +678,8 @@ export function useControlCenterData(initialWorkspaceId = '') {
     canRequeue,
     requeueDisabledReason,
     requeueAlerts,
+    requeueState:
+      requeueState?.workspaceId === selectedWorkspaceId ? requeueState : null,
     loadData,
     refresh,
     alertActivity,

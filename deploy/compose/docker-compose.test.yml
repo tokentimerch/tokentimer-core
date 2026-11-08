@@ -105,6 +105,8 @@ services:
       - ../../packages:/app/packages
       - /app/node_modules
       - /app/apps/api/node_modules
+      - /app/packages/contracts/node_modules
+      - /app/packages/mcp/node_modules
       - ../../.coverage/v8-api:/tmp/v8-coverage
     working_dir: /app/apps/api
     command: ["node", "coverage-bootstrap.cjs"]

@@ -191,7 +191,7 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
           // Corrupt only this owned endpoint's persisted native metadata.
           // The real query must refuse to discard an unknown flag/value or
           // incomplete CTL pair, while its live TLS certificate stays intact.
-          powershell(`$k=Get-Item -LiteralPath '${registryPath}'; $k.SetValue('${fault.name}', ${fault.value}, [Microsoft.Win32.RegistryValueKind]::${fault.type})`);
+          powershell(`New-ItemProperty -LiteralPath '${registryPath}' -Name '${fault.name}' -Value (${fault.value}) -PropertyType ${fault.type} -Force | Out-Null`);
           const refused = await deployIisBinding({ binding, certificatePem: pem(certificates[3]), verifyTimeoutMs: 3000 });
           assert.equal(refused.ok, false);
           assert.equal(refused.code, "UNSUPPORTED_BINDING_SETTINGS", JSON.stringify(refused));
@@ -200,8 +200,8 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
           await expectServed(port, certificates[1].thumbprint);
         } finally {
           powershell(fault.name === "DefaultFlags"
-            ? `$k=Get-Item -LiteralPath '${registryPath}'; $k.SetValue('DefaultFlags', [int]${originalFlags}, [Microsoft.Win32.RegistryValueKind]::DWord)`
-            : `Remove-ItemProperty -LiteralPath '${registryPath}' -Name '${fault.name}' -ErrorAction SilentlyContinue`);
+            ? `New-ItemProperty -LiteralPath '${registryPath}' -Name 'DefaultFlags' -Value ([int]${originalFlags}) -PropertyType DWord -Force | Out-Null`
+            : `$k=Get-Item -LiteralPath '${registryPath}'; if ($k.GetValueNames() -contains '${fault.name}') { Remove-ItemProperty -LiteralPath '${registryPath}' -Name '${fault.name}' }`);
         }
       }
       assert.equal(readFlags(), originalFlags);
@@ -266,15 +266,15 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
       shadowOwned = false;
       assert.equal(await checkSniPrecedenceConflict({ binding }), undefined, "removing owned shadow must clear warning");
       await expectServed(port, certificates[1].thumbprint, servername);
-      if (gate) await gate.scenario("windows-iis-ipv4-wildcard-shadow-rollback", async () => {
+      if (gate) await gate.scenario("windows-iis-ipv4-wildcard-sni-precedence", async () => {
         // Each variant completes exact owned cleanup before the next borrows
         // the same certificate custody. No installed-agent claim is inferred.
         const fixture = require("./ipv4-wildcard-fixture");
-        gate.report.nativeIpv4WildcardShadow = await fixture.qualifyIpv4Wildcard({ certificates, powershell, run, workDir });
-        fixture.verifyProof(gate.report.nativeIpv4WildcardShadow);
+        gate.report.nativeIpv4WildcardPrecedence = await fixture.qualifyIpv4Wildcard({ certificates, powershell, run, workDir });
+        fixture.verifyProof(gate.report.nativeIpv4WildcardPrecedence);
         gate.report.fixtureSources ||= [];
         for (const file of fixture.REQUIRED_SOURCES) if (!gate.report.fixtureSources.some(source => source.file === file)) gate.report.fixtureSources.push({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"../../../..",file))).digest("hex")});
-      }, { evidenceLevel: "real-host", oracle: "Actual IPv4 wildcard HTTP.sys shadow yields production verification failure and rollback; exact native hostname/trusted IPv4 TLS recover while separate IPv4 sibling stays unchanged" });
+      }, { evidenceLevel: "real-host", oracle: "Actual IPv4 wildcard yields to exact SNI; production cutover and trusted TLS succeed while the IPv4 sibling stays unchanged" });
       if (gate) await gate.scenario("windows-iis-ipv6-native-shadow-rollback", async () => {
         const fixture = require("./ipv6-shadow-fixture");
         gate.report.nativeIpv6SniShadow = await fixture.qualifyIpv6Shadow({ certificates, powershell, run, workDir });
@@ -282,12 +282,12 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
         gate.report.fixtureSources ||= [];
         for (const file of fixture.REQUIRED_SOURCES) if (!gate.report.fixtureSources.some(source => source.file === file)) gate.report.fixtureSources.push({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"../../../..",file))).digest("hex")});
       }, { evidenceLevel: "real-host", oracle: "Actual IPv6 HTTP.sys shadow causes real production verification failure and rollback; native endpoint and independently trusted IPv6 TLS recover, separate IPv4 sibling stays unchanged" });
-      if (gate) await gate.scenario("windows-iis-ipv6-wildcard-shadow-rollback", async () => {
+      if (gate) await gate.scenario("windows-iis-ipv6-wildcard-sni-precedence", async () => {
         const fixture = require("./ipv6-wildcard-fixture");
-        gate.report.nativeIpv6WildcardShadow = await fixture.qualifyIpv6Wildcard({ certificates, powershell, run, workDir });
-        fixture.verifyProof(gate.report.nativeIpv6WildcardShadow);
+        gate.report.nativeIpv6WildcardPrecedence = await fixture.qualifyIpv6Wildcard({ certificates, powershell, run, workDir });
+        fixture.verifyProof(gate.report.nativeIpv6WildcardPrecedence);
         for (const file of fixture.REQUIRED_SOURCES) if (!gate.report.fixtureSources.some(source => source.file === file)) gate.report.fixtureSources.push({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"../../../..",file))).digest("hex")});
-      }, { evidenceLevel: "real-host", oracle: "Actual IPv6 wildcard HTTP.sys shadow yields production verification failure and rollback; exact native hostname/trusted IPv6 TLS recover while separate IPv4 sibling stays unchanged" });
+      }, { evidenceLevel: "real-host", oracle: "Actual IPv6 wildcard yields to exact SNI; production cutover and trusted TLS succeed while the IPv4 sibling stays unchanged" });
       if (gate) await gate.scenario("windows-iis-rollback-failure", async () => {
         // Remove only the owned predecessor's public store copy. Its exact
         // recorded CNG key remains owned and is deleted by outer teardown.

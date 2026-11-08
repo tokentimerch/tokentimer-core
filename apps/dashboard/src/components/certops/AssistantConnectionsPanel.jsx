@@ -508,7 +508,8 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                                 >
                                   No installation. Connect by URL and sign in
                                   with your account. Requires a client
-                                  supporting Streamable HTTP and OAuth.
+                                  supporting Streamable HTTP and OAuth. Your
+                                  deployment may also require TLS 1.3.
                                 </Text>
                               </Radio>
                             </Box>
@@ -593,8 +594,10 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                                   your client.
                                 </Text>
                                 <Text>
-                                  2. Sign in and review the app, workspace and
-                                  access.
+                                  2. Connect or authenticate the server in your
+                                  client to open browser sign-in. In Codex, run
+                                  codex mcp login followed by the server name.
+                                  Review the app, workspace and access.
                                 </Text>
                                 <Text>
                                   3. Run tt_whoami in the client to verify the
@@ -630,11 +633,7 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                           />
                         </FormControl>
                       ) : null}
-                      <Stack
-                        direction={{ base: 'column', sm: 'row' }}
-                        align='start'
-                        spacing={4}
-                      >
+                      <Stack direction='column' align='stretch' spacing={4}>
                         <FormControl>
                           <FormLabel
                             id='mcp-access-label'
@@ -729,8 +728,7 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                                     setGroupCreate(event.target.checked)
                                   }
                                 >
-                                  Allow reviewed contact group creation and
-                                  listing recipient names
+                                  Create contact groups and list recipient names
                                 </Checkbox>
                                 <Checkbox
                                   isChecked={memberInvite}
@@ -738,7 +736,7 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                                     setMemberInvite(event.target.checked)
                                   }
                                 >
-                                  Allow reviewed viewer invitations by email
+                                  Review and invite viewers by email
                                 </Checkbox>
                                 <Checkbox
                                   isChecked={issuance}
@@ -754,9 +752,18 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                                     setRenewals(event.target.checked)
                                   }
                                 >
-                                  Allow renewal requests
+                                  Allow certificate renewal requests
                                 </Checkbox>
                               </>
+                            ) : null}
+                            {canManage ? (
+                              <Checkbox
+                                isChecked={agentHealth || renewals || issuance}
+                                isDisabled={renewals || issuance}
+                                onChange={e => setAgentHealth(e.target.checked)}
+                              >
+                                View CertOps agent health
+                              </Checkbox>
                             ) : null}
                           </Stack>
                         </FormControl>
@@ -797,20 +804,11 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                           </Checkbox>
                         </Stack>
                       ) : null}
-                      {canManage ? (
-                        <Checkbox
-                          isChecked={agentHealth || renewals || issuance}
-                          isDisabled={renewals || issuance}
-                          onChange={e => setAgentHealth(e.target.checked)}
-                        >
-                          Include agent health
-                        </Checkbox>
-                      ) : null}
-                      {renewals && canManage ? (
+                      {(renewals || issuance) && canManage ? (
                         <Text fontSize='sm' color={muted}>
-                          Renewal requests include agent health and follow
-                          CertOps Job approval. This never grants job approval
-                          or settings access.
+                          Renewal and issuance requests include agent health and
+                          follow CertOps Job approval. This never grants job
+                          approval or settings access.
                         </Text>
                       ) : null}
                       {inventoryImport && canManage ? (
@@ -890,12 +888,20 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                   <Text fontSize='sm' fontWeight='semibold'>
                     3. Add your client and verify
                   </Text>
-                  <Text fontSize='sm'>
-                    Enrollment prints the command, arguments and environment for
-                    your MCP client. Save that configuration, restart the client
-                    and ask it to run tt_whoami. Confirm the workspace and role
-                    before asking for certificate details.
-                  </Text>
+                  <Stack as='ol' pl={5} spacing={1} fontSize='sm'>
+                    <Text as='li'>
+                      Save the command, arguments and environment printed by
+                      enrollment in your MCP client.
+                    </Text>
+                    <Text as='li'>
+                      Restart the client and ask it to run{' '}
+                      <Text as='code'>tt_whoami</Text>.
+                    </Text>
+                    <Text as='li'>
+                      Confirm the workspace and role before asking for
+                      certificate details.
+                    </Text>
+                  </Stack>
                   <Text fontSize='xs' color={muted}>
                     Renewal tools also need TOKENTIMER_MCP_ENABLE_WRITES=true in
                     the client environment. Closing this dialog hides the code;

@@ -40,11 +40,17 @@ class ErrorBoundary extends React.Component {
     if (this.state.hasError) {
       const chunkFailure = isChunkLoadError(this.state.error);
       const recoveryFailed = chunkFailure && hasRecentChunkRecovery();
+      const darkMode =
+        typeof document !== 'undefined' &&
+        (document.documentElement.dataset.theme === 'dark' ||
+          document.body?.classList.contains('chakra-ui-dark'));
       return (
         <div
           style={{
             minHeight: '100vh',
-            backgroundColor: primitives.slate[50],
+            backgroundColor: darkMode
+              ? primitives.slate[950]
+              : primitives.slate[50],
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -55,7 +61,7 @@ class ErrorBoundary extends React.Component {
             style={{
               maxWidth: '28rem',
               width: '100%',
-              backgroundColor: '#ffffff',
+              backgroundColor: darkMode ? primitives.slate[800] : '#ffffff',
               borderRadius: '0.75rem',
               boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
               padding: '2rem',
@@ -66,7 +72,7 @@ class ErrorBoundary extends React.Component {
               style={{
                 fontSize: '1.5rem',
                 fontWeight: 'bold',
-                color: primitives.red[600],
+                color: darkMode ? primitives.red[300] : primitives.red[600],
                 marginBottom: '1rem',
               }}
             >
@@ -76,7 +82,7 @@ class ErrorBoundary extends React.Component {
             </h2>
             <p
               style={{
-                color: primitives.slate[600],
+                color: darkMode ? primitives.slate[200] : primitives.slate[600],
                 marginBottom: '1.5rem',
               }}
             >

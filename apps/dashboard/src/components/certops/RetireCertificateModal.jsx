@@ -4,6 +4,7 @@ import {
   Alert,
   AlertDescription,
   AlertIcon,
+  Box,
   Button,
   Checkbox,
   Flex,
@@ -239,28 +240,13 @@ export default function RetireCertificateModal({
         <ModalHeader {...headerProps}>
           <DashboardModalTitle>Retire certificate</DashboardModalTitle>
           <DashboardModalDescription>
-            This asset is linked to certificate records, so it cannot be
-            deleted. Record a lifecycle retirement instead; the record and its
-            history are kept. This does not revoke the certificate at its
-            certificate authority or remove it from a host.
+            This asset is linked to certificate records and cannot be deleted.
+            Record a lifecycle retirement to retain the record and its history.
           </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} />
         <ModalBody {...bodyProps}>
           <VStack spacing={4} align='stretch'>
-            {subjectLabel ? (
-              <Text fontSize='sm'>
-                <Text as='span' fontWeight='semibold'>
-                  {subjectLabel}
-                </Text>
-                {selectedCertificate?.status ? (
-                  <CertOpsBadge ml={2} colorScheme='gray'>
-                    {selectedCertificate.status}
-                  </CertOpsBadge>
-                ) : null}
-              </Text>
-            ) : null}
-
             {choices.length > 1 ? (
               <VStack align='stretch' spacing={2}>
                 <Text
@@ -297,11 +283,51 @@ export default function RetireCertificateModal({
                 </Select>
               </VStack>
             ) : null}
-            {selectedCertificate?.fingerprintSha256 ? (
-              <Text fontSize='xs' wordBreak='break-all'>
-                SHA-256: {selectedCertificate.fingerprintSha256}
-              </Text>
-            ) : null}
+            <Box borderWidth='1px' borderRadius='12px' p={3}>
+              <VStack align='stretch' spacing={2} fontSize='sm'>
+                <Text fontWeight='semibold'>Retirement summary</Text>
+                <Text>
+                  <Text as='span' fontWeight='semibold'>
+                    Certificate:{' '}
+                  </Text>
+                  {selectedCertificate
+                    ? selectedCertificate.commonName ||
+                      selectedCertificate.name ||
+                      subjectLabel
+                    : 'Choose a certificate above'}
+                  {selectedCertificate?.status ? (
+                    <CertOpsBadge ml={2} colorScheme='gray'>
+                      {selectedCertificate.status}
+                    </CertOpsBadge>
+                  ) : null}
+                </Text>
+                {selectedCertificate?.fingerprintSha256 ? (
+                  <Text fontSize='xs' wordBreak='break-all'>
+                    SHA-256: {selectedCertificate.fingerprintSha256}
+                  </Text>
+                ) : null}
+                <Text>
+                  <Text as='span' fontWeight='semibold'>
+                    CA:{' '}
+                  </Text>
+                  No revocation request is sent.
+                </Text>
+                <Text>
+                  <Text as='span' fontWeight='semibold'>
+                    Host:{' '}
+                  </Text>
+                  The certificate is not removed from hosts.
+                </Text>
+                <Text>
+                  <Text as='span' fontWeight='semibold'>
+                    Monitoring:{' '}
+                  </Text>
+                  Endpoint monitoring continues. Renewal-failure alerts stop;
+                  expiry alerts stop only when no other live certificate remains
+                  on this asset.
+                </Text>
+              </VStack>
+            </Box>
 
             <RadioGroup value={status} onChange={setStatus}>
               <Stack spacing={3}>
@@ -317,15 +343,6 @@ export default function RetireCertificateModal({
                 ))}
               </Stack>
             </RadioGroup>
-
-            <Alert status='warning' borderRadius='12px'>
-              <AlertIcon />
-              <AlertDescription fontSize='sm'>
-                Renewal-failure alerts for this certificate will stop. Expiry
-                alerts stop only when no other live certificate remains on this
-                asset. Endpoint monitoring continues.
-              </AlertDescription>
-            </Alert>
 
             <Textarea
               value={reason}
@@ -374,13 +391,22 @@ export default function RetireCertificateModal({
                     </UnorderedList>
                     {removableMonitorIds.length && workspaceId ? (
                       <>
+                        <Text fontWeight='semibold'>
+                          Removing the endpoint checker
+                        </Text>
                         <Text>
-                          You can remove the endpoint checker
-                          {removableMonitorIds.length > 1 ? 's' : ''} and
-                          continue. The monitored URL
+                          <Text as='span' fontWeight='semibold'>
+                            Monitoring:{' '}
+                          </Text>
+                          The monitored URL
                           {removableMonitorIds.length > 1 ? 's are' : ' is'} no
-                          longer checked and linked monitor data is deleted. The
-                          certificate itself stays on the host.
+                          longer checked, and linked monitor data is deleted.
+                        </Text>
+                        <Text>
+                          <Text as='span' fontWeight='semibold'>
+                            Host:{' '}
+                          </Text>
+                          The certificate stays on the host.
                         </Text>
                         <Button
                           size='sm'

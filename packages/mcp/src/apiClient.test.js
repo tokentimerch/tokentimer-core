@@ -164,6 +164,24 @@ describe("API client", () => {
     }
   });
 
+  it("uses action-neutral messages for plan and frozen-workspace refusals", async () => {
+    const client = createApiClient(config());
+    for (const [status, upstreamCode, route, message, reason] of [
+      [402, "PLAN_FEATURE_REQUIRED", "/api/v1/operator/webhooks/preview", "This feature is not included in your workspace's plan.", "plan_required"],
+      [403, "WORKSPACE_FROZEN", "/api/v1/operator/inventory/preview", "This workspace is frozen. This action is unavailable.", "workspace_frozen"],
+    ]) {
+      respond = json(status, { code: upstreamCode, error: SENTINEL });
+      await assert.rejects(client.post(route, {}), error => {
+        assert.equal(error.code, "MCP_SCOPE_DENIED");
+        assert.equal(error.message, message);
+        assert.equal(error.reason, reason);
+        assert.equal(error.retryable, false);
+        assert.equal(JSON.stringify(error.toJSON()).includes(SENTINEL), false);
+        return true;
+      });
+    }
+  });
+
   it("marks only transient failures as retryable", async () => {
     const client = createApiClient(config());
     const retryable = async (status) => {

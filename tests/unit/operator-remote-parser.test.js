@@ -67,3 +67,34 @@ test("consent aliases reject client-only origins even behind a public prefix", a
     }
   }
 });
+
+
+test("remote host accepts the explicit default port and rejects invalid authorities", async () => {
+  const keys = ["MCP_OPERATOR_INTERFACE_ENABLED", "MCP_OPERATOR_REMOTE_ENABLED", "MCP_PUBLIC_URL", "APP_URL", "MCP_ALLOWED_ORIGINS"];
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  Object.assign(process.env, {
+    MCP_OPERATOR_INTERFACE_ENABLED: "true",
+    MCP_OPERATOR_REMOTE_ENABLED: "true",
+    MCP_PUBLIC_URL: "https://api.example.test" + MCP_PATH,
+    APP_URL: "https://app.example.test",
+    MCP_ALLOWED_ORIGINS: "https://client.example.test",
+  });
+  try {
+    const app = express();
+    app.use(remoteCors);
+    app.get(MCP_PATH, (_req, res) => res.sendStatus(204));
+    for (const host of ["api.example.test", "API.EXAMPLE.TEST:443"]) {
+      await request(app).get(MCP_PATH).set("Host", host).expect(204);
+    }
+    for (const host of ["api.example.test:444", "other.example.test", "other.example.test@api.example.test", "api.example.test/path", "api.example.test,other.example.test"]) {
+      await request(app).get(MCP_PATH).set("Host", host).expect(403);
+    }
+    await request(app).get(MCP_PATH).set("Host", "api.example.test:443")
+      .set("Origin", "https://untrusted.example.test").expect(403);
+  } finally {
+    for (const key of keys) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  }
+});

@@ -17,6 +17,7 @@ import {
   ModalBody,
   ModalCloseButton,
   useDisclosure,
+  useClipboard,
   Divider,
   Flex,
   Circle,
@@ -258,6 +259,7 @@ function Account({
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [qrData, setQrData] = useState('');
   const [secret, setSecret] = useState('');
+  const { hasCopied: copiedSecret, onCopy: copySecret } = useClipboard(secret);
   const [_otpAuth, setOtpAuth] = useState('');
   const [twoFaCode, setTwoFaCode] = useState('');
   const [disablePwd, setDisablePwd] = useState('');
@@ -867,9 +869,27 @@ function Account({
                   )}
                 </Box>
                 {secret && (
-                  <Text fontSize='xs' color={bodySecondary} textAlign='center'>
-                    Secret: {secret}
-                  </Text>
+                  <Box as='details'>
+                    <Box as='summary' cursor='pointer' fontWeight='medium'>
+                      Enter a setup key manually
+                    </Box>
+                    <Text
+                      fontSize='sm'
+                      color={bodySecondary}
+                      mt={2}
+                      wordBreak='break-all'
+                    >
+                      {secret}
+                    </Text>
+                    <Button
+                      size='sm'
+                      variant='outline'
+                      mt={2}
+                      onClick={copySecret}
+                    >
+                      {copiedSecret ? 'Copied' : 'Copy setup key'}
+                    </Button>
+                  </Box>
                 )}
                 <FormControl>
                   <FormLabel {...formLabelProps}>Authenticator code</FormLabel>
@@ -877,6 +897,7 @@ function Account({
                     type='text'
                     inputMode='numeric'
                     pattern='[0-9]*'
+                    autoComplete='one-time-code'
                     placeholder='Enter 6-digit code'
                     value={twoFaCode}
                     onChange={e => setTwoFaCode(e.target.value)}

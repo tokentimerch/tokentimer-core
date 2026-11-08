@@ -9,6 +9,8 @@ function run(t,mode){
 $ErrorActionPreference='Stop'
 . $env:CERTOPS_ARM_HELPER
 $global:certopsEpoch=0
+$global:certopsPosts=0
+$global:certopsPolls=0
 $global:certopsRequests=[Collections.Generic.List[string]]::new()
 $subscription='11111111-1111-4111-8111-111111111111'
 $base="https://management.azure.com/subscriptions/$subscription/providers/Microsoft.Compute/locations/swedencentral/operations"
@@ -31,7 +33,13 @@ function Invoke-WebRequest {
  if($global:certopsEpoch -ne $global:certopsRequests.Count+1){throw 'Expired federation assertion was reused'}
  $global:certopsRequests.Add($Method)
  if($Method -eq 'POST'){
+   $global:certopsPosts++
    if($env:CERTOPS_ARM_MODE -eq 'submission-401'){throw [QualificationHttpFailure]::new(401)}
+   if($env:CERTOPS_ARM_MODE -eq 'submission-500'){throw [QualificationHttpFailure]::new(500)}
+   if($env:CERTOPS_ARM_MODE -eq 'submission-timeout'){throw 'fixture-private-value'}
+   if($env:CERTOPS_ARM_MODE -eq 'other-action-409'){throw [QualificationHttpFailure]::new(409)}
+   if($env:CERTOPS_ARM_MODE -eq 'submission-busy' -and $global:certopsPosts -le 2){throw [QualificationHttpFailure]::new(409)}
+   if($env:CERTOPS_ARM_MODE -eq 'submission-busy-exhausted'){throw [QualificationHttpFailure]::new(409)}
    $bodyObject=$Body|ConvertFrom-Json
    if($bodyObject.parameters.Count -ne 0){throw 'Windows parameters used command-line transport'}
    $envelopeMatch=[regex]::Match($bodyObject.script[0],"\`$certopsGuestEnvelope='([A-Za-z0-9+/=]+)'")
@@ -42,6 +50,8 @@ function Invoke-WebRequest {
    $poll=if($env:CERTOPS_ARM_MODE -eq 'foreign'){'https://attacker.invalid/steal'}else{"$base/progress?api-version=2024-07-01"}
    return [pscustomobject]@{StatusCode=202;Headers=@{'Azure-AsyncOperation'=$poll;Location="$base/result?api-version=2024-07-01"};Content=''}
  }
+ $global:certopsPolls++
+ if($env:CERTOPS_ARM_MODE -eq 'poll-409'){throw [QualificationHttpFailure]::new(409)}
  if($env:CERTOPS_ARM_MODE -eq 'auth-retry'){
    if($global:certopsRequests.Count -eq 2){throw 'fixture-private-value'}
    if($global:certopsRequests.Count -eq 3){throw [QualificationHttpFailure]::new(401)}
@@ -50,24 +60,33 @@ function Invoke-WebRequest {
  if($env:CERTOPS_ARM_MODE -eq 'failed'){
    return [pscustomobject]@{StatusCode=200;Headers=@{};Content='{"status":"Failed","error":{"message":"fixture-private-value"}}'}
  }
- if($global:certopsRequests.Count -eq 2){return [pscustomobject]@{StatusCode=200;Headers=@{};Content='{"status":"InProgress"}'}}
- if($global:certopsRequests.Count -eq 3){return [pscustomobject]@{StatusCode=200;Headers=@{};Content='{"status":"Succeeded"}'}}
+ if($global:certopsPolls -eq 1){return [pscustomobject]@{StatusCode=200;Headers=@{};Content='{"status":"InProgress"}'}}
+ if($global:certopsPolls -eq 2){return [pscustomobject]@{StatusCode=200;Headers=@{};Content='{"status":"Succeeded"}'}}
  [pscustomobject]@{StatusCode=200;Headers=@{};Content='{"value":[{"message":"CERTOPS_STAGE=probe-passed"}]}'}
 }
 $failed=$false
 try {
- $result=Invoke-CertOpsVmRunCommand -SubscriptionId $subscription -ResourceGroup tt-certops-123-1 -Machine domain-ca -Script 'Write-Output fixture' -Parameters @('Secret=fixture-private-value','journal_phase=none') -RefreshAuthentication {$global:certopsEpoch++}
+ if($env:CERTOPS_ARM_MODE -eq 'other-action-409'){
+   $result=Invoke-CertOpsArmOperation -SubscriptionId $subscription -Uri "$base/restart?api-version=2024-07-01" -Body '{}' -RefreshAuthentication {$global:certopsEpoch++}
+ }else{
+   $result=Invoke-CertOpsVmRunCommand -SubscriptionId $subscription -ResourceGroup tt-certops-123-1 -Machine domain-ca -Script 'Write-Output fixture' -Parameters @('Secret=fixture-private-value','journal_phase=none') -RefreshAuthentication {$global:certopsEpoch++}
+ }
 }catch{
  $failed=$true
  if($_.Exception.Message.Contains('fixture-private-value')){throw 'Private error escaped'}
+ if($env:CERTOPS_ARM_MODE -eq 'submission-busy-exhausted'){
+   if($_.Exception.Data.Contains('CertOpsArmHttpStatus') -or $_.Exception.InnerException.Data['CertOpsArmHttpStatus'] -ne 409){throw 'Busy retry exhaustion must remain terminal while preserving its cause'}
+ }
 }
-if($env:CERTOPS_ARM_MODE -in 'success','auth-retry'){
+if($env:CERTOPS_ARM_MODE -in 'success','auth-retry','submission-busy'){
  if($failed -or $result.value[0].message -ne 'CERTOPS_STAGE=probe-passed'){throw 'Fresh polling did not return guest receipt'}
- if(($global:certopsRequests -join ',') -ne 'POST,GET,GET,GET'){throw 'Unexpected submit/poll sequence'}
- if($global:certopsEpoch -ne 4){throw 'Credential was not refreshed at each boundary'}
+ $expected=if($env:CERTOPS_ARM_MODE -eq 'submission-busy'){'POST,POST,POST,GET,GET,GET'}else{'POST,GET,GET,GET'}
+ if(($global:certopsRequests -join ',') -ne $expected){throw 'Unexpected submit/poll sequence'}
+ if($global:certopsEpoch -ne $global:certopsRequests.Count){throw 'Credential was not refreshed at each boundary'}
 }else{
  if(-not $failed){throw 'Unsafe operation passed'}
- if(@($global:certopsRequests|Where-Object {$_ -eq 'POST'}).Count -ne 1){throw 'Guest action was replayed'}
+ $expectedPosts=if($env:CERTOPS_ARM_MODE -eq 'submission-busy-exhausted'){13}else{1}
+ if(@($global:certopsRequests|Where-Object {$_ -eq 'POST'}).Count -ne $expectedPosts){throw 'Unexpected guest submission count'}
  if($env:CERTOPS_ARM_MODE -eq 'foreign' -and $global:certopsRequests.Count -ne 1){throw 'Credential sent to foreign poll host'}
 }
 Write-Output 'ARM_BOUNDARY_PROBE_PASSED'
@@ -81,3 +100,9 @@ test("foreign ARM polling URLs are rejected before sending credentials",t=>run(t
 test("malformed ARM responses cannot print private content or replay the action",t=>run(t,"malformed"));
 test("read-only timeout/auth retries reacquire credentials without resubmitting",t=>run(t,"auth-retry"));
 test("authentication rejection never replays a guest submission",t=>run(t,"submission-401"));
+test("explicit Run Command busy rejections retry until the first accepted submission",t=>run(t,"submission-busy"));
+test("persistent busy rejections stop at the bounded limit",t=>run(t,"submission-busy-exhausted"));
+test("a conflict during polling never resubmits an accepted action",t=>run(t,"poll-409"));
+test("server failure never replays a guest submission",t=>run(t,"submission-500"));
+test("uncertain network failure never replays a guest submission",t=>run(t,"submission-timeout"));
+test("a different Azure action is not retried on conflict",t=>run(t,"other-action-409"));

@@ -169,6 +169,16 @@ function registerBackgroundStoreCertificate(registry, {domain, certificateId, en
   registry.push(receipt);
   return receipt;
 }
+function recordBackgroundReceiptOwnership(receipt, certificateId, {enrollmentId, thumbprint}) {
+  assert.match(certificateId,uuid);
+  assert.match(enrollmentId,uuid);
+  if (receipt.certificateId !== certificateId) return;
+  if (!receipt.enrollmentIds.includes(enrollmentId)) receipt.enrollmentIds.push(enrollmentId);
+  if (thumbprint !== undefined) {
+    assert.match(thumbprint,/^[A-F0-9]{40}$/);
+    if (!receipt.thumbprints.includes(thumbprint)) receipt.thumbprints.push(thumbprint);
+  }
+}
 // Later existing scenarios may accept another leaf for the same primary identity.
 // Adopt only IDs already recorded by the parent and exact durable My receipts.
 function refreshBackgroundEnrollmentOwnership(receipts, enrollmentIds, readRecord, {workspaceId,rows,readJournal}) {
@@ -695,6 +705,7 @@ module.exports = {
   refreshBackgroundEnrollmentOwnership,
   collectOtherOwnedThumbprints,
   registerBackgroundStoreCertificate,
+  recordBackgroundReceiptOwnership,
   cleanupBackground: context => cleanupRegisteredStore(context,"background"),
   captureServiceDrain,
   assertDrainAbsent,
