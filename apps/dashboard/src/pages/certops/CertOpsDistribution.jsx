@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Clock3, Search, ShieldAlert } from 'lucide-react';
 import {
   Link as RouterLink,
   useLocation,
@@ -48,6 +49,7 @@ import {
   DashboardState,
 } from '../../components/DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
+import CertOpsBadge from '../../components/certops/CertOpsBadge.jsx';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { onboardingPath } from '../../utils/onboardingPath.js';
 import {
@@ -1759,27 +1761,123 @@ function Management({
                   description='Coverage is partial. A certificate in a machine store does not establish that every service has been discovered.'
                 />
                 {!data.discoveries.length ? (
-                  <Text>
-                    No matching service relationships observed. Configured
-                    consumers remain visible above; unknown coverage is not
-                    healthy coverage.
-                  </Text>
-                ) : (
-                  data.discoveries.map(service => (
-                    <Text key={service.id} fontSize='sm'>
-                      {service.source_kind}: {service.service_identity} ·{' '}
-                      {label(service.confidence)} · last observed{' '}
-                      {formatDateTime(service.last_observed_at)} · read-only
-                      configuration observation; served certificate unverified
+                  <Box
+                    bg={dashboard.bg.nested}
+                    border='1px solid'
+                    borderColor={dashboard.border.subtle}
+                    borderRadius='lg'
+                    p={4}
+                  >
+                    <Text fontWeight='semibold' fontSize='sm'>
+                      No service relationships observed
                     </Text>
-                  ))
+                    <Text mt={1} fontSize='sm' color={dashboard.text.secondary}>
+                      Configured consumers remain available in Destinations;
+                      unknown coverage is not healthy coverage.
+                    </Text>
+                  </Box>
+                ) : (
+                  <Stack spacing={3}>
+                    {data.discoveries.map(service => (
+                      <Box
+                        as='article'
+                        key={service.id}
+                        bg={dashboard.bg.nested}
+                        border='1px solid'
+                        borderColor={dashboard.border.subtle}
+                        borderRadius='lg'
+                        p={4}
+                      >
+                        <HStack
+                          align='start'
+                          justify='space-between'
+                          flexWrap='wrap'
+                          spacing={2}
+                        >
+                          <HStack align='start' minW={0} spacing={3}>
+                            <Box
+                              p={2}
+                              borderRadius='md'
+                              bg={dashboard.accent.interactiveSurface}
+                              color={dashboard.accent.interactiveForeground}
+                              flexShrink={0}
+                            >
+                              <Search size={16} aria-hidden='true' />
+                            </Box>
+                            <Box minW={0}>
+                              <Text
+                                fontSize='xs'
+                                fontWeight='bold'
+                                color={dashboard.text.muted}
+                                textTransform='uppercase'
+                                letterSpacing='wide'
+                              >
+                                {label(service.source_kind)}
+                              </Text>
+                              <Text
+                                fontWeight='semibold'
+                                overflowWrap='anywhere'
+                              >
+                                {service.service_identity}
+                              </Text>
+                            </Box>
+                          </HStack>
+                          <CertOpsBadge
+                            colorScheme={
+                              service.confidence === 'stale' ? 'orange' : 'gray'
+                            }
+                          >
+                            {label(service.confidence)}
+                          </CertOpsBadge>
+                        </HStack>
+                        <HStack
+                          mt={3}
+                          align='start'
+                          spacing={2}
+                          color={dashboard.text.secondary}
+                        >
+                          <Box flexShrink={0} mt={0.5}>
+                            <Clock3 size={14} aria-hidden='true' />
+                          </Box>
+                          <Text fontSize='sm'>
+                            Last observed{' '}
+                            {formatDateTime(service.last_observed_at)}
+                          </Text>
+                        </HStack>
+                        <HStack
+                          mt={1}
+                          align='start'
+                          spacing={2}
+                          color={dashboard.text.secondary}
+                        >
+                          <Box flexShrink={0} mt={0.5}>
+                            <ShieldAlert size={14} aria-hidden='true' />
+                          </Box>
+                          <Text fontSize='sm'>
+                            Read-only configuration observation; served
+                            certificate unverified.
+                          </Text>
+                        </HStack>
+                      </Box>
+                    ))}
+                  </Stack>
                 )}
-                <Text mt={2} fontSize='sm'>
-                  Linux file installation and allowlisted reload are supported.
-                  IIS rebind is implemented and requires a production-qualified
-                  agent. SQL Server, RDP and generic Windows service
-                  restart/refresh remain unsupported.
-                </Text>
+                <Box
+                  mt={4}
+                  borderTop='1px solid'
+                  borderColor={dashboard.border.subtle}
+                  pt={4}
+                >
+                  <Text fontWeight='semibold' fontSize='sm'>
+                    Supported targets
+                  </Text>
+                  <Text mt={1} fontSize='sm' color={dashboard.text.secondary}>
+                    Linux file installation and allowlisted reload are
+                    supported. IIS rebind is implemented and requires a
+                    production-qualified agent. SQL Server, RDP and generic
+                    Windows service restart/refresh remain unsupported.
+                  </Text>
+                </Box>
               </DashboardPanel>
             </Stack>
           </TabPanel>

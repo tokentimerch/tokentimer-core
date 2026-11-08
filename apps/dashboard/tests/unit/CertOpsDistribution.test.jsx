@@ -90,6 +90,27 @@ describe('Distribution Management',()=>{
     expect(screen.queryByRole('button',{name:'Add consumer'})).not.toBeInTheDocument();expect(screen.queryByRole('button',{name:'Request rollout'})).not.toBeInTheDocument();
     await openView('Issues');expect(screen.getByText(/A certificate in a machine store does not establish/)).toBeInTheDocument();
   });
+  it('presents each discovery as an observation with its confidence and served-certificate caveat',async()=>{
+    data.discoveries=[
+      {id:'one',source_kind:'custom_service',service_identity:'edge/frontend',confidence:'stale',last_observed_at:'2026-01-02T00:00:00Z'},
+      {id:'two',source_kind:'other_source',service_identity:'db/listener',confidence:'unknown',last_observed_at:null},
+    ];
+    page();await openView('Issues');
+    const first=within(screen.getByText('edge/frontend').closest('article'));
+    expect(first.getByText('custom service')).toBeInTheDocument();
+    expect(first.getByText('stale')).toBeInTheDocument();
+    expect(first.getByText(/Last observed/)).toBeInTheDocument();
+    expect(first.getByText(/served certificate unverified/)).toBeInTheDocument();
+    const second=within(screen.getByText('db/listener').closest('article'));
+    expect(second.getByText('unknown')).toBeInTheDocument();
+    expect(second.getByText(/served certificate unverified/)).toBeInTheDocument();
+  });
+  it('keeps the empty discovery state and coverage limitation explicit',async()=>{
+    page();await openView('Issues');
+    expect(screen.getByText('No service relationships observed')).toBeInTheDocument();
+    expect(screen.getByText(/unknown coverage is not healthy coverage/)).toBeInTheDocument();
+    expect(screen.getByText(/IIS rebind is implemented and requires a production-qualified agent/)).toBeInTheDocument();
+  });
   it('selects an exact retained version and requests approval only after confirmation',async()=>{
     page();const select=await screen.findByLabelText('Exact published version');fireEvent.change(select,{target:{value:retained}});
     fireEvent.click(screen.getByRole('button',{name:'Request rollback approval'}));expect(api.rollout).not.toHaveBeenCalled();
