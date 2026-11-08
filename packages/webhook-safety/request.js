@@ -494,6 +494,7 @@ function sendProxiedRequest({
 
       const req = proxyLib.request(
         {
+          agent: false,
           protocol: proxyUrl.protocol,
           hostname: proxyUrl.hostname,
           port: proxyPort,
@@ -519,10 +520,12 @@ function sendProxiedRequest({
   return new Promise((resolve, reject) => {
     let settled = false;
     let tlsSocket = null;
+    let tunnelAgent = null;
     const finish = (kind, value) => {
       if (settled) return;
       settled = true;
       try {
+        if (tunnelAgent) tunnelAgent.destroy();
         if (tlsSocket) tlsSocket.destroy();
       } catch (_) {
         /* ignore */
@@ -532,6 +535,7 @@ function sendProxiedRequest({
     };
 
     const connectReq = proxyLib.request({
+      agent: false,
       protocol: proxyUrl.protocol,
       hostname: proxyUrl.hostname,
       port: proxyPort,
@@ -568,8 +572,11 @@ function sendProxiedRequest({
         finish("reject", timeoutError(timeoutMs)),
       );
       tlsSocket.once("secureConnect", () => {
+        tunnelAgent = new http.Agent({ keepAlive: false });
+        tunnelAgent.createConnection = () => tlsSocket;
         const req = http.request(
           {
+            agent: tunnelAgent,
             hostname: url.hostname,
             port,
             method: "POST",
@@ -581,9 +588,6 @@ function sendProxiedRequest({
               ...extraHeaders,
             },
             timeout: timeoutMs,
-            createConnection: (_opts, callback) => {
-              callback(null, tlsSocket);
-            },
           },
           (res2) => collectResponse(req, res2, finish),
         );
