@@ -41,18 +41,17 @@ function discordColorForSeverity(sev) {
   }
 }
 
-function teamsThemeForSeverity(sev) {
-  // MessageCard supports themeColor keywords or hex strings
+function teamsSeverityEmoji(sev) {
   switch (normalizeSeverity(sev)) {
     case "critical":
-      return "FF0000"; // Bright red
+      return "🚨";
     case "error":
-      return "FF6B35"; // Orange-red
+      return "⚠️";
     case "warning":
-      return "FFA500"; // Orange
+      return "🟡";
     case "info":
     default:
-      return "0078D4"; // Microsoft blue
+      return "ℹ️";
   }
 }
 
@@ -71,35 +70,7 @@ function teamsColorForSeverity(sev) {
   }
 }
 
-function teamsSeverityEmoji(sev) {
-  switch (normalizeSeverity(sev)) {
-    case "critical":
-      return "🚨";
-    case "error":
-      return "⚠️";
-    case "warning":
-      return "🟡";
-    case "info":
-    default:
-      return "ℹ️";
-  }
-}
-
-function isLegacyTeamsWebhook(url) {
-  try {
-    const hostname = new URL(url).hostname.toLowerCase();
-    return (
-      hostname === "outlook.office.com" ||
-      hostname === "webhook.office.com" ||
-      hostname.endsWith(".office.com") ||
-      hostname.endsWith(".office365.com")
-    );
-  } catch {
-    return false;
-  }
-}
-
-function buildAdaptiveCard({ title, subtitle, statusText, facts, actions, color = "Default" }) {
+function buildAdaptiveCard({ title, subtitle, statusText, facts, actions, color }) {
   const body = [
     {
       type: "TextBlock",
@@ -107,6 +78,7 @@ function buildAdaptiveCard({ title, subtitle, statusText, facts, actions, color 
       weight: "Bolder",
       size: "Large",
       wrap: true,
+      ...(color ? { color } : {}),
     },
   ];
 
