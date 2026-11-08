@@ -17,7 +17,6 @@ import {
   pushMetrics,
 } from "./metrics.js";
 import { computeDaysLeft } from "./shared/thresholds.js";
-import { resolveWebhookProviderKind } from "./shared/webhookProviderKind.js";
 import { confirmDigestConsent, destinationAllowed, verificationMode } from "./shared/recipientDeliveryGate.js";
 import {
   buildWeeklyDigestWhatsAppTemplateVariables,
@@ -689,7 +688,7 @@ function indexWebhooksByUrl(webhookUrls) {
   return map;
 }
 
-async function deliverRecipientDigest({
+export async function deliverRecipientDigest({
   row,
   ws,
   weekStartDate,
@@ -697,6 +696,7 @@ async function deliverRecipientDigest({
   phoneNameByKey,
   webhookByUrl,
   weeklyDigestTemplateSid,
+  postWebhook = postJson,
 }) {
   const tokens = row.tokens;
   if (row.channel === "email") {
@@ -756,9 +756,7 @@ async function deliverRecipientDigest({
       url: row.recipientKey,
       kind: "generic",
     };
-    const configuredKind = (wh.kind || "generic").toLowerCase();
-    const kind =
-      resolveWebhookProviderKind(wh) === "teams" ? "teams" : configuredKind;
+    const kind = (wh.kind || "generic").toLowerCase();
     const tokensList = webhookTokensList(tokens);
     let payload;
     if (kind === "slack") {
@@ -792,7 +790,7 @@ async function deliverRecipientDigest({
       });
     }
 
-    const res = await postJson(wh.url || row.recipientKey, payload, kind);
+    const res = await postWebhook(wh.url || row.recipientKey, payload, kind);
     if (res.success) {
       try {
         logger.info(
