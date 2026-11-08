@@ -1,0 +1,91 @@
+"use strict";
+
+const assert = require("node:assert/strict");
+const { randomUUID } = require("node:crypto");
+const { Client, Pool } = require("pg");
+const express = require("express");
+const request = require("supertest");
+const { migrations } = require("../../../apps/api/migrations/migrate");
+let generateAgentCredential, validateAgentCredential, claimJobs;
+
+
+const connection = { host: process.env.DB_HOST || "localhost", port: Number(process.env.DB_PORT || 5432), user: process.env.DB_USER || "tokentimer", password: process.env.DB_PASSWORD || "password" };
+const database = `agent_retirement_http_${process.pid}_${Date.now()}`;
+const adminDatabase = process.env.DB_NAME || "tokentimer";
+
+describe("HTTP retirement concurrent with claim on PostgreSQL", function () {
+  this.timeout(120000);
+  let db, apiPool, app, workspaceId, userId;
+  before(async () => {
+    const admin = new Client({ ...connection, database: adminDatabase });
+    await admin.connect(); try { await admin.query(`CREATE DATABASE ${database}`); } finally { await admin.end(); }
+    db = new Pool({ ...connection, database });
+    for (const migration of migrations) await db.query(migration.sql);
+    process.env.DB_NAME = database;
+    process.env.DB_PASSWORD = connection.password;
+    process.env.CERTOPS_ENABLED = "true";
+    ({ generateAgentCredential, validateAgentCredential } = require("../../../apps/api/services/certops/agentCredentials"));
+    ({ claimJobs } = require("../../../apps/api/services/certops/agentDispatch"));
+    const router = require("../../../apps/api/routes/certops");
+    apiPool = require("../../../apps/api/db/database").pool;
+    const email = `http-retire-${randomUUID()}@example.test`;
+    userId = (await db.query("INSERT INTO users(email,email_original,display_name,password_hash,auth_method) VALUES ($1,$2,'Retire HTTP','x','local') RETURNING id", [email, email])).rows[0].id;
+    workspaceId = randomUUID();
+    await db.query("INSERT INTO workspaces (id,name,created_by,plan) VALUES ($1,'HTTP race',$2,'oss')", [workspaceId, userId]);
+    app = express(); app.use(express.json());
+    app.use((req, _res, next) => { req.workspace = { id: workspaceId }; req.user = { id: userId }; req.authz = { workspaceRole: "workspace_manager" }; next(); });
+    app.use(router);
+  });
+  after(async () => {
+    if (apiPool) await apiPool.end();
+    if (db) await db.end();
+    const admin = new Client({ ...connection, database: adminDatabase });
+    await admin.connect(); try { await admin.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`); } finally { await admin.end(); }
+  });
+  it("serializes a waiting HTTP retirement before a real claim", async () => {
+    const credential = generateAgentCredential();
+    const agentId = (await db.query(`INSERT INTO certops_agents (workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)
+      VALUES ($1,$2,'0.18.2','1.0.0',$3,$4) RETURNING id`, [workspaceId, `agent-${randomUUID()}`, credential.credentialPrefix, credential.credentialHash])).rows[0].id;
+    const jobId = (await db.query(`INSERT INTO certificate_jobs (workspace_id,operation,status,requested_by_user_id,executor_kind,mode)
+      VALUES ($1,'issue','pending',$2,'agent','real') RETURNING id`, [workspaceId, userId])).rows[0].id;
+    const agent = (await validateAgentCredential({ client: db, rawCredential: credential.plaintextCredential })).agent;
+    const gate = await db.connect();
+    let retirement, claim;
+    try {
+      await gate.query("BEGIN");
+      await gate.query("SELECT id FROM certops_agents WHERE id=$1 FOR UPDATE", [agentId]);
+      retirement = request(app).post(`/api/v1/workspaces/${workspaceId}/certops/agents/${agentId}/retire`).send({}).then(result => result);
+      let httpWaiting = false;
+      for (let i = 0; i < 100; i++) {
+        const waiting = await db.query("SELECT 1 FROM pg_stat_activity WHERE datname=$1 AND $2=ANY(pg_blocking_pids(pid))", [database, gate.processID]);
+        if (waiting.rowCount) { httpWaiting = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      assert.equal(httpWaiting, true, "retirement route did not wait for the locked row");
+      let resolveClaimClient;
+      const claimClientReady = new Promise(resolve => { resolveClaimClient = resolve; });
+      const claimPool = { connect: async () => { const client = await db.connect(); resolveClaimClient(client); return client; } };
+      claim = claimJobs({ dbPool: claimPool, agent, body: { supportedActions: ["issue"] } }).then(value => ({ value }), error => ({ error }));
+      const claimClient = await claimClientReady;
+      let claimWaiting = false;
+      for (let i = 0; i < 100; i++) {
+        const waiting = await db.query("SELECT wait_event_type = 'Lock' AND cardinality(pg_blocking_pids(pid)) > 0 AS blocked FROM pg_stat_activity WHERE pid=$1", [claimClient.processID]);
+        if (waiting.rows[0].blocked) { claimWaiting = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      assert.equal(claimWaiting, true, "claim did not wait for the locked row");
+      await gate.query("COMMIT");
+      const result = await retirement;
+      assert.equal(result.status, 200, JSON.stringify(result.body));
+      assert.equal((await claim).error?.code, "CERTOPS_AGENT_RETIRED");
+      const state = await db.query("SELECT a.status AS agent_status,j.status AS job_status FROM certops_agents a JOIN certificate_jobs j ON j.id=$2 WHERE a.id=$1", [agentId, jobId]);
+      assert.equal(state.rows[0].agent_status, "retired");
+      assert.equal(state.rows[0].job_status, "pending");
+    } finally {
+      try { await gate.query("ROLLBACK"); } catch (_) {}
+      gate.release();
+      if (retirement) await retirement;
+      if (claim) await claim;
+    }
+  });
+});
