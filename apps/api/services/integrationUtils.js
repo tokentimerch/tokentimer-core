@@ -5,6 +5,8 @@
  * Used by vault, gitlab, github, aws, azure, and gcp integrations
  */
 
+const GITHUB_API_VERSION = "2022-11-28";
+
 /**
  * Try to parse a date value from various formats
  * @param {any} value - Date value to parse
@@ -206,6 +208,7 @@ module.exports = {
   discoverExpiryFromObject,
   formatDateYmd,
   CREDENTIALED_AXIOS_REDIRECTS,
+  GITHUB_API_VERSION,
   joinIntegrationApiUrl,
   isHttpRedirectStatus,
   assertSameOriginFollowUp,

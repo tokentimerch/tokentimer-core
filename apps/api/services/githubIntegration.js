@@ -3,6 +3,7 @@
 const axios = require("axios");
 const {
   CREDENTIALED_AXIOS_REDIRECTS,
+  GITHUB_API_VERSION,
   joinIntegrationApiUrl,
 } = require("./integrationUtils");
 const { logger } = require("../utils/logger");
@@ -36,7 +37,8 @@ async function githubRequest({
   );
   const headers = {
     Authorization: `token ${token}`,
-    Accept: "application/vnd.github.v3+json",
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": GITHUB_API_VERSION,
     "User-Agent": "TokenTimer-Integration",
   };
 

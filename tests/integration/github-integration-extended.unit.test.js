@@ -240,4 +240,36 @@ describe("GitHub integration host and owner attribution", () => {
     expect(seen).to.include("/api/v3/user");
     expect(seen).to.include("/api/v3/user/keys");
   });
+
+  it("sets X-GitHub-Api-Version and recommended Accept header on all requests", async () => {
+    const seenHeaders = [];
+    const github = requireWithMocks(resolveGithubModule(), {
+      axios: async (config) => {
+        seenHeaders.push(config.headers);
+        const pathname = githubApiPathname(config.url);
+        if (pathname === "/user") {
+          return { data: { id: 1, login: "octo" } };
+        }
+        if (pathname === "/user/keys") {
+          return { data: [{ id: 501, title: "laptop" }] };
+        }
+        return { data: [] };
+      },
+    });
+    await github.scanGitHub({
+      baseUrl: "https://api.github.com",
+      token: "token",
+      include: {
+        tokens: false,
+        sshKeys: true,
+        deployKeys: false,
+        secrets: false,
+      },
+    });
+    expect(seenHeaders.length).to.be.greaterThan(0);
+    for (const headers of seenHeaders) {
+      expect(headers["X-GitHub-Api-Version"]).to.equal("2022-11-28");
+      expect(headers.Accept).to.equal("application/vnd.github+json");
+    }
+  });
 });
