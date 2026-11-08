@@ -200,6 +200,14 @@ After receiving a report, TokenTimer will take the following steps:
 
 <br>
 
+# Third-Party API Integration Tracking
+
+TokenTimer integrates with numerous third-party APIs and services. The [`integrations.watch.yaml`](integrations.watch.yaml) manifest provides a machine-readable inventory of all integrations, including API endpoints, version headers, SDK dependencies, webhook formats, and links to official changelogs and deprecation notices.
+
+This manifest enables external API-change watchers to monitor breaking changes, deprecations, and version compatibility requirements across all TokenTimer integrations. Run `node scripts/generate-integrations-manifest.js` to validate the manifest against the codebase.
+
+<br>
+
 # License
 
 This project is licensed under the [GNU Affero General Public License v3.0 (AGPLv3)](LICENSE). TokenTimer Core is open source: you may self-host, modify, and integrate it freely. If you run a modified version as a network service, you must make the corresponding source available to its users under the same license.

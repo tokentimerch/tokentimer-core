@@ -1,0 +1,51 @@
+name: Check Integrations Manifest
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'integrations.watch.yaml'
+      - 'scripts/generate-integrations-manifest.js'
+      - 'apps/**/package.json'
+      - 'packages/**/package.json'
+      - 'apps/api/services/**Integration.js'
+      - 'apps/worker/src/notify/**'
+      - 'apps/worker/src/pagerduty-incidents.js'
+      - 'apps/k8s-controller/src/cert-manager-*.js'
+      - 'packages/agent/src/material-store/**'
+  pull_request:
+    paths:
+      - 'integrations.watch.yaml'
+      - 'scripts/generate-integrations-manifest.js'
+      - 'apps/**/package.json'
+      - 'packages/**/package.json'
+      - 'apps/api/services/**Integration.js'
+      - 'apps/worker/src/notify/**'
+      - 'apps/worker/src/pagerduty-incidents.js'
+      - 'apps/k8s-controller/src/cert-manager-*.js'
+      - 'packages/agent/src/material-store/**'
+
+jobs:
+  validate-manifest:
+    name: Validate integrations.watch.yaml
+    runs-on: ubuntu-24.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          
+      - name: Validate integrations manifest
+        run: |
+          node scripts/generate-integrations-manifest.js --check
+        
+      - name: Report validation result
+        if: failure()
+        run: |
+          echo "::error::integrations.watch.yaml is out of date with the codebase"
+          echo "Run 'node scripts/generate-integrations-manifest.js' locally to see details"
+          exit 1

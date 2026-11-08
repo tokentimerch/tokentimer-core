@@ -1,0 +1,875 @@
+# TokenTimer Third-Party Integration API Change Watch Manifest
+#
+# This manifest lists every third-party integration TokenTimer uses and the
+# information an external API-change watcher needs to track breaking changes,
+# deprecations, and compatibility requirements.
+#
+# Schema version: 1.0.0
+# Last updated: 2026-11-08
+
+schema_version: 1.0.0
+
+integrations:
+  windows-ad-cs-iis:
+    id: windows-ad-cs-iis
+    name: Windows AD CS & IIS
+    description: Certificate enrollment via Windows Server Active Directory Certificate Services (AD CS) and deployment to IIS
+    code_locations:
+      - path: packages/agent/src/issuers/adcs-enrollment.js
+        functions: [enrollCertificate, submitCsr, retrieveIssuedCertificate]
+      - path: packages/agent/src/issuers/adcs-enrollment-journal.js
+        functions: [writeEnrollmentJournal, readEnrollmentJournal]
+      - path: packages/agent/src/windows-iis/index.js
+        functions: [bindCertificateToSite, listIisBindings]
+      - path: packages/agent/src/windows-cert-store/index.js
+        functions: [installCertificate, enumerateCertificates]
+      - path: packages/agent/reference/adcs-cmc/cmccore/decode.go
+        functions: [DecodeCMCResponse]
+      - path: packages/agent/reference/adcs-chain/chaincore/chain_windows.go
+        functions: [BuildCertChain]
+    base_urls:
+      - http://<ca-hostname>/certsrv/
+    endpoints:
+      - pattern: /certsrv/certfnsh.asp
+        method: POST
+        description: Certificate issuance request
+      - pattern: /certsrv/certckpn.asp
+        method: POST
+        description: Check pending certificate
+    api_version: null
+    version_headers: []
+    auth_method: Windows Integrated Authentication (Kerberos/NTLM)
+    sdks:
+      - name: Native Win32 CryptoAPI
+        version: System-provided
+        language: C/C++ (via Node.js native bindings)
+      - name: Go crypto/x509
+        version: go1.23.4
+        language: Go
+    webhook_formats:
+      sent: []
+      received: []
+    notes: |
+      Protocol uses Microsoft's proprietary Windows Certificate Enrollment (MS-WCCE) and
+      CMC (Certificate Management over CMS). No formal REST API or versioning.
+      Changes tracked via Windows Server release notes and Microsoft Learn docs.
+      Agent uses native Windows CryptoAPI via C# helper and custom Go CMC parser.
+    sources:
+      - url: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-wcce/446a0fca-7f27-4436-965d-191635518466
+        type: api-policy
+        description: MS-WCCE Protocol Specification
+      - url: https://learn.microsoft.com/en-us/iis/get-started/whats-new-in-iis-10/new-features-introduced-in-iis-10
+        type: changelog
+        description: IIS 10.0 New Features
+      - url: https://learn.microsoft.com/en-us/windows/release-health/windows-message-center
+        type: deprecation
+        description: Windows Message Center
+      - url: https://learn.microsoft.com/en-us/windows-server/get-started/removed-deprecated-features-windows-server
+        type: deprecation
+        description: Windows Server Deprecation Notices
+      - url: https://learn.microsoft.com/en-us/windows-server/identity/ad-cs/post-quantum-cryptography-overview
+        type: changelog
+        description: AD CS Post-Quantum Cryptography Updates
+
+  linux-web-servers:
+    id: linux-web-servers
+    name: Linux Web Servers (Apache/nginx) & ACME/Let's Encrypt
+    description: Certificate deployment to Apache/nginx and ACME protocol (Let's Encrypt, certbot) integration
+    code_locations:
+      - path: packages/agent/src/issuers/acme-enrollment.js
+        functions: [createAcmeOrder, finalizeAcmeOrder, downloadCertificate]
+      - path: packages/agent/src/dns/index.js
+        functions: [createDnsChallenge, cleanupDnsChallenge]
+      - path: packages/agent/src/deploy/index.js
+        functions: [deployToApache, deployToNginx]
+    base_urls:
+      - https://acme-v02.api.letsencrypt.org/directory
+      - https://acme-staging-v02.api.letsencrypt.org/directory
+    endpoints:
+      - pattern: /directory
+        method: GET
+        description: ACME directory endpoints
+      - pattern: /acme/new-nonce
+        method: HEAD
+        description: Replay-nonce generation
+      - pattern: /acme/new-order
+        method: POST
+        description: Create new certificate order
+    api_version: RFC 8555 (ACME v2)
+    version_headers: []
+    auth_method: ACME account key (ES256/RS256 JWS)
+    sdks:
+      - name: Node.js built-in crypto
+        version: Node.js 22.x
+        language: JavaScript
+    webhook_formats:
+      sent: []
+      received: []
+    notes: |
+      ACME (Automatic Certificate Management Environment) is standardized via RFC 8555.
+      Let's Encrypt follows the spec but has deployment-specific constraints (rate limits,
+      64-day cert lifetimes starting Feb 2027). Native Node.js crypto for JWS signing.
+    sources:
+      - url: https://letsencrypt.org/docs/
+        type: api-policy
+        description: Let's Encrypt Documentation
+      - url: https://letsencrypt.org/blog/
+        type: blog
+        feed: https://letsencrypt.org/feed.xml
+        description: Let's Encrypt Blog with API announcements
+      - url: https://letsencrypt.org/upcoming-features/
+        type: deprecation
+        description: Upcoming Features and Changes
+      - url: https://letsencrypt.org/2026/10/07/64-day-certs.html
+        type: deprecation
+        description: 64-Day Certificate Lifetimes (Feb 2027)
+      - url: https://github.com/certbot/certbot/releases
+        type: release-feed
+        feed: https://github.com/certbot/certbot/releases.atom
+        description: Certbot Releases
+      - url: https://nginx.org/en/CHANGES
+        type: changelog
+        description: nginx Changelog
+      - url: https://httpd.apache.org/docs/2.4/new_features_2_4.html
+        type: changelog
+        description: Apache HTTP Server 2.4 New Features
+
+  kubernetes-cert-manager:
+    id: kubernetes-cert-manager
+    name: Kubernetes & cert-manager
+    description: Kubernetes cluster integration for observing cert-manager Certificates and provisioning managed certificates
+    code_locations:
+      - path: apps/k8s-controller/src/cert-manager-client.js
+        functions: [listCertificates, watchCertificates, patchCertificate]
+      - path: apps/k8s-controller/src/cert-manager-observer.js
+        functions: [observeCertificateStatus, reportObservation]
+      - path: apps/k8s-controller/src/certificate-provisioner.js
+        functions: [provisionCertificate, syncProvisioningState]
+      - path: apps/k8s-controller/src/tls-crt-secret-reader.js
+        functions: [readTlsCrtFromSecret]
+    base_urls:
+      - https://kubernetes.default.svc
+    endpoints:
+      - pattern: /apis/cert-manager.io/v1/certificates
+        method: GET
+        description: List cert-manager Certificate resources
+      - pattern: /apis/cert-manager.io/v1/namespaces/{namespace}/certificates
+        method: GET
+        description: List Certificates in namespace
+      - pattern: /apis/cert-manager.io/v1/namespaces/{namespace}/certificates/{name}
+        method: PATCH
+        description: Patch Certificate annotations
+      - pattern: /api/v1/namespaces/{namespace}/secrets/{name}
+        method: GET
+        description: Read Secret containing TLS certificate
+    api_version: cert-manager.io/v1
+    version_headers: []
+    auth_method: Kubernetes ServiceAccount bearer token
+    sdks:
+      - name: '@kubernetes/client-node'
+        version: 1.4.0
+        language: JavaScript
+        location: apps/k8s-controller/package.json
+    webhook_formats:
+      sent: []
+      received:
+        - type: cert-manager Certificate watch events
+          format: Kubernetes Watch API (JSON lines)
+    notes: |
+      Controller observes cert-manager.io/v1 Certificate CRDs and reports expiration
+      status to TokenTimer. Uses Kubernetes ServiceAccount mounted credentials.
+      Supports Kubernetes 1.25+ and cert-manager 1.13+.
+    sources:
+      - url: https://kubernetes.io/docs/reference/using-api/deprecation-guide/
+        type: deprecation
+        description: Kubernetes API Deprecation Guide
+      - url: https://kubernetes.io/docs/reference/deprecation-policy/
+        type: api-policy
+        description: Kubernetes Deprecation Policy
+      - url: https://cert-manager.io/docs/releases/
+        type: changelog
+        description: cert-manager Supported Releases
+      - url: https://cert-manager.io/docs/installation/upgrade/
+        type: deprecation
+        description: cert-manager Upgrade Guide
+      - url: https://github.com/cert-manager/cert-manager/releases
+        type: release-feed
+        feed: https://github.com/cert-manager/cert-manager/releases.atom
+        description: cert-manager GitHub Releases
+      - url: https://github.com/kubernetes/client-go/releases
+        type: release-feed
+        feed: https://github.com/kubernetes/client-go/releases.atom
+        description: Kubernetes client-go Releases
+
+  hashicorp-vault:
+    id: hashicorp-vault
+    name: HashiCorp Vault
+    description: Material distribution from Vault KV v2 and OpenBao KV v2 secret stores
+    code_locations:
+      - path: packages/agent/src/material-store/index.js
+        functions: [createVaultStore, fetchMaterial, storeMaterial]
+      - path: apps/api/services/vaultIntegration.js
+        functions: [scanVaultSecrets, listVaultKvSecrets]
+    base_urls:
+      - https://<vault-server>:8200
+    endpoints:
+      - pattern: /v1/{mount}/data/{path}
+        method: GET
+        description: Read KV v2 secret
+      - pattern: /v1/{mount}/data/{path}
+        method: POST
+        description: Write KV v2 secret
+      - pattern: /v1/{mount}/metadata/{path}
+        method: GET
+        description: Read secret metadata
+      - pattern: /v1/sys/internal/ui/mounts
+        method: GET
+        description: List mounts (UI endpoint for discovery)
+    api_version: null
+    version_headers: []
+    auth_method: Vault token (X-Vault-Token header)
+    sdks:
+      - name: Native Node.js https module
+        version: Node.js 22.x
+        language: JavaScript
+    webhook_formats:
+      sent: []
+      received: []
+    notes: |
+      Uses Vault HTTP API directly. Supports Vault KV v2 and OpenBao KV v2 (OpenBao
+      does not support namespace parameter). Agent fetches certificate bundles for
+      deployment; API scans Vault mounts for certificate discovery.
+    sources:
+      - url: https://developer.hashicorp.com/vault/docs/updates/deprecation
+        type: deprecation
+        description: Vault Deprecation Notices
+      - url: https://developer.hashicorp.com/vault/api-docs
+        type: api-policy
+        description: Vault HTTP API Reference
+      - url: https://github.com/hashicorp/vault/releases
+        type: release-feed
+        feed: https://github.com/hashicorp/vault/releases.atom
+        description: Vault GitHub Releases
+      - url: https://developer.hashicorp.com/vault/docs/updates/release-notes
+        type: changelog
+        description: Vault Release Notes
+      - url: https://developer.hashicorp.com/vault/docs/updates/important-changes
+        type: changelog
+        description: Vault Important Changes
+
+  aws-acm-iam:
+    id: aws-acm-iam
+    name: AWS (ACM, IAM, Secrets Manager)
+    description: AWS Certificate Manager certificate discovery, IAM certificate inventory, and Secrets Manager integration
+    code_locations:
+      - path: apps/api/services/awsIntegration.js
+        functions: [scanAwsCertificates, listAcmCertificates, listIamServerCertificates]
+      - path: apps/api/routes/auto-sync-providers/aws.js
+        functions: [handleAwsScan]
+    base_urls:
+      - https://acm.<region>.amazonaws.com
+      - https://iam.amazonaws.com
+      - https://secretsmanager.<region>.amazonaws.com
+    endpoints:
+      - pattern: /
+        method: POST
+        description: AWS API calls use POST with Action parameter (ListCertificates, DescribeCertificate, etc.)
+    api_version: null
+    version_headers:
+      - X-Amz-Target
+    auth_method: AWS SigV4 (IAM credentials or AssumeRole)
+    sdks:
+      - name: '@aws-sdk/client-acm'
+        version: 3.1045.0
+        language: JavaScript
+        location: apps/api/package.json
+      - name: '@aws-sdk/client-iam'
+        version: 3.1045.0
+        language: JavaScript
+        location: apps/api/package.json
+      - name: '@aws-sdk/client-secrets-manager'
+        version: 3.1045.0
+        language: JavaScript
+        location: apps/api/package.json
+      - name: '@aws-sdk/client-sts'
+        version: 3.1045.0
+        language: JavaScript
+        location: apps/api/package.json
+    webhook_formats:
+      sent: []
+      received: []
+    notes: |
+      Uses AWS SDK for JavaScript v3. API calls are signed with SigV4. No formal API
+      versioning but SDK handles protocol changes. ACM certificates are regional.
+    sources:
+      - url: https://aws.amazon.com/about-aws/whats-new/
+        type: blog
+        feed: https://aws.amazon.com/about-aws/whats-new/recent/feed/
+        description: AWS What's New (RSS)
+      - url: https://docs.aws.amazon.com/sdkref/latest/guide/maint-policy.html
+        type: deprecation
+        description: AWS SDKs Maintenance Policy
+      - url: https://docs.aws.amazon.com/acm/latest/userguide/acm-doc-history.html
+        type: changelog
+        description: ACM Document History
+      - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/iam-release-notes.html
+        type: changelog
+        description: IAM Release Notes
+      - url: https://docs.aws.amazon.com/secretsmanager/latest/userguide/document-history.html
+        type: changelog
+        description: Secrets Manager Document History
+      - url: https://aws.amazon.com/blogs/security/feed/
+        type: blog
+        feed: https://aws.amazon.com/blogs/security/feed/
+        description: AWS Security Blog (RSS)
+      - url: https://aws.amazon.com/about-aws/whats-new/2026/02/aws-certificate-manager-updates-default/
+        type: deprecation
+        description: ACM Default Certificate Validity Change
+
+  microsoft-azure:
+    id: microsoft-azure
+    name: Microsoft Azure (Entra ID, Graph API, Key Vault)
+    description: Azure Key Vault certificate discovery and Azure Entra ID (formerly Azure AD) authentication
+    code_locations:
+      - path: apps/api/services/azureIntegration.js
+        functions: [scanAzureKeyVault, listKeyVaultCertificates, authenticateAzure]
+      - path: packages/agent/src/material-store/azure.js
+        functions: [createAzureKeyVaultStore, fetchCertificateFromAzure]
+      - path: packages/agent/src/material-store/azure-auth.test.js
+        functions: [testAzureManagedIdentity]
+    base_urls:
+      - https://<vault-name>.vault.azure.net
+      - https://management.azure.com
+      - https://login.microsoftonline.com
+      - https://graph.microsoft.com
+    endpoints:
+      - pattern: /certificates
+        method: GET
+        description: List Azure Key Vault certificates
+      - pattern: /certificates/{name}
+        method: GET
+        description: Get certificate details
+      - pattern: /secrets/{name}
+        method: GET
+        description: Get certificate private key (as secret)
+    api_version: 7.5 (Key Vault REST API)
+    version_headers:
+      - api-version (query parameter, not header)
+    auth_method: Azure Managed Identity or Service Principal (OAuth 2.0 bearer token)
+    sdks:
+      - name: Native Node.js https module
+        version: Node.js 22.x
+        language: JavaScript
+    webhook_formats:
+      sent: []
+      received: []
+    notes: |
+      Uses Azure Key Vault REST API directly with api-version query parameter (currently
+      7.5). Authentication via Azure AD/Entra ID OAuth 2.0. Agent supports Managed
+      Identity and Service Principal auth. API scanning uses similar patterns.
+    sources:
+      - url: https://learn.microsoft.com/en-us/azure/key-vault/general/whats-new
+        type: changelog
+        description: Azure Key Vault What's New
+      - url: https://learn.microsoft.com/en-us/rest/api/keyvault/
+        type: api-policy
+        description: Azure Key Vault REST API Reference
+      - url: https://learn.microsoft.com/en-us/azure/key-vault/general/migrate-api-version
+        type: deprecation
+        description: Key Vault API Version Migration
+      - url: https://learn.microsoft.com/en-us/graph/versioning-and-support
+        type: api-policy
+        description: Microsoft Graph Versioning and Support Policy
+      - url: https://developer.microsoft.com/en-us/graph/changelog
+        type: changelog
+        description: Microsoft Graph API Changelog
+      - url: https://learn.microsoft.com/en-us/graph/whats-new-overview
+        type: changelog
+        description: Microsoft Graph What's New
+      - url: https://devblogs.microsoft.com/microsoft365dev/
+        type: blog
+        feed: https://devblogs.microsoft.com/microsoft365dev/feed/
+        description: Microsoft 365 Developer Blog (RSS)
+      - url: https://azure.microsoft.com/en-us/updates/
+        type: blog
+        description: Azure Updates
+      - url: https://github.com/Azure/azure-sdk-for-go/releases
+        type: release-feed
+        feed: https://github.com/Azure/azure-sdk-for-go/releases.atom
+        description: Azure SDK for Go Releases
+      - url: https://github.com/microsoftgraph/msgraph-sdk-go/releases
+        type: release-feed
+        feed: https://github.com/microsoftgraph/msgraph-sdk-go/releases.atom
+        description: Microsoft Graph SDK for Go Releases
+
+  google-cloud:
+    id: google-cloud
+    name: Google Cloud (Certificate Manager, Secret Manager)
+    description: Google Cloud Certificate Manager and Secret Manager integration for certificate discovery
+    code_locations:
+      - path: apps/api/services/gcpIntegration.js
+        functions: [scanGcpCertificates, listCertificateManagerCertificates]
+      - path: packages/agent/src/dns/providers/google-cloud-dns.js
+        functions: [createGoogleDnsChallenge, cleanupGoogleDnsChallenge]
+    base_urls:
+      - https://certificatemanager.googleapis.com
+      - https://secretmanager.googleapis.com
+      - https://dns.googleapis.com
+    endpoints:
+      - pattern: /v1/projects/{project}/locations/{location}/certificates
+        method: GET
+        description: List Certificate Manager certificates
+      - pattern: /v1/projects/{project}/secrets
+        method: GET
+        description: List Secret Manager secrets
+    api_version: v1
+    version_headers: []
+    auth_method: Google Cloud Service Account (OAuth 2.0 bearer token)
+    sdks:
+      - name: Native Node.js https module
+        version: Node.js 22.x
+        language: JavaScript
+    webhook_formats:
+      sent: []
+      received: []
+    notes: |
+      Uses Google Cloud REST APIs directly. Certificate Manager v1 API is stable.
+      Authentication via service account JSON key. DNS provider supports Google Cloud DNS.
+    sources:
+      - url: https://cloud.google.com/certificate-manager/docs/release-notes
+        type: changelog
+        feed: https://cloud.google.com/feeds/certificate-manager-release-notes.xml
+        description: Certificate Manager Release Notes (RSS)
+      - url: https://cloud.google.com/terms/deprecation
+        type: deprecation
+        description: Google Cloud Deprecation Policy
+      - url: https://cloud.google.com/certificate-manager/docs/reference/certificate-manager/rest
+        type: api-policy
+        description: Certificate Manager REST API Reference
+      - url: https://cloud.google.com/secret-manager/docs/release-notes
+        type: changelog
+        feed: https://cloud.google.com/feeds/secret-manager-release-notes.xml
+        description: Secret Manager Release Notes (RSS)
+      - url: https://cloud.google.com/secret-manager/docs/reference/rest
+        type: api-policy
+        description: Secret Manager REST API Reference
+      - url: https://cloud.google.com/iam/docs/release-notes
+        type: changelog
+        feed: https://cloud.google.com/feeds/iam-release-notes.xml
+        description: IAM Release Notes (RSS)
+      - url: https://github.com/googleapis/google-cloud-go/releases
+        type: release-feed
+        feed: https://github.com/googleapis/google-cloud-go/releases.atom
+        description: Google Cloud Go SDK Releases
+
+  github:
+    id: github
+    name: GitHub
+    description: GitHub personal access tokens and SSH keys discovery, monitoring integration
+    code_locations:
+      - path: apps/api/services/githubIntegration.js
+        functions: [scanGitHubTokens, listGitHubSSHKeys, verifyGitHubToken]
+      - path: apps/worker/src/auto-sync-providers.js
+        constants: [CORE_AUTO_SYNC_PROVIDERS]
+      - path: apps/dashboard/src/components/imports/ImportGitHubForm.jsx
+        description: GitHub integration UI
+    base_urls:
+      - https://api.github.com
+    endpoints:
+      - pattern: /user
+        method: GET
+        description: Get authenticated user
+      - pattern: /user/keys
+        method: GET
+        description: List SSH keys
+      - pattern: /users/{username}/keys
+        method: GET
+        description: List user's public SSH keys
+    api_version: '2022-11-28'
+    version_headers:
+      - X-GitHub-Api-Version
+    auth_method: Personal Access Token (PAT) or OAuth token (Authorization header)
+    sdks:
+      - name: axios
+        version: 1.20.0
+        language: JavaScript
+        location: apps/api/package.json
+    webhook_formats:
+      sent: []
+      received: []
+    notes: |
+      GitHub REST API v3 with date-versioned stability (2022-11-28). Uses PAT for
+      authentication. Auto-sync scans for expiring tokens and SSH keys. Supports
+      GitHub.com and GitHub Enterprise Server. PR #629 pins X-GitHub-Api-Version header
+      to 2022-11-28 in all requests.
+    sources:
+      - url: https://github.blog/changelog/
+        type: changelog
+        feed: https://github.blog/changelog/feed/
+        description: GitHub Changelog (RSS)
+      - url: https://docs.github.com/en/rest/about-the-rest-api/api-versions
+        type: api-policy
+        description: GitHub REST API Versions
+      - url: https://docs.github.com/en/webhooks/webhook-events-and-payloads
+        type: webhook
+        description: GitHub Webhook Events and Payloads
+      - url: https://docs.github.com/en/rest/about-the-rest-api/breaking-changes
+        type: deprecation
+        description: GitHub REST API Breaking Changes
+      - url: https://docs.github.com/en/graphql/overview/breaking-changes
+        type: deprecation
+        description: GitHub GraphQL Breaking Changes
+      - url: https://github.blog/changelog/2026-03-24-upcoming-deprecation-of-security-related-organization-api-fields/
+        type: deprecation
+        description: Security API Field Deprecations
+
+  gitlab:
+    id: gitlab
+    name: GitLab
+    description: GitLab personal access tokens and SSH keys discovery
+    code_locations:
+      - path: apps/api/services/gitlabIntegration.js
+        functions: [scanGitLabTokens, listGitLabSSHKeys, verifyGitLabToken]
+      - path: apps/worker/src/auto-sync-providers.js
+        constants: [CORE_AUTO_SYNC_PROVIDERS]
+      - path: apps/dashboard/src/components/imports/ImportGitLabForm.jsx
+        description: GitLab integration UI
+    base_urls:
+      - https://gitlab.com
+    endpoints:
+      - pattern: /api/v4/user
+        method: GET
+        description: Get authenticated user
+      - pattern: /api/v4/user/keys
+        method: GET
+        description: List SSH keys
+      - pattern: /api/v4/personal_access_tokens
+        method: GET
+        description: List personal access tokens (admin only)
+    api_version: v4
+    version_headers: []
+    auth_method: Personal Access Token (Private-Token or Authorization header)
+    sdks:
+      - name: axios
+        version: 1.20.0
+        language: JavaScript
+        location: apps/api/package.json
+    webhook_formats:
+      sent: []
+      received:
+        - type: GitLab webhook events
+          format: JSON payloads
+    notes: |
+      GitLab REST API v4. Auto-sync scans for expiring PATs and SSH keys. Supports
+      GitLab.com and self-hosted GitLab instances.
+    sources:
+      - url: https://docs.gitlab.com/update/deprecations/
+        type: deprecation
+        description: GitLab Deprecations by Version
+      - url: https://docs.gitlab.com/api/rest/
+        type: api-policy
+        description: GitLab REST API Reference
+      - url: https://docs.gitlab.com/user/project/integrations/webhook_events/
+        type: webhook
+        description: GitLab Webhook Events
+      - url: https://about.gitlab.com/releases/
+        type: blog
+        feed: https://about.gitlab.com/atom.xml
+        description: GitLab Release Notes (RSS)
+      - url: https://docs.gitlab.com/api/rest/deprecations/
+        type: deprecation
+        description: GitLab REST API Deprecations
+
+  pagerduty:
+    id: pagerduty
+    name: PagerDuty
+    description: Incident management integration for critical certificate expiration alerts
+    code_locations:
+      - path: apps/worker/src/pagerduty-incidents.js
+        functions: [enqueuePagerDutyIncident, processPagerDutyIncident, reconcilePagerDutyIncidents]
+      - path: apps/worker/src/notify/webhooks.js
+        functions: [postJson, formatPayload]
+    base_urls:
+      - https://events.pagerduty.com
+    endpoints:
+      - pattern: /v2/enqueue
+        method: POST
+        description: Send event to PagerDuty (deprecated, use Events API v2)
+      - pattern: /v2/change/enqueue
+        method: POST
+        description: Send change event
+    api_version: Events API v2
+    version_headers: []
+    auth_method: Integration Key (routing_key in payload)
+    sdks:
+      - name: axios
+        version: 1.20.0
+        language: JavaScript
+        location: apps/worker/package.json
+    webhook_formats:
+      sent:
+        - type: PagerDuty Events API v2
+          format: |
+            {
+              "routing_key": "<integration-key>",
+              "event_action": "trigger|acknowledge|resolve",
+              "dedup_key": "<deduplication-key>",
+              "payload": {
+                "summary": "Certificate expires in N days",
+                "source": "TokenTimer",
+                "severity": "critical|error|warning|info",
+                "timestamp": "ISO8601",
+                "custom_details": { "token_id": "...", "expiration": "..." }
+              }
+            }
+      received: []
+    notes: |
+      PagerDuty Events API v2 for triggering/acknowledging/resolving incidents. Uses
+      routing key authentication. Supports deduplication via dedup_key. Worker manages
+      incident lifecycle with retry logic and parent alert reconciliation.
+    sources:
+      - url: https://developer.pagerduty.com/docs/changelog
+        type: changelog
+        description: PagerDuty API Changelog
+      - url: https://support.pagerduty.com/main/docs/webhooks
+        type: webhook
+        description: PagerDuty Generic Webhooks
+      - url: https://developer.pagerduty.com/docs/ZG9jOjExMDI5NTgx-send-an-alert-event
+        type: api-policy
+        description: PagerDuty Events API v2 Reference
+      - url: https://docs.pagerduty.com/developer/webhooks-overview
+        type: webhook
+        description: PagerDuty Webhooks Overview
+      - url: https://github.com/PagerDuty/go-pagerduty/releases
+        type: release-feed
+        feed: https://github.com/PagerDuty/go-pagerduty/releases.atom
+        description: PagerDuty Go Client Releases
+
+  slack:
+    id: slack
+    name: Slack
+    description: Slack webhook notifications for certificate expiration alerts
+    code_locations:
+      - path: apps/worker/src/notify/slack.js
+        functions: [sendSlackWebhook]
+      - path: apps/worker/src/notify/webhooks.js
+        functions: [formatSlackPayload]
+    base_urls:
+      - https://hooks.slack.com
+    endpoints:
+      - pattern: /services/{workspace}/{channel}/{token}
+        method: POST
+        description: Incoming webhook URL
+    api_version: null
+    version_headers: []
+    auth_method: Webhook URL secret
+    sdks:
+      - name: axios
+        version: 1.20.0
+        language: JavaScript
+        location: apps/worker/package.json
+    webhook_formats:
+      sent:
+        - type: Slack Block Kit message
+          format: |
+            {
+              "text": "fallback text",
+              "blocks": [
+                { "type": "header", "text": { "type": "plain_text", "text": "Title" } },
+                { "type": "section", "text": { "type": "mrkdwn", "text": "Message" } },
+                { "type": "actions", "elements": [{ "type": "button", "text": {...}, "url": "..." }] }
+              ]
+            }
+      received: []
+    notes: |
+      Slack incoming webhooks with Block Kit formatting. No API versioning for webhooks.
+      Enhanced message templates with severity badges, token details, and action buttons.
+    sources:
+      - url: https://docs.slack.dev/changelog/
+        type: changelog
+        feed: https://docs.slack.dev/changelog/rss.xml
+        description: Slack Developer Changelog (RSS)
+      - url: https://docs.slack.dev/legacy/legacy-custom-integrations/legacy-custom-integrations-migration/
+        type: deprecation
+        description: Slack Legacy Integrations Migration
+      - url: https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/
+        type: webhook
+        description: Slack Incoming Webhooks
+      - url: https://github.com/slack-go/slack/releases
+        type: release-feed
+        feed: https://github.com/slack-go/slack/releases.atom
+        description: Slack Go SDK Releases
+
+  microsoft-teams:
+    id: microsoft-teams
+    name: Microsoft Teams
+    description: Microsoft Teams webhook notifications for certificate expiration alerts
+    code_locations:
+      - path: apps/worker/src/notify/webhooks.js
+        functions: [formatTeamsPayload, teamsThemeForSeverity]
+    base_urls:
+      - https://<org>.webhook.office.com
+    endpoints:
+      - pattern: /webhookb2/{guid}@{tenant}/IncomingWebhook/{channel}/{connector}
+        method: POST
+        description: Office 365 Connector webhook (legacy, deprecated)
+      - pattern: /workflows/{workflow-id}/triggers/manual/paths/invoke
+        method: POST
+        description: Power Automate workflow (new)
+    api_version: null
+    version_headers: []
+    auth_method: Webhook URL secret
+    sdks:
+      - name: axios
+        version: 1.20.0
+        language: JavaScript
+        location: apps/worker/package.json
+    webhook_formats:
+      sent:
+        - type: Office 365 MessageCard (legacy)
+          format: |
+            {
+              "@type": "MessageCard",
+              "@context": "https://schema.org/extensions",
+              "summary": "Summary text",
+              "themeColor": "FF0000",
+              "sections": [{
+                "activityTitle": "Title",
+                "facts": [{ "name": "Key", "value": "Value" }],
+                "markdown": true
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "Button text",
+                "targets": [{ "os": "default", "uri": "https://..." }]
+              }]
+            }
+        - type: Adaptive Card (new format for Power Automate)
+          format: JSON (adaptive card schema)
+      received: []
+    notes: |
+      Microsoft Teams webhooks. Office 365 Connectors are deprecated (retirement
+      announced 2024, extended to 2025). Migration to Power Automate workflows or
+      Adaptive Cards via bot framework is ongoing. Current implementation uses legacy
+      MessageCard format but should be updated to Adaptive Cards. Changes are tracked
+      via concurrent agent work (mentioned in task description).
+    sources:
+      - url: https://devblogs.microsoft.com/microsoft365dev/retirement-of-office-365-connectors-within-microsoft-teams/
+        type: deprecation
+        description: Office 365 Connectors Retirement Announcement
+      - url: https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/connectors-using
+        type: webhook
+        description: Create and Send Actionable Messages
+      - url: https://learn.microsoft.com/en-us/microsoftteams/platform/developer-announcements
+        type: changelog
+        description: Teams Platform Developer Announcements
+      - url: https://devblogs.microsoft.com/microsoft365dev/
+        type: blog
+        feed: https://devblogs.microsoft.com/microsoft365dev/feed/
+        description: Microsoft 365 Developer Blog (RSS)
+
+  discord:
+    id: discord
+    name: Discord
+    description: Discord webhook notifications for certificate expiration alerts
+    code_locations:
+      - path: apps/worker/src/notify/webhooks.js
+        functions: [formatDiscordPayload, discordColorForSeverity]
+    base_urls:
+      - https://discord.com
+    endpoints:
+      - pattern: /api/webhooks/{webhook_id}/{webhook_token}
+        method: POST
+        description: Execute webhook
+    api_version: v10
+    version_headers: []
+    auth_method: Webhook URL secret
+    sdks:
+      - name: axios
+        version: 1.20.0
+        language: JavaScript
+        location: apps/worker/package.json
+    webhook_formats:
+      sent:
+        - type: Discord embed message
+          format: |
+            {
+              "content": "Top-level message",
+              "embeds": [{
+                "title": "Embed title",
+                "description": "Message body",
+                "color": 15158332,
+                "fields": [{ "name": "Key", "value": "Value", "inline": true }],
+                "timestamp": "ISO8601"
+              }]
+            }
+      received: []
+    notes: |
+      Discord webhooks with embed formatting. API is versioned (v10) but webhooks
+      are relatively stable. Severity mapped to embed colors.
+    sources:
+      - url: https://docs.discord.com/developers/change-log
+        type: changelog
+        feed: https://docs.discord.com/developers/change-log/rss.xml
+        description: Discord Developer Changelog (RSS)
+      - url: https://docs.discord.com/developers/reference
+        type: api-policy
+        description: Discord API Reference
+      - url: https://docs.discord.com/developers/resources/webhook
+        type: webhook
+        description: Discord Webhook Resource
+      - url: https://github.com/bwmarrin/discordgo/releases
+        type: release-feed
+        feed: https://github.com/bwmarrin/discordgo/releases.atom
+        description: DiscordGo Library Releases
+
+  twilio-whatsapp:
+    id: twilio-whatsapp
+    name: Twilio WhatsApp
+    description: WhatsApp notifications via Twilio API for certificate expiration alerts
+    code_locations:
+      - path: apps/worker/src/notify/whatsapp.js
+        functions: [sendWhatsApp, normalizeWhatsAppTo]
+    base_urls:
+      - https://api.twilio.com
+    endpoints:
+      - pattern: /2010-04-01/Accounts/{AccountSid}/Messages.json
+        method: POST
+        description: Send WhatsApp message
+    api_version: 2010-04-01
+    version_headers: []
+    auth_method: HTTP Basic Auth (Account SID + Auth Token)
+    sdks:
+      - name: axios
+        version: 1.20.0
+        language: JavaScript
+        location: apps/worker/package.json
+    webhook_formats:
+      sent:
+        - type: Twilio Message request
+          format: |
+            POST /2010-04-01/Accounts/{AccountSid}/Messages.json
+            application/x-www-form-urlencoded
+            {
+              "To": "whatsapp:+1234567890",
+              "From": "whatsapp:+0987654321",
+              "Body": "Message text",
+              "ContentSid": "HX...",
+              "ContentVariables": "{...}"
+            }
+      received: []
+    notes: |
+      Twilio WhatsApp API for sending messages. Supports both plain text (Body) and
+      templated messages (ContentSid + ContentVariables). Credentials can be provided
+      via environment variables or encrypted database settings. Idempotency-Key header
+      supported for retry safety.
+    sources:
+      - url: https://www.twilio.com/docs/whatsapp/api
+        type: api-policy
+        description: Twilio WhatsApp API
+      - url: https://www.twilio.com/docs/whatsapp/tutorial/send-whatsapp-notification-messages-templates
+        type: api-policy
+        description: WhatsApp Template Messages
+      - url: https://www.twilio.com/changelog
+        type: changelog
+        description: Twilio Changelog

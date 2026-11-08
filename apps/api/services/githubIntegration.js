@@ -38,6 +38,7 @@ async function githubRequest({
     Authorization: `token ${token}`,
     Accept: "application/vnd.github.v3+json",
     "User-Agent": "TokenTimer-Integration",
+    "X-GitHub-Api-Version": "2022-11-28",
   };
 
   const config = {
