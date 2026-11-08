@@ -124,3 +124,19 @@ test("machine IP timers reject Node timer overflow and accept its maximum", () =
     }
   }
 });
+
+test("global limiter retains route, authenticated user and development exclusions", async () => {
+  const app = appWith((req, _res, next) => { if (req.get("X-Test-User") === "1") req.user = { id: "user-a" }; next(); }, applyGlobalRateLimit);
+  app.get(/.*/, (_req, res) => res.sendStatus(204));
+  for (const path of ["/auth/login", "/api/session", "/api/csrf-token"]) {
+    for (let i = 0; i < 6; i++) assert.equal((await ip(request(endpoint(app)).get(path), "203.0.113.51")).status, 204);
+  }
+  for (let i = 0; i < 6; i++) assert.equal((await ip(request(endpoint(app)).get("/api/private"), "203.0.113.52").set("X-Test-User", "1")).status, 204);
+  const before = process.env.NODE_ENV;
+  try {
+    process.env.NODE_ENV = "development";
+    for (let i = 0; i < 6; i++) assert.equal((await ip(request(endpoint(app)).get("/api/dev"), "203.0.113.53")).status, 204);
+  } finally { process.env.NODE_ENV = before; }
+  for (let i = 0; i < 5; i++) assert.equal((await ip(request(endpoint(app)).get("/api/private"), "203.0.113.54")).status, 204);
+  assert.equal((await ip(request(endpoint(app)).get("/api/private"), "203.0.113.54")).status, 429);
+});

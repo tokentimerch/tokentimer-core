@@ -331,13 +331,13 @@ app.use("/auth", guardOperatorCredentials);
 const {
   speedLimiter,
   csrfTokenLimiter,
-  applyGlobalRateLimit,
+  globalLimiter,
   getApiLimiter,
 } = require("./middleware/rateLimit");
 
 // Always rotate (overwrite) so stale cookies after secret rotation or
 // cookie-name changes cannot 403 this route (csrf-csrf validateOnReuse).
-// Registered before applyGlobalRateLimit / speedLimiter; those layers skip
+// Registered before globalLimiter / speedLimiter; those layers skip
 // or never see this path, so csrfTokenLimiter is the app-level cap.
 app.get("/api/csrf-token", csrfTokenLimiter, (req, res) => {
   const csrfToken = generateCsrfToken(req, res, true, false);
@@ -366,7 +366,7 @@ app.use(require("./routes/whatsapp"));
 app.use(require("./routes/recipientVerification"));
 
 // Apply global rate limiting (excluding auth routes)
-app.use(applyGlobalRateLimit);
+app.use(globalLimiter);
 // Apply speed limiter only in production
 if (process.env.NODE_ENV !== "development" && process.env.NODE_ENV !== "test") {
   app.use(speedLimiter);

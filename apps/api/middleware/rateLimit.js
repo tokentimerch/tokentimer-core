@@ -30,7 +30,18 @@ function normalizeEmail(email) {
     .toLowerCase();
 }
 
+// These exclusions have their own route-specific limits or already passed the
+// exact machine pre-parser boundary. Keep them outside the shared IP bucket.
+function skipGlobalRateLimit(req) {
+  if (hasCertOpsExecutorPreAuthLimit(req)) return true;
+  if (req.path.startsWith("/auth/")) return true;
+  if (req.path === "/api/session" || req.path === "/api/csrf-token") return true;
+  if (req.path.startsWith("/api/") && req.user && req.user.id) return true;
+  return (process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test") && req.path.startsWith("/api/");
+}
+
 const globalLimiter = rateLimit({
+  skip: skipGlobalRateLimit,
   windowMs: intEnv("GLOBAL_RATE_LIMIT_WINDOW_MS", 1 * 60 * 1000),
   max: intEnv("GLOBAL_RATE_LIMIT_MAX", isDevOrTest ? 1000 : 300),
   message: "Too many requests from this IP, please try again later.",
@@ -568,27 +579,8 @@ function getTwilioWebhookLimiter() {
   return resolvedTwilioWebhookLimiter;
 }
 
-/**
- * Apply global rate limit unless path is auth/session or user is authenticated.
- * @param {import("express").Request} req
- * @param {import("express").Response} res
- * @param {import("express").NextFunction} next
- */
-function applyGlobalRateLimit(req, res, next) {
-  // Only the pre-parser can set this marker, after applying the machine IP guard.
-  if (hasCertOpsExecutorPreAuthLimit(req)) return next();
-  if (req.path.startsWith("/auth/")) return next();
-  if (req.path === "/api/session" || req.path === "/api/csrf-token")
-    return next();
-  if (req.path.startsWith("/api/") && req.user && req.user.id) return next();
-  if (
-    (process.env.NODE_ENV === "development" ||
-      process.env.NODE_ENV === "test") &&
-    req.path.startsWith("/api/")
-  )
-    return next();
-  return globalLimiter(req, res, next);
-}
+// Retained for callers importing the former wrapper.
+const applyGlobalRateLimit = globalLimiter;
 
 module.exports = {
   globalLimiter,
