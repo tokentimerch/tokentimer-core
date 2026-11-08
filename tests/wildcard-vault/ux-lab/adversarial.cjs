@@ -107,9 +107,10 @@ async function runtimeControls(c) {
   } finally {
     await owner.request(api() + "/settings", "PUT", { certOpsPaused: false, reason: "Owned qualification resume" });
   }
-  await owner.request(control, "POST", { state: "deploying" });
   // Workspace pause changes the durable authorization epoch. Clearing it and
   // resuming cannot revive the old exact-scope approval; require a new review.
+  const stale = await owner.request(control, "POST", { state: "deploying" }, 409);
+  assert.equal(stale.code, "CERTOPS_DISTRIBUTION_AUTHORIZATION_STALE");
   await wait("workspace pause invalidates the original rollout review", async () => {
     const management = await owner.request(group() + "/management");
     return management.rollouts.find(row => row.id === pending.payload.materialDeployment.rolloutId)?.state === "paused";
