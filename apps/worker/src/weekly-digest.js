@@ -458,62 +458,106 @@ function buildTeamsDigestPayload(
 ) {
   const groupNames = formatGroupNames(contributingGroupNames);
   const facts = [
-    { name: "📊 Workspace", value: workspaceName },
-    { name: "🔢 Tokens Count", value: String(count) },
+    { title: "📊 Workspace", value: workspaceName },
+    { title: "🔢 Tokens Count", value: String(count) },
   ];
   if (groupNames.length > 0) {
     facts.splice(1, 0, {
-      name: "👥 Contact groups",
+      title: "👥 Contact groups",
       value: groupNames.join(", "),
     });
   }
 
-  const sections = [
+  const bodyElements = [
     {
-      activityTitle: `📊 Weekly Digest: ${count} token(s) expiring soon`,
-      activitySubtitle: workspaceName,
+      type: "Container",
+      style: "emphasis",
+      items: [
+        {
+          type: "TextBlock",
+          text: `📊 Weekly Digest: ${count} token(s) expiring soon`,
+          weight: "bolder",
+          size: "large",
+          wrap: true,
+        },
+      ],
+    },
+    {
+      type: "TextBlock",
+      text: workspaceName,
+      size: "medium",
+      wrap: true,
+      spacing: "small",
+    },
+    {
+      type: "TextBlock",
       text: `You have **${count}** token(s) expiring soon. Review them below:`,
+      wrap: true,
+      spacing: "small",
+    },
+    {
+      type: "FactSet",
       facts,
-      markdown: true,
+      spacing: "medium",
     },
   ];
 
   const displayTokens = tokensList.slice(0, 10);
   for (const t of displayTokens) {
-    sections.push({
-      activityTitle: t.name,
-      facts: [
-        { name: "📋 Type", value: t.type },
-        { name: "⏰ Expires in", value: `${t.days_until} day(s)` },
-        { name: "📅 Expiration Date", value: t.expiration },
+    bodyElements.push({
+      type: "Container",
+      separator: true,
+      spacing: "medium",
+      items: [
+        {
+          type: "TextBlock",
+          text: t.name,
+          weight: "bolder",
+          wrap: true,
+        },
+        {
+          type: "FactSet",
+          facts: [
+            { title: "📋 Type", value: t.type },
+            { title: "⏰ Expires in", value: `${t.days_until} day(s)` },
+            { title: "📅 Expiration Date", value: t.expiration },
+          ],
+        },
       ],
-      markdown: true,
     });
   }
 
   if (count > 10) {
-    sections.push({
-      activitySubtitle: `_...and ${count - 10} more token(s)_`,
-      markdown: true,
+    bodyElements.push({
+      type: "TextBlock",
+      text: `_...and ${count - 10} more token(s)_`,
+      isSubtle: true,
+      wrap: true,
+      spacing: "medium",
     });
   }
 
   return {
-    "@type": "MessageCard",
-    "@context": "https://schema.org/extensions",
-    summary: `Weekly Digest: ${count} token(s) expiring soon`,
-    themeColor: "FFA500", // Orange
-    sections,
-    potentialAction: [
+    type: "message",
+    attachments: [
       {
-        "@type": "OpenUri",
-        name: "View in TokenTimer",
-        targets: [
-          {
-            os: "default",
-            uri: `${APP_URL}/dashboard`,
+        contentType: "application/vnd.microsoft.card.adaptive",
+        content: {
+          type: "AdaptiveCard",
+          $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+          version: "1.4",
+          body: bodyElements,
+          actions: [
+            {
+              type: "Action.OpenUrl",
+              title: "View in TokenTimer",
+              url: `${APP_URL}/dashboard`,
+            },
+          ],
+          msteams: {
+            width: "Full",
           },
-        ],
+        },
       },
     ],
   };

@@ -556,8 +556,8 @@ const WEBHOOK_SETUP_GUIDES = [
   {
     kind: 'teams',
     label: 'Microsoft Teams',
-    description: 'Incoming webhook connector guide',
-    href: 'https://docs.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook',
+    description: 'Workflows webhook setup guide',
+    href: 'https://learn.microsoft.com/en-us/power-automate/create-webhook-trigger',
   },
   {
     kind: 'pagerduty',

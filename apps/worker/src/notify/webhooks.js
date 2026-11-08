@@ -431,9 +431,11 @@ function formatDiscordPayload(text, tokenData, opts = {}) {
 
 function formatTeamsPayload(text, tokenData, opts = {}) {
   if (!tokenData) {
-    return {
-      text: `${teamsSeverityEmoji(opts?.severity)} ${opts?.title || text}`,
-    };
+    return buildTeamsAdaptiveCard({
+      title: opts?.title || text,
+      body: text,
+      severity: opts?.severity,
+    });
   }
 
   const severity = normalizeSeverity(opts?.severity);
@@ -442,7 +444,6 @@ function formatTeamsPayload(text, tokenData, opts = {}) {
   const expired = typeof daysLeft === "number" && daysLeft < 0;
   const absDays = typeof daysLeft === "number" ? Math.abs(daysLeft) : daysLeft;
 
-  // Create a more descriptive title with emoji
   let title = `${severityEmoji} Token Expiry Alert`;
   if (expired) {
     title = `🚨 CRITICAL: Token Expired`;
@@ -452,75 +453,120 @@ function formatTeamsPayload(text, tokenData, opts = {}) {
     title = `🟡 WARNING: Token Expires Soon`;
   }
 
+  const facts = [
+    { title: "📋 Type", value: tokenData.type || "Unknown" },
+    { title: "📅 Expiration Date", value: tokenData.expiration || "Unknown" },
+    {
+      title: expired ? "⚡ Status" : "⚡ Severity",
+      value: expired ? `Expired ${absDays} day(s) ago` : severity.toUpperCase(),
+    },
+    {
+      title: expired ? "⏰ Status" : "⏰ Days Remaining",
+      value: expired ? `Expired ${absDays} day(s) ago` : `${daysLeft} day(s)`,
+    },
+  ];
+
+  if (tokenData.renewal_url) {
+    facts.push({
+      title: "🔗 Renewal URL",
+      value: tokenData.renewal_url,
+    });
+  }
+
+  const actions = [];
+  if (tokenData.renewal_url) {
+    actions.push({
+      type: "Action.OpenUrl",
+      title: "Renew Now",
+      url: tokenData.renewal_url,
+    });
+  }
+  actions.push({
+    type: "Action.OpenUrl",
+    title: "View in TokenTimer",
+    url: `${process.env.APP_URL || "http://localhost:5173"}/dashboard`,
+  });
+
+  return buildTeamsAdaptiveCard({
+    title,
+    subtitle: `🔔 ${tokenData.name || `Token #${tokenData.token_id}`}`,
+    body: expired
+      ? `**Expired ${absDays} day(s) ago**`
+      : `**Expires in ${daysLeft} day(s)**`,
+    facts,
+    actions,
+    severity,
+  });
+}
+
+function buildTeamsAdaptiveCard({
+  title,
+  subtitle,
+  body,
+  facts = [],
+  actions = [],
+  severity = "info",
+}) {
+  const color = teamsThemeForSeverity(severity);
+
+  const bodyElements = [
+    {
+      type: "Container",
+      style: "emphasis",
+      items: [
+        {
+          type: "TextBlock",
+          text: title,
+          weight: "bolder",
+          size: "large",
+          wrap: true,
+        },
+      ],
+    },
+  ];
+
+  if (subtitle) {
+    bodyElements.push({
+      type: "TextBlock",
+      text: subtitle,
+      size: "medium",
+      wrap: true,
+      spacing: "small",
+    });
+  }
+
+  if (body) {
+    bodyElements.push({
+      type: "TextBlock",
+      text: body,
+      wrap: true,
+      spacing: "small",
+    });
+  }
+
+  if (facts.length > 0) {
+    bodyElements.push({
+      type: "FactSet",
+      facts: facts.map((f) => ({ title: f.title, value: f.value })),
+      spacing: "medium",
+    });
+  }
+
   return {
-    "@type": "MessageCard",
-    "@context": "https://schema.org/extensions",
-    summary: title,
-    themeColor: teamsThemeForSeverity(severity),
-    sections: [
+    type: "message",
+    attachments: [
       {
-        activityTitle: title,
-        activitySubtitle: `🔔 ${tokenData.name || `Token #${tokenData.token_id}`}`,
-        text: expired
-          ? `**Expired ${absDays} day(s) ago**`
-          : `**Expires in ${daysLeft} day(s)**`,
-        facts: [
-          {
-            name: "📋 Type",
-            value: tokenData.type || "Unknown",
+        contentType: "application/vnd.microsoft.card.adaptive",
+        content: {
+          type: "AdaptiveCard",
+          $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+          version: "1.4",
+          body: bodyElements,
+          ...(actions.length > 0 ? { actions } : {}),
+          msteams: {
+            width: "Full",
           },
-          {
-            name: "📅 Expiration Date",
-            value: tokenData.expiration || "Unknown",
-          },
-          {
-            name: expired ? "⚡ Status" : "⚡ Severity",
-            value: expired
-              ? `Expired ${absDays} day(s) ago`
-              : severity.toUpperCase(),
-          },
-          {
-            name: expired ? "⏰ Status" : "⏰ Days Remaining",
-            value: expired
-              ? `Expired ${absDays} day(s) ago`
-              : `${daysLeft} day(s)`,
-          },
-          ...(tokenData.renewal_url
-            ? [
-                {
-                  name: "🔗 Renewal URL",
-                  value: `[${tokenData.renewal_url}](${tokenData.renewal_url})`,
-                },
-              ]
-            : []),
-        ],
-        markdown: true,
-      },
-    ],
-    potentialAction: [
-      ...(tokenData.renewal_url
-        ? [
-            {
-              "@type": "OpenUri",
-              name: "Renew Now",
-              targets: [
-                {
-                  os: "default",
-                  uri: tokenData.renewal_url,
-                },
-              ],
-            },
-          ]
-        : []),
-      {
-        "@type": "OpenUri",
-        name: "View in TokenTimer",
-        targets: [
-          {
-            os: "default",
-            uri: `${process.env.APP_URL || "http://localhost:5173"}/dashboard`,
-          },
-        ],
+        },
       },
     ],
   };

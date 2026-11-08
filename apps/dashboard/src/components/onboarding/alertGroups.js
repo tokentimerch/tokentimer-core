@@ -7,7 +7,7 @@ import { parseThresholds } from './thresholds.js';
 
 export const WEBHOOK_KINDS = {
   slack: { label: 'Slack', help: 'Incoming webhook URL' },
-  teams: { label: 'Microsoft Teams', help: 'Incoming webhook connector URL' },
+  teams: { label: 'Microsoft Teams', help: 'Workflows webhook URL (Power Automate)' },
   discord: { label: 'Discord', help: 'Channel webhook URL' },
   pagerduty: { label: 'PagerDuty', help: 'Events API v2', needsRouting: true },
   generic: { label: 'Generic', help: 'Any HTTPS endpoint' },
