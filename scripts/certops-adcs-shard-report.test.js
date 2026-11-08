@@ -6,7 +6,7 @@ const { SHARD_NAMES, createShard, phaseOf } = require("../tests/e2e/helpers/cert
 const { verifyShardReport } = require("./certops-adcs-shard-report");
 
 const REQUIRED = suites.suites["enterprise-adcs-real"];
-const SHARDS = SHARD_NAMES.filter((name) => name !== "all");
+const SHARDS = SHARD_NAMES.filter((name) => !["all", "uncertain-sequence"].includes(name));
 
 test("every mandatory native scenario is owned by exactly one diagnostic shard", () => {
   for (const id of REQUIRED) {
@@ -52,7 +52,7 @@ function report(shard) {
 }
 
 test("a complete shard report is accepted and cannot be qualified evidence", () => {
-  for (const name of SHARDS) assert.deepEqual(verifyShardReport(report(name), name), []);
+  for (const name of [...SHARDS, "uncertain-sequence"]) assert.deepEqual(verifyShardReport(report(name), name), []);
   const promoted = report("renewals");
   promoted.qualificationStatus = "qualified";
   assert.ok(verifyShardReport(promoted, "renewals").length);
@@ -104,6 +104,8 @@ test("the workflow matrix keeps release evidence serial and shards parallel with
   assert.equal(new Set(parallel.map((item) => item.suffix)).size, SHARDS.length);
   for (const item of parallel) assert.match(`tt-certops-123-${item.suffix}`, /^tt-certops-[0-9]+-[0-9]+$/);
   assert.equal(plan({ shard: "renewals" }).length, 1);
+  assert.equal(plan({ shard: "uncertain-sequence" })[0].shard, "uncertain-sequence");
+  assert.ok(!parallel.some(item => item.shard === "uncertain-sequence"));
   assert.throws(() => plan({ shard: "renewals", scope: "operator-acceptance" }), /plain comprehensive/);
   assert.throws(() => plan({ shard: "parallel", fault: "issued" }), /plain comprehensive/);
   assert.throws(() => plan({ shard: "bogus" }), /Unknown shard/);
@@ -116,6 +118,10 @@ test("the 15 minute lease fixtures are split so no shard holds more than two (60
   for (const id of ["adcs-real-uncertain-public-explicit-request-recovers", "adcs-real-uncertain-unused-operator-request-revoked", "adcs-real-public-reconcile-foreign-spki-refused", "adcs-real-browser-owned-requestid-reconcile"]) assert.equal(phaseOf(id), "recovery", id);
   assert.equal(phaseOf("adcs-real-browser-uncertain-abandon-confirmation"), "uncertain");
   const recovery = createShard("uncertain-recovery");
+  const sequence = createShard("uncertain-sequence");
+  assert.equal(sequence.runs("uncertain"), true);
+  assert.equal(sequence.runs("recovery"), true);
+  for (const id of Object.keys(waits)) assert.ok(sequence.owns(id));
   assert.equal(recovery.runs("recovery"), true);
   assert.equal(recovery.runs("uncertain"), false);
   assert.equal(createShard("templates-and-uncertain").runs("recovery"), false);

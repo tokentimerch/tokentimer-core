@@ -21,7 +21,7 @@ param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][stri
   [string]$RetentionCadenceNonce,
   [ValidateSet('none','keygen_intent','prepared','submitting','issued','installing','accepted-before-bind','bound-before-complete')][string]$JournalPhaseExperiment='none',
   [ValidateSet('root','subordinate')][string]$HierarchyRole='root',
-  [ValidateSet('all','issuance','renewals','pending-and-ca','templates-and-uncertain','uncertain-recovery')][string]$Shard='all',
+  [ValidateSet('all','issuance','renewals','pending-and-ca','templates-and-uncertain','uncertain-recovery','uncertain-sequence')][string]$Shard='all',
   [ValidateSet('Standard_D2s_v5','Standard_D2as_v5')][string]$VmSize = 'Standard_D2s_v5',
   [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9]{1,49}$')][string]$Location)
 $ErrorActionPreference = 'Stop'
@@ -74,7 +74,7 @@ function New-TemplateStageScript([string]$TemplatePath, [string]$DescriptorPath,
 }
 function Invoke-Stage([string]$Machine, [string]$Script, [string]$Marker, [string[]]$Parameters = @()) {
   $stageTimeout=if([IO.Path]::GetFileName($Script) -ceq 'domain-ca.ps1'){900}else{3600}
-  if($Marker -eq 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed' -and $Shard -eq 'all'){
+  if($Marker -eq 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed' -and $Shard -in @('all','uncertain-sequence')){
     . (Join-Path $PSScriptRoot 'managed-campaign.ps1')
     $response=Invoke-CertOpsManagedCampaign -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -ResourceGroup $ResourceGroup -Location $Location -Script ([IO.File]::ReadAllText($Script)) -Parameters $Parameters -RefreshAuthentication ${function:Refresh-LabAuthentication}
   }else{

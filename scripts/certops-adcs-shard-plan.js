@@ -13,7 +13,8 @@ function plan({ shard = "all", scope = "comprehensive", fault = "none", attempt 
   if (shard === "all") return [{ shard: "all", suffix: String(run), artifactSuffix: "" }];
   if (scope !== "comprehensive" || fault !== "none") throw new Error("A diagnostic shard only applies to the plain comprehensive scope without fault injection");
   const names = SHARD_NAMES.filter((name) => name !== "all");
-  const selected = shard === "parallel" ? names : [shard];
+  // The combined sequence overlaps two shards and must never add another lab to parallel mode.
+  const selected = shard === "parallel" ? names.filter((name) => name !== "uncertain-sequence") : [shard];
   return selected.map((name) => ({ shard: name, suffix: String(run * 100 + names.indexOf(name) + 1), artifactSuffix: `-${name}` }));
 }
 

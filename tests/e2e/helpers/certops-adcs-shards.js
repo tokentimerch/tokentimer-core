@@ -27,6 +27,7 @@ const SHARDS = Object.freeze({
   "pending-and-ca": Object.freeze(["capacity", "pending", "ca"]),
   "templates-and-uncertain": Object.freeze(["templates", "uncertain"]),
   "uncertain-recovery": Object.freeze(["recovery"]),
+  "uncertain-sequence": Object.freeze(["uncertain", "recovery"]),
 });
 
 const SHARD_NAMES = Object.freeze(["all", ...Object.keys(SHARDS)]);

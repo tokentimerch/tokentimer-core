@@ -75,6 +75,20 @@ function assertRecoveryJobNotTerminal(row) {
   const category = categories.find(([pattern]) => pattern.test(message))?.[1] ?? "OTHER";
   throw Object.assign(new Error("Single native candidate recovery failed"), { code: `CERTOPS_RECOVERY_${category}` });
 }
+function recoveryFailureFacts(jobId, row, enrollment) {
+  const state = value => ["prepared", "submitting", "submission_uncertain", "pending", "issued", "validation_deferred", "validation_expired", "installing", "install_failed", "installed", "refused", "rejected_invalid", "denied", "abandoned"].includes(value) ? value : null;
+  const result = row?.result_metadata?.enrollmentResult;
+  const errors = ["ADCS_DISPOSITION_UNKNOWN", "ADCS_CA_UNREACHABLE", "ADCS_CA_KEY_CHANGED", "ADCS_TEMPLATE_UNSAFE", "ADCS_VALIDATION_FAILED", "ADCS_VALIDATION_DEFERRED"];
+  return {
+    jobId: UUID.test(jobId || "") ? jobId : null,
+    jobStatus: ["failed", "rejected", "cancelled", "blocked"].includes(row?.status) ? row.status : "other",
+    jobError: row?.error_code === "AGENT_RESULT_FAILED" ? row.error_code : "other",
+    enrollmentState: state(enrollment?.state),
+    resultState: state(result?.state),
+    resultError: errors.includes(result?.errorCode) ? result.errorCode : null,
+    caHresult: /^0x[0-9a-f]{8}$/i.test(result?.caHresult || "") ? result.caHresult : null,
+  };
+}
 function verifyProof(p) {
   assert.ok(p && typeof p === "object" && !Array.isArray(p));
   assert.deepEqual(
@@ -165,7 +179,7 @@ async function runCandidateRecovery({
   const job = async (jobId) =>
     (
       await query(
-        "SELECT status,needs_operator_reconciliation,error_message,claim_id FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",
+        "SELECT status,needs_operator_reconciliation,error_message,error_code,result_metadata,claim_id FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",
         [fixture.workspaceId, jobId],
       )
     ).rows[0];
@@ -347,6 +361,8 @@ async function runCandidateRecovery({
       restartService();
       await until(async () => {
         const row = await job(recovery.body.jobId);
+        if (["failed", "rejected", "cancelled", "blocked"].includes(row?.status))
+          gate.report.nativeUniqueRecoveryFailure = recoveryFailureFacts(recovery.body.jobId, row, await enrollment());
         assertRecoveryJobNotTerminal(row);
         return row.status === "succeeded";
       });
@@ -501,6 +517,7 @@ module.exports = {
   REQUIRED_SOURCES,
   assertRecoveryScenariosPassed,
   assertRecoveryJobNotTerminal,
+  recoveryFailureFacts,
   verifyProof,
   runCandidateRecovery,
   qualifyOperatorCreatedUnique,

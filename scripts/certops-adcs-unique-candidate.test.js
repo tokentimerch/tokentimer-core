@@ -39,6 +39,13 @@ test("terminal recovery failures expose only fixed categories", () => {
     });
   }
 });
+test("recovery failure facts link the job and retain only bounded known states", () => {
+  const id = "a36028f7-7439-4f1f-9079-d7d8645342c2";
+  const facts = h.recoveryFailureFacts(id, { status: "failed", error_code: "AGENT_RESULT_FAILED", result_metadata: { enrollmentResult: { state: "submission_uncertain", errorCode: "ADCS_DISPOSITION_UNKNOWN", caHresult: "0x80004005" } } }, { state: "submission_uncertain" });
+  assert.deepEqual(facts, { jobId: id, jobStatus: "failed", jobError: "AGENT_RESULT_FAILED", enrollmentState: "submission_uncertain", resultState: "submission_uncertain", resultError: "ADCS_DISPOSITION_UNKNOWN", caHresult: "0x80004005" });
+  const unsafe = h.recoveryFailureFacts("SECRET", { status: "SECRET", error_code: "SECRET", result_metadata: { enrollmentResult: { state: "SECRET", errorCode: "SECRET", caHresult: "SECRET" } } }, { state: "SECRET" });
+  assert.doesNotMatch(JSON.stringify(unsafe), /SECRET/);
+});
 test("single native candidate proof needs every exact recovery and custody fact", () => {
   h.verifyProof(proof());
   for (const key of Object.keys(proof())) {
