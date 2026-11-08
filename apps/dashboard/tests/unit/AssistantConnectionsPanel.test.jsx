@@ -191,6 +191,9 @@ describe('MCP assistant setup', () => {
     expect(await screen.findByLabelText('MCP server URL')).toHaveValue(
       'https://api.example.test/api/v1/operator/mcp'
     );
+    expect(
+      screen.getByText(/codex mcp login followed by the server name/)
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Copy server URL' }));
     await screen.findByText(/Server URL copied/);
     expect(writeText).toHaveBeenCalledWith(

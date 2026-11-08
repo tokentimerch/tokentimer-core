@@ -131,7 +131,16 @@ function remoteCors(req, res, next) {
     return errorReply(res, error);
   }
   if (!config) return res.status(404).json({ error: "not_found" });
-  if (String(req.get("host") || "").toLowerCase() !== config.host)
+  const authority = String(req.get("host") || "");
+  let host;
+  try {
+    // URL normalizes an explicit default port, but reject non-authority syntax.
+    if (!authority || /[\s\\/@?#,%]/.test(authority)) throw new Error("invalid authority");
+    host = new URL(new URL(config.resource).protocol + "//" + authority).host;
+  } catch {
+    return res.status(403).json({ error: "invalid_host" });
+  }
+  if (host !== config.host)
     return res.status(403).json({ error: "invalid_host" });
   const origin = req.get("origin"),
     consent = req.path.toLowerCase().startsWith(OAUTH_PATH + "/requests/");
