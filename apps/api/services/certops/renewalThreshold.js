@@ -5,6 +5,7 @@ const DEFAULT_RENEWAL_THRESHOLD_DAYS = 30;
 const MIN_ADAPTIVE_LIFETIME_DAYS = 2;
 const MAX_ADAPTIVE_LIFETIME_DAYS = 90;
 const MIN_RENEWAL_LEAD_DAYS = 7;
+const SHORT_CERTIFICATE_LIFETIME_DAYS = 10;
 const RENEWAL_LIFETIME_SHARE = 0.33;
 const SECONDS_PER_DAY = 86400;
 
@@ -38,6 +39,9 @@ function resolveCertificateRenewalThresholdDays(row, env = process.env) {
   if (!(lifetime >= MIN_ADAPTIVE_LIFETIME_DAYS && lifetime < MAX_ADAPTIVE_LIFETIME_DAYS)) {
     return thresholdDays;
   }
+  if (lifetime < SHORT_CERTIFICATE_LIFETIME_DAYS) {
+    return Math.floor(lifetime / 2);
+  }
   return Math.min(
     Math.floor(lifetime) - 1,
     Math.max(MIN_RENEWAL_LEAD_DAYS, Math.floor(lifetime * RENEWAL_LIFETIME_SHARE)),
@@ -54,8 +58,10 @@ function renewalThresholdDaysSql(parameter, adaptive) {
     ? `CASE
          WHEN ${lifetime} >= ${MIN_ADAPTIVE_LIFETIME_DAYS}
           AND ${lifetime} < ${MAX_ADAPTIVE_LIFETIME_DAYS}
-         THEN LEAST(FLOOR(${lifetime}) - 1,
-                    GREATEST(${MIN_RENEWAL_LEAD_DAYS}, FLOOR(${lifetime} * ${RENEWAL_LIFETIME_SHARE})))
+         THEN CASE WHEN ${lifetime} < ${SHORT_CERTIFICATE_LIFETIME_DAYS}
+                   THEN FLOOR(${lifetime} / 2)
+                   ELSE LEAST(FLOOR(${lifetime}) - 1,
+                    GREATEST(${MIN_RENEWAL_LEAD_DAYS}, FLOOR(${lifetime} * ${RENEWAL_LIFETIME_SHARE}))) END
          ELSE ${fallback}
        END`
     : fallback;
