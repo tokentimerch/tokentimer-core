@@ -26,6 +26,7 @@ function temporaryDirectory(t) {
 }
 
 const gitBash = "C:\\Program Files\\Git\\bin\\bash.exe";
+// skip-reason: platform - the POSIX installer needs a shell on Windows.
 test("Linux installer writes the requested default only to a new config", { skip: process.platform === "win32" && !fs.existsSync(gitBash) }, (t) => {
   const source = fs.readFileSync(path.join(__dirname, "install-agent.sh"), "utf8");
   const code = section(source, 'if [ -f "$CONFIG_PATH" ] && [ "$DRY_RUN" -eq 0 ]; then', "# --------------------------------------- bootstrap token");
@@ -52,6 +53,7 @@ test("Linux installer writes the requested default only to a new config", { skip
   assert.deepEqual(generated.observedRevocation, { enabled: true, allowedOrigins: [] });
 });
 
+// skip-reason: platform - the Windows installer needs Windows PowerShell.
 test("Windows installer writes the requested default only to a new config", { skip: process.platform !== "win32" }, (t) => {
   const source = fs.readFileSync(path.join(__dirname, "install-agent.ps1"), "utf8");
   const code = section(source, 'if ((Test-Path -LiteralPath $configPath) -and -not $script:DryRun)', "# --------------------------------------- bootstrap token");

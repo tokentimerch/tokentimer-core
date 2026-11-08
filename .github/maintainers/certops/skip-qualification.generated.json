@@ -270,6 +270,26 @@
       "workflowJob": "backend_quality"
     },
     {
+      "id": "43e7781299c383776931",
+      "file": "packages/agent/scripts/installer-revocation-default.test.js",
+      "line": 30,
+      "name": "Linux installer writes the requested default only to a new config",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "linux-filesystem",
+      "workflowJob": "backend_quality"
+    },
+    {
+      "id": "a4909e92aa9117caec5c",
+      "file": "packages/agent/scripts/installer-revocation-default.test.js",
+      "line": 57,
+      "name": "Windows installer writes the requested default only to a new config",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
       "id": "a496aa9e81eb1ebc257e",
       "file": "packages/agent/scripts/installer-smoke.test.js",
       "line": 370,
@@ -586,7 +606,7 @@
     {
       "id": "b45f65881e8f3ba572b1",
       "file": "packages/agent/src/index.test.js",
-      "line": 4245,
+      "line": 4248,
       "name": "refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",

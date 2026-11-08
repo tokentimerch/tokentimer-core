@@ -57,7 +57,11 @@ export function observedRevocationDescriptor(result, now = Date.now()) {
       scheme: 'gray',
       help: 'No revocation check has been reported. Configure monitoring and permitted responder origins on the agent.',
     };
-  if (['not_configured', 'disabled', 'invalid_observation'].includes(result.verdict)) {
+  if (
+    ['not_configured', 'disabled', 'invalid_observation'].includes(
+      result.verdict
+    )
+  ) {
     const previous = result.lastVerified;
     if (previous && ['revoked', 'issuer_revoked'].includes(previous.verdict))
       return {
