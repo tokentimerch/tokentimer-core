@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  calculateRelativeThresholds,
   DEFAULT_ALERT_THRESHOLDS,
   getGroupThresholdInheritHint,
   getThresholdDraftError,
@@ -101,5 +102,43 @@ describe('alertThresholds', () => {
         DEFAULT_ALERT_THRESHOLDS
       )
     ).toBeNull();
+  });
+
+  describe('calculateRelativeThresholds for shorter certificate lifetimes', () => {
+    it('returns sensible thresholds for 45-day certificates (Google Certificate Manager)', () => {
+      const thresholds = calculateRelativeThresholds(45);
+      expect(thresholds).toContain(1);
+      expect(thresholds).toContain(0);
+      expect(Math.max(...thresholds)).toBeLessThanOrEqual(15);
+    });
+
+    it('returns sensible thresholds for 64-day certificates (Let\'s Encrypt 2027)', () => {
+      const thresholds = calculateRelativeThresholds(64);
+      expect(thresholds).toEqual([21, 10, 5, 1, 0]);
+    });
+
+    it('returns sensible thresholds for 47-day certificates (CA/B Forum 2029 limit)', () => {
+      const thresholds = calculateRelativeThresholds(47);
+      expect(thresholds.length).toBeGreaterThan(0);
+      expect(Math.max(...thresholds)).toBeLessThanOrEqual(16);
+    });
+
+    it('returns standard thresholds for 90-day certificates', () => {
+      const thresholds = calculateRelativeThresholds(90);
+      expect(thresholds).toEqual([30, 14, 7, 1, 0]);
+    });
+
+    it('returns proportional thresholds for longer-lived certificates', () => {
+      const thresholds = calculateRelativeThresholds(365);
+      expect(thresholds).toContain(1);
+      expect(thresholds).toContain(0);
+      expect(Math.max(...thresholds)).toBeGreaterThan(30);
+    });
+
+    it('falls back to defaults for invalid inputs', () => {
+      expect(calculateRelativeThresholds(0)).toEqual(DEFAULT_ALERT_THRESHOLDS);
+      expect(calculateRelativeThresholds(-10)).toEqual(DEFAULT_ALERT_THRESHOLDS);
+      expect(calculateRelativeThresholds(null)).toEqual(DEFAULT_ALERT_THRESHOLDS);
+    });
   });
 });

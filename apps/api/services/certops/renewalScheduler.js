@@ -66,6 +66,7 @@ const {
 const DEFAULT_RENEWAL_THRESHOLD_DAYS = 30;
 const DEFAULT_BATCH_SIZE = 200;
 const RENEWAL_THRESHOLD_ENV = "CERTOPS_RENEWAL_THRESHOLD_DAYS";
+const MIN_SAFE_RENEWAL_THRESHOLD_DAYS = 7;
 // An AD CS renewal waits here until an agent has a safe adcs-preflight for its CA.
 const CERTOPS_ADCS_AGENT_NOT_PREPARED = "CERTOPS_ADCS_AGENT_NOT_PREPARED";
 
@@ -116,6 +117,30 @@ function resolveRenewalThresholdDays(env = process.env) {
     return DEFAULT_RENEWAL_THRESHOLD_DAYS;
   }
   return parsed;
+}
+
+function calculateAdaptiveRenewalThreshold(certValidityDays, profileRenewBeforeDays, defaultThresholdDays) {
+  if (profileRenewBeforeDays != null && Number.isInteger(profileRenewBeforeDays) && profileRenewBeforeDays > 0) {
+    return profileRenewBeforeDays;
+  }
+  
+  if (!Number.isInteger(certValidityDays) || certValidityDays <= 0) {
+    return defaultThresholdDays;
+  }
+  
+  if (certValidityDays <= 47) {
+    return Math.max(Math.floor(certValidityDays * 0.33), MIN_SAFE_RENEWAL_THRESHOLD_DAYS);
+  }
+  
+  if (certValidityDays <= 64) {
+    return Math.max(Math.floor(certValidityDays * 0.33), MIN_SAFE_RENEWAL_THRESHOLD_DAYS);
+  }
+  
+  if (certValidityDays < 90) {
+    return Math.min(defaultThresholdDays, Math.floor(certValidityDays * 0.33));
+  }
+  
+  return defaultThresholdDays;
 }
 
 /**
@@ -989,13 +1014,13 @@ module.exports = {
   RENEWAL_THRESHOLD_ENV,
   UNKNOWN_CA_BUCKET,
   caCapKey,
+  calculateAdaptiveRenewalThreshold,
   certificateCaBucket,
   certificateCaEndpointRaw,
   createAutomaticAdcsRenewal,
   countCertificatesWithAutoRenewDisabled,
   countInFlightRenewalJobsByCaEndpoint,
   loadCertificateRenewalRows,
-  resolveRenewalThresholdDays,
   findCertificatesDueForRenewal,
   isValidCaEndpointUrl,
   normalizeCaBucket,

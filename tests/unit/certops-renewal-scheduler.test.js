@@ -218,6 +218,21 @@ describe("certops renewal scheduler", () => {
     );
   });
 
+  it("calculates adaptive renewal thresholds for shorter certificate lifetimes", () => {
+    const { calculateAdaptiveRenewalThreshold } = require("../../apps/api/services/certops/renewalScheduler");
+    
+    assert.strictEqual(calculateAdaptiveRenewalThreshold(45, null, 30), 14, "45-day cert should renew at ~33% lifetime");
+    assert.strictEqual(calculateAdaptiveRenewalThreshold(64, null, 30), 21, "64-day cert should renew at ~33% lifetime");
+    assert.strictEqual(calculateAdaptiveRenewalThreshold(47, null, 30), 15, "47-day cert should renew at ~33% lifetime");
+    assert.strictEqual(calculateAdaptiveRenewalThreshold(90, null, 30), 30, "90-day cert uses default 30");
+    assert.strictEqual(calculateAdaptiveRenewalThreshold(180, null, 30), 30, "Longer certs use default");
+    
+    assert.strictEqual(calculateAdaptiveRenewalThreshold(45, 10, 30), 10, "Explicit profile override takes precedence");
+    assert.strictEqual(calculateAdaptiveRenewalThreshold(64, 25, 30), 25, "Explicit profile override takes precedence");
+    
+    assert.strictEqual(calculateAdaptiveRenewalThreshold(20, null, 30), 7, "Very short cert uses minimum safe threshold");
+  });
+
   it("derives a stable idempotency key from cert id and not_after", () => {
     const first = renewalIdempotencyKey("cert-1", NOT_AFTER);
     const second = renewalIdempotencyKey("cert-1", NOT_AFTER.toISOString());

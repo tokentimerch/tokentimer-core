@@ -2,6 +2,26 @@ export const MIN_ALERT_THRESHOLD_DAYS = -365;
 export const MAX_ALERT_THRESHOLD_DAYS = 730;
 export const DEFAULT_ALERT_THRESHOLDS = [30, 14, 7, 1, 0];
 
+export function calculateRelativeThresholds(certLifetimeDays) {
+  if (!Number.isInteger(certLifetimeDays) || certLifetimeDays <= 0) {
+    return DEFAULT_ALERT_THRESHOLDS;
+  }
+  
+  if (certLifetimeDays <= 47) {
+    return [Math.floor(certLifetimeDays * 0.33), Math.floor(certLifetimeDays * 0.2), Math.floor(certLifetimeDays * 0.1), 1, 0].filter(v => v >= 0);
+  }
+  
+  if (certLifetimeDays <= 64) {
+    return [21, 10, 5, 1, 0];
+  }
+  
+  if (certLifetimeDays <= 90) {
+    return [30, 14, 7, 1, 0];
+  }
+  
+  return [Math.floor(certLifetimeDays * 0.33), Math.floor(certLifetimeDays * 0.15), 14, 7, 1, 0].filter((v, i, arr) => arr.indexOf(v) === i).sort((a, b) => b - a);
+}
+
 function parseThresholdValues(input) {
   if (Array.isArray(input)) {
     return input
