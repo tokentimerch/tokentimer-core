@@ -234,6 +234,7 @@ function composeMigrations(migrations, recorded = []) {
       );
   }
   const dependencies = {
+    recipient_legacy_delivery_grace: ["recipient_channel_verification"],
     certops_issuance_identity_transfer: ["certops_issuance_job_identity"],
     certops_issuance_job_identity: ["operator_issuance"],
     operator_issuance: ["operator_action_requests"],

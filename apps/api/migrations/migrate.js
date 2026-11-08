@@ -4936,6 +4936,11 @@ const migrations = [
     name: "certops_issuance_identity_transfer",
     sql: fs.readFileSync(require("path").join(__dirname, "108-certops-issuance-identity-transfer.sql"), "utf8"),
   },
+  {
+    version: 109,
+    name: "recipient_legacy_delivery_grace",
+    sql: fs.readFileSync(require("path").join(__dirname, "../../../packages/recipient-verification/legacy-grace-migration.sql"), "utf8"),
+  },
 ];
 
 
