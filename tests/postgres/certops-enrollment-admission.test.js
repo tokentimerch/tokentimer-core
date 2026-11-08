@@ -491,6 +491,36 @@ test("retirement or credential rotation wins against already authenticated agent
   }
 });
 
+test("terminal enrollment wins a concurrent proof recovery preparation", async () => {
+  const f = await fixture();
+  const issue = require("../../apps/api/services/certops/issuance").createCertificateIssuanceJob;
+  const recovery = require("../../apps/api/services/certops/adcsProofRecovery");
+  const target = { type: "windows-cert-store", reference: TARGET.reference, store: "My" };
+  const creator = await pool.connect();
+  let job;
+  try {
+    await creator.query("BEGIN");
+    job = (await issue({ client: creator, workspaceId: f.workspaceId, operation: "issue", source: "api", mode: "real", idempotencyKey: randomUUID(),
+      assignedAgentId: f.agentId, requestedByUserId: f.actor, payload: { issuerId: f.issuerId, target } })).job;
+    await creator.query("UPDATE certificate_jobs SET status='orphaned_unknown_effect',needs_operator_reconciliation=true,claim_id=$2,attempt_count=1 WHERE id=$1", [job.id, randomUUID()]);
+    await creator.query("COMMIT");
+  } catch (error) { await creator.query("ROLLBACK"); throw error; } finally { creator.release(); }
+  const writer = await pool.connect(), reader = await pool.connect();
+  try {
+    await writer.query("BEGIN"); await reader.query("BEGIN");
+    await writer.query("UPDATE certificate_enrollments SET state='cancelled' WHERE id=$1", [job.enrollmentId]);
+    const result = recovery.prepareAdcsProofRecoveryTx({ client: reader, workspaceId: f.workspaceId, enrollmentId: job.enrollmentId,
+      originalJobId: job.id, actorUserId: f.actor, reason: "Inspect uncertain installation", audit: async () => {} });
+    const settled = result.then(() => "accepted", () => "rejected");
+    assert.equal(await Promise.race([settled, new Promise(resolve => setTimeout(() => resolve("waiting"), 150))]), "waiting");
+    await writer.query("COMMIT");
+    await assert.rejects(result, { code: "CERTOPS_ADCS_PROOF_INVALID" });
+    await reader.query("ROLLBACK");
+    const counts = (await pool.query("SELECT count(*)::int AS n FROM certops_adcs_proof_recovery_intents WHERE enrollment_id=$1", [job.enrollmentId])).rows[0];
+    assert.equal(counts.n, 0);
+  } finally { await writer.query("ROLLBACK").catch(() => {}); await reader.query("ROLLBACK").catch(() => {}); writer.release(); reader.release(); }
+});
+
 test("AD CS proof recovery binds the original live identity, verifies installation and preserves workspace deletion", async () => {
   const f = await fixture();
   const crypto = require("node:crypto");
@@ -514,6 +544,12 @@ test("AD CS proof recovery binds the original live identity, verifies installati
       fingerprintSha256: "ab".repeat(32), csrSpkiSha256: "cd".repeat(32), leafSpkiSha256: "cd".repeat(32) };
     evidenceId = (await client.query(`INSERT INTO certificate_evidence(workspace_id,job_id,evidence_type,claim_id,attempt_count,created_by_agent_id,metadata)
       VALUES($1,$2,'validation.passed',$3,1,$4,$5::jsonb) RETURNING id`, [f.workspaceId, job.id, claim, f.agentId, JSON.stringify(metadata)])).rows[0].id;
+    // A terminal transition must not discard a valid fact from the still-live
+    // original claim, even though proof-only recovery will be unavailable.
+    await client.query("SAVEPOINT terminal_receipt");
+    await client.query("UPDATE certificate_enrollments SET state='cancelled' WHERE id=$1", [job.enrollmentId]);
+    assert.equal((await recovery.recordAdcsExpectedIdentityTx({ client, agent, jobId: job.id, evidenceId })).created, true);
+    await client.query("ROLLBACK TO SAVEPOINT terminal_receipt");
     const first = await recovery.recordAdcsExpectedIdentityTx({ client, agent, jobId: job.id, evidenceId });
     assert.equal(first.created, true);
     assert.deepEqual(await recovery.recordAdcsExpectedIdentityTx({ client, agent, jobId: job.id, evidenceId }), { receiptId: first.receiptId, created: false });
@@ -533,6 +569,12 @@ test("AD CS proof recovery binds the original live identity, verifies installati
     const request = { client: resultTx, workspaceId: f.workspaceId, enrollmentId: job.enrollmentId, originalJobId: job.id,
       actorUserId: f.actor, reason: "Inspect the installed certificate", audit: async () => {} };
     const before = Number((await resultTx.query("SELECT count(*) FROM certificate_jobs WHERE workspace_id=$1", [f.workspaceId])).rows[0].count);
+    for (const terminal of ["cancelled", "expired", "abandoned"]) {
+      await resultTx.query("SAVEPOINT terminal_before_prepare");
+      await resultTx.query("UPDATE certificate_enrollments SET state=$2 WHERE id=$1", [job.enrollmentId, terminal]);
+      await assert.rejects(recovery.prepareAdcsProofRecoveryTx(request), { code: "CERTOPS_ADCS_PROOF_INVALID" });
+      await resultTx.query("ROLLBACK TO SAVEPOINT terminal_before_prepare");
+    }
     const intent = await recovery.prepareAdcsProofRecoveryTx(request);
     assert.equal(intent.state, "transport_unavailable");
     assert.equal(intent.created, true);
@@ -540,16 +582,39 @@ test("AD CS proof recovery binds the original live identity, verifies installati
     assert.equal(Number((await resultTx.query("SELECT count(*) FROM certificate_jobs WHERE workspace_id=$1", [f.workspaceId])).rows[0].count), before);
     await resultTx.query(`UPDATE certops_agents SET declared_capabilities=$2::jsonb,capabilities_updated_at=NOW() WHERE id=$1`,
       [f.agentId, JSON.stringify(["windows-store-only-adcs-v1", "adcs-enroll-v1", "evidence-claim-binding-v1", "adcs-store-proof-only-v1"])]);
+    for (const terminal of ["cancelled", "expired", "abandoned"]) {
+      await resultTx.query("SAVEPOINT terminal_before_queue");
+      await resultTx.query("UPDATE certificate_enrollments SET state=$2 WHERE id=$1", [job.enrollmentId, terminal]);
+      await assert.rejects(recovery.queueAdcsProofRecoveryTx({ client: resultTx, workspaceId: f.workspaceId, intentId: intent.intentId, actorUserId: f.actor }), { code: "CERTOPS_ADCS_PROOF_INVALID" });
+      await resultTx.query("ROLLBACK TO SAVEPOINT terminal_before_queue");
+    }
     const queued = await recovery.queueAdcsProofRecoveryTx({ client: resultTx, workspaceId: f.workspaceId, intentId: intent.intentId, actorUserId: f.actor });
     assert.equal(queued.created, true);
     assert.equal(queued.job.operation, "adcs-installation-proof");
     proofJobId = queued.job.id;
     assert.equal((await recovery.queueAdcsProofRecoveryTx({ client: resultTx, workspaceId: f.workspaceId, intentId: intent.intentId, actorUserId: f.actor })).created, false);
+    for (const terminal of ["cancelled", "expired", "abandoned"]) {
+      await resultTx.query("SAVEPOINT terminal_after_queue");
+      await resultTx.query("UPDATE certificate_enrollments SET state=$2 WHERE id=$1", [job.enrollmentId, terminal]);
+      await assert.rejects(recovery.queueAdcsProofRecoveryTx({ client: resultTx, workspaceId: f.workspaceId, intentId: intent.intentId, actorUserId: f.actor }), { code: "CERTOPS_ADCS_PROOF_INVALID" });
+      assert.equal(await recovery.loadAdcsProofJobBindingTx({ client: resultTx, workspaceId: f.workspaceId, jobId: queued.job.id, agentId: f.agentId }), null);
+      await resultTx.query("ROLLBACK TO SAVEPOINT terminal_after_queue");
+    }
     const binding = await recovery.loadAdcsProofJobBindingTx({ client: resultTx, workspaceId: f.workspaceId, jobId: queued.job.id, agentId: f.agentId });
     assert.equal(binding.originalJobId, job.id);
     assert.equal(binding.fingerprintSha256, "ab".repeat(32));
     assert.equal(await recovery.loadAdcsProofJobBindingTx({ client: resultTx, workspaceId: f.workspaceId, jobId: queued.job.id, agentId: randomUUID() }), null);
-    await resultTx.query("COMMIT");
+    const terminalWriter = await pool.connect();
+    try {
+      await terminalWriter.query("BEGIN");
+      await terminalWriter.query("SET LOCAL statement_timeout = '5s'");
+      const transition = terminalWriter.query("UPDATE certificate_enrollments SET state='cancelled' WHERE id=$1", [job.enrollmentId]);
+      const settled = transition.then(() => "updated", () => "rejected");
+      assert.equal(await Promise.race([settled, new Promise(resolve => setTimeout(() => resolve("waiting"), 150))]), "waiting");
+      await resultTx.query("COMMIT");
+      await transition;
+      await terminalWriter.query("ROLLBACK");
+    } finally { await terminalWriter.query("ROLLBACK").catch(() => {}); terminalWriter.release(); }
   } catch (error) { await resultTx.query("ROLLBACK"); throw error; } finally { resultTx.release(); }
   const claimedProof = await require("../../apps/api/services/certops/agentDispatch").claimJobs({ dbPool: pool,
     agent: require("../../apps/api/services/certops/agentCredentialFence").bindAuthenticatedCredential({ id: f.agentId, agentId: publicId, workspaceId: f.workspaceId, status: "active", platform: "win32", protocolVersion: "1.0.0", agentVersion: "0.18.1" }, rawCredential),

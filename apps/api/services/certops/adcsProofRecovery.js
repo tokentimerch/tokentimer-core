@@ -79,7 +79,7 @@ async function prepareAdcsProofRecoveryTx({ client, workspaceId, enrollmentId, o
   const enrollment = (await client.query(`SELECT e.id,e.agent_id,e.certificate_id,e.current_job_id,e.snapshot_bytes,e.snapshot_sha256,e.deploy_target,j.status AS original_status,
       j.claim_id AS original_claim_id,j.attempt_count AS original_attempt,j.needs_operator_reconciliation
     FROM certificate_enrollments e JOIN certificate_jobs j ON j.workspace_id=e.workspace_id AND j.enrollment_id=e.id AND j.id=$3::uuid
-    WHERE e.workspace_id=$1 AND e.id=$2::uuid FOR UPDATE OF e`, [workspaceId, enrollmentId, originalJobId])).rows[0];
+    WHERE e.workspace_id=$1 AND e.id=$2::uuid AND e.state NOT IN ('cancelled','expired','abandoned') FOR UPDATE OF e`, [workspaceId, enrollmentId, originalJobId])).rows[0];
   if (!enrollment || String(enrollment.agent_id) !== String(owner.agent_id) || enrollment.original_status !== "orphaned_unknown_effect" || enrollment.needs_operator_reconciliation !== true || !enrollment.original_claim_id) fail("the exact orphaned enrollment job is required");
   if (String(enrollment.current_job_id) !== originalJobId) fail("another enrollment attempt already superseded this job");
   const receipt = (await client.query(`SELECT id,snapshot_sha256,destination_sha256 FROM certops_adcs_expected_identity_receipts WHERE workspace_id=$1 AND enrollment_id=$2::uuid
@@ -113,9 +113,12 @@ async function prepareAdcsProofRecoveryTx({ client, workspaceId, enrollmentId, o
 async function queueAdcsProofRecoveryTx({ client, workspaceId, intentId, actorUserId, env = process.env }) {
   tx(client); uuid(workspaceId); uuid(intentId);
   if (!Number.isInteger(actorUserId) || actorUserId <= 0) fail("operator required");
-  const candidate = (await client.query(`SELECT agent_id,proof_job_id FROM certops_adcs_proof_recovery_intents WHERE workspace_id=$1 AND id=$2::uuid`, [workspaceId, intentId])).rows[0];
+  const candidate = (await client.query(`SELECT agent_id,proof_job_id,enrollment_id FROM certops_adcs_proof_recovery_intents WHERE workspace_id=$1 AND id=$2::uuid`, [workspaceId, intentId])).rows[0];
   if (!candidate) fail("proof recovery intent not found");
   if (candidate.proof_job_id) {
+    const eligible = await client.query(`SELECT id FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2::uuid
+      AND state NOT IN ('cancelled','expired','abandoned') FOR SHARE`, [workspaceId, candidate.enrollment_id]);
+    if (!eligible.rows[0]) fail("proof enrollment is terminal or unavailable");
     const job = await require("./jobs").getCertificateJobById({ client, workspaceId, jobId: candidate.proof_job_id, env });
     return { job, created: false };
   }
@@ -133,6 +136,7 @@ async function queueAdcsProofRecoveryTx({ client, workspaceId, intentId, actorUs
     JOIN certops_adcs_expected_identity_receipts r ON r.workspace_id=i.workspace_id AND r.id=i.receipt_id AND r.enrollment_id=e.id AND r.agent_id=i.agent_id
     JOIN certificate_jobs original ON original.workspace_id=r.workspace_id AND original.id=r.original_job_id
     WHERE i.workspace_id=$1 AND i.id=$2::uuid AND e.current_job_id=original.id AND original.enrollment_id=e.id
+      AND e.state NOT IN ('cancelled','expired','abandoned')
       AND original.status='orphaned_unknown_effect' AND original.needs_operator_reconciliation=TRUE
       AND original.claim_id=r.original_claim_id AND original.attempt_count=r.original_attempt
     FOR UPDATE OF i,e SKIP LOCKED`, [workspaceId, intentId])).rows[0];
@@ -171,6 +175,7 @@ async function loadAdcsProofJobBindingTx({ client, workspaceId, jobId, agentId }
     JOIN certificate_jobs original ON original.workspace_id=r.workspace_id AND original.id=r.original_job_id
     JOIN managed_certificates mc ON mc.workspace_id=e.workspace_id AND mc.id=e.certificate_id
     WHERE i.workspace_id=$1 AND i.proof_job_id=$2::uuid AND i.agent_id=$3::uuid AND i.state='queued'
+      AND e.state NOT IN ('cancelled','expired','abandoned')
       AND j.operation='adcs-installation-proof' AND j.assigned_agent_id=i.agent_id AND j.enrollment_id=e.id
       AND j.subject_type='managed_certificate' AND j.subject_id=e.certificate_id::text AND mc.deployed_agent_id=i.agent_id
       AND r.enrollment_id=e.id AND r.agent_id=i.agent_id
