@@ -65,7 +65,11 @@ function assertRecoveryJobNotTerminal(row) {
     [/^could not acquire AD CS enrollment lock:/, "LOCK"],
     [/^no local enrollment journal for enrollment /, "JOURNAL_MISSING"],
     [/^local AD CS enrollment journal is corrupt:/, "JOURNAL_CORRUPT"],
+    [/^AD CS reconcile failed for enrollment /, "RECONCILIATION_ERROR"],
     [/^AD CS tier-2 /, "RECONCILIATION"],
+    [/^tier-2 candidate RequestId \d+ (?:still )?validation_deferred;/, "VALIDATION_DEFERRED"],
+    [/^tier-2 candidate RequestId \d+ validation deadline expired;/, "VALIDATION_EXPIRED"],
+    [/^tier-2 candidate RequestId \d+ failed validation;/, "VALIDATION_FAILED"],
     [/^Local enrollment policy /, "LOCAL_POLICY"],
   ];
   const category = categories.find(([pattern]) => pattern.test(message))?.[1] ?? "OTHER";

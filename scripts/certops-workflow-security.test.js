@@ -12,6 +12,11 @@ test("early AD CS failure evidence is sanitized and cannot replace cleanup",()=>
  const yaml=require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
  const workflow=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows/certops-enterprise-adcs-qualification.yml"),"utf8"));
  const steps=workflow.jobs.lab.steps,early=steps.findIndex(step=>step.name==="Publish sanitized failure report before resource cleanup"),cleanup=steps.findIndex(step=>step.name==="Destroy owned temporary resources");
+ const release=steps.find(step=>step.name==="Assert mandatory native scenarios and candidate source evidence");
+ const diagnostic=steps.find(step=>step.name==="Assert diagnostic scenarios without release qualification");
+ assert.equal(release.if,"inputs.qualification_scope == 'comprehensive' && matrix.shard == 'all' && !inputs.debug_mode");
+ assert.equal(diagnostic.if,"inputs.qualification_scope == 'comprehensive' && matrix.shard == 'all' && inputs.debug_mode");
+ assert.equal(diagnostic.run,"node scripts/certops-adcs-diagnostic-report.js qualification-results/enterprise-adcs-real.json");
  assert.ok(early>=0 && cleanup>early);assert.equal(steps[early].if,"failure() && !inputs.debug_mode");
  assert.equal(steps[early].with.path,"qualification-results/enterprise-adcs-real.json");assert.equal(steps[early]["continue-on-error"],true);
  assert.equal(steps[cleanup].if,"always()");

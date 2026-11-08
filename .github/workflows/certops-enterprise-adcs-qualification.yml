@@ -124,8 +124,11 @@ jobs:
           if($env:FAULT_PROFILE -notin @('none','submitting','issued','installing','response-loss')){throw 'Unknown fault profile'}
           ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:LAB_GROUP -Hours ([int]$env:LAB_HOURS) -WindowsVersion $env:WINDOWS_VERSION -Language $env:WINDOWS_LANGUAGE -Location $env:LAB_LOCATION -VmSize $env:LAB_VM_SIZE -ResponseLossExperiment $responseLoss -JournalPhaseExperiment $journalPhase -QualificationScope $env:QUALIFICATION_SCOPE -DebugMode $env:DEBUG_MODE -ContinueOnFailure $env:CONTINUE_ON_FAILURE -Shard $env:SHARD
       - name: Assert mandatory native scenarios and candidate source evidence
-        if: inputs.qualification_scope == 'comprehensive' && matrix.shard == 'all'
+        if: inputs.qualification_scope == 'comprehensive' && matrix.shard == 'all' && !inputs.debug_mode
         run: node scripts/certops-qualification-report.js qualification-results/enterprise-adcs-real.json
+      - name: Assert diagnostic scenarios without release qualification
+        if: inputs.qualification_scope == 'comprehensive' && matrix.shard == 'all' && inputs.debug_mode
+        run: node scripts/certops-adcs-diagnostic-report.js qualification-results/enterprise-adcs-real.json
       - name: Assert the diagnostic shard ran every scenario it owns (not release evidence)
         if: matrix.shard != 'all'
         run: node scripts/certops-adcs-shard-report.js qualification-results/enterprise-adcs-real.json "$SHARD"

@@ -25,6 +25,10 @@ test("terminal recovery failures expose only fixed categories", () => {
     ["no local enrollment journal for enrollment SECRET", "JOURNAL_MISSING"],
     ["local AD CS enrollment journal is corrupt: SECRET", "JOURNAL_CORRUPT"],
     ["AD CS tier-2 SECRET", "RECONCILIATION"],
+    ["AD CS reconcile failed for enrollment SECRET", "RECONCILIATION_ERROR"],
+    ["tier-2 candidate RequestId 42 still validation_deferred; SECRET", "VALIDATION_DEFERRED"],
+    ["tier-2 candidate RequestId 42 validation deadline expired; SECRET", "VALIDATION_EXPIRED"],
+    ["tier-2 candidate RequestId 42 failed validation; SECRET", "VALIDATION_FAILED"],
     ["Local enrollment policy SECRET", "LOCAL_POLICY"],
     ["SECRET", "OTHER"],
   ]) {
