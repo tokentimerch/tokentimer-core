@@ -21,6 +21,7 @@ test("recovery proof requires both preceding native scenarios to pass", () => {
 test("terminal recovery failures expose only fixed categories", () => {
   h.assertRecoveryJobNotTerminal({ status: "running" });
   for (const [message, category] of [
+    ["job execution failed: SECRET", "EXECUTION_EXCEPTION"],
     ["could not acquire AD CS enrollment lock: SECRET", "LOCK"],
     ["no local enrollment journal for enrollment SECRET", "JOURNAL_MISSING"],
     ["local AD CS enrollment journal is corrupt: SECRET", "JOURNAL_CORRUPT"],

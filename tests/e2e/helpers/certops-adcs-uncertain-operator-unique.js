@@ -62,6 +62,7 @@ function assertRecoveryJobNotTerminal(row) {
   if (!["failed", "rejected", "cancelled", "blocked"].includes(row.status)) return;
   const message = typeof row.error_message === "string" ? row.error_message : "";
   const categories = [
+    [/^job execution failed:/, "EXECUTION_EXCEPTION"],
     [/^could not acquire AD CS enrollment lock:/, "LOCK"],
     [/^no local enrollment journal for enrollment /, "JOURNAL_MISSING"],
     [/^local AD CS enrollment journal is corrupt:/, "JOURNAL_CORRUPT"],
