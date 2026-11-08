@@ -41,21 +41,6 @@ function discordColorForSeverity(sev) {
   }
 }
 
-function teamsThemeForSeverity(sev) {
-  // MessageCard supports themeColor keywords or hex strings
-  switch (normalizeSeverity(sev)) {
-    case "critical":
-      return "FF0000"; // Bright red
-    case "error":
-      return "FF6B35"; // Orange-red
-    case "warning":
-      return "FFA500"; // Orange
-    case "info":
-    default:
-      return "0078D4"; // Microsoft blue
-  }
-}
-
 function teamsSeverityEmoji(sev) {
   switch (normalizeSeverity(sev)) {
     case "critical":
@@ -434,7 +419,6 @@ function formatTeamsPayload(text, tokenData, opts = {}) {
     return buildTeamsAdaptiveCard({
       title: opts?.title || text,
       body: text,
-      severity: opts?.severity,
     });
   }
 
@@ -495,7 +479,6 @@ function formatTeamsPayload(text, tokenData, opts = {}) {
       : `**Expires in ${daysLeft} day(s)**`,
     facts,
     actions,
-    severity,
   });
 }
 
@@ -505,10 +488,7 @@ function buildTeamsAdaptiveCard({
   body,
   facts = [],
   actions = [],
-  severity = "info",
 }) {
-  const color = teamsThemeForSeverity(severity);
-
   const bodyElements = [
     {
       type: "Container",

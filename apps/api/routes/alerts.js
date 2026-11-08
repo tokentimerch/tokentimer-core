@@ -1941,12 +1941,12 @@ router.post(
           break;
         }
         case "teams": {
-          const theme =
+          const containerStyle =
             sev === "critical" || sev === "error"
               ? "attention"
               : sev === "warning"
                 ? "warning"
-                : "accent";
+                : "emphasis";
           payload = {
             type: "message",
             attachments: [
@@ -1959,7 +1959,7 @@ router.post(
                   body: [
                     {
                       type: "Container",
-                      style: "emphasis",
+                      style: containerStyle,
                       items: [
                         {
                           type: "TextBlock",
