@@ -65,6 +65,7 @@ describe("createAdcsRenewalProfile", () => {
 
   it("stores the windows-iis contract and ignores a template override", async () => {
     let stored = null;
+    let lead;
     const db = poolFrom(async (sql, params) => {
       if (sql === "BEGIN" || sql === "COMMIT") return { rows: [] };
       if (sql.includes("FROM certificate_issuers i")) {
@@ -80,6 +81,7 @@ describe("createAdcsRenewalProfile", () => {
         };
       }
       if (sql.includes("INSERT INTO certificate_profiles")) {
+        lead = params[5];
         stored = params[6];
         return { rows: [{ id: "profile-1" }] };
       }
@@ -107,6 +109,7 @@ describe("createAdcsRenewalProfile", () => {
       body,
       auditWriter: async () => {},
     });
+    assert.equal(lead, null);
     const metadata = JSON.parse(stored);
     assert.equal(metadata.renewalProfile.target.reference, "www.example.com");
     assert.equal(Object.hasOwn(metadata.renewalProfile, "template"), false);

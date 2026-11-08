@@ -778,7 +778,7 @@ function normalizeAdcsProfileInput(body) {
     name,
     description,
     issuerId,
-    renewBeforeDays: normalizeRenewBeforeDays(body?.renewBeforeDays ?? 30),
+    renewBeforeDays: normalizeRenewBeforeDays(body?.renewBeforeDays ?? null),
     renewalProfile: {
       target: {
         type: "windows-iis",

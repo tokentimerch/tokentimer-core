@@ -3339,7 +3339,9 @@ function deriveCertificateRenewalState(
     state: CERTOPS_RENEWAL_STATE_AUTO,
     renewBeforeDays,
     renewsFrom,
-    detail: `Renewal is attempted automatically from ${renewBeforeDays} days before expiry.`,
+    detail: renewBeforeDays < 1
+      ? `Renewal is attempted automatically from ${Number((renewBeforeDays * 24).toFixed(2))} hours before expiry.`
+      : `Renewal is attempted automatically from ${renewBeforeDays} days before expiry.`,
   };
 }
 

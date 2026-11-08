@@ -125,6 +125,14 @@ describe("CertOps certificate renewal-state derivation", () => {
     assert.equal(configured.renewsFrom, "2026-08-31T00:00:00.000Z");
   });
 
+  it("reports fractional lead times and the precise short-lived renewal window", () => {
+    const row = certificateRow({ not_before: new Date("2026-09-29T00:00:00.000Z"), effective_renew_before_days: "0.5" });
+    const renewal = deriveCertificateRenewalState(row, { env: {} });
+    assert.equal(renewal.renewBeforeDays, 0.5);
+    assert.equal(renewal.renewsFrom, "2026-09-29T12:00:00.000Z");
+    assert.match(renewal.detail, /12 hours/);
+  });
+
   it("reports not-configured when an agent-deployable certificate has no linked profile", () => {
     const renewal = deriveCertificateRenewalState(
       certificateRow({
