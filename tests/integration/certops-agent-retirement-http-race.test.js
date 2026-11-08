@@ -19,6 +19,6 @@ describe("HTTP agent retirement race isolation", function () {
     });
     assert.equal(result.signal, null, result.output);
     assert.equal(result.code, 0, result.output);
-    assert.match(result.output, /2 passing/);
+    assert.match(result.output, /3 passing/);
   });
 });

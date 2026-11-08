@@ -43,6 +43,28 @@ describe("HTTP retirement concurrent with claim on PostgreSQL", function () {
     const admin = new Client({ ...connection, database: adminDatabase });
     await admin.connect(); try { await admin.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`); } finally { await admin.end(); }
   });
+  it("authenticates real agent claim requests before and after HTTP retirement", async () => {
+    const { createCertOpsAgentRouter } = require("../../../apps/api/routes/certops-agent");
+    const { createAgentCredentialAuth } = require("../../../apps/api/middleware/agent-auth");
+    const credential = generateAgentCredential();
+    const name = `agent-${randomUUID()}`;
+    const agentId = (await db.query(`INSERT INTO certops_agents (workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)
+      VALUES ($1,$2,'0.18.2','1.0.0',$3,$4) RETURNING id`, [workspaceId, name, credential.credentialPrefix, credential.credentialHash])).rows[0].id;
+    const machine = express();
+    machine.use(express.json());
+    machine.use(createCertOpsAgentRouter({ dbPool: db, credentialAuthMiddleware: createAgentCredentialAuth({ client: db }) }));
+    const route = "/api/v1/certops/agent/jobs/claim";
+    const payload = sequence => ({ schemaVersion: 1, protocolVersion: "1.0.0", messageType: "claim", agentId: name, workspaceId: null, sentAt: new Date().toISOString(), clockOffsetMs: null, sequence, body: { maxJobs: 1, supportedActions: [] } });
+    assert.equal((await request(machine).post(route).set("Authorization", "Bearer invalid").send(payload(1))).status, 401);
+    const active = await request(machine).post(route).set("Authorization", `Bearer ${credential.plaintextCredential}`).send(payload(1));
+    assert.equal(active.status, 200, JSON.stringify(active.body));
+    assert.deepEqual(active.body.jobs, []);
+    const retirement = await request(app).post(`/api/v1/workspaces/${workspaceId}/certops/agents/${agentId}/retire`).send({});
+    assert.equal(retirement.status, 200, JSON.stringify(retirement.body));
+    const retired = await request(machine).post(route).set("Authorization", `Bearer ${credential.plaintextCredential}`).send(payload(2));
+    assert.equal(retired.status, 410, JSON.stringify(retired.body));
+    assert.equal(retired.body.code, "CERTOPS_AGENT_RETIRED");
+  });
   it("serializes a waiting HTTP retirement before a real claim", async () => {
     const credential = generateAgentCredential();
     const agentId = (await db.query(`INSERT INTO certops_agents (workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)
