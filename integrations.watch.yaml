@@ -262,6 +262,7 @@ integrations:
         contains:
           - /user/repos
           - /user/keys
+          - '"X-GitHub-Api-Version": "{api_version}"'
     base_urls:
       - https://api.github.com
       - https://<enterprise-host>/api/v3
@@ -277,7 +278,7 @@ integrations:
         pattern: /repos/{owner}/{repo}/actions/secrets
       - method: GET
         pattern: /repos/{owner}/{repo}/keys
-    notes: The listed version is GitHub.com's documented default REST version.
+    notes: The listed REST version is explicitly sent by the inventory client.
     sdks:
       - name: axios
         version: 1.20.0
