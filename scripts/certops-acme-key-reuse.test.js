@@ -142,6 +142,10 @@ test("derived ACME snapshot binds the database profile identity without dropping
   const stored=deriveRenewalProfileFromIssuedCertificate({payload:issue,certificate:{commonName:"leaf.example.test",subjectAltNames:["leaf.example.test"]}});
   const profile={id:"33333333-3333-4333-8333-333333333333",name:"Derived profile (owned certificate)",public_metadata:{renewalProfile:stored}};
   const certificate={id:"22222222-2222-4222-8222-222222222222",workspace_id:"11111111-1111-4111-8111-111111111111",not_after:"2030-01-01T00:00:00.000Z",profile_id:profile.id,profile_name:profile.name,profile_public_metadata:profile.public_metadata};
+  const {applyRenewalProfilePatch}=require("../apps/api/services/certops/renewalProfileAdmin");
+  const fullPatch=structuredClone(stored);fullPatch.keyRotationPolicy.rotateOnRenew=false;
+  assert.throws(()=>applyRenewalProfilePatch(stored,fullPatch),error=>error.code==="CERTOPS_PROFILE_FIELD_IMMUTABLE");
+  assert.deepEqual(applyRenewalProfilePatch(stored,{keyRotationPolicy:{rotateOnRenew:false}}),fullPatch);
   const actual=buildRenewalJobPayload({certificate}).renewalProfile;
   assert.notDeepEqual(actual,stored,"raw stored metadata omits the linked row identity");
   assert.deepEqual(actual,journey.expectedProfileSnapshot(profile));
