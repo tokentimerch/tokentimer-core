@@ -279,7 +279,7 @@ test("host script and workflow keep execution behind a fail-closed gate", () => 
   assert.doesNotMatch(workflow, /pull_request:/);
   assert.doesNotMatch(workflow, /\npush:/);
   assert.match(workflow, /contents: read/);
-  assert.match(workflow, /actions\/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd/);
+  assert.match(workflow, /actions\/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1/);
   assert.match(workflow, /actions\/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1/);
   assert.match(workflow, /Install-WindowsFeature/);
   assert.match(workflow, /scripts\/certops-windows-bind-failure-native\.js/);

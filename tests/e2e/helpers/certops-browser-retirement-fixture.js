@@ -11,7 +11,15 @@ const assert = require("node:assert/strict"),
   https = require("node:https"),
   tls = require("node:tls");
 const { spawnSync } = require("node:child_process");
+function endpointConfiguration(env = process.env) {
+  if (env.CERTOPS_BROWSER_RETIREMENT_DOCKER === "1") {
+    assert.equal(env.CERTOPS_CSR_DISPOSABLE_STACK, "1", "Container fixture requires a disposable stack");
+    return { bind: "0.0.0.0", monitorHost: "host.docker.internal" };
+  }
+  return { bind: "127.0.0.1", monitorHost: "127.0.0.1" };
+}
 async function createRetirementItems(fixture) {
+  const endpoint = endpointConfiguration();
   const directory = fs.mkdtempSync(
       path.join(os.tmpdir(), "browser-retirement-"),
     ),
@@ -85,9 +93,9 @@ async function createRetirementItems(fixture) {
       items.push(item);
       await new Promise((resolve, reject) => {
         server.once("error", reject);
-        server.listen(0, "127.0.0.1", resolve);
+        server.listen(0, endpoint.bind, resolve);
       });
-      item.url = `https://127.0.0.1:${server.address().port}`;
+      item.url = `https://${endpoint.monitorHost}:${server.address().port}`;
       item.peer = () =>
         new Promise((resolve, reject) => {
           const socket = tls.connect(
@@ -202,4 +210,4 @@ async function createRetirementItems(fixture) {
     throw error;
   }
 }
-module.exports = { createRetirementItems };
+module.exports = { createRetirementItems, endpointConfiguration };

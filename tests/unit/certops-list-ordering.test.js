@@ -215,7 +215,7 @@ describe("CertOps paginated list ordering", () => {
     const cases = {
       certificate: "mc.common_name ASC NULLS LAST, mc.id ASC",
       expires: "mc.not_after ASC NULLS LAST, mc.id ASC",
-      renewalWindow: "mc.not_after - (COALESCE(cp.renew_before_days, $2)",
+      renewalWindow: "mc.not_after - (COALESCE(cp.renew_before_days, CASE",
       lastAttempt: "last_renew_job_status ASC NULLS LAST, mc.id ASC",
     };
     for (const [sort, expression] of Object.entries(cases)) {

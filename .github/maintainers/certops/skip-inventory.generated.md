@@ -19,9 +19,9 @@ Total skips found: 158
 | `packages/agent/scripts/install-agent-sh.test.js` | 36 | install-agent.sh polkit grants on re-run | describe(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/installer-revocation-default.test.js` | 30 | Linux installer writes the requested default only to a new config | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/installer-revocation-default.test.js` | 57 | Windows installer writes the requested default only to a new config | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/installer-smoke.test.js` | 370 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `packages/agent/scripts/pack-release.test.js` | 227 | tracks install-agent.sh as executable in git (mode 100755) | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `packages/agent/scripts/pack-release.test.js` | 236 | assertExecutableEntries rejects a tarball whose installer lost the exec bit | dynamic (this.skip() / t.skip()) | `platform` |
+| `packages/agent/scripts/installer-smoke.test.js` | 373 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `packages/agent/scripts/pack-release.test.js` | 228 | tracks install-agent.sh as executable in git (mode 100755) | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `packages/agent/scripts/pack-release.test.js` | 237 | assertExecutableEntries rejects a tarball whose installer lost the exec bit | dynamic (this.skip() / t.skip()) | `platform` |
 | `packages/agent/src/acme/acme.test.js` | 250 | POSIX hook executes non-executable archive bytes with spaces and quotes in the path | test(..., { skip }) option-object | `platform` |
 | `packages/agent/src/config/config.test.js` | 121 | sets 0700 permissions on non-win32 platforms | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/config/config.test.js` | 129 | re-asserts 0700 on every call even if the mode was loosened | it(..., { skip }) option-object | `platform` |

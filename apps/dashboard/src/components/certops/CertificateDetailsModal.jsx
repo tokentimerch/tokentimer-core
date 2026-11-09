@@ -27,6 +27,7 @@ import { Link as RouterLink } from 'react-router';
 import { FileText, History, Info, MapPin, Settings } from 'lucide-react';
 import { TOKEN_CATEGORIES } from '../../constants/tokenCategories.js';
 import { tokenAPI } from '../../utils/apiClient';
+import { getShortCertificateAlertThresholds } from '../../utils/alertThresholds.js';
 import CopyableId from '../CopyableId.jsx';
 import {
   DashboardDetailsModalFrame,
@@ -356,6 +357,10 @@ export default function CertificateDetailsModal({
         : expiry.scheme === 'green'
           ? 'dashboard.state.success'
           : undefined;
+  const suggestedAlertThresholds = getShortCertificateAlertThresholds(
+    certificate?.notBefore,
+    certificate?.notAfter
+  );
   const summaryItems = [
     hasValue(expiresAt)
       ? {
@@ -376,6 +381,13 @@ export default function CertificateDetailsModal({
       : null,
     hasValue(certificate?.notBefore)
       ? { label: 'Valid from', value: formatDate(certificate.notBefore) }
+      : null,
+    suggestedAlertThresholds.length
+      ? {
+          label: 'Suggested alert thresholds',
+          value: suggestedAlertThresholds.join(', '),
+          help: 'Days before expiry. Set thresholds in Alert Preferences.',
+        }
       : null,
     hasRenewalData
       ? {

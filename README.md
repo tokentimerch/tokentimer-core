@@ -200,6 +200,10 @@ After receiving a report, TokenTimer will take the following steps:
 
 <br>
 
+# Integration API monitoring
+
+The [integration watch manifest](integrations.watch.yaml) lists Core integration source paths, API versions, package pins, and official change feeds. After editing it, run `node scripts/check-integrations-manifest.js` from the repository root with the development dependencies installed.
+
 # License
 
 This project is licensed under the [GNU Affero General Public License v3.0 (AGPLv3)](LICENSE). TokenTimer Core is open source: you may self-host, modify, and integrate it freely. If you run a modified version as a network service, you must make the corresponding source available to its users under the same license.

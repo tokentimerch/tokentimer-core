@@ -117,7 +117,7 @@ async function qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certif
   assert.equal(process.platform, "linux"); assert.ok(["certbot", "acme.sh"].includes(acmeKind));
   const query = (sql, args = []) => pool.query(sql, args);
   const profile = async () => (await query("SELECT cp.id, cp.public_metadata, cp.renew_before_days, cp.status, cp.updated_at FROM managed_certificates mc JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id WHERE mc.workspace_id=$1 AND mc.id=$2", [workspaceId, certificateId])).rows[0];
-  const original = await profile(); assert.ok(original); assert.equal(original.status, "active");
+  const original = await profile(); assert.ok(original); assert.equal(original.status, "active"); assert.equal(original.renew_before_days, 30, "Reuse proof requires the explicit profile lead");
   assert.equal(original.public_metadata.renewalProfile.keyRotationPolicy.rotateOnRenew, true, "Run reuse only after the journey's positive rotation controls");
   const expected = structuredClone(original.public_metadata.renewalProfile); expected.keyRotationPolicy.rotateOnRenew = false;
   const changed = await publicSession.request(`/api/v1/workspaces/${workspaceId}/certops/profiles/${original.id}`, "PATCH", { renewalProfile: expected });
@@ -168,7 +168,7 @@ async function qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certif
   assert.equal(manual.status, 201); ownedJobIds.push(manual.body.job.id); jobs.push({ id: manual.body.job.id, source: "api" }); await complete(jobs[0]);
   await new Promise(resolve => setTimeout(resolve, 1500));
   const due = (await query("SELECT mc.not_after, mc.not_after <= NOW() + (COALESCE(cp.renew_before_days,30) || ' days')::interval AS due FROM managed_certificates mc JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id WHERE mc.workspace_id=$1 AND mc.id=$2 AND cp.status='active' AND EXISTS (SELECT 1 FROM certops_management_periods p WHERE p.workspace_id=mc.workspace_id AND p.managed_certificate_id=mc.id AND p.ended_at IS NULL AND p.automation_enabled=TRUE)", [workspaceId, certificateId])).rows[0];
-  assert.equal(due?.due, true, "Actual SQL NOW must select the naturally due managed certificate");
+  assert.equal(due?.due, true, "Actual SQL NOW must select the certificate under its explicit profile lead");
   const scheduler = require(path.join(repoRoot, "apps/api/services/certops/renewalScheduler.js"));
   const key = scheduler.renewalIdempotencyKey(certificateId, due.not_after);
   assert.equal((await query("SELECT 1 FROM certificate_jobs WHERE workspace_id=$1 AND idempotency_key=$2", [workspaceId, key])).rows.length, 0);

@@ -304,8 +304,115 @@ describe("operator token inventory on PostgreSQL", () => {
     assert.equal(tools.get("tt_create_contact").validateOutput(created.body), true);
     const row = (await pool.query("SELECT first_name,last_name,phone_e164,details FROM workspace_contacts WHERE workspace_id=$1 AND id=$2", [workspace, created.body.contactId])).rows[0];
     assert.equal(row.first_name, "Ada"); assert.equal(row.phone_e164, contact.phoneE164); assert.equal(row.details.email, "ada@example.test");
+    // Creating a contact via MCP never creates consent or sends an invitation.
+    const verification = require("../../packages/recipient-verification");
+    const envKeys = ["TT_DEPLOYMENT", "RECIPIENT_VERIFICATION_MODE", "RECIPIENT_VERIFICATION_CLOUD_SHADOW", "RECIPIENT_FINGERPRINT_SECRET"];
+    const saved = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+    try {
+      process.env.RECIPIENT_FINGERPRINT_SECRET = "synthetic-mcp-contact-verification-secret";
+      delete process.env.RECIPIENT_VERIFICATION_CLOUD_SHADOW;
+      const pending = await pool.query("SELECT COUNT(*)::int AS count FROM contact_verification_challenges WHERE workspace_id=$1 AND contact_id=$2", [workspace, created.body.contactId]);
+      assert.equal(pending.rows[0].count, 0);
+      for (const [channel, destination] of [["email", row.details.email], ["whatsapp", row.phone_e164]]) {
+        const args = { client: pool, workspaceId: workspace, contactId: created.body.contactId, channel, destination };
+        process.env.TT_DEPLOYMENT = "cloud";
+        process.env.RECIPIENT_VERIFICATION_MODE = "off";
+        const enforced = await verification.canDeliverToRecipient(args);
+        assert.equal(enforced.mode, "enforce");
+        assert.equal(enforced.allowed, false);
+        assert.equal(enforced.code, "RECIPIENT_NOT_VERIFIED");
+        process.env.TT_DEPLOYMENT = "self-hosted";
+        const off = await verification.canDeliverToRecipient(args);
+        assert.equal(off.mode, "off");
+        assert.equal(off.allowed, true);
+        process.env.RECIPIENT_VERIFICATION_MODE = "shadow";
+        const shadow = await verification.canDeliverToRecipient(args);
+        assert.equal(shadow.allowed, true);
+        assert.equal(shadow.shadowBlocked, true);
+        process.env.RECIPIENT_VERIFICATION_MODE = "enforce";
+        const selfHosted = await verification.canDeliverToRecipient(args);
+        assert.equal(selfHosted.allowed, false);
+        assert.equal(selfHosted.code, "RECIPIENT_NOT_VERIFIED");
+        // Synthetic consent row: exercise the gate after verification without sending messages.
+        await pool.query(`INSERT INTO contact_channel_verifications
+          (workspace_id,contact_id,channel,destination_normalized,destination_fingerprint,status,verified_at,consent_at,consent_method)
+          VALUES($1,$2,$3,$4,$5,'verified',NOW(),NOW(),'test')`,
+        [workspace, created.body.contactId, channel, destination, verification.destinationFingerprint(channel, destination)]);
+        assert.equal((await verification.canDeliverToRecipient(args)).allowed, true);
+        await pool.query(`INSERT INTO notification_suppressions(channel,destination_fingerprint,scope,workspace_id,reason)
+          VALUES($1,$2,'workspace',$3,'recipient_declined')`,
+        [channel, verification.destinationFingerprint(channel, destination), workspace]);
+        const suppressed = await verification.canDeliverToRecipient(args);
+        assert.equal(suppressed.allowed, false);
+        assert.equal(suppressed.code, "RECIPIENT_OPTED_OUT");
+      }
+    } finally {
+      for (const key of envKeys) {
+        if (saved[key] === undefined) delete process.env[key];
+        else process.env[key] = saved[key];
+      }
+    }
     assert.equal((await post("contacts/create", body, raw)).body.replayed, true);
     assert.equal((await post("contacts/preview", { contact }, raw)).body.code, "OPERATOR_INTENT_STALE");
+  });
+  it("returns current verification guidance only when requested and enforced", async () => {
+    const keys = ["TT_DEPLOYMENT", "RECIPIENT_VERIFICATION_MODE", "RECIPIENT_VERIFICATION_CLOUD_SHADOW", "RECIPIENT_FINGERPRINT_SECRET"];
+    const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+    const verification = require("../../packages/recipient-verification");
+    try {
+      process.env.TT_DEPLOYMENT = "cloud";
+      process.env.RECIPIENT_VERIFICATION_MODE = "enforce";
+      process.env.RECIPIENT_FINGERPRINT_SECRET = "synthetic-mcp-contact-verification-secret";
+      delete process.env.RECIPIENT_VERIFICATION_CLOUD_SHADOW;
+      const raw = await credential(manager, ["mcp:contacts:create"]);
+      const contact = { firstName: "Verify", lastName: "Example", email: "verify-" + crypto.randomUUID() + "@example.test", phoneE164: "+491" + String(crypto.randomInt(100000000, 999999999)) };
+      const preview = await post("contacts/preview", { contact }, raw);
+      assert.equal(preview.status, 200);
+      const body = { planId: preview.body.planId, planHash: preview.body.planHash, requestId: crypto.randomUUID() };
+      const extended = () => post("contacts/create", body, raw).set("X-TT-Contact-Verification", "1");
+      const created = await extended();
+      assert.equal(created.status, 200, JSON.stringify(created.body));
+      assert.equal(tools.get("tt_create_contact").validateOutput(created.body), true, JSON.stringify({ body: created.body, errors: tools.get("tt_create_contact").validateOutput.errors }));
+      assert.deepEqual(created.body.verification, { mode: "enforce", status: "available", email: "confirmation_required", whatsapp: "confirmation_required", invitationSentByCreation: false });
+      const legacy = await post("contacts/create", body, raw);
+      assert.equal(legacy.status, 200);
+      assert.equal(legacy.body.replayed, true);
+      assert.equal(Object.hasOwn(legacy.body, "verification"), false);
+      const fingerprint = verification.destinationFingerprint("email", contact.email);
+      await pool.query(`INSERT INTO contact_channel_verifications
+        (workspace_id,contact_id,channel,destination_normalized,destination_fingerprint,status,verified_at,consent_at,consent_method)
+        VALUES($1,$2,'email',$3,$4,'verified',NOW(),NOW(),'test')`, [workspace, created.body.contactId, contact.email, fingerprint]);
+      const replay = await extended();
+      assert.equal(replay.status, 200);
+      assert.equal(replay.body.replayed, true);
+      assert.equal(replay.body.verification.email, "verified");
+      assert.equal(replay.body.verification.whatsapp, "confirmation_required");
+      await pool.query(`INSERT INTO notification_suppressions(channel,destination_fingerprint,scope,workspace_id,reason)
+        VALUES('email',$1,'workspace',$2,'recipient_declined')`, [fingerprint, workspace]);
+      assert.equal((await extended()).body.verification.email, "opted_out");
+      const query = pool.query;
+      try {
+        pool.query = function (sql, ...rest) {
+          if (typeof sql === "string" && sql.startsWith("SELECT phone_e164,details FROM workspace_contacts")) throw new Error("synthetic status failure");
+          return query.call(this, sql, ...rest);
+        };
+        const unavailable = await extended();
+        assert.equal(unavailable.status, 200);
+        assert.deepEqual(unavailable.body.verification, { mode: "enforce", status: "unavailable", email: null, whatsapp: null, invitationSentByCreation: false });
+      } finally { pool.query = query; }
+      process.env.TT_DEPLOYMENT = "self-hosted";
+      for (const mode of ["off", "shadow"]) {
+        process.env.RECIPIENT_VERIFICATION_MODE = mode;
+        const response = await extended();
+        assert.equal(response.status, 200);
+        assert.equal(Object.hasOwn(response.body, "verification"), false);
+      }
+    } finally {
+      for (const key of keys) {
+        if (saved[key] === undefined) delete process.env[key];
+        else process.env[key] = saved[key];
+      }
+    }
   });
   it("rejects expired, foreign, and revoked contact creation previews", async () => {
     const raw = await credential(manager, ["mcp:contacts:create"]), other = await credential(manager, ["mcp:contacts:create"]);

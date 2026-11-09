@@ -77,6 +77,16 @@ describe("API client", () => {
     assert.equal(seen[0].headers["x-request-id"], result.correlationId);
   });
 
+  it("requests the extended contact result only for contact creation", async () => {
+    respond = json(200, { ok: true });
+    seen.length = 0;
+    const client = createApiClient(config());
+    await client.post("/api/v1/operator/contacts/create", {});
+    await client.post("/api/v1/operator/contacts/preview", {});
+    assert.equal(seen[0].headers["x-tt-contact-verification"], "1");
+    assert.equal(seen[1].headers["x-tt-contact-verification"], undefined);
+  });
+
   it("only ever reaches the operator namespace", () => {
     for (const bad of [
       "/api/v1/workspaces/abc/certops/jobs",
