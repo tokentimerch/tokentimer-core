@@ -12,8 +12,8 @@
  * raw/base64/mixed private material and oversized decoys. Authenticated public issue and
  * signed-agent claim must generate real CSR, key, CA issuance, filesystem deploy and
  * persisted facts; independent X509/key/trusted TLS oracles bind actual results.
- * Naturally due genuine expiry must derive a profile/active period and support real
- * scheduler renewals. Final lease-loss control holds the actual owned client before
+ * The derived profile and active period support real scheduler renewals after an
+ * explicit profile lead makes the fresh certificate due. Final lease-loss control holds the actual owned client before
  * exec, observes current claim and PID and retires the agent publicly WITHOUT releasing
  * barrier: production abort must preserve deployed pair, TLS and authoritative DNS.
  * Benign process controls are supporting evidence only; no Windows/IIS, domain ADCS or
