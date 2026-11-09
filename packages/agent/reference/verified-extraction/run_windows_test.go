@@ -30,10 +30,28 @@ func TestInstallerReceivesInheritedIntentPipe(t *testing.T) {
 			if err := os.WriteFile(script, []byte(text), 0600); err != nil {
 				t.Fatal(err)
 			}
-			if err := invokeInstaller(context.Background(), script, root, nil, token, strings.Repeat("a", 32), strings.Repeat("d", 64)); err != nil {
+			if err := invokeInstaller(context.Background(), script, root, nil, token, strings.Repeat("a", 32), strings.Repeat("d", 64), nil); err != nil {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestInstallerDoesNotRunWhenResumeIsDenied(t *testing.T) {
+	root := t.TempDir()
+	script := filepath.Join(root, "installer.ps1")
+	if err := os.WriteFile(script, []byte(`[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'started'), 'yes')`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	denied := errors.New("install guard release failed")
+	err := invokeInstaller(context.Background(), script, root, nil, "", strings.Repeat("a", 32), strings.Repeat("b", 64), func() error {
+		return denied
+	})
+	if !errors.Is(err, denied) {
+		t.Fatalf("unexpected installer result: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "started")); !os.IsNotExist(err) {
+		t.Fatalf("installer started after resume was denied: %v", err)
 	}
 }
 
@@ -100,7 +118,10 @@ func TestRunCandidateQuarantinesAfterIntent(t *testing.T) {
 					return func() error { f.events = append(f.events, "release"); return nil }, nil
 				},
 				scmDigest: func() (string, error) { return strings.Repeat("c", 64), nil },
-				invoke: func(_ context.Context, _, _ string, _ []string, _, tx, secret string) error {
+				invoke: func(_ context.Context, _, _ string, _ []string, _, tx, secret string, beforeResume func() error) error {
+					if err := beforeResume(); err != nil {
+						return err
+					}
 					f.events = append(f.events, "invoke")
 					if tx != strings.Repeat("a", 32) {
 						t.Fatal("missing transaction")
@@ -146,7 +167,7 @@ func TestRunCandidateCancelledBeforeInvocationCleansFreshPair(t *testing.T) {
 			return func() error { f.events = append(f.events, "release"); return nil }, nil
 		},
 		scmDigest: func() (string, error) { return strings.Repeat("c", 64), nil },
-		invoke: func(context.Context, string, string, []string, string, string, string) error {
+		invoke: func(context.Context, string, string, []string, string, string, string, func() error) error {
 			t.Fatal("installer invoked after cancellation")
 			return nil
 		},
@@ -180,7 +201,10 @@ func TestRunCandidateHoldsStagingWhileFailedTerminationWaits(t *testing.T) {
 			return func() error { f.events = append(f.events, "release"); return nil }, nil
 		},
 		scmDigest: func() (string, error) { return strings.Repeat("c", 64), nil },
-		invoke: func(context.Context, string, string, []string, string, string, string) error {
+		invoke: func(_ context.Context, _, _ string, _ []string, _, _, _ string, beforeResume func() error) error {
+			if err := beforeResume(); err != nil {
+				return err
+			}
 			return waitCanceledChild(context.Canceled, done, func() error { return terminationErr }, func() { reported <- struct{}{} })
 		},
 	}
@@ -216,6 +240,37 @@ func TestRunCandidateHoldsStagingWhileFailedTerminationWaits(t *testing.T) {
 	}
 }
 
+func TestRunCandidateSetupFailureCleansFreshPairUnderGuard(t *testing.T) {
+	f := &runFixture{}
+	setupErr := errors.New("suspended installer setup failed")
+	held := false
+	deps := executionDependencies{
+		nativeArch: func() (string, error) { return runtime.GOARCH, nil },
+		prepare:    func(Candidate) (preparedForRun, error) { return f, nil },
+		scratch:    func() (scratchForRun, error) { return scratchFixture{f}, nil },
+		beginGuard: func(context.Context) (func() error, error) {
+			held = true
+			return func() error { held = false; return nil }, nil
+		},
+		scmDigest: func() (string, error) { return strings.Repeat("c", 64), nil },
+		invoke: func(context.Context, string, string, []string, string, string, string, func() error) error {
+			return setupErr
+		},
+		abortBeforeInvoke: func(preparedForRun, scratchForRun, ExecutionIntent) error {
+			if !held {
+				t.Fatal("setup failure cleaned after releasing the guard")
+			}
+			f.events = append(f.events, "abort")
+			return nil
+		},
+	}
+	result, err := runCandidate(context.Background(), Candidate{Architecture: runtime.GOARCH}, nil, "", deps)
+	if err != nil || !errors.Is(result.InstallerErr, setupErr) || result.CleanupPending ||
+		!strings.Contains(strings.Join(f.events, ","), "abort") || held {
+		t.Fatalf("setup failure did not clear the fresh intent pair: %+v %v %v", result, err, f.events)
+	}
+}
+
 // No installer process exists on this path; clean only while the guard is held.
 func TestRunCandidatePathFailureAbortsOnlyUnderGuard(t *testing.T) {
 	for _, cleanupFails := range []bool{false, true} {
@@ -231,7 +286,7 @@ func TestRunCandidatePathFailureAbortsOnlyUnderGuard(t *testing.T) {
 					return func() error { held = false; f.events = append(f.events, "release"); return nil }, nil
 				},
 				scmDigest: func() (string, error) { return strings.Repeat("c", 64), nil },
-				invoke: func(context.Context, string, string, []string, string, string, string) error {
+				invoke: func(context.Context, string, string, []string, string, string, string, func() error) error {
 					t.Fatal("installer invoked")
 					return nil
 				},

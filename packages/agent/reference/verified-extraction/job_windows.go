@@ -22,7 +22,7 @@ type jobAccounting struct {
 // runContained terminates the Windows job on completion or cancellation. Job
 // accounting does not prove that all processes, including WMI/SCM actors, have
 // exited; callers must quarantine every path that the child could access.
-func runContained(ctx context.Context, cmd *exec.Cmd) error {
+func runContained(ctx context.Context, cmd *exec.Cmd, beforeResume func() error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -68,7 +68,16 @@ func runContained(ctx context.Context, cmd *exec.Cmd) error {
 		_ = windows.TerminateJobObject(job, 1)
 	}()
 	thread, err := primaryThread(uint32(cmd.Process.Pid))
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err == nil && beforeResume != nil {
+		err = beforeResume()
+	}
 	if err != nil {
+		if thread != 0 {
+			windows.CloseHandle(thread)
+		}
 		_ = windows.TerminateJobObject(job, 1)
 		_ = cmd.Wait()
 		return err

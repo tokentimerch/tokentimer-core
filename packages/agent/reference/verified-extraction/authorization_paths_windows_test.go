@@ -62,10 +62,10 @@ if ($script:AuthorizedLauncherTransaction -cne '%s') { throw 'transaction not au
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := invokeInstaller(ctx, script, scratch, nil, "", transaction, secret); err != nil {
+	if err := invokeInstaller(ctx, script, scratch, nil, "", transaction, secret, nil); err != nil {
 		t.Fatalf("two matching intent paths and inherited secret should be accepted: %v", err)
 	}
-	if err := invokeInstaller(ctx, script, scratch, nil, "", transaction, strings.Repeat("f", 64)); err == nil {
+	if err := invokeInstaller(ctx, script, scratch, nil, "", transaction, strings.Repeat("f", 64), nil); err == nil {
 		t.Fatal("incorrect inherited secret was accepted")
 	}
 }
@@ -108,7 +108,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Node could not invoke the system PowerShell AC
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := invokeInstaller(ctx, script, root, nil, "", strings.Repeat("a", 32), strings.Repeat("b", 64)); err != nil {
+	if err := invokeInstaller(ctx, script, root, nil, "", strings.Repeat("a", 32), strings.Repeat("b", 64), nil); err != nil {
 		t.Fatal(err)
 	}
 }

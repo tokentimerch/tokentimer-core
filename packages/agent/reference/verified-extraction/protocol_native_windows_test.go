@@ -77,10 +77,10 @@ try { Assert-AuthorizedLauncherOrNoIntent } finally { $m.ReleaseMutex(); $m.Disp
 	if err := release(); err != nil {
 		t.Fatal(err)
 	}
-	if err := invokeInstaller(context.Background(), script, scratch.Root(), nil, "", intent.Transaction, intent.Secret); err != nil {
+	if err := invokeInstaller(context.Background(), script, scratch.Root(), nil, "", intent.Transaction, intent.Secret, nil); err != nil {
 		t.Fatalf("authorized candidate refused: %v", err)
 	}
-	if err := invokeInstaller(context.Background(), script, scratch.Root(), nil, "", intent.Transaction, strings.Repeat("c", 64)); err == nil {
+	if err := invokeInstaller(context.Background(), script, scratch.Root(), nil, "", intent.Transaction, strings.Repeat("c", 64), nil); err == nil {
 		t.Fatal("forged pipe secret accepted")
 	}
 	if err := payload.Cleanup(); err != ErrExecutionRecoveryPending {

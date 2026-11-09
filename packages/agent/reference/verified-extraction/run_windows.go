@@ -41,7 +41,7 @@ type executionDependencies struct {
 	scratch           func() (scratchForRun, error)
 	beginGuard        func(context.Context) (func() error, error)
 	scmDigest         func() (string, error)
-	invoke            func(context.Context, string, string, []string, string, string, string) error
+	invoke            func(context.Context, string, string, []string, string, string, string, func() error) error
 	abortBeforeInvoke func(preparedForRun, scratchForRun, ExecutionIntent) error
 }
 
@@ -64,9 +64,9 @@ func RunCandidate(ctx context.Context, candidate Candidate, args []string, token
 	return runCandidate(ctx, candidate, args, token, d)
 }
 
-// runCandidate keeps both private directories on every path after either
-// intent may have been created. WMI and SCM can outlive the original process,
-// so neither normal exit nor job termination authorizes automatic deletion.
+// runCandidate keeps both private directories after an installer may have
+// started. WMI and SCM can outlive the original process, so neither normal
+// exit nor job termination authorizes automatic deletion.
 func runCandidate(ctx context.Context, candidate Candidate, args []string, token string, d executionDependencies) (result RunResult, err error) {
 	if d.nativeArch == nil || d.prepare == nil || d.scratch == nil || d.beginGuard == nil || d.scmDigest == nil || d.invoke == nil {
 		return result, fmt.Errorf("incomplete execution dependencies")
@@ -144,11 +144,17 @@ func runCandidate(ctx context.Context, candidate Candidate, args []string, token
 	if err := scratch.BeginScratchIntent(intent.ArchiveSHA256, scmDigest, intent.Transaction, intent.Secret); err != nil {
 		return result, fmt.Errorf("scratch intent not established: %w", err)
 	}
-	if err := ctx.Err(); err != nil && d.abortBeforeInvoke != nil {
-		if cleanupErr := d.abortBeforeInvoke(p, scratch, intent); cleanupErr == nil {
-			attempted = false
-			scratch = nil
-			p = nil
+	abortFreshPair := func() bool {
+		if d.abortBeforeInvoke == nil || d.abortBeforeInvoke(p, scratch, intent) != nil {
+			return false
+		}
+		attempted = false
+		scratch = nil
+		p = nil
+		return true
+	}
+	if err := ctx.Err(); err != nil {
+		if abortFreshPair() {
 			return result, err
 		}
 		return result, fmt.Errorf("%w; pre-invocation cleanup failed; quarantine retained", err)
@@ -157,22 +163,25 @@ func runCandidate(ctx context.Context, candidate Candidate, args []string, token
 	// until it succeeds so a failure can safely abort the fresh intent pair.
 	installer, err := p.InstallerPath()
 	if err != nil {
-		if d.abortBeforeInvoke != nil {
-			if cleanupErr := d.abortBeforeInvoke(p, scratch, intent); cleanupErr == nil {
-				attempted = false
-				scratch = nil
-				p = nil
-				return result, err
-			}
+		if abortFreshPair() {
+			return result, err
 		}
 		return result, fmt.Errorf("%w; pre-invocation cleanup failed; quarantine retained", err)
 	}
-	if err := release(); err != nil {
+	// The suspended installer cannot take the mutex. Release it at the last
+	// point before resume, after setup and the final cancellation check.
+	var releaseErr error
+	result.InstallerErr = d.invoke(ctx, installer, scratch.Root(), args, token, intent.Transaction, intent.Secret, func() error {
 		guardHeld = false
-		return result, fmt.Errorf("release install guard: %w", err)
+		releaseErr = release()
+		return releaseErr
+	})
+	if releaseErr != nil {
+		return result, fmt.Errorf("release install guard: %w", releaseErr)
 	}
-	guardHeld = false
-	result.InstallerErr = d.invoke(ctx, installer, scratch.Root(), args, token, intent.Transaction, intent.Secret)
+	if guardHeld && result.InstallerErr != nil && !abortFreshPair() {
+		return result, fmt.Errorf("%w; pre-invocation cleanup failed; quarantine retained", result.InstallerErr)
+	}
 	return result, nil
 }
 
@@ -212,7 +221,7 @@ func systemPowerShellPath() (string, string, error) {
 	return filepath.Join(systemDir, "WindowsPowerShell", "v1.0", "powershell.exe"), systemDir, nil
 }
 
-func invokeInstaller(ctx context.Context, installer, scratch string, args []string, token, transaction, secret string) error {
+func invokeInstaller(ctx context.Context, installer, scratch string, args []string, token, transaction, secret string, beforeResume func() error) error {
 	if !digest.MatchString(secret) {
 		return fmt.Errorf("invalid protected execution secret")
 	}
@@ -247,7 +256,7 @@ func invokeInstaller(ctx context.Context, installer, scratch string, args []stri
 	if token != "" {
 		cmd.Env = append(cmd.Env, "TOKENTIMER_AGENT_BOOTSTRAP_TOKEN="+token)
 	}
-	return runContained(ctx, cmd)
+	return runContained(ctx, cmd, beforeResume)
 }
 
 type systemInfo struct {
