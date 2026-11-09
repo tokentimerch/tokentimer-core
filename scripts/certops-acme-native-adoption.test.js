@@ -139,3 +139,26 @@ test("actual parent setup context supplies the independent serving TLS observer"
 });
 
 test("actual TLS options callback resolves explicit owned CA instead of implicit default trust",()=>{const ca=Buffer.from('owned-public-CA-control');assert.equal(helper.resolveTlsOptions(()=>({ca})).ca,ca);for(const provider of [undefined,{ca},()=>({}),()=>null])assert.throws(()=>helper.resolveTlsOptions(provider));});
+
+
+test("native setup compares exact SAN membership independent of CA order", () => {
+  const domain = "example.test";
+  const expected = { target: { type: "domain", reference: domain }, sans: [domain, "*.example.test", "alt.example.test"], keyRotation: true };
+  const compare = (sans, fields = {}) => helper.sameExecutionPolicy({ ...expected, ...fields, sans }, expected);
+  assert.equal(compare(["alt.example.test", domain, "*.example.test"]), true);
+  assert.equal(compare([domain, "*.example.test"]), false);
+  assert.equal(compare([domain, "*.example.test", "alt.example.test", "extra.example.test"]), false);
+  assert.equal(compare([domain, "example.test", "alt.example.test"]), false);
+  assert.equal(compare(expected.sans, { keyRotation: false }), false);
+  assert.equal(compare(["*.example.test", "alt.example.test"]), false);
+});
+
+
+test("policy mismatch diagnostics expose only fixed categories", () => {
+  const original = { target: { reference: "private-host" }, sans: ["private-host"], certPath: "/private/path", keyRotation: true };
+  const changed = { ...original, certPath: "/another/private/path", keyRotation: false, untrustedKey: "secret" };
+  assert.deepEqual(helper.executionPolicyDifferenceLabels(changed, original), ["adoption-policy-diff-key", "adoption-policy-diff-deployment"]);
+  const unknown = helper.executionPolicyDifferenceLabels({ ...original, untrustedKey: "secret" }, original);
+  assert.deepEqual(unknown, ["adoption-policy-diff-other"]);
+  assert.ok([...unknown, ...helper.executionPolicyDifferenceLabels(changed, original)].every(label => !/private|secret|untrusted/.test(label)));
+});

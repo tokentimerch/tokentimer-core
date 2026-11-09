@@ -324,6 +324,88 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     await admin.query(`DROP DATABASE IF EXISTS ${dbName}`);
     await admin.end();
   });
+  async function trackingAdoptionFixture() {
+    const ws = await workspace();
+    const mc = await source(ws, A, { name: "adoption.example.test" });
+    const initial = (await db.query("SELECT id FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL", [ws, mc.id])).rows[0];
+    assert.ok(initial);
+    await stopManagingSource({ workspaceId: ws, periodId: initial.id, client: db });
+    const tracking = await readdManagingSource({ workspaceId: ws, managedCertificateId: mc.id, renewalProfileId: null, automationEnabled: false, client: db });
+    await db.query("UPDATE managed_certificates SET subject_alt_names=$2 WHERE id=$1", [mc.id, ["adoption.example.test"]]);
+    const claim = randomUUID(), outboxClaim = randomUUID();
+    const payload = { target: { type: "domain", reference: "adoption.example.test" }, sans: ["adoption.example.test"], certPath: "/tmp/adoption.pem", commandRef: "certbot", caEndpoint: "https://ca.example.test/directory", acmeKind: "certbot", dnsProvider: "example", dnsZone: "example.test" };
+    const finished = (await db.query("INSERT INTO certificate_jobs(workspace_id,subject_type,subject_id,operation,status,claim_id,payload) VALUES($1,'managed_certificate',$2,'renew','succeeded',$3,$4::jsonb) RETURNING id", [ws, mc.id, claim, JSON.stringify(payload)])).rows[0];
+    await db.query("INSERT INTO certificate_evidence(workspace_id,job_id,evidence_type,claim_id,metadata) VALUES($1,$2,'validation.passed',$3,$4::jsonb)", [ws, finished.id, claim, JSON.stringify({ step: "verify" })]);
+    const intentPayload = { jobId: finished.id, certificateId: mc.id };
+    const intent = (await db.query("INSERT INTO certops_outbox(workspace_id,event_type,dedupe_key,payload,claim_id) VALUES($1,'profile_derivation_requested',$2,$3::jsonb,$4) RETURNING *", [ws, finished.id, JSON.stringify(intentPayload), outboxClaim])).rows[0];
+    const certopsWorker = await import("../../apps/worker/src/certops-worker.js");
+    const run = () => certopsWorker.handleProfileDerivationIntent({ dbPool: db, row: intent, claimId: outboxClaim, payload: intentPayload });
+    return { ws, mc, tracking, intent, run };
+  }
+
+  async function assertTrackingAdoption(f) {
+    const saved = (await db.query("SELECT mc.profile_id, p.id AS period_id, p.automation_enabled, p.renewal_profile_id FROM managed_certificates mc JOIN certops_management_periods p ON p.workspace_id=mc.workspace_id AND p.managed_certificate_id=mc.id AND p.ended_at IS NULL WHERE mc.workspace_id=$1 AND mc.id=$2", [f.ws, f.mc.id])).rows[0];
+    assert.ok(saved.profile_id);
+    assert.equal(saved.period_id, f.tracking.periodId);
+    assert.equal(saved.automation_enabled, false);
+    assert.equal(saved.renewal_profile_id, null);
+  }
+
+  it("preserves tracking mode when the outbox links an adopted renewal profile", async () => {
+    const f = await trackingAdoptionFixture();
+    assert.equal((await f.run()).terminalStatus, "succeeded");
+    await assertTrackingAdoption(f);
+  });
+
+  for (const locked of ["certificate", "period"]) {
+    it(`defers a contended ${locked} lock without changing tracking mode`, async () => {
+      const f = await trackingAdoptionFixture();
+      const blocker = await db.connect();
+      try {
+        await blocker.query("BEGIN");
+        if (locked === "certificate") await blocker.query("SELECT id FROM managed_certificates WHERE id=$1 FOR UPDATE", [f.mc.id]);
+        else await blocker.query("SELECT id FROM certops_management_periods WHERE id=$1 FOR UPDATE", [f.tracking.periodId]);
+        const outcome = await f.run();
+        assert.equal(outcome.deferred, true);
+        assert.equal(outcome.reason, "management_lock_busy");
+        assert.equal((await db.query("SELECT status FROM certops_outbox WHERE id=$1", [f.intent.id])).rows[0].status, "pending");
+        assert.equal((await db.query("SELECT profile_id FROM managed_certificates WHERE id=$1", [f.mc.id])).rows[0].profile_id, null);
+      } finally {
+        await blocker.query("ROLLBACK");
+        blocker.release();
+      }
+      assert.equal((await f.run()).terminalStatus, "succeeded");
+      await assertTrackingAdoption(f);
+    });
+  }
+
+  it("defers to a concurrent replace-management choice", async () => {
+    const f = await trackingAdoptionFixture();
+    const selected = (await db.query("INSERT INTO certificate_profiles(workspace_id,name) VALUES($1,$2) RETURNING id", [f.ws, "Explicit replacement"])).rows[0].id;
+    const blocker = await db.connect();
+    let replacement;
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("SELECT id FROM certops_management_periods WHERE id=$1 FOR UPDATE", [f.tracking.periodId]);
+      const outcome = await f.run();
+      assert.equal(outcome.deferred, true);
+      assert.equal(outcome.reason, "management_lock_busy");
+      replacement = await replaceManagingSource({ workspaceId: f.ws, managedCertificateId: f.mc.id, periodId: f.tracking.periodId, renewalProfileId: selected, automationEnabled: true, client: blocker });
+      await blocker.query("COMMIT");
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+    }
+    const retry = await f.run();
+    assert.equal(retry.terminalStatus, "skipped");
+    assert.equal(retry.reason, "already_linked");
+    const current = (await db.query("SELECT mc.profile_id,p.id,p.automation_enabled,p.renewal_profile_id FROM managed_certificates mc JOIN certops_management_periods p ON p.workspace_id=mc.workspace_id AND p.managed_certificate_id=mc.id AND p.ended_at IS NULL WHERE mc.id=$1", [f.mc.id])).rows[0];
+    assert.equal(current.id, replacement.readded.periodId);
+    assert.equal(current.profile_id, selected);
+    assert.equal(current.renewal_profile_id, selected);
+    assert.equal(current.automation_enabled, true);
+  });
+
   it("normalizes legacy audit reads without changing immutable metadata or timestamps", async () => {
     const { auditActionSql } = require("../../apps/api/services/audit");
     const ids = fixture.auditBefore.map(row => row.id);

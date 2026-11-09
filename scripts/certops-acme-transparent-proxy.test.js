@@ -126,3 +126,11 @@ test("finalization readiness binds the actual order and every one of its authori
     }),
   );
 });
+
+test("CA response classification emits only fixed problem categories", () => {
+  for (const [type, expected] of [["badNonce", "badNonce"], ["dns", "dns"], ["unauthorized", "unauthorized"], ["rateLimited", "rateLimited"]]) {
+    assert.equal(h.pebbleProblemCategory(400, {type:`urn:ietf:params:acme:error:${type}`, detail:"private-value"}), expected);
+  }
+  for (const value of [null, {}, {type:"__proto__"}, {type:"private-value"}, {type: {}}]) assert.equal(h.pebbleProblemCategory(400, value), null);
+  assert.equal(h.pebbleProblemCategory(200, {type:"urn:ietf:params:acme:error:badNonce"}), null);
+});

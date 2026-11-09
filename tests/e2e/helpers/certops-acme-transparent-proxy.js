@@ -170,6 +170,17 @@ function createOrderObserver({ authority, upstreamDirectory }) {
     },
   };
 }
+// Expose only fixed response categories, never CA-provided detail or identifiers.
+function pebbleProblemCategory(status, parsed) {
+  if (!Number.isInteger(status) || status < 400 || status > 599 || !parsed || typeof parsed !== "object") return null;
+  const known = new Map([
+    ["urn:ietf:params:acme:error:badNonce", "badNonce"],
+    ["urn:ietf:params:acme:error:dns", "dns"],
+    ["urn:ietf:params:acme:error:unauthorized", "unauthorized"],
+    ["urn:ietf:params:acme:error:rateLimited", "rateLimited"],
+  ]);
+  return known.get(parsed.type) || null;
+}
 function publicCounters() {
   return {
     received: 0,
@@ -177,6 +188,11 @@ function publicCounters() {
     refused: 0,
     acceptedAccounts: 0,
     acceptedOrders: 0,
+    badNonceResponses: 0,
+    dnsProblemResponses: 0,
+    unauthorizedResponses: 0,
+    rateLimitedResponses: 0,
+    invalidAuthorizations: 0,
     validAuthorizations: 0,
     readyOrders: 0,
     forwardedFinalizations: 0,
@@ -327,6 +343,12 @@ async function startOwnedAcmeProxy({
               } catch {
                 /* Certificate responses need not be JSON. */
               }
+              const problem = pebbleProblemCategory(status, parsed);
+              if (problem === "badNonce") counters.badNonceResponses++;
+              if (problem === "dns") counters.dnsProblemResponses++;
+              if (problem === "unauthorized") counters.unauthorizedResponses++;
+              if (problem === "rateLimited") counters.rateLimitedResponses++;
+              if (selected.stage === "authorization" && status === 200 && parsed?.status === "invalid") counters.invalidAuthorizations++;
               if (selected.stage === "account" && [200, 201].includes(status))
                 counters.acceptedAccounts++;
               if (selected.stage === "new-order" && status === 201)
@@ -477,5 +499,6 @@ module.exports = {
   readBounded,
   identifiersDigest,
   createOrderObserver,
+  pebbleProblemCategory,
   startOwnedAcmeProxy,
 };

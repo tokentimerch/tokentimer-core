@@ -54,6 +54,7 @@
  * ACME client. Public discovery/claims, actual issuance/renewal, trusted served TLS and
  * persisted evidence are checked; all keys, paths and child processes belong to the run. */
 "use strict";
+const QUALIFICATION_AGENT_TIMING = Object.freeze({pollIntervalMs:3000,heartbeatIntervalMs:10000,discoveryIntervalMs:5000,discoveryObservationTimeoutMs:30000});
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -70,6 +71,50 @@ function localEndpoint(value, protocol) {
   assert.equal(url.protocol, protocol);
   assert.ok(["localhost", "127.0.0.1", "[::1]"].includes(url.hostname), "qualification CA must be loopback only");
   return url.href;
+}
+function failedRenewalTerminalStatus(status) {
+  return ["failed", "rejected", "cancelled", "blocked", "orphaned_unknown_effect"].includes(status);
+}
+// Return fixed labels only: persisted errors may contain private command output.
+function issuanceDiagnosticLabels(row, agent, before, after, phase = "issue") {
+  assert.ok(["issue", "second-renewal", "manual-renewal"].includes(phase));
+  const labels = [];
+  const statuses = new Set(["failed", "rejected", "cancelled", "blocked", "orphaned_unknown_effect", "pending", "claimed", "running", "succeeded"]);
+  labels.push(`real-acme-diagnostic-${phase}-status-${statuses.has(row?.status) ? row.status : "other"}`);
+  labels.push(agent?.exitCode === null && agent?.signalCode === null ? "real-acme-diagnostic-agent-running" : "real-acme-diagnostic-agent-not-running");
+  const message = typeof row?.error_message === "string" ? row.error_message.toLowerCase() : "";
+  // Match only source-defined prefixes; values from persisted details are never emitted.
+  const categories = [
+    ["acme step failed", "acme-step"],
+    ["job execution failed", "execution-exception"],
+    ["acme step reported success but produced no certificate file", "acme-staging"],
+    ["preflight validation failed", "preflight-validation"],
+    ["pre-deploy validation failed", "pre-deploy-validation"],
+    ["preflight failed", "preflight"],
+    ["pre-deploy validation could not read private key", "pre-deploy-key-read"],
+    ["deploy step failed", "deployment"],
+    ["verify step failed", "verification"],
+    ["reload step failed", "reload"],
+    ["deploy target.chainpath is configured", "missing-chain"],
+  ];
+  const kind = message.includes("acme step failed") ? "acme-step" : message.includes("job execution failed") ? "execution-exception" : categories.find(([prefix]) => message.startsWith(prefix))?.[1] || (message ? "other" : "none");
+  const validationCode = /^pre(?:flight|-deploy) validation failed \(([a-z_]+)\)/.exec(message)?.[1];
+  const validationCodes = new Set(["certificate_parse_failed", "private_key_parse_failed", "san_mismatch", "private_key_mismatch", "not_yet_valid", "expired", "chain_invalid"]);
+  if (validationCodes.has(validationCode)) labels.push(`real-acme-diagnostic-validation-${validationCode.replaceAll("_", "-")}`);
+  labels.push(`real-acme-diagnostic-error-${kind}`);
+  if (phase === "second-renewal" && row?.status === "blocked") {
+    const reason = require("./helpers/certops-acme-background-renewals").workerBlockedReason(row);
+    labels.push(`real-acme-diagnostic-second-renewal-block-${reason}`);
+  }
+  for (const stage of ["new-order", "finalize"]) {
+    const previous = before?.perStage?.[stage]?.forwarded;
+    const current = after?.perStage?.[stage]?.forwarded;
+    if (Number.isSafeInteger(previous) && Number.isSafeInteger(current) && current > previous) labels.push(`real-acme-diagnostic-proxy-${stage}-forwarded`);
+  }
+  for (const [field, label] of [["acceptedOrders", "order-accepted"], ["validAuthorizations", "authorization-valid"], ["invalidAuthorizations", "authorization-invalid"], ["readyOrders", "order-ready"], ["badNonceResponses", "bad-nonce"], ["dnsProblemResponses", "dns-problem"], ["unauthorizedResponses", "unauthorized"], ["rateLimitedResponses", "rate-limited"]]) {
+    if (Number.isSafeInteger(before?.[field]) && Number.isSafeInteger(after?.[field]) && after[field] > before[field]) labels.push(`real-acme-diagnostic-ca-observed-${label}`);
+  }
+  return labels;
 }
 async function waitUntil(check, timeoutMs = 180000) {
   const deadline = Date.now() + timeoutMs;
@@ -124,6 +169,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
   const closedAgents=new WeakSet();
   const ownedJobIds=[], ownedCertificateIds=[], ownedWorkers=[], ownedBrowserResources=[], ownedBulkResources=[], ownedAdoptionResources=[], ownedRestartResources=[], ownedProfileResources=[], ownedLeaseResources=[];
   try {
+  fs.mkdirSync(path.dirname(certPath), { mode: 0o700 });
   fs.mkdirSync(configDir, { mode: 0o700 });
   barrierDirectory=path.join(workDir,"command-barrier");fs.mkdirSync(barrierDirectory,{mode:0o700});
   commandArgv=[process.execPath,path.join(repoRoot,"tests/e2e/helpers/certops-acme-command-barrier.js"),barrierDirectory,...commandArgv];
@@ -132,10 +178,11 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
   if(process.env.CERTOPS_REPORT_SCOPE===bulkReport.SCOPE)resultGateway=await require("./helpers/certops-acme-result-outage").startResultOutageGateway({upstreamUrl:baseUrl});
   const config = {
     serverUrl: resultGateway?.agentUrl || baseUrl, agentId, allowInsecureLocalHttp: true,
-    pollIntervalMs: 500, heartbeatIntervalMs: 1000,
+    // Leave headroom in the shared machine-request budget for job, lease and evidence traffic.
+    pollIntervalMs: QUALIFICATION_AGENT_TIMING.pollIntervalMs, heartbeatIntervalMs: QUALIFICATION_AGENT_TIMING.heartbeatIntervalMs,
     declaredTargetSelectors: [domain], declaredCommandProfileNames: [commandRef],
     execution: { enabled: true, dryRun: false },
-    discovery:{directories:[discoveryDir],intervalMs:1000},
+    discovery:{directories:[discoveryDir],intervalMs:QUALIFICATION_AGENT_TIMING.discoveryIntervalMs},
     windowsDiscovery:{enabled:false},
     policy: { allowedPaths: [workDir], allowedCommands: { [commandRef]: { argv: commandArgv } }, allowedCaEndpoints: [caEndpoint], allowedDnsZones: ["example.test"], allowedDnsProviders: ["pebble-challtestsrv"] },
     dnsProviders: { "pebble-challtestsrv": { credentialsFile }, zoneProviderMap: { "example.test": "pebble-challtestsrv" } },
@@ -220,7 +267,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
         assert.equal(inventory.status,200);
         nativeDiscovery.recordScans({rows,inventory:inventory.body,positiveFingerprint:discoveryFingerprint,negativeFingerprint:nativeDiscovery.fingerprint,positivePath:certificateFile,agentId,preparedAt});
         return true;
-      },30000);
+      },QUALIFICATION_AGENT_TIMING.discoveryObservationTimeoutMs);
     });
     for (const failure of ["unavailable", "rate-limited", "malformed"]) {
     gateway.setFailure(failure);
@@ -275,6 +322,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       assert.equal(nativeConsole,undefined,"Native lifecycle is a separate lane from read-only console");
       nativeLifecycle=await require("./helpers/certops-acme-browser-lifecycle").createLifecycleActor({pool,workspaceId,agentId,identity:publicSession,uiOrigin:process.env.CERTOPS_NATIVE_ACME_LIFECYCLE_URL,apiOrigin:process.env.CERTOPS_NATIVE_ACME_LIFECYCLE_API_URL,workDir,acmeKind,eabRef,ownedBrowserResources,registerOwnedJob:id=>{if(!ownedJobIds.includes(id))ownedJobIds.push(id);}});
     }
+    const diagnosticProxyBefore = gateway.snapshot();
     const issueInput={ operation: "issue", idempotencyKey: crypto.randomUUID(), payload: { sans: requestedNames, target: { type: "domain", reference: domain }, certPath, commandRef, caEndpoint, acmeKind, ...(eabRef ? { eabRef } : {}), dnsProvider: "pebble-challtestsrv", dnsZone: "example.test" } };
     let job;
     if(nativeLifecycle)job=(await nativeLifecycle.admit(issueInput)).publicJob;
@@ -289,11 +337,20 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       require("../../scripts/certops-acme-native-console-report").NATIVE_CASES[0],
       () => nativeConsole.observeAndRelease({ jobId, certificateId }),
     );
-    await waitUntil(async () => {
-      const row = (await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [jobId])).rows[0];
-      if (["failed", "rejected", "cancelled"].includes(row?.status)) throw new Error(`Real ACME job terminated ${row.status}`);
-      return row?.status === "succeeded";
-    });
+    try {
+      await waitUntil(async () => {
+        const row = (await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [jobId])).rows[0];
+        if (["failed", "rejected", "cancelled"].includes(row?.status)) throw new Error(`Real ACME job terminated ${row.status}`);
+        return row?.status === "succeeded";
+      });
+    } catch (error) {
+      // Emit only fixed labels; never expose persisted errors or exception details.
+      try {
+        const row = (await pool.query("SELECT status,error_message FROM certificate_jobs WHERE id=$1", [jobId])).rows[0];
+        for (const label of issuanceDiagnosticLabels(row, agent, diagnosticProxyBefore, gateway.snapshot())) await runScenario(label, async()=>{});
+      } catch { /* Diagnostics must not replace the original failure or cleanup. */ }
+      throw error;
+    }
     const firstIssuanceObservedAt = Date.now();
     await runScenario("real-acme-diagnostic-issue-completed",async()=>{});
     await verifyDnsCleanup();
@@ -378,6 +435,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     assert.equal(process.platform, "linux");
     await waitUntil(() => Date.now() > firstRenewalObservedAt + 1500);
     const previousRenewals = (await pool.query("SELECT id FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND operation='renew' AND source='automation'", [workspaceId, String(certificateId)])).rows.map((row) => row.id);
+    const diagnosticSecondBefore = gateway.snapshot();
     assert.equal(agent.kill("SIGSTOP"), true);
     let second;
     try {
@@ -388,15 +446,24 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       second = admitted[0]; ownedJobIds.push(second.id);
       await runScenario("real-acme-diagnostic-second-renewal-admitted",async()=>{});
     } finally { assert.equal(agent.kill("SIGCONT"), true); }
-    await waitUntil(async () => {
-      assert.equal(agent.exitCode, null); assert.equal(agent.signalCode, null);
-      const row = (await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [second.id])).rows[0];
-      if (["failed", "rejected", "cancelled"].includes(row?.status)) throw new Error("Actual second scheduled renewal terminated unsuccessfully");
-      return row?.status === "succeeded";
-    });
+    try {
+      await waitUntil(async () => {
+        assert.equal(agent.exitCode, null); assert.equal(agent.signalCode, null);
+        const row = (await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [second.id])).rows[0];
+        if (failedRenewalTerminalStatus(row?.status)) throw new Error("Actual second scheduled renewal terminated unsuccessfully");
+        return row?.status === "succeeded";
+      });
+    } catch (error) {
+      try {
+        const row = (await pool.query("SELECT status,error_code,error_message FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, second.id])).rows[0];
+        for (const label of issuanceDiagnosticLabels(row, agent, diagnosticSecondBefore, gateway.snapshot(), "second-renewal")) await runScenario(label, async()=>{});
+      } catch { /* Diagnostics must not replace the original failure or cleanup. */ }
+      throw error;
+    }
     const twiceRenewed = new crypto.X509Certificate(fs.readFileSync(certPath));
     await runScenario("real-acme-diagnostic-second-renewal-completed",async()=>{});
     await verifyDnsCleanup();
+    await runScenario("real-acme-diagnostic-second-renewal-dns-verified",async()=>{});
     verifyNames(twiceRenewed);
     assert.equal(twiceRenewed.checkHost(domain), domain);
     assert.notEqual(twiceRenewed.fingerprint256, renewed.fingerprint256);
@@ -404,17 +471,23 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     assert.equal(publicKeyDer(twiceRenewed).equals(publicKeyDer(renewed)), false);
     assert.ok(Date.parse(twiceRenewed.validTo) > Date.parse(renewed.validTo));
     assert.ok(twiceRenewed.checkPrivateKey(crypto.createPrivateKey(fs.readFileSync(keyPath))));
+    await runScenario("real-acme-diagnostic-second-renewal-material-verified",async()=>{});
     assert.equal(await servedFingerprint(), twiceRenewed.fingerprint256);
+    await runScenario("real-acme-diagnostic-second-renewal-tls-verified",async()=>{});
     assert.ok((await pool.query("SELECT 1 FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2", [workspaceId, second.id])).rows.length);
+    await runScenario("real-acme-diagnostic-second-renewal-evidence-verified",async()=>{});
     // A human renewal must resolve the stored profile, rather than accepting
     // caller-supplied issuer/path settings, and reach the same native pipeline.
     await new Promise(resolve => setTimeout(resolve, 1500));
     const profileBeforeManual = (await pool.query("SELECT cp.public_metadata FROM managed_certificates mc JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id WHERE mc.workspace_id=$1 AND mc.id=$2", [workspaceId, certificateId])).rows[0].public_metadata.renewalProfile;
+    await runScenario("real-acme-diagnostic-manual-renewal-profile-read",async()=>{});
+    const diagnosticManualBefore = gateway.snapshot();
     const manualInput = { operation: "renew", subjectType: "managed_certificate", subjectId: String(certificateId), idempotencyKey: crypto.randomUUID(),...(nativeLifecycle?{payload:{reason:"Disposable native browser lifecycle renewal"}}:{}) };
     let manualJob;
     if(nativeLifecycle)manualJob=(await nativeLifecycle.admit(manualInput)).publicJob;
     else{const manual=await publicSession.request(`/api/v1/workspaces/${workspaceId}/certops/jobs`,"POST",manualInput);assert.equal(manual.status,201);manualJob=manual.body.job;}
     if(!ownedJobIds.includes(manualJob.id))ownedJobIds.push(manualJob.id);
+    await runScenario("real-acme-diagnostic-manual-renewal-admitted",async()=>{});
     assert.equal(manualJob.source, "api");
     assert.equal(manualJob.payload.commandRef, commandRef);
     assert.equal(manualJob.payload.caEndpoint, caEndpoint);
@@ -424,13 +497,24 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     assert.deepEqual([...manualJob.payload.sans].sort(), [...requestedNames].sort());
     const repeatedManual = await publicSession.request(`/api/v1/workspaces/${workspaceId}/certops/jobs`, "POST", manualInput);
     assert.equal(repeatedManual.status, 201); assert.equal(repeatedManual.body.job.id, manualJob.id);
-    await waitUntil(async () => {
-      assert.equal(agent.exitCode, null); assert.equal(agent.signalCode, null);
-      const current = (await pool.query("SELECT status FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, manualJob.id])).rows[0];
-      if (["failed", "rejected", "cancelled", "blocked", "orphaned_unknown_effect"].includes(current?.status)) throw new Error("Actual profile-driven manual renewal terminated unsuccessfully");
-      return current?.status === "succeeded";
-    });
+    await runScenario("real-acme-diagnostic-manual-renewal-replay-verified",async()=>{});
+    try {
+      await waitUntil(async () => {
+        assert.equal(agent.exitCode, null); assert.equal(agent.signalCode, null);
+        const current = (await pool.query("SELECT status FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, manualJob.id])).rows[0];
+        if (["failed", "rejected", "cancelled", "blocked", "orphaned_unknown_effect"].includes(current?.status)) throw new Error("Actual profile-driven manual renewal terminated unsuccessfully");
+        return current?.status === "succeeded";
+      });
+    } catch (error) {
+      try {
+        const row = (await pool.query("SELECT status,error_code,error_message FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, manualJob.id])).rows[0];
+        for (const label of issuanceDiagnosticLabels(row, agent, diagnosticManualBefore, gateway.snapshot(), "manual-renewal")) await runScenario(label, async()=>{});
+      } catch { /* Diagnostics must not replace the original failure or cleanup. */ }
+      throw error;
+    }
+    await runScenario("real-acme-diagnostic-manual-renewal-completed",async()=>{});
     await verifyDnsCleanup();
+    await runScenario("real-acme-diagnostic-manual-renewal-dns-verified",async()=>{});
     const manuallyRenewed = new crypto.X509Certificate(fs.readFileSync(certPath));
     verifyNames(manuallyRenewed);
     assert.notEqual(manuallyRenewed.fingerprint256, twiceRenewed.fingerprint256);
@@ -438,6 +522,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     assert.equal(publicKeyDer(manuallyRenewed).equals(publicKeyDer(twiceRenewed)), false);
     assert.ok(manuallyRenewed.checkPrivateKey(crypto.createPrivateKey(fs.readFileSync(keyPath))));
     assert.equal(await servedFingerprint(), manuallyRenewed.fingerprint256);
+    await runScenario("real-acme-diagnostic-manual-renewal-material-verified",async()=>{});
     if(nativeLifecycle)await runScenario("real-acme-browser-renew-native-completion",async()=>{
       await nativeLifecycle.observeNative({jobId:manualJob.id,certificateId,certPath,keyPath,tlsOptions:lifecycleTlsOptions()});
       const proof=await nativeLifecycle.finish(),sidecar=path.join(repoRoot,"qualification-results/acme-browser-lifecycle-proof.json");
@@ -446,29 +531,62 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     assert.ok((await pool.query("SELECT 1 FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2", [workspaceId, manualJob.id])).rows.length);
     assert.deepEqual((await pool.query("SELECT cp.public_metadata FROM managed_certificates mc JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id WHERE mc.workspace_id=$1 AND mc.id=$2", [workspaceId, certificateId])).rows[0].public_metadata.renewalProfile, profileBeforeManual,
       "manual renewal must preserve its stored execution profile");
+    await runScenario("real-acme-diagnostic-manual-renewal-profile-verified",async()=>{});
     const background=require("./helpers/certops-acme-background-renewals");
-    await runScenario(background.SCENARIO,async()=>{
-      const proof=await background.qualifyBackgroundRenewals({pool,workspaceId,agent,certificateId,certPath,keyPath,ownedJobIds,waitUntil,verifyDnsCleanup,verifyNames,servedFingerprint,repoRoot,acmeKind,workDir,ownedWorkers});
-      fs.mkdirSync(path.dirname(backgroundProofPath),{recursive:true});fs.writeFileSync(backgroundProofPath,JSON.stringify(proof),{mode:0o600});
-    });
+    const workerMilestones=[];
+    const workerMilestoneNames=new Set(["worker-fixture-preconditions-passed","worker-sql-selection-passed","worker-started","worker-cycle-succeeded","worker-cycle-leaf-observed","worker-cycle-inventory-and-evidence-passed","worker-cycle-profile-and-period-passed","worker-stopped-and-drained","worker-observer-failed","worker-cycle-job-failed","worker-cycle-job-rejected","worker-cycle-job-cancelled","worker-cycle-job-blocked","worker-cycle-job-orphaned_unknown_effect","worker-block-deploy-certificate-unavailable","worker-block-lease-conflict","worker-block-lease-retired","worker-block-lease-client-unavailable","worker-block-lease-confirmation-failed","worker-block-lease-expired","worker-block-lease-retry-limit","worker-block-lease-retry-expiry","worker-block-execution-disabled","worker-block-signing-key-unpinned","worker-block-local-dry-run","worker-block-other","worker-block-none","worker-block-diagnostic-unavailable"]);
+    try {
+      await runScenario(background.SCENARIO,async()=>{
+        const proof=await background.qualifyBackgroundRenewals({pool,workspaceId,agent,certificateId,certPath,keyPath,ownedJobIds,waitUntil,verifyDnsCleanup,verifyNames,servedFingerprint,repoRoot,acmeKind,workDir,ownedWorkers,onMilestone:(name,cycle)=>{if(workerMilestoneNames.has(name)&&(cycle===null||cycle===0||cycle===1)&&workerMilestones.length<16)workerMilestones.push(`real-acme-diagnostic-${name}${cycle===null?"":`-${cycle+1}`}`);}});
+        fs.mkdirSync(path.dirname(backgroundProofPath),{recursive:true});fs.writeFileSync(backgroundProofPath,JSON.stringify(proof),{mode:0o600});
+      });
+    } catch(error) {
+      try { for(const name of workerMilestones)await runScenario(name,async()=>{}); } catch { /* Keep the original worker failure and cleanup authoritative. */ }
+      throw error;
+    }
     const reuse = require("./helpers/certops-acme-key-reuse");
-    await runScenario(reuse.scenarioName, async () => {
-      const proof = await reuse.qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certificateId, certPath, keyPath, ownedJobIds, waitUntil, verifyDnsCleanup, verifyNames, servedFingerprint, repoRoot, acmeKind, workDir, configDir, workDirIdentity });
-      fs.mkdirSync(path.dirname(reuseProofPath), { recursive: true }); fs.writeFileSync(reuseProofPath, JSON.stringify(proof), { mode: 0o600 });
-    });
+    const reuseMilestones = [];
+    const reuseMilestoneNames = new Set(["reuse-prerequisites-verified", "reuse-profile-saved", "reuse-initial-material-verified", "reuse-scheduler-due-verified", "reuse-proof-verified"]);
+    for (const phase of ["manual", "scheduler"]) {
+      for (const suffix of ["admitted", "job-succeeded", "job-evidence-verified", "public-data-verified", "material-verified", "profile-verified", "job-failed", "job-rejected", "job-cancelled", "job-blocked", "job-orphaned_unknown_effect", "job-other", "error-acme", "error-execution", "error-preflight", "error-pre-deploy", "error-deployment", "error-verification", "error-reload", "error-other", "error-none"]) reuseMilestoneNames.add(`reuse-${phase}-${suffix}`);
+    }
+    try {
+      await runScenario(reuse.scenarioName, async () => {
+        const proof = await reuse.qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certificateId, certPath, keyPath, ownedJobIds, waitUntil, verifyDnsCleanup, verifyNames, servedFingerprint, repoRoot, acmeKind, workDir, configDir, workDirIdentity, onMilestone: name => { if (reuseMilestoneNames.has(name) && reuseMilestones.length < 40) reuseMilestones.push(`real-acme-diagnostic-${name}`); } });
+        fs.mkdirSync(path.dirname(reuseProofPath), { recursive: true }); fs.writeFileSync(reuseProofPath, JSON.stringify(proof), { mode: 0o600 });
+      });
+    } catch (error) {
+      try { for (const name of reuseMilestones) await runScenario(name, async () => {}); } catch { /* Preserve the original failure and owned cleanup. */ }
+      throw error;
+    }
     if(process.env.CERTOPS_REPORT_SCOPE===bulkReport.SCOPE){
       const bulk=require('./helpers/certops-acme-bulk-renewal');
-      await runScenario(bulk.SCENARIO,async()=>{
-        const proof=bulkProof=await bulk.qualifyBulk({pool,workspaceId,agentId,agent,publicSession,certificateId,certPath,keyPath,configDir,workDir,requestedNames,domain,commandRef,caEndpoint,acmeKind,eabRef,ownedJobIds,ownedCertificateIds,ownedBulkResources,ownedWorkers,waitUntil,verifyNames,verifyDnsCleanup,primaryTlsOptions:lifecycleTlsOptions});
-        fs.writeFileSync(path.join(repoRoot,bulkReport.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
-      });
+      const bulkMilestones=[];
+      const bulkMilestoneNames=new Set(["bulk-original-verified","bulk-issue-admitted","bulk-issue-completed","bulk-subject-tls-ready","bulk-subjects-verified","bulk-renewal-admission-verified","bulk-replay-verified","bulk-allocation-verified","bulk-renewal-completed","bulk-renewal-evidence-verified","bulk-original-unchanged","bulk-periods-stopped","bulk-proof-verified","bulk-job-failed","bulk-job-cancelled","bulk-job-rejected","bulk-job-blocked","bulk-job-orphaned_unknown_effect"]);
+      try {
+        await runScenario(bulk.SCENARIO,async()=>{
+          const proof=bulkProof=await bulk.qualifyBulk({pool,workspaceId,agentId,agent,publicSession,certificateId,certPath,keyPath,configDir,workDir,requestedNames,domain,commandRef,caEndpoint,acmeKind,eabRef,ownedJobIds,ownedCertificateIds,ownedBulkResources,ownedWorkers,waitUntil,verifyNames,verifyDnsCleanup,primaryTlsOptions:lifecycleTlsOptions,onMilestone:(name,index)=>{if(bulkMilestoneNames.has(name)&&(index===null||index===0||index===1)&&bulkMilestones.length<24)bulkMilestones.push(`real-acme-diagnostic-${name}${index===null?"":`-${index+1}`}`);}});
+          fs.writeFileSync(path.join(repoRoot,bulkReport.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
+        });
+      } catch(error) {
+        try { for(const name of bulkMilestones)await runScenario(name,async()=>{}); } catch { /* Preserve the original failure and owned cleanup. */ }
+        throw error;
+      }
     }
     if(process.env.CERTOPS_REPORT_SCOPE===adoptionReport.SCOPE){
       const adoption=require('./helpers/certops-acme-native-adoption');
-      await runScenario(adoption.SCENARIO,async()=>{
-        const proof=await adoption.qualifyNativeAdoption({pool,workspaceId,agentId,publicSession,certificateId,certPath,keyPath,configDir,workDir,domain,acmeKind,bulkProof,ownedJobIds,ownedBulkResources,ownedAdoptionResources,ownedWorkers,waitUntil,verifyDnsCleanup,servedFingerprint,primaryTlsOptions:lifecycleTlsOptions});
-        fs.writeFileSync(path.join(repoRoot,adoptionReport.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
-      });
+      const adoptionMilestones=[];
+      const adoptionMilestoneNames=new Set(["adoption-start","adoption-prerequisites-passed","adoption-guard-created","adoption-bulk-material-verified","adoption-linked-profile-verified","adoption-no-open-period-verified","adoption-source-ready","adoption-tls-ready","adoption-readd-completed","adoption-detach-verified","adoption-setup-admitted","adoption-setup-replay-verified","adoption-setup-job-completed","adoption-setup-public-result-verified","adoption-dry-material-verified","adoption-real-material-evidence-verified","adoption-intent-verified","adoption-outbox-drained","adoption-public-state-verified","adoption-profile-loaded","adoption-policy-verified","adoption-profile-origin-verified","adoption-primary-material-verified","adoption-primary-profile-verified","adoption-primary-tls-verified","adoption-policy-diff-target","adoption-policy-diff-sans","adoption-policy-diff-key","adoption-policy-diff-authority","adoption-policy-diff-dns","adoption-policy-diff-deployment","adoption-policy-diff-verification","adoption-policy-diff-other","adoption-profile-and-period-verified","adoption-proof-verified","adoption-readd-http-expected","adoption-readd-http-client-error","adoption-readd-http-server-error","adoption-readd-http-other","adoption-setup-http-expected","adoption-setup-http-client-error","adoption-setup-http-server-error","adoption-setup-http-other","adoption-setup-job-failed","adoption-setup-job-rejected","adoption-setup-job-cancelled","adoption-setup-job-orphaned_unknown_effect"]);
+      const recordAdoptionMilestone=(name,index)=>{if(adoptionMilestoneNames.has(name)&&(index===null||index===0||index===1)&&adoptionMilestones.length<64)adoptionMilestones.push(`real-acme-diagnostic-${name}${index===null?"":index===0?"-dry":"-real"}`);};
+      try {
+        await runScenario(adoption.SCENARIO,async()=>{
+          const proof=await adoption.qualifyNativeAdoption({pool,workspaceId,agentId,publicSession,certificateId,certPath,keyPath,configDir,workDir,domain,acmeKind,bulkProof,ownedJobIds,ownedBulkResources,ownedAdoptionResources,ownedWorkers,waitUntil,verifyDnsCleanup,servedFingerprint,primaryTlsOptions:lifecycleTlsOptions,onMilestone:recordAdoptionMilestone});
+          fs.writeFileSync(path.join(repoRoot,adoptionReport.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
+        });
+      } catch(error) {
+        try { for(const name of adoptionMilestones)await runScenario(name,async()=>{}); } catch { /* Preserve the original failure and owned cleanup. */ }
+        throw error;
+      }
     }
     if(resultGateway){
       const outbox=require('./helpers/certops-acme-certificate-outbox');
@@ -565,3 +683,8 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     if (cleanupErrors.length) throw new AggregateError([...(primaryError?[primaryError]:[]),...cleanupErrors], "Real ACME journey or owned fixture cleanup failed");
   }
 };
+
+module.exports.issuanceDiagnosticLabels = issuanceDiagnosticLabels;
+module.exports.failedRenewalTerminalStatus = failedRenewalTerminalStatus;
+
+module.exports.QUALIFICATION_AGENT_TIMING = QUALIFICATION_AGENT_TIMING;
