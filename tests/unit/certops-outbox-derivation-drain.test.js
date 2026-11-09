@@ -54,6 +54,8 @@ function createHandlerPool({
   certificate = { id: CERT_ID, common_name: "app.example.com", subject_alt_names: [], profile_id: null },
   evidence = { step: "verify", exitCode: 0 },
   onCertificateLock = null,
+  period = null,
+  restoreRowCount = 1,
 } = {}) {
   const queries = [];
   const state = { job, outboxStatus, certificate, committed: false, rolledBack: false };
@@ -79,6 +81,10 @@ function createHandlerPool({
         if (onCertificateLock) await onCertificateLock(state);
         return { rows: state.certificate ? [state.certificate] : [] };
       }
+      if (text.includes("FROM certops_management_periods")) {
+        return { rows: period ? [period] : [] };
+      }
+      if (text.startsWith("UPDATE certops_management_periods")) return { rows: [], rowCount: restoreRowCount };
       if (text.includes("FROM certificate_evidence")) {
         return { rows: evidence ? [{ metadata: evidence }] : [] };
       }
@@ -141,6 +147,33 @@ describe("adoption intent lifecycle", () => {
     );
     assert.ok(terminalIndex > 0);
     assert.ok(terminalIndex < clientSql.indexOf("COMMIT"));
+  });
+
+  it("preserves a locked tracking period when derivation links a profile", async () => {
+    const worker = await import(workerUrl);
+    const period = { id: "88888888-8888-4888-8888-888888888888", automation_enabled: false, renewal_profile_id: null };
+    const { result, queries } = await runHandler(worker, { period });
+    assert.equal(result.terminalStatus, "succeeded");
+    const read = queries.find(q => q.sql.includes("FROM certops_management_periods"));
+    const write = queries.find(q => q.sql.startsWith("UPDATE certops_management_periods"));
+    assert.match(read.sql, /FOR UPDATE/);
+    assert.deepEqual(write.params, [WORKSPACE, CERT_ID, period.id, null]);
+    assert.ok(queries.indexOf(write) < queries.findIndex(q => q.sql === "COMMIT"));
+  });
+
+  it("rolls back the derivation if tracking-period restoration fails", async () => {
+    const worker = await import(workerUrl);
+    const harness = createHandlerPool({ period: { id: "88888888-8888-4888-8888-888888888888", automation_enabled: false, renewal_profile_id: null }, restoreRowCount: 0 });
+    const row = intentRow();
+    await assert.rejects(() => worker.handleProfileDerivationIntent({ dbPool: harness.dbPool, row, claimId: CLAIM_ID, payload: row.payload, log: silentLogger, deriveProfile: async () => ({ profileId: PROFILE_ID }) }), /Tracking period changed/);
+    assert.equal(harness.state.rolledBack, true);
+    assert.equal(harness.state.committed, false);
+  });
+
+  it("does not override an already-automatic period", async () => {
+    const worker = await import(workerUrl);
+    const { queries } = await runHandler(worker, { period: { id: "88888888-8888-4888-8888-888888888888", automation_enabled: true, renewal_profile_id: PROFILE_ID } });
+    assert.equal(queries.some(q => q.sql.startsWith("UPDATE certops_management_periods")), false);
   });
 
   it("waits while the job is still running, without consuming an attempt", async () => {
