@@ -509,10 +509,17 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     });
     if(process.env.CERTOPS_REPORT_SCOPE===bulkReport.SCOPE){
       const bulk=require('./helpers/certops-acme-bulk-renewal');
-      await runScenario(bulk.SCENARIO,async()=>{
-        const proof=bulkProof=await bulk.qualifyBulk({pool,workspaceId,agentId,agent,publicSession,certificateId,certPath,keyPath,configDir,workDir,requestedNames,domain,commandRef,caEndpoint,acmeKind,eabRef,ownedJobIds,ownedCertificateIds,ownedBulkResources,ownedWorkers,waitUntil,verifyNames,verifyDnsCleanup,primaryTlsOptions:lifecycleTlsOptions});
-        fs.writeFileSync(path.join(repoRoot,bulkReport.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
-      });
+      const bulkMilestones=[];
+      const bulkMilestoneNames=new Set(["bulk-original-verified","bulk-issue-admitted","bulk-issue-completed","bulk-subject-tls-ready","bulk-subjects-verified","bulk-renewal-admission-verified","bulk-replay-verified","bulk-allocation-verified","bulk-renewal-completed","bulk-renewal-evidence-verified","bulk-original-unchanged","bulk-periods-stopped","bulk-proof-verified","bulk-job-failed","bulk-job-cancelled","bulk-job-rejected","bulk-job-blocked","bulk-job-orphaned_unknown_effect"]);
+      try {
+        await runScenario(bulk.SCENARIO,async()=>{
+          const proof=bulkProof=await bulk.qualifyBulk({pool,workspaceId,agentId,agent,publicSession,certificateId,certPath,keyPath,configDir,workDir,requestedNames,domain,commandRef,caEndpoint,acmeKind,eabRef,ownedJobIds,ownedCertificateIds,ownedBulkResources,ownedWorkers,waitUntil,verifyNames,verifyDnsCleanup,primaryTlsOptions:lifecycleTlsOptions,onMilestone:(name,index)=>{if(bulkMilestoneNames.has(name)&&(index===null||index===0||index===1)&&bulkMilestones.length<24)bulkMilestones.push(`real-acme-diagnostic-${name}${index===null?"":`-${index+1}`}`);}});
+          fs.writeFileSync(path.join(repoRoot,bulkReport.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
+        });
+      } catch(error) {
+        try { for(const name of bulkMilestones)await runScenario(name,async()=>{}); } catch { /* Preserve the original failure and owned cleanup. */ }
+        throw error;
+      }
     }
     if(process.env.CERTOPS_REPORT_SCOPE===adoptionReport.SCOPE){
       const adoption=require('./helpers/certops-acme-native-adoption');
