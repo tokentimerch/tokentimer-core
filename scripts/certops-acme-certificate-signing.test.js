@@ -395,7 +395,7 @@ test("mandatory cell names the separate manual certificate rotation slot", () =>
   assert.match(workflow, /projectReport/);
   assert.match(
     workflow,
-    /actions\/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd/,
+    /actions\/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1/,
   );
   assert.match(
     workflow,
