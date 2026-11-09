@@ -133,7 +133,6 @@
       "suite": "browser-certificate-surfaces",
       "source": "scripts/certops-browser.js",
       "requiredSources": [
-        "scripts/certops-browser.js",
         "apps/dashboard/src/components/certops/RenewalProfilesPanel.jsx",
         "apps/api/routes/certops.js",
         "apps/api/services/certops/renewalProfileAdmin.js"
