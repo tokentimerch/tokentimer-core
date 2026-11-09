@@ -300,11 +300,14 @@ async function validateResolvedIP(hostname, options = {}) {
  * usability guardrail (stops accidental "generic webhook" typos to the
  * wrong provider), not the SSRF private-IP defense above.
  *
- * office.com/office365.com cover legacy Teams incoming webhooks (Microsoft
- * is deprecating that connector); the *.logic.azure.com and
- * *.environment.api.powerplatform.com wildcards cover Power Automate /
- * Logic Apps flows used as the modern Teams webhook replacement.
+ * Keep legacy Teams hosts recognized for existing configuration. The Power
+ * Automate and Logic Apps hosts are used by Teams Workflows.
  */
+const TEAMS_WORKFLOW_HOST_SUFFIXES = [
+  ".logic.azure.com",
+  ".environment.api.powerplatform.com",
+];
+
 const DEFAULT_WEBHOOK_PROVIDER_HOSTS = [
   "hooks.slack.com",
   "discord.com",
@@ -318,8 +321,7 @@ const DEFAULT_WEBHOOK_PROVIDER_HOSTS = [
   "events.pagerduty.com",
   "events.eu.pagerduty.com",
   "*.pagerduty.com",
-  "*.logic.azure.com",
-  "*.environment.api.powerplatform.com",
+  ...TEAMS_WORKFLOW_HOST_SUFFIXES.map((suffix) => `*${suffix}`),
 ];
 
 /**
@@ -414,6 +416,11 @@ function webhookHostAllowed(hostname) {
   return allowList.some((entry) => hostMatchesEntry(host, entry));
 }
 
+function isTeamsWorkflowHost(hostname) {
+  const host = normalizeWebhookHostEntry(hostname);
+  return TEAMS_WORKFLOW_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix));
+}
+
 const { createPostWebhook, WebhookRequestError } = require("./request");
 
 const postWebhook = createPostWebhook({
@@ -431,6 +438,7 @@ module.exports = {
   getWebhookProviderHosts,
   allowAllWebhookHosts,
   webhookHostAllowed,
+  isTeamsWorkflowHost,
   postWebhook,
   WebhookRequestError,
 };

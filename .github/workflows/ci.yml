@@ -198,6 +198,9 @@ jobs:
       - name: Validate contracts manifest
         run: pnpm run check:contracts
 
+      - name: Check integrations watch manifest
+        run: node scripts/check-integrations-manifest.js
+
       - name: Validate contracts integrity
         run: pnpm run check:contracts:integrity
 

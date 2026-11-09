@@ -57,7 +57,20 @@ describe("Worker notify extended unit coverage", () => {
     expect(genericPayload).to.have.property("content");
     expect(slackPayload).to.have.property("blocks");
     expect(discordPayload).to.have.property("embeds");
-    expect(teamsPayload).to.have.property("@type");
+    expect(teamsPayload).to.have.property("type", "message");
+    expect(teamsPayload).to.have.property("attachments");
+    const [teamsAttachment] = teamsPayload.attachments;
+    expect(teamsAttachment).to.have.property(
+      "contentType",
+      "application/vnd.microsoft.card.adaptive",
+    );
+    expect(teamsAttachment).to.have.property("contentUrl", null);
+    expect(teamsAttachment.content).to.have.property("type", "AdaptiveCard");
+    expect(teamsAttachment.content.actions).to.deep.include({
+      type: "Action.OpenUrl",
+      title: "Renew Now",
+      url: tokenData.renewal_url,
+    });
     expect(pagerdutyPayload).to.have.property("event_action");
     expect(pagerdutyPayload.payload).to.have.property("severity", "critical");
   });

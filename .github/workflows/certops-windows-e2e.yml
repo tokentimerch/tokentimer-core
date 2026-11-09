@@ -89,7 +89,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = gh api repos/tokentimerch/tokentimer-core/git/tags/853ac07cce5d3ea01900c1cdfa7ad32c070d3b49 | ConvertFrom-Json
+          $tag = gh api --header "Accept: application/vnd.github+json" repos/tokentimerch/tokentimer-core/git/tags/853ac07cce5d3ea01900c1cdfa7ad32c070d3b49 | ConvertFrom-Json
           if ($LASTEXITCODE -or $tag.tag -ne 'v0.17.2' -or $tag.object.sha -ne '6c902405c7b5d229e2f47b4d5436d780e91c5e17' -or !$tag.verification.verified -or $tag.verification.reason -ne 'valid') { throw 'Historical signed release tag verification failed' }
           Remove-Item Env:GH_TOKEN
           $source = Join-Path $env:GITHUB_WORKSPACE 'qualification-historical-source'
