@@ -112,6 +112,7 @@ describe("GitHub integration host and owner attribution", () => {
     const seen = [];
     const github = requireWithMocks(resolveGithubModule(), {
       axios: async (config) => {
+        expect(Object.keys(config.headers).map((name) => name.toLowerCase())).not.to.include("x-github-api-version");
         seen.push(new URL(config.url).pathname);
         return { data: { id: 1, login: "octo" } };
       },
@@ -164,7 +165,7 @@ describe("GitHub integration host and owner attribution", () => {
     expect(requestHeaders.length).to.be.at.least(5);
     for (const headers of requestHeaders) {
       expect(headers.Accept).to.equal("application/vnd.github+json");
-      expect(headers["X-GitHub-Api-Version"]).to.equal("2022-11-28");
+      expect(Object.keys(headers).map((name) => name.toLowerCase())).not.to.include("x-github-api-version");
     }
   });
 

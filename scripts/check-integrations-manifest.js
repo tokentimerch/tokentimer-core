@@ -48,7 +48,7 @@ function checkSourceUrl(value) {
 
 function checkCodeLocation(root, location, apiVersion) {
   requireValue(isObject(location), "Invalid code location");
-  const { path: relativePath, functions = [], contains = [] } = location;
+  const { path: relativePath, functions = [], contains = [], excludes = [] } = location;
   const source = readRepoFile(root, relativePath);
   requireValue(Array.isArray(functions), `${relativePath}: invalid functions list`);
   for (const name of functions) {
@@ -69,6 +69,14 @@ function checkCodeLocation(root, location, apiVersion) {
     requireValue(
       source.includes(text),
       `${relativePath}: source text ${JSON.stringify(text)} is missing`,
+    );
+  }
+  requireValue(Array.isArray(excludes), `${relativePath}: invalid excludes list`);
+  for (const evidence of excludes) {
+    requireValue(isText(evidence), `${relativePath}: invalid excluded source evidence`);
+    requireValue(
+      !source.toLowerCase().includes(evidence.toLowerCase()),
+      `${relativePath}: excluded source text ${JSON.stringify(evidence)} is present`,
     );
   }
 }
