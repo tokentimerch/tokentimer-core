@@ -56,11 +56,33 @@ async function testWebhookUrl(
       payload = { content: `\u{1F514} ${text}` };
     } else if (lowerKind === "teams") {
       payload = {
-        "@type": "MessageCard",
-        "@context": "https://schema.org/extensions",
-        summary: "TokenTimer Test",
-        themeColor: "0078D4",
-        sections: [{ activityTitle: text }],
+        type: "message",
+        attachments: [
+          {
+            contentType: "application/vnd.microsoft.card.adaptive",
+            contentUrl: null,
+            content: {
+              type: "AdaptiveCard",
+              $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+              version: "1.4",
+              body: [
+                {
+                  type: "TextBlock",
+                  text: "TokenTimer Test",
+                  weight: "Bolder",
+                  size: "Large",
+                  wrap: true,
+                },
+                {
+                  type: "TextBlock",
+                  text,
+                  wrap: true,
+                  spacing: "Small",
+                },
+              ],
+            },
+          },
+        ],
       };
     } else if (lowerKind === "pagerduty") {
       payload = {
@@ -97,7 +119,7 @@ async function testWebhookUrl(
       };
     }
     if (lowerKind === "teams") {
-      if (status === 200) return { success: true };
+      if (status >= 200 && status < 300) return { success: true };
       return {
         success: false,
         error: `Teams responded ${status}: ${bodyText}`,
