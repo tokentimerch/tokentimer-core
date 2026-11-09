@@ -92,7 +92,7 @@ function issuanceDiagnosticLabels(row, agent, before, after) {
     ["reload step failed", "reload"],
     ["deploy target.chainpath is configured", "missing-chain"],
   ];
-  const kind = categories.find(([prefix]) => message.startsWith(prefix))?.[1] || (message ? "other" : "none");
+  const kind = message.includes("acme step failed") ? "acme-step" : message.includes("job execution failed") ? "execution-exception" : categories.find(([prefix]) => message.startsWith(prefix))?.[1] || (message ? "other" : "none");
   const validationCode = /^pre(?:flight|-deploy) validation failed \(([a-z_]+)\)/.exec(message)?.[1];
   const validationCodes = new Set(["certificate_parse_failed", "private_key_parse_failed", "san_mismatch", "private_key_mismatch", "not_yet_valid", "expired", "chain_invalid"]);
   if (validationCodes.has(validationCode)) labels.push(`real-acme-diagnostic-validation-${validationCode.replaceAll("_", "-")}`);
