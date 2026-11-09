@@ -284,6 +284,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     jobId = job.id;
     if(!ownedJobIds.includes(jobId))ownedJobIds.push(jobId);
     assert.ok(jobId && certificateId, "issuance must return job and certificate identities");
+    await runScenario("real-acme-diagnostic-issue-admitted",async()=>{});
     if (nativeConsole) await runScenario(
       require("../../scripts/certops-acme-native-console-report").NATIVE_CASES[0],
       () => nativeConsole.observeAndRelease({ jobId, certificateId }),
@@ -294,6 +295,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       return row?.status === "succeeded";
     });
     const firstIssuanceObservedAt = Date.now();
+    await runScenario("real-acme-diagnostic-issue-completed",async()=>{});
     await verifyDnsCleanup();
     const pem = fs.readFileSync(certPath, "utf8");
     const certificate = new crypto.X509Certificate(pem);
@@ -315,6 +317,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     });
     const observed=await servedFingerprint();
     assert.equal(observed, certificate.fingerprint256);
+    await runScenario("real-acme-diagnostic-issued-tls-verified",async()=>{});
     const lifecycleTlsOptions=()=>({host:"127.0.0.1",port:tlsServer.address().port,servername:domain,ca:fs.readFileSync(process.env.CERTOPS_PEBBLE_ISSUER_ROOT)});
     if(nativeLifecycle)await runScenario("real-acme-browser-issue-native-completion",()=>nativeLifecycle.observeNative({jobId,certificateId,certPath,keyPath,tlsOptions:lifecycleTlsOptions()}));
     if (nativeConsole) await runScenario(require("../../scripts/certops-acme-native-console-report").NATIVE_CASES[1], async () => {
@@ -327,6 +330,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     fs.mkdirSync(path.dirname(stageProofPath),{recursive:true});fs.writeFileSync(stageProofPath,JSON.stringify(stageProof),{flag:"wx",mode:0o600});
     const evidence = await pool.query("SELECT 1 FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2", [workspaceId, jobId]);
     assert.ok(evidence.rows.length, "real agent evidence must persist in the API database");
+    await runScenario("real-acme-diagnostic-issued-evidence-persisted",async()=>{});
 
     const profile=(await pool.query("SELECT cp.id AS profile_id, cp.renew_before_days, cp.public_metadata, mc.not_after FROM managed_certificates mc JOIN certificate_profiles cp ON cp.id=mc.profile_id AND cp.workspace_id=mc.workspace_id WHERE mc.workspace_id=$1 AND mc.id=$2",[workspaceId,certificateId])).rows[0];
     assert.ok(profile?.public_metadata?.renewalProfile,"Actual successful issuance must derive a reusable execution profile");
@@ -338,6 +342,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     const lead=await publicSession.request(`/api/v1/workspaces/${workspaceId}/certops/profiles/${profile.profile_id}`,"PATCH",{renewBeforeDays:30});
     assert.equal(lead.status,200,"Explicit renewal lead must be accepted");
     assert.equal(lead.body.renewBeforeDays,30);
+    await runScenario("real-acme-diagnostic-explicit-lead-saved",async()=>{});
     assert.ok(new Date(profile.not_after).getTime()<=Date.now()+30*86400000,"Fixture leaf must be due under the explicit lead");
     assert.ok((await pool.query("SELECT 1 FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL AND automation_enabled=TRUE",[workspaceId,certificateId])).rows.length,"Successful agent deployment must enable its actual management period");
     await waitUntil(() => Date.now() > firstIssuanceObservedAt + 1500);
@@ -346,6 +351,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     const renewal=(await pool.query("SELECT id FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND operation='renew' AND source='automation' ORDER BY created_at DESC LIMIT 1",[workspaceId,String(certificateId)])).rows[0];
     assert.ok(renewal,"Real persisted profile must produce an automatic renewal job");
     ownedJobIds.push(renewal.id);
+    await runScenario("real-acme-diagnostic-first-renewal-admitted",async()=>{});
     await waitUntil(async()=>{
       assert.equal(agent.exitCode,null,"Actual agent exited during scheduled renewal");
       const row=(await pool.query("SELECT status FROM certificate_jobs WHERE id=$1",[renewal.id])).rows[0];
@@ -353,6 +359,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       return row?.status==="succeeded";
     });
     const firstRenewalObservedAt = Date.now();
+    await runScenario("real-acme-diagnostic-first-renewal-completed",async()=>{});
     await verifyDnsCleanup();
     const renewed=new crypto.X509Certificate(fs.readFileSync(certPath));
     verifyNames(renewed);
@@ -362,6 +369,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     assert.ok(Date.parse(renewed.validTo) > Date.parse(certificate.validTo), "Actual expiry must advance to the next scheduler generation");
     assert.ok(renewed.checkPrivateKey(crypto.createPrivateKey(fs.readFileSync(keyPath))));
     assert.equal(await servedFingerprint(),renewed.fingerprint256,"Dynamic filesystem TLS fixture must serve the actual renewed deployment");
+    await runScenario("real-acme-diagnostic-first-renewal-tls-verified",async()=>{});
     assert.ok((await pool.query("SELECT 1 FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2",[workspaceId,renewal.id])).rows.length,"Scheduled renewal must persist actual agent evidence");
     // Exercise a second explicitly due cycle without changing certificate or
     // scheduler timestamps. Pause only our own execution process while two
@@ -378,6 +386,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       const admitted = (await pool.query("SELECT id,status FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND operation='renew' AND source='automation' AND NOT(id=ANY($3::uuid[]))", [workspaceId, String(certificateId), previousRenewals])).rows;
       assert.equal(admitted.length, 1, "Concurrent sweeps must admit one job for the actual next expiry generation");
       second = admitted[0]; ownedJobIds.push(second.id);
+      await runScenario("real-acme-diagnostic-second-renewal-admitted",async()=>{});
     } finally { assert.equal(agent.kill("SIGCONT"), true); }
     await waitUntil(async () => {
       assert.equal(agent.exitCode, null); assert.equal(agent.signalCode, null);
@@ -386,6 +395,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       return row?.status === "succeeded";
     });
     const twiceRenewed = new crypto.X509Certificate(fs.readFileSync(certPath));
+    await runScenario("real-acme-diagnostic-second-renewal-completed",async()=>{});
     await verifyDnsCleanup();
     verifyNames(twiceRenewed);
     assert.equal(twiceRenewed.checkHost(domain), domain);
