@@ -41,12 +41,14 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
     const currentMainLedger=(await pool.query("SELECT * FROM migrations ORDER BY version")).rows;
     assert.equal(currentMainLedger.at(-1).version,80);
     assert.equal(currentMainLedger.at(-1).name,"auto_sync_run_metrics");
-    // Model released Core through 108, plus the lifecycle preview through 89.
+    // Model current Core through 109, plus the lifecycle preview through 89.
     // Current job services need the released operator columns before fixtures are created.
     migrations.push(...pending.filter(entry=>entry.version>80 && (entry.version<=89 || (entry.version>=92 && ![96,97].includes(entry.version)))));
     await runMigrations();
     const beforeVerificationLedger=(await pool.query("SELECT * FROM migrations ORDER BY version")).rows;
-    assert.equal(beforeVerificationLedger.at(-1).version, 108);
+    assert.equal(beforeVerificationLedger.at(-1).version, 109);
+    assert.equal(beforeVerificationLedger.at(-1).name, "certops_retirement_dossiers");
+    assert.equal((await pool.query("SELECT to_regclass('public.certops_material_retirement_dossiers') AS name")).rows[0].name, "certops_material_retirement_dossiers");
     const {fixture}=require("../helpers/distribution-lifecycle-fixture.cjs");
     const operations=require("../../apps/api/services/certops/distributionOperations");
     const f=await fixture();
@@ -244,6 +246,7 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
   {"version":106,"name":"operator_issuance"},
   {"version":107,"name":"certops_issuance_job_identity"},
   {"version":108,"name":"certops_issuance_identity_transfer"},
+  {"version":109,"name":"certops_retirement_dossiers"},
 ]);
     const constraints =
       await pool.query(`SELECT conname, pg_get_constraintdef(oid) AS definition
