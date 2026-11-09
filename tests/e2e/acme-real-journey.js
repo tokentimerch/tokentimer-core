@@ -71,6 +71,22 @@ function localEndpoint(value, protocol) {
   assert.ok(["localhost", "127.0.0.1", "[::1]"].includes(url.hostname), "qualification CA must be loopback only");
   return url.href;
 }
+// Return fixed labels only: persisted errors may contain private command output.
+function issuanceDiagnosticLabels(row, agent, before, after) {
+  const labels = [];
+  const statuses = new Set(["failed", "rejected", "cancelled", "blocked", "pending", "claimed", "running", "succeeded"]);
+  labels.push(`real-acme-diagnostic-issue-status-${statuses.has(row?.status) ? row.status : "other"}`);
+  labels.push(agent?.exitCode === null && agent?.signalCode === null ? "real-acme-diagnostic-agent-running" : "real-acme-diagnostic-agent-not-running");
+  const message = typeof row?.error_message === "string" ? row.error_message.toLowerCase() : "";
+  const kind = message.includes("acme step failed") ? "acme-step" : message.includes("job execution failed") ? "execution-exception" : message ? "other" : "none";
+  labels.push(`real-acme-diagnostic-error-${kind}`);
+  for (const stage of ["new-order", "finalize"]) {
+    const previous = before?.perStage?.[stage]?.forwarded;
+    const current = after?.perStage?.[stage]?.forwarded;
+    if (Number.isSafeInteger(previous) && Number.isSafeInteger(current) && current > previous) labels.push(`real-acme-diagnostic-proxy-${stage}-forwarded`);
+  }
+  return labels;
+}
 async function waitUntil(check, timeoutMs = 180000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -275,6 +291,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       assert.equal(nativeConsole,undefined,"Native lifecycle is a separate lane from read-only console");
       nativeLifecycle=await require("./helpers/certops-acme-browser-lifecycle").createLifecycleActor({pool,workspaceId,agentId,identity:publicSession,uiOrigin:process.env.CERTOPS_NATIVE_ACME_LIFECYCLE_URL,apiOrigin:process.env.CERTOPS_NATIVE_ACME_LIFECYCLE_API_URL,workDir,acmeKind,eabRef,ownedBrowserResources,registerOwnedJob:id=>{if(!ownedJobIds.includes(id))ownedJobIds.push(id);}});
     }
+    const diagnosticProxyBefore = gateway.snapshot();
     const issueInput={ operation: "issue", idempotencyKey: crypto.randomUUID(), payload: { sans: requestedNames, target: { type: "domain", reference: domain }, certPath, commandRef, caEndpoint, acmeKind, ...(eabRef ? { eabRef } : {}), dnsProvider: "pebble-challtestsrv", dnsZone: "example.test" } };
     let job;
     if(nativeLifecycle)job=(await nativeLifecycle.admit(issueInput)).publicJob;
@@ -289,11 +306,20 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       require("../../scripts/certops-acme-native-console-report").NATIVE_CASES[0],
       () => nativeConsole.observeAndRelease({ jobId, certificateId }),
     );
-    await waitUntil(async () => {
-      const row = (await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [jobId])).rows[0];
-      if (["failed", "rejected", "cancelled"].includes(row?.status)) throw new Error(`Real ACME job terminated ${row.status}`);
-      return row?.status === "succeeded";
-    });
+    try {
+      await waitUntil(async () => {
+        const row = (await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [jobId])).rows[0];
+        if (["failed", "rejected", "cancelled"].includes(row?.status)) throw new Error(`Real ACME job terminated ${row.status}`);
+        return row?.status === "succeeded";
+      });
+    } catch (error) {
+      // Emit only fixed labels; never expose persisted errors or exception details.
+      try {
+        const row = (await pool.query("SELECT status,error_message FROM certificate_jobs WHERE id=$1", [jobId])).rows[0];
+        for (const label of issuanceDiagnosticLabels(row, agent, diagnosticProxyBefore, gateway.snapshot())) await runScenario(label, async()=>{});
+      } catch { /* Diagnostics must not replace the original failure or cleanup. */ }
+      throw error;
+    }
     const firstIssuanceObservedAt = Date.now();
     await runScenario("real-acme-diagnostic-issue-completed",async()=>{});
     await verifyDnsCleanup();
@@ -565,3 +591,5 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     if (cleanupErrors.length) throw new AggregateError([...(primaryError?[primaryError]:[]),...cleanupErrors], "Real ACME journey or owned fixture cleanup failed");
   }
 };
+
+module.exports.issuanceDiagnosticLabels = issuanceDiagnosticLabels;
