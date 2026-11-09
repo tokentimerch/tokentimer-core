@@ -132,6 +132,9 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
   activeGate=gate;
   await gate.preflight();
   gate.report.fixtureSource={file:"tests/e2e/certops-adcs-real-e2e.test.js",sha256:crypto.createHash("sha256").update(fs.readFileSync(__filename)).digest("hex")};
+  const adaptiveLeadSource="tests/e2e/helpers/certops-adcs-adaptive-lead.js";
+  gate.report.fixtureSources??=[];
+  gate.report.fixtureSources.push({file:adaptiveLeadSource,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"../..",adaptiveLeadSource))).digest("hex")});
   if(issuerSwitch)gate.report.fixtureSource={file:issuerSwitchJourney.SOURCE,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"../..",issuerSwitchJourney.SOURCE))).digest("hex")};
   gate.report.artifactQualification=process.env.GITHUB_ACTIONS === "true" ? "workflow-checkout-source" : "local-worktree-source-baseline-sha-only";
   if(hierarchy){const selected=require("../../scripts/certops-adcs-hierarchy-profile");selected.profile(requestedVersion,process.env.CERTOPS_WINDOWS_LANGUAGE||"en-US");gate.report.fixtureSources??=[];for(const file of selected.REQUIRED_SOURCES)gate.report.fixtureSources.push({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"../..",file))).digest("hex")});}
@@ -387,8 +390,10 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
     await gate.scenario("adcs-real-profile-automatic-service-renewal", async()=>{
       const {item,issuerId,authority,site,port,certificateId,observed}=renewalFixture;
       const target={type:"windows-iis",reference:item.domain,store:"My",binding:{site,port,sniHost:item.domain}};
-      const profile=await fixture.request(`${api}/profiles`,"POST",{name:`Native renewal ${run}`,issuerId,target,keyAlgorithm:"rsa",keySize:2048,renewBeforeDays:30});assert.equal(profile.status,201);
-      const profileRow=(await fixture.pool.query("SELECT public_metadata FROM certificate_profiles WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,profile.body.id])).rows[0];
+      const profile=await fixture.request(`${api}/profiles`,"POST",{name:`Native renewal ${run}`,issuerId,target,keyAlgorithm:"rsa",keySize:2048});assert.equal(profile.status,201);
+      assert.equal(profile.body.renewBeforeDays,null,"An omitted AD CS profile lead must inherit the deployment window");
+      const profileRow=(await fixture.pool.query("SELECT public_metadata,renew_before_days FROM certificate_profiles WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,profile.body.id])).rows[0];
+      assert.equal(profileRow.renew_before_days,null);
       // Automatic dispatch requires fresh real native preflight evidence created after confirmation.
       assert.ok(++primaryPreflightCount<=18);const check=await fixture.request(`${api}/issuers/${issuerId}/preflight`,"POST",{agentId:agentRowId,caConfig,template:item.template});assert.equal(check.status,201);await jobFinished(check.body.job.id);
       const renewal=await require("../../apps/api/services/certops/renewalScheduler").createAutomaticAdcsRenewal({dbPool:fixture.pool,certificate:{id:certificateId,workspace_id:fixture.workspaceId,profile_id:profile.body.id,profile_issuer_id:issuerId,profile_public_metadata:profileRow.public_metadata,not_after:new Date(observed.validTo),common_name:item.domain},mode:"real",env:process.env,auditWriter:require("../../apps/api/services/audit").writeAudit});
@@ -405,13 +410,22 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
       assert.ok(Date.parse(observed.validTo)>Date.now());
       assert.ok(Date.parse(observed.validTo)<=Date.now()+7*86400000,"Actual CA template must issue a short-lived certificate without rewriting database expiry");
       const fingerprint=observed.fingerprint256.replace(/:/g,"").toLowerCase();
-      const source=await until(async()=> (await fixture.pool.query("SELECT mc.id,mc.not_after FROM managed_certificates mc JOIN certificate_instances ci ON ci.workspace_id=mc.workspace_id AND ci.managed_certificate_id=mc.id JOIN certificate_targets ct ON ct.workspace_id=ci.workspace_id AND ct.id=ci.target_id WHERE mc.workspace_id=$1 AND ci.observed_fingerprint_sha256=$2 AND ct.windows_site=$3 AND mc.source='agent_windows' ORDER BY ci.observed_at DESC LIMIT 1",[fixture.workspaceId,fingerprint,site])).rows[0]);
+      const source=await until(async()=> (await fixture.pool.query("SELECT mc.id,mc.not_before,mc.not_after FROM managed_certificates mc JOIN certificate_instances ci ON ci.workspace_id=mc.workspace_id AND ci.managed_certificate_id=mc.id JOIN certificate_targets ct ON ct.workspace_id=ci.workspace_id AND ct.id=ci.target_id WHERE mc.workspace_id=$1 AND ci.observed_fingerprint_sha256=$2 AND ct.windows_site=$3 AND mc.source='agent_windows' ORDER BY ci.observed_at DESC LIMIT 1",[fixture.workspaceId,fingerprint,site])).rows[0]);
       assert.equal(new Date(source.not_after).getTime(),Date.parse(observed.validTo));
+      assert.ok(source.not_before,"Native discovery must preserve the issued certificate's valid-from time");
+      assert.equal(new Date(source.not_before).getTime(),Date.parse(observed.validFrom));
+      const databaseNow=(await fixture.pool.query("SELECT NOW() AS now")).rows[0].now;
+      assert.ok(new Date(databaseNow).getTime() < (new Date(source.not_before).getTime()+new Date(source.not_after).getTime())/2,
+        "A fresh native certificate must still be before its actual lifetime midpoint");
       // A certificate renewed under management stays managed; an operator replaces its configuration by ending the exact open period.
       const openPeriod=(await fixture.pool.query("SELECT id FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL",[fixture.workspaceId,source.id])).rows[0];
       const managed=await fixture.request(`${api}/sources/${source.id}/replace-management`,"POST",{...(openPeriod?{periodId:openPeriod.id}:{}),renewalProfileId:profileId,automationEnabled:true});assert.equal(managed.status,201,`replace-management failed: ${managed.status} ${managed.body?.code||""}`);
       const scheduler=require("../../apps/api/services/certops/renewalScheduler");
       const before=await fixture.pool.query("SELECT id FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND operation='renew'",[fixture.workspaceId,String(source.id)]);assert.equal(before.rows.length,0);
+      // The lab cannot wait for the real midpoint. Prove the fresh native
+      // certificate is not due while inheriting, then use an explicit override
+      // as a separate positive control for the existing native renewal.
+      await require("./helpers/certops-adcs-adaptive-lead").qualifyAdaptiveLead({fixture,api,scheduler,source,profileId});
       const sweep=await scheduler.runRenewalSchedulerSweep({dbPool:fixture.pool,env:{...process.env,CERTOPS_ENABLED:"true"}});assert.equal(sweep.lockAcquired,true);assert.ok(sweep.created>=1);assert.deepEqual(sweep.errors,[]);
       const job=await until(async()=> (await fixture.pool.query("SELECT id FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND operation='renew' ORDER BY created_at DESC LIMIT 1",[fixture.workspaceId,String(source.id)])).rows[0]);
       const enrollment=(await fixture.pool.query("SELECT id FROM certificate_enrollments WHERE workspace_id=$1 AND current_job_id=$2",[fixture.workspaceId,job.id])).rows[0];assert.ok(enrollment);ownedEnrollmentIds.push(enrollment.id);
@@ -419,7 +433,7 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
       const raw=await new Promise((resolve,reject)=>{const socket=tls.connect({host:"127.0.0.1",port,servername:item.domain,ca:tlsAuthority(authority)},()=>{resolve(socket.getPeerCertificate().raw);socket.end();});socket.setTimeout(10000,()=>socket.destroy(new Error("Independent domain IIS TLS oracle timed out")));socket.on("error",reject);});
       const leaf=new crypto.X509Certificate(raw);assert.equal(leaf.checkHost(item.domain),item.domain);assert.notEqual(leaf.fingerprint256,observed.fingerprint256);ownedThumbprints.add(crypto.createHash("sha1").update(raw).digest("hex").toUpperCase());
       assert.ok((await fixture.pool.query("SELECT 1 FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2",[fixture.workspaceId,job.id])).rows.length);
-      gate.report.schedulerQualification={eligibilityClock:"actual-database-now",validityFixture:"actual-six-day-CA-template",observation:"native-agent-IIS",profileAuthority:"public-replace-management"};
+      gate.report.schedulerQualification={eligibilityClock:"actual-database-now",validityFixture:"actual-six-day-CA-template",observation:"native-agent-IIS",profileAuthority:"public-inherited-then-explicit-override"};
       renewalFixture.observed=leaf;
       renewalFixture.currentEnrollmentId=enrollment.id;
     });

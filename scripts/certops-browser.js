@@ -175,7 +175,19 @@ async function main(){
       await eventuallyBrowser(async()=>(await readProfile()).renewBeforeDays===45);
       await page.reload();await openProfiles();await profileRow().getByText("45 days",{exact:true}).waitFor();
       assert.deepEqual((await readProfile()).renewalProfile,original.renewalProfile,"Lead-time edit must preserve execution policy");
-    },{oracle:"Actual permitted policy edit persists without changing public execution contract"});
+      await profileRow().getByRole("button",{name:"Change",exact:true}).click();
+      await profileRow().getByRole("button",{name:"Use deployment default",exact:true}).click();
+      await eventuallyBrowser(async()=>(await readProfile()).renewBeforeDays===null);
+      await page.reload();await openProfiles();await profileRow().getByText("Deployment default",{exact:true}).waitFor();
+      assert.equal((await readProfile()).renewBeforeDays,null);
+      assert.deepEqual((await readProfile()).renewalProfile,original.renewalProfile,"Inheriting the deployment window must preserve execution policy");
+      // Restore the explicit fixture value used by the following cancellation test.
+      await profileRow().getByRole("button",{name:"Change",exact:true}).click();
+      await profileRow().getByLabel("Renewal lead time in days",{exact:true}).fill("45");
+      await profileRow().getByRole("button",{name:"Save",exact:true}).click();
+      await eventuallyBrowser(async()=>(await readProfile()).renewBeforeDays===45);
+      await profileRow().getByText("45 days",{exact:true}).waitFor();
+    },{oracle:"Real browser edit, reset to inherited default and reload persist without changing execution policy"});
     await gate.scenario("browser-renewal-edit-cancellation",async()=>{
       const original=await readProfile();
       await profileRow().getByRole("button",{name:"Change",exact:true}).click();
