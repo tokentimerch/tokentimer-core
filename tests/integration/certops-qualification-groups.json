@@ -301,6 +301,8 @@
         "file": "certops-identity-invariants.test.js",
         "names": [
           "normalizes legacy audit reads without changing immutable metadata or timestamps",
+          "preserves tracking mode when the outbox links an adopted renewal profile",
+          "defers to a concurrent replace-management choice",
           "returns real AD CS metadata in every audit feed and JSON/CSV export",
           "upgrades representative pre-v62 history without guessing lifecycle or historical job identity",
           "v62 compatibility preserves erased-workspace audit metadata and rolls preparation back on failure",
