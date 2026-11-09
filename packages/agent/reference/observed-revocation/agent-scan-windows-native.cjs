@@ -16,6 +16,8 @@ const { Pool } = require("pg");
 const { runWindowsDiscoveryScan } = require("../../src/index");
 const { collectWindowsDiscoveryObservations } = require("../../src/discovery/windows");
 const { createScanChecker } = require("../../src/revocation/observation");
+const { loadTrustMaterial } = require("../../src/revocation/config");
+const { checkObservedCertificate } = require("../../src/revocation/helper");
 const { createProtocolClient } = require("../../src/protocol");
 const { listCertificateIdentities } = require("../../../../apps/api/services/certops/certificateIdentity");
 const { cleanupFixture } = require("./windows-native-safety.cjs");
@@ -68,8 +70,23 @@ async function main() {
       getCredential: async () => process.env.TT_NATIVE_REVOCATION_CREDENTIAL,
       sequenceAllocator: { next: () => revision },
     });
+    let trustStage = "not_called", helperStage = "not_called";
     const checkRevocation = await createScanChecker({ enabled: true, allowedOrigins: [data.origin],
-      trustAnchorFiles: [rootFile], intermediateFiles: [intermediateFile] });
+      trustAnchorFiles: [rootFile], intermediateFiles: [intermediateFile] }, {
+      load: async (config) => {
+        try { const material = await loadTrustMaterial(config); trustStage = "loaded"; return material; }
+        catch (error) {
+          const known = ["Windows trust stores unavailable", "Windows trust store entry invalid", "Windows trust store fingerprint mismatch", "observed revocation trust material unavailable or exceeds limits", "system trust enumeration failed"];
+          trustStage = known.includes(error.message) ? error.message : "other trust error";
+          throw error;
+        }
+      },
+      check: async (options) => {
+        const result = await checkObservedCertificate(options);
+        helperStage = ["good", "revoked", "issuer_revoked", "unknown"].includes(result.verdict) ? result.verdict : "invalid";
+        return result;
+      },
+    });
     const result = await runWindowsDiscoveryScan({ client, observationRevision: revision,
       // Invoke the production collector, then restrict the disposable test's
       // report to its own unique certificate before it reaches the API.
@@ -79,6 +96,9 @@ async function main() {
     assert.equal(result.observed, 1, "fixture must be discovered in LocalMachine/My");
     const grouped = await listCertificateIdentities({ workspaceId: process.env.TT_NATIVE_REVOCATION_WORKSPACE, client: db });
     assert.equal(grouped.items.length, 1);
+    if (grouped.items[0].observedRevocation.verdict !== data.expected) {
+      console.error(`Native revocation stages: trust=${trustStage}; helper=${helperStage}; stored=${grouped.items[0].observedRevocation.verdict}`);
+    }
     assert.equal(grouped.items[0].observedRevocation.verdict, data.expected);
     if (data.expected === "unknown") assert.equal(grouped.items[0].observedRevocation.lastVerified.verdict, "revoked");
     process.stdout.write(JSON.stringify({ verdict: data.expected }));
