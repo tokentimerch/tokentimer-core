@@ -28,7 +28,11 @@ before(async () => {
   Object.assign(process.env, { NODE_ENV: "test", CERTOPS_ENABLED: "true", DB_HOST: "127.0.0.1", DB_PORT: port,
     DB_NAME: "certops_admission_ci_test", DB_USER: "admission_test", DB_PASSWORD: "isolated-admission-only" });
   ({ pool } = require("../../apps/api/db/database"));
-  await require("../../apps/api/migrations/migrate").runMigrations();
+  // The CLI closes its separate migration pool before the fixture is torn down.
+  const migration = spawnSync(process.execPath, [require.resolve("../../apps/api/migrations/migrate")], {
+    env: process.env, encoding: "utf8", timeout: 120000,
+  });
+  assert.equal(migration.status, 0, migration.stderr || migration.stdout || String(migration.error));
   enrollments = require("../../apps/api/services/certops/certificateEnrollments");
   scheduler = require("../../apps/api/services/certops/renewalScheduler");
   profiles = require("../../apps/api/services/certops/renewalProfileAdmin");
@@ -78,6 +82,26 @@ test("manual concurrent mixed-case admission creates one enrollment and one job"
   assert.equal(results.find(result => result.status === "rejected").reason.code, "CERTOPS_ENROLLMENT_OPEN");
   assert.equal(await count(f), 1);
   assert.equal(Number((await pool.query("SELECT count(*) FROM certificate_jobs WHERE workspace_id=$1 AND operation='renew'", [f.workspaceId])).rows[0].count), 1);
+});
+test("two registrations cannot enroll the same IIS binding concurrently or renew the same fingerprint again", async () => {
+  const f = await fixture();
+  const second = (await pool.query(`INSERT INTO managed_certificates
+    (workspace_id,source,source_ref,fingerprint_sha256,name,common_name,identity_observed_at,status,not_after,profile_id,key_mode)
+    VALUES($1,'agent_filesystem',$2,$3,'Second location','app.example.com',NOW(),'discovered',$4,$5,'agent-local') RETURNING *`,
+  [f.workspaceId, randomUUID(), f.certificate.fingerprint_sha256, f.certificate.not_after, f.profile.id])).rows[0];
+  const results = await Promise.allSettled([manual(f), manual(f, { certificateId: second.id })]);
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  assert.equal(results.find(result => result.status === 'rejected').reason.code, 'CERTOPS_ENROLLMENT_OPEN');
+  const winner = results.find(result => result.status === 'fulfilled').value;
+  await pool.query("UPDATE certificate_enrollments SET state='installed', installed_at=NOW() WHERE id=$1", [winner.enrollmentId]);
+  const loser = results[0].status === 'fulfilled' ? second : f.certificate;
+  const winnerCertificate = results[0].status === 'fulfilled' ? f.certificate : second;
+  await pool.query("UPDATE managed_certificates SET fingerprint_sha256=$2, identity_observed_at=NOW() WHERE id=$1", [winnerCertificate.id, randomBytes(32).toString('hex')]);
+  const automaticLoser = { ...f, certificate: loser };
+  assert.equal((await automatic(automaticLoser)).created, false);
+  // A different binding remains an independent destination.
+  const otherTarget = { ...TARGET, binding: { ...TARGET.binding, port: 8443 } };
+  assert.ok((await manual(f, { certificateId: loser.id, target: otherTarget })).enrollmentId);
 });
 test("manual and automatic admissions share the same transaction exclusion", async () => {
   const f = await fixture();
