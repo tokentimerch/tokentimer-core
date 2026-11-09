@@ -109,6 +109,16 @@ function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = 
       if (caller) detail.fixtureFrame = `${caller[1]}:${caller[2]}`;
     }
     if (failureCount > 0) detail.afterEarlierFailure = true;
+    if (error?.code === "CERTOPS_TAR_INSPECTION_FAILED" && error.qualificationTarInspection) {
+      const diagnostic = error.qualificationTarInspection;
+      const categories = ["other", "permission-denied", "path-too-long", "invalid-archive", "create-failed", "open-failed"];
+      const spawnCodes = ["ENOENT", "EACCES", "EPERM", "ENOBUFS", "ETIMEDOUT"];
+      detail.tarInspection = {
+        exitStatus: Number.isInteger(diagnostic.exitStatus) && diagnostic.exitStatus >= -2147483648 && diagnostic.exitStatus <= 2147483647 ? diagnostic.exitStatus : null,
+        spawnCode: spawnCodes.includes(diagnostic.spawnCode) ? diagnostic.spawnCode : null,
+        category: categories.includes(diagnostic.category) ? diagnostic.category : "other",
+      };
+    }
     if (error?.code === "CERTOPS_NATIVE_COMMAND_FAILED" && error.qualificationCommand) {
       const command = error.qualificationCommand;
       const executables = ["powershell.exe", "certutil.exe", "certreq.exe", "sc.exe", "netsh.exe", "node.exe", "icacls.exe"];

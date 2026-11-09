@@ -39,6 +39,23 @@ const PRIVATE_KEY_PEM_BLOCK_PATTERN =
  * material. Throws with the offending path(s) if any are found.
  * @param {string} tarballPath
  */
+// Only fixed categories and process metadata can enter qualification reports.
+function tarInspectionDiagnostic(result) {
+  const stderr = String(result?.stderr || "").toLowerCase();
+  let category = "other";
+  if (/permission denied|access is denied/.test(stderr)) category = "permission-denied";
+  else if (/file name too long|filename too long|path too long/.test(stderr)) category = "path-too-long";
+  else if (/unrecognized archive|invalid archive|truncated|unexpected end of file|unexpected eof/.test(stderr)) category = "invalid-archive";
+  else if (/cannot create|can't create|failed to create/.test(stderr)) category = "create-failed";
+  else if (/cannot open|can't open|no such file/.test(stderr)) category = "open-failed";
+  const allowedSpawnCodes = ["ENOENT", "EACCES", "EPERM", "ENOBUFS", "ETIMEDOUT"];
+  return {
+    exitStatus: Number.isInteger(result?.status) && result.status >= -2147483648 && result.status <= 2147483647 ? result.status : null,
+    spawnCode: allowedSpawnCodes.includes(result?.error?.code) ? result.error.code : null,
+    category,
+  };
+}
+
 function assertNoPrivateKeyMaterial(tarballPath) {
   const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "tokentimer-agent-pack-scan-"));
   try {
@@ -46,10 +63,13 @@ function assertNoPrivateKeyMaterial(tarballPath) {
       encoding: "utf8",
     });
     if (extract.status !== 0) {
-      throw new Error(
+      const error = new Error(
         `pack-release: could not inspect tarball contents for private-key material ` +
           `(tar exited ${extract.status}): ${extract.stderr || extract.stdout || ""}`,
       );
+      error.code = "CERTOPS_TAR_INSPECTION_FAILED";
+      error.qualificationTarInspection = tarInspectionDiagnostic(extract);
+      throw error;
     }
 
     const offenders = [];
@@ -240,6 +260,7 @@ module.exports = {
   sha256File,
   assertNoPrivateKeyMaterial,
   assertExecutableEntries,
+  tarInspectionDiagnostic,
 };
 
 if (require.main === module) {
