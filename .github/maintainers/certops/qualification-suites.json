@@ -5142,6 +5142,7 @@
   ],
   "sourceGroups": {
     "windows-host": [
+      "packages/agent/scripts/host/nested-test-env.js",
       "packages/agent/scripts/host/discovery-http-sys-fixture.js",
       "packages/agent/scripts/host/cng-export-fixture.js",
       "packages/agent/scripts/host/iis-shared-port-fixture.js",
