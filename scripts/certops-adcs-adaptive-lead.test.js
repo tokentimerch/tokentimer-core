@@ -27,6 +27,7 @@ test("adaptive AD CS qualification compares the same source before and after an 
 test("adaptive AD CS qualification fails closed on wrong inheritance or selection", async () => {
   for (const options of [
     { inherited: 30 },
+    { env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "30" } },
     { env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "4" } },
     { early: [{ workspace_id: "workspace", id: "source" }] },
     { patched: null },
