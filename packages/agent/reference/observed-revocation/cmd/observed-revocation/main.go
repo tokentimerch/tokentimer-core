@@ -14,10 +14,12 @@ import (
 )
 
 type request struct {
-	Leaf           string   `json:"leaf"`
-	Intermediates  []string `json:"intermediates"`
-	Roots          []string `json:"roots"`
-	AllowedOrigins []string `json:"allowedOrigins"`
+	Leaf                string   `json:"leaf"`
+	Intermediates       []string `json:"intermediates"`
+	Roots               []string `json:"roots"`
+	SystemRoots         []string `json:"systemRoots"`
+	SystemIntermediates []string `json:"systemIntermediates"`
+	AllowedOrigins      []string `json:"allowedOrigins"`
 }
 type response struct {
 	Verdict     string     `json:"verdict"`
@@ -53,11 +55,11 @@ func run(r io.Reader, w io.Writer, now time.Time) error {
 		out.Detail = "invalid observed certificate"
 		return write()
 	}
-	if len(req.Roots) > 512 || len(req.Intermediates) > 256 || len(req.AllowedOrigins) > 128 {
+	if len(req.Roots)+len(req.SystemRoots) > 512 || len(req.Intermediates)+len(req.SystemIntermediates) > 256 || len(req.AllowedOrigins) > 128 {
 		out.Detail = "input exceeds limits"
 		return write()
 	}
-	if len(req.Roots) == 0 {
+	if len(req.Roots)+len(req.SystemRoots) == 0 {
 		out.Detail = "trust anchors unavailable"
 		return write()
 	}
@@ -70,6 +72,17 @@ func run(r io.Reader, w io.Writer, now time.Time) error {
 		}
 		roots = append(roots, cert)
 	}
+	// Unsupported certificates in the operating system store must not disable
+	// unrelated trust anchors. They never become trusted if parsing fails.
+	for _, encoded := range req.SystemRoots {
+		if cert, err := parseCertificate(encoded); err == nil {
+			roots = append(roots, cert)
+		}
+	}
+	if len(roots) == 0 {
+		out.Detail = "trust anchors unavailable"
+		return write()
+	}
 	for _, encoded := range req.Intermediates {
 		cert, err := parseCertificate(encoded)
 		if err != nil {
@@ -77,6 +90,11 @@ func run(r io.Reader, w io.Writer, now time.Time) error {
 			return write()
 		}
 		intermediates = append(intermediates, cert)
+	}
+	for _, encoded := range req.SystemIntermediates {
+		if cert, err := parseCertificate(encoded); err == nil {
+			intermediates = append(intermediates, cert)
+		}
 	}
 	chains, err := revocation.VerifyChain(leaf, intermediates, roots, now)
 	if err != nil {

@@ -37,3 +37,11 @@ test("unsupported platforms have no helper and a missing binary reports unknown"
   assert.equal(resolveHelperPath({ platform: "darwin", arch: "x64" }), null);
   assert.equal((await checkObservedCertificate({ helperPath: path.join(__dirname, "missing-helper"), certificatePem: pem, fingerprintSha256: fp, roots: [pem] })).verdict, "unknown");
 });
+
+test("separates operating-system trust and fails closed when an older helper rejects the protocol", async () => {
+  const args = { certificatePem: pem, fingerprintSha256: fp, roots: [], systemRoots: [pem], systemIntermediates: [pem] };
+  const spawnImpl = () => spawn(process.execPath, ["-e", `let s=''; process.stdin.on('data',x=>s+=x); process.stdin.on('end',()=>{const v=JSON.parse(s);if(v.roots.length!==0||v.systemRoots.length!==1||v.systemIntermediates.length!==1)process.exit(2);console.log(JSON.stringify({verdict:'good',chainStatus:'valid',checkedAt:'2026-01-01T00:00:00Z',validUntil:'2026-01-01T01:00:00Z'}));});`], { stdio: ["pipe", "pipe", "ignore"] });
+  assert.equal((await checkObservedCertificate({ ...args, spawnImpl })).verdict, "good");
+  const oldHelper = () => spawn(process.execPath, ["-e", "process.stdin.resume();process.stdin.on('end',()=>process.exit(1));"], { stdio: ["pipe", "pipe", "ignore"] });
+  assert.equal((await checkObservedCertificate({ ...args, spawnImpl: oldHelper })).verdict, "unknown");
+});

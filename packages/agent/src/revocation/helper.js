@@ -19,19 +19,19 @@ function resolveHelperPath({ packageRoot = path.resolve(__dirname, "../.."), pla
 
 // Input/output contain public certificate material only. Fail closed on a
 // missing executable, timeout, malformed output or an identity mismatch.
-function checkObservedCertificate({ helperPath = resolveHelperPath(), certificatePem, fingerprintSha256, roots, intermediates = [], allowedOrigins = [], spawnImpl = spawn, timeoutMs = 65000 } = {}) {
+function checkObservedCertificate({ helperPath = resolveHelperPath(), certificatePem, fingerprintSha256, roots, intermediates = [], systemRoots = [], systemIntermediates = [], allowedOrigins = [], spawnImpl = spawn, timeoutMs = 65000 } = {}) {
   const unknown = () => ({ verdict: "unknown", chainStatus: "unknown", detail: "verification unavailable" });
-  if (!helperPath || !Array.isArray(roots) || roots.length === 0 || !Array.isArray(intermediates) || !Array.isArray(allowedOrigins) || allowedOrigins.some((value) => typeof value !== "string")) return Promise.resolve(unknown());
+  if (!helperPath || !Array.isArray(roots) || !Array.isArray(systemRoots) || roots.length + systemRoots.length === 0 || !Array.isArray(intermediates) || !Array.isArray(systemIntermediates) || !Array.isArray(allowedOrigins) || allowedOrigins.some((value) => typeof value !== "string")) return Promise.resolve(unknown());
   try {
     const cert = new X509Certificate(certificatePem);
     if (cert.fingerprint256.replace(/:/g, "").toLowerCase() !== fingerprintSha256) return Promise.resolve(unknown());
     certificatePem = cert.toString();
-    for (const certPem of [...roots, ...intermediates]) {
+    for (const certPem of [...roots, ...intermediates, ...systemRoots, ...systemIntermediates]) {
       if (typeof certPem !== "string" || !/^-----BEGIN CERTIFICATE-----\s*[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----\s*$/.test(certPem)) return Promise.resolve(unknown());
       new X509Certificate(certPem);
     }
   } catch (_) { return Promise.resolve(unknown()); }
-  const input = JSON.stringify({ leaf: certificatePem, roots, intermediates, allowedOrigins });
+  const input = JSON.stringify({ leaf: certificatePem, roots, intermediates, systemRoots, systemIntermediates, allowedOrigins });
   if (Buffer.byteLength(input) > MAX_INPUT || !Number.isInteger(timeoutMs) || timeoutMs <= 0) return Promise.resolve(unknown());
   return new Promise((resolve) => {
     let child, finished = false, output = "", size = 0;

@@ -82,8 +82,8 @@ async function main() {
         }
       },
       check: async (options) => {
-        const json = JSON.stringify({ leaf: options.certificatePem, roots: options.roots, intermediates: options.intermediates, allowedOrigins: options.allowedOrigins });
-        inputStage = `roots:${options.roots.length},intermediates:${options.intermediates.length},bytes:${Buffer.byteLength(json)},helper_exists:${fs.existsSync(resolveHelperPath())},same_helper:${path.resolve(resolveHelperPath()).toLowerCase() === path.resolve(data.helperPath).toLowerCase()}`;
+        const json = JSON.stringify({ leaf: options.certificatePem, roots: options.roots, intermediates: options.intermediates, systemRoots: options.systemRoots, systemIntermediates: options.systemIntermediates, allowedOrigins: options.allowedOrigins });
+        inputStage = `roots:${options.roots.length},intermediates:${options.intermediates.length},system_roots:${options.systemRoots.length},system_intermediates:${options.systemIntermediates.length},bytes:${Buffer.byteLength(json)},helper_exists:${fs.existsSync(resolveHelperPath())},same_helper:${path.resolve(resolveHelperPath()).toLowerCase() === path.resolve(data.helperPath).toLowerCase()}`;
         const result = await checkObservedCertificate(options);
         helperStage = ["good", "revoked", "issuer_revoked", "unknown"].includes(result.verdict) ? result.verdict : "invalid";
         const known = ["verification unavailable", "invalid observed certificate", "input exceeds limits", "trust anchors unavailable", "invalid trust anchor", "invalid intermediate", "certificate chain validation failed", "multiple validated chains require disambiguation", "revocation data unavailable or unsupported", "validated chain unavailable", "chain certificate missing", "chain signature invalid"];

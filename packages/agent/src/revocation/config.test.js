@@ -40,6 +40,7 @@ test("trust bundles accept public certificates but reject private material and s
     assert.equal(readCertificateBundle(bundle).length, 2);
     const roots = await loadTrustMaterial({ enabled: true, trustAnchorFiles: [bundle], intermediateFiles: [] }, { systemRoots: () => [cert], platform: "linux" });
     assert.equal(roots.roots.length, 1);
+    assert.equal(roots.systemRoots.length, 0, "an explicit duplicate retains strict handling");
     fs.appendFileSync(bundle, "\n-----BEGIN PRIVATE KEY-----\nAA==\n-----END PRIVATE KEY-----\n");
     assert.throws(() => readCertificateBundle(bundle), /non-certificate/);
     const link = path.join(dir, "link.pem");
@@ -53,6 +54,20 @@ test("Windows disallowed store also excludes explicitly configured intermediates
   const thumbprint = new X509Certificate(cert).fingerprint.replace(/:/g, "").toLowerCase();
   const config = { enabled: true, trustAnchorFiles: [], intermediateFiles: [path.join(__dirname, "../verify/fixtures/chain-leaf.crt.pem")] };
   const material = await loadTrustMaterial(config, { systemRoots: () => [root], platform: "win32", windowsStores: () => ({ denied: new Map([[thumbprint, cert]]), ca: new Map() }) });
-  assert.equal(material.roots.length, 1);
+  assert.equal(material.systemRoots.length, 1);
   assert.equal(material.intermediates.length, 0);
+});
+
+test("platform and explicit trust stay separate for strict helper validation", async () => {
+  const rootFile = path.join(__dirname, "../verify/fixtures/ca.crt.pem");
+  const intermediateFile = path.join(__dirname, "../verify/fixtures/intermediate.crt.pem");
+  const root = new X509Certificate(fs.readFileSync(rootFile)).toString();
+  const intermediate = new X509Certificate(fs.readFileSync(intermediateFile));
+  const thumbprint = intermediate.fingerprint.replace(/:/g, "").toLowerCase();
+  const config = { enabled: true, trustAnchorFiles: [rootFile], intermediateFiles: [] };
+  const material = await loadTrustMaterial(config, { systemRoots: () => [cert], platform: "win32", windowsStores: () => ({ denied: new Map(), ca: new Map([[thumbprint, intermediate.toString()]]) }) });
+  assert.deepEqual(material.roots, [root]);
+  assert.deepEqual(material.systemRoots, [cert]);
+  assert.deepEqual(material.intermediates, []);
+  assert.deepEqual(material.systemIntermediates, [intermediate.toString()]);
 });

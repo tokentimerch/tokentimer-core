@@ -13,7 +13,7 @@ async function createScanChecker(config, { load = loadTrustMaterial, check = che
   if (!config.allowedOrigins?.length) return async () => ({ state: "not_configured" });
   let material;
   try { material = await load(config); } catch (_) { return async () => ({ verdict: "unknown", chainStatus: "unknown", detail: "local trust material unavailable" }); }
-  return (certificate) => check({ ...certificate, roots: material.roots, intermediates: [...material.intermediates, ...(certificate.intermediateCertificates || [])], allowedOrigins: config.allowedOrigins });
+  return (certificate) => check({ ...certificate, roots: material.roots, intermediates: [...material.intermediates, ...(certificate.intermediateCertificates || [])], systemRoots: material.systemRoots || [], systemIntermediates: material.systemIntermediates || [], allowedOrigins: config.allowedOrigins });
 }
 
 // Keep network work bounded and reuse a single check when one certificate is

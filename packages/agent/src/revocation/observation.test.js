@@ -31,6 +31,17 @@ test("same fingerprint is checked once and revocation stays separate from locati
   for (const { item } of entries) assert.equal(item.metadata.find((m) => m.name === "observedRevocationVerdict").value, "revoked");
 });
 
+test("scan checker preserves the origin of local trust material", async () => {
+  let actual;
+  const material = { roots: ["explicit-root"], intermediates: ["explicit-intermediate"], systemRoots: ["system-root"], systemIntermediates: ["system-intermediate"] };
+  const checker = await createScanChecker({ enabled: true, allowedOrigins: ["http://pki.example"] }, { load: () => material, check: (value) => { actual = value; return { verdict: "unknown" }; } });
+  await checker({ intermediateCertificates: ["observed-intermediate"] });
+  assert.deepEqual(actual.roots, ["explicit-root"]);
+  assert.deepEqual(actual.systemRoots, ["system-root"]);
+  assert.deepEqual(actual.intermediates, ["explicit-intermediate", "observed-intermediate"]);
+  assert.deepEqual(actual.systemIntermediates, ["system-intermediate"]);
+});
+
 test("failed verification reports unknown with an attempt time, and concurrency is bounded", async () => {
   const entries = Array.from({ length: 10 }, (_, i) => ({ certificatePem: "public", item: { fingerprintSha256: String(i).repeat(64), metadata: [] } }));
   let active = 0, maximum = 0;

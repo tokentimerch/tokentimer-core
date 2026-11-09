@@ -89,23 +89,27 @@ async function freshWindowsIntermediates({ run = execFileAsync } = {}) {
 }
 
 async function loadTrustMaterial(config, { io = fs, systemRoots = freshSystemRoots, platform = process.platform, windowsStores = freshWindowsIntermediates } = {}) {
-  if (!config?.enabled) return { roots: [], intermediates: [] };
-  let roots = await systemRoots();
+  if (!config?.enabled) return { roots: [], intermediates: [], systemRoots: [], systemIntermediates: [] };
+  let platformRoots = await systemRoots();
+  let roots = [];
   for (const file of config.trustAnchorFiles) roots.push(...readCertificateBundle(file, io));
-  const intermediates = [];
+  const intermediates = [], platformIntermediates = [];
   let denied = new Map();
   if (platform === "win32") {
     let ca;
     ({ denied, ca } = await windowsStores());
     if (!(denied instanceof Map) || !(ca instanceof Map)) throw new Error("Windows trust stores unavailable");
+    platformRoots = platformRoots.filter((pem) => !denied.has(new X509Certificate(pem).fingerprint.replace(/:/g, "").toLowerCase()));
     roots = roots.filter((pem) => !denied.has(new X509Certificate(pem).fingerprint.replace(/:/g, "").toLowerCase()));
-    for (const [thumbprint, pem] of ca) if (!denied.has(thumbprint)) intermediates.push(pem);
+    for (const [thumbprint, pem] of ca) if (!denied.has(thumbprint)) platformIntermediates.push(pem);
   }
   for (const file of config.intermediateFiles) intermediates.push(...readCertificateBundle(file, io));
   roots = [...new Set(roots)];
+  const uniqueSystemRoots = [...new Set(platformRoots)].filter((pem) => !roots.includes(pem));
   const uniqueIntermediates = [...new Set(intermediates)].filter((pem) => !denied.has(new X509Certificate(pem).fingerprint.replace(/:/g, "").toLowerCase()));
-  if (!roots.length || roots.length > 512 || uniqueIntermediates.length > 256) throw new Error("observed revocation trust material unavailable or exceeds limits");
-  return { roots, intermediates: uniqueIntermediates };
+  const uniqueSystemIntermediates = [...new Set(platformIntermediates)].filter((pem) => !uniqueIntermediates.includes(pem));
+  if ((!roots.length && !uniqueSystemRoots.length) || roots.length + uniqueSystemRoots.length > 512 || uniqueIntermediates.length + uniqueSystemIntermediates.length > 256) throw new Error("observed revocation trust material unavailable or exceeds limits");
+  return { roots, intermediates: uniqueIntermediates, systemRoots: uniqueSystemRoots, systemIntermediates: uniqueSystemIntermediates };
 }
 
 module.exports = { validateObservedRevocation, readCertificateBundle, freshSystemRoots, freshWindowsIntermediates, loadTrustMaterial };
