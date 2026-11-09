@@ -17,7 +17,7 @@ const { runWindowsDiscoveryScan } = require("../../src/index");
 const { collectWindowsDiscoveryObservations } = require("../../src/discovery/windows");
 const { createScanChecker } = require("../../src/revocation/observation");
 const { loadTrustMaterial } = require("../../src/revocation/config");
-const { checkObservedCertificate } = require("../../src/revocation/helper");
+const { checkObservedCertificate, resolveHelperPath } = require("../../src/revocation/helper");
 const { createProtocolClient } = require("../../src/protocol");
 const { listCertificateIdentities } = require("../../../../apps/api/services/certops/certificateIdentity");
 const { cleanupFixture } = require("./windows-native-safety.cjs");
@@ -70,7 +70,7 @@ async function main() {
       getCredential: async () => process.env.TT_NATIVE_REVOCATION_CREDENTIAL,
       sequenceAllocator: { next: () => revision },
     });
-    let trustStage = "not_called", helperStage = "not_called";
+    let trustStage = "not_called", helperStage = "not_called", helperDetail = "not_called", inputStage = "not_called";
     const checkRevocation = await createScanChecker({ enabled: true, allowedOrigins: [data.origin],
       trustAnchorFiles: [rootFile], intermediateFiles: [intermediateFile] }, {
       load: async (config) => {
@@ -82,8 +82,12 @@ async function main() {
         }
       },
       check: async (options) => {
+        const json = JSON.stringify({ leaf: options.certificatePem, roots: options.roots, intermediates: options.intermediates, allowedOrigins: options.allowedOrigins });
+        inputStage = `roots:${options.roots.length},intermediates:${options.intermediates.length},bytes:${Buffer.byteLength(json)},helper_exists:${fs.existsSync(resolveHelperPath())},same_helper:${path.resolve(resolveHelperPath()).toLowerCase() === path.resolve(data.helperPath).toLowerCase()}`;
         const result = await checkObservedCertificate(options);
         helperStage = ["good", "revoked", "issuer_revoked", "unknown"].includes(result.verdict) ? result.verdict : "invalid";
+        const known = ["verification unavailable", "invalid observed certificate", "input exceeds limits", "trust anchors unavailable", "invalid trust anchor", "invalid intermediate", "certificate chain validation failed", "multiple validated chains require disambiguation", "revocation data unavailable or unsupported", "validated chain unavailable", "chain certificate missing", "chain signature invalid"];
+        helperDetail = known.includes(result.detail) ? result.detail : "other_or_none";
         return result;
       },
     });
@@ -97,7 +101,7 @@ async function main() {
     const grouped = await listCertificateIdentities({ workspaceId: process.env.TT_NATIVE_REVOCATION_WORKSPACE, client: db });
     assert.equal(grouped.items.length, 1);
     if (grouped.items[0].observedRevocation.verdict !== data.expected) {
-      console.error(`Native revocation stages: trust=${trustStage}; helper=${helperStage}; stored=${grouped.items[0].observedRevocation.verdict}`);
+      console.error(`Native revocation stages: trust=${trustStage}; helper=${helperStage}; detail=${helperDetail}; input=${inputStage}; stored=${grouped.items[0].observedRevocation.verdict}`);
     }
     assert.equal(grouped.items[0].observedRevocation.verdict, data.expected);
     if (data.expected === "unknown") assert.equal(grouped.items[0].observedRevocation.lastVerified.verdict, "revoked");
