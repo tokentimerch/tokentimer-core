@@ -43,6 +43,22 @@ test("SMTP receipt requires fresh ID, exact recipient and actual job body", () =
   const mime = { ...row, Content: { ...row.Content, Body: "" }, MIME: { Parts: [{ Headers: { "Content-Transfer-Encoding": ["base64"] }, Body: Buffer.from(`Renewal job: ${jobId}`).toString("base64") }] } };
   assert.equal(h.matchingMessages(inbox(mime), options).length, 1);
 });
+test("SMTP receipt matches folded UTF-8 encoded subjects without relaxing identity checks", () => {
+  const jobId = crypto.randomUUID(), recipient = "native@example.test";
+  const subject = "=?UTF-8?Q?=E2=9A=A0=EF=B8=8F_Certificate_renewal_f?=\r\n =?UTF-8?Q?ailed=3A_certops-123=2Eexample=2Etest?=";
+  const row = { ID: "fresh", Content: { Headers: { To: [recipient], Subject: [subject] }, Body: `Renewal job: ${jobId}` } };
+  const inbox = value => ({items:[value],total:1,count:1,start:0});
+  const options = {jobId,recipient,previous:new Set()};
+  assert.equal(h.matchingMessages(inbox(row),options).length,1);
+  const b64 = Buffer.from("⚠️ Certificate renewal failed: owned").toString("base64");
+  assert.equal(h.matchingMessages(inbox({...row,Content:{...row.Content,Headers:{...row.Content.Headers,Subject:[`=?UTF-8?B?${b64}?=`]}}}),options).length,1);
+  assert.equal(h.matchingMessages(inbox({...row,Content:{...row.Content,Headers:{...row.Content.Headers,To:["other@example.test"]}}}),options).length,0);
+  assert.equal(h.matchingMessages(inbox({...row,Content:{...row.Content,Body:"unrelated"}}),options).length,0);
+  assert.equal(h.matchingMessages(inbox({...row,Content:{...row.Content,Headers:{...row.Content.Headers,Subject:["=?UTF-8?Q?Unrelated_alert?="]}}}),options).length,0);
+  assert.equal(h.matchingMessages(inbox({...row,ID:"old"}),{...options,previous:new Set(["old"])}).length,0);
+  const duplicates = { items:[row,{...row,ID:"another"}], total:2, count:2, start:0 };
+  assert.equal(h.independentReceipt({nodeEnv:"production",deliveryStatus:"sent",messages:h.matchingMessages(duplicates,options)}),false);
+});
 test("SMTP observation endpoint cannot redirect qualification to external hosts", () => {
   assert.equal(h.localEndpoint("http://127.0.0.1:8025").port, "8025");
   for (const value of ["https://127.0.0.1", "http://foreign.example", "http://user:password@localhost", "http://localhost/?token=secret"]) assert.throws(() => h.localEndpoint(value));
