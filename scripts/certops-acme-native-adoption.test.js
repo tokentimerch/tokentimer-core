@@ -152,3 +152,13 @@ test("native setup compares exact SAN membership independent of CA order", () =>
   assert.equal(compare(expected.sans, { keyRotation: false }), false);
   assert.equal(compare(["*.example.test", "alt.example.test"]), false);
 });
+
+
+test("policy mismatch diagnostics expose only fixed categories", () => {
+  const original = { target: { reference: "private-host" }, sans: ["private-host"], certPath: "/private/path", keyRotation: true };
+  const changed = { ...original, certPath: "/another/private/path", keyRotation: false, untrustedKey: "secret" };
+  assert.deepEqual(helper.executionPolicyDifferenceLabels(changed, original), ["adoption-policy-diff-key", "adoption-policy-diff-deployment"]);
+  const unknown = helper.executionPolicyDifferenceLabels({ ...original, untrustedKey: "secret" }, original);
+  assert.deepEqual(unknown, ["adoption-policy-diff-other"]);
+  assert.ok([...unknown, ...helper.executionPolicyDifferenceLabels(changed, original)].every(label => !/private|secret|untrusted/.test(label)));
+});
