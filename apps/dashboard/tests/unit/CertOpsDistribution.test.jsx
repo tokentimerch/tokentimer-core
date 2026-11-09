@@ -142,6 +142,34 @@ describe('Distribution Management',()=>{
     expect(api.rollout.mock.calls[0][2]).toEqual(expect.objectContaining({verificationOnly:true,materialVersionId:latest}));
     expect(screen.queryByText('Deployment succeeded')).not.toBeInTheDocument();
   });
+  it('uses a fresh idempotency key for each confirmed verification request',async()=>{
+    api.rollout.mockResolvedValue({status:'pending'});page();
+    const verify=await screen.findByRole('button',{name:'Verify only'});
+    fireEvent.click(verify);await waitFor(()=>expect(api.rollout).toHaveBeenCalledTimes(1));
+    await waitFor(()=>expect(screen.getByRole('button',{name:'Verify only'})).toBeEnabled());
+    fireEvent.click(screen.getByRole('button',{name:'Verify only'}));
+    await waitFor(()=>expect(api.rollout).toHaveBeenCalledTimes(2));
+    expect(api.rollout.mock.calls[1][3]).not.toBe(api.rollout.mock.calls[0][3]);
+  });
+  it('uses a fresh idempotency key for each confirmed rollout request',async()=>{
+    api.rollout.mockResolvedValue({status:'pending'});page();
+    fireEvent.click(await screen.findByRole('button',{name:'Request rollout'}));
+    fireEvent.click(screen.getByRole('button',{name:'Confirm'}));
+    await waitFor(()=>expect(api.rollout).toHaveBeenCalledTimes(1));
+    await waitFor(()=>expect(screen.getByRole('button',{name:'Request rollout'})).toBeEnabled());
+    fireEvent.click(screen.getByRole('button',{name:'Request rollout'}));
+    fireEvent.click(screen.getByRole('button',{name:'Confirm'}));
+    await waitFor(()=>expect(api.rollout).toHaveBeenCalledTimes(2));
+    expect(api.rollout.mock.calls[1][3]).not.toBe(api.rollout.mock.calls[0][3]);
+  });
+  it('reuses the idempotency key when a verification response is uncertain',async()=>{
+    api.rollout.mockRejectedValueOnce(new Error('network interrupted')).mockResolvedValueOnce({status:'pending'});page();
+    fireEvent.click(await screen.findByRole('button',{name:'Verify only'}));
+    await screen.findByText(/Operation failed/);
+    fireEvent.click(screen.getByRole('button',{name:'Verify only'}));
+    await waitFor(()=>expect(api.rollout).toHaveBeenCalledTimes(2));
+    expect(api.rollout.mock.calls[1][3]).toBe(api.rollout.mock.calls[0][3]);
+  });
   it('adds a consumer using a registered agent and a customer-local alias',async()=>{
     page();await openView('Destinations');fireEvent.click(await screen.findByRole('button',{name:'Add consumer'}));fireEvent.change(screen.getByLabelText('Registered agent'),{target:{value:'agent'}});
     fireEvent.change(screen.getByLabelText('Customer-local deployment profile'),{target:{value:'web_secondary'}});fireEvent.click(screen.getByRole('button',{name:'Save consumer'}));

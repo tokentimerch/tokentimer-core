@@ -1009,9 +1009,10 @@ function Management({
     const signature = `${groupId}:${selectedVersion}:${verificationOnly}:${data.group.generation}`;
     if (!keys.current.has(signature))
       keys.current.set(signature, crypto.randomUUID());
+    const key = keys.current.get(signature);
     return run(
-      () =>
-        distributionApi.rollout(
+      async () => {
+        const result = await distributionApi.rollout(
           workspaceId,
           groupId,
           {
@@ -1020,8 +1021,14 @@ function Management({
             verificationOnly,
             requiresApproval: !verificationOnly && retained,
           },
-          keys.current.get(signature)
-        ),
+          key
+        );
+        // Keep the key after an uncertain failure so the operator can retry
+        // safely. A confirmed response completes this intent; a later request
+        // for the same version must create a fresh job.
+        if (keys.current.get(signature) === key) keys.current.delete(signature);
+        return result;
+      },
       result =>
         result.status === 'pending_approval'
           ? 'Request created. Review and approve the exact version in Jobs.'
