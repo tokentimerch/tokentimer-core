@@ -22,7 +22,7 @@ jobs:
         run: |
           $output = Join-Path $env:RUNNER_TEMP 'published-windows-baseline'
           New-Item -ItemType Directory -Path $output | Out-Null
-          gh api --header "Accept: application/vnd.github+json" --header "X-GitHub-Api-Version: 2022-11-28" repos/tokentimerch/tokentimer-core/releases/tags/v0.17.3 | Set-Content -Encoding utf8 -LiteralPath "$output\release.json"
+          gh api --header "Accept: application/vnd.github+json" repos/tokentimerch/tokentimer-core/releases/tags/v0.17.3 | Set-Content -Encoding utf8 -LiteralPath "$output\release.json"
           if ($LASTEXITCODE) { throw 'Pinned public release metadata unavailable' }
           gh release download v0.17.3 --repo tokentimerch/tokentimer-core --pattern 'tokentimer-agent-0.17.3.tgz*' --dir $output
           if ($LASTEXITCODE) { throw 'Public baseline assets unavailable' }

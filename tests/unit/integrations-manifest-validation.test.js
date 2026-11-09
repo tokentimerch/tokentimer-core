@@ -15,12 +15,13 @@ it("rejects malformed integration metadata", () => {
 });
 
 
-it("checks the GitHub API version against the client header", () => {
+it("checks that the GitHub client uses the server default API version", () => {
   const os = require("node:os");
   const path = require("node:path");
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "tt-integration-watch-"));
   try {
     const integration = structuredClone(manifest.integrations.github);
+    assert.equal(integration.api_version, null);
     const partial = { schema_version: manifest.schema_version, integrations: { github: integration } };
     for (const file of ["apps/api/services/githubIntegration.js", "apps/api/package.json"]) {
       const dest = path.join(temp, file);
@@ -29,14 +30,23 @@ it("checks the GitHub API version against the client header", () => {
     }
     assert.equal(validateManifest(partial, temp), 1);
     const sourcePath = path.join(temp, "apps/api/services/githubIntegration.js");
-    const original = fs.readFileSync(sourcePath, "utf8");
-    const header = `"X-GitHub-Api-Version": "${integration.api_version}",`;
-    assert.ok(original.includes(header), "expected actual client header");
-    fs.writeFileSync(sourcePath, original.replace(header, ""));
-    assert.throws(() => validateManifest(partial, temp), /github:.*source text.*missing/);
-    fs.writeFileSync(sourcePath, original.replace(header, '"X-GitHub-Api-Version": "2099-01-01",'));
-    assert.throws(() => validateManifest(partial, temp), /github:.*source text.*missing/);
+    fs.appendFileSync(sourcePath, '\nconst headers = { "x-github-api-version": "2022-11-28" };\n');
+    assert.throws(() => validateManifest(partial, temp), /github:.*excluded source text.*present/);
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+it("does not override the GitHub CLI API version in workflows", () => {
+  for (const file of [
+    ".github/workflows/certops-linux-published-upgrade.yml",
+    ".github/workflows/certops-windows-e2e.yml",
+    ".github/workflows/certops-windows-published-baseline.yml",
+    ".github/workflows/discord-release-backfill.yml",
+    ".github/workflows/discord-release-notify.yml",
+  ]) {
+    const source = fs.readFileSync(file, "utf8");
+    assert.doesNotThrow(() => yaml.load(source), file);
+    assert.doesNotMatch(source, /X-GitHub-Api-Version/i, file);
   }
 });

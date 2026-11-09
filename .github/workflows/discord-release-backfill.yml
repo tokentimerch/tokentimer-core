@@ -46,7 +46,6 @@ jobs:
           AFTER_TAG="${{ inputs.after_tag }}"
           AFTER_PUBLISHED_AT="$(gh api \
             --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
             "/repos/${{ github.repository }}/releases/tags/${AFTER_TAG}" \
             --jq '.published_at // .created_at')"
           echo "Backfilling releases published after ${AFTER_TAG} (${AFTER_PUBLISHED_AT})"
@@ -127,7 +126,6 @@ jobs:
 
           gh api --paginate \
             --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
             "/repos/${{ github.repository }}/releases?per_page=100" \
           | jq -cs --arg after "$AFTER_PUBLISHED_AT" '
               add
