@@ -201,6 +201,17 @@ function material(certPath, keyPath, domain) {
     notAfter: Date.parse(leaf.validTo),
   };
 }
+// The fixture's target is an approved SAN, so its CSR common name is stable.
+// CA SAN ordering is not part of the exact-name policy; every other field remains strict.
+function sameExecutionPolicy(actual, expected) {
+  const reference = expected?.target?.reference;
+  if (!reference || !Array.isArray(actual?.sans) || !Array.isArray(expected?.sans) ||
+      !actual.sans.includes(reference) || !expected.sans.includes(reference)) return false;
+  return isDeepStrictEqual(
+    { ...actual, sans: [...actual.sans].sort() },
+    { ...expected, sans: [...expected.sans].sort() },
+  );
+}
 function materialState(value) {
   return {
     certificateSha: sha(value.cert),
@@ -612,7 +623,7 @@ async function qualifyNativeAdoption(c) {
       ),
     );
     assert.ok(
-      isDeepStrictEqual(actualExecution, expectedExecution),
+      sameExecutionPolicy(actualExecution, expectedExecution),
       "Derived execution policy changed",
     );
     assert.equal(
@@ -695,6 +706,7 @@ module.exports = {
   assertCleanupSafe,
   qualifyNativeAdoption,
   resolveTlsOptions,
+  sameExecutionPolicy,
   readOwnedBytes,
   verifyPublicResult,
 };
