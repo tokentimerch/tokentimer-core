@@ -157,6 +157,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
   const closedAgents=new WeakSet();
   const ownedJobIds=[], ownedCertificateIds=[], ownedWorkers=[], ownedBrowserResources=[], ownedBulkResources=[], ownedAdoptionResources=[], ownedRestartResources=[], ownedProfileResources=[], ownedLeaseResources=[];
   try {
+  fs.mkdirSync(path.dirname(certPath), { mode: 0o700 });
   fs.mkdirSync(configDir, { mode: 0o700 });
   barrierDirectory=path.join(workDir,"command-barrier");fs.mkdirSync(barrierDirectory,{mode:0o700});
   commandArgv=[process.execPath,path.join(repoRoot,"tests/e2e/helpers/certops-acme-command-barrier.js"),barrierDirectory,...commandArgv];
