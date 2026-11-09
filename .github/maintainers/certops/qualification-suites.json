@@ -132,6 +132,11 @@
       "kind": "host",
       "suite": "browser-certificate-surfaces",
       "source": "scripts/certops-browser.js",
+      "requiredSources": [
+        "apps/dashboard/src/components/certops/RenewalProfilesPanel.jsx",
+        "apps/api/routes/certops.js",
+        "apps/api/services/certops/renewalProfileAdmin.js"
+      ],
       "environmentGroup": "job-decisions-api-environment"
     },
     {
@@ -6047,6 +6052,9 @@
       "pnpm-lock.yaml"
     ],
     "shared-certops-adcs-preflight-cohorts-6": [
+      "apps/api/services/certops/renewalProfileAdmin.js",
+      "apps/api/services/certops/renewalThreshold.js",
+      "tests/e2e/helpers/certops-adcs-adaptive-lead.js",
       "tests/e2e/helpers/certops-adcs-preflight-cohorts.js",
       "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
       "tests/e2e/helpers/certops-adcs-recovery.js",
