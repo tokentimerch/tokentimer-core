@@ -78,9 +78,23 @@ describe("HTTP retirement concurrent with claim on PostgreSQL", function () {
     realApp.use(session({ secret: process.env.SESSION_SECRET, resave: false, saveUninitialized: false }));
     realApp.use(passport.initialize());
     realApp.use(passport.session());
+    realApp.use(require("cookie-parser")());
+    const { doubleCsrf } = require("csrf-csrf");
+    const { createCsrfExemptMiddleware, isCertOpsMachineTokenCsrfExemptPath } = require("../../../apps/api/middleware/csrf-exempt");
+    const { generateToken, doubleCsrfProtection } = doubleCsrf({
+      getSecret: () => process.env.SESSION_SECRET,
+      cookieName: "x-csrf-token",
+      cookieOptions: { httpOnly: true, path: "/", secure: false },
+      getTokenFromRequest: req => req.headers["x-csrf-token"],
+    });
+    const enforceCsrf = createCsrfExemptMiddleware(doubleCsrfProtection, { allowPath: isCertOpsMachineTokenCsrfExemptPath, skip: false });
+    realApp.use("/api", enforceCsrf);
+    realApp.use("/auth", enforceCsrf);
+    realApp.get("/api/csrf-token", (req, res) => res.json({ csrfToken: generateToken(req, res, true, false) }));
     realApp.use(authRouter);
     realApp.use("/api/v1/workspaces/:id", requireAuth, loadWorkspace, requireWorkspaceMembership);
     realApp.use(require("../../../apps/api/routes/certops"));
+    realApp.use((err, _req, res, next) => err?.code === "EBADCSRFTOKEN" ? res.status(403).json({ code: err.code }) : next(err));
     const password = "FixturePassword123!";
     const hash = await bcrypt.hash(password, 10);
     const email = `session-retire-${randomUUID()}@example.test`;
@@ -91,16 +105,25 @@ describe("HTTP retirement concurrent with claim on PostgreSQL", function () {
     const agentId = (await db.query(`INSERT INTO certops_agents (workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)
       VALUES ($1,$2,'0.18.2','1.0.0',$3,$4) RETURNING id`, [realWorkspace, `session-agent-${randomUUID()}`, credential.credentialPrefix, credential.credentialHash])).rows[0].id;
     const route = `/api/v1/workspaces/${realWorkspace}/certops/agents/${agentId}/retire`;
-    assert.equal((await request(realApp).post(route).send({})).status, 401);
+    const anonymous = request.agent(realApp);
+    const anonymousToken = (await anonymous.get("/api/csrf-token")).body.csrfToken;
+    assert.equal((await anonymous.post(route).set("X-CSRF-Token", anonymousToken).send({})).status, 401);
     const outsiderEmail = `session-outsider-${randomUUID()}@example.test`;
     await db.query("INSERT INTO users(email,email_original,display_name,password_hash,auth_method,email_verified) VALUES ($1,$2,'Session Outsider',$3,'local',TRUE)", [outsiderEmail, outsiderEmail, hash]);
     const outsider = request.agent(realApp);
-    assert.equal((await outsider.post("/auth/login").send({ email: outsiderEmail, password })).status, 200);
-    assert.equal((await outsider.post(route).send({})).status, 403);
+    const outsiderToken = (await outsider.get("/api/csrf-token")).body.csrfToken;
+    assert.equal((await outsider.post("/auth/login").set("X-CSRF-Token", outsiderToken).send({ email: outsiderEmail, password })).status, 200);
+    const outsiderSessionToken = (await outsider.get("/api/csrf-token")).body.csrfToken;
+    assert.equal((await outsider.post(route).set("X-CSRF-Token", outsiderSessionToken).send({})).status, 403);
     const operator = request.agent(realApp);
-    const login = await operator.post("/auth/login").send({ email, password });
+    const loginToken = (await operator.get("/api/csrf-token")).body.csrfToken;
+    const login = await operator.post("/auth/login").set("X-CSRF-Token", loginToken).send({ email, password });
     assert.equal(login.status, 200, JSON.stringify(login.body));
-    const retirement = await operator.post(route).send({});
+    const rejected = await operator.post(route).send({});
+    assert.equal(rejected.status, 403);
+    assert.equal(rejected.body.code, "EBADCSRFTOKEN");
+    const sessionToken = (await operator.get("/api/csrf-token")).body.csrfToken;
+    const retirement = await operator.post(route).set("X-CSRF-Token", sessionToken).send({});
     assert.equal(retirement.status, 200, JSON.stringify(retirement.body));
     assert.equal((await db.query("SELECT status FROM certops_agents WHERE id=$1", [agentId])).rows[0].status, "retired");
   });
