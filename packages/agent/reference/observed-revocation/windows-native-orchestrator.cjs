@@ -33,7 +33,12 @@ async function main() {
     created = true;
     db = new Pool({ ...connection, database });
     const migrationClient = await db.connect();
-    try { for (const migration of migrations) { await applyMigrationSql(migrationClient, migration); await applyPostCommitSql(migrationClient, migration); } }
+    try {
+      for (const migration of migrations) {
+        try { await applyMigrationSql(migrationClient, migration); await applyPostCommitSql(migrationClient, migration); }
+        catch (error) { throw new Error(`Migration ${migration.version} failed`, { cause: error }); }
+      }
+    }
     finally { migrationClient.release(); }
     const user = (await db.query("INSERT INTO users(email,email_original,display_name,password_hash,auth_method) VALUES('native-probe@example.test','native-probe@example.test','Probe','x','local') RETURNING id")).rows[0];
     const workspace = (await db.query("INSERT INTO workspaces(id,name,plan,created_by,certops_managed_identity_limit) VALUES(gen_random_uuid(),'Native probe','oss',$1,1) RETURNING id", [user.id])).rows[0];
