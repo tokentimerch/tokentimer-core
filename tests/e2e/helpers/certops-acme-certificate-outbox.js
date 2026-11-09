@@ -31,6 +31,13 @@ const attachment = require("./certops-acme-agent-attachment");
 const { readOwnedBytes } = require("./certops-acme-native-adoption");
 const SCOPE = "native-certificate-success-result-outbox-and-agent-restart";
 const SCENARIO = "real-acme-certificate-result-outbox-restart";
+const MILESTONES = Object.freeze([
+  "outbox-prerequisites-verified", "outbox-guard-created", "outbox-protected-state-read", "outbox-barrier-armed",
+  "outbox-job-admitted", "outbox-job-failed", "outbox-job-rejected", "outbox-job-cancelled", "outbox-job-blocked", "outbox-job-orphaned_unknown_effect",
+  "outbox-running-claim-verified", "outbox-gateway-armed", "outbox-result-persisted", "outbox-native-material-verified",
+  "outbox-agent-attached", "outbox-agent-stopped", "outbox-protected-state-verified", "outbox-agent-restarted",
+  "outbox-result-delivered", "outbox-claim-verified", "outbox-evidence-verified", "outbox-final-state-verified", "outbox-proof-verified",
+]);
 const FIELD = "nativeAcmeCertificateOutbox";
 const SIDECAR = "qualification-results/acme-certificate-outbox-proof.json";
 const FLAGS = Object.freeze([
@@ -134,16 +141,19 @@ function verifyAgainstJourney(p, previous, adoption) {
   return true;
 }
 async function qualify(c) {
+  const mark = name => { try { c.onMilestone?.(name); } catch { /* Diagnostics must not replace the native result. */ } };
   assert.equal(process.platform, "linux");
   assert.equal(c.acmeKind, "certbot");
   const root = fs.realpathSync(c.workDir);
   assert.equal(root, path.resolve(c.workDir));
   assertCleanupSafe(root);
+  mark("outbox-prerequisites-verified");
   const guard = path.join(root, GUARD),
     token = Buffer.from(crypto.randomBytes(32).toString("hex"));
   active.add(root);
   fs.writeFileSync(guard, token, { flag: "wx", mode: 0o600 });
   const guardId = fs.lstatSync(guard, { bigint: true });
+  mark("outbox-guard-created");
   const beforeCert = readOwnedBytes(c.certPath),
     beforeKey = readOwnedBytes(c.keyPath),
     beforeLeaf = new crypto.X509Certificate(beforeCert);
@@ -155,6 +165,7 @@ async function qualify(c) {
     protectedBefore = protectedNames.map((n) =>
       sha(readOwnedBytes(path.join(c.configDir, n))),
     );
+  mark("outbox-protected-state-read");
   const arm = path.join(c.barrierDirectory, "armed.json"),
     receipt = path.join(c.barrierDirectory, "process.json"),
     barrierToken = crypto.randomUUID();
@@ -163,6 +174,7 @@ async function qualify(c) {
   const armBytes = Buffer.from(JSON.stringify({ token: barrierToken }));
   fs.writeFileSync(arm, armBytes, { flag: "wx", mode: 0o600 });
   const armId = fs.lstatSync(arm, { bigint: true });
+  mark("outbox-barrier-armed");
   const made = await c.publicSession.request(
     `/api/v1/workspaces/${c.workspaceId}/certops/jobs`,
     "POST",
@@ -177,6 +189,7 @@ async function qualify(c) {
   assert.equal(made.status, 201);
   const jobId = made.body.job.id;
   assert.ok(uuid(jobId));
+  mark("outbox-job-admitted");
   const job = async () =>
     (
       await c.pool.query(
@@ -184,8 +197,13 @@ async function qualify(c) {
         [c.workspaceId, jobId],
       )
     ).rows[0];
+  let terminalReported = false;
   const running = await c.waitUntil(async () => {
     const row = await job();
+    if (!terminalReported && ["failed", "rejected", "cancelled", "blocked", "orphaned_unknown_effect"].includes(row?.status)) {
+      terminalReported = true;
+      mark(`outbox-job-${row.status}`);
+    }
     return row?.status === "running" &&
       uuid(row.claim_id) &&
       fs.existsSync(receipt)
@@ -211,10 +229,12 @@ async function qualify(c) {
       )
     ).rows;
   assert.equal((await dispatches()).length, 1);
+  mark("outbox-running-claim-verified");
 
   c.resultGateway.arm(jobId, running.claim_id);
   assert.ok(readOwnedBytes(arm, 8192, armId).equals(armBytes));
   fs.unlinkSync(arm);
+  mark("outbox-gateway-armed");
   const outbox = path.join(c.configDir, "outbox");
   const persisted = await c.waitUntil(() => {
     if (c.resultGateway.observation().refusedResults < 1) return null;
@@ -234,6 +254,7 @@ async function qualify(c) {
   assert.equal(persisted.entry.result.status, "succeeded");
   assert.equal(persisted.entry.result.claimId, running.claim_id);
   assert.ok(["running", "claimed"].includes((await job()).status));
+  mark("outbox-result-persisted");
   const deployedCert = readOwnedBytes(c.certPath),
     deployedKey = readOwnedBytes(c.keyPath),
     deployedLeaf = new crypto.X509Certificate(deployedCert);
@@ -247,6 +268,7 @@ async function qualify(c) {
   await c.verifyDnsCleanup();
   const caBeforeRestart = c.caGateway.snapshot().acceptedOrders;
   assert.ok(Number.isSafeInteger(caBeforeRestart) && caBeforeRestart > 0);
+  mark("outbox-native-material-verified");
   const originalAgent = c.agent;
   const owner = await attachment.attachIdleAgent({
     agent: originalAgent,
@@ -256,8 +278,10 @@ async function qualify(c) {
     waitUntil: c.waitUntil,
     isAgentClosed: () => c.isAgentClosed(originalAgent),
   });
+  mark("outbox-agent-attached");
   await owner.stopAndDrain();
   assert.ok(c.isAgentClosed(originalAgent));
+  mark("outbox-agent-stopped");
   assert.ok(readOwnedBytes(receipt, 8192, receiptId).length > 0);
   fs.unlinkSync(receipt);
   const credentialAfter = protectedNames.map((n) =>
@@ -267,6 +291,7 @@ async function qualify(c) {
     isDeepStrictEqual(credentialAfter, protectedBefore),
     "Original protected configuration changed",
   );
+  mark("outbox-protected-state-verified");
   c.resultGateway.restoreDelivery();
   const restarted = c.restartAgent();
   assert.ok(
@@ -274,6 +299,7 @@ async function qualify(c) {
       restarted.pid !== originalAgent.pid &&
       restarted.exitCode === null,
   );
+  mark("outbox-agent-restarted");
   await c.waitUntil(async () => {
     const row = await job();
     return row?.status === "succeeded" &&
@@ -281,11 +307,13 @@ async function qualify(c) {
       ? row
       : null;
   }, 120000);
+  mark("outbox-result-delivered");
   const final = await job();
   assert.equal((await dispatches()).length, 1);
   assert.equal(final.claim_id, running.claim_id);
   assert.equal(final.attempt_count, 1);
   assert.equal(final.claimed_by_agent_id, running.claimed_by_agent_id);
+  mark("outbox-claim-verified");
   const evidence = (
     await c.pool.query(
       "SELECT metadata FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2 AND claim_id=$3 AND evidence_type='validation.passed' AND metadata->>'step'='verify'",
@@ -305,6 +333,7 @@ async function qualify(c) {
           .toLowerCase() === sha(deployedLeaf.raw),
     ),
   );
+  mark("outbox-evidence-verified");
   assert.ok(
     readOwnedBytes(c.certPath).equals(deployedCert) &&
       readOwnedBytes(c.keyPath).equals(deployedKey),
@@ -322,6 +351,7 @@ async function qualify(c) {
   assert.ok(!fs.existsSync(dead) || fs.readdirSync(dead).length === 0);
   assert.equal(c.resultGateway.observation().mismatchedResults, 0);
   assert.ok(c.resultGateway.observation().forwardedResults >= 1);
+  mark("outbox-final-state-verified");
   c.resultGateway.disarm();
   owner.release();
   assert.ok(readOwnedBytes(guard, 128, guardId).equals(token));
@@ -340,6 +370,7 @@ async function qualify(c) {
     ...Object.fromEntries(FLAGS.map((x) => [x, true])),
   };
   verifyProof(proof);
+  mark("outbox-proof-verified");
   return proof;
 }
 module.exports = {
@@ -347,6 +378,7 @@ module.exports = {
   SCENARIO,
   FIELD,
   SIDECAR,
+  MILESTONES,
   FLAGS,
   REQUIRED_SOURCES,
   verifyProof,
