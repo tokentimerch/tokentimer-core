@@ -54,6 +54,7 @@
  * ACME client. Public discovery/claims, actual issuance/renewal, trusted served TLS and
  * persisted evidence are checked; all keys, paths and child processes belong to the run. */
 "use strict";
+const QUALIFICATION_AGENT_TIMING = Object.freeze({pollIntervalMs:3000,heartbeatIntervalMs:10000,discoveryIntervalMs:5000,discoveryObservationTimeoutMs:30000});
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -177,10 +178,11 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
   if(process.env.CERTOPS_REPORT_SCOPE===bulkReport.SCOPE)resultGateway=await require("./helpers/certops-acme-result-outage").startResultOutageGateway({upstreamUrl:baseUrl});
   const config = {
     serverUrl: resultGateway?.agentUrl || baseUrl, agentId, allowInsecureLocalHttp: true,
-    pollIntervalMs: 500, heartbeatIntervalMs: 1000,
+    // Leave headroom in the shared machine-request budget for job, lease and evidence traffic.
+    pollIntervalMs: QUALIFICATION_AGENT_TIMING.pollIntervalMs, heartbeatIntervalMs: QUALIFICATION_AGENT_TIMING.heartbeatIntervalMs,
     declaredTargetSelectors: [domain], declaredCommandProfileNames: [commandRef],
     execution: { enabled: true, dryRun: false },
-    discovery:{directories:[discoveryDir],intervalMs:1000},
+    discovery:{directories:[discoveryDir],intervalMs:QUALIFICATION_AGENT_TIMING.discoveryIntervalMs},
     windowsDiscovery:{enabled:false},
     policy: { allowedPaths: [workDir], allowedCommands: { [commandRef]: { argv: commandArgv } }, allowedCaEndpoints: [caEndpoint], allowedDnsZones: ["example.test"], allowedDnsProviders: ["pebble-challtestsrv"] },
     dnsProviders: { "pebble-challtestsrv": { credentialsFile }, zoneProviderMap: { "example.test": "pebble-challtestsrv" } },
@@ -265,7 +267,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
         assert.equal(inventory.status,200);
         nativeDiscovery.recordScans({rows,inventory:inventory.body,positiveFingerprint:discoveryFingerprint,negativeFingerprint:nativeDiscovery.fingerprint,positivePath:certificateFile,agentId,preparedAt});
         return true;
-      },30000);
+      },QUALIFICATION_AGENT_TIMING.discoveryObservationTimeoutMs);
     });
     for (const failure of ["unavailable", "rate-limited", "malformed"]) {
     gateway.setFailure(failure);
@@ -654,3 +656,5 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
 
 module.exports.issuanceDiagnosticLabels = issuanceDiagnosticLabels;
 module.exports.failedRenewalTerminalStatus = failedRenewalTerminalStatus;
+
+module.exports.QUALIFICATION_AGENT_TIMING = QUALIFICATION_AGENT_TIMING;

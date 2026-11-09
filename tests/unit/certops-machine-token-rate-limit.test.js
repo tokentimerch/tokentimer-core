@@ -616,3 +616,23 @@ describe("CertOps machine-token rate limiter", () => {
     assert.equal(meta.phase, "post_auth");
   });
 });
+
+it("shares the default 120-request budget across agent heartbeat, claim, evidence and lease routes", async () => {
+  const credential = `ttagent_${TOKEN_ID}_${TOKEN_SECRET}`;
+  const options = {params:{},authorization:`Bearer ${credential}`,tokenPrefix:`ttagent_fixture`,agentId:"owned-agent"};
+  const paths = ["/api/v1/certops/agents/heartbeat","/api/v1/certops/agents/jobs/claim","/api/v1/certops/agents/jobs/evidence"];
+  const pre = createCertOpsMachineTokenPreAuthRateLimit();
+  const post = createCertOpsMachineTokenRateLimit();
+  for (let i=0;i<120;i++) {
+    const requestPath=paths[i%paths.length];
+    const request=createRequest({...options,route:{path:requestPath},path:requestPath,originalUrl:requestPath});
+    assert.equal((await runMiddleware(pre,request)).nextCalled,true);
+    assert.equal((await runMiddleware(post,request)).nextCalled,true);
+  }
+  const lease=createRequest({...options,route:{path:"/api/v1/certops/agents/jobs/lease"},path:"/api/v1/certops/agents/jobs/lease"});
+  for(const limiter of [pre,post]) {
+    const result=await runMiddleware(limiter,lease);
+    assert.equal(result.res.statusCode,429);
+    assert.equal(result.res.body.code,CERTOPS_MACHINE_RATE_LIMITED);
+  }
+});
