@@ -77,7 +77,7 @@ function failedRenewalTerminalStatus(status) {
 }
 // Return fixed labels only: persisted errors may contain private command output.
 function issuanceDiagnosticLabels(row, agent, before, after, phase = "issue") {
-  assert.ok(["issue", "second-renewal"].includes(phase));
+  assert.ok(["issue", "second-renewal", "manual-renewal"].includes(phase));
   const labels = [];
   const statuses = new Set(["failed", "rejected", "cancelled", "blocked", "orphaned_unknown_effect", "pending", "claimed", "running", "succeeded"]);
   labels.push(`real-acme-diagnostic-${phase}-status-${statuses.has(row?.status) ? row.status : "other"}`);
@@ -463,6 +463,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     const twiceRenewed = new crypto.X509Certificate(fs.readFileSync(certPath));
     await runScenario("real-acme-diagnostic-second-renewal-completed",async()=>{});
     await verifyDnsCleanup();
+    await runScenario("real-acme-diagnostic-second-renewal-dns-verified",async()=>{});
     verifyNames(twiceRenewed);
     assert.equal(twiceRenewed.checkHost(domain), domain);
     assert.notEqual(twiceRenewed.fingerprint256, renewed.fingerprint256);
@@ -470,17 +471,23 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     assert.equal(publicKeyDer(twiceRenewed).equals(publicKeyDer(renewed)), false);
     assert.ok(Date.parse(twiceRenewed.validTo) > Date.parse(renewed.validTo));
     assert.ok(twiceRenewed.checkPrivateKey(crypto.createPrivateKey(fs.readFileSync(keyPath))));
+    await runScenario("real-acme-diagnostic-second-renewal-material-verified",async()=>{});
     assert.equal(await servedFingerprint(), twiceRenewed.fingerprint256);
+    await runScenario("real-acme-diagnostic-second-renewal-tls-verified",async()=>{});
     assert.ok((await pool.query("SELECT 1 FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2", [workspaceId, second.id])).rows.length);
+    await runScenario("real-acme-diagnostic-second-renewal-evidence-verified",async()=>{});
     // A human renewal must resolve the stored profile, rather than accepting
     // caller-supplied issuer/path settings, and reach the same native pipeline.
     await new Promise(resolve => setTimeout(resolve, 1500));
     const profileBeforeManual = (await pool.query("SELECT cp.public_metadata FROM managed_certificates mc JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id WHERE mc.workspace_id=$1 AND mc.id=$2", [workspaceId, certificateId])).rows[0].public_metadata.renewalProfile;
+    await runScenario("real-acme-diagnostic-manual-renewal-profile-read",async()=>{});
+    const diagnosticManualBefore = gateway.snapshot();
     const manualInput = { operation: "renew", subjectType: "managed_certificate", subjectId: String(certificateId), idempotencyKey: crypto.randomUUID(),...(nativeLifecycle?{payload:{reason:"Disposable native browser lifecycle renewal"}}:{}) };
     let manualJob;
     if(nativeLifecycle)manualJob=(await nativeLifecycle.admit(manualInput)).publicJob;
     else{const manual=await publicSession.request(`/api/v1/workspaces/${workspaceId}/certops/jobs`,"POST",manualInput);assert.equal(manual.status,201);manualJob=manual.body.job;}
     if(!ownedJobIds.includes(manualJob.id))ownedJobIds.push(manualJob.id);
+    await runScenario("real-acme-diagnostic-manual-renewal-admitted",async()=>{});
     assert.equal(manualJob.source, "api");
     assert.equal(manualJob.payload.commandRef, commandRef);
     assert.equal(manualJob.payload.caEndpoint, caEndpoint);
@@ -490,13 +497,24 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     assert.deepEqual([...manualJob.payload.sans].sort(), [...requestedNames].sort());
     const repeatedManual = await publicSession.request(`/api/v1/workspaces/${workspaceId}/certops/jobs`, "POST", manualInput);
     assert.equal(repeatedManual.status, 201); assert.equal(repeatedManual.body.job.id, manualJob.id);
-    await waitUntil(async () => {
-      assert.equal(agent.exitCode, null); assert.equal(agent.signalCode, null);
-      const current = (await pool.query("SELECT status FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, manualJob.id])).rows[0];
-      if (["failed", "rejected", "cancelled", "blocked", "orphaned_unknown_effect"].includes(current?.status)) throw new Error("Actual profile-driven manual renewal terminated unsuccessfully");
-      return current?.status === "succeeded";
-    });
+    await runScenario("real-acme-diagnostic-manual-renewal-replay-verified",async()=>{});
+    try {
+      await waitUntil(async () => {
+        assert.equal(agent.exitCode, null); assert.equal(agent.signalCode, null);
+        const current = (await pool.query("SELECT status FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, manualJob.id])).rows[0];
+        if (["failed", "rejected", "cancelled", "blocked", "orphaned_unknown_effect"].includes(current?.status)) throw new Error("Actual profile-driven manual renewal terminated unsuccessfully");
+        return current?.status === "succeeded";
+      });
+    } catch (error) {
+      try {
+        const row = (await pool.query("SELECT status,error_code,error_message FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, manualJob.id])).rows[0];
+        for (const label of issuanceDiagnosticLabels(row, agent, diagnosticManualBefore, gateway.snapshot(), "manual-renewal")) await runScenario(label, async()=>{});
+      } catch { /* Diagnostics must not replace the original failure or cleanup. */ }
+      throw error;
+    }
+    await runScenario("real-acme-diagnostic-manual-renewal-completed",async()=>{});
     await verifyDnsCleanup();
+    await runScenario("real-acme-diagnostic-manual-renewal-dns-verified",async()=>{});
     const manuallyRenewed = new crypto.X509Certificate(fs.readFileSync(certPath));
     verifyNames(manuallyRenewed);
     assert.notEqual(manuallyRenewed.fingerprint256, twiceRenewed.fingerprint256);
@@ -504,6 +522,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     assert.equal(publicKeyDer(manuallyRenewed).equals(publicKeyDer(twiceRenewed)), false);
     assert.ok(manuallyRenewed.checkPrivateKey(crypto.createPrivateKey(fs.readFileSync(keyPath))));
     assert.equal(await servedFingerprint(), manuallyRenewed.fingerprint256);
+    await runScenario("real-acme-diagnostic-manual-renewal-material-verified",async()=>{});
     if(nativeLifecycle)await runScenario("real-acme-browser-renew-native-completion",async()=>{
       await nativeLifecycle.observeNative({jobId:manualJob.id,certificateId,certPath,keyPath,tlsOptions:lifecycleTlsOptions()});
       const proof=await nativeLifecycle.finish(),sidecar=path.join(repoRoot,"qualification-results/acme-browser-lifecycle-proof.json");
@@ -512,6 +531,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     assert.ok((await pool.query("SELECT 1 FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2", [workspaceId, manualJob.id])).rows.length);
     assert.deepEqual((await pool.query("SELECT cp.public_metadata FROM managed_certificates mc JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id WHERE mc.workspace_id=$1 AND mc.id=$2", [workspaceId, certificateId])).rows[0].public_metadata.renewalProfile, profileBeforeManual,
       "manual renewal must preserve its stored execution profile");
+    await runScenario("real-acme-diagnostic-manual-renewal-profile-verified",async()=>{});
     const background=require("./helpers/certops-acme-background-renewals");
     const workerMilestones=[];
     const workerMilestoneNames=new Set(["worker-fixture-preconditions-passed","worker-sql-selection-passed","worker-started","worker-cycle-succeeded","worker-cycle-leaf-observed","worker-cycle-inventory-and-evidence-passed","worker-cycle-profile-and-period-passed","worker-stopped-and-drained","worker-observer-failed","worker-cycle-job-failed","worker-cycle-job-rejected","worker-cycle-job-cancelled","worker-cycle-job-blocked","worker-cycle-job-orphaned_unknown_effect","worker-block-deploy-certificate-unavailable","worker-block-lease-conflict","worker-block-lease-retired","worker-block-lease-client-unavailable","worker-block-lease-confirmation-failed","worker-block-lease-expired","worker-block-lease-retry-limit","worker-block-lease-retry-expiry","worker-block-execution-disabled","worker-block-signing-key-unpinned","worker-block-local-dry-run","worker-block-other","worker-block-none","worker-block-diagnostic-unavailable"]);

@@ -57,3 +57,11 @@ test("native agent cadence leaves discovery and loop-tick headroom",()=>{
  const idleTicks=[t.pollIntervalMs,t.heartbeatIntervalMs,t.discoveryIntervalMs].reduce((sum,ms)=>sum+Math.ceil(60000/(ms*0.8))+1,0);
  assert.ok(idleTicks<=60,`idle loop ticks ${idleTicks} leave insufficient room for other traffic`);
 });
+
+
+test("manual-renewal failure diagnostics use fixed categories only",()=>{
+ const labels=issuanceDiagnosticLabels({status:"blocked",error_message:"acme step failed: private output"},{exitCode:null,signalCode:null},{}, {}, "manual-renewal");
+ assert.ok(labels.includes("real-acme-diagnostic-manual-renewal-status-blocked"));
+ assert.ok(labels.includes("real-acme-diagnostic-error-acme-step"));
+ assert.ok(labels.every(label=>!label.includes("private")));
+});
