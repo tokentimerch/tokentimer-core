@@ -1,16 +1,20 @@
 "use strict";
 const assert = require("node:assert/strict");
+const { resolveRenewalThresholdPolicy } = require("../../../apps/api/services/certops/renewalThreshold");
 
 // Run against the actual public profile API and production SQL due selector.
 // The override is a positive control, not evidence that the midpoint elapsed.
-async function qualifyAdaptiveLead({ fixture, api, scheduler, source, profileId }) {
+async function qualifyAdaptiveLead({ fixture, api, scheduler, source, profileId, env = process.env }) {
+  const policy = resolveRenewalThresholdPolicy(env);
+  assert.equal(policy.adaptive, true, "Qualification requires the deployment adaptive renewal policy");
+  assert.equal(policy.thresholdDays, scheduler.DEFAULT_RENEWAL_THRESHOLD_DAYS, "Qualification requires the default deployment fallback");
   const profile = await fixture.request(`${api}/profiles/${profileId}`);
   assert.equal(profile.status, 200);
   assert.equal(profile.body.renewBeforeDays, null, "Profile must inherit the deployment window");
   const selectDue = () => scheduler.findCertificatesDueForRenewal({
     db: fixture.pool,
-    thresholdDays: scheduler.DEFAULT_RENEWAL_THRESHOLD_DAYS,
-    adaptive: true,
+    thresholdDays: policy.thresholdDays,
+    adaptive: policy.adaptive,
     batchSize: 10000,
     terminalStatuses: scheduler.RENEWAL_JOB_TERMINAL_STATUSES,
   });

@@ -3,7 +3,7 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { qualifyAdaptiveLead } = require("../tests/e2e/helpers/certops-adcs-adaptive-lead");
 
-function setup({ inherited = null, early = [], after = [{ workspace_id: "workspace", id: "source" }], patched = 30 } = {}) {
+function setup({ inherited = null, early = [], after = [{ workspace_id: "workspace", id: "source" }], patched = 30, env = {} } = {}) {
   const operations = [];
   const fixture = { workspaceId: "workspace", pool: {}, async request(route, method = "GET", body) {
     operations.push({ route, method, body });
@@ -11,10 +11,10 @@ function setup({ inherited = null, early = [], after = [{ workspace_id: "workspa
   } };
   let calls = 0;
   const scheduler = { DEFAULT_RENEWAL_THRESHOLD_DAYS: 30, RENEWAL_JOB_TERMINAL_STATUSES: ["succeeded"], async findCertificatesDueForRenewal(options) {
-    assert.equal(options.db, fixture.pool); assert.equal(options.adaptive, true);
+    assert.equal(options.db, fixture.pool); assert.equal(options.adaptive, true); assert.equal(options.thresholdDays, 30);
     return calls++ === 0 ? early : after;
   } };
-  return { args: { fixture, api: "/api", scheduler, source: { id: "source" }, profileId: "profile" }, operations };
+  return { args: { fixture, api: "/api", scheduler, source: { id: "source" }, profileId: "profile", env }, operations };
 }
 
 test("adaptive AD CS qualification compares the same source before and after an explicit override", async () => {
@@ -27,6 +27,7 @@ test("adaptive AD CS qualification compares the same source before and after an 
 test("adaptive AD CS qualification fails closed on wrong inheritance or selection", async () => {
   for (const options of [
     { inherited: 30 },
+    { env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "4" } },
     { early: [{ workspace_id: "workspace", id: "source" }] },
     { patched: null },
     { after: [] },

@@ -25,6 +25,7 @@ async function main(){
     return {browser:{available:browserAvailable},api:{available:(await fetch(api)).ok},openssl:{available:require("node:child_process").spawnSync("openssl",["version"]).status===0}};
   }});
   gate.report.fixtureSource={file:"scripts/certops-browser.js",sha256:require("node:crypto").createHash("sha256").update(require("node:fs").readFileSync(__filename)).digest("hex")};
+  gate.report.fixtureSources=["apps/dashboard/src/components/certops/RenewalProfilesPanel.jsx","apps/api/routes/certops.js","apps/api/services/certops/renewalProfileAdmin.js"].map(file=>({file,sha256:require("node:crypto").createHash("sha256").update(require("node:fs").readFileSync(require("node:path").resolve(__dirname,"..",file))).digest("hex")}));
   gate.report.artifactQualification=process.env.GITHUB_ACTIONS==="true"?"workflow-checkout-source":"local-worktree-source-baseline-sha-only";
   try{
     assert.equal(await gate.preflight(),true);

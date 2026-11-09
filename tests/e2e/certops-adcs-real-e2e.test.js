@@ -132,9 +132,8 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
   activeGate=gate;
   await gate.preflight();
   gate.report.fixtureSource={file:"tests/e2e/certops-adcs-real-e2e.test.js",sha256:crypto.createHash("sha256").update(fs.readFileSync(__filename)).digest("hex")};
-  const adaptiveLeadSource="tests/e2e/helpers/certops-adcs-adaptive-lead.js";
   gate.report.fixtureSources??=[];
-  gate.report.fixtureSources.push({file:adaptiveLeadSource,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"../..",adaptiveLeadSource))).digest("hex")});
+  for(const file of ["tests/e2e/helpers/certops-adcs-adaptive-lead.js","apps/api/services/certops/renewalThreshold.js","apps/api/services/certops/renewalProfileAdmin.js"])gate.report.fixtureSources.push({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"../..",file))).digest("hex")});
   if(issuerSwitch)gate.report.fixtureSource={file:issuerSwitchJourney.SOURCE,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"../..",issuerSwitchJourney.SOURCE))).digest("hex")};
   gate.report.artifactQualification=process.env.GITHUB_ACTIONS === "true" ? "workflow-checkout-source" : "local-worktree-source-baseline-sha-only";
   if(hierarchy){const selected=require("../../scripts/certops-adcs-hierarchy-profile");selected.profile(requestedVersion,process.env.CERTOPS_WINDOWS_LANGUAGE||"en-US");gate.report.fixtureSources??=[];for(const file of selected.REQUIRED_SOURCES)gate.report.fixtureSources.push({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"../..",file))).digest("hex")});}
