@@ -813,7 +813,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
    * report stays schema-minimal (the results route falls back to attemptId
    * when claimId is absent).
    */
-  async function reportResult({ jobId, attemptId, status: jobStatus, rejectionReason = null, keyRotated = null, errorMessage = null, claimId = null, nonce = null, clockOffsetMs = null, trustResult = null, enrollmentResult = null, preflightResult = null, publicationReceipt = null, publicationCertificatePem = null, deploymentReceipt = null } = {}) {
+  async function reportResult({ jobId, attemptId, status: jobStatus, rejectionReason = null, keyRotated = null, errorMessage = null, claimId = null, nonce = null, clockOffsetMs = null, trustResult = null, enrollmentResult = null, preflightResult = null, publicationReceipt = null, publicationCertificatePem = null, deploymentReceipt = null, cleanupReceipt = null } = {}) {
     const body = {
       jobId,
       attemptId,
@@ -828,6 +828,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
       ...(trustResult !== null ? { trustResult } : {}),
       ...(publicationReceipt !== null ? { publicationReceipt, publicationCertificatePem } : {}),
       ...(deploymentReceipt !== null ? { deploymentReceipt } : {}),
+      ...(cleanupReceipt !== null ? { cleanupReceipt } : {}),
       ...(enrollmentResult !== null ? { enrollmentResult } : {}),
       ...(preflightResult !== null ? { preflightResult } : {}),
     };
