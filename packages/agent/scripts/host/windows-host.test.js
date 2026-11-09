@@ -389,7 +389,10 @@ test("Windows real-host discovery and service-host qualification", { timeout: 24
       await require("./package-fixture").qualifyPackage({ powershell, run, workDir, gate });
     }, { evidenceLevel: "real-host", oracle: "actual product release archive, native SHA256, independently parsed amd64/arm64 PE headers, isolated imports and tamper rejection; unsigned candidate, not signed release provenance" });
     await gate.scenario("windows-scm-lifecycle", async () => {
-      const output = run(process.execPath, ["--test", "--test-reporter=tap", "--test-name-pattern", "Windows service lifecycle smoke", path.resolve(__dirname, "../installer-smoke.test.js")], { env: { ...process.env, CERTOPS_QUALIFICATION_STRICT: "1" }, timeout: 300000 });
+      const nestedSource = "packages/agent/scripts/host/nested-test-env.js";
+      gate.report.fixtureSources ||= [];
+      gate.report.fixtureSources.push({ file: nestedSource, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, "../../../..", nestedSource))).digest("hex") });
+      const output = run(process.execPath, ["--test", "--test-reporter=tap", "--test-name-pattern", "Windows service lifecycle smoke", path.resolve(__dirname, "../installer-smoke.test.js")], { env: require("./nested-test-env").nestedTestEnv({ ...process.env, CERTOPS_QUALIFICATION_STRICT: "1" }), timeout: 300000 });
       assert.match(output, /^\s*ok \d+ - reaches Running and survives a Stop-Service \/ Start-Service cycle(?:\s|$)/m,
         "the mandatory SCM testcase must actually pass");
       assert.doesNotMatch(output, /^\s*ok \d+ - reaches Running.*# SKIP|^# skipped [1-9]/m,

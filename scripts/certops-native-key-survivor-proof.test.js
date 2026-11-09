@@ -23,7 +23,7 @@ test("clean Windows host lanes build the current metadata helper before any host
   const yaml = require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
   for (const file of ["certops-qualification.yml"]) {
     const steps = yaml.load(fs.readFileSync(path.join(root, ".github/workflows", file), "utf8")).jobs.windows.steps;
-    const setup = steps.findIndex(step => step.uses === "actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff");
+    const setup = steps.findIndex(step => step.uses === "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e");
     const build = steps.findIndex(step => step.run === "node packages/agent/scripts/build-windows-chain-helper.js");
     const host = steps.findIndex(step => typeof step.run === "string" && step.run.split(/\r?\n/).some(line => line.trim() === "node --test packages/agent/scripts/host/windows-host.test.js"));
     assert.ok(setup >= 0 && setup < build && build < host, file);

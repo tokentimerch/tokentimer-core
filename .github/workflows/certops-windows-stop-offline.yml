@@ -31,7 +31,7 @@ jobs:
       DB_PASSWORD: 'qualification-local-only'
       DB_NAME: certops_qualification
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
@@ -41,7 +41,7 @@ jobs:
         with:
           node-version: '24'
           cache: pnpm
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version-file: packages/agent/windows-service-host/go.mod
           cache: false
