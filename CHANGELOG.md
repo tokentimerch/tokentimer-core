@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Bounded recipient transition.** Operators can grant reviewed existing email and WhatsApp destinations up to 30 days to confirm while verification stays `enforce`. Refusals and destination changes invalidate grace; grants never become consent or renew automatically. **Operator action:** run migrations, review and activate a snapshot, then set `RECIPIENT_VERIFICATION_LEGACY_GRACE=1` on API and notification workers. See [the operator procedure](docs/recipient-legacy-grace.md).
+
 ### Changed
 
 - **MCP contact creation.** When recipient verification is enforced, the response reports confirmation status for each email or WhatsApp destination. Creating a contact does not send an invitation.

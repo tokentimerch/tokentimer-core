@@ -168,6 +168,7 @@ Set `RECIPIENT_FINGERPRINT_SECRET` (or rely on `PHONE_HASH_SALT` or `SESSION_SEC
 | `RECIPIENT_VERIFICATION_MODE` | `off`, `shadow`, or `enforce`. Cloud ignores `off` | `off` self-hosted, `enforce` on Cloud | API, worker |
 | `TT_DEPLOYMENT` | `self-hosted` or `cloud`. Any other value enforces verification | unset means `self-hosted` | API, worker |
 | `RECIPIENT_VERIFICATION_CLOUD_SHADOW` | Set to `1` with mode `shadow` to temporarily shadow Cloud | unset | API, worker |
+| `RECIPIENT_VERIFICATION_LEGACY_GRACE` | Set to `1` alongside `enforce` to honor active, operator-reviewed exact-destination grants; [activation and expiry](recipient-legacy-grace.md) | `0` | API, worker |
 | `RECIPIENT_VERIFICATION_DISPATCH_LEASE_SECONDS` | How long an in-flight verification email blocks a replacement after a crash | `120` | API |
 | `RECIPIENT_RESUBSCRIBE_IP_PER_DAY` | Public re-subscribe requests per client address | `10` | API |
 | `RECIPIENT_FINGERPRINT_SECRET` | HMAC key for destination fingerprints and token hashes | falls back to `PHONE_HASH_SALT`, then `SESSION_SECRET` | API, worker |

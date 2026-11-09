@@ -26,6 +26,7 @@ for (const [file, services] of [
     for (const name of services) {
       const env = environment(compose.services[name].environment);
       assert.equal(env.RECIPIENT_VERIFICATION_MODE, "${RECIPIENT_VERIFICATION_MODE:-off}", name);
+      assert.equal(env.RECIPIENT_VERIFICATION_LEGACY_GRACE, "${RECIPIENT_VERIFICATION_LEGACY_GRACE:-0}", name);
       assert.equal(env.RECIPIENT_FINGERPRINT_SECRET, "${RECIPIENT_FINGERPRINT_SECRET:-}", name);
       assert.equal(env.PUBLIC_BASE_URL, "${PUBLIC_BASE_URL:-}", name);
       assert.equal(env.TT_DEPLOYMENT, "${TT_DEPLOYMENT:-self-hosted}", name);

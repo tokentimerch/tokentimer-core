@@ -1,6 +1,6 @@
 # Recipient verification
 
-Workspace contacts can exist, and can belong to contact groups, before a destination is confirmed. Whether alerts, weekly digests, and workspace notification tests require that confirmation depends on the deployment. Cloud requires it. A standard self-hosted deployment does not, until an operator turns verification on. When verification is enforced, a weekly digest checks consent again after it claims the recipient and does not mark the digest sent when the check fails.
+Workspace contacts can exist, and can belong to contact groups, before a destination is confirmed. Whether alerts, weekly digests, and workspace notification tests require that confirmation depends on the deployment. Cloud enforces recipient policy by default; an operator can grant a bounded transition period to reviewed existing destinations. A standard self-hosted deployment does not require confirmation until an operator turns verification on. When verification is enforced, a weekly digest checks delivery eligibility again after it claims the recipient and does not mark the digest sent when the check fails.
 
 Account verification, password reset, billing, waitlist, workspace invitations, and operator incident email are not recipient-consent messages. They are not blocked by this policy.
 
@@ -21,6 +21,12 @@ An email decline stays in force until the recipient accepts a new confirmation s
 
 Historical `contact_opt_ins` rows recorded when a contact was created are not treated as consent. New contacts do not write that row.
 
+An operator may activate [bounded legacy delivery grants](recipient-legacy-grace.md)
+for reviewed existing destinations. Such a contact remains `pending`; API fields
+`delivery_basis: "legacy_grace"` and `grace_expires_at` describe its temporary
+delivery eligibility. New/changed destinations and explicit refusals do not gain
+that exception.
+
 ## Email
 
 A workspace admin or manager sends a verification invitation. TokenTimer emails a link that expires in 48 hours. Opening the link only shows the confirmation page. The recipient must submit the accept or decline form. The token is stored as an HMAC, is single-use, and is bound to the workspace, contact, channel, and normalized address.
@@ -40,9 +46,14 @@ Configure Twilio's incoming message webhook as `POST {PUBLIC_BASE_URL}/webhooks/
 - Self-hosted default is `off` when `TT_DEPLOYMENT` is unset or `self-hosted`. Alerts, weekly digests, and workspace tests send without recipient confirmation, and they do not require `PUBLIC_BASE_URL`, `RECIPIENT_FINGERPRINT_SECRET`, or the Twilio inbound webhook. Set `RECIPIENT_VERIFICATION_MODE=enforce` to require confirmation. Set `shadow` to evaluate and log eligibility without blocking delivery.
 - Cloud default is `enforce` when `TT_DEPLOYMENT=cloud`. `off` is ignored. `shadow` on Cloud requires both `RECIPIENT_VERIFICATION_MODE=shadow` and `RECIPIENT_VERIFICATION_CLOUD_SHADOW=1`. An unrecognized nonempty `TT_DEPLOYMENT` also enforces.
 
+`RECIPIENT_VERIFICATION_LEGACY_GRACE=1` is an optional companion to `enforce`, not
+a new verification mode. It only permits an exact destination in an active,
+operator-reviewed snapshot, for at most 30 days. Opt-out, revocation and
+suppression checks still win. See the [preview and activation runbook](recipient-legacy-grace.md).
+
 When enforcement blocks every required recipient, the alert is marked `blocked` with `NO_VERIFIED_RECIPIENTS` and is not retried as a provider outage. If another channel succeeded, the alert is `partial` and the successful channel is not sent again. Other eligible recipients in a mixed group are still delivered, including when an earlier duplicate contact for the same address is unverified. A workspace warning is raised for administrators. A permanent webhook response is a provider failure: that endpoint is not retried automatically, earlier successful channels are not sent again, and the warning type is `delivery_webhook_permanent`. An administrator can retry that webhook after fixing it. A later temporary failure stays scheduled on that new retry. A malformed webhook URL is refused when settings are saved. A previously stored malformed URL is a permanent delivery failure for that endpoint, and the other endpoints in the batch still run. Retry returns `409 DELIVERY_IN_PROGRESS` while a worker is delivering the alert. A claim whose lease has expired can still be retried. After a recipient confirms, an authorized operator can retry the blocked email or WhatsApp channel. The worker checks current consent before sending and skips destinations that already received the alert.
 
-Workspace WhatsApp tests require `contact_id` for a saved contact, and the number must match that contact. In `enforce` mode the current number must also be verified. An arbitrary `phone_e164` is rejected. In `off` and `shadow`, an unverified saved contact can still receive the test.
+Workspace WhatsApp tests require `contact_id` for a saved contact, and the number must match that contact. In `enforce` mode the current number must be verified or have an eligible active legacy grant. An arbitrary `phone_e164` is rejected. In `off` and `shadow`, an unverified saved contact can still receive the test.
 
 ## Limits
 

@@ -787,6 +787,43 @@ test("bulk requeue retries a repaired webhook without resending its successful s
   assert.deepEqual(hits, { good: 1, repair: 2 });
 });
 
+for (const channel of ["email", "whatsapp"]) {
+  test(`${channel} worker delivers an activated legacy grant but stops after snapshot revocation`, async () => {
+    migrate();
+    const previous = process.env.RECIPIENT_VERIFICATION_LEGACY_GRACE;
+    process.env.RECIPIENT_VERIFICATION_LEGACY_GRACE = "1";
+    try {
+      const fixture = await createWorkspace(`legacy-${channel}`, {
+        contact: { email: "legacy-worker@example.test", phone: "+14155550118" },
+        group: {}, webhooks: [],
+      });
+      await pool.query("UPDATE workspace_contacts SET created_at=NOW()-INTERVAL '2 days', updated_at=NOW()-INTERVAL '2 days' WHERE id=$1", [fixture.contactId]);
+      await pool.query("UPDATE workspace_settings SET contact_groups=$2::jsonb WHERE workspace_id=$1", [
+        fixture.workspaceId, JSON.stringify([{ id: "default", name: "Default",
+          [channel === "email" ? "email_contact_ids" : "whatsapp_contact_ids"]: [fixture.contactId] }]),
+      ]);
+      const grace = require("../../packages/recipient-verification/legacy-grace");
+      const preview = await grace.previewLegacyGrace({ pool, workspaceId: fixture.workspaceId,
+        cutoffAt: new Date(Date.now() - 86400000).toISOString(), expiresAt: new Date(Date.now() + 86400000).toISOString() });
+      await grace.activateLegacyGrace({ pool, snapshot: preview.snapshot, expectedSha256: preview.sha256, operator: "worker-test" });
+      const { deliveryWorkerJob } = await import("../../apps/worker/src/delivery-worker.js");
+      const run = () => deliveryWorkerJob({ closePool: false, incidentEmailSender: async () => ({ success: true }) });
+      const delivered = await enqueue(fixture, [channel]);
+      await run();
+      assert.equal((await loadAlert(delivered)).status, "sent");
+      assert.equal((await pool.query("SELECT count(*)::int AS n FROM contact_channel_verifications WHERE contact_id=$1", [fixture.contactId])).rows[0].n, 0);
+      await grace.revokeLegacyGrace({ pool, snapshotId: preview.snapshot.id });
+      const blocked = await enqueue(fixture, [channel]);
+      await run();
+      assert.equal((await loadAlert(blocked)).status, "blocked");
+      assert.equal((await pool.query("SELECT count(*)::int AS n FROM alert_delivery_log WHERE alert_queue_id=$1 AND status='success'", [blocked])).rows[0].n, 0);
+    } finally {
+      if (previous === undefined) delete process.env.RECIPIENT_VERIFICATION_LEGACY_GRACE;
+      else process.env.RECIPIENT_VERIFICATION_LEGACY_GRACE = previous;
+    }
+  });
+}
+
 test.after(async () => {
   if (hookServer) {
     await new Promise((resolve) => hookServer.close(() => resolve()));

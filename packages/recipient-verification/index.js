@@ -86,6 +86,11 @@ function cloudShadowArmed(env = process.env) {
   return String(env.RECIPIENT_VERIFICATION_CLOUD_SHADOW || "").trim() === "1";
 }
 
+function legacyGraceEnabled(env = process.env) {
+  return deploymentIdentity(env) !== "unknown"
+    && String(env.RECIPIENT_VERIFICATION_LEGACY_GRACE || "").trim() === "1";
+}
+
 function resolveEnforcementMode(env = process.env) {
   const deployment = deploymentIdentity(env);
   const raw = String(env.RECIPIENT_VERIFICATION_MODE || "").trim().toLowerCase();
@@ -106,6 +111,7 @@ function describeEnforcement(env = process.env) {
     mode,
     requestedMode: requested || "unset",
     cloudShadowIgnored: deployment === "cloud" && requested === "shadow" && mode !== "shadow",
+    ...(legacyGraceEnabled(env) ? { legacyGraceEnabled: true } : {}),
   };
 }
 
@@ -238,12 +244,16 @@ function isMissingSchema(error) {
 }
 
 function finishForMode(mode, decision) {
+  const grace = decision.allowed && decision.delivery_basis === "legacy_grace"
+    ? { delivery_basis: decision.delivery_basis, grace_expires_at: decision.grace_expires_at }
+    : {};
   if (mode === "off" || mode === "shadow") {
     return {
       allowed: true,
       mode,
       shadowBlocked: mode === "shadow" ? decision.allowed !== true : false,
       code: decision.allowed ? null : decision.code,
+      ...grace,
     };
   }
   return {
@@ -251,6 +261,7 @@ function finishForMode(mode, decision) {
     mode,
     shadowBlocked: false,
     code: decision.allowed ? null : decision.code || "RECIPIENT_NOT_VERIFIED",
+    ...grace,
   };
 }
 
@@ -272,6 +283,39 @@ async function withTransaction(pool, fn) {
   } finally {
     client.release();
   }
+}
+
+async function legacyGraceDecision({ client, workspaceId, contactId, channel, destination, fingerprint }) {
+  if (!legacyGraceEnabled()) return { allowed: false, code: "RECIPIENT_NOT_VERIFIED" };
+  const granted = await client.query(
+    `-- RV_LEGACY_GRACE_LOOKUP
+     SELECT s.expires_at
+       FROM contact_channel_legacy_grants g
+       JOIN recipient_legacy_grace_snapshots s ON s.id = g.snapshot_id
+       JOIN workspace_contacts c ON c.id = g.contact_id AND c.workspace_id = g.workspace_id
+       LEFT JOIN contact_channel_verifications v
+         ON v.workspace_id = g.workspace_id AND v.contact_id = g.contact_id AND v.channel = g.channel
+      WHERE g.workspace_id = $1 AND g.contact_id = $2 AND g.channel = $3
+        AND g.destination_normalized = $4 AND g.destination_fingerprint = $5
+        AND g.revoked_at IS NULL AND s.revoked_at IS NULL
+        AND s.activated_at <= clock_timestamp() AND s.expires_at > clock_timestamp()
+        AND (v.contact_id IS NULL OR (v.status = 'pending' AND v.destination_normalized = $4))
+        AND (($3 = 'email' AND lower(btrim(COALESCE(c.details->>'email', ''))) = $4)
+          OR ($3 = 'whatsapp' AND c.phone_e164 = $4))
+        AND NOT EXISTS (
+          SELECT 1 FROM notification_suppressions n
+           WHERE n.channel = $3 AND n.destination_fingerprint = $5
+             AND (n.expires_at IS NULL OR n.expires_at > clock_timestamp())
+             AND (n.scope = 'global' OR (n.scope = 'workspace' AND n.workspace_id = $1))
+        )
+      LIMIT 1`,
+    [workspaceId, contactId, channel, destination, fingerprint],
+  );
+  const expiresAt = granted.rows[0]?.expires_at;
+  if (!expiresAt || !(new Date(expiresAt).getTime() > Date.now())) {
+    return { allowed: false, code: "RECIPIENT_NOT_VERIFIED" };
+  }
+  return { allowed: true, code: null, delivery_basis: "legacy_grace", grace_expires_at: new Date(expiresAt).toISOString() };
 }
 
 async function evaluateRecipient({ client, workspaceId, contactId, channel, destination }) {
@@ -318,7 +362,9 @@ async function evaluateRecipient({ client, workspaceId, contactId, channel, dest
       [workspaceId, contactId, channel, normalized.value],
     );
     const row = found.rows[0];
-    if (!row || row.status === "pending") return { allowed: false, code: "RECIPIENT_NOT_VERIFIED" };
+    if (!row || row.status === "pending") {
+      return await legacyGraceDecision({ client, workspaceId, contactId, channel, destination: normalized.value, fingerprint });
+    }
     if (row.status === "opted_out") return { allowed: false, code: "RECIPIENT_OPTED_OUT" };
     if (row.status === "revoked") return { allowed: false, code: "RECIPIENT_REVOKED" };
     if (row.status !== "verified" || !row.consent_at) {
@@ -2086,6 +2132,25 @@ async function attachVerification(db, workspaceId, contacts) {
     }
     return { ...contact, verification };
   });
+  if (legacyGraceEnabled()) {
+    // Bound database work independently of the contact-list page size.
+    for (let offset = 0; offset < items.length; offset += 8) {
+      await Promise.all(items.slice(offset, offset + 8).map(async (contact) => {
+        for (const channel of ["email", "whatsapp"]) {
+          const entry = contact.verification[channel];
+          if (!entry || entry.status !== "pending") continue;
+          const decision = await canDeliverToRecipient({
+            client: db, workspaceId, contactId: contact.id, channel,
+            destination: channel === "email" ? contact.details?.email : contact.phone_e164,
+          });
+          if (decision.allowed && decision.delivery_basis === "legacy_grace") {
+            entry.delivery_basis = decision.delivery_basis;
+            entry.grace_expires_at = decision.grace_expires_at;
+          }
+        }
+      }));
+    }
+  }
   return { items, verification_summary: { mode: resolveEnforcementMode(), ...empty } };
 }
 
@@ -2226,6 +2291,7 @@ module.exports = {
   limits,
   resolveEnforcementMode,
   describeEnforcement,
+  legacyGraceEnabled,
   confirmDigestConsent,
   fingerprintSecret,
   publicApiBase,

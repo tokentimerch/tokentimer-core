@@ -29,6 +29,7 @@ const reservations = Object.freeze({
   104: "operator_inventory",
   105: "operator_oauth_retention",
   106: "operator_issuance",
+  109: "recipient_legacy_delivery_grace",
 });
 
 function validateMigrationReservations(migrations) {
