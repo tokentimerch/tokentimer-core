@@ -591,10 +591,16 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     if(resultGateway){
       const outbox=require('./helpers/certops-acme-certificate-outbox');
       fs.rmSync(path.join(repoRoot,outbox.SIDECAR),{force:true});
-      await runScenario(outbox.SCENARIO,async()=>{
-        const proof=await outbox.qualify({pool,workspaceId,agent,agentEntry,restartAgent:()=>startAgent(false),isAgentClosed:original=>closedAgents.has(original),configDir,workDir,certificateId,certPath,keyPath,domain,barrierDirectory,ownedJobIds,ownedRestartResources,waitUntil,publicSession,acmeKind,resultGateway,caGateway:gateway,servedFingerprint,verifyDnsCleanup});
-        fs.writeFileSync(path.join(repoRoot,outbox.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
-      });
+      const outboxMilestones=[];
+      try {
+        await runScenario(outbox.SCENARIO,async()=>{
+          const proof=await outbox.qualify({pool,workspaceId,agent,agentEntry,restartAgent:()=>startAgent(false),isAgentClosed:original=>closedAgents.has(original),configDir,workDir,certificateId,certPath,keyPath,domain,barrierDirectory,ownedJobIds,ownedRestartResources,waitUntil,publicSession,acmeKind,resultGateway,caGateway:gateway,servedFingerprint,verifyDnsCleanup,onMilestone:name=>{if(outbox.MILESTONES.includes(name)&&outboxMilestones.length<32)outboxMilestones.push(`real-acme-diagnostic-${name}`);}});
+          fs.writeFileSync(path.join(repoRoot,outbox.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
+        });
+      } catch(error) {
+        try { for(const name of outboxMilestones)await runScenario(name,async()=>{}); } catch { /* Preserve the original failure and owned cleanup. */ }
+        throw error;
+      }
     }
     if(resultGateway){
       const disabled=require('./helpers/certops-acme-disabled-profile');
