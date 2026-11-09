@@ -117,7 +117,9 @@ function extraDnsNames(value, reference) {
 }
 
 function sweepSentence(dnsName, leadDays) {
-  const window = leadDays ? `the ${leadDays} day lead time` : 'the deployment renewal window';
+  const window = leadDays
+    ? `the ${leadDays} day lead time`
+    : 'the deployment renewal window';
   return `The sweep enrolls when the certificate is inside ${window} and an agent that declares ${dnsName} has passed the CA check and is online.`;
 }
 

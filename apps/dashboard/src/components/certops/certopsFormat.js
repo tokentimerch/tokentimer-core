@@ -211,7 +211,9 @@ export function renewalDescriptor(renewal) {
 
   if (state === RENEWAL_STATES.auto) {
     const from = renewal?.renewsFrom
-      ? (Number(renewal?.renewBeforeDays) < 1 ? formatDateTime(renewal.renewsFrom) : formatDate(renewal.renewsFrom))
+      ? Number(renewal?.renewBeforeDays) < 1
+        ? formatDateTime(renewal.renewsFrom)
+        : formatDate(renewal.renewsFrom)
       : null;
     const days = Number.isFinite(Number(renewal?.renewBeforeDays))
       ? Number(renewal.renewBeforeDays)
