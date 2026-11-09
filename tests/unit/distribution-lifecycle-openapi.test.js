@@ -26,6 +26,21 @@ const groupPath =
   "/api/v1/workspaces/{id}/certops/distribution-groups/{groupId}";
 const timestamp = "2030-01-01T00:00:00Z";
 
+test("retirement dossier OpenAPI documents all routes and unverified evidence boundaries", () => {
+  const job = document.paths["/api/v1/workspaces/{id}/certops/distribution-jobs/{jobId}/retirement-dossiers"];
+  const detail = document.paths["/api/v1/workspaces/{id}/certops/retirement-dossiers/{dossierId}"];
+  const review = document.paths["/api/v1/workspaces/{id}/certops/retirement-dossiers/{dossierId}/review"];
+  assert.ok(job.get && job.post && detail.get && review.post);
+  assert.deepEqual(review.post.responses["200"].content["application/json"].schema.properties.reconciliationCleared.enum, [false]);
+  assert.deepEqual(detail.get.responses["200"].content["application/json"].schema.properties.evidenceVerified.enum, [false]);
+  const schema=document.components.schemas.MaterialRetirementEvidence;
+  const validate=new Ajv({strict:false}).compile(schema);
+  const evidence=Object.fromEntries(schema.required.map(key=>[key,`sha256:${"a".repeat(64)}`]));
+  assert.equal(validate(evidence),true);
+  assert.equal(validate({...evidence,writerInventory:[evidence.writerInventory]}),false);
+  assert.equal(validate({...evidence,extra:"unexpected"}),false);
+});
+
 test("the complete served contract validates as OpenAPI 3.0 with resolved lifecycle schemas", async () => {
   const parsed = await SwaggerParser.validate(specPath);
   assert.equal(parsed.openapi, "3.0.3");
