@@ -388,6 +388,7 @@ async function qualifyBulk(c) {
       assert.equal(fs.lstatSync(targetPath, { throwIfNoEntry: false }), undefined);
       const issued = await publicSession.request(prefix + "/jobs", "POST", {
         operation: "issue",
+        assignedAgentId: expectedAgent[0].id,
         idempotencyKey: crypto.randomUUID(),
         payload: {
           sans: requestedNames,
@@ -428,6 +429,13 @@ async function qualifyBulk(c) {
         keyPath: path.join(c.configDir, "keys", id + ".key.pem"),
       };
       const stored = await profile(id);
+      const source = (await query(
+        "SELECT deployed_agent_id, deployed_cert_path FROM managed_certificates WHERE workspace_id=$1 AND id=$2",
+        [workspaceId, id],
+      )).rows[0];
+      assert.ok(source);
+      assert.equal(source.deployed_agent_id, expectedAgent[0].id);
+      assert.equal(source.deployed_cert_path, targetPath);
       assert.ok(stored && !profiles.some((other) => other.id === stored.id));
       assert.equal(
         stored.public_metadata.renewalProfile.keyRotationPolicy.rotateOnRenew,

@@ -405,6 +405,18 @@ describe("certops issuance job creation", () => {
     );
   });
 
+  it("persists the explicitly assigned agent with the deployment path", async () => {
+    const agentId = "44444444-4444-4444-8444-444444444444";
+    const { state, client } = createIssuanceClient();
+    await createCertificateIssuanceJob({
+      ...validRequest(), assignedAgentId: agentId, client,
+      jobCreatorOverride: async () => ({ job: { id: "job-1" }, created: true }),
+    });
+    assert.equal(state.inserts.length, 1);
+    assert.equal(state.inserts[0][9], BASE_PAYLOAD.certPath);
+    assert.equal(state.inserts[0][10], agentId);
+  });
+
   it("takes the identity advisory lock before reading the identity", async () => {
     // The workspace kill-switch lock is FOR SHARE and does not serialize two
     // issuance requests. Without this lock, concurrent POSTs with one key both
