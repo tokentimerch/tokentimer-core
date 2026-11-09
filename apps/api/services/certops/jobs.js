@@ -1225,6 +1225,7 @@ function resolveExecutorKindAndRouting(options, source, payload, autoAssignedAge
   // Derive the same raw requirements consumed by dispatch and renewal-path
   // health, then apply this write path's validation and normalization.
   const rawRouting = resolveAgentJobRoutingRequirements({
+    operation: options.operation,
     executorKind,
     assignedAgentId:
       options.assignedAgentId ?? payload.assignedAgentId ?? autoAssignedAgentId,

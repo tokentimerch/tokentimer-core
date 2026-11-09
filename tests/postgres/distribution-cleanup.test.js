@@ -9,7 +9,7 @@ async function setup(t){
   const previous=process.env.CERTOPS_MATERIAL_CLEANUP_ENABLED;process.env.CERTOPS_MATERIAL_CLEANUP_ENABLED="true";
   t.after(()=>{if(previous===undefined)delete process.env.CERTOPS_MATERIAL_CLEANUP_ENABLED;else process.env.CERTOPS_MATERIAL_CLEANUP_ENABLED=previous;});
   const f=await fixture();
-  await pool.query("UPDATE certops_agents SET declared_capabilities=declared_capabilities||'[\"material-cleanup-vault-kv2-v1\"]'::jsonb,supported_operations=supported_operations||'[\"cleanup-from-store\"]'::jsonb,declared_target_selectors=declared_target_selectors||$2::jsonb WHERE id=$1",[f.issuer,JSON.stringify([f.groupId])]);
+  await pool.query("UPDATE certops_agents SET declared_capabilities=declared_capabilities||'[\"material-cleanup-vault-kv2-v1\"]'::jsonb,supported_operations=supported_operations||'[\"cleanup-from-store\"]'::jsonb WHERE id=$1",[f.issuer]);
   const group=(await pool.query("SELECT * FROM certops_distribution_groups WHERE id=$1",[f.groupId])).rows[0],old=[];
   for(let n=0;n<3;n++){
     const id=crypto.randomUUID(),job=(await pool.query("INSERT INTO certificate_jobs(workspace_id,operation,status,source,subject_type,subject_id,assigned_agent_id,management_period_id) VALUES($1,'renew','succeeded','api','managed_certificate',$2,$3,$4) RETURNING id",[f.workspaceId,f.certificateId,f.issuer,group.management_period_id])).rows[0];
@@ -127,6 +127,9 @@ test("cleanup claim yields to a group editor without fencing and retries current
 
 test("cleanup uses real signed dispatch, claim-bound receipts and the existing single-use nonce ledger",async t=>{
   const f=await setup(t),requested=await request(f),dispatch=require("../../apps/api/services/certops/agentDispatch"),signing=require("../../apps/api/services/certops/jobSigning");
+  const routing=await jobFor(f,requested.jobId);
+  assert.equal(routing.required_target_selector,null,"The group reference is not an issuer target selector");
+  assert.equal(routing.payload.target.reference,f.groupId,"The signed cleanup still identifies its group");
   const row=(await pool.query("SELECT agent_id,agent_version,protocol_version FROM certops_agents WHERE id=$1",[f.issuer])).rows[0];
   const agent={id:f.issuer,workspaceId:f.workspaceId,agentId:row.agent_id,agentVersion:row.agent_version,protocolVersion:row.protocol_version,status:"active"};
   await signing.ensureActiveSigningKey();const pin=await signing.getActiveSigningKeyPublicInfo();

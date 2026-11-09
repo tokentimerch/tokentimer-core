@@ -63,6 +63,7 @@ function hasFreshCapability({
 }
 
 function resolveAgentJobRoutingRequirements({
+  operation = null,
   executorKind = "agent",
   assignedAgentId = null,
   requiredTargetSelector = null,
@@ -79,7 +80,7 @@ function resolveAgentJobRoutingRequirements({
     requiredTargetSelector:
       requiredTargetSelector ??
       body.targetSelector ??
-      (body.target && typeof body.target === "object"
+      (operation !== "cleanup-from-store" && body.target && typeof body.target === "object"
         ? body.target.reference
         : null) ??
       null,
