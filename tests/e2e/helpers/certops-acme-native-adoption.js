@@ -218,6 +218,8 @@ function resolveTlsOptions(provider){
   return options;
 }
 async function qualifyNativeAdoption(c) {
+  const mark = typeof c.onMilestone === "function" ? c.onMilestone : () => {};
+  mark("adoption-start", null);
   assert.equal(process.platform, "linux");
   assert.equal(c.acmeKind, "certbot");
   bulk.verifyProof(c.bulkProof);
@@ -245,6 +247,7 @@ async function qualifyNativeAdoption(c) {
   assert.equal(fs.realpathSync(root), root);
   assertCleanupSafe(root);
   assert.ok(Array.isArray(c.ownedAdoptionResources));
+  mark("adoption-prerequisites-passed", null);
   const rootIdentity = fs.lstatSync(root, { bigint: true });
   const marker = path.join(root, GUARD),
     markerBytes = crypto.randomBytes(32);
@@ -281,9 +284,11 @@ async function qualifyNativeAdoption(c) {
   const keyPath = path.join(c.configDir, "keys", certificateId + ".key.pem");
   const primary = () => material(c.certPath, c.keyPath, c.domain);
   const owned = () => material(certPath, keyPath, c.domain);
+  mark("adoption-guard-created", null);
   const before = owned(),
     primaryBefore = primary();
   assert.equal(before.fingerprint, c.bulkProof.fingerprints[2]);
+  mark("adoption-bulk-material-verified", null);
   const originalServingProfile = async () =>
     (
       await query(
@@ -313,6 +318,7 @@ async function qualifyNativeAdoption(c) {
   ).rows;
   assert.equal(agent.length, 1);
   assert.equal(source.deployed_agent_id, agent[0].id);
+  mark("adoption-linked-profile-verified", null);
   const noOpenPeriod = async () =>
     assert.equal(
       (
@@ -324,6 +330,7 @@ async function qualifyNativeAdoption(c) {
       0,
     );
   await noOpenPeriod();
+  mark("adoption-no-open-period-verified", null);
   assert.equal(
     (await query("SELECT id FROM certops_outbox WHERE status='pending'")).rows
       .length,
@@ -332,6 +339,7 @@ async function qualifyNativeAdoption(c) {
   );
   const expectedExecution =
     profileContract.executionFieldsFromRenewalProfile(originalProfile);
+  mark("adoption-source-ready", null);
   const jobIds = [],
     claimIds = [];
   try {
@@ -400,12 +408,15 @@ async function qualifyNativeAdoption(c) {
         });
       });
     assert.equal(await trusted(), before.fingerprint);
+    mark("adoption-tls-ready", null);
     const readd = await c.publicSession.request(
       prefix + `/sources/${certificateId}/readd`,
       "POST",
       { renewalProfileId: null, automationEnabled: false },
     );
+    mark(readd.status === 201 ? "adoption-readd-http-expected" : readd.status >= 400 && readd.status < 500 ? "adoption-readd-http-client-error" : readd.status >= 500 && readd.status < 600 ? "adoption-readd-http-server-error" : "adoption-readd-http-other", null);
     assert.equal(readd.status, 201);
+    mark("adoption-readd-completed", null);
     assert.equal(readd.body.managedCertificateId, certificateId);
     const periodId = readd.body.periodId;
     assert.match(periodId, UUID);
@@ -417,6 +428,7 @@ async function qualifyNativeAdoption(c) {
         )
       ).rows[0];
     assert.equal((await certificate()).profile_id, null);
+    mark("adoption-detach-verified", null);
     const setup = async (dryRun) => {
       const key = crypto.randomUUID(),
         body = { dryRun, idempotencyKey: key, payload: expectedExecution };
@@ -426,7 +438,9 @@ async function qualifyNativeAdoption(c) {
         body,
       );
       if (response.body?.job?.id) c.ownedJobIds.push(response.body.job.id);
+      mark(response.status === 201 ? "adoption-setup-http-expected" : response.status >= 400 && response.status < 500 ? "adoption-setup-http-client-error" : response.status >= 500 && response.status < 600 ? "adoption-setup-http-server-error" : "adoption-setup-http-other", dryRun ? 0 : 1);
       assert.equal(response.status, 201);
+      mark("adoption-setup-admitted", dryRun ? 0 : 1);
       const id = response.body.job.id;
       assert.match(id, UUID);
       jobIds.push(id);
@@ -439,6 +453,7 @@ async function qualifyNativeAdoption(c) {
         c.ownedJobIds.push(replay.body.job.id);
       assert.equal(replay.status, 201);
       assert.equal(replay.body.job.id, id);
+      mark("adoption-setup-replay-verified", dryRun ? 0 : 1);
       const row = await c.waitUntil(async () => {
         const value = (
           await query(
@@ -453,8 +468,10 @@ async function qualifyNativeAdoption(c) {
             "cancelled",
             "orphaned_unknown_effect",
           ].includes(value?.status)
-        )
+        ) {
+          mark(`adoption-setup-job-${value.status}`, dryRun ? 0 : 1);
           throw new Error("Actual native renewal setup failed");
+        }
         if (
           (dryRun && value?.status === "succeeded") ||
           (!dryRun && value?.status === "dry_run_complete")
@@ -466,6 +483,7 @@ async function qualifyNativeAdoption(c) {
           ? value
           : null;
       }, 180000);
+      mark("adoption-setup-job-completed", dryRun ? 0 : 1);
       assert.equal(row.mode, dryRun ? "dry_run" : "real");
       assert.equal(row.operation, "renew");
       assert.equal(row.subject_id, certificateId);
@@ -493,6 +511,7 @@ async function qualifyNativeAdoption(c) {
       );
       assert.equal(publicResult.status, 200);
       verifyPublicResult(publicResult.body, row, agent[0].id);
+      mark("adoption-setup-public-result-verified", dryRun ? 0 : 1);
       return row;
     };
     const dry = await setup(true);
@@ -503,6 +522,7 @@ async function qualifyNativeAdoption(c) {
     assert.equal(await trusted(), before.fingerprint);
     await c.verifyDnsCleanup();
     assert.equal((await certificate()).profile_id, null);
+    mark("adoption-dry-material-verified", null);
     assert.equal(
       (
         await query(
@@ -532,6 +552,7 @@ async function qualifyNativeAdoption(c) {
         (row) => row.metadata.fingerprintSha256 === after.fingerprint,
       ),
     );
+    mark("adoption-real-material-evidence-verified", null);
     const intents = (
       await query(
         "SELECT id,workspace_id,event_type,payload,status,attempt_count FROM certops_outbox WHERE status='pending'",
@@ -542,6 +563,7 @@ async function qualifyNativeAdoption(c) {
     assert.equal(intents[0].event_type, "profile_derivation_requested");
     assert.equal(intents[0].payload.jobId, real.id);
     assert.equal(intents[0].payload.certificateId, certificateId);
+    mark("adoption-intent-verified", null);
     const worker = await import(
       pathToFileURL(
         path.resolve(__dirname, "../../../apps/worker/src/certops-worker.js"),
@@ -553,6 +575,7 @@ async function qualifyNativeAdoption(c) {
     });
     assert.equal(drained.scanned, 1);
     assert.equal(drained.succeeded, 1);
+    mark("adoption-outbox-drained", null);
     for (const key of ["skipped", "deferred", "retried", "failed"])
       assert.equal(drained[key], 0);
     const intent = (
@@ -576,6 +599,7 @@ async function qualifyNativeAdoption(c) {
       "configured",
     );
     assert.equal(publicDetail.body.certificate.renewalSetup.jobId, real.id);
+    mark("adoption-public-state-verified", null);
     const derived = (
       await query(
         "SELECT status,renew_before_days,public_metadata FROM certificate_profiles WHERE workspace_id=$1 AND id=$2",
@@ -621,6 +645,7 @@ async function qualifyNativeAdoption(c) {
     assert.equal(period[0].id, periodId);
     assert.equal(period[0].automation_enabled, false);
     assert.equal(period[0].renewal_profile_id, null);
+    mark("adoption-profile-and-period-verified", null);
     const stopped = await c.publicSession.request(
       prefix + `/management-periods/${periodId}/stop`,
       "POST",
@@ -653,6 +678,7 @@ async function qualifyNativeAdoption(c) {
       ...Object.fromEntries(FLAGS.map((flag) => [flag, true])),
     };
     verifyAgainstBulk(proof, c.bulkProof);
+    mark("adoption-proof-verified", null);
     return proof;
   } finally {
     await resource.close();

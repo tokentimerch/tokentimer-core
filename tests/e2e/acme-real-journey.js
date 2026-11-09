@@ -72,10 +72,11 @@ function localEndpoint(value, protocol) {
   return url.href;
 }
 // Return fixed labels only: persisted errors may contain private command output.
-function issuanceDiagnosticLabels(row, agent, before, after) {
+function issuanceDiagnosticLabels(row, agent, before, after, phase = "issue") {
+  assert.ok(["issue", "second-renewal"].includes(phase));
   const labels = [];
   const statuses = new Set(["failed", "rejected", "cancelled", "blocked", "pending", "claimed", "running", "succeeded"]);
-  labels.push(`real-acme-diagnostic-issue-status-${statuses.has(row?.status) ? row.status : "other"}`);
+  labels.push(`real-acme-diagnostic-${phase}-status-${statuses.has(row?.status) ? row.status : "other"}`);
   labels.push(agent?.exitCode === null && agent?.signalCode === null ? "real-acme-diagnostic-agent-running" : "real-acme-diagnostic-agent-not-running");
   const message = typeof row?.error_message === "string" ? row.error_message.toLowerCase() : "";
   // Match only source-defined prefixes; values from persisted details are never emitted.
@@ -101,6 +102,9 @@ function issuanceDiagnosticLabels(row, agent, before, after) {
     const previous = before?.perStage?.[stage]?.forwarded;
     const current = after?.perStage?.[stage]?.forwarded;
     if (Number.isSafeInteger(previous) && Number.isSafeInteger(current) && current > previous) labels.push(`real-acme-diagnostic-proxy-${stage}-forwarded`);
+  }
+  for (const [field, label] of [["acceptedOrders", "order-accepted"], ["validAuthorizations", "authorization-valid"], ["invalidAuthorizations", "authorization-invalid"], ["readyOrders", "order-ready"], ["badNonceResponses", "bad-nonce"], ["dnsProblemResponses", "dns-problem"], ["unauthorizedResponses", "unauthorized"], ["rateLimitedResponses", "rate-limited"]]) {
+    if (Number.isSafeInteger(before?.[field]) && Number.isSafeInteger(after?.[field]) && after[field] > before[field]) labels.push(`real-acme-diagnostic-ca-observed-${label}`);
   }
   return labels;
 }
@@ -422,6 +426,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     assert.equal(process.platform, "linux");
     await waitUntil(() => Date.now() > firstRenewalObservedAt + 1500);
     const previousRenewals = (await pool.query("SELECT id FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND operation='renew' AND source='automation'", [workspaceId, String(certificateId)])).rows.map((row) => row.id);
+    const diagnosticSecondBefore = gateway.snapshot();
     assert.equal(agent.kill("SIGSTOP"), true);
     let second;
     try {
@@ -432,12 +437,20 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       second = admitted[0]; ownedJobIds.push(second.id);
       await runScenario("real-acme-diagnostic-second-renewal-admitted",async()=>{});
     } finally { assert.equal(agent.kill("SIGCONT"), true); }
-    await waitUntil(async () => {
-      assert.equal(agent.exitCode, null); assert.equal(agent.signalCode, null);
-      const row = (await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [second.id])).rows[0];
-      if (["failed", "rejected", "cancelled"].includes(row?.status)) throw new Error("Actual second scheduled renewal terminated unsuccessfully");
-      return row?.status === "succeeded";
-    });
+    try {
+      await waitUntil(async () => {
+        assert.equal(agent.exitCode, null); assert.equal(agent.signalCode, null);
+        const row = (await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [second.id])).rows[0];
+        if (["failed", "rejected", "cancelled"].includes(row?.status)) throw new Error("Actual second scheduled renewal terminated unsuccessfully");
+        return row?.status === "succeeded";
+      });
+    } catch (error) {
+      try {
+        const row = (await pool.query("SELECT status,error_message FROM certificate_jobs WHERE id=$1", [second.id])).rows[0];
+        for (const label of issuanceDiagnosticLabels(row, agent, diagnosticSecondBefore, gateway.snapshot(), "second-renewal")) await runScenario(label, async()=>{});
+      } catch { /* Diagnostics must not replace the original failure or cleanup. */ }
+      throw error;
+    }
     const twiceRenewed = new crypto.X509Certificate(fs.readFileSync(certPath));
     await runScenario("real-acme-diagnostic-second-renewal-completed",async()=>{});
     await verifyDnsCleanup();
@@ -523,10 +536,18 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     }
     if(process.env.CERTOPS_REPORT_SCOPE===adoptionReport.SCOPE){
       const adoption=require('./helpers/certops-acme-native-adoption');
-      await runScenario(adoption.SCENARIO,async()=>{
-        const proof=await adoption.qualifyNativeAdoption({pool,workspaceId,agentId,publicSession,certificateId,certPath,keyPath,configDir,workDir,domain,acmeKind,bulkProof,ownedJobIds,ownedBulkResources,ownedAdoptionResources,ownedWorkers,waitUntil,verifyDnsCleanup,servedFingerprint,primaryTlsOptions:lifecycleTlsOptions});
-        fs.writeFileSync(path.join(repoRoot,adoptionReport.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
-      });
+      const adoptionMilestones=[];
+      const adoptionMilestoneNames=new Set(["adoption-start","adoption-prerequisites-passed","adoption-guard-created","adoption-bulk-material-verified","adoption-linked-profile-verified","adoption-no-open-period-verified","adoption-source-ready","adoption-tls-ready","adoption-readd-completed","adoption-detach-verified","adoption-setup-admitted","adoption-setup-replay-verified","adoption-setup-job-completed","adoption-setup-public-result-verified","adoption-dry-material-verified","adoption-real-material-evidence-verified","adoption-intent-verified","adoption-outbox-drained","adoption-public-state-verified","adoption-profile-and-period-verified","adoption-proof-verified","adoption-readd-http-expected","adoption-readd-http-client-error","adoption-readd-http-server-error","adoption-readd-http-other","adoption-setup-http-expected","adoption-setup-http-client-error","adoption-setup-http-server-error","adoption-setup-http-other","adoption-setup-job-failed","adoption-setup-job-rejected","adoption-setup-job-cancelled","adoption-setup-job-orphaned_unknown_effect"]);
+      const recordAdoptionMilestone=(name,index)=>{if(adoptionMilestoneNames.has(name)&&(index===null||index===0||index===1)&&adoptionMilestones.length<32)adoptionMilestones.push(`real-acme-diagnostic-${name}${index===null?"":index===0?"-dry":"-real"}`);};
+      try {
+        await runScenario(adoption.SCENARIO,async()=>{
+          const proof=await adoption.qualifyNativeAdoption({pool,workspaceId,agentId,publicSession,certificateId,certPath,keyPath,configDir,workDir,domain,acmeKind,bulkProof,ownedJobIds,ownedBulkResources,ownedAdoptionResources,ownedWorkers,waitUntil,verifyDnsCleanup,servedFingerprint,primaryTlsOptions:lifecycleTlsOptions,onMilestone:recordAdoptionMilestone});
+          fs.writeFileSync(path.join(repoRoot,adoptionReport.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
+        });
+      } catch(error) {
+        try { for(const name of adoptionMilestones)await runScenario(name,async()=>{}); } catch { /* Preserve the original failure and owned cleanup. */ }
+        throw error;
+      }
     }
     if(resultGateway){
       const outbox=require('./helpers/certops-acme-certificate-outbox');
