@@ -272,7 +272,7 @@
     {
       "id": "a496aa9e81eb1ebc257e",
       "file": "packages/agent/scripts/installer-smoke.test.js",
-      "line": 370,
+      "line": 373,
       "name": "reaches Running and survives a Stop-Service / Start-Service cycle",
       "environment": "windows-elevated",
       "workflow": ".github/workflows/certops-qualification.yml",
@@ -281,7 +281,7 @@
     {
       "id": "a0b75f0de8c699728470",
       "file": "packages/agent/scripts/pack-release.test.js",
-      "line": 207,
+      "line": 208,
       "name": "tracks install-agent.sh as executable in git (mode 100755)",
       "environment": "linux-filesystem",
       "workflowJob": "backend_quality"
@@ -289,7 +289,7 @@
     {
       "id": "efaa1f1fb388b4cd75cb",
       "file": "packages/agent/scripts/pack-release.test.js",
-      "line": 216,
+      "line": 217,
       "name": "assertExecutableEntries rejects a tarball whose installer lost the exec bit",
       "reason": "platform",
       "environment": "linux-filesystem",
