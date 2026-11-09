@@ -122,15 +122,27 @@ function expectedProfileSnapshot(profile) {
   return { ...structuredClone(stored), profileId: profile.id, profileName: profile.name };
 }
 
-async function qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certificateId, certPath, keyPath, ownedJobIds, waitUntil, verifyDnsCleanup, verifyNames, servedFingerprint, repoRoot, acmeKind, workDir, configDir, workDirIdentity }) {
+function reuseFailureLabels(row, phase) {
+  assert.ok(["manual", "scheduler"].includes(phase));
+  const statuses = ["failed", "rejected", "cancelled", "blocked", "orphaned_unknown_effect"];
+  const status = statuses.includes(row?.status) ? row.status : "other";
+  const message = typeof row?.error_message === "string" ? row.error_message.toLowerCase() : "";
+  const kinds = [["acme step failed", "acme"], ["job execution failed", "execution"], ["preflight validation failed", "preflight"], ["pre-deploy validation failed", "pre-deploy"], ["deploy step failed", "deployment"], ["verify step failed", "verification"], ["reload step failed", "reload"]];
+  const kind = kinds.find(([prefix]) => message.startsWith(prefix))?.[1] || (message ? "other" : "none");
+  return [`reuse-${phase}-job-${status}`, `reuse-${phase}-error-${kind}`];
+}
+async function qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certificateId, certPath, keyPath, ownedJobIds, waitUntil, verifyDnsCleanup, verifyNames, servedFingerprint, repoRoot, acmeKind, workDir, configDir, workDirIdentity, onMilestone = () => {} }) {
+  const mark = name => { try { onMilestone(name); } catch { /* Diagnostics cannot replace the native failure. */ } };
   assert.equal(process.platform, "linux"); assert.ok(["certbot", "acme.sh"].includes(acmeKind));
   const query = (sql, args = []) => pool.query(sql, args);
   const profile = async () => (await query("SELECT cp.id, cp.name, cp.public_metadata, cp.renew_before_days, cp.status, cp.updated_at FROM managed_certificates mc JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id WHERE mc.workspace_id=$1 AND mc.id=$2", [workspaceId, certificateId])).rows[0];
   const original = await profile(); assert.ok(original); assert.equal(original.status, "active"); assert.equal(original.renew_before_days, 30, "Reuse proof requires the explicit profile lead");
   assert.equal(original.public_metadata.renewalProfile.keyRotationPolicy.rotateOnRenew, true, "Run reuse only after the journey's positive rotation controls");
+  mark("reuse-prerequisites-verified");
   const expected = structuredClone(original.public_metadata.renewalProfile); expected.keyRotationPolicy.rotateOnRenew = false;
   const changed = await publicSession.request(`/api/v1/workspaces/${workspaceId}/certops/profiles/${original.id}`, "PATCH", { renewalProfile: { keyRotationPolicy: { rotateOnRenew: false } } });
   assert.equal(changed.status, 200); const stable = await profile(); assert.deepEqual(stable.public_metadata.renewalProfile, expected);
+  mark("reuse-profile-saved");
   const privateBytes = fs.readFileSync(keyPath), privateKey = crypto.createPrivateKey(privateBytes);
   const sha = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
   const spki = leaf => sha(leaf.publicKey.export({ type: "spki", format: "der" }));
@@ -150,34 +162,44 @@ async function qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certif
     leaves.push(leaf);
   };
   await observe();
-  const complete = async job => {
+  mark("reuse-initial-material-verified");
+  const complete = async (job, phase) => {
     await waitUntil(async () => {
       assert.equal(agent.exitCode, null); assert.equal(agent.signalCode, null);
-      const row = (await query("SELECT status,payload,claim_id,source,mode,result_metadata FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, job.id])).rows[0];
-      assert.ok(row); if (["failed", "rejected", "cancelled", "blocked", "orphaned_unknown_effect"].includes(row.status)) throw new Error("Real key-reuse renewal terminated unsuccessfully");
+      const row = (await query("SELECT status,payload,claim_id,source,mode,result_metadata,error_message FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, job.id])).rows[0];
+      assert.ok(row); if (["failed", "rejected", "cancelled", "blocked", "orphaned_unknown_effect"].includes(row.status)) {
+        for (const label of reuseFailureLabels(row, phase)) mark(label);
+        throw new Error("Real key-reuse renewal terminated unsuccessfully");
+      }
       if (row.status !== "succeeded") return false;
+      mark(`reuse-${phase}-job-succeeded`);
       assert.equal(row.mode, "real"); assert.equal(row.payload.keyRotation, false); assert.equal(row.source, job.source); assert.ok(row.claim_id);
       assert.deepEqual(row.payload.renewalProfile, expectedProfileSnapshot(stable), "Claimed execution must retain the complete stable source profile snapshot");
       assert.equal(row.payload.acmeKind, acmeKind); assert.equal(row.payload.commandRef, expected.acme.commandRef); assert.equal(row.payload.caEndpoint, expected.ca.endpoint);
       assert.deepEqual([...row.payload.sans].sort(), [...expected.sanPolicy.sans].sort()); assert.equal(row.payload.certPath, certPath);
       assert.equal(row.result_metadata.keyRotated, false);
       assert.ok((await query("SELECT 1 FROM certificate_evidence e JOIN certificate_jobs j ON j.workspace_id=e.workspace_id AND j.id=e.job_id WHERE e.workspace_id=$1 AND e.job_id=$2 AND e.claim_id=j.claim_id AND e.evidence_type='validation.passed' AND e.metadata->>'step'='verify'", [workspaceId, job.id])).rows.length);
-      const publicData = JSON.stringify([row, (await query("SELECT metadata,redacted_output FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2", [workspaceId, job.id])).rows]);
+      mark(`reuse-${phase}-job-evidence-verified`);
+      const { error_message: _diagnosticError, ...publicRow } = row;
+      const publicData = JSON.stringify([publicRow, (await query("SELECT metadata,redacted_output FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2", [workspaceId, job.id])).rows]);
       const bodySentinel = privateBytes.toString("utf8").split(/\r?\n/).find(line => line && !line.startsWith("-----"));
       assert.ok(bodySentinel && bodySentinel.length >= 32);
       assert.equal([privateBytes.toString("utf8"), privateBytes.toString("base64"), bodySentinel, "PRIVATE KEY-----"].some(secret => publicData.includes(secret)), false, "Actual private material must remain absent from persisted public job and evidence data");
       return true;
     }, 180000);
-    await observe(); assert.deepEqual(await profile(), stable);
+    mark(`reuse-${phase}-public-data-verified`);
+    await observe(); mark(`reuse-${phase}-material-verified`); assert.deepEqual(await profile(), stable);
+    mark(`reuse-${phase}-profile-verified`);
   };
   // Let the real CA's second-resolution notAfter advance; this is actual time,
   // not a scheduler clock override or manufactured inventory eligibility.
   await new Promise(resolve => setTimeout(resolve, 1500));
   const manual = await publicSession.request(`/api/v1/workspaces/${workspaceId}/certops/jobs`, "POST", { operation: "renew", subjectType: "managed_certificate", subjectId: String(certificateId), idempotencyKey: crypto.randomUUID() });
-  assert.equal(manual.status, 201); ownedJobIds.push(manual.body.job.id); jobs.push({ id: manual.body.job.id, source: "api" }); await complete(jobs[0]);
+  assert.equal(manual.status, 201); ownedJobIds.push(manual.body.job.id); jobs.push({ id: manual.body.job.id, source: "api" }); mark("reuse-manual-admitted"); await complete(jobs[0], "manual");
   await new Promise(resolve => setTimeout(resolve, 1500));
   const due = (await query("SELECT mc.not_after, mc.not_after <= NOW() + (COALESCE(cp.renew_before_days,30) || ' days')::interval AS due FROM managed_certificates mc JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id WHERE mc.workspace_id=$1 AND mc.id=$2 AND cp.status='active' AND EXISTS (SELECT 1 FROM certops_management_periods p WHERE p.workspace_id=mc.workspace_id AND p.managed_certificate_id=mc.id AND p.ended_at IS NULL AND p.automation_enabled=TRUE)", [workspaceId, certificateId])).rows[0];
   assert.equal(due?.due, true, "Actual SQL NOW must select the certificate under its explicit profile lead");
+  mark("reuse-scheduler-due-verified");
   const scheduler = require(path.join(repoRoot, "apps/api/services/certops/renewalScheduler.js"));
   const key = scheduler.renewalIdempotencyKey(certificateId, due.not_after);
   assert.equal((await query("SELECT 1 FROM certificate_jobs WHERE workspace_id=$1 AND idempotency_key=$2", [workspaceId, key])).rows.length, 0);
@@ -189,9 +211,9 @@ async function qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certif
     const admitted = (await query("SELECT id,source FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND idempotency_key=$3", [workspaceId, String(certificateId), key])).rows;
     for (const job of admitted) { ownedJobIds.push(job.id); jobs.push(job); }
   }
-  assert.equal(sweep.errors.length, 0); assert.equal(jobs.length, 2); assert.equal(jobs[1].source, "automation"); await complete(jobs[1]);
+  assert.equal(sweep.errors.length, 0); assert.equal(jobs.length, 2); assert.equal(jobs[1].source, "automation"); mark("reuse-scheduler-admitted"); await complete(jobs[1], "scheduler");
   const proof = { scope, client: acmeKind, materialPaths: paths.proof(), ...Object.fromEntries(fields.map(field => [field, true])), fingerprints: leaves.map(leaf => sha(leaf.raw)), serials: leaves.map(leaf => leaf.serialNumber), spkiFingerprint: spki(leaves[0]), jobIds: jobs.map(job => job.id), sourceProfileId: stable.id, sourceProfileFingerprint: sha(JSON.stringify(stable)) };
-  verifyProof(proof); return proof;
+  verifyProof(proof); mark("reuse-proof-verified"); return proof;
 }
 
 const SCOPE = "acme-client-path-and-key-reuse-variants";
@@ -420,4 +442,4 @@ const variants = {
   contained, refuseBlanketReset, assertClientPath, createRun, registerKey, submitOrder, deleteKey, spkiOf,
   verifyProof: verifyVariantProof, localProof, assessLab, closedReport, writeReport, run,
 };
-module.exports = { expectedProfileSnapshot, assertOwnedMaterialRoot, MATERIAL_PATH_SCOPE, MATERIAL_PATH_FLAGS, MATERIAL_PATH_LIMITS, verifyMaterialPaths, materialPathObserver, qualifyKeyReuse, verifyProof, scope, scenarioName, fields, requiredSources, variants };
+module.exports = { reuseFailureLabels, expectedProfileSnapshot, assertOwnedMaterialRoot, MATERIAL_PATH_SCOPE, MATERIAL_PATH_FLAGS, MATERIAL_PATH_LIMITS, verifyMaterialPaths, materialPathObserver, qualifyKeyReuse, verifyProof, scope, scenarioName, fields, requiredSources, variants };

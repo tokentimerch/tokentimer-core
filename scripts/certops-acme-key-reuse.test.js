@@ -153,3 +153,12 @@ test("derived ACME snapshot binds the database profile identity without dropping
   assert.notDeepEqual({...actual,acme:{...actual.acme,commandRef:"changed"}},journey.expectedProfileSnapshot(profile));
   assert.throws(()=>journey.expectedProfileSnapshot({...profile,public_metadata:{renewalProfile:{...stored,sanPolicy:{...stored.sanPolicy,mode:"inherit"}}}}));
 });
+
+
+test("key reuse failure categories expose no persisted error content", () => {
+  assert.deepEqual(journey.reuseFailureLabels({status: "blocked", error_message: "acme step failed: private credential"}, "manual"), ["reuse-manual-job-blocked", "reuse-manual-error-acme"]);
+  const labels = journey.reuseFailureLabels({status: "private-status", error_message: "secret-output"}, "scheduler");
+  assert.deepEqual(labels, ["reuse-scheduler-job-other", "reuse-scheduler-error-other"]);
+  assert.ok(labels.every(label => !/private|secret/.test(label)));
+  assert.throws(() => journey.reuseFailureLabels({}, "untrusted-phase"));
+});
