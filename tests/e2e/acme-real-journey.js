@@ -177,10 +177,11 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
   if(process.env.CERTOPS_REPORT_SCOPE===bulkReport.SCOPE)resultGateway=await require("./helpers/certops-acme-result-outage").startResultOutageGateway({upstreamUrl:baseUrl});
   const config = {
     serverUrl: resultGateway?.agentUrl || baseUrl, agentId, allowInsecureLocalHttp: true,
-    pollIntervalMs: 500, heartbeatIntervalMs: 1000,
+    // Leave headroom in the shared machine-request budget for job, lease and evidence traffic.
+    pollIntervalMs: 3000, heartbeatIntervalMs: 10000,
     declaredTargetSelectors: [domain], declaredCommandProfileNames: [commandRef],
     execution: { enabled: true, dryRun: false },
-    discovery:{directories:[discoveryDir],intervalMs:1000},
+    discovery:{directories:[discoveryDir],intervalMs:30000},
     windowsDiscovery:{enabled:false},
     policy: { allowedPaths: [workDir], allowedCommands: { [commandRef]: { argv: commandArgv } }, allowedCaEndpoints: [caEndpoint], allowedDnsZones: ["example.test"], allowedDnsProviders: ["pebble-challtestsrv"] },
     dnsProviders: { "pebble-challtestsrv": { credentialsFile }, zoneProviderMap: { "example.test": "pebble-challtestsrv" } },
