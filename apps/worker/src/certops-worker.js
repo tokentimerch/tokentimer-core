@@ -383,6 +383,7 @@ export async function handleProfileDerivationIntent({
 
   const client = await dbPool.connect();
   let transactionStarted = false;
+  let lockingManagement = false;
   try {
     await client.query("BEGIN");
     transactionStarted = true;
@@ -408,13 +409,17 @@ export async function handleProfileDerivationIntent({
 
     // Locked in the same transaction as the outbox row, so a detach cannot
     // slip between reading profile_id here and writing it in derivation.
+    // Do not wait while holding the outbox row: detach can own the
+    // certificate and need this outbox row in the opposite order.
+    lockingManagement = true;
     const certResult = await client.query(
       `SELECT id, common_name, subject_alt_names, profile_id
          FROM managed_certificates
         WHERE workspace_id = $1 AND id = $2::uuid
-        FOR UPDATE`,
+        FOR UPDATE NOWAIT`,
       [row.workspace_id, certificateId],
     );
+    lockingManagement = false;
     const certificate = certResult.rows[0] || null;
     if (!certificate) {
       return await completeOwnRow(client, row.id, claimId, {
@@ -454,14 +459,18 @@ export async function handleProfileDerivationIntent({
     // Linking a profile fires the legacy management-period sync trigger. Lock
     // the existing period so adoption cannot silently change a tracking-only
     // operator choice, and restore that choice in this same transaction.
+    // replace-management can own the period while waiting for the
+    // certificate. Defer instead of forming a lock cycle.
+    lockingManagement = true;
     const periodResult = await client.query(
       `SELECT id, automation_enabled, renewal_profile_id
          FROM certops_management_periods
         WHERE workspace_id = $1 AND managed_certificate_id = $2::uuid
           AND ended_at IS NULL
-        FOR UPDATE`,
+        FOR UPDATE NOWAIT`,
       [row.workspace_id, certificateId],
     );
+    lockingManagement = false;
     const period = periodResult.rows[0] || null;
 
     const derivation = await deriveProfile({
@@ -528,12 +537,17 @@ export async function handleProfileDerivationIntent({
     failure.code = derivation?.reason || "derivation_failed";
     throw failure;
   } catch (error) {
+    let rolledBack = !transactionStarted;
     if (transactionStarted) {
       try {
         await client.query("ROLLBACK");
+        rolledBack = true;
       } catch (_) {
         // Preserve the primary failure for the drain's retry path.
       }
+    }
+    if (rolledBack && lockingManagement && error?.code === "55P03") {
+      return deferredOutcome("management_lock_busy", deferMs);
     }
     throw error;
   } finally {
