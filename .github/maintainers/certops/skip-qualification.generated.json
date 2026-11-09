@@ -711,7 +711,7 @@
     {
       "id": "fa3bcd874625c1befd31",
       "file": "packages/agent/src/platform/platform.test.js",
-      "line": 481,
+      "line": 487,
       "name": "refuses a group/other-readable file on POSIX",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",
@@ -721,7 +721,7 @@
     {
       "id": "e03762e2624a4efbd711",
       "file": "packages/agent/src/platform/platform.test.js",
-      "line": 495,
+      "line": 501,
       "name": "enforces a real restricted ACL end to end on win32",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",

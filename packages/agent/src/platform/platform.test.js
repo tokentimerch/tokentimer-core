@@ -234,6 +234,12 @@ describe("platform: permission application", () => {
     assert.equal(spawn.calls[0].file, platform.windowsSystem32Tool("whoami"));
   });
 
+  it("uses Windows PowerShell from System32 for owner checks, independent of PATH", () => {
+    const spawn = fakeSpawn({});
+    assert.equal(platform.readWindowsOwnerSid("C:\\state\\config.json", { spawn }), OWN_SID);
+    assert.equal(spawn.calls[0].file, path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"));
+  });
+
   it("collapses the grant list when the agent already runs as SYSTEM", () => {
     const spawn = fakeSpawn({
       whoami: () => ({ stdout: `"nt authority\\system","${platform.SYSTEM_SID}"\r\n` }),
@@ -320,7 +326,7 @@ describe("platform: permission application", () => {
       icacls: icaclsSaveHandler(`D:PAI(A;;FA;;;${OWN_SID})(A;;FA;;;SY)`),
     });
     const bareSpawn = (file, args) => {
-      if (file === "powershell") return { error: Object.assign(new Error("nope"), { code: "ENOENT" }) };
+      if (path.parse(file).name.toLowerCase() === "powershell") return { error: Object.assign(new Error("nope"), { code: "ENOENT" }) };
       return spawn(file, args);
     };
     assert.throws(

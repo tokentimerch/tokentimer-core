@@ -63,8 +63,8 @@ Total skips found: 160
 | `packages/agent/src/material-preflight.test.js` | 10 | a local material policy refusal has no uncertain side effect | test(..., { skip }) option-object | `platform` |
 | `packages/agent/src/material-store/material-store.test.js` | 95 | real isolated Vault KV v2: pinned publication and idempotent CAS | test(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/material-store/material-store.test.js` | 137 | real Vault ACL separates issuer, consumer, scanner and customer prefixes | test(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/platform/platform.test.js` | 481 | refuses a group/other-readable file on POSIX | it(..., { skip }) option-object | `platform` |
-| `packages/agent/src/platform/platform.test.js` | 495 | enforces a real restricted ACL end to end on win32 | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/platform/platform.test.js` | 487 | refuses a group/other-readable file on POSIX | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/platform/platform.test.js` | 501 | enforces a real restricted ACL end to end on win32 | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/replay/replay.test.js` | 144 | writes the store file with 0600 permissions on non-win32 | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/trust-store/receipt.test.js` | 559 | reports {corrupt: true} for a symlink at the receipt path, never following it | dynamic (this.skip() / t.skip()) | `platform` |
 | `packages/agent/src/windows-material/pkcs12.test.js` | 14 | Windows CryptoAPI parses encrypted PKCS#12 and proves private-key association without persisting a key | test(..., { skip }) option-object | `platform` |

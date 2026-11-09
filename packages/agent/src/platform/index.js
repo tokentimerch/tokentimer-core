@@ -380,8 +380,11 @@ function readWindowsOwnerSid(targetPath, { spawn = spawnSync } = {}) {
   for (const key of Object.keys(env)) {
     if (key.toLowerCase() === "psmodulepath") delete env[key];
   }
+  // Do not rely on the service PATH, which may omit WindowsPowerShell or
+  // resolve a different executable ahead of the Windows component.
+  const powershell = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const result = spawn(
-    "powershell",
+    powershell,
     ["-NoProfile", "-NonInteractive", "-Command", script],
     {
       encoding: "utf8",
