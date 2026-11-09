@@ -137,8 +137,13 @@ describe("GitHub integration host and owner attribution", () => {
   });
 
   it("tags every scanned item with an explicit sourceKind and sourceObjectId", async () => {
+    const requestHeaders = [];
+    const respond = buildAxiosMock({ userId: 7, repoId: 900 });
     const github = requireWithMocks(resolveGithubModule(), {
-      axios: buildAxiosMock({ userId: 7, repoId: 900 }),
+      axios: async (config) => {
+        requestHeaders.push(config.headers);
+        return respond(config);
+      },
     });
     const result = await github.scanGitHub({
       baseUrl: "https://api.github.com",
@@ -156,6 +161,11 @@ describe("GitHub integration host and owner attribution", () => {
     expect(secret.sourceObjectId).to.equal("900:DEPLOY_SECRET");
     expect(deployKey.sourceKind).to.equal("github-deploy-key");
     expect(deployKey.sourceObjectId).to.equal("900:700");
+    expect(requestHeaders.length).to.be.at.least(5);
+    for (const headers of requestHeaders) {
+      expect(headers.Accept).to.equal("application/vnd.github+json");
+      expect(headers["X-GitHub-Api-Version"]).to.equal("2022-11-28");
+    }
   });
 
   it("rewrites github.com and www.github.com scans onto api.github.com", async () => {
