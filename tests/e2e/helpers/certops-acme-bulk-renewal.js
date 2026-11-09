@@ -380,6 +380,8 @@ async function qualifyBulk(c) {
         undefined,
         "Bulk native destination must start absent",
       );
+      fs.mkdirSync(path.dirname(targetPath), { mode: 0o700 });
+      assert.equal(fs.lstatSync(targetPath, { throwIfNoEntry: false }), undefined);
       const issued = await publicSession.request(prefix + "/jobs", "POST", {
         operation: "issue",
         idempotencyKey: crypto.randomUUID(),
