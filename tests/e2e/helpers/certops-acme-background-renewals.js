@@ -134,6 +134,25 @@ function verifyProof(value) {
   runner.validateLifecycle(value.workerLifecycle);
   return true;
 }
+// Emit only source-defined categories; persisted errors may contain private data.
+function workerBlockedReason(row) {
+  if (row?.error_code === "CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE") return "deploy-certificate-unavailable";
+  const message = typeof row?.error_message === "string" ? row.error_message.toLowerCase() : "";
+  const prefixes = [
+    ["lease renew aborted: claim ownership lost or lease conflict (http 409)", "lease-conflict"],
+    ["lease renew aborted: agent is retired (http 410)", "lease-retired"],
+    ["lease renew aborted: lease client unavailable", "lease-client-unavailable"],
+    ["lease renew aborted: mandatory confirmation failed", "lease-confirmation-failed"],
+    ["lease renew aborted: transient failure at or past", "lease-expired"],
+    ["lease renew aborted: exceeded", "lease-retry-limit"],
+    ["lease renew aborted: next retry would exceed", "lease-retry-expiry"],
+    ["agent execution is not enabled", "execution-disabled"],
+    ["execution is enabled but no control-plane signing key is pinned", "signing-key-unpinned"],
+    ['refusing mode:"real" job because local execution.dryrun is true', "local-dry-run"],
+  ];
+  return prefixes.find(([prefix]) => message.startsWith(prefix))?.[1] || (message ? "other" : "none");
+}
+
 async function qualifyBackgroundRenewals({
   pool,
   workspaceId,
@@ -343,6 +362,12 @@ async function qualifyBackgroundRenewals({
           ].includes(row.status)
         ) {
           onMilestone(`worker-cycle-job-${row.status}`, cycle);
+          if (row.status === "blocked") {
+            try {
+              const diagnostic = (await query("SELECT error_code,error_message FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, row.id])).rows[0];
+              onMilestone(`worker-block-${workerBlockedReason(diagnostic)}`, cycle);
+            } catch { onMilestone("worker-block-diagnostic-unavailable", cycle); }
+          }
           throw new Error("Actual cron renewal terminated unsuccessfully");
         }
         return row.status === "succeeded" ? row : false;
@@ -453,5 +478,6 @@ module.exports = {
   FLAGS,
   REQUIRED_SOURCES,
   verifyProof,
+  workerBlockedReason,
   qualifyBackgroundRenewals,
 };

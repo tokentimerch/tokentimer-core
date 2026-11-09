@@ -397,3 +397,19 @@ test("parent drains independent consumers but preserves records on worker or bro
     }
   }
 });
+
+test("worker block reason exposes only fixed source-defined categories",()=>{
+  const cases=[
+    ["lease renew aborted: claim ownership lost or lease conflict (HTTP 409) (private-data)","lease-conflict"],
+    ["lease renew aborted: agent is retired (HTTP 410) (private-data)","lease-retired"],
+    ["lease renew aborted: mandatory confirmation failed (private-data)","lease-confirmation-failed"],
+    ["lease renew aborted: transient failure at or past confirmed lease expiry (private-data)","lease-expired"],
+    ["lease renew aborted: exceeded 3 consecutive transient failures (private-data)","lease-retry-limit"],
+    ["lease renew aborted: next retry would exceed confirmed lease expiry (private-data)","lease-retry-expiry"],
+    ["refusing mode:\"real\" job because local execution.dryRun is true; private-data","local-dry-run"],
+  ];
+  for(const [error_message,expected] of cases)assert.equal(h.workerBlockedReason({error_message}),expected);
+  assert.equal(h.workerBlockedReason({error_code:"CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE",error_message:"private-data"}),"deploy-certificate-unavailable");
+  assert.equal(h.workerBlockedReason({error_message:"private-data"}),"other");
+  assert.equal(h.workerBlockedReason(undefined),"none");
+});
