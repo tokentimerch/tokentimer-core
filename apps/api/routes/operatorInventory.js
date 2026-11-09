@@ -90,8 +90,15 @@ router.post("/api/v1/operator/contacts/preview", ...guard("mcp:contacts:create",
   catch (error) { return errorReply(res, error); }
 });
 router.post("/api/v1/operator/contacts/create", ...guard("mcp:contacts:create", "workspace_manager"), rejectKeyMaterial, async (req, res) => {
-  try { const body = exactBody(req.body, ["planId", "planHash", "requestId"]); return res.json(await transaction((client) => contacts.createContact({ client, operator: req.operator, ...body }))); }
-  catch (error) { return errorReply(res, error); }
+  try {
+    const body = exactBody(req.body, ["planId", "planHash", "requestId"]);
+    const result = await transaction((client) => contacts.createContact({ client, operator: req.operator, ...body }));
+    if (req.get("X-TT-Contact-Verification") === "1") {
+      const status = await contacts.contactVerification({ client: pool, workspaceId: req.operator.workspaceId, contactId: result.contactId });
+      if (status) result.verification = status;
+    }
+    return res.json(result);
+  } catch (error) { return errorReply(res, error); }
 });
 router.post("/api/v1/operator/webhooks/preview", ...guard("mcp:webhooks:create", "workspace_manager"), rejectKeyMaterial, async (req, res) => {
   try { const body = exactBody(req.body, ["webhook"]); return res.json(await transaction((client) => webhooks.previewWebhook({ client, operator: req.operator, ...body }))); }

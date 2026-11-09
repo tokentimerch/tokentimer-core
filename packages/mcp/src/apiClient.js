@@ -153,6 +153,10 @@ function createApiClient(config, { fetchImpl = globalThis.fetch } = {}) {
       "X-Request-Id": correlationId,
     };
     if (body !== undefined) headers["Content-Type"] = "application/json";
+    // Older adapters retain the original strict response contract.
+    if (method === "POST" && path === "/api/v1/operator/contacts/create") {
+      headers["X-TT-Contact-Verification"] = "1";
+    }
     let response;
     try {
       response = await fetchImpl(url, {

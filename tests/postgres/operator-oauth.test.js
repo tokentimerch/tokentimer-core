@@ -220,7 +220,13 @@ describe("remote MCP OAuth on PostgreSQL", { concurrency: false }, () => {
     assert.ok((await scopes(flow)).includes("mcp:contacts:create"));
     const token = await tokenFor(flow), client = new Client({ name: "contact-qualification", version: "1.0.0" });
     const previousWrites = process.env.MCP_OPERATOR_WRITES_ENABLED;
+    const verificationKeys = ["TT_DEPLOYMENT", "RECIPIENT_VERIFICATION_MODE", "RECIPIENT_VERIFICATION_CLOUD_SHADOW", "RECIPIENT_FINGERPRINT_SECRET"];
+    const savedVerification = Object.fromEntries(verificationKeys.map((key) => [key, process.env[key]]));
     process.env.MCP_OPERATOR_WRITES_ENABLED = "true";
+    process.env.TT_DEPLOYMENT = "cloud";
+    process.env.RECIPIENT_VERIFICATION_MODE = "enforce";
+    process.env.RECIPIENT_FINGERPRINT_SECRET = "synthetic-mcp-oauth-verification-secret";
+    delete process.env.RECIPIENT_VERIFICATION_CLOUD_SHADOW;
     try {
       await client.connect(new StreamableHTTPClientTransport(new URL(origin + MCP_PATH), { requestInit: { headers: { Authorization: `Bearer ${token.body.access_token}` } } }));
       const names = (await client.listTools()).tools.map((tool) => tool.name);
@@ -232,9 +238,14 @@ describe("remote MCP OAuth on PostgreSQL", { concurrency: false }, () => {
       const submitted = await client.callTool({ name: "tt_create_contact", arguments: { planId: preview.structuredContent.planId, planHash: preview.structuredContent.planHash, requestId: crypto.randomUUID() } });
       assert.notEqual(submitted.isError, true, JSON.stringify(submitted));
       assert.equal(submitted.structuredContent.state, "succeeded");
+      assert.deepEqual(submitted.structuredContent.verification, { mode: "enforce", status: "available", email: "confirmation_required", whatsapp: null, invitationSentByCreation: false });
     } finally {
       if (previousWrites === undefined) delete process.env.MCP_OPERATOR_WRITES_ENABLED;
       else process.env.MCP_OPERATOR_WRITES_ENABLED = previousWrites;
+      for (const key of verificationKeys) {
+        if (savedVerification[key] === undefined) delete process.env[key];
+        else process.env[key] = savedVerification[key];
+      }
       await client.close();
     }
   });
