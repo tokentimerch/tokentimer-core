@@ -179,6 +179,14 @@ for(const [provider,providerVersion] of [["vault-kv2",7],["openbao-kv2",7],["azu
   assert.ok(missing.consumers[0].diagnostics.some(d=>d.code==="CERTOPS_AGENT_CAPABILITY_UNAVAILABLE"&&d.capability===providerCapability(provider)));
 });
 
+for(const [provider,providerVersion] of [["vault-kv2",7],["openbao-kv2",9],["azure-key-vault","a".repeat(32)]]) test(`distribution overview and retention expose exact ${provider} version`,async()=>{
+  const f=await fixture({materialProvider:provider,providerVersion});
+  const overview=await administration.overview({client:pool,workspaceId:f.workspaceId,groupId:f.groupId});
+  const retention=await administration.retentionPreview({client:pool,workspaceId:f.workspaceId,groupId:f.groupId});
+  assert.equal(overview.versions.find(v=>v.id===f.materialVersionId).provider_version,providerVersion);
+  assert.equal(retention.versions.find(v=>v.id===f.materialVersionId).provider_version,providerVersion);
+});
+
 test("public Windows preflight reports missing native qualification capabilities",async()=>{
   const f=await fixture();
   await pool.query("UPDATE certops_agents SET platform='win32' WHERE id=$1",[f.consumer]);
@@ -1000,4 +1008,31 @@ test("degraded optional deployment retries the original job once, with explicit 
   assert.equal((await verificationRollout(f)).state, "verified");
   assert.equal((await deployments()).find(row => row.binding_id === optionalBindingId).job_id, jobId);
   assert.deepEqual((await deployments()).find(row => row.binding_id === f.bindingId), required);
+});
+
+for (const kind of ["activation", "staging"]) test(`reassignment refuses a terminal ${kind} with unresolved effects`, async () => {
+  const f = await fixture();
+  if (kind === "staging") {
+    await operations.putBinding({ ...f, binding: { ...f.binding, verificationPolicy: "installed" }, actorUserId: f.actor });
+    f.binding = { ...f.binding, verificationPolicy: "installed" };
+    const policy = { method: "none", disruptive: false, requiresApproval: true, timezone: "UTC", windows: [], blackouts: [], validUntil: null, emergency: null, independentStaging: true };
+    await maintenance.putConsumerPolicy({ ...f, policy, expectedAuthorizationRevision: 2, actorUserId: f.actor });
+  }
+  const parent = await operations.requestRollout({ ...f, actorUserId: f.actor });
+  if (parent.status === "pending_approval") {
+    await approveJob({ workspaceId: f.workspaceId, jobId: parent.id, approverUserId: f.approver });
+    await operations.transaction(client => operations.processDistributionIntent({ client, row: { workspace_id: f.workspaceId, event_type: "distribution_approval_granted" }, payload: { jobId: parent.id } }));
+  }
+  const rollout = (await pool.query("SELECT id FROM certops_distribution_rollouts WHERE approval_job_id=$1", [parent.id])).rows[0];
+  await operations.transaction(client => operations.advanceRollout(client, f.workspaceId, f.groupId, rollout.id));
+  const child = (await pool.query("SELECT job_id, staging_job_id FROM certops_consumer_deployments WHERE workspace_id=$1 AND binding_id=$2", [f.workspaceId, f.bindingId])).rows[0];
+  const jobId = kind === "staging" ? child.staging_job_id : child.job_id;
+  assert.ok(jobId);
+  await pool.query("UPDATE certificate_jobs SET status='blocked', needs_operator_reconciliation=true WHERE id=$1", [jobId]);
+  await pool.query("UPDATE certops_consumer_deployments SET stage='failed' WHERE workspace_id=$1 AND binding_id=$2", [f.workspaceId, f.bindingId]);
+  const replacement = { ...f, binding: { ...f.binding, agentId: f.issuer }, actorUserId: f.actor };
+  await assert.rejects(operations.putBinding(replacement), { code: "CERTOPS_CONSUMER_REASSIGNMENT_REQUIRES_RECONCILIATION" });
+  assert.equal((await pool.query("SELECT assigned_agent_id FROM certops_consumer_bindings WHERE id=$1", [f.bindingId])).rows[0].assigned_agent_id, f.consumer);
+  await pool.query("UPDATE certificate_jobs SET needs_operator_reconciliation=false WHERE id=$1", [jobId]);
+  assert.equal((await operations.putBinding(replacement)).assigned_agent_id, f.issuer);
 });

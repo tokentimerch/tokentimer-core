@@ -246,6 +246,30 @@ test("customer-local preflight reads the exact version without creating files, a
   assert.ok(result.diagnostics.some(item=>item.code==="material_exact_version_authorized"));
   assert.ok(!JSON.stringify(result).includes("PRIVATE KEY"));
 });
+test("customer-local preflight accepts a valid large binding journal without mutation",async t=>{
+  const f=await fixture(t);filesOnly(f);
+  // PEM permits whitespace, and a real certificate chain or a SAN-rich leaf
+  // can exceed 16 KiB while staying within the supported bundle size.
+  f.bundle.certificatePem += "\n".repeat(20000);
+  const options=f.options();
+  assert.equal((await f.deploy()).status,"succeeded");
+  assert.ok(fs.statSync(f.record).size>16384);
+  const before=fs.readFileSync(f.record);
+  const {readBindingPreflightIntent}=require("../../bin/preflight-material-binding");
+  assert.deepEqual(readBindingPreflightIntent(options.stateDir,f.bindingId),JSON.parse(before).intent);
+  const result=await preflightPinnedDeployment(options);
+  assert.equal(result.ready,true);
+  assert.ok(!result.diagnostics.some(item=>item.code==="material_binding_state_invalid"));
+  assert.deepEqual(fs.readFileSync(f.record),before);
+  // The shared journal limit remains bounded; public intent files keep their
+  // smaller independent limit.
+  const {MAX_BINDING_JOURNAL_BYTES}=require("./index");
+  writeProtectedJson(f.record,{intent:options.job.materialDeployment,certificatePem:"x".repeat(MAX_BINDING_JOURNAL_BYTES)});
+  assert.throws(()=>readBindingPreflightIntent(options.stateDir,f.bindingId));
+  const intentFile=path.join(f.deployDir,"oversized-intent.json");
+  writeProtectedJson(intentFile,{bindingId:f.bindingId,activationPolicy:"x".repeat(16384)});
+  assert.throws(()=>require("../../bin/preflight-material-binding").readPublicPreflightIntent(intentFile,f.bindingId));
+});
 for (const provider of ["vault-kv2", "openbao-kv2"]) test(`downloaded ${provider} preflight intent reaches the exact customer-local store without mutation`,async t=>{
   const f=await fixture(t);filesOnly(f);
   const options=f.options({intent:{provider}}),{readPublicPreflightIntent}=require("../../bin/preflight-material-binding");

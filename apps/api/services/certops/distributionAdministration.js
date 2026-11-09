@@ -43,7 +43,7 @@ async function overview({ client = pool, workspaceId, groupId }) {
   });
   const versions = (
     await client.query(
-      `SELECT v.id,v.state,v.provider_version,v.fingerprint_sha256,v.valid_to,v.published_at,v.created_at,v.publishing_job_id,c.state AS cleanup_state
+      `SELECT v.id,v.state,COALESCE(to_jsonb(v.provider_version_ref),to_jsonb(v.provider_version)) AS provider_version,v.fingerprint_sha256,v.valid_to,v.published_at,v.created_at,v.publishing_job_id,c.state AS cleanup_state
     FROM certops_material_versions v LEFT JOIN certops_material_cleanups c ON c.workspace_id=v.workspace_id AND c.material_version_id=v.id
     WHERE v.workspace_id=$1 AND v.group_id=$2 ORDER BY v.created_at DESC LIMIT 1000`,
       [workspaceId, group.id],
@@ -284,7 +284,7 @@ async function retentionPreview({ client = pool, workspaceId, groupId }) {
       DEFAULT_POLICY.retention;
   const versions = (
     await client.query(
-      `SELECT v.id,v.state,v.provider_version,v.profile_revision,v.created_at,v.published_at,v.valid_to,c.state AS cleanup_state,c.id AS cleanup_id,c.job_id AS cleanup_job_id,j.status AS cleanup_job_status
+      `SELECT v.id,v.state,COALESCE(to_jsonb(v.provider_version_ref),to_jsonb(v.provider_version)) AS provider_version,v.profile_revision,v.created_at,v.published_at,v.valid_to,c.state AS cleanup_state,c.id AS cleanup_id,c.job_id AS cleanup_job_id,j.status AS cleanup_job_status
         FROM certops_material_versions v LEFT JOIN certops_material_cleanups c ON c.workspace_id=v.workspace_id AND c.material_version_id=v.id
         LEFT JOIN certificate_jobs j ON j.workspace_id=c.workspace_id AND j.id=c.job_id
         WHERE v.workspace_id=$1 AND v.group_id=$2 ORDER BY v.created_at DESC,v.id DESC`,

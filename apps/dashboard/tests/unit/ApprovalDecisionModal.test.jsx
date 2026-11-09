@@ -179,6 +179,19 @@ describe('immutable distribution approval review', () => {
     );
   });
 
+  for (const approvalType of ['distributionRollout', 'distributionPolicyApproval']) {
+    for (const staging of [true, false]) {
+      it(`shows staging ${staging ? 'enabled' : 'disabled'} for ${approvalType}`, async () => {
+        const selected = {...binding, activationPolicy: {...binding.activationPolicy, independentStaging: staging}};
+        const intent = approvalType === 'distributionRollout' ? {bindings:[selected]} : {scope:{bindings:[selected]}};
+        const dialog = await show({[approvalType]:intent});
+        const field = dialog.getByText('Preparation before activation window').parentElement;
+        expect(within(field).getByText(staging ? 'Yes' : 'No')).toBeInTheDocument();
+        if(staging) expect(dialog.getByText(/does not establish installation, service use or trust/)).toBeInTheDocument();
+      });
+    }
+  }
+
   it('exposes the standing grant scope, source authority, reviewer membership and fixed failure behavior', async () => {
     const dialog = await show({
       distributionPolicyApproval: {

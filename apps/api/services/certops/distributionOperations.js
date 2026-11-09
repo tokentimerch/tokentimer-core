@@ -27,7 +27,7 @@ async function putBinding({ workspaceId, groupId, bindingId = crypto.randomUUID(
       const live = await client.query(`SELECT 1 FROM certops_consumer_deployments d
         LEFT JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND (j.id=d.job_id OR j.id=d.staging_job_id)
         WHERE d.workspace_id=$1 AND d.binding_id=$2
-          AND (j.status IN ('claimed','running','orphaned_unknown_effect') OR d.stage='orphaned_unknown_effect') LIMIT 1`, [workspaceId, bindingId]);
+          AND (j.status IN ('claimed','running','orphaned_unknown_effect') OR j.needs_operator_reconciliation IS TRUE OR d.stage='orphaned_unknown_effect') LIMIT 1`, [workspaceId, bindingId]);
       if (live.rowCount) fail("CERTOPS_CONSUMER_REASSIGNMENT_REQUIRES_RECONCILIATION");
     }
     if (binding.verificationPolicy === "installed") {

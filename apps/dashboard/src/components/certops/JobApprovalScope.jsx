@@ -35,6 +35,7 @@ function activation(binding) {
         binding.activationClass ||
         (binding.verificationPolicy === 'installed' ? 'none' : 'reload'),
       Calendar: 'No additional calendar configured',
+      'Preparation before activation window': false,
     };
   const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   return {
@@ -45,6 +46,13 @@ function activation(binding) {
       ['timezone', 'Time zone'],
       ['validUntil', 'Authorization expires'],
     ]),
+    'Preparation before activation window': policy.independentStaging === true,
+    ...(policy.independentStaging === true
+      ? {
+          'Preparation scope':
+            'Copies protected material to the consumer before the activation window. It does not establish installation, service use or trust.',
+        }
+      : {}),
     'Maintenance windows': Object.fromEntries(
       (policy.windows || []).map((window, index) => [
         `Window ${index + 1}`,

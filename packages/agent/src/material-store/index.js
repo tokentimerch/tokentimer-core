@@ -15,6 +15,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ALIAS = /^[A-Za-z0-9_-]{1,64}$/;
 const SEGMENT = /^[A-Za-z0-9_-]{1,128}$/;
 const MAX_BUNDLE_BYTES = 256 * 1024;
+// Binding journals contain the complete certificate plus public intent and receipt.
+const MAX_BINDING_JOURNAL_BYTES = MAX_BUNDLE_BYTES + 16384;
 const BUNDLE_FIELDS = new Set(["schemaVersion", "workspaceId", "groupId", "materialVersionId", "certificatePem", "privateKeyPem", "fingerprintSha256", "sans"]);
 
 function failure(code) {
@@ -283,4 +285,4 @@ function createMaterialStore(stores, intent, options = {}) {
     : createVaultStore(stores, intent, options);
 }
 
-module.exports = { createMaterialStore, createVaultStore, resolveStore, validateBundle, readProtectedFile, writeProtectedFile, writeProtectedJson, protectDirectory, sameSans, failure, UUID, ALIAS, MAX_BUNDLE_BYTES };
+module.exports = { createMaterialStore, createVaultStore, resolveStore, validateBundle, readProtectedFile, writeProtectedFile, writeProtectedJson, protectDirectory, sameSans, failure, UUID, ALIAS, MAX_BUNDLE_BYTES, MAX_BINDING_JOURNAL_BYTES };

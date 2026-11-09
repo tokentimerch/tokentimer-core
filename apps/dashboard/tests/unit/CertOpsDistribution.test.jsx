@@ -131,6 +131,35 @@ describe('Distribution Management',()=>{
     expect(screen.getByText(/retry the original signed job/)).toBeVisible();
     expect(screen.getByText(/production-qualified agent/)).toBeVisible();
   });
+  it('identifies jobless incidents and preserves historical binding evidence',async()=>{
+    data.incidents=[
+      {id:'offline-one',binding_id:'binding',code:'required_consumer_offline',severity:'warning',resolved_at:null,evidence:{bindingId:'binding',agentId:'agent',desiredVersionId:'version-a'}},
+      {id:'offline-two',binding_id:'historical-binding',code:'required_consumer_offline',severity:'critical',resolved_at:'2026-01-01',evidence:{bindingId:'historical-binding',agentId:'former-agent',rolloutId:'rollout-old',observedVersionId:'version-b'}},
+    ];
+    page();await openView('Issues');
+    const first=within(screen.getByText('Binding: binding').closest('li'));
+    expect(first.getByText('Agent: agent')).toBeInTheDocument();
+    expect(first.getByText('Current profile: nginx')).toBeInTheDocument();
+    expect(first.getByText('Desired version: version-a')).toBeInTheDocument();
+    expect(first.getByRole('link',{name:'View consumer'})).toHaveAttribute('href','/?workspace=workspace&group=group#distribution-consumers');
+    expect(first.queryByRole('link',{name:'View affected job'})).not.toBeInTheDocument();
+    const historical=within(screen.getByText('Binding: historical-binding').closest('li'));
+    expect(historical.getByText('Agent: former-agent')).toBeInTheDocument();
+    expect(historical.getByText('Observed version: version-b')).toBeInTheDocument();
+    expect(historical.getByText('Rollout: rollout-old')).toBeInTheDocument();
+    expect(historical.getByText('Severity: critical')).toBeInTheDocument();
+    expect(historical.getByText('Resolved')).toBeInTheDocument();
+    expect(historical.queryByRole('link',{name:'View consumer'})).not.toBeInTheDocument();
+    fireEvent.click(first.getByRole('link',{name:'View consumer'}));
+    await waitFor(()=>expect(screen.getByRole('tab',{name:'Destinations'})).toHaveAttribute('aria-selected','true'));
+  });
+  it('displays opaque provider versions in overview and retention',async()=>{
+    const azure='00112233445566778899aabbccddeeff';data.versions[0].provider_version=azure;
+    api.retention.mockResolvedValue({versions:[{id:latest,provider_version:azure,retainedReasons:['desired_consumer_version']}]});
+    page();expect(await screen.findByRole('option',{name:new RegExp(azure)})).toBeInTheDocument();
+    await openView('Policy');fireEvent.click(screen.getByRole('button',{name:'Preview retained versions'}));
+    expect(await screen.findByText(`Store version ${azure}`)).toBeInTheDocument();
+  });
   it('selects an exact retained version and requests approval only after confirmation',async()=>{
     page();const select=await screen.findByLabelText('Exact published version');fireEvent.change(select,{target:{value:retained}});
     fireEvent.click(screen.getByRole('button',{name:'Request rollback approval'}));expect(api.rollout).not.toHaveBeenCalled();

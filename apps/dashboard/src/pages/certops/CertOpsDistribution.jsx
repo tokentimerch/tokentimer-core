@@ -1201,7 +1201,8 @@ function Management({
                         )
                         .map(value => (
                           <option key={value.id} value={value.id}>
-                            {value.provider_version} · {value.id} · expires{' '}
+                            {value.provider_version ?? 'Version unavailable'} ·{' '}
+                            {value.id} · expires{' '}
                             {formatDateTime(value.valid_to)}
                             {value.id !== data.group.latest_material_version_id
                               ? ' (retained rollback version)'
@@ -1819,54 +1820,113 @@ function Management({
                     borderTop='1px solid'
                     borderColor={dashboard.border.subtle}
                   >
-                    {data.incidents.map(incident => (
-                      <Box
-                        as='li'
-                        key={incident.id}
-                        py={3}
-                        borderBottom='1px solid'
-                        borderColor={dashboard.border.subtle}
-                      >
-                        <SimpleGrid
-                          columns={{ base: 1, md: 3 }}
-                          spacing={2}
-                          alignItems='center'
+                    {data.incidents.map(incident => {
+                      const bindingId =
+                        incident.binding_id || incident.evidence?.bindingId;
+                      const consumer = data.consumers.find(
+                        item => item.binding_id === bindingId
+                      );
+                      const agentId = incident.evidence?.agentId;
+                      const consumerParams = new URLSearchParams(
+                        location.search
+                      );
+                      consumerParams.set('workspace', workspaceId);
+                      consumerParams.set('group', groupId);
+                      return (
+                        <Box
+                          as='li'
+                          key={incident.id}
+                          py={3}
+                          borderBottom='1px solid'
+                          borderColor={dashboard.border.subtle}
                         >
-                          <HStack minW={0} spacing={2} flexWrap='wrap'>
-                            <Text
-                              fontSize='sm'
-                              fontWeight='semibold'
-                              overflowWrap='anywhere'
-                            >
-                              {label(incident.code)}
-                            </Text>
-                            <CertOpsBadge
-                              colorScheme={
-                                incident.resolved_at ? 'green' : 'orange'
-                              }
-                            >
-                              {incident.resolved_at ? 'Resolved' : 'Open'}
-                            </CertOpsBadge>
-                          </HStack>
-                          <Box color={dashboard.text.secondary} fontSize='sm'>
-                            <Text>
-                              Opened {formatDateTime(incident.opened_at)}
-                            </Text>
-                            <Text>
-                              Updated {formatDateTime(incident.updated_at)}
-                            </Text>
-                          </Box>
-                          <Box>
-                            <JobLink
-                              workspaceId={workspaceId}
-                              id={incident.evidence?.jobId}
-                            >
-                              View affected job
-                            </JobLink>
-                          </Box>
-                        </SimpleGrid>
-                      </Box>
-                    ))}
+                          <SimpleGrid
+                            columns={{ base: 1, md: 3 }}
+                            spacing={2}
+                            alignItems='center'
+                          >
+                            <HStack minW={0} spacing={2} flexWrap='wrap'>
+                              <Text
+                                fontSize='sm'
+                                fontWeight='semibold'
+                                overflowWrap='anywhere'
+                              >
+                                {label(incident.code)}
+                              </Text>
+                              <CertOpsBadge
+                                colorScheme={
+                                  incident.resolved_at ? 'green' : 'orange'
+                                }
+                              >
+                                {incident.resolved_at ? 'Resolved' : 'Open'}
+                              </CertOpsBadge>
+                            </HStack>
+                            <Box color={dashboard.text.secondary} fontSize='sm'>
+                              {incident.severity ? (
+                                <Text>
+                                  Severity: {label(incident.severity)}
+                                </Text>
+                              ) : null}
+                              {bindingId ? (
+                                <Text>Binding: {bindingId}</Text>
+                              ) : null}
+                              {agentId ? <Text>Agent: {agentId}</Text> : null}
+                              {consumer ? (
+                                <Text>
+                                  Current profile:{' '}
+                                  {consumer.deployment_profile_ref}
+                                </Text>
+                              ) : null}
+                              {incident.evidence?.desiredVersionId ? (
+                                <Text>
+                                  Desired version:{' '}
+                                  {incident.evidence.desiredVersionId}
+                                </Text>
+                              ) : null}
+                              {incident.evidence?.observedVersionId ? (
+                                <Text>
+                                  Observed version:{' '}
+                                  {incident.evidence.observedVersionId}
+                                </Text>
+                              ) : null}
+                              {incident.evidence?.rolloutId ? (
+                                <Text>
+                                  Rollout: {incident.evidence.rolloutId}
+                                </Text>
+                              ) : null}
+                              <Text>
+                                Opened {formatDateTime(incident.opened_at)}
+                              </Text>
+                              <Text>
+                                Updated {formatDateTime(incident.updated_at)}
+                              </Text>
+                            </Box>
+                            <Box>
+                              {consumer ? (
+                                <Link
+                                  as={RouterLink}
+                                  to={{
+                                    pathname: location.pathname,
+                                    search: `?${consumerParams}`,
+                                    hash: '#distribution-consumers',
+                                  }}
+                                  color='blue.500'
+                                  display='block'
+                                >
+                                  View consumer
+                                </Link>
+                              ) : null}
+                              <JobLink
+                                workspaceId={workspaceId}
+                                id={incident.evidence?.jobId}
+                              >
+                                View affected job
+                              </JobLink>
+                            </Box>
+                          </SimpleGrid>
+                        </Box>
+                      );
+                    })}
                   </Stack>
                 )}
                 <Box as='details' mt={3}>

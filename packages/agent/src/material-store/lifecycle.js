@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const tls = require("node:tls");
-const { createMaterialStore, readProtectedFile, writeProtectedFile, writeProtectedJson, protectDirectory, failure, UUID, sameSans, validateBundle, MAX_BUNDLE_BYTES } = require("./index");
+const { createMaterialStore, readProtectedFile, writeProtectedFile, writeProtectedJson, protectDirectory, failure, UUID, sameSans, validateBundle, MAX_BINDING_JOURNAL_BYTES } = require("./index");
 const { applyRestrictivePermissions } = require("../platform");
 const { deployCertificateAndKey } = require("../deploy");
 const { canonicalizeJobPayload } = require("../signing");
@@ -262,7 +262,7 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
   return withMaterialLock(locks, `binding:${intent.workspaceId}:${intent.bindingId}`, async () => {
     let previous = null;
     if (fs.existsSync(record)) {
-      try { previous = JSON.parse(readProtectedFile(record, MAX_BUNDLE_BYTES+16384)); }
+      try { previous = JSON.parse(readProtectedFile(record, MAX_BINDING_JOURNAL_BYTES)); }
       catch { throw failure("material_binding_state_invalid"); }
       if (previous.generation > intent.generation || (previous.generation === intent.generation && previous.intentHash !== hash)) throw failure("material_stale_generation");
       if (previous.uncertain) throw failure("material_binding_uncertain");
@@ -456,7 +456,7 @@ async function reconcilePinnedDeployment({ job,bindings,stateDir,policyEngine,wi
   const { intent,binding }=resolveBindingPolicy(job,bindings,policyEngine,{platform});
   return withMaterialLock(path.join(stateDir,"material-locks"),`binding:${intent.workspaceId}:${intent.bindingId}`,async()=>{
     const record=path.join(stateDir,"material-bindings",`${intent.bindingId}.json`);
-    const previous=JSON.parse(readProtectedFile(record,MAX_BUNDLE_BYTES+16384));
+    const previous=JSON.parse(readProtectedFile(record,MAX_BINDING_JOURNAL_BYTES));
     const intentHash=deploymentIntentHash(intent);
     if(previous.generation!==intent.generation || previous.intentHash!==intentHash)throw failure("material_stale_generation");
     if (intent.preparationOnly === true) {
@@ -517,7 +517,7 @@ async function preflightPinnedDeployment({job,stores,bindings,stateDir,policyEng
   check("material_live_lock_present",fs.existsSync(lock)?"blocked":"passed");
   const record=path.join(stateDir,"material-bindings",`${intent.bindingId}.json`);
   if(fs.existsSync(record)){
-    try{const previous=JSON.parse(readProtectedFile(record,16384));
+    try{const previous=JSON.parse(readProtectedFile(record,MAX_BINDING_JOURNAL_BYTES));
       check("material_binding_uncertain",previous.uncertain?"blocked":"passed");
       check("material_stale_generation",previous.generation>intent.generation?"blocked":"passed");
     }catch{check("material_binding_state_invalid","blocked");}
