@@ -164,6 +164,17 @@ function messageText(message) {
   };
   return walk(message.Content, 0) + walk(message.MIME, 0);
 }
+function decodeSubject(value) {
+  // RFC 2047 permits folded adjacent encoded words; their separating whitespace
+  // is not part of the subject. Nodemailer uses both UTF-8 Q and B encodings.
+  return String(value)
+    .replace(/(\?=)\s+(?==\?utf-8\?[bq]\?)/gi, "$1")
+    .replace(/=\?utf-8\?([bq])\?([^?]*)\?=/gi, (_word, encoding, encoded) => {
+      if (encoding.toLowerCase() === "b") return Buffer.from(encoded, "base64").toString("utf8");
+      const bytes = encoded.replace(/_/g, " ").replace(/=([0-9a-f]{2})/gi, (_match, hex) => String.fromCharCode(parseInt(hex, 16)));
+      return Buffer.from(bytes, "latin1").toString("utf8");
+    });
+}
 function matchingMessages(body, { recipient, previous, jobId }) {
   assert.ok(body && Array.isArray(body.items) && body.items.length <= 1000);
   assert.equal(body.start, 0);
@@ -179,7 +190,7 @@ function matchingMessages(body, { recipient, previous, jobId }) {
         return address.toLowerCase() === recipient.toLowerCase();
       }) &&
       (message.Content?.Headers?.Subject || []).some(subject => {
-        const decoded = String(subject).replace(/=\?utf-8\?B\?([^?]+)\?=/gi, (_all, b64) => Buffer.from(b64, "base64").toString("utf8"));
+        const decoded = decodeSubject(subject);
         return decoded.includes("Certificate renewal failed");
       }) && messageText(message).includes(jobId);
   });
