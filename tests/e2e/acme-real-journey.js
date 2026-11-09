@@ -328,11 +328,17 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     const evidence = await pool.query("SELECT 1 FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2", [workspaceId, jobId]);
     assert.ok(evidence.rows.length, "real agent evidence must persist in the API database");
 
-    const profile=(await pool.query("SELECT cp.public_metadata, mc.not_after FROM managed_certificates mc JOIN certificate_profiles cp ON cp.id=mc.profile_id AND cp.workspace_id=mc.workspace_id WHERE mc.workspace_id=$1 AND mc.id=$2",[workspaceId,certificateId])).rows[0];
+    const profile=(await pool.query("SELECT cp.id AS profile_id, cp.renew_before_days, cp.public_metadata, mc.not_after FROM managed_certificates mc JOIN certificate_profiles cp ON cp.id=mc.profile_id AND cp.workspace_id=mc.workspace_id WHERE mc.workspace_id=$1 AND mc.id=$2",[workspaceId,certificateId])).rows[0];
     assert.ok(profile?.public_metadata?.renewalProfile,"Actual successful issuance must derive a reusable execution profile");
     assert.equal(profile.public_metadata.renewalProfile.acme.commandRef, commandRef, "Persisted renewal must use the actual qualified client profile");
     if (eabRef) assert.equal(profile.public_metadata.renewalProfile.ca.eabRef, eabRef);
-    assert.ok(new Date(profile.not_after).getTime()<=Date.now()+30*86400000,"Real short-lived fixture leaf must naturally enter the renewal window");
+    assert.equal(profile.renew_before_days,null,"Derived profile must initially inherit the deployment renewal window");
+    // The real six-day leaf is fresh. Select an explicit lead for immediate
+    // scheduler and native renewal coverage without changing certificate clocks.
+    const lead=await publicSession.request(`/api/v1/workspaces/${workspaceId}/certops/profiles/${profile.profile_id}`,"PATCH",{renewBeforeDays:30});
+    assert.equal(lead.status,200,"Explicit renewal lead must be accepted");
+    assert.equal(lead.body.renewBeforeDays,30);
+    assert.ok(new Date(profile.not_after).getTime()<=Date.now()+30*86400000,"Fixture leaf must be due under the explicit lead");
     assert.ok((await pool.query("SELECT 1 FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL AND automation_enabled=TRUE",[workspaceId,certificateId])).rows.length,"Successful agent deployment must enable its actual management period");
     await waitUntil(() => Date.now() > firstIssuanceObservedAt + 1500);
     const sweep=await require(path.join(repoRoot,"apps/api/services/certops/renewalScheduler.js")).runRenewalSchedulerSweep({dbPool:pool,env:process.env});
@@ -357,7 +363,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     assert.ok(renewed.checkPrivateKey(crypto.createPrivateKey(fs.readFileSync(keyPath))));
     assert.equal(await servedFingerprint(),renewed.fingerprint256,"Dynamic filesystem TLS fixture must serve the actual renewed deployment");
     assert.ok((await pool.query("SELECT 1 FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2",[workspaceId,renewal.id])).rows.length,"Scheduled renewal must persist actual agent evidence");
-    // Exercise a second naturally due cycle without changing certificate or
+    // Exercise a second explicitly due cycle without changing certificate or
     // scheduler timestamps. Pause only our own execution process while two
     // real sweeps race, so completion cannot create a new due generation
     // between the admission checks.
