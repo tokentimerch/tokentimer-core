@@ -72,10 +72,11 @@ function localEndpoint(value, protocol) {
   return url.href;
 }
 // Return fixed labels only: persisted errors may contain private command output.
-function issuanceDiagnosticLabels(row, agent, before, after) {
+function issuanceDiagnosticLabels(row, agent, before, after, phase = "issue") {
+  assert.ok(["issue", "second-renewal"].includes(phase));
   const labels = [];
   const statuses = new Set(["failed", "rejected", "cancelled", "blocked", "pending", "claimed", "running", "succeeded"]);
-  labels.push(`real-acme-diagnostic-issue-status-${statuses.has(row?.status) ? row.status : "other"}`);
+  labels.push(`real-acme-diagnostic-${phase}-status-${statuses.has(row?.status) ? row.status : "other"}`);
   labels.push(agent?.exitCode === null && agent?.signalCode === null ? "real-acme-diagnostic-agent-running" : "real-acme-diagnostic-agent-not-running");
   const message = typeof row?.error_message === "string" ? row.error_message.toLowerCase() : "";
   // Match only source-defined prefixes; values from persisted details are never emitted.
@@ -101,6 +102,9 @@ function issuanceDiagnosticLabels(row, agent, before, after) {
     const previous = before?.perStage?.[stage]?.forwarded;
     const current = after?.perStage?.[stage]?.forwarded;
     if (Number.isSafeInteger(previous) && Number.isSafeInteger(current) && current > previous) labels.push(`real-acme-diagnostic-proxy-${stage}-forwarded`);
+  }
+  for (const [field, label] of [["acceptedOrders", "order-accepted"], ["validAuthorizations", "authorization-valid"], ["invalidAuthorizations", "authorization-invalid"], ["readyOrders", "order-ready"], ["badNonceResponses", "bad-nonce"], ["dnsProblemResponses", "dns-problem"], ["unauthorizedResponses", "unauthorized"], ["rateLimitedResponses", "rate-limited"]]) {
+    if (Number.isSafeInteger(before?.[field]) && Number.isSafeInteger(after?.[field]) && after[field] > before[field]) labels.push(`real-acme-diagnostic-ca-observed-${label}`);
   }
   return labels;
 }
@@ -422,6 +426,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     assert.equal(process.platform, "linux");
     await waitUntil(() => Date.now() > firstRenewalObservedAt + 1500);
     const previousRenewals = (await pool.query("SELECT id FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND operation='renew' AND source='automation'", [workspaceId, String(certificateId)])).rows.map((row) => row.id);
+    const diagnosticSecondBefore = gateway.snapshot();
     assert.equal(agent.kill("SIGSTOP"), true);
     let second;
     try {
@@ -432,12 +437,20 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       second = admitted[0]; ownedJobIds.push(second.id);
       await runScenario("real-acme-diagnostic-second-renewal-admitted",async()=>{});
     } finally { assert.equal(agent.kill("SIGCONT"), true); }
-    await waitUntil(async () => {
-      assert.equal(agent.exitCode, null); assert.equal(agent.signalCode, null);
-      const row = (await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [second.id])).rows[0];
-      if (["failed", "rejected", "cancelled"].includes(row?.status)) throw new Error("Actual second scheduled renewal terminated unsuccessfully");
-      return row?.status === "succeeded";
-    });
+    try {
+      await waitUntil(async () => {
+        assert.equal(agent.exitCode, null); assert.equal(agent.signalCode, null);
+        const row = (await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [second.id])).rows[0];
+        if (["failed", "rejected", "cancelled"].includes(row?.status)) throw new Error("Actual second scheduled renewal terminated unsuccessfully");
+        return row?.status === "succeeded";
+      });
+    } catch (error) {
+      try {
+        const row = (await pool.query("SELECT status,error_message FROM certificate_jobs WHERE id=$1", [second.id])).rows[0];
+        for (const label of issuanceDiagnosticLabels(row, agent, diagnosticSecondBefore, gateway.snapshot(), "second-renewal")) await runScenario(label, async()=>{});
+      } catch { /* Diagnostics must not replace the original failure or cleanup. */ }
+      throw error;
+    }
     const twiceRenewed = new crypto.X509Certificate(fs.readFileSync(certPath));
     await runScenario("real-acme-diagnostic-second-renewal-completed",async()=>{});
     await verifyDnsCleanup();
