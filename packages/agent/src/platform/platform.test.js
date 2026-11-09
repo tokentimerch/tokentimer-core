@@ -200,6 +200,33 @@ describe("platform: permission application", () => {
     assert.ok(icacls.args.includes(`*${OWN_SID}:(OI)(CI)(F)`));
   });
 
+  it("lets administrators traverse state without inheritable or write rights", () => {
+    const spawn = fakeSpawn({
+      whoami: () => ({ stdout: `"nt authority\\system","${platform.SYSTEM_SID}"\r\n` }),
+      icacls: icaclsSaveHandler("D:PAI(A;OICI;FA;;;SY)(A;;0x1200a9;;;BA)"),
+      powershell: () => ({ stdout: `${platform.SYSTEM_SID}\r\n` }),
+    });
+    platform.applyRestrictivePermissions("C:\\state", {
+      kind: "directory", includeAdministrators: true, platform: "win32", spawn,
+      tmpDir: os.tmpdir(),
+    });
+    const grant = spawn.calls.find((call) => call.args.includes("/grant:r"));
+    assert.ok(grant.args.includes(`*${platform.ADMINISTRATORS_SID}:(RX)`));
+    assert.ok(grant.args.includes(`*${platform.SYSTEM_SID}:(OI)(CI)(F)`));
+  });
+
+  it("grants administrators access to config without changing secret-file defaults", () => {
+    const spawn = fakeSpawn({
+      whoami: whoamiHandler,
+      icacls: icaclsSaveHandler(`D:PAI(A;;FA;;;${OWN_SID})(A;;FA;;;SY)(A;;FA;;;BA)`),
+    });
+    platform.applyRestrictivePermissions("C:\\state\\config.json", {
+      includeAdministrators: true, platform: "win32", spawn, tmpDir: os.tmpdir(),
+    });
+    const grant = spawn.calls.find((call) => call.args.includes("/grant:r"));
+    assert.ok(grant.args.includes(`*${platform.ADMINISTRATORS_SID}:(F)`));
+  });
+
   it("resolves whoami through System32 so Git Bash cannot shadow it", () => {
     const spawn = fakeSpawn({ whoami: whoamiHandler });
     const sid = platform.currentUserSid({ spawn, useCache: false });

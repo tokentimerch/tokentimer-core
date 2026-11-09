@@ -450,6 +450,25 @@ if (-not $script:DryRun -and -not (Test-IsAdministrator)) {
 }
 
 # -------------------------------------------------------- node version gate
+function Get-ExistingServiceEnvironment {
+    param([string]$ServiceKey)
+    $item = Get-ItemProperty -Path $ServiceKey -Name Environment -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return @() }
+    $property = $item.PSObject.Properties['Environment']
+    if ($null -eq $property -or $null -eq $property.Value) { return @() }
+    return @($property.Value)
+}
+
+# A prior installation may have enabled the Node flag for system trust. Do
+# not replace files or start the service with an older runtime that rejects
+# that option; retain the operator's settings and report the problem instead.
+function Test-UnsupportedSystemCaOption {
+    param([string[]]$Existing, [version]$NodeVersion)
+    $supportsFlag = ($NodeVersion.Major -eq 22 -and $NodeVersion -ge [version]'22.15.0') -or ($NodeVersion.Major -eq 23 -and $NodeVersion -ge [version]'23.8.0') -or $NodeVersion.Major -ge 24
+    if ($supportsFlag) { return $false }
+    return @($Existing | Where-Object { $_ -match '^(?i:NODE_OPTIONS)=' -and $_ -match '(?i)(?:^|[=\s])--use-system-ca(?:\s|$)' }).Count -gt 0
+}
+
 # engines.node is a single ">=x.y.z <a.b.c" range in this package; a plain
 # regex parse of the lower bound avoids needing node before the node check
 # itself, mirroring install-agent.sh's sed parse.
@@ -480,6 +499,16 @@ if ($nodeMajor -lt $requiredMajor) {
 }
 Write-Log "Node $nodeVersionRaw satisfies engines.node '$requiredRange'."
 $script:NodeExe = $nodeCommand.Source
+$nodeVersionMatch = [regex]::Match($nodeVersionRaw, '^v([0-9]+)\.([0-9]+)\.([0-9]+)')
+if (-not $nodeVersionMatch.Success) { Fail "could not parse installed Node version from 'node -v' (got '$nodeVersionRaw')" }
+$script:NodeVersion = [version]("{0}.{1}.{2}" -f $nodeVersionMatch.Groups[1].Value, $nodeVersionMatch.Groups[2].Value, $nodeVersionMatch.Groups[3].Value)
+$serviceEnvironment = @(Get-ExistingServiceEnvironment -ServiceKey "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName")
+if (Test-UnsupportedSystemCaOption -Existing @($serviceEnvironment) -NodeVersion $script:NodeVersion) {
+    Fail "Node $nodeVersionRaw does not support the existing service option --use-system-ca. Upgrade Node or remove that option and configure --ca-bundle before reinstalling."
+}
+if (($script:NodeVersion.Major -eq 22 -and $script:NodeVersion -lt [version]'22.15.0') -or ($script:NodeVersion.Major -eq 23 -and $script:NodeVersion -lt [version]'23.8.0')) {
+    Write-Log "Node $nodeVersionRaw cannot load Windows system CAs automatically. For a private control-plane CA, upgrade Node or configure --ca-bundle."
+}
 
 # --------------------------------------------------- platform module helper
 # Reuses the package's own src/platform module (already ACL-tested; see
@@ -489,7 +518,8 @@ $script:NodeExe = $nodeCommand.Source
 function Invoke-PlatformAcl {
     param(
         [Parameter(Mandatory = $true)][string]$TargetPath,
-        [Parameter(Mandatory = $true)][ValidateSet("file", "directory")][string]$Kind
+        [Parameter(Mandatory = $true)][ValidateSet("file", "directory")][string]$Kind,
+        [switch]$IncludeAdministrators
     )
     $platformModule = Join-Path $PackageDir "src\platform\index.js"
     # ConvertTo-Json (built into PowerShell 5.1+) is used rather than a
@@ -502,7 +532,8 @@ function Invoke-PlatformAcl {
     $modulePathJson = $platformModule | ConvertTo-Json -Compress
     $targetPathJson = $TargetPath | ConvertTo-Json -Compress
     $kindJson = $Kind | ConvertTo-Json -Compress
-    $jsSource = "require($modulePathJson).applyRestrictivePermissions($targetPathJson, { kind: $kindJson });"
+    $adminJs = if ($IncludeAdministrators) { 'true' } else { 'false' }
+    $jsSource = "require($modulePathJson).applyRestrictivePermissions($targetPathJson, { kind: $kindJson, includeAdministrators: $adminJs });"
     $scriptPath = Join-Path ([System.IO.Path]::GetTempPath()) "tokentimer-acl-$PID-$([guid]::NewGuid().ToString('N')).js"
     try {
         [System.IO.File]::WriteAllText($scriptPath, $jsSource, (New-Object System.Text.UTF8Encoding($false)))
@@ -812,7 +843,7 @@ if ($script:DryRun) {
 if (-not $script:DryRun) {
     New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
 }
-Invoke-Step "apply restricted ACL to $StateDir" { Invoke-PlatformAcl -TargetPath $StateDir -Kind "directory" }
+Invoke-Step "apply restricted ACL to $StateDir" { Invoke-PlatformAcl -TargetPath $StateDir -Kind "directory" -IncludeAdministrators }
 
 # ---------------------------------------------- acme.sh dnsapi hook (Windows)
 # install-agent.sh symlinks bin/dns_certops.sh into
@@ -875,7 +906,7 @@ if ((Test-Path -LiteralPath $configPath) -and -not $script:DryRun) {
     $configContent = ($lines -join "`n") + "`n"
     [System.IO.File]::WriteAllText($configTmp, $configContent, (New-Object System.Text.UTF8Encoding($false)))
     Move-Item -Force $configTmp $configPath
-    Invoke-PlatformAcl -TargetPath $configPath -Kind "file"
+    Invoke-PlatformAcl -TargetPath $configPath -Kind "file" -IncludeAdministrators
     # Sanity-parse the result with the node we already verified, so a bad
     # value can never install an unreadable config.
     & node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))" $configPath
@@ -909,15 +940,39 @@ if ($script:DryRun) {
 # ------------------------------------------------------------- Windows service
 # Native tooling only (sc.exe): no NSSM or other third-party service
 # wrapper. LocalSystem per ADR-0012 decision 11.
+# Preserve operator-supplied service variables on upgrades and rollback. The
+# explicit API caBundlePath remains authoritative when set by the operator.
+function Get-WindowsServiceEnvironmentValues {
+    param([string[]]$Existing, [string]$ConfigDir, [string]$Token, [version]$NodeVersion)
+    $values = New-Object System.Collections.Generic.List[string]
+    foreach ($entry in $Existing) {
+        if ($entry -and $entry -notmatch '^(?i:TOKENTIMER_AGENT_CONFIG_DIR|TOKENTIMER_AGENT_BOOTSTRAP_TOKEN)=') { $values.Add($entry) }
+    }
+    $values.Add("TOKENTIMER_AGENT_CONFIG_DIR=$ConfigDir")
+    if (-not [string]::IsNullOrEmpty($Token)) { $values.Add("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=$Token") }
+    $systemCaOverride = @($values | Where-Object { $_ -match '^(?i:NODE_USE_SYSTEM_CA)=' }).Count -gt 0
+    $nodeOptions = @($values | Where-Object { $_ -match '^(?i:NODE_OPTIONS)=' } | Select-Object -First 1)
+    $explicitCaOption = $nodeOptions.Count -gt 0 -and $nodeOptions[0] -match '(?i)--(?:no-)?use-(?:system|bundled|openssl)-ca(?:\s|$)'
+    if (-not $systemCaOverride -and -not $explicitCaOption) {
+        if (($NodeVersion.Major -eq 22 -and $NodeVersion -ge [version]'22.19.0') -or $NodeVersion -ge [version]'24.6.0') {
+            $values.Add('NODE_USE_SYSTEM_CA=1')
+        } elseif (($NodeVersion.Major -eq 22 -and $NodeVersion -ge [version]'22.15.0') -or ($NodeVersion.Major -eq 23 -and $NodeVersion -ge [version]'23.8.0') -or ($NodeVersion.Major -eq 24 -and $NodeVersion -lt [version]'24.6.0')) {
+            if ($nodeOptions.Count -gt 0) {
+                [void]$values.Remove($nodeOptions[0])
+                $values.Add($nodeOptions[0] + ' --use-system-ca')
+            } else { $values.Add('NODE_OPTIONS=--use-system-ca') }
+        }
+    }
+    return $values.ToArray()
+}
+
 function Set-ServiceEnvironment {
     param([string]$ConfigDir, [string]$Token)
-    $values = New-Object System.Collections.Generic.List[string]
-    $values.Add("TOKENTIMER_AGENT_CONFIG_DIR=$ConfigDir")
-    if (-not [string]::IsNullOrEmpty($Token)) {
-        $values.Add("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=$Token")
-    }
+    $key = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName"
+    $existing = @(Get-ExistingServiceEnvironment -ServiceKey $key)
+    $values = @(Get-WindowsServiceEnvironmentValues -Existing $existing -ConfigDir $ConfigDir -Token $Token -NodeVersion $script:NodeVersion)
     New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName" `
-        -Name "Environment" -PropertyType MultiString -Value $values.ToArray() -Force | Out-Null
+        -Name "Environment" -PropertyType MultiString -Value $values -Force | Out-Null
 }
 
 function Test-ServiceHealthy {

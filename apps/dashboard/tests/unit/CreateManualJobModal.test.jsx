@@ -129,6 +129,18 @@ beforeEach(() => {
   useCertOpsIsWorkspaceAdminMock.mockReturnValue(true);
 });
 
+describe('no-op simulation', () => {
+  it('submits the signed dry-run mode as a job field', async () => {
+    createJobMock.mockResolvedValue({ job: { id: 'job-1' } });
+    renderModal();
+    selectOperation('noop');
+    expect(screen.getByLabelText('Execution mode').value).toBe('real');
+    fireEvent.change(screen.getByLabelText('Execution mode'), { target: { value: 'dry_run' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create job' }));
+    await waitFor(() => expect(createJobMock).toHaveBeenCalledWith('ws-1', expect.objectContaining({ operation: 'noop', mode: 'dry_run' })));
+  });
+});
+
 describe('CreateManualJobModal executor toggle', () => {
   it('does not show an Executor control for a non-issue operation', () => {
     renderModal();

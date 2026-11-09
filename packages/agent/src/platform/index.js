@@ -161,9 +161,9 @@ function resetPlatformCaches() {
  *
  * SYSTEM is required (the service runs as LocalSystem). The agent's own
  * identity is required for a non-service, operator-run agent. Administrators
- * is accepted but never granted by the agent: a member of Administrators can
- * take ownership of any file on the machine, so excluding it from the DACL
- * buys no confidentiality while breaking routine operator maintenance.
+ * is accepted and granted explicitly only where operator configuration needs
+ * it. A member can take ownership, so excluding it from the allowlist buys no
+ * confidentiality and breaks routine operator maintenance.
  *
  * @param {string} ownSid
  * @returns {Set<string>}
@@ -188,16 +188,16 @@ function allowedPrincipals(ownSid) {
  * every write) start out restricted instead of inheriting the parent's ACL.
  *
  * @param {string} targetPath
- * @param {{ kind?: "file"|"directory", spawn?: Function, fsImpl?: typeof fs, tmpDir?: string }} [options]
+ * @param {{ kind?: "file"|"directory", includeAdministrators?: boolean, spawn?: Function, fsImpl?: typeof fs, tmpDir?: string }} [options]
  * @returns {{ mechanism: "windows-acl", principals: string[], removed: string[], inheritance: "removed" }}
  */
 function applyWindowsAcl(
   targetPath,
-  { kind = "file", spawn = spawnSync, fsImpl = fs, tmpDir } = {},
+  { kind = "file", includeAdministrators = false, spawn = spawnSync, fsImpl = fs, tmpDir } = {},
 ) {
   const ownSid = currentUserSid({ spawn });
   const rights = kind === "directory" ? "(OI)(CI)(F)" : "(F)";
-  const granted = [SYSTEM_SID, ownSid].filter(
+  const granted = [SYSTEM_SID, ownSid, ...(includeAdministrators ? [ADMINISTRATORS_SID] : [])].filter(
     (sid, index, all) => all.indexOf(sid) === index,
   );
   const grantResult = runTool(
@@ -206,7 +206,7 @@ function applyWindowsAcl(
       targetPath,
       "/inheritance:r",
       "/grant:r",
-      ...granted.map((sid) => `*${sid}:${rights}`),
+      ...granted.map((sid) => `*${sid}:${includeAdministrators && sid === ADMINISTRATORS_SID && kind === "directory" ? "(RX)" : rights}`),
     ],
     spawn,
   );
@@ -506,7 +506,7 @@ function assertWindowsAcl(
  * chmod, a failure here propagates.
  *
  * @param {string} targetPath
- * @param {{ kind?: "file"|"directory", mode?: number, platform?: string, spawn?: Function, fsImpl?: typeof fs }} [options]
+ * @param {{ kind?: "file"|"directory", mode?: number, includeAdministrators?: boolean, platform?: string, spawn?: Function, fsImpl?: typeof fs }} [options]
  * @returns {{ mechanism: "posix-mode"|"windows-acl", principals?: string[], mode?: number }}
  */
 function applyRestrictivePermissions(
@@ -518,10 +518,11 @@ function applyRestrictivePermissions(
     spawn = spawnSync,
     fsImpl = fs,
     tmpDir,
+    includeAdministrators = false,
   } = {},
 ) {
   if (isWindows(platform)) {
-    return applyWindowsAcl(targetPath, { kind, spawn, fsImpl, tmpDir });
+    return applyWindowsAcl(targetPath, { kind, spawn, fsImpl, tmpDir, includeAdministrators });
   }
   const posixMode =
     typeof mode === "number" ? mode : kind === "directory" ? DIRECTORY_MODE : FILE_MODE;
