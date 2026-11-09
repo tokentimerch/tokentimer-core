@@ -41,14 +41,13 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
     const currentMainLedger=(await pool.query("SELECT * FROM migrations ORDER BY version")).rows;
     assert.equal(currentMainLedger.at(-1).version,80);
     assert.equal(currentMainLedger.at(-1).name,"auto_sync_run_metrics");
-    // Model current Core through 109, plus the lifecycle preview through 89.
+    // Model released Core through 108, plus the lifecycle preview through 89.
     // Current job services need the released operator columns before fixtures are created.
-    migrations.push(...pending.filter(entry=>entry.version>80 && (entry.version<=89 || (entry.version>=92 && ![96,97].includes(entry.version)))));
+    migrations.push(...pending.filter(entry=>entry.version>80 && (entry.version<=89 || (entry.version>=92 && entry.version<=108 && ![96,97].includes(entry.version)))));
     await runMigrations();
     const beforeVerificationLedger=(await pool.query("SELECT * FROM migrations ORDER BY version")).rows;
-    assert.equal(beforeVerificationLedger.at(-1).version, 109);
-    assert.equal(beforeVerificationLedger.at(-1).name, "certops_retirement_dossiers");
-    assert.equal((await pool.query("SELECT to_regclass('public.certops_material_retirement_dossiers') AS name")).rows[0].name, "certops_material_retirement_dossiers");
+    assert.equal(beforeVerificationLedger.at(-1).version, 108);
+    assert.equal((await pool.query("SELECT to_regclass('public.certops_material_retirement_dossiers') AS name")).rows[0].name, null);
     const {fixture}=require("../helpers/distribution-lifecycle-fixture.cjs");
     const operations=require("../../apps/api/services/certops/distributionOperations");
     const f=await fixture();
@@ -106,9 +105,10 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
       recovered.push({incident,delivered});
       if(delivered)await pool.query("INSERT INTO alert_queue(user_id,certops_agent_id,alert_key,threshold_days,due_date,channels,status) VALUES($1,$2,$3,0,CURRENT_DATE,'[]'::jsonb,'sent')",[f.actor,f.consumer,`cert_distribution:${incident.id}:2:resolved`]);
     }
-    migrations.push(...pending.filter(entry=>[90,91,96,97].includes(entry.version)));
+    migrations.push(...pending.filter(entry=>[90,91,96,97,109].includes(entry.version)));
     await runMigrations();
-    assert.deepEqual((await pool.query("SELECT * FROM migrations WHERE version<=89 OR (version>=92 AND version NOT IN (96,97)) ORDER BY version")).rows,beforeVerificationLedger);
+    assert.deepEqual((await pool.query("SELECT * FROM migrations WHERE version<=89 OR (version BETWEEN 92 AND 108 AND version NOT IN (96,97)) ORDER BY version")).rows,beforeVerificationLedger);
+    assert.equal((await pool.query("SELECT to_regclass('public.certops_material_retirement_dossiers') AS name")).rows[0].name, "certops_material_retirement_dossiers");
     const backfilled=(await pool.query("SELECT verification_failure_count,verification_failure_revision FROM certops_consumer_current_state WHERE workspace_id=$1 AND binding_id=$2",[f.workspaceId,f.bindingId])).rows[0];
     assert.equal(Number(backfilled.verification_failure_count),1,"Fresh success resets the two earlier failures; the retrying failed cycle is retained from its log, not attempt_count=99");
     assert.equal(backfilled.verification_failure_revision,1);
