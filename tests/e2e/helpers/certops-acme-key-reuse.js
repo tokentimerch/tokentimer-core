@@ -129,7 +129,7 @@ async function qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certif
   const original = await profile(); assert.ok(original); assert.equal(original.status, "active"); assert.equal(original.renew_before_days, 30, "Reuse proof requires the explicit profile lead");
   assert.equal(original.public_metadata.renewalProfile.keyRotationPolicy.rotateOnRenew, true, "Run reuse only after the journey's positive rotation controls");
   const expected = structuredClone(original.public_metadata.renewalProfile); expected.keyRotationPolicy.rotateOnRenew = false;
-  const changed = await publicSession.request(`/api/v1/workspaces/${workspaceId}/certops/profiles/${original.id}`, "PATCH", { renewalProfile: expected });
+  const changed = await publicSession.request(`/api/v1/workspaces/${workspaceId}/certops/profiles/${original.id}`, "PATCH", { renewalProfile: { keyRotationPolicy: { rotateOnRenew: false } } });
   assert.equal(changed.status, 200); const stable = await profile(); assert.deepEqual(stable.public_metadata.renewalProfile, expected);
   const privateBytes = fs.readFileSync(keyPath), privateKey = crypto.createPrivateKey(privateBytes);
   const sha = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
