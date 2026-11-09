@@ -129,6 +129,7 @@ test(
         ).status,
         200,
       );
+      // The explicit profile lead makes fresh two-day certificates due for retirement testing.
       for (let i = 0; i < 3; i++) {
         const host = `retired-scheduler-${i}.example.test`;
         assert.equal(
@@ -193,7 +194,7 @@ test(
           };
         const profileId = (
           await fixture.pool.query(
-            "INSERT INTO certificate_profiles(workspace_id,name,key_mode,public_metadata,created_by) VALUES($1,$2,'agent-local',$3,$4) RETURNING id",
+            "INSERT INTO certificate_profiles(workspace_id,name,key_mode,public_metadata,created_by,renew_before_days) VALUES($1,$2,'agent-local',$3,$4,30) RETURNING id",
             [
               fixture.workspaceId,
               `Retired scheduler ${i}`,
@@ -440,7 +441,7 @@ test(
                   payload,
                   env: process.env,
                 }),
-                { code: "CERTOPS_CERTIFICATE_NOT_RENEWABLE" },
+                { code: "CERTOPS_CERTIFICATE_RETIRED" },
               );
             } finally {
               try {
