@@ -78,7 +78,24 @@ function issuanceDiagnosticLabels(row, agent, before, after) {
   labels.push(`real-acme-diagnostic-issue-status-${statuses.has(row?.status) ? row.status : "other"}`);
   labels.push(agent?.exitCode === null && agent?.signalCode === null ? "real-acme-diagnostic-agent-running" : "real-acme-diagnostic-agent-not-running");
   const message = typeof row?.error_message === "string" ? row.error_message.toLowerCase() : "";
-  const kind = message.includes("acme step failed") ? "acme-step" : message.includes("job execution failed") ? "execution-exception" : message ? "other" : "none";
+  // Match only source-defined prefixes; values from persisted details are never emitted.
+  const categories = [
+    ["acme step failed", "acme-step"],
+    ["job execution failed", "execution-exception"],
+    ["acme step reported success but produced no certificate file", "acme-staging"],
+    ["preflight validation failed", "preflight-validation"],
+    ["pre-deploy validation failed", "pre-deploy-validation"],
+    ["preflight failed", "preflight"],
+    ["pre-deploy validation could not read private key", "pre-deploy-key-read"],
+    ["deploy step failed", "deployment"],
+    ["verify step failed", "verification"],
+    ["reload step failed", "reload"],
+    ["deploy target.chainpath is configured", "missing-chain"],
+  ];
+  const kind = message.includes("acme step failed") ? "acme-step" : message.includes("job execution failed") ? "execution-exception" : categories.find(([prefix]) => message.startsWith(prefix))?.[1] || (message ? "other" : "none");
+  const validationCode = /^pre(?:flight|-deploy) validation failed \(([a-z_]+)\)/.exec(message)?.[1];
+  const validationCodes = new Set(["certificate_parse_failed", "private_key_parse_failed", "san_mismatch", "private_key_mismatch", "not_yet_valid", "expired", "chain_invalid"]);
+  if (validationCodes.has(validationCode)) labels.push(`real-acme-diagnostic-validation-${validationCode.replaceAll("_", "-")}`);
   labels.push(`real-acme-diagnostic-error-${kind}`);
   for (const stage of ["new-order", "finalize"]) {
     const previous = before?.perStage?.[stage]?.forwarded;
