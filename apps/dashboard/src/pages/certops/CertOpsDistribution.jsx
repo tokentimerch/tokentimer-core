@@ -356,6 +356,11 @@ function PolicyForm({ data, disabled, onSave }) {
             onChange={value => set('retention', 'rollbackSeconds', value)}
           />
         </SimpleGrid>
+        <Text fontSize='sm'>
+          Retention and rollback periods are measured from publication (or
+          creation if publication time is unavailable), not from the last use
+          or replacement of a version. Active references remain protected.
+        </Text>
         <Checkbox
           isChecked={policy.retention.cleanupEnabled}
           onChange={event =>

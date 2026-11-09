@@ -12,6 +12,13 @@ test("retention eligibility protects each consumer/job/approval/recovery referen
     assert.ok(retentionReasons(version,{rank:4,policy,now,references:new Map([["old",[reason]]]),latestId:"new"}).includes(reason));
   assert.ok(retentionReasons(version,{rank:1,policy,now,references:new Map(),latestId:"old"}).includes("minimum_version_count"));
 });
+test("rollback period uses publication age, while active references remain protected",()=>{
+  const current={...policy,minimumSeconds:0,minimumVersions:2,rollbackSeconds:604800};
+  const old={id:"old",state:"published",published_at:new Date(now-30*86400000)};
+  const input={rank:3,policy:current,now,latestId:"new"};
+  assert.ok(!retentionReasons(old,{...input,references:new Map()}).includes("rollback_preservation_period"));
+  assert.ok(retentionReasons(old,{...input,references:new Map([["old",["observed_consumer_version"]]])}).includes("observed_consumer_version"));
+});
 test("service identity survives fingerprint rotation and store-only inventory is not a consuming service",()=>{
   const base={agentRowId:"agent",targetHost:"web",locationKind:"iis_binding",locationSlot:"site1:443",fingerprintSha256:"old"};
   assert.equal(serviceKey(base),serviceKey({...base,fingerprintSha256:"new"}));

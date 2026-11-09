@@ -2,7 +2,7 @@
 
 Retention preview never authorizes deletion. The optional `cleanup-from-store` job implements **Vault/OpenBao KV v2 exact-version soft deletion** on a customer agent, after a separate human approval. The providers have separate capability gates. It does not destroy versions, remove metadata/all versions, purge objects or implement Azure deletion. Public material, job, approval and incident history remains.
 
-Existing workspaces retain manual/report-only defaults: minimum 30 days, three versions and seven days of rollback preservation. Cleanup is disabled. The current release manifest qualifies **neither** `material-cleanup-vault-kv2-v1` **nor** `material-cleanup-openbao-kv2-v1`; runtime settings cannot enable either capability in an unqualified binary.
+Existing workspaces retain manual/report-only defaults: minimum 30 days, three versions and seven days of rollback preservation. Both durations start at publication, or creation if publication time is unavailable; they do not guarantee a period after last use or replacement. Active references remain protected. Cleanup is disabled. The current release manifest qualifies **neither** `material-cleanup-vault-kv2-v1` **nor** `material-cleanup-openbao-kv2-v1`; runtime settings cannot enable either capability in an unqualified binary.
 
 ## Operator workflow
 

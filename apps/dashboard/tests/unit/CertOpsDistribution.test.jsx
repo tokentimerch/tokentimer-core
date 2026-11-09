@@ -225,6 +225,7 @@ describe('Distribution Management',()=>{
     fireEvent.click(screen.getByRole('button',{name:'Edit policy settings'}));
     for(const name of ['Rollout authority','Verification','Incident notifications','Retention and cleanup'])
       expect(screen.getByRole('heading',{name})).toBeInTheDocument();
+    expect(screen.getByText(/not from the last use or replacement of a version/)).toBeInTheDocument();
   });
   it('distinguishes configured verification from its last outcome and does not imply notification delivery without a contact group',async()=>{
     data.contactGroups=[];data.schedule={last_outcome:'success'};page();await openView('Policy');
