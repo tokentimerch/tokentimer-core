@@ -523,10 +523,18 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     }
     if(process.env.CERTOPS_REPORT_SCOPE===adoptionReport.SCOPE){
       const adoption=require('./helpers/certops-acme-native-adoption');
-      await runScenario(adoption.SCENARIO,async()=>{
-        const proof=await adoption.qualifyNativeAdoption({pool,workspaceId,agentId,publicSession,certificateId,certPath,keyPath,configDir,workDir,domain,acmeKind,bulkProof,ownedJobIds,ownedBulkResources,ownedAdoptionResources,ownedWorkers,waitUntil,verifyDnsCleanup,servedFingerprint,primaryTlsOptions:lifecycleTlsOptions});
-        fs.writeFileSync(path.join(repoRoot,adoptionReport.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
-      });
+      const adoptionMilestones=[];
+      const adoptionMilestoneNames=new Set(["adoption-start","adoption-prerequisites-passed","adoption-guard-created","adoption-bulk-material-verified","adoption-linked-profile-verified","adoption-no-open-period-verified","adoption-source-ready","adoption-tls-ready","adoption-readd-completed","adoption-detach-verified","adoption-setup-admitted","adoption-setup-replay-verified","adoption-setup-job-completed","adoption-setup-public-result-verified","adoption-dry-material-verified","adoption-real-material-evidence-verified","adoption-intent-verified","adoption-outbox-drained","adoption-public-state-verified","adoption-profile-and-period-verified","adoption-proof-verified","adoption-readd-http-expected","adoption-readd-http-client-error","adoption-readd-http-server-error","adoption-readd-http-other","adoption-setup-http-expected","adoption-setup-http-client-error","adoption-setup-http-server-error","adoption-setup-http-other","adoption-setup-job-failed","adoption-setup-job-rejected","adoption-setup-job-cancelled","adoption-setup-job-orphaned_unknown_effect"]);
+      const recordAdoptionMilestone=(name,index)=>{if(adoptionMilestoneNames.has(name)&&(index===null||index===0||index===1)&&adoptionMilestones.length<32)adoptionMilestones.push(`real-acme-diagnostic-${name}${index===null?"":index===0?"-dry":"-real"}`);};
+      try {
+        await runScenario(adoption.SCENARIO,async()=>{
+          const proof=await adoption.qualifyNativeAdoption({pool,workspaceId,agentId,publicSession,certificateId,certPath,keyPath,configDir,workDir,domain,acmeKind,bulkProof,ownedJobIds,ownedBulkResources,ownedAdoptionResources,ownedWorkers,waitUntil,verifyDnsCleanup,servedFingerprint,primaryTlsOptions:lifecycleTlsOptions,onMilestone:recordAdoptionMilestone});
+          fs.writeFileSync(path.join(repoRoot,adoptionReport.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
+        });
+      } catch(error) {
+        try { for(const name of adoptionMilestones)await runScenario(name,async()=>{}); } catch { /* Preserve the original failure and owned cleanup. */ }
+        throw error;
+      }
     }
     if(resultGateway){
       const outbox=require('./helpers/certops-acme-certificate-outbox');
