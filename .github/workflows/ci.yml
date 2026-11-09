@@ -8,6 +8,16 @@ on:
   push:
     branches: [main, master]
   workflow_dispatch:
+    inputs:
+      native_windows_revocation:
+        description: Also run disposable Windows native revocation qualification
+        required: false
+        default: false
+        type: boolean
+      expected_sha:
+        description: Exact Core commit required for native revocation qualification
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -15,7 +25,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.native_windows_revocation && '-native-windows-revocation' || '' }}
   cancel-in-progress: true
 
 env:
@@ -1306,3 +1316,83 @@ jobs:
             grype-results-worker.sarif
             grype-results-k8s-controller.sarif
           if-no-files-found: ignore
+
+  windows_observed_revocation_native:
+    name: Windows native observed revocation
+    if: github.event_name == 'workflow_dispatch' && inputs.native_windows_revocation == true
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Require the exact candidate
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          if ($env:EXPECTED_SHA -cnotmatch '^[a-f0-9]{40}$' -or $env:EXPECTED_SHA -cne $env:GITHUB_SHA) { throw 'Candidate SHA mismatch' }
+          if ($env:RUNNER_ENVIRONMENT -cne 'github-hosted') { throw 'A disposable GitHub-hosted runner is required' }
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: '11.28.8'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: packages/agent/reference/observed-revocation/go.mod
+          cache: false
+      - run: pnpm install --frozen-lockfile
+      - name: Verify fixture guards and cleanup
+        run: node --test packages/agent/reference/observed-revocation/windows-native-safety.test.cjs
+      - name: Exercise real Windows store discovery through the API
+        shell: pwsh
+        env:
+          CERTOPS_REVOCATION_NATIVE_WINDOWS: '1'
+          DB_HOST: 127.0.0.1
+          DB_PORT: '5432'
+          DB_NAME: revocation_test
+          DB_USER: postgres
+          DB_PASSWORD: root
+          PGPASSWORD: root
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $service = Get-Service -Name 'postgresql-x64-14' -ErrorAction Stop
+          if ($service.Status -ne 'Stopped') { throw 'Expected the hosted runner database service to be stopped' }
+          if (-not (Test-Path -LiteralPath $env:PGDATA -PathType Container)) { throw 'Hosted runner PostgreSQL data directory is unavailable' }
+          $psql = Join-Path $env:PGBIN 'psql.exe'
+          if (-not (Test-Path -LiteralPath $psql -PathType Leaf)) { throw 'Hosted runner PostgreSQL client is unavailable' }
+          $private = @(Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
+            $_.IPAddress -match '^10\.' -or $_.IPAddress -match '^192\.168\.' -or $_.IPAddress -match '^172\.(1[6-9]|2\d|3[01])\.'
+          } | Select-Object -ExpandProperty IPAddress)
+          if ($private.Count -eq 0) { throw 'No private IPv4 address is available for the fixture responder' }
+          $env:CERTOPS_REVOCATION_TEST_IP = $private[0]
+          $env:CERTOPS_REVOCATION_TEST_HELPER = Join-Path $env:GITHUB_WORKSPACE 'packages/agent/bin/tokentimer-observed-revocation-windows-amd64.exe'
+          $ownedDatabase = $false
+          $startedService = $false
+          try {
+            Add-Content -LiteralPath (Join-Path $env:PGDATA 'postgresql.conf') -Value "`nlisten_addresses = '127.0.0.1'"
+            Set-Service -Name $service.Name -StartupType Manual
+            Start-Service -Name $service.Name
+            $startedService = $true
+            & $psql -X -w -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE revocation_test'
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create isolated maintenance database' }
+            $ownedDatabase = $true
+            New-Item -ItemType Directory -Path (Split-Path -Parent $env:CERTOPS_REVOCATION_TEST_HELPER) -Force | Out-Null
+            Push-Location packages/agent/reference/observed-revocation
+            try {
+              go build -mod=readonly -trimpath -buildvcs=false -o $env:CERTOPS_REVOCATION_TEST_HELPER ./cmd/observed-revocation
+              if ($LASTEXITCODE -ne 0) { throw 'Could not build candidate helper' }
+              node windows-native-orchestrator.cjs
+              if ($LASTEXITCODE -ne 0) { throw 'Native revocation qualification failed' }
+            } finally { Pop-Location }
+          } finally {
+            try {
+              if ($ownedDatabase) {
+                & $psql -X -w -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'DROP DATABASE revocation_test WITH (FORCE)'
+                if ($LASTEXITCODE -ne 0) { throw 'Owned maintenance database cleanup failed' }
+              }
+            } finally {
+              if ($startedService) { Stop-Service -Name $service.Name -ErrorAction Stop }
+            }
+          }

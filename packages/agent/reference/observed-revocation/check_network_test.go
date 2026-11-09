@@ -114,8 +114,10 @@ func TestNetworkCRLAndOCSP(t *testing.T) {
 		Items    json.RawMessage `json:"items"`
 	}
 	var batches []scanBatch
+	scanRevision := 0
 	check := func(scenario, want string) {
 		t.Helper()
+		scanRevision++
 		captured := false
 		if !linuxOnly {
 			// Each probe can launch an agent and database, so the response may be
@@ -156,7 +158,7 @@ func TestNetworkCRLAndOCSP(t *testing.T) {
 				return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}))
 			}
 			runAgent := func(cmd *exec.Cmd, helper string) {
-				input, e := json.Marshal(map[string]string{"leaf": encode(leaf), "intermediate": encode(inter), "root": encode(root), "origin": origin, "expected": want, "helperPath": helper})
+				input, e := json.Marshal(map[string]string{"leaf": encode(leaf), "intermediate": encode(inter), "root": encode(root), "origin": origin, "expected": want, "helperPath": helper, "revision": fmt.Sprint(scanRevision)})
 				if e != nil {
 					t.Fatal(e)
 				}
@@ -174,7 +176,11 @@ func TestNetworkCRLAndOCSP(t *testing.T) {
 				}
 			}
 			if helper := os.Getenv("CERTOPS_REVOCATION_TEST_HELPER"); helper != "" {
-				runAgent(exec.Command("node", "agent-scan-probe.cjs"), helper)
+				probe := "agent-scan-probe.cjs"
+				if os.Getenv("CERTOPS_REVOCATION_NATIVE_WINDOWS") == "1" {
+					probe = "agent-scan-windows-native.cjs"
+				}
+				runAgent(exec.Command("node", probe), helper)
 			}
 			if helper := os.Getenv("CERTOPS_REVOCATION_TEST_LINUX_HELPER"); helper != "" {
 				agentDir, e := filepath.Abs("../..")
