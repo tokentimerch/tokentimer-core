@@ -358,8 +358,8 @@ function PolicyForm({ data, disabled, onSave }) {
         </SimpleGrid>
         <Text fontSize='sm'>
           Retention and rollback periods are measured from publication (or
-          creation if publication time is unavailable), not from the last use
-          or replacement of a version. Active references remain protected.
+          creation if publication time is unavailable), not from the last use or
+          replacement of a version. Active references remain protected.
         </Text>
         <Checkbox
           isChecked={policy.retention.cleanupEnabled}
