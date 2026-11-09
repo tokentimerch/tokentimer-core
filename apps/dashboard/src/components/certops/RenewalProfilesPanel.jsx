@@ -341,7 +341,7 @@ function DisableRenewalModal({ isOpen, onClose, profile, onConfirm, saving }) {
 }
 
 /** Inline editor for the renewal lead time. */
-function LeadTimeEditor({ profile, onSave, saving, disabled }) {
+export function LeadTimeEditor({ profile, onSave, saving, disabled }) {
   const [value, setValue] = useState(String(profile.renewBeforeDays ?? ''));
   const [editing, setEditing] = useState(false);
   const { muted, dashboard } = useDashboardThemeColors();
@@ -403,6 +403,17 @@ function LeadTimeEditor({ profile, onSave, saving, disabled }) {
           }}
         >
           Save
+        </Button>
+        <Button
+          size='xs'
+          variant='outline'
+          isLoading={Boolean(saving)}
+          onClick={async () => {
+            const saved = await onSave(null);
+            if (saved) setEditing(false);
+          }}
+        >
+          Use deployment default
         </Button>
         <Button
           size='xs'

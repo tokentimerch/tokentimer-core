@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   RENEWAL_STATES,
   formatDate,
+  formatDateTime,
   renewalDescriptor,
 } from '../../src/components/certops/certopsFormat';
 
@@ -20,6 +21,12 @@ describe('renewalDescriptor', () => {
     expect(descriptor.label).toMatch(/^Auto-renews from \S/);
     expect(descriptor.scheme).toBe('green');
     expect(descriptor.isWarning).toBe(false);
+  });
+
+  it('shows the time of day for a fractional-day renewal window', () => {
+    const renewsFrom = '2026-08-12T12:00:00.000Z';
+    const descriptor = renewalDescriptor({ state: 'auto', renewsFrom, renewBeforeDays: 0.5 });
+    expect(descriptor.label).toBe(`Auto-renews from ${formatDateTime(renewsFrom)}`);
   });
 
   it('falls back to a dateless auto label when no window was computed', () => {

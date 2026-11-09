@@ -673,9 +673,9 @@ async function qualifyAdcsBrowserJourney(context) {
           ["IIS port", String(port)],
           ["SNI hostname", item.domain],
           ["Certificate store", "My"],
-          ["Lead time", "30"],
         ])
           await dialog.getByLabel(label, { exact: true }).fill(value);
+        assert.equal(await dialog.getByLabel("Lead time", { exact: true }).inputValue(), "", "AD CS wizard must default to inheritance");
         await dialog
           .getByLabel("Key algorithm", { exact: true })
           .selectOption("rsa");
@@ -690,7 +690,15 @@ async function qualifyAdcsBrowserJourney(context) {
           `${api}/profiles`,
           201,
         );
-        profileId = (await created.json()).id;
+        const createdProfile = await created.json();
+        profileId = createdProfile.id;
+        assert.equal(createdProfile.renewBeforeDays, null, "Browser-created AD CS profile must inherit the deployment window");
+        // The real certificate has not reached its midpoint. Set an explicit
+        // lead through the public API before attachment so the existing native
+        // enrollment remains an immediate positive control.
+        const override = await fixture.request(`${api}/profiles/${profileId}`, "PATCH", { renewBeforeDays: 30 });
+        assert.equal(override.status, 200);
+        assert.equal(override.body.renewBeforeDays, 30);
         const attachButton = dialog.getByRole("button", {
           name: "Attach and enable automation",
           exact: true,
@@ -727,7 +735,7 @@ async function qualifyAdcsBrowserJourney(context) {
       {
         evidenceLevel: "real-host",
         oracle:
-          "Real browser authors a confirmed-issuer IIS profile and replaces the exact existing native source's management period with automation enabled; no first-issue UI is invented",
+          "Real browser creates an inherited-lead IIS profile; a public explicit-lead override enables immediate native renewal before the browser attaches the owned source",
       },
     );
     await gate.scenario(

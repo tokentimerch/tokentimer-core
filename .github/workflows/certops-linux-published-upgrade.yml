@@ -20,7 +20,7 @@ jobs:
       CERTOPS_SIGNING_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       CERTOPS_REGISTRATION_ENCRYPTION_KEY: abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
@@ -31,7 +31,7 @@ jobs:
           node-version: '24'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version-file: packages/agent/windows-service-host/go.mod
       - name: Prepare exact public predecessor and candidate release archives
@@ -40,7 +40,7 @@ jobs:
         run: |
           set -euo pipefail
           downloads=$(mktemp -d "$RUNNER_TEMP/certops-linux-archive-downloads.XXXXXX")
-          gh api repos/tokentimerch/tokentimer-core/releases/tags/v0.17.2 > "$downloads/release.json"
+          gh api --header "Accept: application/vnd.github+json" repos/tokentimerch/tokentimer-core/releases/tags/v0.17.2 > "$downloads/release.json"
           node scripts/certops-linux-published-package.js --verify-release "$downloads/release.json"
           gh release download v0.17.2 --repo tokentimerch/tokentimer-core --pattern 'tokentimer-agent-0.17.2.tgz*' --dir "$downloads"
           pnpm --dir packages/agent build

@@ -508,7 +508,8 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                                 >
                                   No installation. Connect by URL and sign in
                                   with your account. Requires a client
-                                  supporting Streamable HTTP and OAuth.
+                                  supporting Streamable HTTP and OAuth. Your
+                                  deployment may also require TLS 1.3.
                                 </Text>
                               </Radio>
                             </Box>
@@ -593,8 +594,10 @@ function ConnectionsForWorkspace({ workspaceId, userId }) {
                                   your client.
                                 </Text>
                                 <Text>
-                                  2. Sign in and review the app, workspace and
-                                  access.
+                                  2. Connect or authenticate the server in your
+                                  client to open browser sign-in. In Codex, run
+                                  codex mcp login followed by the server name.
+                                  Review the app, workspace and access.
                                 </Text>
                                 <Text>
                                   3. Run tt_whoami in the client to verify the

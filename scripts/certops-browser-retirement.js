@@ -106,7 +106,7 @@ async function main() {
     await page.goto(url);
     await loaded;
     await page
-      .getByRole("checkbox", { name: /Show retired/ })
+      .getByRole("checkbox", { name: /Show unmanaged/ })
       .waitFor({ state: "attached" });
   }
   try {
@@ -123,6 +123,9 @@ async function main() {
     await page.waitForURL((value) => !value.pathname.includes("login"));
     await gate.scenario(scenarios[0], async () => {
       await go();
+      // Native monitor discoveries are unmanaged until explicitly attached.
+      await page.getByText(/^Show unmanaged/).click();
+      await page.waitForFunction(() => [...document.querySelectorAll('input[type="checkbox"]')].some(input => input.closest("label")?.textContent.includes("Show unmanaged") && input.checked));
       for (const item of tlsFixture.items) {
         await row(item).waitFor();
         assert.equal(await item.peer(), item.fingerprint);
@@ -182,11 +185,9 @@ async function main() {
       assert.equal(response.body.items.length, 0);
     });
     await gate.scenario(scenarios[3], async () => {
-      await page
-        .getByRole("checkbox", { name: /Show retired/ })
-        .locator("..")
-        .click();
       for (const item of tlsFixture.items) {
+        const statusFilter = page.getByRole("combobox", { name: "Filter by certificate status" });
+        await statusFilter.selectOption(item.status);
         await row(item).waitFor();
         assert.match(
           await row(item).innerText(),
@@ -196,9 +197,10 @@ async function main() {
           ),
         );
         assert.match(await row(item).innerText(), /Still observed/i);
+        await page.reload();
+        assert.equal(await statusFilter.inputValue(), item.status);
+        await row(item).waitFor();
       }
-      await page.reload();
-      for (const item of tlsFixture.items) await row(item).waitFor();
     });
     await gate.scenario(scenarios[4], async () => {
       await go();
@@ -216,7 +218,7 @@ async function main() {
         );
         assert.equal(
           await page
-            .getByRole("checkbox", { name: /Show retired/ })
+            .getByRole("checkbox", { name: /Show unmanaged/ })
             .isChecked(),
           false,
         );

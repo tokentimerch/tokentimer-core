@@ -2,6 +2,21 @@ export const MIN_ALERT_THRESHOLD_DAYS = -365;
 export const MAX_ALERT_THRESHOLD_DAYS = 730;
 export const DEFAULT_ALERT_THRESHOLDS = [30, 14, 7, 1, 0];
 
+export function getShortCertificateAlertThresholds(notBefore, notAfter) {
+  if (notBefore == null || notAfter == null) return [];
+  const lifetimeDays =
+    (new Date(notAfter).getTime() - new Date(notBefore).getTime()) / 86400000;
+  if (!(lifetimeDays >= 2 && lifetimeDays < 90)) return [];
+
+  return normalizeThresholds([
+    Math.floor(lifetimeDays * 0.33),
+    Math.floor(lifetimeDays * 0.2),
+    Math.floor(lifetimeDays * 0.1),
+    1,
+    0,
+  ]);
+}
+
 function parseThresholdValues(input) {
   if (Array.isArray(input)) {
     return input

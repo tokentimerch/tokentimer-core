@@ -2,8 +2,8 @@
  * Qualification: production default-cron ACME renewal
  *
  * Start unmodified apps/worker/src/runner.js certops without cron/interval/startup/
- * one-shot overrides: the real default is a minute cron. Require one naturally due
- * global profile/active period and zero active certificate jobs before startup. Two real
+ * one-shot overrides: the real default is a minute cron. Require one profile with
+ * an explicit lead, an active period and zero active certificate jobs before startup. Two real
  * ticks must admit agent-executed renewals with distinct CA serials/SPKIs, advanced
  * expiry, protected matching keys, trusted served TLS, current-claim leaf evidence and
  * production scheduler audit. The local observer counts starts, maintenance summaries
@@ -31,6 +31,7 @@ const SCENARIO =
   "real ACME: production worker default minute cron renews twice";
 const FLAGS = [
   "actualDefaultCron",
+  // The real SQL-NOW selector uses the explicit profile lead, not an inherited window.
   "defaultSqlNowSelection",
   "twoAutomaticRealJobs",
   "claimBoundVerification",
@@ -171,6 +172,7 @@ async function qualifyBackgroundRenewals({
   const beforeProfile = await profile(),
     beforePeriod = await management();
   assert.equal(beforeProfile.status, "active");
+  assert.equal(beforeProfile.renew_before_days, 30, "Worker proof requires the explicit profile lead");
   assert.equal(
     beforeProfile.public_metadata.renewalProfile.keyRotationPolicy
       .rotateOnRenew,
@@ -254,7 +256,7 @@ async function qualifyBackgroundRenewals({
   assert.equal(
     due.length,
     1,
-    "Actual default SQL-NOW scan must remain globally isolated",
+    "Actual SQL-NOW scan with the explicit lead must remain globally isolated",
   );
   assert.equal(String(due[0].id), String(certificateId));
   assert.equal(due[0].workspace_id, workspaceId);
@@ -308,7 +310,7 @@ async function qualifyBackgroundRenewals({
             ).rows[0];
       assert.ok(
         inventory,
-        "Default SQL-NOW selection must remain naturally due",
+        "Certificate must remain due under the explicit profile lead",
       );
       assert.equal(
         new Date(inventory.not_after).getTime(),

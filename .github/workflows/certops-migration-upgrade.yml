@@ -34,12 +34,12 @@ jobs:
         working-directory: candidate
     steps:
       - name: Checkout exact candidate
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           path: candidate
           persist-credentials: false
       - name: Checkout immutable historical Core source
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: b6ad7fc3d38db35b4c41a2c6137b0c39afc72158
           path: baseline
