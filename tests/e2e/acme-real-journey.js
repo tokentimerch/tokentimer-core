@@ -71,11 +71,14 @@ function localEndpoint(value, protocol) {
   assert.ok(["localhost", "127.0.0.1", "[::1]"].includes(url.hostname), "qualification CA must be loopback only");
   return url.href;
 }
+function failedRenewalTerminalStatus(status) {
+  return ["failed", "rejected", "cancelled", "blocked", "orphaned_unknown_effect"].includes(status);
+}
 // Return fixed labels only: persisted errors may contain private command output.
 function issuanceDiagnosticLabels(row, agent, before, after, phase = "issue") {
   assert.ok(["issue", "second-renewal"].includes(phase));
   const labels = [];
-  const statuses = new Set(["failed", "rejected", "cancelled", "blocked", "pending", "claimed", "running", "succeeded"]);
+  const statuses = new Set(["failed", "rejected", "cancelled", "blocked", "orphaned_unknown_effect", "pending", "claimed", "running", "succeeded"]);
   labels.push(`real-acme-diagnostic-${phase}-status-${statuses.has(row?.status) ? row.status : "other"}`);
   labels.push(agent?.exitCode === null && agent?.signalCode === null ? "real-acme-diagnostic-agent-running" : "real-acme-diagnostic-agent-not-running");
   const message = typeof row?.error_message === "string" ? row.error_message.toLowerCase() : "";
@@ -98,6 +101,10 @@ function issuanceDiagnosticLabels(row, agent, before, after, phase = "issue") {
   const validationCodes = new Set(["certificate_parse_failed", "private_key_parse_failed", "san_mismatch", "private_key_mismatch", "not_yet_valid", "expired", "chain_invalid"]);
   if (validationCodes.has(validationCode)) labels.push(`real-acme-diagnostic-validation-${validationCode.replaceAll("_", "-")}`);
   labels.push(`real-acme-diagnostic-error-${kind}`);
+  if (phase === "second-renewal" && row?.status === "blocked") {
+    const reason = require("./helpers/certops-acme-background-renewals").workerBlockedReason(row);
+    labels.push(`real-acme-diagnostic-second-renewal-block-${reason}`);
+  }
   for (const stage of ["new-order", "finalize"]) {
     const previous = before?.perStage?.[stage]?.forwarded;
     const current = after?.perStage?.[stage]?.forwarded;
@@ -441,12 +448,12 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       await waitUntil(async () => {
         assert.equal(agent.exitCode, null); assert.equal(agent.signalCode, null);
         const row = (await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [second.id])).rows[0];
-        if (["failed", "rejected", "cancelled"].includes(row?.status)) throw new Error("Actual second scheduled renewal terminated unsuccessfully");
+        if (failedRenewalTerminalStatus(row?.status)) throw new Error("Actual second scheduled renewal terminated unsuccessfully");
         return row?.status === "succeeded";
       });
     } catch (error) {
       try {
-        const row = (await pool.query("SELECT status,error_message FROM certificate_jobs WHERE id=$1", [second.id])).rows[0];
+        const row = (await pool.query("SELECT status,error_code,error_message FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, second.id])).rows[0];
         for (const label of issuanceDiagnosticLabels(row, agent, diagnosticSecondBefore, gateway.snapshot(), "second-renewal")) await runScenario(label, async()=>{});
       } catch { /* Diagnostics must not replace the original failure or cleanup. */ }
       throw error;
@@ -646,3 +653,4 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
 };
 
 module.exports.issuanceDiagnosticLabels = issuanceDiagnosticLabels;
+module.exports.failedRenewalTerminalStatus = failedRenewalTerminalStatus;
