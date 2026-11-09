@@ -548,7 +548,7 @@ async function qualifyBulk(c) {
       assert.ok(
         isDeepStrictEqual(
           row.payload.renewalProfile,
-          profiles[index].public_metadata.renewalProfile,
+          require("./certops-acme-key-reuse").expectedProfileSnapshot(profiles[index]),
         ),
         "Bulk signed snapshot changed",
       );
