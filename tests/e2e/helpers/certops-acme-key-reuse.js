@@ -113,10 +113,19 @@ function verifyProof(proof) {
   for (const id of proof.jobIds) assert.match(id, /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i);
   assert.equal(new Set(proof.jobIds.map(id => id.toLowerCase())).size, 2); return true;
 }
+// The signed snapshot binds the linked row identity and name while retaining
+// every stored execution field. These fixtures use exact SAN policies.
+function expectedProfileSnapshot(profile) {
+  assert.ok(profile && typeof profile.id === "string" && typeof profile.name === "string");
+  const stored = profile.public_metadata?.renewalProfile;
+  assert.ok(stored && stored.sanPolicy?.mode === "exact");
+  return { ...structuredClone(stored), profileId: profile.id, profileName: profile.name };
+}
+
 async function qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certificateId, certPath, keyPath, ownedJobIds, waitUntil, verifyDnsCleanup, verifyNames, servedFingerprint, repoRoot, acmeKind, workDir, configDir, workDirIdentity }) {
   assert.equal(process.platform, "linux"); assert.ok(["certbot", "acme.sh"].includes(acmeKind));
   const query = (sql, args = []) => pool.query(sql, args);
-  const profile = async () => (await query("SELECT cp.id, cp.public_metadata, cp.renew_before_days, cp.status, cp.updated_at FROM managed_certificates mc JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id WHERE mc.workspace_id=$1 AND mc.id=$2", [workspaceId, certificateId])).rows[0];
+  const profile = async () => (await query("SELECT cp.id, cp.name, cp.public_metadata, cp.renew_before_days, cp.status, cp.updated_at FROM managed_certificates mc JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id WHERE mc.workspace_id=$1 AND mc.id=$2", [workspaceId, certificateId])).rows[0];
   const original = await profile(); assert.ok(original); assert.equal(original.status, "active"); assert.equal(original.renew_before_days, 30, "Reuse proof requires the explicit profile lead");
   assert.equal(original.public_metadata.renewalProfile.keyRotationPolicy.rotateOnRenew, true, "Run reuse only after the journey's positive rotation controls");
   const expected = structuredClone(original.public_metadata.renewalProfile); expected.keyRotationPolicy.rotateOnRenew = false;
@@ -148,7 +157,7 @@ async function qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certif
       assert.ok(row); if (["failed", "rejected", "cancelled", "blocked", "orphaned_unknown_effect"].includes(row.status)) throw new Error("Real key-reuse renewal terminated unsuccessfully");
       if (row.status !== "succeeded") return false;
       assert.equal(row.mode, "real"); assert.equal(row.payload.keyRotation, false); assert.equal(row.source, job.source); assert.ok(row.claim_id);
-      assert.deepEqual(row.payload.renewalProfile, expected, "Claimed execution must retain the complete stable source profile snapshot");
+      assert.deepEqual(row.payload.renewalProfile, expectedProfileSnapshot(stable), "Claimed execution must retain the complete stable source profile snapshot");
       assert.equal(row.payload.acmeKind, acmeKind); assert.equal(row.payload.commandRef, expected.acme.commandRef); assert.equal(row.payload.caEndpoint, expected.ca.endpoint);
       assert.deepEqual([...row.payload.sans].sort(), [...expected.sanPolicy.sans].sort()); assert.equal(row.payload.certPath, certPath);
       assert.equal(row.result_metadata.keyRotated, false);
@@ -411,4 +420,4 @@ const variants = {
   contained, refuseBlanketReset, assertClientPath, createRun, registerKey, submitOrder, deleteKey, spkiOf,
   verifyProof: verifyVariantProof, localProof, assessLab, closedReport, writeReport, run,
 };
-module.exports = { assertOwnedMaterialRoot, MATERIAL_PATH_SCOPE, MATERIAL_PATH_FLAGS, MATERIAL_PATH_LIMITS, verifyMaterialPaths, materialPathObserver, qualifyKeyReuse, verifyProof, scope, scenarioName, fields, requiredSources, variants };
+module.exports = { expectedProfileSnapshot, assertOwnedMaterialRoot, MATERIAL_PATH_SCOPE, MATERIAL_PATH_FLAGS, MATERIAL_PATH_LIMITS, verifyMaterialPaths, materialPathObserver, qualifyKeyReuse, verifyProof, scope, scenarioName, fields, requiredSources, variants };

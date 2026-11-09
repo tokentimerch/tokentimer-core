@@ -159,7 +159,7 @@ async function qualifyBackgroundRenewals({
   const profile = async () =>
     (
       await query(
-        "SELECT cp.id,cp.status,cp.renew_before_days,cp.public_metadata,cp.updated_at FROM managed_certificates mc JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id WHERE mc.workspace_id=$1 AND mc.id=$2",
+        "SELECT cp.id,cp.name,cp.status,cp.renew_before_days,cp.public_metadata,cp.updated_at FROM managed_certificates mc JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id WHERE mc.workspace_id=$1 AND mc.id=$2",
         [workspaceId, certificateId],
       )
     ).rows[0];
@@ -357,7 +357,7 @@ async function qualifyBackgroundRenewals({
       assert.equal(current.payload.acmeKind, acmeKind);
       assert.deepEqual(
         current.payload.renewalProfile,
-        beforeProfile.public_metadata.renewalProfile,
+        require("./certops-acme-key-reuse").expectedProfileSnapshot(beforeProfile),
       );
       assert.equal(current.payload.certPath, certPath);
       assert.ok(
