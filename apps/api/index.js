@@ -168,15 +168,10 @@ if (metricsEnabled) {
   });
 }
 
-// Trust N proxy hops so req.ip reflects the real client IP behind ingress/LB.
-// Override via TRUST_PROXY_HOPS (default 2 = LB -> Traefik). Set to 0 for
-// no-proxy deployments. Affects req.protocol detection used by callback URL
-// generation in SSO flows.
-const TRUST_PROXY_HOPS = Number(process.env.TRUST_PROXY_HOPS);
-app.set(
-  "trust proxy",
-  Number.isFinite(TRUST_PROXY_HOPS) ? TRUST_PROXY_HOPS : 2,
-);
+// Default to direct access. Trust forwarding headers only after an operator
+// configures the actual proxy chain and restricts direct backend access.
+const { resolveTrustedProxyHops } = require("./config/trustProxy");
+app.set("trust proxy", resolveTrustedProxyHops(process.env.TRUST_PROXY_HOPS));
 
 // API docs are enabled in non-production by default.
 // In production, opt-in explicitly with ENABLE_API_DOCS=true.

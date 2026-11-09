@@ -190,7 +190,7 @@ API_URL: {{ .Values.config.apiUrl | default .Values.config.baseUrl | quote }}
 {{- if ne .Values.config.trustProxyHops nil }}
 TRUST_PROXY_HOPS: {{ .Values.config.trustProxyHops | quote }}
 {{- else }}
-TRUST_PROXY_HOPS: "2"
+TRUST_PROXY_HOPS: "0"
 {{- end }}
 {{- if or .Values.postgresql.cloudnative.enabled (not .Values.postgresql.external.existingSecret) }}
 DB_HOST: {{ include "tokentimer.databaseHost" . | quote }}

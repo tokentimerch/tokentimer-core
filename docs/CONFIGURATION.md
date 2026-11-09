@@ -126,7 +126,7 @@ the origins users and integrations actually use in the browser.
 | `PHONE_HASH_SALT`                          | Optional salt for phone hashing                                                 | `unset`                                | API privacy  |
 | `WEEKLY_DIGEST_RECIPIENT_KEY`              | HMAC secret for weekly-digest skip keys. Falls back to `SESSION_SECRET`. Rotating it re-sends already claimed recipients for the current week. | `unset` | Worker privacy |
 | `WEEKLY_DIGEST_UNCERTAIN_RETRY_SECONDS`    | How long a weekly digest waits after an in-flight or ambiguous provider call before another worker may send | `900` | Worker |
-| `TRUST_PROXY_HOPS`                         | Number of trusted proxy hops (`0` for direct access). Restrict direct API access when proxies are trusted, set the actual hop count, and ensure those proxies sanitize `X-Forwarded-For`; otherwise clients can bypass IP limits. | `2`                                    | API security |
+| `TRUST_PROXY_HOPS`                         | Number of trusted proxy hops. Default `0` is for direct access. **Operator action:** deployments previously relying on implicit proxy trust must set the actual hop count before upgrading, restrict direct API access, and ensure proxies sanitize forwarding headers. This also controls the forwarded protocol used for callback URLs. | `0`                                    | API security |
 | `WORKER_API_KEY`                           | Worker-to-API auth key. Bearer requests authenticated with this key are CSRF-exempt, as are CertOps machine-token paths. CSRF is enforced in development as well as production. | `unset (falls back to SESSION_SECRET)` | Worker, API  |
 
 ## Email and delivery

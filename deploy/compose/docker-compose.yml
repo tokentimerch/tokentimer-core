@@ -140,9 +140,9 @@ services:
       SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE: ${SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE:-false}
 
       # Reverse proxy: number of trusted proxy hops in front of the API.
-      # Affects req.ip and req.protocol resolution. Default 2 covers
-      # LB -> reverse-proxy. Set 0 when no proxy is in front.
-      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-2}
+      # Default 0 is for direct access. Restrict backend access and configure
+      # actual trusted hops for proxied deployments; affects req.ip/protocol.
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-0}
 
       # Per-IP limiter for GET /api/csrf-token. Empty = code defaults.
       CSRF_TOKEN_RATE_LIMIT_WINDOW_MS: ${CSRF_TOKEN_RATE_LIMIT_WINDOW_MS:-}
