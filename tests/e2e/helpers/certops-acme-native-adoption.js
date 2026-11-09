@@ -212,6 +212,19 @@ function sameExecutionPolicy(actual, expected) {
     { ...expected, sans: [...expected.sans].sort() },
   );
 }
+// Fixed labels only: never emit certificate values or untrusted field names.
+function executionPolicyDifferenceLabels(actual, expected) {
+  const groups = {
+    target: ["target"], sans: ["sans"], key: ["keyAlgorithm", "keySize", "keyRotation"],
+    authority: ["commandRef", "caEndpoint", "acmeKind", "preferredChain", "accountRef", "eabRef"],
+    dns: ["dnsProvider", "dnsZone"],
+    deployment: ["deploymentTargets", "certPath", "keyPath", "chainPath", "reloadService", "reloadCommandRefs"],
+    verification: ["verifyHost", "verifyPort"],
+  };
+  const select = (value, keys) => Object.fromEntries(keys.filter(key => Object.hasOwn(value, key)).map(key => [key, key === "sans" && Array.isArray(value[key]) ? [...value[key]].sort() : value[key]]));
+  const labels = Object.entries(groups).filter(([, keys]) => !isDeepStrictEqual(select(actual, keys), select(expected, keys))).map(([label]) => `adoption-policy-diff-${label}`);
+  return labels.length ? labels : ["adoption-policy-diff-other"];
+}
 function materialState(value) {
   return {
     certificateSha: sha(value.cert),
@@ -622,10 +635,15 @@ async function qualifyNativeAdoption(c) {
         derived.public_metadata.renewalProfile,
       ),
     );
+    mark("adoption-profile-loaded", null);
+    if (!sameExecutionPolicy(actualExecution, expectedExecution)) {
+      for (const label of executionPolicyDifferenceLabels(actualExecution, expectedExecution)) mark(label, null);
+    }
     assert.ok(
       sameExecutionPolicy(actualExecution, expectedExecution),
       "Derived execution policy changed",
     );
+    mark("adoption-policy-verified", null);
     assert.equal(
       derived.public_metadata.derivedFrom.certificateId,
       certificateId,
@@ -634,18 +652,22 @@ async function qualifyNativeAdoption(c) {
       assert.equal(derived.status, source.profile_status);
       assert.equal(derived.renew_before_days, source.renew_before_days);
     }
+    mark("adoption-profile-origin-verified", null);
     assert.ok(
       isDeepStrictEqual(materialState(primary()), materialState(primaryBefore)),
       "Original serving custody changed",
     );
+    mark("adoption-primary-material-verified", null);
     assert.ok(
       isDeepStrictEqual(await originalServingProfile(), primaryProfile),
       "Original profile changed",
     );
+    mark("adoption-primary-profile-verified", null);
     assert.equal(
       await c.servedFingerprint(),
       primaryBefore.leaf.fingerprint256,
     );
+    mark("adoption-primary-tls-verified", null);
     const period = (
       await query(
         "SELECT id,automation_enabled,renewal_profile_id FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL",
@@ -707,6 +729,7 @@ module.exports = {
   qualifyNativeAdoption,
   resolveTlsOptions,
   sameExecutionPolicy,
+  executionPolicyDifferenceLabels,
   readOwnedBytes,
   verifyPublicResult,
 };
