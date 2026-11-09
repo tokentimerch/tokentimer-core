@@ -324,6 +324,30 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     await admin.query(`DROP DATABASE IF EXISTS ${dbName}`);
     await admin.end();
   });
+  it("preserves tracking mode when the outbox links an adopted renewal profile", async () => {
+    const ws = await workspace();
+    const mc = await source(ws, A, { name: "adoption.example.test" });
+    const initial = (await db.query("SELECT id FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL", [ws, mc.id])).rows[0];
+    assert.ok(initial);
+    await stopManagingSource({ workspaceId: ws, periodId: initial.id, client: db });
+    const tracking = await readdManagingSource({ workspaceId: ws, managedCertificateId: mc.id, renewalProfileId: null, automationEnabled: false, client: db });
+    await db.query("UPDATE managed_certificates SET subject_alt_names=$2 WHERE id=$1", [mc.id, ["adoption.example.test"]]);
+    const claim = randomUUID(), outboxClaim = randomUUID();
+    const payload = { target: { type: "domain", reference: "adoption.example.test" }, sans: ["adoption.example.test"], certPath: "/tmp/adoption.pem", commandRef: "certbot", caEndpoint: "https://ca.example.test/directory", acmeKind: "certbot", dnsProvider: "example", dnsZone: "example.test" };
+    const finished = (await db.query("INSERT INTO certificate_jobs(workspace_id,subject_type,subject_id,operation,status,claim_id,payload) VALUES($1,'managed_certificate',$2,'renew','succeeded',$3,$4::jsonb) RETURNING id", [ws, mc.id, claim, JSON.stringify(payload)])).rows[0];
+    await db.query("INSERT INTO certificate_evidence(workspace_id,job_id,evidence_type,claim_id,metadata) VALUES($1,$2,'validation.passed',$3,$4::jsonb)", [ws, finished.id, claim, JSON.stringify({ step: "verify" })]);
+    const intentPayload = { jobId: finished.id, certificateId: mc.id };
+    const intent = (await db.query("INSERT INTO certops_outbox(workspace_id,event_type,dedupe_key,payload,claim_id) VALUES($1,'profile_derivation_requested',$2,$3::jsonb,$4) RETURNING *", [ws, finished.id, JSON.stringify(intentPayload), outboxClaim])).rows[0];
+    const certopsWorker = await import("../../apps/worker/src/certops-worker.js");
+    const result = await certopsWorker.handleProfileDerivationIntent({ dbPool: db, row: intent, claimId: outboxClaim, payload: intentPayload });
+    assert.equal(result.terminalStatus, "succeeded");
+    const saved = (await db.query("SELECT mc.profile_id, p.id AS period_id, p.automation_enabled, p.renewal_profile_id FROM managed_certificates mc JOIN certops_management_periods p ON p.workspace_id=mc.workspace_id AND p.managed_certificate_id=mc.id AND p.ended_at IS NULL WHERE mc.workspace_id=$1 AND mc.id=$2", [ws, mc.id])).rows[0];
+    assert.ok(saved.profile_id);
+    assert.equal(saved.period_id, tracking.periodId);
+    assert.equal(saved.automation_enabled, false);
+    assert.equal(saved.renewal_profile_id, null);
+  });
+
   it("normalizes legacy audit reads without changing immutable metadata or timestamps", async () => {
     const { auditActionSql } = require("../../apps/api/services/audit");
     const ids = fixture.auditBefore.map(row => row.id);

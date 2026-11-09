@@ -451,6 +451,19 @@ export async function handleProfileDerivationIntent({
       });
     }
 
+    // Linking a profile fires the legacy management-period sync trigger. Lock
+    // the existing period so adoption cannot silently change a tracking-only
+    // operator choice, and restore that choice in this same transaction.
+    const periodResult = await client.query(
+      `SELECT id, automation_enabled, renewal_profile_id
+         FROM certops_management_periods
+        WHERE workspace_id = $1 AND managed_certificate_id = $2::uuid
+          AND ended_at IS NULL
+        FOR UPDATE`,
+      [row.workspace_id, certificateId],
+    );
+    const period = periodResult.rows[0] || null;
+
     const derivation = await deriveProfile({
       client,
       workspaceId: row.workspace_id,
@@ -466,6 +479,16 @@ export async function handleProfileDerivationIntent({
     });
 
     if (derivation?.profileId) {
+      if (period && !period.automation_enabled) {
+        const restored = await client.query(
+          `UPDATE certops_management_periods
+              SET automation_enabled = FALSE, renewal_profile_id = $4::uuid
+            WHERE workspace_id = $1 AND managed_certificate_id = $2::uuid
+              AND id = $3::uuid AND ended_at IS NULL`,
+          [row.workspace_id, certificateId, period.id, period.renewal_profile_id],
+        );
+        if (restored.rowCount !== 1) throw new Error("Tracking period changed during profile derivation");
+      }
       return await completeOwnRow(client, row.id, claimId, {
         status: "succeeded",
         reason: null,
