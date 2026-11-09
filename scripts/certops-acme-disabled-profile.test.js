@@ -65,3 +65,15 @@ test("six-day native leaf needs an explicit lead for immediate selection", () =>
   assert.ok(h.MILESTONES.length <= 16);
   assert.equal(new Set(h.MILESTONES).size, h.MILESTONES.length);
 });
+
+
+test("lead edit requires ownership and preserves all other profile fields", () => {
+  const before = { id: "owned-profile", status: "active", renew_before_days: null, public_metadata: { renewalProfile: { keyRotationPolicy: { rotateOnRenew: true } }, derivedFrom: { certificateId: "owned" } } };
+  const after = { ...structuredClone(before), renew_before_days: 30, public_metadata: { ...structuredClone(before.public_metadata), operatorOwned: true } };
+  assert.doesNotThrow(() => h.assertOwnedLeadEdit(before, after));
+  assert.throws(() => h.assertOwnedLeadEdit(before, { ...after, public_metadata: before.public_metadata }));
+  assert.throws(() => h.assertOwnedLeadEdit(before, { ...after, renew_before_days: 29 }));
+  const changed = structuredClone(after); changed.public_metadata.renewalProfile.keyRotationPolicy.rotateOnRenew = false;
+  assert.throws(() => h.assertOwnedLeadEdit(before, changed));
+  assert.throws(() => h.assertOwnedLeadEdit(before, { ...after, status: "disabled" }));
+});

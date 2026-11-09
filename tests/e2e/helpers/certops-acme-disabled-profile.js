@@ -121,6 +121,14 @@ function verifyAgainstBulk(p, previous) {
   );
   return true;
 }
+function assertOwnedLeadEdit(before, after) {
+  const { OPERATOR_OWNED_METADATA_KEY } = require("../../../apps/api/services/certops/renewalProfileDerivation");
+  assert.deepEqual(after, {
+    ...before,
+    renew_before_days: 30,
+    public_metadata: { ...before.public_metadata, [OPERATOR_OWNED_METADATA_KEY]: true },
+  }, "Lead edit must preserve the execution policy and record operator ownership");
+}
 function assertCleanupSafe(root) {
   assert.ok(
     !active.has(path.resolve(root)) && !fs.existsSync(path.join(root, GUARD)),
@@ -246,7 +254,7 @@ async function qualify(c) {
     assert.equal(lead.status, 200);
     assert.equal(lead.body.renewBeforeDays, 30);
     original = await profile();
-    assert.ok(isDeepStrictEqual(original, { ...beforeLead, renew_before_days: 30 }), "Only the profile lead may change");
+    assertOwnedLeadEdit(beforeLead, original);
     mark("disabled-lead-saved");
     server = tls.createServer(
       {
@@ -480,5 +488,6 @@ module.exports = {
   verifyProof,
   verifyAgainstBulk,
   assertCleanupSafe,
+  assertOwnedLeadEdit,
   qualify,
 };
