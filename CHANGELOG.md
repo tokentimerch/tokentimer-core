@@ -11,6 +11,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Short-lived certificate renewal.** The default renewal window adapts to certificate lifetime; profile and deployment overrides take priority. AD CS profiles can inherit the default. **Operator guidance:** clients consuming `renewBeforeDays` must accept fractional values; schedule sweeps and jobs to fit the remaining lifetime.
+
 - **Microsoft Teams alerts.** Alerts, weekly digests, and webhook tests use Adaptive Cards. **Operator action:** use a Teams Workflows webhook and confirm the card appears; retain any required proxy settings.
 
 - **Dashboard usability.** Review recipient confirmations in a dedicated dialog, with clearer setup guidance and recovery states throughout the dashboard.
