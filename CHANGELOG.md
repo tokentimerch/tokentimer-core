@@ -11,6 +11,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **MCP contact creation.** When recipient verification is enforced, the response reports confirmation status for each email or WhatsApp destination. Creating a contact does not send an invitation.
+
 - **Short-lived certificate renewal.** The default renewal window adapts to certificate lifetime; profile and deployment overrides take priority. AD CS profiles can inherit the default. **Operator guidance:** clients consuming `renewBeforeDays` must accept fractional values; schedule sweeps and jobs to fit the remaining lifetime.
 
 - **Microsoft Teams alerts.** Alerts, weekly digests, and webhook tests use Adaptive Cards. **Operator action:** use a Teams Workflows webhook and confirm the card appears; retain any required proxy settings.

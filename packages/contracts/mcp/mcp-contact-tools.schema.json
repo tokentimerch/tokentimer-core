@@ -62,7 +62,19 @@
         "planId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
         "contactId": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
         "state": { "const": "succeeded" },
-        "replayed": { "type": "boolean" }
+        "replayed": { "type": "boolean" },
+        "verification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "status", "email", "whatsapp", "invitationSentByCreation"],
+          "properties": {
+            "mode": { "const": "enforce" },
+            "status": { "enum": ["available", "unavailable"] },
+            "email": { "enum": ["confirmation_required", "verified", "opted_out", "revoked", "suppressed", "unavailable", null] },
+            "whatsapp": { "enum": ["confirmation_required", "verified", "opted_out", "revoked", "suppressed", "unavailable", null] },
+            "invitationSentByCreation": { "const": false }
+          }
+        }
       }
     }
   }

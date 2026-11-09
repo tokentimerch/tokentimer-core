@@ -8,6 +8,7 @@ const { assertInventoryImportAllowed } = require("./inventoryPolicy");
 const { normalizeContact } = require("./contactValidation");
 const { untrustedText } = require("./projections");
 const { invalid } = require("./tokenInventory");
+const verification = require("../../../../packages/recipient-verification");
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HASH = /^[a-f0-9]{64}$/;
@@ -70,4 +71,25 @@ async function createContact({ client, operator, planId, planHash, requestId }) 
   return result;
 }
 
-module.exports = { previewContact, createContact };
+// Compute this after the create transaction commits. A status lookup failure must
+// never make a successfully created contact look like a failed write.
+async function contactVerification({ client, workspaceId, contactId }) {
+  if (verification.resolveEnforcementMode() !== "enforce") return undefined;
+  const unavailable = { mode: "enforce", status: "unavailable", email: null, whatsapp: null, invitationSentByCreation: false };
+  try {
+    const found = await client.query("SELECT phone_e164,details FROM workspace_contacts WHERE workspace_id=$1 AND id=$2", [workspaceId, contactId]);
+    const contact = found.rows[0];
+    if (!contact) return unavailable;
+    const status = async (channel, destination) => {
+      if (!destination) return null;
+      const decision = await verification.canDeliverToRecipient({ client, workspaceId, contactId, channel, destination });
+      if (decision.allowed) return "verified";
+      return ({ RECIPIENT_NOT_VERIFIED: "confirmation_required", RECIPIENT_OPTED_OUT: "opted_out", RECIPIENT_REVOKED: "revoked", RECIPIENT_SUPPRESSED: "suppressed" })[decision.code] || "unavailable";
+    };
+    return { mode: "enforce", status: "available", email: await status("email", contact.details?.email), whatsapp: await status("whatsapp", contact.phone_e164), invitationSentByCreation: false };
+  } catch (_error) {
+    return unavailable;
+  }
+}
+
+module.exports = { previewContact, createContact, contactVerification };

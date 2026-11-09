@@ -193,6 +193,38 @@ describe("MCP adapter against the real operator API", { concurrency: false }, ()
     });
   }
 
+  it("returns contact confirmation guidance through the real stdio adapter only when enforced", async () => {
+    const keys = ["MCP_OPERATOR_WRITES_ENABLED", "TT_DEPLOYMENT", "RECIPIENT_VERIFICATION_MODE", "RECIPIENT_VERIFICATION_CLOUD_SHADOW", "RECIPIENT_FINGERPRINT_SECRET"];
+    const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+    try {
+      process.env.MCP_OPERATOR_WRITES_ENABLED = "true";
+      process.env.TT_DEPLOYMENT = "cloud";
+      process.env.RECIPIENT_VERIFICATION_MODE = "enforce";
+      process.env.RECIPIENT_FINGERPRINT_SECRET = "synthetic-stdio-verification-secret";
+      delete process.env.RECIPIENT_VERIFICATION_CLOUD_SHADOW;
+      const connection = await connections.createConnection({ workspaceId, userId: owner, name: "contact-verification-e2e", scopes: ["mcp:contacts:create"], roleCeiling: "admin" });
+      await session({ env: { TOKENTIMER_MCP_CREDENTIAL: connection.plaintextCredential, TOKENTIMER_MCP_ENABLE_WRITES: "true" } }, async ({ client }) => {
+        const preview = await client.callTool({ name: "tt_preview_contact_create", arguments: { contact: { firstName: "MCP", lastName: "Stdio", email: `stdio-${crypto.randomUUID()}@example.test` } } });
+        assert.notEqual(preview.isError, true, JSON.stringify(preview));
+        const args = { planId: preview.structuredContent.planId, planHash: preview.structuredContent.planHash, requestId: crypto.randomUUID() };
+        const created = await client.callTool({ name: "tt_create_contact", arguments: args });
+        assert.notEqual(created.isError, true, JSON.stringify(created));
+        assert.deepEqual(created.structuredContent.verification, { mode: "enforce", status: "available", email: "confirmation_required", whatsapp: null, invitationSentByCreation: false });
+        process.env.TT_DEPLOYMENT = "self-hosted";
+        process.env.RECIPIENT_VERIFICATION_MODE = "off";
+        const replay = await client.callTool({ name: "tt_create_contact", arguments: args });
+        assert.notEqual(replay.isError, true, JSON.stringify(replay));
+        assert.equal(replay.structuredContent.replayed, true);
+        assert.equal(Object.hasOwn(replay.structuredContent, "verification"), false);
+      });
+    } finally {
+      for (const key of keys) {
+        if (saved[key] === undefined) delete process.env[key];
+        else process.env[key] = saved[key];
+      }
+    }
+  });
+
   it("keeps every answer inside the connection's workspace", async () => {
     await session({}, async ({ client }) => {
       const other = await client.callTool({ name: "tt_get_certificate", arguments: { identityId: otherCert.identityId } });
