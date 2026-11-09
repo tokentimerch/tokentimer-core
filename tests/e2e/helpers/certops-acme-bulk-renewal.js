@@ -207,6 +207,7 @@ async function qualifyBulk(c) {
     verifyNames,
     verifyDnsCleanup,
     primaryTlsOptions,
+    onMilestone = () => {},
   } = c;
   assert.ok(Array.isArray(ownedBulkResources));
   assert.equal(fs.realpathSync.native(workDir), workDir);
@@ -287,8 +288,10 @@ async function qualifyBulk(c) {
           "blocked",
           "orphaned_unknown_effect",
         ].includes(row.status)
-      )
+      ) {
+        onMilestone(`bulk-job-${row.status}`, null);
         throw new Error("Actual owned bulk fixture job failed");
+      }
       return row.status === "succeeded" ? row : false;
     }, 180000);
   const profile = async (id) =>
@@ -369,6 +372,7 @@ async function qualifyBulk(c) {
     const subjects = [],
       profiles = [],
       issueJobIds = [];
+    onMilestone("bulk-original-verified", null);
     for (let index = 0; index < 2; index++) {
       const targetPath = path.join(
         workDir,
@@ -380,6 +384,8 @@ async function qualifyBulk(c) {
         undefined,
         "Bulk native destination must start absent",
       );
+      fs.mkdirSync(path.dirname(targetPath), { mode: 0o700 });
+      assert.equal(fs.lstatSync(targetPath, { throwIfNoEntry: false }), undefined);
       const issued = await publicSession.request(prefix + "/jobs", "POST", {
         operation: "issue",
         idempotencyKey: crypto.randomUUID(),
@@ -404,6 +410,7 @@ async function qualifyBulk(c) {
           id.toLowerCase() !== certificateId.toLowerCase() &&
           !subjects.some((item) => item.id.toLowerCase() === id.toLowerCase()),
       );
+      onMilestone("bulk-issue-admitted", index);
       const actualIssue = await waitJob(issued.body.job.id);
       assert.equal(actualIssue.operation, "issue");
       assert.equal(actualIssue.mode, "real");
@@ -413,6 +420,7 @@ async function qualifyBulk(c) {
       assert.ok(uuid(actualIssue.claim_id));
       assert.equal(actualIssue.payload.certPath, targetPath);
       issueJobIds.push(actualIssue.id);
+      onMilestone("bulk-issue-completed", index);
       await verifyDnsCleanup();
       const item = {
         id,
@@ -460,10 +468,12 @@ async function qualifyBulk(c) {
       item.tls = { ...primaryTlsOptions(), port: server.address().port };
       subjects.push(item);
       profiles.push(stored);
+      onMilestone("bulk-subject-tls-ready", index);
     }
     const originals = subjects.map(material);
     for (const [index, item] of subjects.entries())
       assert.equal(await trusted(item.tls), originals[index].fingerprint);
+    onMilestone("bulk-subjects-verified", null);
     const certificateIds = subjects.map((item) => item.id),
       unknownId = crypto.randomUUID(),
       request = {
@@ -489,6 +499,7 @@ async function qualifyBulk(c) {
       if (uuid(row.jobId)) ownedJobIds.push(row.jobId);
     assert.equal(admitted.status, 200);
     const jobs = verifyAdmission(admitted.body, certificateIds, unknownId);
+    onMilestone("bulk-renewal-admission-verified", null);
     const replay = await publicSession.request(
       `${prefix}/jobs/bulk-renew`,
       "POST",
@@ -502,6 +513,7 @@ async function qualifyBulk(c) {
       verifyAdmission(replay.body, certificateIds, unknownId, { replay: true }),
       jobs,
     );
+    onMilestone("bulk-replay-verified", null);
     const allocated = (
       await query(
         "SELECT id,subject_id FROM certificate_jobs WHERE workspace_id=$1 AND idempotency_key LIKE $2 ORDER BY id",
@@ -522,8 +534,10 @@ async function qualifyBulk(c) {
     );
     const claims = [],
       updated = [];
+    onMilestone("bulk-allocation-verified", null);
     for (const [index, item] of subjects.entries()) {
       const row = await waitJob(jobs[index]);
+      onMilestone("bulk-renewal-completed", index);
       assert.equal(row.operation, "renew");
       assert.equal(row.source, "api");
       assert.equal(row.mode, "real");
@@ -548,7 +562,7 @@ async function qualifyBulk(c) {
       assert.ok(
         isDeepStrictEqual(
           row.payload.renewalProfile,
-          profiles[index].public_metadata.renewalProfile,
+          require("./certops-acme-key-reuse").expectedProfileSnapshot(profiles[index]),
         ),
         "Bulk signed snapshot changed",
       );
@@ -594,6 +608,7 @@ async function qualifyBulk(c) {
         "Bulk changed stored execution profile",
       );
       claims.push(row.claim_id);
+      onMilestone("bulk-renewal-evidence-verified", index);
       updated.push(actual);
     }
     await verifyDnsCleanup();
@@ -609,6 +624,7 @@ async function qualifyBulk(c) {
       await trusted(primaryTlsOptions()),
       originalServingMaterial.fingerprint,
     );
+    onMilestone("bulk-original-unchanged", null);
     for (const item of subjects) {
       const periods = (
         await query(
@@ -633,6 +649,7 @@ async function qualifyBulk(c) {
         0,
       );
     }
+    onMilestone("bulk-periods-stopped", null);
     await resource.close();
     owned();
     fs.unlinkSync(guard);
@@ -654,6 +671,7 @@ async function qualifyBulk(c) {
       ...Object.fromEntries(FLAGS.map((flag) => [flag, true])),
     };
     verifyProof(proof);
+    onMilestone("bulk-proof-verified", null);
   } finally {
     await resource.close();
   }

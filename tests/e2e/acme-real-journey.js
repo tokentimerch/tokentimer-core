@@ -71,6 +71,39 @@ function localEndpoint(value, protocol) {
   assert.ok(["localhost", "127.0.0.1", "[::1]"].includes(url.hostname), "qualification CA must be loopback only");
   return url.href;
 }
+// Return fixed labels only: persisted errors may contain private command output.
+function issuanceDiagnosticLabels(row, agent, before, after) {
+  const labels = [];
+  const statuses = new Set(["failed", "rejected", "cancelled", "blocked", "pending", "claimed", "running", "succeeded"]);
+  labels.push(`real-acme-diagnostic-issue-status-${statuses.has(row?.status) ? row.status : "other"}`);
+  labels.push(agent?.exitCode === null && agent?.signalCode === null ? "real-acme-diagnostic-agent-running" : "real-acme-diagnostic-agent-not-running");
+  const message = typeof row?.error_message === "string" ? row.error_message.toLowerCase() : "";
+  // Match only source-defined prefixes; values from persisted details are never emitted.
+  const categories = [
+    ["acme step failed", "acme-step"],
+    ["job execution failed", "execution-exception"],
+    ["acme step reported success but produced no certificate file", "acme-staging"],
+    ["preflight validation failed", "preflight-validation"],
+    ["pre-deploy validation failed", "pre-deploy-validation"],
+    ["preflight failed", "preflight"],
+    ["pre-deploy validation could not read private key", "pre-deploy-key-read"],
+    ["deploy step failed", "deployment"],
+    ["verify step failed", "verification"],
+    ["reload step failed", "reload"],
+    ["deploy target.chainpath is configured", "missing-chain"],
+  ];
+  const kind = message.includes("acme step failed") ? "acme-step" : message.includes("job execution failed") ? "execution-exception" : categories.find(([prefix]) => message.startsWith(prefix))?.[1] || (message ? "other" : "none");
+  const validationCode = /^pre(?:flight|-deploy) validation failed \(([a-z_]+)\)/.exec(message)?.[1];
+  const validationCodes = new Set(["certificate_parse_failed", "private_key_parse_failed", "san_mismatch", "private_key_mismatch", "not_yet_valid", "expired", "chain_invalid"]);
+  if (validationCodes.has(validationCode)) labels.push(`real-acme-diagnostic-validation-${validationCode.replaceAll("_", "-")}`);
+  labels.push(`real-acme-diagnostic-error-${kind}`);
+  for (const stage of ["new-order", "finalize"]) {
+    const previous = before?.perStage?.[stage]?.forwarded;
+    const current = after?.perStage?.[stage]?.forwarded;
+    if (Number.isSafeInteger(previous) && Number.isSafeInteger(current) && current > previous) labels.push(`real-acme-diagnostic-proxy-${stage}-forwarded`);
+  }
+  return labels;
+}
 async function waitUntil(check, timeoutMs = 180000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -124,6 +157,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
   const closedAgents=new WeakSet();
   const ownedJobIds=[], ownedCertificateIds=[], ownedWorkers=[], ownedBrowserResources=[], ownedBulkResources=[], ownedAdoptionResources=[], ownedRestartResources=[], ownedProfileResources=[], ownedLeaseResources=[];
   try {
+  fs.mkdirSync(path.dirname(certPath), { mode: 0o700 });
   fs.mkdirSync(configDir, { mode: 0o700 });
   barrierDirectory=path.join(workDir,"command-barrier");fs.mkdirSync(barrierDirectory,{mode:0o700});
   commandArgv=[process.execPath,path.join(repoRoot,"tests/e2e/helpers/certops-acme-command-barrier.js"),barrierDirectory,...commandArgv];
@@ -275,6 +309,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       assert.equal(nativeConsole,undefined,"Native lifecycle is a separate lane from read-only console");
       nativeLifecycle=await require("./helpers/certops-acme-browser-lifecycle").createLifecycleActor({pool,workspaceId,agentId,identity:publicSession,uiOrigin:process.env.CERTOPS_NATIVE_ACME_LIFECYCLE_URL,apiOrigin:process.env.CERTOPS_NATIVE_ACME_LIFECYCLE_API_URL,workDir,acmeKind,eabRef,ownedBrowserResources,registerOwnedJob:id=>{if(!ownedJobIds.includes(id))ownedJobIds.push(id);}});
     }
+    const diagnosticProxyBefore = gateway.snapshot();
     const issueInput={ operation: "issue", idempotencyKey: crypto.randomUUID(), payload: { sans: requestedNames, target: { type: "domain", reference: domain }, certPath, commandRef, caEndpoint, acmeKind, ...(eabRef ? { eabRef } : {}), dnsProvider: "pebble-challtestsrv", dnsZone: "example.test" } };
     let job;
     if(nativeLifecycle)job=(await nativeLifecycle.admit(issueInput)).publicJob;
@@ -289,11 +324,20 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       require("../../scripts/certops-acme-native-console-report").NATIVE_CASES[0],
       () => nativeConsole.observeAndRelease({ jobId, certificateId }),
     );
-    await waitUntil(async () => {
-      const row = (await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [jobId])).rows[0];
-      if (["failed", "rejected", "cancelled"].includes(row?.status)) throw new Error(`Real ACME job terminated ${row.status}`);
-      return row?.status === "succeeded";
-    });
+    try {
+      await waitUntil(async () => {
+        const row = (await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [jobId])).rows[0];
+        if (["failed", "rejected", "cancelled"].includes(row?.status)) throw new Error(`Real ACME job terminated ${row.status}`);
+        return row?.status === "succeeded";
+      });
+    } catch (error) {
+      // Emit only fixed labels; never expose persisted errors or exception details.
+      try {
+        const row = (await pool.query("SELECT status,error_message FROM certificate_jobs WHERE id=$1", [jobId])).rows[0];
+        for (const label of issuanceDiagnosticLabels(row, agent, diagnosticProxyBefore, gateway.snapshot())) await runScenario(label, async()=>{});
+      } catch { /* Diagnostics must not replace the original failure or cleanup. */ }
+      throw error;
+    }
     const firstIssuanceObservedAt = Date.now();
     await runScenario("real-acme-diagnostic-issue-completed",async()=>{});
     await verifyDnsCleanup();
@@ -447,10 +491,17 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     assert.deepEqual((await pool.query("SELECT cp.public_metadata FROM managed_certificates mc JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id WHERE mc.workspace_id=$1 AND mc.id=$2", [workspaceId, certificateId])).rows[0].public_metadata.renewalProfile, profileBeforeManual,
       "manual renewal must preserve its stored execution profile");
     const background=require("./helpers/certops-acme-background-renewals");
-    await runScenario(background.SCENARIO,async()=>{
-      const proof=await background.qualifyBackgroundRenewals({pool,workspaceId,agent,certificateId,certPath,keyPath,ownedJobIds,waitUntil,verifyDnsCleanup,verifyNames,servedFingerprint,repoRoot,acmeKind,workDir,ownedWorkers});
-      fs.mkdirSync(path.dirname(backgroundProofPath),{recursive:true});fs.writeFileSync(backgroundProofPath,JSON.stringify(proof),{mode:0o600});
-    });
+    const workerMilestones=[];
+    const workerMilestoneNames=new Set(["worker-fixture-preconditions-passed","worker-sql-selection-passed","worker-started","worker-cycle-succeeded","worker-cycle-leaf-observed","worker-cycle-inventory-and-evidence-passed","worker-cycle-profile-and-period-passed","worker-stopped-and-drained","worker-observer-failed","worker-cycle-job-failed","worker-cycle-job-rejected","worker-cycle-job-cancelled","worker-cycle-job-blocked","worker-cycle-job-orphaned_unknown_effect","worker-block-deploy-certificate-unavailable","worker-block-lease-conflict","worker-block-lease-retired","worker-block-lease-client-unavailable","worker-block-lease-confirmation-failed","worker-block-lease-expired","worker-block-lease-retry-limit","worker-block-lease-retry-expiry","worker-block-execution-disabled","worker-block-signing-key-unpinned","worker-block-local-dry-run","worker-block-other","worker-block-none","worker-block-diagnostic-unavailable"]);
+    try {
+      await runScenario(background.SCENARIO,async()=>{
+        const proof=await background.qualifyBackgroundRenewals({pool,workspaceId,agent,certificateId,certPath,keyPath,ownedJobIds,waitUntil,verifyDnsCleanup,verifyNames,servedFingerprint,repoRoot,acmeKind,workDir,ownedWorkers,onMilestone:(name,cycle)=>{if(workerMilestoneNames.has(name)&&(cycle===null||cycle===0||cycle===1)&&workerMilestones.length<16)workerMilestones.push(`real-acme-diagnostic-${name}${cycle===null?"":`-${cycle+1}`}`);}});
+        fs.mkdirSync(path.dirname(backgroundProofPath),{recursive:true});fs.writeFileSync(backgroundProofPath,JSON.stringify(proof),{mode:0o600});
+      });
+    } catch(error) {
+      try { for(const name of workerMilestones)await runScenario(name,async()=>{}); } catch { /* Keep the original worker failure and cleanup authoritative. */ }
+      throw error;
+    }
     const reuse = require("./helpers/certops-acme-key-reuse");
     await runScenario(reuse.scenarioName, async () => {
       const proof = await reuse.qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certificateId, certPath, keyPath, ownedJobIds, waitUntil, verifyDnsCleanup, verifyNames, servedFingerprint, repoRoot, acmeKind, workDir, configDir, workDirIdentity });
@@ -458,10 +509,17 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     });
     if(process.env.CERTOPS_REPORT_SCOPE===bulkReport.SCOPE){
       const bulk=require('./helpers/certops-acme-bulk-renewal');
-      await runScenario(bulk.SCENARIO,async()=>{
-        const proof=bulkProof=await bulk.qualifyBulk({pool,workspaceId,agentId,agent,publicSession,certificateId,certPath,keyPath,configDir,workDir,requestedNames,domain,commandRef,caEndpoint,acmeKind,eabRef,ownedJobIds,ownedCertificateIds,ownedBulkResources,ownedWorkers,waitUntil,verifyNames,verifyDnsCleanup,primaryTlsOptions:lifecycleTlsOptions});
-        fs.writeFileSync(path.join(repoRoot,bulkReport.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
-      });
+      const bulkMilestones=[];
+      const bulkMilestoneNames=new Set(["bulk-original-verified","bulk-issue-admitted","bulk-issue-completed","bulk-subject-tls-ready","bulk-subjects-verified","bulk-renewal-admission-verified","bulk-replay-verified","bulk-allocation-verified","bulk-renewal-completed","bulk-renewal-evidence-verified","bulk-original-unchanged","bulk-periods-stopped","bulk-proof-verified","bulk-job-failed","bulk-job-cancelled","bulk-job-rejected","bulk-job-blocked","bulk-job-orphaned_unknown_effect"]);
+      try {
+        await runScenario(bulk.SCENARIO,async()=>{
+          const proof=bulkProof=await bulk.qualifyBulk({pool,workspaceId,agentId,agent,publicSession,certificateId,certPath,keyPath,configDir,workDir,requestedNames,domain,commandRef,caEndpoint,acmeKind,eabRef,ownedJobIds,ownedCertificateIds,ownedBulkResources,ownedWorkers,waitUntil,verifyNames,verifyDnsCleanup,primaryTlsOptions:lifecycleTlsOptions,onMilestone:(name,index)=>{if(bulkMilestoneNames.has(name)&&(index===null||index===0||index===1)&&bulkMilestones.length<24)bulkMilestones.push(`real-acme-diagnostic-${name}${index===null?"":`-${index+1}`}`);}});
+          fs.writeFileSync(path.join(repoRoot,bulkReport.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
+        });
+      } catch(error) {
+        try { for(const name of bulkMilestones)await runScenario(name,async()=>{}); } catch { /* Preserve the original failure and owned cleanup. */ }
+        throw error;
+      }
     }
     if(process.env.CERTOPS_REPORT_SCOPE===adoptionReport.SCOPE){
       const adoption=require('./helpers/certops-acme-native-adoption');
@@ -565,3 +623,5 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     if (cleanupErrors.length) throw new AggregateError([...(primaryError?[primaryError]:[]),...cleanupErrors], "Real ACME journey or owned fixture cleanup failed");
   }
 };
+
+module.exports.issuanceDiagnosticLabels = issuanceDiagnosticLabels;

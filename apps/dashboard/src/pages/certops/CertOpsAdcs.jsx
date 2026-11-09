@@ -13,7 +13,6 @@ import {
   Icon,
   Input,
   Select,
-  SimpleGrid,
   Stack,
   Text,
   VStack,
@@ -48,10 +47,13 @@ import {
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import AdcsIssuerWizard from '../../components/certops/AdcsIssuerWizard.jsx';
+import JobActivity from '../../components/onboarding/JobActivity.jsx';
+import { getJob } from '../../components/certops/certopsJobsApi.js';
+import { failedPreflightMessage } from '../../components/certops/adcsPreflightJob.js';
+import { isJobFinal } from '../../components/onboarding/jobTimeline.js';
 import { showError, showSuccess } from '../../utils/toast.js';
 
 const PREFLIGHT_POLL_MS = 3000;
-const PREFLIGHT_POLL_ATTEMPTS = 8;
 
 function errorText(err, fallback) {
   return err?.response?.data?.error || fallback;
@@ -439,6 +441,9 @@ function IssuerWork({
   muted,
   onPreflight,
   onConfirm,
+  checkJob,
+  workspaceId,
+  checkWaiting,
 }) {
   const pinned = pinnedPair(issuer);
   const [checkVersion, setCheckVersion] = useState(null);
@@ -485,7 +490,7 @@ function IssuerWork({
         >
           <input type='hidden' name='caConfig' value={pinned.caConfig} />
           <input type='hidden' name='template' value={pinned.template} />
-          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
+          <Stack spacing={3} align='flex-start'>
             <FormControl isRequired>
               <FormLabel {...fieldLabelProps}>
                 Agent that reads the CA
@@ -510,17 +515,19 @@ function IssuerWork({
                 saved, and it does not decide who renews later.
               </Text>
             </FormControl>
-            <Flex align='flex-end'>
-              <DashboardActionButton
-                type='submit'
-                variant='outline'
-                {...actionProps(busyKey, `preflight:${issuer.id}`, paused)}
-                aria-label={`Run check for ${issuer.name}`}
-              >
-                Run check
-              </DashboardActionButton>
-            </Flex>
-          </SimpleGrid>
+            <DashboardActionButton
+              type='submit'
+              variant='outline'
+              {...actionProps(
+                busyKey,
+                `preflight:${issuer.id}`,
+                paused || checkWaiting
+              )}
+              aria-label={`Run check for ${issuer.name}`}
+            >
+              Run check
+            </DashboardActionButton>
+          </Stack>
         </form>
       ) : (
         <Box>
@@ -533,6 +540,14 @@ function IssuerWork({
           </DashboardActionButton>
         </Box>
       )}
+      {checkJob?.issuerId === issuer.id ? (
+        <JobActivity
+          key={checkJob.jobId}
+          workspaceId={workspaceId}
+          jobId={checkJob.jobId}
+          title='CA check activity'
+        />
+      ) : null}
       {showResult && safe ? (
         <ConfirmKeys
           issuer={issuer}
@@ -562,6 +577,9 @@ function IssuerRow({
   expandedBg,
   onPreflight,
   onConfirm,
+  checkJob,
+  workspaceId,
+  checkWaiting,
 }) {
   const preflightLine = issuer.lastPreflight
     ? `${issuer.lastPreflight.caConfig} / ${issuer.lastPreflight.template}`
@@ -681,6 +699,9 @@ function IssuerRow({
             muted={muted}
             onPreflight={onPreflight}
             onConfirm={onConfirm}
+            checkJob={checkJob}
+            workspaceId={workspaceId}
+            checkWaiting={checkWaiting}
           />
         </Box>
       </Collapse>
@@ -880,6 +901,7 @@ export default function CertOpsAdcs({
   const [busyKey, setBusyKey] = useState(null);
   const [waitingForPreflight, setWaitingForPreflight] = useState(null);
   const [preflightNote, setPreflightNote] = useState('');
+  const [checkJob, setCheckJob] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [issuerTotal, setIssuerTotal] = useState(0);
   const [enrollmentTotal, setEnrollmentTotal] = useState(0);
@@ -989,7 +1011,10 @@ export default function CertOpsAdcs({
     }
   }, [workspaceId, enrollments.length]);
 
-  useEffect(() => () => stopPreflightPoll(), [workspaceId, stopPreflightPoll]);
+  useEffect(() => {
+    setCheckJob(null);
+    return () => stopPreflightPoll();
+  }, [workspaceId, stopPreflightPoll]);
 
   // A deep link asks for the New issuer dialog. Wait until the role, the
   // pause state and the agent list are known, open it only when the person
@@ -1036,22 +1061,26 @@ export default function CertOpsAdcs({
   }, [issuers]);
 
   const startPreflightPoll = useCallback(
-    (issuerId, issuerName, previousSignature) => {
+    (issuerId, issuerName, jobId) => {
       stopPreflightPoll();
       setPreflightNote('');
       const poll = {
         cancelled: false,
         controller: new AbortController(),
         timer: null,
-        attempts: 0,
+        running: false,
       };
       pollRef.current = poll;
       setWaitingForPreflight(issuerName || 'the issuer');
       poll.timer = setInterval(async () => {
         if (poll.cancelled || pollRef.current !== poll) return;
-        poll.attempts += 1;
-        const attempt = poll.attempts;
+        if (poll.running) return;
+        poll.running = true;
         try {
+          const jobResult = await getJob(workspaceId, jobId, {
+            signal: poll.controller.signal,
+          });
+          const job = jobResult?.job || jobResult;
           const current = await findListedIssuer(
             listIssuers,
             workspaceId,
@@ -1064,22 +1093,17 @@ export default function CertOpsAdcs({
               previous.map(item => (item.id === issuerId ? current : item))
             );
           }
-          const changed =
-            preflightSignature(
-              current?.lastPreflight,
-              current?.lastPreflightJobId
-            ) !== previousSignature;
-          if (
-            (changed || attempt >= PREFLIGHT_POLL_ATTEMPTS) &&
-            pollRef.current === poll
-          ) {
+          const changed = current?.lastPreflightJobId === jobId;
+          const failed = isJobFinal(job?.status) && job?.status !== 'succeeded';
+          if ((changed || failed) && pollRef.current === poll) {
             poll.cancelled = true;
             clearInterval(poll.timer);
             pollRef.current = null;
             setWaitingForPreflight(null);
-            if (!changed) {
+            if (failed) {
               setPreflightNote(
-                `${issuerName || 'The issuer'} has not reported a preflight verdict yet. Use Refresh after the agent finishes.`
+                failedPreflightMessage(job) ||
+                  'The CA check did not succeed. Review the job before retrying.'
               );
             }
           }
@@ -1093,6 +1117,8 @@ export default function CertOpsAdcs({
           pollRef.current = null;
           setWaitingForPreflight(false);
           showError(errorText(err, 'Could not refresh the preflight verdict.'));
+        } finally {
+          poll.running = false;
         }
       }, PREFLIGHT_POLL_MS);
     },
@@ -1132,22 +1158,20 @@ export default function CertOpsAdcs({
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const previous = issuers.find(item => item.id === issuerId);
-    const previousSignature = preflightSignature(
-      previous?.lastPreflight,
-      previous?.lastPreflightJobId
-    );
     setBusyKey(`preflight:${issuerId}`);
     try {
-      await dispatchIssuerPreflight(workspaceId, issuerId, {
+      const result = await dispatchIssuerPreflight(workspaceId, issuerId, {
         agentId: data.get('agentId'),
         caConfig: String(data.get('caConfig') || ''),
         template: String(data.get('template') || ''),
       });
+      if (!result?.job?.id)
+        throw new Error('The CA check did not return a job.');
+      setCheckJob({ issuerId, jobId: result.job.id });
       showSuccess(
         'Preflight dispatched. The verdict appears after the agent reports.'
       );
-      await reload();
-      startPreflightPoll(issuerId, previous?.name, previousSignature);
+      startPreflightPoll(issuerId, previous?.name, result.job.id);
     } catch (err) {
       showError(errorText(err, 'Could not dispatch preflight.'));
     } finally {
@@ -1356,6 +1380,11 @@ export default function CertOpsAdcs({
                       rowHoverBg={rowHoverBg}
                       expandedBg={expandedBg}
                       onPreflight={handlePreflight}
+                      checkJob={checkJob}
+                      workspaceId={workspaceId}
+                      checkWaiting={Boolean(
+                        waitingForPreflight && checkJob?.issuerId === issuer.id
+                      )}
                       onConfirm={handleConfirm}
                     />
                   ))}

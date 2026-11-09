@@ -374,7 +374,7 @@ async function qualify(c) {
     assert.ok(
       isDeepStrictEqual(
         job.payload.renewalProfile,
-        original.public_metadata.renewalProfile,
+        require("./certops-acme-key-reuse").expectedProfileSnapshot(original),
       ),
       "Actual signed snapshot changed execution policy",
     );
