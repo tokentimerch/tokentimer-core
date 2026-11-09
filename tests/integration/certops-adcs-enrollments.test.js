@@ -199,6 +199,11 @@ describe("CertOps AD CS enrollments (real database)", function () {
     };
   }
 
+  function independentTarget() {
+    const target = enrollmentInput().target;
+    return { ...target, binding: { ...target.binding, site: `Fixture ${crypto.randomUUID()}` } };
+  }
+
   async function assertNoForeignDueRows() {
     const foreign = await TestUtils.execQuery(
       `SELECT count(*)::int AS n
@@ -306,6 +311,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
     try {
       await createEnrollment(enrollmentInput({
         certificateId,
+        target: independentTarget(),
         createJob: async () => {
           throw new Error("job insert failed");
         },
@@ -459,7 +465,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
 
     const certificateId = crypto.randomUUID();
     try {
-      await createEnrollment(enrollmentInput({ certificateId, keySize: 1024 }));
+      await createEnrollment(enrollmentInput({ certificateId, keySize: 1024, target: independentTarget() }));
       throw new Error("expected a malformed snapshot to be refused");
     } catch (error) {
       expect(error.code).to.equal("CERTOPS_SNAPSHOT_INVALID");
@@ -475,7 +481,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
       [issuerId],
     );
     try {
-      await createEnrollment(enrollmentInput());
+      await createEnrollment(enrollmentInput({ target: independentTarget() }));
       throw new Error("expected revalidation to block enrollment");
     } catch (error) {
       expect(error.code).to.equal("CERTOPS_ISSUER_REVALIDATION_REQUIRED");
