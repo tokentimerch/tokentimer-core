@@ -619,10 +619,16 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     if(process.env.CERTOPS_REPORT_SCOPE===bulkReport.SCOPE){
       const alerts=require('./helpers/certops-acme-renewal-alert');
       fs.rmSync(path.join(repoRoot,alerts.SIDECAR),{force:true});
-      await runScenario(alerts.SCENARIO,async()=>{
-        const proof=await alerts.qualify({pool,workspaceId,agentId,agent,publicSession,certificateId,certPath,keyPath,workDir,repoRoot,acmeKind,proxy:gateway,ownedJobIds,waitUntil,servedFingerprint,verifyDnsCleanup});
-        fs.writeFileSync(path.join(repoRoot,alerts.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
-      });
+      const alertMilestones=[];
+      try {
+        await runScenario(alerts.SCENARIO,async()=>{
+          const proof=await alerts.qualify({pool,workspaceId,agentId,agent,publicSession,certificateId,certPath,keyPath,workDir,repoRoot,acmeKind,proxy:gateway,ownedJobIds,waitUntil,servedFingerprint,verifyDnsCleanup,onMilestone:name=>{if(alerts.MILESTONES.includes(name)&&alertMilestones.length<32)alertMilestones.push(`real-acme-diagnostic-${name}`);}});
+          fs.writeFileSync(path.join(repoRoot,alerts.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
+        });
+      } catch(error) {
+        try { for(const name of alertMilestones)await runScenario(name,async()=>{}); } catch { /* Preserve the original failure and owned cleanup. */ }
+        throw error;
+      }
     }
     await require("./helpers/certops-acme-lease-loss")({pool,workspaceId,agentId,agent,publicSession,certificateId,certPath,keyPath,barrierDirectory,ownedJobIds,ownedLeaseResources,waitUntil,verifyDnsCleanup,servedFingerprint});
     if (eabSecret) {

@@ -133,3 +133,15 @@ test("native renewal alert proof stays bound to the prior certificate outbox", (
   });
   assert.equal(python.status, 0, python.stderr || python.stdout);
 });
+
+
+test("SMTP diagnostics emit fixed labels and never child error details", () => {
+  assert.equal(h.deliveryExitLabel({status:0}), "smtp-worker-exit-0");
+  assert.equal(h.deliveryExitLabel({status:1}), "smtp-worker-exit-1");
+  assert.equal(h.deliveryExitLabel({status:42}), "smtp-worker-exit-other");
+  assert.equal(h.deliveryExitLabel({signal:"private-signal"}), "smtp-worker-signal");
+  assert.equal(h.deliveryExitLabel({error:new Error("private stderr")}), "smtp-worker-error");
+  assert.ok(h.MILESTONES.length <= 32);
+  assert.equal(new Set(h.MILESTONES).size, h.MILESTONES.length);
+  assert.ok(h.MILESTONES.every(label => /^smtp-[a-z0-9-]+$/.test(label)));
+});
