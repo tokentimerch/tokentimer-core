@@ -19,3 +19,21 @@ test("post-finalize categories expose only source-defined failure and validation
  assert.ok(run("acme step reported success but produced no certificate file: secret").includes("real-acme-diagnostic-error-acme-staging"));
  assert.ok(run("preflight validation failed (SECRET_TOKEN): private").every(value=>!value.includes("secret")&&!value.includes("private")));
 });
+
+test("CA milestones expose only bounded response deltas",()=>{
+ const before={acceptedOrders:1,validAuthorizations:2,invalidAuthorizations:0,readyOrders:1,badNonceResponses:0,dnsProblemResponses:0,unauthorizedResponses:0,rateLimitedResponses:0};
+ const after={...before,acceptedOrders:2,badNonceResponses:1,privateValue:"do-not-report"};
+ const labels=issuanceDiagnosticLabels({status:"failed",error_message:"private-value"},{exitCode:null,signalCode:null},before,after);
+ assert.ok(labels.includes("real-acme-diagnostic-ca-observed-order-accepted"));
+ assert.ok(labels.includes("real-acme-diagnostic-ca-observed-bad-nonce"));
+ assert.ok(!labels.some(value=>value.includes("private")));
+ assert.ok(!labels.includes("real-acme-diagnostic-ca-observed-authorization-invalid"));
+});
+
+test("second-renewal failure labels remain scoped and reject untrusted phase names",()=>{
+ const labels=issuanceDiagnosticLabels({status:"blocked",error_message:"job execution failed: private-data"},{exitCode:null,signalCode:null},{},{},"second-renewal");
+ assert.ok(labels.includes("real-acme-diagnostic-second-renewal-status-blocked"));
+ assert.ok(labels.includes("real-acme-diagnostic-error-execution-exception"));
+ assert.ok(labels.every(value=>!value.includes("private")));
+ assert.throws(()=>issuanceDiagnosticLabels({},null,{},{},"private-data"));
+});
