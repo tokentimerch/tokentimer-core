@@ -1811,12 +1811,12 @@ router.post(
       // Friendly provider allowlist check (shared with worker delivery via
       // @tokentimer/webhook-safety, honors WEBHOOK_EXTRA_PROVIDER_HOSTS /
       // WEBHOOK_PROVIDER_HOSTS and WEBHOOK_ALLOW_ALL_HOSTS).
-      const lowerKind = String(req.body?.kind || "generic").toLowerCase();
-      if (lowerKind !== "generic") {
+      const providerKind = String(kind || "generic").toLowerCase();
+      if (providerKind !== "generic") {
         const allowed = webhookHostAllowed(target.hostname);
         if (!allowed) {
           return res.status(400).json({
-            error: `Webhook host not allowed for provider (${lowerKind}). Use a domain such as hooks.slack.com, discord.com, a Teams Workflows / Power Automate host (*.environment.api.powerplatform.com or *.logic.azure.com), or events.pagerduty.com. Self-hosted deployments can add hosts via WEBHOOK_EXTRA_PROVIDER_HOSTS.`,
+            error: `Webhook host not allowed for provider (${providerKind}). Use a domain such as hooks.slack.com, discord.com, a Teams Workflows / Power Automate host (*.environment.api.powerplatform.com or *.logic.azure.com), or events.pagerduty.com. Self-hosted deployments can add hosts via WEBHOOK_EXTRA_PROVIDER_HOSTS.`,
             code: "WEBHOOK_HOST_NOT_ALLOWED",
           });
         }
@@ -1837,7 +1837,7 @@ router.post(
 
       // Build a payload similar to the alert runner's templates for realism
       let payload;
-      switch (String(kind || "generic").toLowerCase()) {
+      switch (providerKind) {
         case "slack": {
           const testTitle = template || "TokenTimer Test";
           const daysText =
@@ -1941,26 +1941,56 @@ router.post(
           break;
         }
         case "teams": {
-          const theme =
+          const containerStyle =
             sev === "critical" || sev === "error"
               ? "attention"
               : sev === "warning"
                 ? "warning"
-                : "accent";
+                : "emphasis";
           payload = {
-            "@type": "MessageCard",
-            "@context": "https://schema.org/extensions",
-            summary: template || "TokenTimer Test",
-            themeColor: theme,
-            sections: [
+            type: "message",
+            attachments: [
               {
-                activityTitle: template || "TokenTimer Test",
-                activitySubtitle: `${testTokenData.name} expires in ${testTokenData.daysLeft} day(s)`,
-                facts: [
-                  { name: "Type", value: testTokenData.type },
-                  { name: "Expiration Date", value: testTokenData.expiration },
-                  { name: "Severity", value: sev },
-                ],
+                contentType: "application/vnd.microsoft.card.adaptive",
+                contentUrl: null,
+                content: {
+                  type: "AdaptiveCard",
+                  $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+                  version: "1.4",
+                  body: [
+                    {
+                      type: "Container",
+                      style: containerStyle,
+                      items: [
+                        {
+                          type: "TextBlock",
+                          text: template || "TokenTimer Test",
+                          weight: "bolder",
+                          size: "large",
+                          wrap: true,
+                        },
+                      ],
+                    },
+                    {
+                      type: "TextBlock",
+                      text: `${testTokenData.name} expires in ${testTokenData.daysLeft} day(s)`,
+                      wrap: true,
+                      spacing: "small",
+                    },
+                    {
+                      type: "FactSet",
+                      facts: [
+                        { title: "Type", value: testTokenData.type },
+                        { title: "Expiration Date", value: testTokenData.expiration },
+                        { title: "Severity", value: sev },
+                      ],
+                      spacing: "medium",
+                    },
+                  ],
+                  msteams: {
+                    width: "Full",
+                  },
+                },
               },
             ],
           };
@@ -2026,7 +2056,7 @@ router.post(
         );
 
         // Provider-specific validation
-        const k = String(kind || "generic").toLowerCase();
+        const k = providerKind;
         const fail = (msg) =>
           res
             .status(400)
@@ -2049,9 +2079,8 @@ router.post(
         }
 
         if (k === "teams") {
-          // Teams typically returns 200 and sometimes body '1'
-          if (status === 200) {
-            return pass("Teams accepted (200)");
+          if (status >= 200 && status < 300) {
+            return pass(`Teams accepted (${status})`);
           }
           return fail(`Teams responded ${status}: ${rawText}`);
         }

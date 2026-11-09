@@ -117,7 +117,10 @@ function extraDnsNames(value, reference) {
 }
 
 function sweepSentence(dnsName, leadDays) {
-  return `The sweep enrolls when the certificate is inside the ${leadDays} day lead time and an agent that declares ${dnsName} has passed the CA check and is online.`;
+  const window = leadDays
+    ? `the ${leadDays} day lead time`
+    : 'the deployment renewal window';
+  return `The sweep enrolls when the certificate is inside ${window} and an agent that declares ${dnsName} has passed the CA check and is online.`;
 }
 
 /**
@@ -219,7 +222,7 @@ export default function AdcsProfileWizard({
   const [store, setStore] = useState('My');
   const [keyAlgorithm, setKeyAlgorithm] = useState('rsa');
   const [keySize, setKeySize] = useState('2048');
-  const [leadTime, setLeadTime] = useState('30');
+  const [leadTime, setLeadTime] = useState('');
   const [agents, setAgents] = useState([]);
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState('');
@@ -244,7 +247,7 @@ export default function AdcsProfileWizard({
       setStore('My');
       setKeyAlgorithm('rsa');
       setKeySize('2048');
-      setLeadTime('30');
+      setLeadTime('');
       setBusy(false);
       setLocalError('');
       setCreated(null);
@@ -338,7 +341,7 @@ export default function AdcsProfileWizard({
         dnsNames,
         keyAlgorithm,
         keySize: Number(keySize),
-        renewBeforeDays: Number(leadTime),
+        renewBeforeDays: leadTime.trim() ? Number(leadTime) : null,
       });
       setCreated(profile);
       showSuccess('Renewal profile created.');
@@ -403,7 +406,7 @@ export default function AdcsProfileWizard({
     site.trim() &&
     store.trim() &&
     wholeInRange(port, 1, 65535) &&
-    wholeInRange(leadTime, 1, 365) &&
+    (!leadTime.trim() || wholeInRange(leadTime, 1, 365)) &&
     extraNameCount <= 15;
 
   return (
@@ -611,13 +614,14 @@ export default function AdcsProfileWizard({
                       ))}
                     </Select>
                   </FormControl>
-                  <FormControl isRequired>
+                  <FormControl>
                     <FormLabel {...modal.labelProps}>
-                      Lead time (days)
+                      Lead time (days, optional)
                     </FormLabel>
                     <Input
                       {...modal.fieldProps}
                       aria-label='Lead time'
+                      placeholder='Use deployment default'
                       value={leadTime}
                       onChange={event => setLeadTime(event.target.value)}
                     />

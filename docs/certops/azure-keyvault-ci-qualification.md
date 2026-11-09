@@ -26,6 +26,8 @@ policy below. Both production extension capability gates remain disabled.
 
 ## Existing infrastructure and prerequisites
 
+The qualification lab provisions Key Vaults using control-plane API `2026-02-01`. Inventory and material operations use Key Vault data-plane API `7.4`.
+
 The AD CS workflow already selects a subscription with `AZURE_SUBSCRIPTION_ID`
 and uses `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` with GitHub OIDC. The Key Vault
 login wrapper reuses `infra/certops-adcs/login-oidc.ps1`, with an isolated CLI

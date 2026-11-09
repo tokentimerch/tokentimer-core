@@ -63,9 +63,15 @@ const {
   loadQualifyingAdcsAgents,
 } = require("./adcsPreflightGate");
 
-const DEFAULT_RENEWAL_THRESHOLD_DAYS = 30;
+const {
+  DEFAULT_RENEWAL_THRESHOLD_DAYS,
+  RENEWAL_THRESHOLD_ENV,
+  renewalThresholdDaysSql,
+  resolveRenewalThresholdDays,
+  resolveRenewalThresholdPolicy,
+} = require("./renewalThreshold");
+
 const DEFAULT_BATCH_SIZE = 200;
-const RENEWAL_THRESHOLD_ENV = "CERTOPS_RENEWAL_THRESHOLD_DAYS";
 // An AD CS renewal waits here until an agent has a safe adcs-preflight for its CA.
 const CERTOPS_ADCS_AGENT_NOT_PREPARED = "CERTOPS_ADCS_AGENT_NOT_PREPARED";
 
@@ -105,18 +111,6 @@ const NON_RENEWABLE_CERTIFICATE_STATUSES = Object.freeze([
 // Canonical definition lives in renewalProfile.js (re-exported here for call
 // sites in this file), since jobs.js's own defense-in-depth re-check at
 // job-creation time needs the identical list.
-
-function resolveRenewalThresholdDays(env = process.env) {
-  const raw = env[RENEWAL_THRESHOLD_ENV];
-  if (raw == null || String(raw).trim() === "") {
-    return DEFAULT_RENEWAL_THRESHOLD_DAYS;
-  }
-  const parsed = Number.parseInt(String(raw).trim(), 10);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    return DEFAULT_RENEWAL_THRESHOLD_DAYS;
-  }
-  return parsed;
-}
 
 /**
  * Max renewal jobs that may be in flight per CA endpoint at sweep time.
@@ -252,6 +246,7 @@ function renewalIdempotencyKey(certificateId, notAfter) {
 async function findCertificatesDueForRenewal({
   db = pool,
   thresholdDays,
+  adaptive = true,
   batchSize = DEFAULT_BATCH_SIZE,
   terminalStatuses,
 } = {}) {
@@ -295,7 +290,7 @@ async function findCertificatesDueForRenewal({
             AND period.managed_certificate_id = mc.id
             AND period.ended_at IS NULL AND period.automation_enabled = TRUE)
         AND mc.not_after <= NOW()
-              + (COALESCE(cp.renew_before_days, $1) || ' days')::interval
+              + (${renewalThresholdDaysSql("$1", adaptive)} || ' days')::interval
         AND mc.status NOT IN (${NON_RENEWABLE_CERTIFICATE_STATUSES.map(
           (status) => `'${status}'`,
         ).join(", ")})
@@ -349,6 +344,7 @@ async function findCertificatesDueForRenewal({
 async function countCertificatesWithAutoRenewDisabled({
   db = pool,
   thresholdDays,
+  adaptive = true,
   terminalStatuses,
 } = {}) {
   const result = await db.query(
@@ -366,7 +362,7 @@ async function countCertificatesWithAutoRenewDisabled({
             AND period.managed_certificate_id = mc.id
             AND period.ended_at IS NULL AND period.automation_enabled = TRUE)
         AND mc.not_after <= NOW()
-              + (COALESCE(cp.renew_before_days, $1) || ' days')::interval
+              + (${renewalThresholdDaysSql("$1", adaptive)} || ' days')::interval
         AND mc.status NOT IN (${NON_RENEWABLE_CERTIFICATE_STATUSES.map(
           (status) => `'${status}'`,
         ).join(", ")})
@@ -712,7 +708,7 @@ async function runRenewalSchedulerSweep({
   mode = "real",
   auditWriter = writeAudit,
 } = {}) {
-  const thresholdDays = resolveRenewalThresholdDays(env);
+  const { thresholdDays, adaptive } = resolveRenewalThresholdPolicy(env);
   const perCaCap = resolveRenewalPerCaCap(env);
   const terminalStatuses = RENEWAL_JOB_TERMINAL_STATUSES;
 
@@ -749,6 +745,7 @@ async function runRenewalSchedulerSweep({
     const dueCertificates = await findCertificatesDueForRenewal({
       db: dbPool,
       thresholdDays,
+      adaptive,
       batchSize,
       terminalStatuses,
     });
@@ -767,6 +764,7 @@ async function runRenewalSchedulerSweep({
         await countCertificatesWithAutoRenewDisabled({
           db: dbPool,
           thresholdDays,
+          adaptive,
           terminalStatuses,
         });
     } catch (error) {
@@ -896,10 +894,13 @@ async function loadCertificateRenewalRows({
   certificateIds,
   env = process.env,
 }) {
+  const { thresholdDays, adaptive } = resolveRenewalThresholdPolicy(env);
+  const leadTime = renewalThresholdDaysSql("$3", adaptive);
   const profileColumns = `SELECT mc.id,
             mc.status,
             mc.key_mode,
             mc.key_reference,
+            mc.not_before,
             mc.not_after,
             mc.common_name,
             mc.subject_alt_names,
@@ -912,8 +913,9 @@ async function loadCertificateRenewalRows({
             cp.issuer_id AS profile_issuer_id,
             ci.kind AS profile_issuer_kind`;
   const scheduleColumns = `,
+            ${leadTime} AS effective_renew_before_days,
             mc.not_after
-              - (COALESCE(cp.renew_before_days, $3) || ' days')::interval
+              - (${leadTime} || ' days')::interval
               AS renews_from,
             (
               SELECT cj.status
@@ -959,7 +961,7 @@ async function loadCertificateRenewalRows({
       [
         workspaceId,
         certificateIds,
-        String(resolveRenewalThresholdDays(env)),
+        String(thresholdDays),
         RENEWAL_JOB_TERMINAL_STATUSES,
       ],
     );
@@ -995,7 +997,6 @@ module.exports = {
   countCertificatesWithAutoRenewDisabled,
   countInFlightRenewalJobsByCaEndpoint,
   loadCertificateRenewalRows,
-  resolveRenewalThresholdDays,
   findCertificatesDueForRenewal,
   isValidCaEndpointUrl,
   normalizeCaBucket,

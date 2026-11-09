@@ -99,10 +99,20 @@ describe("cert_renewal_failed webhook content", () => {
     const teams = _test.buildCertRenewalFailedWebhookPayload("teams", alert, {
       job,
     });
-    assert.equal(teams["@type"], "MessageCard");
-    assert.equal(teams.summary, "Certificate Renewal Failed");
-    assert.deepEqual(teams.sections[0].facts[2], {
-      name: "Error code",
+    assert.equal(teams.type, "message");
+    const [attachment] = teams.attachments;
+    assert.equal(
+      attachment.contentType,
+      "application/vnd.microsoft.card.adaptive",
+    );
+    assert.equal(attachment.content.type, "AdaptiveCard");
+    assert.equal(attachment.content.version, "1.4");
+    const factSet = attachment.content.body.find(
+      (item) => item.type === "FactSet",
+    );
+    assert.ok(factSet, "Expected FactSet in body");
+    assert.deepEqual(factSet.facts[2], {
+      title: "Error code",
       value: "ACME\\_RATE\\_LIMITED",
     });
   });

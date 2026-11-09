@@ -14,9 +14,15 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Certificate distribution lifecycle (PR #498; unreleased).** Adds consumer administration, exact-version review and reviewed automation, canary/calendar controls, recurring verification, incident recovery, safe resumption after partial success, public preflight and retention management. Independent Linux preparation and exact-version Vault/OpenBao cleanup are implemented behind separate closed production capability gates; Azure and shared Windows/IIS material deployment retain their gates. Unsupported service connectors and restart/refresh methods remain backlog. **Operator action:** apply the composed migrations through 108 before matching API/workers; migration 97 requires fresh independent review of existing distribution authorizations. See the [scope and evidence matrix](docs/certops/pr498-merge-readiness-20261103.md) and [per-capability qualification status](docs/certops/pr498-production-qualification-20261103.md); no extension capability has been promoted.
 ### Changed
 
+- **Short-lived certificate renewal.** The default renewal window adapts to certificate lifetime; profile and deployment overrides take priority. AD CS profiles can inherit the default. **Operator guidance:** clients consuming `renewBeforeDays` must accept fractional values; schedule sweeps and jobs to fit the remaining lifetime.
+
+- **Microsoft Teams alerts.** Alerts, weekly digests, and webhook tests use Adaptive Cards. **Operator action:** use a Teams Workflows webhook and confirm the card appears; retain any required proxy settings.
+
 - **Dashboard usability.** Review recipient confirmations in a dedicated dialog, with clearer setup guidance and recovery states throughout the dashboard.
 
 ### Fixed
+
+- **Webhook proxy delivery.** HTTP and HTTPS webhook requests use the configured proxy correctly when `NODE_USE_ENV_PROXY=1`, without being sent through the proxy twice.
 
 - **API logging.** Successful health and metrics probes no longer generate completion logs; failed probes remain logged with their matching `X-Request-Id`. Background logs no longer inherit an unrelated request ID after its response ends.
 

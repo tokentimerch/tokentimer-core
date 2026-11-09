@@ -210,7 +210,11 @@ export function renewalDescriptor(renewal) {
   const workspacePaused = renewal?.workspacePaused === true;
 
   if (state === RENEWAL_STATES.auto) {
-    const from = renewal?.renewsFrom ? formatDate(renewal.renewsFrom) : null;
+    const from = renewal?.renewsFrom
+      ? Number(renewal?.renewBeforeDays) < 1
+        ? formatDateTime(renewal.renewsFrom)
+        : formatDate(renewal.renewsFrom)
+      : null;
     const days = Number.isFinite(Number(renewal?.renewBeforeDays))
       ? Number(renewal.renewBeforeDays)
       : null;

@@ -7881,7 +7881,8 @@ paths:
                   type: integer
                   minimum: 1
                   maximum: 365
-                  default: 30
+                  nullable: true
+                  description: Omit or use null to inherit the deployment renewal window.
                 dnsNames:
                   type: array
                   maxItems: 15
@@ -14370,8 +14371,8 @@ components:
                   the profile, and is reported ahead of any profile problem.
                 enum: [auto_renew_disabled, no_profile, incomplete_profile, not_agent_deployable, unknown_expiry]
               renewBeforeDays:
-                type: integer
-                description: Effective lead time, falling back to the deployment threshold when the profile does not set one.
+                type: number
+                description: Effective lead time in days; may be fractional for certificates valid for less than two days.
               lastRenewJobStatus:
                 type: string
                 nullable: true
@@ -14890,8 +14891,9 @@ components:
           type: string
           nullable: true
         renewBeforeDays:
-          type: integer
+          type: number
           nullable: true
+          description: Effective lead time in days; may be fractional for certificates valid for less than two days.
         renewsFrom:
           type: string
           format: date-time
