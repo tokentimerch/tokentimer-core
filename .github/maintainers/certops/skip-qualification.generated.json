@@ -316,6 +316,16 @@
       "workflowJob": "backend_quality"
     },
     {
+      "id": "7d6a5a3bfbe0a7b200da",
+      "file": "packages/agent/scripts/windows-service-ca.test.js",
+      "line": 23,
+      "name": "Windows service CA environment",
+      "kind": "describe(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
       "id": "9dd82ec990cd4e0a09af",
       "file": "packages/agent/src/acme/acme.test.js",
       "line": 250,
@@ -386,9 +396,19 @@
       "workflowJob": "backend_quality"
     },
     {
+      "id": "233bad7dd1a7f4d86a79",
+      "file": "packages/agent/src/config/config.test.js",
+      "line": 1090,
+      "name": "keeps administrator access on config but not on credential files after restart (win32)",
+      "kind": "it(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
       "id": "696063d6c7c3db3cd321",
       "file": "packages/agent/src/config/config.test.js",
-      "line": 1140,
+      "line": 1159,
       "name": "sets 0600 permissions on the credential file on non-win32 platforms",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",
@@ -398,7 +418,7 @@
     {
       "id": "6a8c836d194d58bc67a1",
       "file": "packages/agent/src/config/config.test.js",
-      "line": 1200,
+      "line": 1219,
       "name": "refuses a credential file whose ACL grants Everyone (win32)",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",
@@ -408,7 +428,7 @@
     {
       "id": "26d15b9d61c8363804da",
       "file": "packages/agent/src/config/config.test.js",
-      "line": 1215,
+      "line": 1234,
       "name": "refuses a credential file owned by an untrusted principal (win32)",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",
@@ -418,7 +438,7 @@
     {
       "id": "8471cea230602a13649a",
       "file": "packages/agent/src/config/config.test.js",
-      "line": 1228,
+      "line": 1247,
       "name": "refuses a credential file owned by an untrusted principal (win32)",
       "reason": "platform",
       "environment": "windows-elevated",
@@ -427,7 +447,7 @@
     {
       "id": "71960d4bf81cfcd3b72d",
       "file": "packages/agent/src/config/config.test.js",
-      "line": 1542,
+      "line": 1561,
       "name": "refuses a group/other-readable credentials file (POSIX)",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",
@@ -437,7 +457,7 @@
     {
       "id": "89718a196c2cd623d00b",
       "file": "packages/agent/src/config/config.test.js",
-      "line": 1552,
+      "line": 1571,
       "name": "refuses a credentials file whose ACL grants Everyone (win32)",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",
@@ -447,7 +467,7 @@
     {
       "id": "15c2a6408c06ba8e2881",
       "file": "packages/agent/src/config/config.test.js",
-      "line": 1563,
+      "line": 1582,
       "name": "accepts a credentials file restricted to the agent and SYSTEM (win32)",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",
@@ -457,7 +477,7 @@
     {
       "id": "aec95d935c2d72099563",
       "file": "packages/agent/src/config/config.test.js",
-      "line": 1639,
+      "line": 1658,
       "name": "refuses a group/other-readable credentials file (POSIX)",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",
@@ -467,7 +487,7 @@
     {
       "id": "309e94af8489aeb639e9",
       "file": "packages/agent/src/config/config.test.js",
-      "line": 1651,
+      "line": 1670,
       "name": "refuses an ACL granting Everyone and never falls back to a skip (win32)",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",
@@ -477,7 +497,7 @@
     {
       "id": "cf415b4fb7e50fb17958",
       "file": "packages/agent/src/config/config.test.js",
-      "line": 1664,
+      "line": 1683,
       "name": "fails closed when the ACL cannot be inspected at all (win32)",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",
@@ -691,7 +711,7 @@
     {
       "id": "fa3bcd874625c1befd31",
       "file": "packages/agent/src/platform/platform.test.js",
-      "line": 454,
+      "line": 481,
       "name": "refuses a group/other-readable file on POSIX",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",
@@ -701,7 +721,7 @@
     {
       "id": "e03762e2624a4efbd711",
       "file": "packages/agent/src/platform/platform.test.js",
-      "line": 468,
+      "line": 495,
       "name": "enforces a real restricted ACL end to end on win32",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",

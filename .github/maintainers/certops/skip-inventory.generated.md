@@ -8,7 +8,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `prerequisite`: needs the fixture or privilege supplied by its owning CI job
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 158
+Total skips found: 160
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -22,6 +22,7 @@ Total skips found: 158
 | `packages/agent/scripts/installer-smoke.test.js` | 373 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/scripts/pack-release.test.js` | 228 | tracks install-agent.sh as executable in git (mode 100755) | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/scripts/pack-release.test.js` | 237 | assertExecutableEntries rejects a tarball whose installer lost the exec bit | dynamic (this.skip() / t.skip()) | `platform` |
+| `packages/agent/scripts/windows-service-ca.test.js` | 23 | Windows service CA environment | describe(..., { skip }) option-object | `platform` |
 | `packages/agent/src/acme/acme.test.js` | 250 | POSIX hook executes non-executable archive bytes with spaces and quotes in the path | test(..., { skip }) option-object | `platform` |
 | `packages/agent/src/config/config.test.js` | 121 | sets 0700 permissions on non-win32 platforms | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/config/config.test.js` | 129 | re-asserts 0700 on every call even if the mode was loosened | it(..., { skip }) option-object | `platform` |
@@ -29,16 +30,17 @@ Total skips found: 158
 | `packages/agent/src/config/config.test.js` | 148 | re-asserts the ACL when a foreign principal was granted (win32) | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/config/config.test.js` | 946 | sets 0600 permissions on the pin file on non-win32 platforms | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/config/config.test.js` | 1043 | refuses to write the pin through a symlink | it(..., { skip }) option-object | `platform` |
-| `packages/agent/src/config/config.test.js` | 1140 | sets 0600 permissions on the credential file on non-win32 platforms | it(..., { skip }) option-object | `platform` |
-| `packages/agent/src/config/config.test.js` | 1200 | refuses a credential file whose ACL grants Everyone (win32) | it(..., { skip }) option-object | `platform` |
-| `packages/agent/src/config/config.test.js` | 1215 | refuses a credential file owned by an untrusted principal (win32) | it(..., { skip }) option-object | `platform` |
-| `packages/agent/src/config/config.test.js` | 1228 | refuses a credential file owned by an untrusted principal (win32) | dynamic (this.skip() / t.skip()) | `platform` |
-| `packages/agent/src/config/config.test.js` | 1542 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `platform` |
-| `packages/agent/src/config/config.test.js` | 1552 | refuses a credentials file whose ACL grants Everyone (win32) | it(..., { skip }) option-object | `platform` |
-| `packages/agent/src/config/config.test.js` | 1563 | accepts a credentials file restricted to the agent and SYSTEM (win32) | it(..., { skip }) option-object | `platform` |
-| `packages/agent/src/config/config.test.js` | 1639 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `platform` |
-| `packages/agent/src/config/config.test.js` | 1651 | refuses an ACL granting Everyone and never falls back to a skip (win32) | it(..., { skip }) option-object | `platform` |
-| `packages/agent/src/config/config.test.js` | 1664 | fails closed when the ACL cannot be inspected at all (win32) | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/config/config.test.js` | 1090 | keeps administrator access on config but not on credential files after restart (win32) | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/config/config.test.js` | 1159 | sets 0600 permissions on the credential file on non-win32 platforms | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/config/config.test.js` | 1219 | refuses a credential file whose ACL grants Everyone (win32) | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/config/config.test.js` | 1234 | refuses a credential file owned by an untrusted principal (win32) | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/config/config.test.js` | 1247 | refuses a credential file owned by an untrusted principal (win32) | dynamic (this.skip() / t.skip()) | `platform` |
+| `packages/agent/src/config/config.test.js` | 1561 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/config/config.test.js` | 1571 | refuses a credentials file whose ACL grants Everyone (win32) | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/config/config.test.js` | 1582 | accepts a credentials file restricted to the agent and SYSTEM (win32) | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/config/config.test.js` | 1658 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/config/config.test.js` | 1670 | refuses an ACL granting Everyone and never falls back to a skip (win32) | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/config/config.test.js` | 1683 | fails closed when the ACL cannot be inspected at all (win32) | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/deploy/deploy.test.js` | 564 | rejects a symlinked destination escaping the allowed root (realpath re-check) | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/deploy/deploy.test.js` | 593 | rejects a symlinked parent directory escaping the allowed root | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/discovery/discovery.test.js` | 332 | rejects symbolic-link certificate candidates | dynamic (this.skip() / t.skip()) | `platform` |
@@ -61,8 +63,8 @@ Total skips found: 158
 | `packages/agent/src/material-preflight.test.js` | 10 | a local material policy refusal has no uncertain side effect | test(..., { skip }) option-object | `platform` |
 | `packages/agent/src/material-store/material-store.test.js` | 95 | real isolated Vault KV v2: pinned publication and idempotent CAS | test(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/material-store/material-store.test.js` | 137 | real Vault ACL separates issuer, consumer, scanner and customer prefixes | test(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/platform/platform.test.js` | 454 | refuses a group/other-readable file on POSIX | it(..., { skip }) option-object | `platform` |
-| `packages/agent/src/platform/platform.test.js` | 468 | enforces a real restricted ACL end to end on win32 | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/platform/platform.test.js` | 481 | refuses a group/other-readable file on POSIX | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/platform/platform.test.js` | 495 | enforces a real restricted ACL end to end on win32 | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/replay/replay.test.js` | 144 | writes the store file with 0600 permissions on non-win32 | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/trust-store/receipt.test.js` | 559 | reports {corrupt: true} for a symlink at the receipt path, never following it | dynamic (this.skip() / t.skip()) | `platform` |
 | `packages/agent/src/windows-material/pkcs12.test.js` | 14 | Windows CryptoAPI parses encrypted PKCS#12 and proves private-key association without persisting a key | test(..., { skip }) option-object | `platform` |

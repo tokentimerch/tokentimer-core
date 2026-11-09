@@ -1087,7 +1087,7 @@ describe("signing key pin round trip", () => {
 
 describe("writeAgentIdentity / config.json round trip", () => {
   // skip-reason: platform - verifies Windows ACL inheritance and actual files.
-  it("keeps administrator access on config but not on credential files after restart", { skip: !IS_WIN32 }, () => {
+  it("keeps administrator access on config but not on credential files after restart (win32)", { skip: !IS_WIN32 }, () => {
     const dir = makeTempConfigDir();
     ensureConfigDir(dir);
     const configPath = path.join(dir, "config.json");
