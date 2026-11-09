@@ -60,6 +60,7 @@ import useDistributionRead, {
 } from '../../components/certops/useDistributionRead.js';
 import { verificationDeadline } from '../../components/certops/distributionFormat.js';
 import { distributionApi } from '../../components/certops/distributionApi.js';
+import RetirementDossier from '../../components/certops/RetirementDossier.jsx';
 import { diagnosticExplanation } from '../../components/certops/distributionDiagnostics.js';
 import { formatDateTime } from '../../components/certops/certopsFormat.js';
 
@@ -1951,6 +1952,11 @@ function Management({
                     consumer verification.
                   </Text>
                 </Box>
+                <RetirementDossier
+                  key={workspaceId}
+                  workspaceId={workspaceId}
+                  canManage={canManage}
+                />
               </DashboardPanel>
               <DashboardPanel
                 id='distribution-discovery'
