@@ -77,7 +77,7 @@ function failedRenewalTerminalStatus(status) {
 }
 // Return fixed labels only: persisted errors may contain private command output.
 function issuanceDiagnosticLabels(row, agent, before, after, phase = "issue") {
-  assert.ok(["issue", "second-renewal", "manual-renewal"].includes(phase));
+  assert.ok(["issue", "second-renewal", "manual-renewal", "reuse-manual", "reuse-scheduler"].includes(phase));
   const labels = [];
   const statuses = new Set(["failed", "rejected", "cancelled", "blocked", "orphaned_unknown_effect", "pending", "claimed", "running", "succeeded"]);
   labels.push(`real-acme-diagnostic-${phase}-status-${statuses.has(row?.status) ? row.status : "other"}`);
@@ -545,18 +545,18 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       throw error;
     }
     const reuse = require("./helpers/certops-acme-key-reuse");
-    const reuseMilestones = [];
+    const reuseMilestones = [], reuseCaDiagnostics = [], reuseCaBefore = {};
     const reuseMilestoneNames = new Set(["reuse-prerequisites-verified", "reuse-profile-saved", "reuse-initial-material-verified", "reuse-scheduler-due-verified", "reuse-proof-verified"]);
     for (const phase of ["manual", "scheduler"]) {
-      for (const suffix of ["admitted", "job-succeeded", "job-evidence-verified", "public-data-verified", "material-verified", "profile-verified", "job-failed", "job-rejected", "job-cancelled", "job-blocked", "job-orphaned_unknown_effect", "job-other", "error-acme", "error-execution", "error-preflight", "error-pre-deploy", "error-deployment", "error-verification", "error-reload", "error-other", "error-none"]) reuseMilestoneNames.add(`reuse-${phase}-${suffix}`);
+      for (const suffix of ["admitted", "job-succeeded", "job-evidence-verified", "public-data-verified", "material-verified", "profile-verified", "job-failed", "job-rejected", "job-cancelled", "job-blocked", "job-orphaned_unknown_effect", "job-other", "error-acme", "error-execution", "error-preflight", "error-pre-deploy", "error-deployment", "error-verification", "error-reload", "error-other", "error-none", "exit-0", "exit-1", "exit-2", "exit-null", "exit-other", "exit-unavailable"]) reuseMilestoneNames.add(`reuse-${phase}-${suffix}`);
     }
     try {
       await runScenario(reuse.scenarioName, async () => {
-        const proof = await reuse.qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certificateId, certPath, keyPath, ownedJobIds, waitUntil, verifyDnsCleanup, verifyNames, servedFingerprint, repoRoot, acmeKind, workDir, configDir, workDirIdentity, onMilestone: name => { if (reuseMilestoneNames.has(name) && reuseMilestones.length < 40) reuseMilestones.push(`real-acme-diagnostic-${name}`); } });
+        const proof = await reuse.qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certificateId, certPath, keyPath, ownedJobIds, waitUntil, verifyDnsCleanup, verifyNames, servedFingerprint, repoRoot, acmeKind, workDir, configDir, workDirIdentity, onMilestone: name => { if (reuseMilestoneNames.has(name) && reuseMilestones.length < 40) reuseMilestones.push(`real-acme-diagnostic-${name}`); }, onPhaseStart: phase => { if (["manual", "scheduler"].includes(phase)) reuseCaBefore[phase] = gateway.snapshot(); }, onJobFailure: (row, phase) => { if (["manual", "scheduler"].includes(phase) && reuseCaBefore[phase]) reuseCaDiagnostics.push(...issuanceDiagnosticLabels(row, agent, reuseCaBefore[phase], gateway.snapshot(), `reuse-${phase}`)); } });
         fs.mkdirSync(path.dirname(reuseProofPath), { recursive: true }); fs.writeFileSync(reuseProofPath, JSON.stringify(proof), { mode: 0o600 });
       });
     } catch (error) {
-      try { for (const name of reuseMilestones) await runScenario(name, async () => {}); } catch { /* Preserve the original failure and owned cleanup. */ }
+      try { for (const name of [...reuseMilestones, ...reuseCaDiagnostics]) await runScenario(name, async () => {}); } catch { /* Preserve the original failure and owned cleanup. */ }
       throw error;
     }
     if(process.env.CERTOPS_REPORT_SCOPE===bulkReport.SCOPE){

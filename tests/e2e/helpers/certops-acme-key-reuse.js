@@ -129,9 +129,11 @@ function reuseFailureLabels(row, phase) {
   const message = typeof row?.error_message === "string" ? row.error_message.toLowerCase() : "";
   const kinds = [["acme step failed", "acme"], ["job execution failed", "execution"], ["preflight validation failed", "preflight"], ["pre-deploy validation failed", "pre-deploy"], ["deploy step failed", "deployment"], ["verify step failed", "verification"], ["reload step failed", "reload"]];
   const kind = kinds.find(([prefix]) => message.startsWith(prefix))?.[1] || (message ? "other" : "none");
-  return [`reuse-${phase}-job-${status}`, `reuse-${phase}-error-${kind}`];
+  const exit = /^acme step failed with exit code (\d+|null):/.exec(message)?.[1];
+  const exitClass = ["0", "1", "2", "null"].includes(exit) ? exit : (exit ? "other" : "unavailable");
+  return [`reuse-${phase}-job-${status}`, `reuse-${phase}-error-${kind}`, `reuse-${phase}-exit-${exitClass}`];
 }
-async function qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certificateId, certPath, keyPath, ownedJobIds, waitUntil, verifyDnsCleanup, verifyNames, servedFingerprint, repoRoot, acmeKind, workDir, configDir, workDirIdentity, onMilestone = () => {} }) {
+async function qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certificateId, certPath, keyPath, ownedJobIds, waitUntil, verifyDnsCleanup, verifyNames, servedFingerprint, repoRoot, acmeKind, workDir, configDir, workDirIdentity, onMilestone = () => {}, onPhaseStart = () => {}, onJobFailure = () => {} }) {
   const mark = name => { try { onMilestone(name); } catch { /* Diagnostics cannot replace the native failure. */ } };
   assert.equal(process.platform, "linux"); assert.ok(["certbot", "acme.sh"].includes(acmeKind));
   const query = (sql, args = []) => pool.query(sql, args);
@@ -169,6 +171,7 @@ async function qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certif
       const row = (await query("SELECT status,payload,claim_id,source,mode,result_metadata,error_message FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, job.id])).rows[0];
       assert.ok(row); if (["failed", "rejected", "cancelled", "blocked", "orphaned_unknown_effect"].includes(row.status)) {
         for (const label of reuseFailureLabels(row, phase)) mark(label);
+        try { onJobFailure(row, phase); } catch { /* Preserve the native failure. */ }
         throw new Error("Real key-reuse renewal terminated unsuccessfully");
       }
       if (row.status !== "succeeded") return false;
@@ -194,6 +197,7 @@ async function qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certif
   // Let the real CA's second-resolution notAfter advance; this is actual time,
   // not a scheduler clock override or manufactured inventory eligibility.
   await new Promise(resolve => setTimeout(resolve, 1500));
+  try { onPhaseStart("manual"); } catch { /* Diagnostics are optional. */ }
   const manual = await publicSession.request(`/api/v1/workspaces/${workspaceId}/certops/jobs`, "POST", { operation: "renew", subjectType: "managed_certificate", subjectId: String(certificateId), idempotencyKey: crypto.randomUUID() });
   assert.equal(manual.status, 201); ownedJobIds.push(manual.body.job.id); jobs.push({ id: manual.body.job.id, source: "api" }); mark("reuse-manual-admitted"); await complete(jobs[0], "manual");
   await new Promise(resolve => setTimeout(resolve, 1500));
@@ -206,6 +210,7 @@ async function qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certif
   // Capture jobs even when the sweep reports an error, so parent cleanup owns
   // any committed admission rather than losing it on the assertion below.
   let sweep;
+  try { onPhaseStart("scheduler"); } catch { /* Diagnostics are optional. */ }
   try { sweep = await scheduler.runRenewalSchedulerSweep({ dbPool: pool, env: process.env }); }
   finally {
     const admitted = (await query("SELECT id,source FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND idempotency_key=$3", [workspaceId, String(certificateId), key])).rows;
