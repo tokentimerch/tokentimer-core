@@ -37,3 +37,13 @@ test("second-renewal failure labels remain scoped and reject untrusted phase nam
  assert.ok(labels.every(value=>!value.includes("private")));
  assert.throws(()=>issuanceDiagnosticLabels({},null,{},{},"private-data"));
 });
+
+test("blocked second renewals fail promptly with only an allowlisted reason",()=>{
+ const {failedRenewalTerminalStatus}=require("../tests/e2e/acme-real-journey");
+ for(const status of ["failed","rejected","cancelled","blocked","orphaned_unknown_effect"])assert.equal(failedRenewalTerminalStatus(status),true);
+ for(const status of ["pending","claimed","running","succeeded",undefined,"private-status"])assert.equal(failedRenewalTerminalStatus(status),false);
+ const labels=issuanceDiagnosticLabels({status:"blocked",error_message:"lease renew aborted: claim ownership lost or lease conflict (HTTP 409) (private-data)"},{exitCode:null,signalCode:null},{},{},"second-renewal");
+ assert.ok(labels.includes("real-acme-diagnostic-second-renewal-block-lease-conflict"));
+ assert.ok(labels.every(value=>!value.includes("private")));
+ assert.ok(issuanceDiagnosticLabels({status:"blocked",error_message:"private-data"},null,{},{},"second-renewal").includes("real-acme-diagnostic-second-renewal-block-other"));
+});
