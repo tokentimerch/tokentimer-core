@@ -57,9 +57,16 @@ function tarInspectionDiagnostic(result) {
 }
 
 function assertNoPrivateKeyMaterial(tarballPath) {
-  const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "tokentimer-agent-pack-scan-"));
+  const scanDir = fs.mkdtempSync(path.join(os.tmpdir(), "tokentimer-agent-pack-scan-"));
   try {
-    const extract = spawnSync("tar", ["-xzf", tarballPath, "-C", extractDir], {
+    // GNU tar interprets a Windows drive colon in an absolute archive path as
+    // a remote host. Scan an owned copy using a relative name from the same
+    // temporary volume; this also works when the output is on another drive.
+    const extractDir = path.join(scanDir, "contents");
+    fs.mkdirSync(extractDir);
+    fs.copyFileSync(tarballPath, path.join(scanDir, "archive.tgz"));
+    const extract = spawnSync("tar", ["-xzf", "../archive.tgz"], {
+      cwd: extractDir,
       encoding: "utf8",
     });
     if (extract.status !== 0) {
@@ -110,7 +117,7 @@ function assertNoPrivateKeyMaterial(tarballPath) {
       );
     }
   } finally {
-    fs.rmSync(extractDir, { recursive: true, force: true });
+    fs.rmSync(scanDir, { recursive: true, force: true });
   }
 }
 
@@ -129,7 +136,10 @@ const EXECUTABLE_TARBALL_ENTRIES = Object.freeze([
  */
 function assertExecutableEntries(tarballPath, { platform = process.platform } = {}) {
   if (platform === "win32") return;
-  const list = spawnSync("tar", ["-tvzf", tarballPath], { encoding: "utf8" });
+  const archive = path.resolve(tarballPath);
+  const list = spawnSync("tar", ["-tvzf", path.basename(archive)], {
+    cwd: path.dirname(archive), encoding: "utf8",
+  });
   if (list.status !== 0) {
     throw new Error(
       `pack-release: could not list tarball modes (tar exited ${list.status}): ${list.stderr || ""}`,

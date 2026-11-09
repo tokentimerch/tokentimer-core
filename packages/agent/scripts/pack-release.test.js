@@ -57,8 +57,8 @@ describe("pack-release (H10)", () => {
     const result = main([`--out-dir=${outDir}`]);
     assert.doesNotThrow(() => assertNoPrivateKeyMaterial(result.tarballPath));
 
-    const list = spawnSync("tar", ["-tzf", result.tarballPath], {
-      encoding: "utf8",
+    const list = spawnSync("tar", ["-tzf", path.basename(result.tarballPath)], {
+      cwd: path.dirname(result.tarballPath), encoding: "utf8",
     });
     assert.equal(list.status, 0);
     assert.doesNotMatch(list.stdout, /\.key\.pem$/m);
@@ -89,8 +89,8 @@ describe("pack-release (H10)", () => {
     } finally {
       if (ownedStale) fs.unlinkSync(stale);
     }
-    const list = spawnSync("tar", ["-tzf", result.tarballPath], {
-      encoding: "utf8",
+    const list = spawnSync("tar", ["-tzf", path.basename(result.tarballPath)], {
+      cwd: path.dirname(result.tarballPath), encoding: "utf8",
     });
     assert.equal(list.status, 0);
     assert.match(list.stdout, /package\/bin\/tokentimer-agent-host-amd64\.exe/);
@@ -117,7 +117,7 @@ describe("pack-release (H10)", () => {
     const extracted = path.join(outDir, "extracted");
     fs.mkdirSync(extracted);
     assert.equal(
-      spawnSync("tar", ["-xzf", result.tarballPath, "-C", extracted]).status,
+      spawnSync("tar", ["-xzf", `../${path.basename(result.tarballPath)}`], { cwd: extracted }).status,
       0,
     );
     const { assertPeArchitecture } = require("./build-windows-chain-helper");
@@ -180,8 +180,9 @@ describe("pack-release (H10)", () => {
       const badTarball = path.join(scratchDir, "bad.tgz");
       const tarResult = spawnSync(
         "tar",
-        ["-czf", badTarball, "-C", payloadDir, "."],
+        ["-czf", "bad.tgz", "-C", "payload", "."],
         {
+          cwd: scratchDir,
           encoding: "utf8",
         },
       );
@@ -189,7 +190,7 @@ describe("pack-release (H10)", () => {
 
       assert.throws(
         () => assertNoPrivateKeyMaterial(badTarball),
-        /private-key material/,
+        /refusing to ship a tarball containing private-key material/,
       );
     } finally {
       fs.rmSync(scratchDir, { recursive: true, force: true });
