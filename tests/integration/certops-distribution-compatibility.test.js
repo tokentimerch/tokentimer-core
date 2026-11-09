@@ -37,7 +37,8 @@ describe("Independent PR migration and preview compatibility",function(){
         })));
       }else execute(upgrade);
       const after=(await client.query("SELECT * FROM migrations ORDER BY version")).rows;
-      assert.deepEqual(after.filter(row=>preserved.some(original=>original.version===row.version)),preserved);assert.equal(after.length,108);
+      assert.deepEqual(after.filter(row=>preserved.some(original=>original.version===row.version)),preserved);assert.equal(after.length,109);
+      assert.equal(after.filter(row=>row.version===109 && row.name==="certops_retirement_dossiers").length,1);
       const canonicalTail=["pagerduty_resolution_reason","pagerduty_operator_actions","remove_pagerduty_rest_lookup","certops_consumer_staging","certops_review_authority_epochs","certops_manual_rollout_authority"];
       const previewTails={
         "lifecycle-81-85":["weekly_digest_recipient_claim_token","pagerduty_incident_lifecycle","pagerduty_resolution_reason","pagerduty_operator_actions","remove_pagerduty_rest_lookup","certops_manual_rollout_authority"],
@@ -48,7 +49,7 @@ describe("Independent PR migration and preview compatibility",function(){
         assert.equal(after.filter(row=>row.name===name).length,1,"Authority migration "+name+" is present once");
       for(const name of ["operator_connections","operator_enrollment_grants","operator_action_requests","operator_oauth","operator_connection_lifetimes","operator_inventory","operator_oauth_retention","operator_issuance","certops_issuance_job_identity","certops_issuance_identity_transfer"])
         assert.equal(after.filter(row=>row.name===name).length,1,"Released MCP migration "+name+" is present once");
-      for(const table of ["certops_material_cleanups","certops_consumer_verification_outcomes","contact_channel_verifications","pagerduty_incidents"])
+      for(const table of ["certops_material_cleanups","certops_consumer_verification_outcomes","contact_channel_verifications","pagerduty_incidents","certops_material_retirement_dossiers"])
         assert.equal((await client.query("SELECT to_regclass($1)::text AS name",[table])).rows[0].name,table);
       assert.equal((await client.query("SELECT resolution_delivery_pending FROM certops_distribution_incidents LIMIT 0")).rowCount,0);
       if(labelsExist)assert.equal(Number((await client.query("SELECT items_created_total FROM auto_sync_kind_stats WHERE provider='compat_fixture'")).rows[0].items_created_total),7);

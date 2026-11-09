@@ -125,7 +125,7 @@ Total skips found: 156
 | `tests/e2e/certops-log-pagination-e2e.test.js` | 13 | agent log cursor polling preserves live append and reconnect order | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/e2e/certops-membership-fences-e2e.test.js` | 17 | live workspace membership and machine workspace fences | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/e2e/certops-multi-target-deploy-e2e.test.js` | 31 | production multi-target coordinator preserves files and exposes uncertain rollback | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `tests/e2e/certops-native-agent-e2e.test.js` | 81 | real native agent signed gates durable outbox restart and observe-only behavior | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `tests/e2e/certops-native-agent-e2e.test.js` | 82 | real native agent signed gates durable outbox restart and observe-only behavior | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/e2e/certops-observe-only-e2e.test.js` | 16 | observe-only polling preserves queued work until explicit execution advertisement | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/e2e/certops-pause-ingestion-e2e.test.js` | 21 | workspace pause blocks new work while retaining owned result ingestion | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/e2e/certops-profile-issuer-switch-e2e.test.js` | 24 | public renewal issuer changes retain runnable policy and atomic audit | dynamic (this.skip() / t.skip()) | `prerequisite` |
