@@ -90,3 +90,33 @@ test("workspace deletion removes its retirement dossiers",async()=>{
   await operations.transaction(client=>require("../../apps/api/services/workspaceDeletion").deleteWorkspaces(client,[f.workspaceId]));
   assert.equal((await pool.query("SELECT 1 FROM certops_material_retirement_dossiers WHERE id=$1",[d.id])).rowCount,0);
 });
+test("real API login sessions request and independently review a retirement dossier",{timeout:60000},async()=>{
+  const f=await setup();await operations.requestRollout({...f,actorUserId:f.actor});
+  const bcrypt=require("../../apps/api/node_modules/bcryptjs"),net=require("node:net"),{spawn}=require("node:child_process");
+  const password=`Synthetic-${crypto.randomBytes(24).toString("hex")}`;
+  await pool.query("UPDATE users SET password_hash=$2,email_verified=TRUE WHERE id=ANY($1::int[])",[[f.actor,f.approver],await bcrypt.hash(password,10)]);
+  const users=(await pool.query("SELECT id,email FROM users WHERE id=ANY($1::int[])",[[f.actor,f.approver]])).rows;
+  const port=await new Promise(resolve=>{const server=net.createServer();server.listen(0,"127.0.0.1",()=>{const p=server.address().port;server.close(()=>resolve(p));});});
+  const base=`http://127.0.0.1:${port}`;
+  const env={...process.env,PORT:String(port),HOST:"127.0.0.1",SESSION_SECRET:crypto.randomBytes(32).toString("hex"),CREDENTIAL_PEPPER:crypto.randomBytes(32).toString("hex"),PUBLIC_APP_URL:base};
+  const api=spawn(process.execPath,["apps/api/index.js"],{cwd:process.cwd(),env,stdio:["ignore","ignore","ignore"]});
+  const session=()=>{
+    const cookies=new Map();let csrf;
+    async function call(route,method="GET",body){
+      const response=await fetch(`${base}${route}`,{method,signal:AbortSignal.timeout(15000),headers:{"content-type":"application/json",cookie:[...cookies].map(([k,v])=>`${k}=${v}`).join("; "),...(csrf?{"x-csrf-token":csrf}:{})},...(body?{body:JSON.stringify(body)}:{})});
+      for(const value of response.headers.getSetCookie()){const first=value.split(";",1)[0],i=first.indexOf("=");cookies.set(first.slice(0,i),first.slice(i+1));}
+      return {status:response.status,body:await response.json()};
+    }
+    return {call,async login(email){csrf=(await call("/api/csrf-token")).body.csrfToken;assert.equal((await call("/auth/login","POST",{email,password})).status,200);csrf=(await call("/api/csrf-token")).body.csrfToken;}};
+  };
+  try{
+    let ready=false;for(let i=0;i<100;i++){if(api.exitCode!==null)throw new Error("Owned API exited");try{if((await fetch(`${base}/health`,{signal:AbortSignal.timeout(1000)})).ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,200));}assert.equal(ready,true);
+    const owner=session(),reviewer=session();await owner.login(users.find(u=>u.id===f.actor).email);await reviewer.login(users.find(u=>u.id===f.approver).email);
+    const prefix=`/api/v1/workspaces/${f.workspaceId}/certops`,evidence=Object.fromEntries(["writerInventory","writerIsolation","destinationIsolation","replacementReadback"].map(k=>[k,`sha256:${"a".repeat(64)}`]));
+    const created=await owner.call(`${prefix}/distribution-jobs/${f.original.id}/retirement-dossiers`,"POST",{evidence});assert.equal(created.status,200,JSON.stringify(created.body));
+    const path=`${prefix}/retirement-dossiers/${created.body.id}/review`;
+    assert.equal((await owner.call(path,"POST",{dossierHash:created.body.dossierHash})).status,409);
+    const result=await reviewer.call(path,"POST",{dossierHash:created.body.dossierHash});assert.equal(result.status,200,JSON.stringify(result.body));assert.equal(result.body.reconciliationCleared,false);
+    assert.equal((await pool.query("SELECT needs_operator_reconciliation FROM certificate_jobs WHERE id=$1",[f.original.id])).rows[0].needs_operator_reconciliation,true);
+  }finally{if(api.exitCode===null){api.kill("SIGTERM");await new Promise(resolve=>{api.once("exit",resolve);setTimeout(()=>{api.kill("SIGKILL");resolve();},5000).unref();});}}
+});

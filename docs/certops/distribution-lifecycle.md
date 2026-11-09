@@ -136,6 +136,8 @@ Preflight reads the exact store version, verifies local scope/revisions and the 
 
 Retry preserves the original signed payload/version/generation and independently rechecks current membership, desired generation, exact version, approvals and automatic policy authority. The server keeps an uncertain deployment visibly uncertain while retry is pending. Neither local reconciliation nor retry request alone promotes deployment status; a fresh claim-bound receipt is required.
 
+For a superseded uncertain job, **Incidents → Recovery guidance → Review a retired destination** records an advisory dossier. Keep source evidence externally and enter SHA-256 digests for the writer inventory, writer isolation, destination isolation and replacement readback; a different authorized operator reviews those records. A current scope means only that the recorded job, binding and authorization still match. TokenTimer does not verify the external evidence, infer the historical outcome or clear reconciliation from this review.
+
 If an optional consumer failed after all required consumers completed, the rollout
 can be `degraded`. Retrying that current deployment puts the rollout in `paused`
 without redeploying successful consumers. Use **Resume** after local reconciliation;
