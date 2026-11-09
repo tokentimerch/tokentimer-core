@@ -102,6 +102,18 @@ describe("adapter tool set", () => {
   });
 });
 
+describe("contact verification guidance", () => {
+  it("tells write-enabled clients that creating a contact does not verify or invite it", () => {
+    const contact = loadTools({ includeWrites: true }).find((tool) => tool.name === "tt_create_contact");
+    assert.ok(contact);
+    assert.match(contact.description, /does not send a verification invitation/i);
+    assert.match(contact.description, /when verification is enforced/i);
+    assert.match(contact.description, /recipient confirmation in TokenTimer/i);
+    const { WRITE_INSTRUCTIONS } = require("./server");
+    assert.match(WRITE_INSTRUCTIONS, /does not verify delivery channels or send an invitation/i);
+  });
+});
+
 describe("request planning", () => {
   const tool = (name) => byName.get(name);
 

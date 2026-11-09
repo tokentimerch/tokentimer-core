@@ -46,6 +46,21 @@ function handlerFor(name, responses) {
 const validJob = fixtures.tt_get_job.output.valid[0];
 const errorText = (result) => JSON.parse(result.content[0].text);
 
+describe("contact verification result", () => {
+  it("returns negotiated verification guidance as MCP structured content", async () => {
+    const id = "550e8400-e29b-41d4-a716-446655440002";
+    const body = { operation: "create_contact", requestId: id, planId: id, contactId: id, state: "succeeded", replayed: false,
+      verification: { mode: "enforce", status: "available", email: "confirmation_required", whatsapp: null, invitationSentByCreation: false } };
+    const fetchImpl = fakeFetch([{ body }]);
+    const tool = loadTools({ includeWrites: true }).find((entry) => entry.name === "tt_create_contact");
+    const handler = createToolHandler(tool, createApiClient(config, { fetchImpl }));
+    const result = await handler({ planId: id, planHash: "a".repeat(64), requestId: id });
+    assert.equal(result.isError, undefined);
+    assert.deepEqual(result.structuredContent, body);
+    assert.equal(fetchImpl.calls[0].options.headers["X-TT-Contact-Verification"], "1");
+  });
+});
+
 describe("tool handlers", () => {
   it("returns the API's answer as structured content, mirrored as text", async () => {
     const { handler, calls } = handlerFor("tt_get_job", [{ body: validJob }]);
