@@ -49,11 +49,11 @@ test("blocked second renewals fail promptly with only an allowlisted reason",()=
 });
 
 
-test("native agent cadence leaves discovery and request-budget headroom",()=>{
+test("native agent cadence leaves discovery and loop-tick headroom",()=>{
  const t=require("../tests/e2e/acme-real-journey").QUALIFICATION_AGENT_TIMING;
  // Poll loops jitter by up to 20%; allow five seconds for scan and evidence processing.
  assert.ok(2*t.discoveryIntervalMs*1.2+5000<=t.discoveryObservationTimeoutMs);
  // Conservatively count an extra initial tick per loop in any one-minute window.
- const idleRequests=[t.pollIntervalMs,t.heartbeatIntervalMs,t.discoveryIntervalMs].reduce((sum,ms)=>sum+Math.ceil(60000/(ms*0.8))+1,0);
- assert.ok(idleRequests<=60,`idle request budget ${idleRequests} leaves insufficient room for job traffic`);
+ const idleTicks=[t.pollIntervalMs,t.heartbeatIntervalMs,t.discoveryIntervalMs].reduce((sum,ms)=>sum+Math.ceil(60000/(ms*0.8))+1,0);
+ assert.ok(idleTicks<=60,`idle loop ticks ${idleTicks} leave insufficient room for other traffic`);
 });
