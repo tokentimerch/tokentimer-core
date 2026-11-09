@@ -17,10 +17,16 @@ export function channelStatus(contact, channel) {
   }
   return {
     status: entry.status,
-    label: LABELS[entry.status] || 'Pending',
+    label:
+      channel === 'email' &&
+      entry.status === 'verified' &&
+      entry.delivery_basis === 'verified_member'
+        ? 'Verified member'
+        : LABELS[entry.status] || 'Pending',
     invitation: entry.invitation || null,
     verified_at: entry.verified_at || null,
     consent_at: entry.consent_at || null,
+    ...(entry.delivery_basis ? { delivery_basis: entry.delivery_basis } : {}),
   };
 }
 

@@ -3,6 +3,7 @@
 const crypto = require("crypto");
 const { isValidEmail } = require("./emailCheck");
 const { safeDeliveryKey, deliveryData, deliveryChannelNames } = require("../alert-eligibility/deliveryData");
+const { findVerifiedMemberEmails } = require("./verified-member");
 
 const CONSENT_POLICY_VERSION = "2026-10-25";
 const DEFAULT_DEPLOYMENT = "self-hosted";
@@ -246,7 +247,8 @@ function isMissingSchema(error) {
 function finishForMode(mode, decision) {
   const grace = decision.allowed && decision.delivery_basis === "legacy_grace"
     ? { delivery_basis: decision.delivery_basis, grace_expires_at: decision.grace_expires_at }
-    : {};
+    : decision.allowed && decision.delivery_basis === "verified_member"
+      ? { delivery_basis: "verified_member" } : {};
   if (mode === "off" || mode === "shadow") {
     return {
       allowed: true,
@@ -341,7 +343,8 @@ async function evaluateRecipient({ client, workspaceId, contactId, channel, dest
       const reason = suppressed.rows[0].reason;
       return {
         allowed: false,
-        code: reason === "recipient_declined" ? "RECIPIENT_OPTED_OUT" : "RECIPIENT_SUPPRESSED",
+        code: reason === "recipient_declined" ? "RECIPIENT_OPTED_OUT"
+          : reason === "member_verification_revoked" ? "RECIPIENT_REVOKED" : "RECIPIENT_SUPPRESSED",
       };
     }
     const found = await client.query(
@@ -363,6 +366,12 @@ async function evaluateRecipient({ client, workspaceId, contactId, channel, dest
     );
     const row = found.rows[0];
     if (!row || row.status === "pending") {
+      if (channel === "email") {
+        const members = await findVerifiedMemberEmails({
+          client, workspaceId, recipients: [{ contactId, destination: normalized.value, fingerprint }],
+        });
+        if (members.length) return { allowed: true, code: null, delivery_basis: "verified_member" };
+      }
       return await legacyGraceDecision({ client, workspaceId, contactId, channel, destination: normalized.value, fingerprint });
     }
     if (row.status === "opted_out") return { allowed: false, code: "RECIPIENT_OPTED_OUT" };
@@ -1373,6 +1382,15 @@ async function createInvitation({ pool, workspaceId, contactId, channel, actorUs
     if (!destination.ok) throw coded(400, "DESTINATION_MISSING", "This contact has no destination for that channel");
     const fingerprint = destinationFingerprint(channel, destination.value);
     if (!fingerprint) throw coded(503, "RECIPIENT_VERIFICATION_UNAVAILABLE", "Recipient verification is not configured");
+    if (channel === "email" && !recipientInitiated) {
+      const members = await findVerifiedMemberEmails({
+        client, workspaceId, recipients: [{ contactId, destination: destination.value, fingerprint }],
+      });
+      if (members.length) return {
+        alreadyVerified: true, channel, delivery_basis: "verified_member",
+        destination: destination.value, token: null, challengeId: null, expiresAt: null,
+      };
+    }
     const abuse = await client.query(
       `-- RV_SUPPRESSION_LOOKUP
        SELECT reason FROM notification_suppressions
@@ -1610,6 +1628,18 @@ async function upsertVerification(client, row, status, method) {
   const nowVerified = status === "verified";
   const optedOut = status === "opted_out";
   if (nowVerified) {
+    if (row.channel === "email") {
+      // Serialize reconfirmation against revocation on duplicate contacts.
+      await client.query(
+        `-- RV_RESUME_MEMBER_DESTINATION
+         INSERT INTO notification_suppressions
+           (channel, destination_fingerprint, scope, workspace_id, reason, expires_at)
+         VALUES ($1, $2, 'workspace', $3, 'member_verification_revoked', '-infinity'::timestamptz)
+         ON CONFLICT (channel, destination_fingerprint, workspace_id, reason) WHERE scope = 'workspace'
+         DO UPDATE SET expires_at = '-infinity'::timestamptz`,
+        [row.channel, row.destination_fingerprint, row.workspace_id],
+      );
+    }
     await client.query(
       `-- RV_CLEAR_DECLINE
        DELETE FROM notification_suppressions
@@ -2132,6 +2162,48 @@ async function attachVerification(db, workspaceId, contacts) {
     }
     return { ...contact, verification };
   });
+  const confirmed = items.flatMap(contact => {
+    if (!["verified", "pending"].includes(contact.verification.email?.status)) return [];
+    const email = normalizeEmail(contact.details?.email);
+    const fingerprint = email.ok && destinationFingerprint("email", email.value);
+    return fingerprint ? [{ contact, fingerprint }] : [];
+  });
+  if (confirmed.length) {
+    const suppressed = await db.query(
+      `-- RV_LIST_MEMBER_REVOCATIONS
+       SELECT destination_fingerprint FROM notification_suppressions
+        WHERE channel = 'email' AND scope = 'workspace' AND workspace_id = $1
+          AND reason = 'member_verification_revoked'
+          AND destination_fingerprint = ANY($2::text[])
+          AND (expires_at IS NULL OR expires_at > NOW())`,
+      [workspaceId, confirmed.map(entry => entry.fingerprint)],
+    );
+    const revoked = new Set(suppressed.rows.map(row => row.destination_fingerprint));
+    for (const { contact, fingerprint } of confirmed) {
+      if (!revoked.has(fingerprint)) continue;
+      empty.email[contact.verification.email.status] -= 1;
+      contact.verification.email.status = "revoked";
+      empty.email.revoked += 1;
+    }
+  }
+  const recipients = items.flatMap(contact => {
+    if (contact.verification.email?.status !== "pending") return [];
+    const email = normalizeEmail(contact.details?.email);
+    const fingerprint = email.ok && destinationFingerprint("email", email.value);
+    return fingerprint ? [{ contactId: contact.id, destination: email.value, fingerprint }] : [];
+  });
+  const members = await findVerifiedMemberEmails({ client: db, workspaceId, recipients });
+  const memberEmails = new Map(members.map(row => [String(row.contact_id), row.destination_normalized]));
+  for (const contact of items) {
+    if (contact.verification.email?.status !== "pending"
+      || memberEmails.get(String(contact.id)) !== normalizeEmail(contact.details?.email).value) continue;
+    contact.verification.email = {
+      status: "verified", delivery_basis: "verified_member",
+      verified_at: null, consent_at: null, invitation: null,
+    };
+    empty.email.pending -= 1;
+    empty.email.verified += 1;
+  }
   if (legacyGraceEnabled()) {
     // Bound database work independently of the contact-list page size.
     for (let offset = 0; offset < items.length; offset += 8) {

@@ -44,6 +44,7 @@ test.before(async () => {
     );
   `);
   await pool.query(migration);
+  await require("../helpers/recipient-member-schema.cjs")(pool);
   await pool.query(graceMigration);
   const locking = fs.readFileSync(path.join(__dirname, "../../packages/recipient-verification/legacy-grace-locking-migration.sql"), "utf8");
   await pool.query(locking);
@@ -180,7 +181,8 @@ test("suppression and post-preview refusals prevent activation and delivery", as
   await setStatus(existing, "revoked");
   await assert.rejects(activate(result), /no longer eligible/);
   await setStatus(existing, "pending");
-  await assert.rejects(activate(await preview(existing.workspaceId)), /no longer eligible/);
+  await assert.rejects(activate(result), /no longer eligible/);
+  assert.equal((await preview(existing.workspaceId)).snapshot.recipients.some(row => row.channel === "email"), false);
   const suppressible = await seed({ email: "suppressible@example.test" });
   await activate(await preview(suppressible.workspaceId));
   await pool.query(`INSERT INTO notification_suppressions (channel,destination_fingerprint,scope,workspace_id,reason)

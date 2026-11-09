@@ -787,6 +787,28 @@ test("bulk requeue retries a repaired webhook without resending its successful s
   assert.deepEqual(hits, { good: 1, repair: 2 });
 });
 
+test("email worker reuses member proof without consent and blocks after membership removal", async () => {
+  migrate();
+  const fixture = await createWorkspace("verified-member", {
+    contact: { email: "member-worker@example.test" }, group: {}, webhooks: [],
+  });
+  await pool.query("UPDATE users SET email_original=$2 WHERE id=$1", [fixture.userId, "member-worker@example.test"]);
+  await pool.query("UPDATE workspace_settings SET contact_groups=$2::jsonb WHERE workspace_id=$1",
+    [fixture.workspaceId, JSON.stringify([{ id: "default", name: "Default", email_contact_ids: [fixture.contactId] }])]);
+  const { deliveryWorkerJob } = await import("../../apps/worker/src/delivery-worker.js");
+  const run = () => deliveryWorkerJob({ closePool: false, incidentEmailSender: async () => ({ success: true }) });
+  const delivered = await enqueue(fixture, ["email"]);
+  await run();
+  assert.equal((await loadAlert(delivered)).status, "sent");
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM contact_channel_verifications WHERE contact_id=$1",
+    [fixture.contactId])).rows[0].n, 0);
+  await pool.query("DELETE FROM workspace_memberships WHERE user_id=$1 AND workspace_id=$2",
+    [fixture.userId, fixture.workspaceId]);
+  const blocked = await enqueue(fixture, ["email"]);
+  await run();
+  assert.equal((await loadAlert(blocked)).status, "blocked");
+});
+
 for (const channel of ["email", "whatsapp"]) {
   test(`${channel} worker delivers an activated legacy grant but stops after snapshot revocation`, async () => {
     migrate();

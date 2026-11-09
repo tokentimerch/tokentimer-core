@@ -42,6 +42,7 @@ function createStore() {
     const text = String(sql);
     state.queries.push(text);
     if (text === "BEGIN" || text === "COMMIT" || text === "ROLLBACK") return rowsOf([]);
+    if (/RV_VERIFIED_MEMBER_EMAILS|RV_LIST_MEMBER_REVOCATIONS|RV_RESUME_MEMBER_DESTINATION/.test(text)) return rowsOf([]);
     if (text.includes("SAVEPOINT rv_optional_verification")) return rowsOf([]);
     if (text.includes("pg_advisory_xact_lock")) {
       state.locks.push(params[0]);

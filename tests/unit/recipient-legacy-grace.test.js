@@ -35,6 +35,7 @@ function database({ status = "pending", suppression, expiresAt, unavailable = fa
     calls,
     async query(sql, params) {
       calls.push({ sql, params });
+      if (/RV_VERIFIED_MEMBER_EMAILS|RV_LIST_MEMBER_REVOCATIONS/.test(sql)) return { rows: [] };
       if (sql.includes("RV_SUPPRESSION_LOOKUP")) return { rows: suppression ? [{ reason: suppression }] : [] };
       if (sql.includes("RV_DELIVERY_LOOKUP")) return { rows: status ? [{ status, consent_at: status === "verified" ? new Date() : null }] : [] };
       if (sql.includes("RV_LEGACY_GRACE_LOOKUP")) {
