@@ -605,10 +605,16 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     if(resultGateway){
       const disabled=require('./helpers/certops-acme-disabled-profile');
       fs.rmSync(path.join(repoRoot,disabled.SIDECAR),{force:true});
-      await runScenario(disabled.SCENARIO,async()=>{
-        const proof=await disabled.qualify({pool,workspaceId,agentId,publicSession,certificateId,certPath,keyPath,configDir,workDir,domain,acmeKind,bulkProof,ownedWorkers,ownedBulkResources,ownedProfileResources,ownedJobIds,waitUntil,servedFingerprint,verifyDnsCleanup,primaryTlsOptions:lifecycleTlsOptions});
-        fs.writeFileSync(path.join(repoRoot,disabled.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
-      });
+      const disabledMilestones=[];
+      try {
+        await runScenario(disabled.SCENARIO,async()=>{
+          const proof=await disabled.qualify({pool,workspaceId,agentId,publicSession,certificateId,certPath,keyPath,configDir,workDir,domain,acmeKind,bulkProof,ownedWorkers,ownedBulkResources,ownedProfileResources,ownedJobIds,waitUntil,servedFingerprint,verifyDnsCleanup,primaryTlsOptions:lifecycleTlsOptions,onMilestone:name=>{if(disabled.MILESTONES.includes(name)&&disabledMilestones.length<16)disabledMilestones.push(`real-acme-diagnostic-${name}`);}});
+          fs.writeFileSync(path.join(repoRoot,disabled.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
+        });
+      } catch(error) {
+        try { for(const name of disabledMilestones)await runScenario(name,async()=>{}); } catch { /* Preserve the original failure and owned cleanup. */ }
+        throw error;
+      }
     }
     if(process.env.CERTOPS_REPORT_SCOPE===bulkReport.SCOPE){
       const alerts=require('./helpers/certops-acme-renewal-alert');
