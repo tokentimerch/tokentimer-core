@@ -150,6 +150,7 @@ async function qualifyBackgroundRenewals({
   acmeKind,
   workDir,
   ownedWorkers,
+  onMilestone = () => {},
 }) {
   assert.equal(process.platform, "linux");
   assert.ok(["certbot", "acme.sh"].includes(acmeKind));
@@ -220,6 +221,7 @@ async function qualifyBackgroundRenewals({
     return rows;
   };
   const leaves = [];
+  onMilestone("worker-fixture-preconditions-passed", null);
   const observe = async () => {
     const leaf = new crypto.X509Certificate(fs.readFileSync(certPath));
     verifyNames(leaf);
@@ -260,6 +262,7 @@ async function qualifyBackgroundRenewals({
   );
   assert.equal(String(due[0].id), String(certificateId));
   assert.equal(due[0].workspace_id, workspaceId);
+  onMilestone("worker-sql-selection-passed", null);
   const initialInventory = (
     await query(
       "SELECT not_after,profile_id FROM managed_certificates WHERE workspace_id=$1 AND id=$2 AND not_after<=NOW()+INTERVAL '30 days'",
@@ -298,6 +301,7 @@ async function qualifyBackgroundRenewals({
         ownedWorkers.push(value);
       },
     });
+    onMilestone("worker-started", null);
     for (let cycle = 0; cycle < 2; cycle++) {
       const inventory =
         cycle === 0
@@ -322,7 +326,7 @@ async function qualifyBackgroundRenewals({
           inventory.not_after,
         );
       const current = await waitUntil(async () => {
-        resource.check();
+        try { resource.check(); } catch(error) { onMilestone("worker-observer-failed", cycle); throw error; }
         assert.equal(agent.exitCode, null);
         assert.equal(agent.signalCode, null);
         const rows = await register();
@@ -337,10 +341,13 @@ async function qualifyBackgroundRenewals({
             "blocked",
             "orphaned_unknown_effect",
           ].includes(row.status)
-        )
+        ) {
+          onMilestone(`worker-cycle-job-${row.status}`, cycle);
           throw new Error("Actual cron renewal terminated unsuccessfully");
+        }
         return row.status === "succeeded" ? row : false;
       }, 240000);
+      onMilestone("worker-cycle-succeeded", cycle);
       assert.equal(current.source, "automation");
       assert.equal(current.mode, "real");
       assert.equal(current.operation, "renew");
@@ -363,6 +370,7 @@ async function qualifyBackgroundRenewals({
       );
       jobs.push(current.id);
       await observe();
+      onMilestone("worker-cycle-leaf-observed", cycle);
       await waitUntil(async () => {
         const actual = (
           await query(
@@ -395,6 +403,7 @@ async function qualifyBackgroundRenewals({
               Date.parse(leaves.at(-1).validTo),
         ),
       );
+      onMilestone("worker-cycle-inventory-and-evidence-passed", cycle);
       const audit = (
         await query(
           "SELECT metadata FROM audit_events WHERE workspace_id=$1 AND action='CERTOPS_JOB_CREATED_AUTOMATIC' AND metadata->>'jobId'=$2",
@@ -405,9 +414,11 @@ async function qualifyBackgroundRenewals({
       assert.equal(audit[0].metadata.trigger, "renewal_scheduler");
       assert.ok(isDeepStrictEqual(await profile(), beforeProfile));
       assert.ok(isDeepStrictEqual(await management(), beforePeriod));
+      onMilestone("worker-cycle-profile-and-period-passed", cycle);
     }
     lifecycle = await resource.stopAndDrain();
     runner.validateLifecycle(lifecycle);
+    onMilestone("worker-stopped-and-drained", null);
     assert.equal((await register()).length, 2);
   } finally {
     try {
