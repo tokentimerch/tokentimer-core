@@ -491,10 +491,17 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     assert.deepEqual((await pool.query("SELECT cp.public_metadata FROM managed_certificates mc JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id WHERE mc.workspace_id=$1 AND mc.id=$2", [workspaceId, certificateId])).rows[0].public_metadata.renewalProfile, profileBeforeManual,
       "manual renewal must preserve its stored execution profile");
     const background=require("./helpers/certops-acme-background-renewals");
-    await runScenario(background.SCENARIO,async()=>{
-      const proof=await background.qualifyBackgroundRenewals({pool,workspaceId,agent,certificateId,certPath,keyPath,ownedJobIds,waitUntil,verifyDnsCleanup,verifyNames,servedFingerprint,repoRoot,acmeKind,workDir,ownedWorkers});
-      fs.mkdirSync(path.dirname(backgroundProofPath),{recursive:true});fs.writeFileSync(backgroundProofPath,JSON.stringify(proof),{mode:0o600});
-    });
+    const workerMilestones=[];
+    const workerMilestoneNames=new Set(["worker-fixture-preconditions-passed","worker-sql-selection-passed","worker-started","worker-cycle-succeeded","worker-cycle-leaf-observed","worker-cycle-inventory-and-evidence-passed","worker-cycle-profile-and-period-passed","worker-stopped-and-drained","worker-observer-failed","worker-cycle-job-failed","worker-cycle-job-rejected","worker-cycle-job-cancelled","worker-cycle-job-blocked","worker-cycle-job-orphaned_unknown_effect"]);
+    try {
+      await runScenario(background.SCENARIO,async()=>{
+        const proof=await background.qualifyBackgroundRenewals({pool,workspaceId,agent,certificateId,certPath,keyPath,ownedJobIds,waitUntil,verifyDnsCleanup,verifyNames,servedFingerprint,repoRoot,acmeKind,workDir,ownedWorkers,onMilestone:(name,cycle)=>{if(workerMilestoneNames.has(name)&&(cycle===null||cycle===0||cycle===1)&&workerMilestones.length<16)workerMilestones.push(`real-acme-diagnostic-${name}${cycle===null?"":`-${cycle+1}`}`);}});
+        fs.mkdirSync(path.dirname(backgroundProofPath),{recursive:true});fs.writeFileSync(backgroundProofPath,JSON.stringify(proof),{mode:0o600});
+      });
+    } catch(error) {
+      try { for(const name of workerMilestones)await runScenario(name,async()=>{}); } catch { /* Keep the original worker failure and cleanup authoritative. */ }
+      throw error;
+    }
     const reuse = require("./helpers/certops-acme-key-reuse");
     await runScenario(reuse.scenarioName, async () => {
       const proof = await reuse.qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certificateId, certPath, keyPath, ownedJobIds, waitUntil, verifyDnsCleanup, verifyNames, servedFingerprint, repoRoot, acmeKind, workDir, configDir, workDirIdentity });
