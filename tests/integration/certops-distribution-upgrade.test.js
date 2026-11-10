@@ -20,6 +20,7 @@ describe("Core distribution and lifecycle migration histories", function () {
     'operator_connections', 'operator_enrollment_grants', 'operator_action_requests', 'operator_oauth',
     'operator_connection_lifetimes', 'operator_inventory', 'operator_oauth_retention', 'operator_issuance',
     'certops_issuance_job_identity', 'certops_issuance_identity_transfer',
+    'certops_period_creator_delete', 'recipient_member_verification',
   ];
   const migrations = require('../../apps/api/migrations/migrate').migrations;
   const companions = companionNames.filter(name => migrations.some(m => m.name === name));
