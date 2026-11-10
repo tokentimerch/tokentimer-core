@@ -1088,7 +1088,7 @@ describe("recipient verification", () => {
     assert.equal(ui.verificationControlsVisible("off"), false);
     assert.equal(ui.verificationControlsVisible("enforce"), true);
     assert.equal(ui.verificationControlsVisible("shadow"), true);
-    assert.match(ui.verificationWaitCopy("enforce"), /Alerts wait until/);
+    assert.match(ui.verificationWaitCopy("enforce"), /Unverified destinations wait for confirmation/);
     assert.match(ui.verificationWaitCopy("shadow"), /still sent/);
     assert.equal(ui.verificationWaitCopy("off"), null);
     assert.match(ui.verificationIntro("off"), /confirmation is off/i);

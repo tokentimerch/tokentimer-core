@@ -70,6 +70,23 @@ CREATE TRIGGER recipient_member_verification_preserve_revocation
   ON contact_channel_verifications
   FOR EACH ROW EXECUTE FUNCTION recipient_member_verification_preserve_revocation();
 
+-- Preserve historical reconfirmation before replaying older duplicate refusals.
+INSERT INTO notification_suppressions
+  (channel, destination_fingerprint, scope, workspace_id, reason, expires_at)
+SELECT v.channel, v.destination_fingerprint, 'workspace', v.workspace_id,
+       'member_verification_revoked', '-infinity'::timestamptz
+  FROM contact_channel_verifications v
+  JOIN workspaces w ON w.id = v.workspace_id
+ WHERE v.channel = 'email'
+ GROUP BY v.channel, v.destination_fingerprint, v.workspace_id
+HAVING MAX(v.consent_at) FILTER (WHERE v.status = 'verified') >
+       MAX(COALESCE(CASE WHEN v.status = 'revoked' THEN v.revoked_at ELSE v.opted_out_at END,
+                    v.updated_at, v.created_at))
+         FILTER (WHERE v.status IN ('revoked', 'opted_out'))
+ON CONFLICT (channel, destination_fingerprint, workspace_id, reason)
+  WHERE scope = 'workspace'
+DO NOTHING;
+
 INSERT INTO notification_suppressions
   (channel, destination_fingerprint, scope, workspace_id, reason)
 SELECT DISTINCT v.channel, v.destination_fingerprint, 'workspace', v.workspace_id,
@@ -87,7 +104,13 @@ SELECT DISTINCT v.channel, v.destination_fingerprint, 'workspace', v.workspace_i
        'recipient_declined'
   FROM contact_channel_verifications v
   JOIN workspaces w ON w.id = v.workspace_id
- WHERE v.status = 'opted_out'
+ WHERE v.channel = 'email' AND v.status = 'opted_out'
+   AND NOT EXISTS (
+     SELECT 1 FROM notification_suppressions s
+      WHERE s.channel = v.channel AND s.destination_fingerprint = v.destination_fingerprint
+        AND s.scope = 'workspace' AND s.workspace_id = v.workspace_id
+        AND s.reason = 'member_verification_revoked' AND s.expires_at = '-infinity'::timestamptz
+   )
 ON CONFLICT (channel, destination_fingerprint, workspace_id, reason)
   WHERE scope = 'workspace'
 DO NOTHING;

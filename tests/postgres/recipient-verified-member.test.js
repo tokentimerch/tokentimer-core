@@ -147,6 +147,79 @@ test("opt-out and active destination suppression always take precedence", async 
   assert.equal((await decision(row)).code, "RECIPIENT_OPTED_OUT");
 });
 
+test("upgrade preserves newer explicit confirmation over historical duplicate refusals", async () => {
+  for (const refusal of ["opted_out", "revoked"]) {
+    const row = await seed({ email: `${refusal}@example.test` });
+    const duplicate = (await pool.query("INSERT INTO workspace_contacts (workspace_id,details) VALUES ($1,$2) RETURNING *",
+      [row.workspaceId, { email: row.destination }])).rows[0];
+    const other = { ...row, contactId: duplicate.id };
+    await pool.query("ALTER TABLE contact_channel_verifications DISABLE TRIGGER USER");
+    try {
+      await status(row, refusal);
+      await pool.query(`UPDATE contact_channel_verifications
+        SET opted_out_at='2000-01-01', revoked_at='2000-01-01', updated_at='2000-01-01'
+        WHERE contact_id=$1`, [row.contactId]);
+      await status(other, "verified");
+      await pool.query("UPDATE contact_channel_verifications SET consent_at='2001-01-01' WHERE contact_id=$1", [other.contactId]);
+    } finally {
+      await pool.query("ALTER TABLE contact_channel_verifications ENABLE TRIGGER USER");
+    }
+    await require("../helpers/recipient-member-schema.cjs")(pool);
+    assert.equal((await decision(other)).allowed, true);
+    await pool.query("DELETE FROM workspace_contacts WHERE id=$1", [other.contactId]);
+    const recreated = (await pool.query("INSERT INTO workspace_contacts (workspace_id,details) VALUES ($1,$2) RETURNING id",
+      [row.workspaceId, { email: row.destination }])).rows[0];
+    await require("../helpers/recipient-member-schema.cjs")(pool);
+    assert.equal((await decision({ ...row, contactId: recreated.id })).allowed, true);
+  }
+});
+
+test("reconfirmation survives stale opt-outs, contact deletion and migration retries", async () => {
+  for (const writer of ["current", "older"]) {
+    const row = await seed({ email: `${writer}@example.test` });
+    const duplicate = (await pool.query("INSERT INTO workspace_contacts (workspace_id,details) VALUES ($1,$2) RETURNING *",
+      [row.workspaceId, { email: row.destination }])).rows[0];
+    const other = { ...row, contactId: duplicate.id };
+    await status(row, "opted_out");
+    if (writer === "current") {
+      const challenge = await verification.createInvitation({ pool, workspaceId: row.workspaceId,
+        contactId: other.contactId, channel: "email", actorUserId: row.userId, recipientInitiated: true });
+      assert.equal((await verification.consumeEmailChallenge({ pool, token: challenge.token, decision: "accept" })).ok, true);
+    } else {
+      await status(other, "verified");
+      await pool.query("DELETE FROM notification_suppressions WHERE workspace_id=$1 AND reason='recipient_declined'", [row.workspaceId]);
+    }
+    await require("../helpers/recipient-member-schema.cjs")(pool);
+    assert.equal((await decision(other)).allowed, true);
+    await pool.query("DELETE FROM workspace_contacts WHERE id=$1", [other.contactId]);
+    const recreated = (await pool.query("INSERT INTO workspace_contacts (workspace_id,details) VALUES ($1,$2) RETURNING id",
+      [row.workspaceId, { email: row.destination }])).rows[0];
+    await require("../helpers/recipient-member-schema.cjs")(pool);
+    assert.equal((await decision({ ...row, contactId: recreated.id })).allowed, true);
+    await status(row, "pending");
+    await status(row, "opted_out");
+    await require("../helpers/recipient-member-schema.cjs")(pool);
+    assert.equal((await decision({ ...row, contactId: recreated.id })).code, "RECIPIENT_OPTED_OUT");
+  }
+});
+
+test("upgrade keeps a historical refusal newer than duplicate confirmation", async () => {
+  const row = await seed();
+  const duplicate = (await pool.query("INSERT INTO workspace_contacts (workspace_id,details) VALUES ($1,$2) RETURNING id",
+    [row.workspaceId, { email: row.destination }])).rows[0];
+  await pool.query("ALTER TABLE contact_channel_verifications DISABLE TRIGGER USER");
+  try {
+    await status({ ...row, contactId: duplicate.id }, "verified");
+    await pool.query("UPDATE contact_channel_verifications SET consent_at='2000-01-01' WHERE contact_id=$1", [duplicate.id]);
+    await status(row, "opted_out");
+    await pool.query("UPDATE contact_channel_verifications SET opted_out_at='2001-01-01' WHERE contact_id=$1", [row.contactId]);
+  } finally {
+    await pool.query("ALTER TABLE contact_channel_verifications ENABLE TRIGGER USER");
+  }
+  await require("../helpers/recipient-member-schema.cjs")(pool);
+  assert.equal((await decision({ ...row, contactId: duplicate.id })).code, "RECIPIENT_OPTED_OUT");
+});
+
 test("concurrent reconfirmation and revocation serialize on the destination refusal", async () => {
   const row = await seed();
   const duplicate = (await pool.query("INSERT INTO workspace_contacts (workspace_id,details) VALUES ($1,$2) RETURNING id",

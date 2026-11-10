@@ -102,11 +102,15 @@ test("repeated verification requests do not send challenges or spend invitation 
 });
 
 test("dashboard distinguishes inherited proof from recipient consent", async () => {
-  const { channelStatus } = await import(pathToFileURL(path.resolve(__dirname,
+  const { channelStatus, verificationIntro, verificationWaitCopy, groupChannelHint } = await import(pathToFileURL(path.resolve(__dirname,
     "../../apps/dashboard/src/pages/contactVerificationStatus.js")).href);
   const result = channelStatus({ verification: { email: {
     status: "verified", delivery_basis: "verified_member",
   } } }, "email");
   assert.equal(result.label, "Verified member");
   assert.equal(result.consent_at, null);
+  assert.match(verificationIntro("enforce"), /Verified workspace-member email needs no second confirmation/);
+  assert.match(verificationIntro("enforce"), /Other email addresses and WhatsApp numbers require confirmation/);
+  assert.equal(verificationWaitCopy("enforce"), "Unverified destinations wait for confirmation.");
+  assert.match(groupChannelHint("enforce"), /Unverified destinations/);
 });

@@ -8,4 +8,4 @@ Self-hosted delivery keeps verification off by default. In `enforce` mode, a con
 - `RECIPIENT_FINGERPRINT_SECRET`: shared HMAC key for destination fingerprints and verification tokens; falls back to `PHONE_HASH_SALT`, then `SESSION_SECRET`.
 - `PUBLIC_BASE_URL`: public API origin for confirmation links and Twilio inbound signature validation; falls back to `API_URL`.
 
-See [configuration variables and limits](CONFIGURATION.md#recipient-verification) for defaults and [browser validation](recipient-verification-validation.md) for the test command.
+See [configuration variables and limits](CONFIGURATION.md#recipient-verification) for defaults.

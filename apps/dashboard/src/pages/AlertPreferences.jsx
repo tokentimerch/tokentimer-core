@@ -3427,7 +3427,7 @@ export default function AlertPreferences({
                         <Text fontSize='sm' color={bodySecondary} mt={1}>
                           {recipientVerificationMode === 'shadow'
                             ? 'Confirmation is recorded; delivery continues.'
-                            : 'Email and WhatsApp alerts wait for confirmation.'}
+                            : verificationIntro(recipientVerificationMode)}
                         </Text>
                       </Box>
                       <Button
