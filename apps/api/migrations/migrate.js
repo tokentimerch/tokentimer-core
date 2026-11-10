@@ -4936,6 +4936,11 @@ const migrations = [
     name: "certops_issuance_identity_transfer",
     sql: fs.readFileSync(require("path").join(__dirname, "108-certops-issuance-identity-transfer.sql"), "utf8"),
   },
+  {
+    version: 109,
+    name: "certops_period_creator_delete",
+    sql: fs.readFileSync(require("path").join(__dirname, "109-certops-period-creator-delete.sql"), "utf8"),
+  },
 ];
 
 
