@@ -156,9 +156,17 @@ test("derived ACME snapshot binds the database profile identity without dropping
 
 
 test("key reuse failure categories expose no persisted error content", () => {
-  assert.deepEqual(journey.reuseFailureLabels({status: "blocked", error_message: "acme step failed: private credential"}, "manual"), ["reuse-manual-job-blocked", "reuse-manual-error-acme"]);
+  assert.deepEqual(journey.reuseFailureLabels({status: "blocked", error_message: "acme step failed: private credential"}, "manual"), ["reuse-manual-job-blocked", "reuse-manual-error-acme", "reuse-manual-exit-unavailable"]);
   const labels = journey.reuseFailureLabels({status: "private-status", error_message: "secret-output"}, "scheduler");
-  assert.deepEqual(labels, ["reuse-scheduler-job-other", "reuse-scheduler-error-other"]);
+  assert.deepEqual(labels, ["reuse-scheduler-job-other", "reuse-scheduler-error-other", "reuse-scheduler-exit-unavailable"]);
   assert.ok(labels.every(label => !/private|secret/.test(label)));
   assert.throws(() => journey.reuseFailureLabels({}, "untrusted-phase"));
+});
+
+
+test("key reuse ACME exit categories are fixed and reject untrusted detail", () => {
+  assert.ok(journey.reuseFailureLabels({status:"failed",error_message:"acme step failed with exit code 1: private stderr"},"manual").includes("reuse-manual-exit-1"));
+  assert.ok(journey.reuseFailureLabels({status:"failed",error_message:"acme step failed with exit code 9: secret"},"manual").includes("reuse-manual-exit-other"));
+  assert.ok(journey.reuseFailureLabels({status:"failed",error_message:"acme step failed with exit code null: secret"},"scheduler").includes("reuse-scheduler-exit-null"));
+  assert.ok(journey.reuseFailureLabels({status:"failed",error_message:"acme step failed with exit code secret"},"manual").every(label=>!label.includes("secret")));
 });

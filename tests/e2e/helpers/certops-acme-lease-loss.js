@@ -10,6 +10,28 @@ const assert = require("node:assert/strict"),
   crypto = require("node:crypto");
 const attachment = require("./certops-acme-lease-attachment");
 const active = new Set();
+function leaseFailureLabels(row, agent) {
+  const statuses = new Set(["pending", "pending_approval", "approved", "claimed", "running", "succeeded", "failed", "rejected", "cancelled", "blocked", "orphaned_unknown_effect", "awaiting_issuer"]);
+  const status = row && statuses.has(row.status) ? row.status.replaceAll("_", "-") : row ? "other" : "missing";
+  const agentState = agent && agent.exitCode === null && agent.signalCode === null ? "running" : agent && (agent.exitCode != null || agent.signalCode != null) ? "exited" : "unknown";
+  return [`lease-job-${status}`, `lease-agent-${agentState}`];
+}
+function verifyFencedJob(fenced, jobId, row) {
+  assert.ok(fenced && Array.isArray(fenced.cancelledJobIds) && Array.isArray(fenced.orphanedJobIds));
+  const cancelled = fenced.cancelledJobIds.filter(id => id === jobId).length;
+  const orphaned = fenced.orphanedJobIds.filter(id => id === jobId).length;
+  assert.equal(cancelled + orphaned, 1, "Retirement must fence the exact owned job once");
+  assert.ok(row);
+  if (cancelled) {
+    assert.equal(row.status, "cancelled");
+    assert.equal(row.error_code, "CERTOPS_AGENT_FORCE_RETIRED");
+  } else {
+    assert.equal(row.status, "orphaned_unknown_effect");
+    assert.equal(row.error_code, "CERTOPS_AGENT_FORCE_RETIRED_UNKNOWN_EFFECT");
+    assert.equal(row.needs_operator_reconciliation, true);
+    assert.equal(row.reconciliation_reason, "Qualification native mutation-time lease loss");
+  }
+}
 function measureOwnedProcess(proof, { token, agent, barrierDirectory }) {
   assert.equal(proof.token, token);
   assert.ok(Number.isInteger(proof.pid) && proof.pid > 0);
@@ -51,7 +73,9 @@ module.exports = async function qualifyLeaseLoss({
   waitUntil,
   verifyDnsCleanup,
   servedFingerprint,
+  onMilestone = () => {},
 }) {
+  onMilestone("lease-start");
   assert.equal(process.platform, "linux");
   const beforeCert = fs.readFileSync(certPath),
     beforeKey = fs.readFileSync(keyPath),
@@ -64,7 +88,8 @@ module.exports = async function qualifyLeaseLoss({
   assert.ok(Array.isArray(ownedLeaseResources));
   active.add(path.resolve(barrierDirectory));
   fs.writeFileSync(arm, JSON.stringify({ token }), { flag: "wx", mode: 0o600 });
-  let proof, primary, owner;
+  onMilestone("lease-armed");
+  let proof, primary, owner, jobId;
   try {
     const created = await publicSession.request(
       `/api/v1/workspaces/${workspaceId}/certops/jobs`,
@@ -77,14 +102,17 @@ module.exports = async function qualifyLeaseLoss({
       },
     );
     assert.equal(created.status, 201);
-    const jobId = created.body.job.id;
+    jobId = created.body.job.id;
     ownedJobIds.push(jobId);
+    onMilestone("lease-job-admitted");
     await waitUntil(() => fs.existsSync(receipt), 60000);
+    onMilestone("lease-receipt-observed");
     proof = measureOwnedProcess(JSON.parse(fs.readFileSync(receipt, "utf8")), {
       token,
       agent,
       barrierDirectory,
     });
+    onMilestone("lease-process-identified");
     owner = attachment.attach({
       proof,
       token,
@@ -94,6 +122,7 @@ module.exports = async function qualifyLeaseLoss({
       waitUntil,
     });
     await owner.ready;
+    onMilestone("lease-process-attached");
     assert.equal(agent.exitCode, null);
     assert.equal(agent.signalCode, null);
     const active = (
@@ -116,31 +145,44 @@ module.exports = async function qualifyLeaseLoss({
     ).rows[0];
     assert.ok(actualAgent);
     assert.equal(active.claimed_by_agent_id, actualAgent.id);
+    onMilestone("lease-active-state-verified");
     const retired = await publicSession.request(
       `/api/v1/workspaces/${workspaceId}/certops/agents/${actualAgent.id}/retire`,
       "POST",
       { force: true, reason: "Qualification native mutation-time lease loss" },
     );
     assert.equal(retired.status, 200);
+    onMilestone("lease-agent-retired");
     await owner.waitForNativeExit();
+    onMilestone("lease-process-exited");
     // The arm remains present throughout: only native lease-abort cancellation,
     // not a fixture release, can terminate this genuine executing command.
     assert.equal(JSON.parse(fs.readFileSync(arm, "utf8")).token, token);
+    onMilestone("lease-arm-retained");
     await verifyDnsCleanup();
+    onMilestone("lease-dns-clean");
     assert.ok(fs.readFileSync(certPath).equals(beforeCert));
+    onMilestone("lease-cert-unchanged");
     assert.ok(fs.readFileSync(keyPath).equals(beforeKey));
+    onMilestone("lease-key-unchanged");
     assert.equal(await servedFingerprint(), fingerprint);
-    assert.equal(
-      (
-        await pool.query(
-          "SELECT status FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",
-          [workspaceId, jobId],
-        )
-      ).rows[0].status,
-      "cancelled",
-    );
+    onMilestone("lease-tls-unchanged");
+    const terminal = (await pool.query(
+      "SELECT status,error_code,needs_operator_reconciliation,reconciliation_reason FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",
+      [workspaceId, jobId],
+    )).rows[0];
+    // Use the retirement transaction's fenced list: a claimed job can become
+    // running after the earlier observation and before retirement commits.
+    verifyFencedJob(retired.body.fenced, jobId, terminal);
+    onMilestone("lease-final-state-verified");
   } catch (error) {
     primary = error;
+    if (jobId && !owner) {
+      try {
+        const row = (await pool.query("SELECT status FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, jobId])).rows[0];
+        for (const label of leaseFailureLabels(row, agent)) onMilestone(label);
+      } catch { try { onMilestone("lease-job-diagnostic-unavailable"); } catch {} }
+    }
   } finally {
     const failures = [];
     try {
@@ -151,6 +193,7 @@ module.exports = async function qualifyLeaseLoss({
       await owner.stopAndDrain();
       owner.removeOwnedBarriersAndRelease();
       active.delete(path.resolve(barrierDirectory));
+      onMilestone("lease-owned-cleanup-completed");
     } catch (error) {
       failures.push(error);
     }
@@ -162,6 +205,8 @@ module.exports = async function qualifyLeaseLoss({
   }
   if (primary) throw primary;
 };
+module.exports.leaseFailureLabels = leaseFailureLabels;
+module.exports.verifyFencedJob = verifyFencedJob;
 module.exports.assertCleanupSafe = function assertCleanupSafe(root) {
   assert.equal(
     active.has(path.resolve(root)),

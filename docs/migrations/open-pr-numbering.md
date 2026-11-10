@@ -38,7 +38,8 @@ are reservations, not no-op migrations. They do not install another feature.
 | 106 | operator_issuance | MCP certificate issuance (#406) |
 | 107 | certops_issuance_job_identity | Main; unchanged |
 | 108 | certops_issuance_identity_transfer | Main; unchanged |
-| 109–111 | Windows store issuance | Reserved for #613; not installed by this branch |
+| 109 | certops_period_creator_delete | Main; unchanged |
+| 110 | recipient_member_verification | Reuse exact verified workspace-member email proof |
 | 112 | certops_observed_revocation | Observed certificate revocation (#589) |
 
 Use the normal runner with these canonical identities. Independent feature tails

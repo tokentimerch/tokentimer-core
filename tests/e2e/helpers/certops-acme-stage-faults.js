@@ -28,6 +28,7 @@ const { identifiersDigest } = require("./certops-acme-transparent-proxy");
 const SCOPE = "native-public-acme-client-owned-stage-transport-refusal";
 const STAGES = ["new-order", "finalize"];
 const SCENARIOS = STAGES.map((stage) => `real-acme-${stage}-transport-refusal`);
+const NONCE_SCENARIO = "real-acme-controlled-badnonce-retry";
 const FLAGS = [
   "actualPublicIssueJobs",
   "actualClientReachedBothStages",
@@ -78,6 +79,28 @@ const uuid = (value) =>
   /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value);
 const digest = (value) =>
   typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+function verifyNonceRecovery({ before, after, job, certificateId, agentId, verificationCount }) {
+  assert.ok(before && after && job);
+  for (const field of ["controlledBadNonceResponses", "acceptedOrders", "issuedResponses", "unchangedBodies"]) {
+    assert.ok(Number.isSafeInteger(before[field]) && Number.isSafeInteger(after[field]));
+  }
+  assert.equal(after.controlledBadNonceResponses - before.controlledBadNonceResponses, 1);
+  assert.equal(after.acceptedOrders - before.acceptedOrders, 1);
+  assert.ok(after.issuedResponses - before.issuedResponses >= 1);
+  assert.ok(after.unchangedBodies > before.unchangedBodies);
+  assert.ok(after.perStage["new-order"].forwarded > before.perStage["new-order"].forwarded);
+  assert.equal(after.transportFailed, false);
+  assert.equal(job.status, "succeeded");
+  assert.equal(job.operation, "issue");
+  assert.equal(job.mode, "real");
+  assert.equal(job.source, "api");
+  assert.equal(job.subject_id, certificateId);
+  assert.equal(job.agent_id, agentId);
+  assert.equal(job.attempt_count, 1);
+  assert.ok(uuid(job.id) && uuid(job.claim_id) && uuid(certificateId));
+  assert.ok(Number.isSafeInteger(verificationCount) && verificationCount > 0);
+  return true;
+}
 function verifyCases(cases) {
   assert.ok(Array.isArray(cases) && cases.length === 2);
   for (const [index, row] of cases.entries()) {
@@ -328,6 +351,8 @@ module.exports = {
   SCOPE,
   STAGES,
   SCENARIOS,
+  NONCE_SCENARIO,
+  verifyNonceRecovery,
   FLAGS,
   REQUIRED_SOURCES,
   verifyCases,

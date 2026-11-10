@@ -300,6 +300,8 @@
       {
         "file": "certops-identity-invariants.test.js",
         "names": [
+          "preserves tracking mode when the outbox links an adopted renewal profile",
+          "defers to a concurrent replace-management choice",
           "normalizes legacy audit reads without changing immutable metadata or timestamps",
           "preserves tracking mode when the outbox links an adopted renewal profile",
           "defers to a concurrent replace-management choice",

@@ -56,6 +56,7 @@ test("the worker gate reads fresh consent for each retry and honours a later opt
     const client = {
       async query(sql) {
         if (sql.includes("RV_SUPPRESSION_LOOKUP")) return { rows: [] };
+        if (sql.includes("RV_VERIFIED_MEMBER_EMAILS")) return { rows: [] };
         assert.match(sql, /RV_DELIVERY_LOOKUP/);
         return { rows: [current] };
       },

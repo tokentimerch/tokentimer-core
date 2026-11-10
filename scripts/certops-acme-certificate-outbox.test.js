@@ -77,3 +77,13 @@ test("retained agent receipts bind original kernel identity and require explicit
     );
   }
 });
+
+
+test("outbox restart diagnostics are a bounded fixed allowlist", () => {
+  assert.ok(h.MILESTONES.length <= 32);
+  assert.equal(new Set(h.MILESTONES).size, h.MILESTONES.length);
+  assert.ok(h.MILESTONES.every(name => /^outbox-[a-z_]+(?:-[a-z_]+)*$/.test(name)));
+  assert.ok(h.MILESTONES.includes("outbox-result-persisted"));
+  assert.ok(h.MILESTONES.includes("outbox-agent-restarted"));
+  assert.ok(h.MILESTONES.includes("outbox-result-delivered"));
+});

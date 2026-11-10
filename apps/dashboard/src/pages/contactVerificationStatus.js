@@ -17,10 +17,16 @@ export function channelStatus(contact, channel) {
   }
   return {
     status: entry.status,
-    label: LABELS[entry.status] || 'Pending',
+    label:
+      channel === 'email' &&
+      entry.status === 'verified' &&
+      entry.delivery_basis === 'verified_member'
+        ? 'Verified member'
+        : LABELS[entry.status] || 'Pending',
     invitation: entry.invitation || null,
     verified_at: entry.verified_at || null,
     consent_at: entry.consent_at || null,
+    ...(entry.delivery_basis ? { delivery_basis: entry.delivery_basis } : {}),
   };
 }
 
@@ -39,7 +45,7 @@ export function verificationControlsVisible(mode) {
 
 export function verificationIntro(mode) {
   if (mode === 'enforce') {
-    return 'A contact can be saved before they confirm. Email and WhatsApp alerts wait until that person confirms the exact address or number.';
+    return 'Verified workspace-member email needs no second confirmation. Other email addresses and WhatsApp numbers require confirmation.';
   }
   if (mode === 'shadow') {
     return 'Recipient verification is recording confirmation status. Notifications are still sent.';
@@ -52,7 +58,7 @@ export function verificationIntro(mode) {
 
 export function verificationWaitCopy(mode) {
   if (mode === 'enforce')
-    return 'Alerts wait until this person confirms the address or number.';
+    return 'Unverified destinations wait for confirmation.';
   if (mode === 'shadow')
     return 'Confirmation is recorded. Notifications are still sent.';
   return null;
@@ -60,7 +66,7 @@ export function verificationWaitCopy(mode) {
 
 export function groupChannelHint(mode) {
   if (mode === 'enforce') {
-    return 'Unverified people stay in the group and do not receive email or WhatsApp until they confirm.';
+    return 'Unverified destinations stay in the group but do not receive alerts until confirmed.';
   }
   if (mode === 'shadow') {
     return 'Unverified people stay in the group. Notifications are still sent while verification is recording status.';

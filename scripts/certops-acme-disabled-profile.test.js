@@ -53,3 +53,27 @@ test("native manual-while-disabled binds exact genuine second bulk certificate a
   ])
     assert.throws(() => h.verifyAgainstBulk({ ...proof, ...patch }, previous));
 });
+
+
+test("six-day native leaf needs an explicit lead for immediate selection", () => {
+  const { resolveCertificateRenewalThresholdDays } = require("../apps/api/services/certops/renewalThreshold");
+  const now = new Date("2026-01-01T00:00:00Z");
+  const row = { not_before: now, not_after: new Date(now.getTime() + 6 * 86400000), profile_renew_before_days: null };
+  assert.equal(resolveCertificateRenewalThresholdDays(row, {}), 3);
+  assert.equal(resolveCertificateRenewalThresholdDays({ ...row, profile_renew_before_days: 30 }, {}), 30);
+  assert.ok(h.MILESTONES.includes("disabled-lead-saved"));
+  assert.ok(h.MILESTONES.length <= 16);
+  assert.equal(new Set(h.MILESTONES).size, h.MILESTONES.length);
+});
+
+
+test("lead edit requires ownership and preserves all other profile fields", () => {
+  const before = { id: "owned-profile", status: "active", renew_before_days: null, public_metadata: { renewalProfile: { keyRotationPolicy: { rotateOnRenew: true } }, derivedFrom: { certificateId: "owned" } } };
+  const after = { ...structuredClone(before), renew_before_days: 30, public_metadata: { ...structuredClone(before.public_metadata), operatorOwned: true } };
+  assert.doesNotThrow(() => h.assertOwnedLeadEdit(before, after));
+  assert.throws(() => h.assertOwnedLeadEdit(before, { ...after, public_metadata: before.public_metadata }));
+  assert.throws(() => h.assertOwnedLeadEdit(before, { ...after, renew_before_days: 29 }));
+  const changed = structuredClone(after); changed.public_metadata.renewalProfile.keyRotationPolicy.rotateOnRenew = false;
+  assert.throws(() => h.assertOwnedLeadEdit(before, changed));
+  assert.throws(() => h.assertOwnedLeadEdit(before, { ...after, status: "disabled" }));
+});
