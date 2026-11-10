@@ -45,8 +45,13 @@ async function ready(url, ca) {
   }
   throw new Error("Disposable Pebble fixture did not become ready");
 }
-async function withPebble(run) {
+function pebbleEnvironment(source, deterministicNonces) {
+  assert.equal(typeof deterministicNonces, "boolean");
+  return { ...source, PEBBLE_VA_NOSLEEP: "1", PEBBLE_AUTHZREUSE: "0", PEBBLE_VA_ALWAYS_VALID: "0", ...(deterministicNonces ? { PEBBLE_WFE_NONCEREJECT: "0" } : {}) };
+}
+async function withPebble(run, { deterministicNonces = false } = {}) {
   assert.equal(typeof run, "function");
+  assert.equal(typeof deterministicNonces, "boolean");
   for (const port of [14000, 15000, 8053, 8055]) await portAvailable(port);
   await udpAvailable(8053);
   assert.equal(spawnSync("openssl", ["version"]).status, 0, "Missing OpenSSL prerequisite");
@@ -63,7 +68,7 @@ async function withPebble(run) {
     if (eabRequired) fs.writeFileSync(eabFile, JSON.stringify(eab), { mode: 0o600 });
     fs.writeFileSync(config, JSON.stringify({ pebble: { listenAddress: "127.0.0.1:14000", managementListenAddress: "127.0.0.1:15000", certificate: cert, privateKey: key, httpPort: 5002, tlsPort: 5001, ocspResponderURL: "", externalAccountBindingRequired: eabRequired, ...(eabRequired ? { externalAccountMACKeys: { [eab.eabKid]: eab.eabHmacKey } } : {}), profiles: { default: { description: "Qualification short-lived certificate", validityPeriod: 518400 } } } }), { mode: 0o600 });
     children.push(spawn("pebble-challtestsrv", ["-management", "127.0.0.1:8055", "-dns01", "127.0.0.1:8053", "-http01", "", "-https01", "", "-tlsalpn01", "", "-doh", "", "-defaultIPv6", ""], { stdio: "ignore" }));
-    children.push(spawn("pebble", ["-config", config, "-strict", "-dnsserver", "127.0.0.1:8053"], { stdio: "ignore", env: { ...process.env, PEBBLE_VA_NOSLEEP: "1", PEBBLE_AUTHZREUSE: "0", PEBBLE_VA_ALWAYS_VALID: "0" } }));
+    children.push(spawn("pebble", ["-config", config, "-strict", "-dnsserver", "127.0.0.1:8053"], { stdio: "ignore", env: pebbleEnvironment(process.env, deterministicNonces) }));
     for (const child of children) child.on("error", () => {});
     await ready("https://127.0.0.1:14000/dir", fs.readFileSync(cert));
     const actualDirectory = await new Promise((resolve, reject) => {
@@ -108,7 +113,7 @@ async function withPebble(run) {
     if(errors.length)throw new AggregateError([...(primaryError?[primaryError]:[]),...errors],"Owned Pebble fixture or journey cleanup failed");
   }
 }
-module.exports = { withPebble, probeHttpsReady };
+module.exports = { withPebble, probeHttpsReady, pebbleEnvironment };
 async function main() {
   assert.equal(process.env.CERTOPS_PROTOCOL_DISPOSABLE_STACK, "1", "Real ACME requires an explicitly disposable database");
   assert.equal(process.platform, "linux", "initial real ACME lane requires Linux");
@@ -145,7 +150,7 @@ async function main() {
     }
     if(nativeConsole)require("./certops-acme-native-console-report").verifyActualJourney(events,require("./certops-acme-native-console-report").readProof(),process.env.GITHUB_SHA);
     if(nativeLifecycle)require("./certops-acme-browser-lifecycle-report").verifyActualJourney(events,require("./certops-acme-browser-lifecycle-report").readProof(),process.env.GITHUB_SHA);
-    console.log(JSON.stringify(verify(events, [...required, journey, helper.scenarioName,require("../tests/e2e/helpers/certops-acme-background-renewals").SCENARIO,...require("../tests/e2e/helpers/certops-acme-stage-faults").SCENARIOS,...(scope==="real-agent-acme-filesystem"?[require("../tests/e2e/helpers/certops-acme-bulk-renewal").SCENARIO,require("../tests/e2e/helpers/certops-acme-native-adoption").SCENARIO,require("../tests/e2e/helpers/certops-acme-certificate-outbox").SCENARIO,require("../tests/e2e/helpers/certops-acme-disabled-profile").SCENARIO]:[])], "certops-agent-e2e.test.js", scope)));
-  });
+    console.log(JSON.stringify(verify(events, [...required, journey, helper.scenarioName,require("../tests/e2e/helpers/certops-acme-background-renewals").SCENARIO,...require("../tests/e2e/helpers/certops-acme-stage-faults").SCENARIOS,require("../tests/e2e/helpers/certops-acme-stage-faults").NONCE_SCENARIO,...(scope==="real-agent-acme-filesystem"?[require("../tests/e2e/helpers/certops-acme-bulk-renewal").SCENARIO,require("../tests/e2e/helpers/certops-acme-native-adoption").SCENARIO,require("../tests/e2e/helpers/certops-acme-certificate-outbox").SCENARIO,require("../tests/e2e/helpers/certops-acme-disabled-profile").SCENARIO]:[])], "certops-agent-e2e.test.js", scope)));
+  }, { deterministicNonces: true });
 }
 if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 1; });

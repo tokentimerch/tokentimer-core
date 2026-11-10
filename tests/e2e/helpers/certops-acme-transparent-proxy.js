@@ -188,6 +188,7 @@ function publicCounters() {
     refused: 0,
     acceptedAccounts: 0,
     acceptedOrders: 0,
+    controlledBadNonceResponses: 0,
     badNonceResponses: 0,
     dnsProblemResponses: 0,
     unauthorizedResponses: 0,
@@ -234,6 +235,7 @@ async function startOwnedAcmeProxy({
     orderObserver,
     lastRefusedFinalize = null,
     failure = null,
+    badNonceArmed = false,
     closed = false,
     failed = false;
   const server = https.createServer(
@@ -265,6 +267,30 @@ async function startOwnedAcmeProxy({
     const body = await readBounded(request);
     counters.received++;
     perStage[selected.stage].received++;
+    if (badNonceArmed && selected.stage === "new-order") {
+      badNonceArmed = false;
+      // Retrieve a fresh nonce from the same pinned local CA; never record it.
+      const nonce = await new Promise((resolve, reject) => {
+        const upstream = https.request(new URL(selected.upstreamOrigin), {
+          path: "/nonce-plz", method: "HEAD", headers: { host: selected.host },
+          ca: upstreamCaPem, rejectUnauthorized: true, timeout: 15000, agent: false,
+        }, reply => {
+          reply.resume();
+          if (reply.statusCode !== 200 && reply.statusCode !== 204) return reject(new Error("Owned nonce retrieval failed"));
+          resolve(reply.headers["replay-nonce"]);
+        });
+        upstreamRequests.add(upstream);
+        upstream.once("close", () => upstreamRequests.delete(upstream));
+        upstream.once("error", reject);
+        upstream.once("timeout", () => upstream.destroy(new Error("Owned nonce retrieval timed out")));
+        upstream.end();
+      });
+      assert.ok(typeof nonce === "string" && /^[A-Za-z0-9_-]{1,256}$/.test(nonce));
+      counters.controlledBadNonceResponses++;
+      response.writeHead(400, { "content-type": "application/problem+json", "replay-nonce": nonce })
+        .end(JSON.stringify({ type: "urn:ietf:params:acme:error:badNonce", detail: "JWS has an invalid anti-replay nonce" }));
+      return;
+    }
     if (
       failure &&
       (failure === selected.stage ||
@@ -429,6 +455,12 @@ async function startOwnedAcmeProxy({
   });
   return {
     directory: `https://${authority}/dir`,
+    armBadNonceOnce() {
+      assert.equal(closed, false);
+      assert.equal(failure, null);
+      assert.equal(badNonceArmed, false);
+      badNonceArmed = true;
+    },
     setFailure(value) {
       assert.ok(
         [
