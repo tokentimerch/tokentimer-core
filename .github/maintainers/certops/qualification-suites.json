@@ -5949,6 +5949,7 @@
     ],
     "shared-acme-real-journey-4": [
       "tests/e2e/acme-real-journey.js",
+      "tests/e2e/helpers/certops-api-fixture.js",
       "scripts/certops-real-acme.js",
       "tests/e2e/helpers/certops-acme-lease-loss.js",
       "tests/e2e/helpers/certops-acme-command-barrier.js",
