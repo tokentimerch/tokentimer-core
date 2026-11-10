@@ -26,10 +26,13 @@ export default function AutoSyncProvenance({ tokenId, ownership }) {
   const [retry, setRetry] = useState(0);
   const [showHistory, setShowHistory] = useState(false);
   const current = useRef(tokenId);
+  const paginationGenRef = useRef(0);
   current.current = tokenId;
   useEffect(() => {
     let cancelled = false;
+    paginationGenRef.current += 1;
     setData(null);
+    setLoading(false);
     setShowHistory(false);
     setError('');
     apiClient
@@ -42,6 +45,7 @@ export default function AutoSyncProvenance({ tokenId, ownership }) {
       });
     return () => {
       cancelled = true;
+      paginationGenRef.current += 1;
     };
   }, [tokenId, retry]);
   const configurations = data?.configurations || [];
@@ -60,23 +64,34 @@ export default function AutoSyncProvenance({ tokenId, ownership }) {
     : ownership === 'Managed' || ownership === 'Observed';
   if (!hasAutoSyncProvenance && !error) return null;
   const loadMore = async () => {
+    const generation = ++paginationGenRef.current;
     setLoading(true);
     setError('');
     try {
       const res = await apiClient.get(
         `/api/tokens/${tokenId}/auto-sync-provenance?before=${data.next_before}`
       );
-      if (current.current === tokenId)
+      if (
+        paginationGenRef.current === generation &&
+        current.current === tokenId
+      )
         setData(previous => ({
           ...res.data,
           items: [...previous.items, ...res.data.items],
         }));
     } catch {
-      if (current.current === tokenId) {
+      if (
+        paginationGenRef.current === generation &&
+        current.current === tokenId
+      ) {
         setError('Earlier history could not be loaded. Please try again.');
       }
     } finally {
-      if (current.current === tokenId) setLoading(false);
+      if (
+        paginationGenRef.current === generation &&
+        current.current === tokenId
+      )
+        setLoading(false);
     }
   };
   return (

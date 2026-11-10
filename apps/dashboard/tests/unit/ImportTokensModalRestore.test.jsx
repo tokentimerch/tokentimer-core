@@ -7,6 +7,7 @@ import {
   fireEvent,
   cleanup,
   within,
+  act,
 } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 
@@ -461,6 +462,72 @@ describe('ImportTokensModal restored scan params provider scoping', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Newer runs' }));
     expect(screen.getByText('result-0')).toBeVisible();
+  });
+
+  it('discards earlier runs after leaving and revisiting a configuration', async () => {
+    let finishOld;
+    let paginationLoads = 0;
+    const runs = label =>
+      Array.from({ length: 5 }, (_, index) => ({
+        run_id: `${label}-${index}`,
+        status: `${label}-${index}`,
+        started_at: '2026-10-01',
+      }));
+    apiGetMock.mockImplementation(url => {
+      if (String(url).includes('/runs?limit=5&cursor=')) {
+        paginationLoads += 1;
+        if (paginationLoads === 1)
+          return new Promise(resolve => {
+            finishOld = resolve;
+          });
+        return Promise.resolve({
+          data: { items: runs('current-earlier'), next_cursor: null },
+        });
+      }
+      if (String(url).includes('/runs?limit=5'))
+        return Promise.resolve({
+          data: { items: runs('current'), next_cursor: 'cursor' },
+        });
+      if (String(url).endsWith('/auto-sync'))
+        return Promise.resolve({
+          data: {
+            items: ['1', '2'].map(id => ({
+              id: `as-gitlab-${id}`,
+              provider: 'gitlab',
+              name: `Config ${id}`,
+              scan_params: {},
+            })),
+          },
+        });
+      return Promise.resolve({ data: {} });
+    });
+    render(
+      renderModal({
+        provider: 'gitlab',
+        integrationSubTab: 'manage',
+        autoSyncConfigId: 'as-gitlab-1',
+      })
+    );
+    await screen.findByText('current-0');
+    fireEvent.click(screen.getByRole('button', { name: 'Earlier runs' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Configuration' }), {
+      target: { value: 'as-gitlab-2' },
+    });
+    await screen.findByText('current-0');
+    expect(
+      screen.getByRole('button', { name: /Earlier runs/ })
+    ).not.toBeDisabled();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Configuration' }), {
+      target: { value: 'as-gitlab-1' },
+    });
+    await screen.findByText('current-0');
+    await act(async () =>
+      finishOld({ data: { items: runs('stale'), next_cursor: null } })
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Earlier runs' }));
+    await screen.findByText('current-earlier-0');
+    expect(screen.queryByText('stale-0')).not.toBeInTheDocument();
+    expect(paginationLoads).toBe(2);
   });
 
   it('hides the previous configuration history while another configuration loads', async () => {
