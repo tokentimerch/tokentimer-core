@@ -168,6 +168,8 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
   let stageCases, nativeConsole, nativeLifecycle, nativeDiscovery, bulkProof, resultGateway;
   const closedAgents=new WeakSet();
   const ownedJobIds=[], ownedCertificateIds=[], ownedWorkers=[], ownedBrowserResources=[], ownedBulkResources=[], ownedAdoptionResources=[], ownedRestartResources=[], ownedProfileResources=[], ownedLeaseResources=[];
+  const sessionCleanupFailures = new Set();
+  const sessionCleanupKinds = new Set(["workspace-discovery","audit-delete","workspace-delete","user-delete","pool-close"]);
   try {
   fs.mkdirSync(path.dirname(certPath), { mode: 0o700 });
   fs.mkdirSync(configDir, { mode: 0o700 });
@@ -260,7 +262,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       assert.ok(!serialized.includes(privateBodySentinel)&&!serialized.includes("PRIVATE KEY-----"),"Even a private-key body fragment or header must remain local");
       return true;
     });
-    publicSession = await require("./helpers/certops-api-fixture").createApiFixture(baseUrl);
+    publicSession = await require("./helpers/certops-api-fixture").createApiFixture(baseUrl, { onCleanupFailure: kind => { if (sessionCleanupKinds.has(kind)) sessionCleanupFailures.add(kind); } });
     await pool.query("INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES ($1,$2,'admin')", [workspaceId, publicSession.userId]);
     if(nativeDiscovery)await runScenario("real-native-unprivileged-file-discovery-refusals",async()=>{
       const preparedAt = new Date().toISOString();
@@ -720,7 +722,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       require("./helpers/certops-acme-key-reuse").assertOwnedMaterialRoot(workDir,workDirIdentity);
       fs.rmSync(workDir, { recursive: true, force: true });
     }, "fixture-owned-files-cleanup-failed");
-    if (cleanupErrors.length) { try { for (const kind of cleanupFailureKinds) await runScenario(`real-acme-diagnostic-${kind}`,async()=>{}); await runScenario("real-acme-diagnostic-fixture-cleanup-failed",async()=>{}); } catch {} throw new AggregateError([...(primaryError?[primaryError]:[]),...cleanupErrors], "Real ACME journey or owned fixture cleanup failed"); }
+    if (cleanupErrors.length) { try { for (const kind of cleanupFailureKinds) await runScenario(`real-acme-diagnostic-${kind}`,async()=>{}); for (const kind of sessionCleanupFailures) await runScenario(`real-acme-diagnostic-session-${kind}-failed`,async()=>{}); await runScenario("real-acme-diagnostic-fixture-cleanup-failed",async()=>{}); } catch {} throw new AggregateError([...(primaryError?[primaryError]:[]),...cleanupErrors], "Real ACME journey or owned fixture cleanup failed"); }
   }
 };
 
