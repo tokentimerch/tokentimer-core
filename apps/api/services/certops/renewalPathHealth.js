@@ -460,7 +460,7 @@ function classifyExecutors({
     return {
       renewalPathState: RENEWAL_PATH_STATES.UNAVAILABLE,
       renewalPathReason: RENEWAL_PATH_REASONS.WAITING_FOR_FRESH_PREFLIGHT,
-      renewalPathSummary: `The AD CS renewal for this certificate is waiting for a fresh CA check. No agent that renews it has run adcs-preflight against its CA in the last ${ADCS_PREFLIGHT_WINDOW_HOURS} hours, so the renewal starts once an agent passes the check.`,
+      renewalPathSummary: `The AD CS renewal needs a fresh CA check. No eligible agent has a matching safe result from the last ${ADCS_PREFLIGHT_WINDOW_HOURS} hours. TokenTimer requests a new check when renewal is due and waits for a safe result.`,
     };
   }
   if (onlineCount === total) {
