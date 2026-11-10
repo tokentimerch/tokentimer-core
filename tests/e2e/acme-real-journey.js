@@ -171,6 +171,12 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
   try {
   fs.mkdirSync(path.dirname(certPath), { mode: 0o700 });
   fs.mkdirSync(configDir, { mode: 0o700 });
+  if (acmeKind === "acme.sh") {
+    // Match the installed agent's owned acme.sh DNS hook layout.
+    const dnsApiDir = path.join(configDir, "acme", "acme.sh", "dnsapi");
+    fs.mkdirSync(dnsApiDir, { recursive: true, mode: 0o700 });
+    fs.symlinkSync(path.join(repoRoot, "packages/agent/bin/dns_certops.sh"), path.join(dnsApiDir, "dns_certops.sh"));
+  }
   barrierDirectory=path.join(workDir,"command-barrier");fs.mkdirSync(barrierDirectory,{mode:0o700});
   commandArgv=[process.execPath,path.join(repoRoot,"tests/e2e/helpers/certops-acme-command-barrier.js"),barrierDirectory,...commandArgv];
   const credentialsFile = path.join(configDir, "dns.json");
@@ -322,7 +328,10 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       assert.equal(nativeConsole,undefined,"Native lifecycle is a separate lane from read-only console");
       nativeLifecycle=await require("./helpers/certops-acme-browser-lifecycle").createLifecycleActor({pool,workspaceId,agentId,identity:publicSession,uiOrigin:process.env.CERTOPS_NATIVE_ACME_LIFECYCLE_URL,apiOrigin:process.env.CERTOPS_NATIVE_ACME_LIFECYCLE_API_URL,workDir,acmeKind,eabRef,ownedBrowserResources,registerOwnedJob:id=>{if(!ownedJobIds.includes(id))ownedJobIds.push(id);}});
     }
+    const concurrentIssues=(await pool.query("SELECT count(*)::int AS count FROM certificate_jobs WHERE workspace_id=$1 AND operation='issue' AND status IN ('pending','pending_approval','approved','claimed','running','awaiting_issuer')",[workspaceId])).rows[0].count;
+    assert.equal(concurrentIssues,0,"Controlled badNonce must target the only active issue job");
     const diagnosticProxyBefore = gateway.snapshot();
+    gateway.armBadNonceOnce();
     const issueInput={ operation: "issue", idempotencyKey: crypto.randomUUID(), payload: { sans: requestedNames, target: { type: "domain", reference: domain }, certPath, commandRef, caEndpoint, acmeKind, ...(eabRef ? { eabRef } : {}), dnsProvider: "pebble-challtestsrv", dnsZone: "example.test" } };
     let job;
     if(nativeLifecycle)job=(await nativeLifecycle.admit(issueInput)).publicJob;
@@ -388,6 +397,11 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     const evidence = await pool.query("SELECT 1 FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2", [workspaceId, jobId]);
     assert.ok(evidence.rows.length, "real agent evidence must persist in the API database");
     await runScenario("real-acme-diagnostic-issued-evidence-persisted",async()=>{});
+    await runScenario(stageFaults.NONCE_SCENARIO, async()=>{
+      const current=(await pool.query("SELECT j.id,j.status,j.operation,j.mode,j.source,j.subject_id,j.claim_id,j.attempt_count,a.agent_id FROM certificate_jobs j JOIN certops_agents a ON a.workspace_id=j.workspace_id AND a.id=j.claimed_by_agent_id WHERE j.workspace_id=$1 AND j.id=$2",[workspaceId,jobId])).rows[0];
+      const verificationCount=(await pool.query("SELECT count(*)::int AS count FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2 AND claim_id=$3 AND evidence_type='validation.passed' AND metadata->>'step'='verify'",[workspaceId,jobId,current?.claim_id])).rows[0].count;
+      stageFaults.verifyNonceRecovery({before:diagnosticProxyBefore,after:gateway.snapshot(),job:current,certificateId,agentId,verificationCount});
+    });
 
     const profile=(await pool.query("SELECT cp.id AS profile_id, cp.renew_before_days, cp.public_metadata, mc.not_after FROM managed_certificates mc JOIN certificate_profiles cp ON cp.id=mc.profile_id AND cp.workspace_id=mc.workspace_id WHERE mc.workspace_id=$1 AND mc.id=$2",[workspaceId,certificateId])).rows[0];
     assert.ok(profile?.public_metadata?.renewalProfile,"Actual successful issuance must derive a reusable execution profile");

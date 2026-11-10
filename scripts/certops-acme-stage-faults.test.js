@@ -78,3 +78,20 @@ test("unrelated order, premature finalize or forwarded fault cannot satisfy nati
     assert.throws(() => helper.verifyProof(value));
   }
 });
+
+
+test("controlled badNonce recovery binds one genuine issued current-claim job", () => {
+  const id = c => `${c.repeat(8)}-${c.repeat(4)}-4${c.repeat(3)}-8${c.repeat(3)}-${c.repeat(12)}`;
+  const before = { controlledBadNonceResponses:0, acceptedOrders:0, issuedResponses:0, unchangedBodies:0, perStage:{"new-order":{forwarded:0}} };
+  const after = { controlledBadNonceResponses:1, acceptedOrders:1, issuedResponses:1, unchangedBodies:3, perStage:{"new-order":{forwarded:1}}, transportFailed:false };
+  const job = { id:id("a"), claim_id:id("b"), status:"succeeded",operation:"issue",mode:"real",source:"api",subject_id:id("c"),agent_id:"owned-agent",attempt_count:1 };
+  const facts = { before,after,job,certificateId:id("c"),agentId:"owned-agent",verificationCount:1 };
+  assert.equal(helper.verifyNonceRecovery(facts),true);
+  for (const mutate of [
+    x=>{x.after.controlledBadNonceResponses=0}, x=>{x.after.controlledBadNonceResponses=2},
+    x=>{x.after.acceptedOrders=0}, x=>{x.after.acceptedOrders=2}, x=>{x.after.issuedResponses=0},
+    x=>{x.after.perStage["new-order"].forwarded=0}, x=>{x.after.transportFailed=true},
+    x=>{x.job.claim_id=null}, x=>{x.job.attempt_count=2}, x=>{x.job.agent_id="other"},
+    x=>{x.job.status="failed"}, x=>{x.verificationCount=0},
+  ]) { const bad=structuredClone(facts);mutate(bad);assert.throws(()=>helper.verifyNonceRecovery(bad)); }
+});

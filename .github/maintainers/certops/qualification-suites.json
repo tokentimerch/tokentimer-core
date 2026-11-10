@@ -303,6 +303,7 @@
         "real ACME: manual and default scheduler renewals reuse the same local key",
         "real-acme-new-order-transport-refusal",
         "real-acme-finalize-transport-refusal",
+        "real-acme-controlled-badnonce-retry",
         "real ACME: production worker default minute cron renews twice",
         "real-acme-public-bulk-two-native-renewals",
         "real-acme-public-native-renewal-setup",
@@ -839,7 +840,8 @@
       "source": "tests/e2e/certops-agent-e2e.test.js",
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
-        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence"
+        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence",
+        "real-acme-controlled-badnonce-retry"
       ],
       "requiredSourceGroup": "real-agent-acmesh-filesystem",
       "environmentGroup": "alpine-real-acme-certbot-environment"
@@ -8944,6 +8946,7 @@
       "real ACME: manual and default scheduler renewals reuse the same local key",
       "real-acme-new-order-transport-refusal",
       "real-acme-finalize-transport-refusal",
+      "real-acme-controlled-badnonce-retry",
       "real ACME: production worker default minute cron renews twice"
     ]
   }
