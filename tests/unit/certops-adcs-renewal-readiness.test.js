@@ -87,7 +87,7 @@ function fakePool({
       }
       if (sql.includes("certificate_issuer_versions v")) return { rows: versionRows };
       if (sql.includes("SELECT a.id")) return { rows: agentRows };
-      if (sql.includes("SELECT 1")) return { rows: declaredRows };
+      if (sql.includes("SELECT id") && sql.includes("FROM certops_agents")) return { rows: agentRows.length ? agentRows.map(({ id }) => ({ id })) : declaredRows };
       if (sql.includes("FROM certificate_enrollments")) return { rows: openRows };
       throw new Error(`unexpected query: ${sql.slice(0, 80)}`);
     },
@@ -101,10 +101,26 @@ function run(pool) {
     mode: "real",
     env: {},
     auditWriter: async () => {},
+    preflightDispatcher: async () => {},
   });
 }
 
 describe("AD CS automatic renewal agent readiness", () => {
+  it("requests a fresh CA check for an eligible agent when renewal is due and evidence is stale", async () => {
+    const pool = fakePool({ agentRows: [preflightEvidence({ createdAgoMs: 25 * HOUR_MS })] });
+    const requests = [];
+    await assert.rejects(createAutomaticAdcsRenewal({
+      dbPool: pool, certificate: CERTIFICATE, mode: "real", env: {},
+      auditWriter: async () => {},
+      preflightDispatcher: async (request) => { requests.push(request); },
+    }), { code: CERTOPS_ADCS_AGENT_NOT_PREPARED });
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].agentId, "agent-1");
+    assert.equal(requests[0].issuerId, "issuer-1");
+    assert.equal(requests[0].caConfig, CA_CONFIG);
+    assert.equal(requests[0].template, TEMPLATE);
+    assert.equal(requests[0].automatic, true);
+  });
   it("waits when a declaring agent has no qualifying adcs-preflight for this CA", async () => {
     const pool = fakePool({ declaredRows: [{ "?column?": 1 }] });
     await assert.rejects(run(pool), { code: CERTOPS_ADCS_AGENT_NOT_PREPARED });

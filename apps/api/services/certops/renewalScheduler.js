@@ -56,7 +56,7 @@ const {
   resolveRenewalPerCaCap,
 } = require("./renewalCapacity");
 const { writeAudit } = require("../audit");
-const { createEnrollment, findOpenEnrollment } = require("./certificateEnrollments");
+const { createEnrollment, findOpenEnrollment, dispatchPreflight } = require("./certificateEnrollments");
 const { validateAdcsRenewalProfile } = require("./adcsRenewalRules");
 const {
   loadCurrentAdcsIssuerVersion,
@@ -421,6 +421,7 @@ async function createAutomaticAdcsRenewal({
   mode,
   env,
   auditWriter,
+  preflightDispatcher = dispatchPreflight,
 }) {
   const issuer = await dbPool.query(
     `SELECT kind FROM certificate_issuers WHERE workspace_id = $1 AND id = $2`,
@@ -449,18 +450,34 @@ async function createAutomaticAdcsRenewal({
   });
   if (!agent) {
     const declared = await dbPool.query(
-      `SELECT 1
+      `SELECT id
          FROM certops_agents
         WHERE workspace_id = $1
           AND status = 'active'
+          AND platform = 'win32'
           AND declared_target_selectors @> jsonb_build_array($2::text)
+          AND supported_operations @> '["adcs-preflight"]'::jsonb
+        ORDER BY last_seen_at DESC NULLS LAST, id
         LIMIT 1`,
       [certificate.workspace_id, fields.target.reference],
     );
+    if (declared.rows[0]?.id && version?.confirmed_at && version?.ca_key_sha256 && version?.ca_config && version?.template) {
+      await preflightDispatcher({
+        client: dbPool,
+        workspaceId: certificate.workspace_id,
+        issuerId: certificate.profile_issuer_id,
+        agentId: declared.rows[0].id,
+        caConfig: version.ca_config,
+        template: version.template,
+        automatic: true,
+        confirmedAt: version.confirmed_at,
+        env,
+      });
+    }
     const error = new Error(
       declared.rows[0]
-        ? "no agent has a safe adcs-preflight for this CA within the preflight freshness window; run the CA check from the agent"
-        : "no active agent declares this AD CS renewal target",
+        ? "no agent has a safe adcs-preflight for this CA within the preflight freshness window"
+        : "no active Windows agent that supports AD CS preflight declares this renewal target",
     );
     error.code = declared.rows[0]
       ? CERTOPS_ADCS_AGENT_NOT_PREPARED

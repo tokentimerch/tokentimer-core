@@ -20,7 +20,7 @@ function assertSchema(validate, value, code) {
 const { writeAudit } = require("../audit");
 const { logger } = require("../../utils/logger");
 const { redactGenericSecrets } = require("../../utils/secretMaterial");
-const { createCertificateJob } = require("./jobs");
+const { createCertificateJob, TERMINAL_JOB_STATUSES } = require("./jobs");
 const { adcsCaBucket } = require("./renewalCapacity");
 const { lockWorkspaceForCertOpsSideEffect } = require("./workspaceKillSwitch");
 const {
@@ -214,13 +214,32 @@ function dispatchPreflight({
   createJob = createCertificateJob,
   audit = writeAudit,
   beforeLock,
+  automatic = false,
+  confirmedAt = null,
+  env = process.env,
 }) {
+  if (automatic && (!confirmedAt || !Number.isFinite(new Date(confirmedAt).getTime()))) {
+    throw serviceError("automatic preflight requires a confirmed issuer", "CERTOPS_ISSUER_REVALIDATION_REQUIRED");
+  }
   const db = dbOf(client);
   return withTransaction(db, async (tx) => {
+    if (automatic) await lockWorkspaceForCertOpsSideEffect({ client: tx, workspaceId, env });
     if (typeof beforeLock === "function") await beforeLock(tx);
     await tx.query("SELECT pg_advisory_xact_lock(hashtext($1::text))", [
       `adcs-preflight:${workspaceId}`,
     ]);
+    if (automatic) {
+      const existing = await tx.query(
+        `SELECT id FROM certificate_jobs
+          WHERE workspace_id = $1 AND operation = 'adcs-preflight'
+            AND subject_id = $2 AND assigned_agent_id = $3
+            AND created_at >= $5
+            AND (NOT (status = ANY($4::text[])) OR created_at > NOW() - INTERVAL '1 hour')
+          LIMIT 1`,
+        [workspaceId, String(issuerId), agentId, [...TERMINAL_JOB_STATUSES], confirmedAt],
+      );
+      if (existing.rows[0]) return null;
+    }
     const recent = await tx.query(
       `SELECT count(*)::int AS n
          FROM certificate_jobs
@@ -240,7 +259,7 @@ function dispatchPreflight({
       workspaceId,
       operation: "adcs-preflight",
       allowIssuerPreflight: true,
-      source: "api",
+      source: automatic ? "automation" : "api",
       subjectType: "external",
       subjectId: issuerId,
       assignedAgentId: agentId,

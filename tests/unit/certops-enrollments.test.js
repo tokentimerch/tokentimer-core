@@ -1415,6 +1415,64 @@ describe("enrollment rows", () => {
     );
   });
 
+  it("deduplicates automatic preflight requests inside the workspace lock", async () => {
+    let created = false;
+    const queries = [];
+    const db = { async query(sql) {
+      queries.push(sql);
+      if (sql.includes("FROM workspaces")) return { rows: [{ id: WORKSPACE, certops_paused: false }] };
+      if (sql.includes("SELECT id FROM certificate_jobs")) return { rows: [{ id: JOB_ID }] };
+      return { rows: [] };
+    } };
+    const result = await dispatchPreflight({
+      client: db, workspaceId: WORKSPACE, issuerId: ISSUER,
+      agentId: "22222222-2222-4222-8222-222222222222",
+      caConfig: "ca.example.com\\CA", template: "WebServer", automatic: true,
+      env: { CERTOPS_ENABLED: "true" }, confirmedAt: new Date(),
+      createJob: async () => { created = true; },
+    });
+    assert.equal(result, null);
+    assert.equal(created, false);
+    assert.ok(queries.some((sql) => sql.includes("pg_advisory_xact_lock")));
+    assert.ok(queries.some((sql) => sql.includes("FOR SHARE")));
+  });
+
+  it("does not schedule automatic preflight in a paused workspace", async () => {
+    const db = { async query(sql) {
+      if (sql.includes("FROM workspaces")) return { rows: [{ id: WORKSPACE, certops_paused: true }] };
+      return { rows: [] };
+    } };
+    await assert.rejects(dispatchPreflight({
+      client: db, workspaceId: WORKSPACE, issuerId: ISSUER,
+      agentId: "22222222-2222-4222-8222-222222222222",
+      caConfig: "ca.example.com\\CA", template: "WebServer", automatic: true,
+      env: { CERTOPS_ENABLED: "true" }, confirmedAt: new Date(),
+    }), { code: "CERTOPS_WORKSPACE_PAUSED" });
+  });
+
+  it("schedules one automatic read-only preflight using the existing issuer path", async () => {
+    const db = { async query(sql) {
+      if (sql.includes("FROM workspaces")) return { rows: [{ id: WORKSPACE, certops_paused: false }] };
+      if (sql.includes("SELECT id FROM certificate_jobs")) return { rows: [] };
+      if (sql.includes("SELECT count(*)")) return { rows: [{ n: 0 }] };
+      if (sql.includes("RETURNING preflight_seq")) return { rows: [{ preflight_seq: 1 }] };
+      return { rows: [] };
+    } };
+    let request;
+    const job = await dispatchPreflight({
+      client: db, workspaceId: WORKSPACE, issuerId: ISSUER,
+      agentId: "22222222-2222-4222-8222-222222222222",
+      caConfig: "ca.example.com\\CA", template: "WebServer", automatic: true,
+      env: { CERTOPS_ENABLED: "true" }, confirmedAt: new Date(), audit: async () => {},
+      createJob: async (options) => { request = options; return { id: JOB_ID }; },
+    });
+    assert.equal(job.id, JOB_ID);
+    assert.equal(request.source, "automation");
+    assert.equal(request.payload.action, "adcs-preflight");
+    assert.equal(request.payload.mode, "real");
+    assert.equal(request.assignedAgentId, "22222222-2222-4222-8222-222222222222");
+  });
+
   it("stores a preflight result only for the succeeded job's CA and template", async () => {
     const caConfig = "ca01.corp.example.com\\Corp Issuing CA 01";
     const template = "TokenTimerWebServer";
