@@ -647,9 +647,11 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       }
     }
     const leaseMilestones=[];
-    const leaseMilestoneNames=new Set(["lease-start","lease-armed","lease-job-admitted","lease-process-identified","lease-process-attached","lease-active-state-verified","lease-agent-retired","lease-process-exited","lease-arm-retained","lease-dns-clean","lease-cert-unchanged","lease-key-unchanged","lease-tls-unchanged","lease-final-state-verified","lease-owned-cleanup-completed"]);
+    const leaseMilestoneNames=new Set(["lease-start","lease-armed","lease-job-admitted","lease-receipt-observed","lease-process-identified","lease-process-attached","lease-active-state-verified","lease-agent-retired","lease-process-exited","lease-arm-retained","lease-dns-clean","lease-cert-unchanged","lease-key-unchanged","lease-tls-unchanged","lease-final-state-verified","lease-owned-cleanup-completed"]);
+    for (const status of ["pending","pending-approval","approved","claimed","running","succeeded","failed","rejected","cancelled","blocked","orphaned-unknown-effect","awaiting-issuer","other","missing","diagnostic-unavailable"]) leaseMilestoneNames.add(`lease-job-${status}`);
+    for (const state of ["running","exited","unknown"]) leaseMilestoneNames.add(`lease-agent-${state}`);
     try {
-      await require("./helpers/certops-acme-lease-loss")({pool,workspaceId,agentId,agent,publicSession,certificateId,certPath,keyPath,barrierDirectory,ownedJobIds,ownedLeaseResources,waitUntil,verifyDnsCleanup,servedFingerprint,onMilestone:name=>{if(leaseMilestoneNames.has(name)&&leaseMilestones.length<15)leaseMilestones.push(`real-acme-diagnostic-${name}`);}});
+      await require("./helpers/certops-acme-lease-loss")({pool,workspaceId,agentId,agent,publicSession,certificateId,certPath,keyPath,barrierDirectory,ownedJobIds,ownedLeaseResources,waitUntil,verifyDnsCleanup,servedFingerprint,onMilestone:name=>{if(leaseMilestoneNames.has(name)&&leaseMilestones.length<20)leaseMilestones.push(`real-acme-diagnostic-${name}`);}});
     } catch(error) {
       try { for(const name of leaseMilestones)await runScenario(name,async()=>{}); } catch { /* Preserve the original failure and owned cleanup. */ }
       throw error;
