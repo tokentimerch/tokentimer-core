@@ -57,7 +57,10 @@ test("deleting a creator nullifies only its retained closed period attribution",
     await db.query("CREATE TRIGGER aaa_period_tamper BEFORE UPDATE ON certops_management_periods FOR EACH ROW EXECUTE FUNCTION pg_temp.alter_period_during_fk()");
     await rejectUpdate("DELETE FROM users WHERE id=$1", [users[1].id]);
     await db.query("DROP TRIGGER aaa_period_tamper ON certops_management_periods");
+    await db.query(`GRANT DELETE ON public.users TO "${restrictedRole}"`);
+    await db.query(`SET LOCAL ROLE "${restrictedRole}"`);
     await db.query("DELETE FROM users WHERE id=$1", [users[1].id]);
+    await db.query("RESET ROLE");
     const row=(await db.query("SELECT created_by,to_jsonb(p)-'created_by' AS state FROM certops_management_periods p WHERE id=$1", [period])).rows[0];
     assert.equal(row.created_by,null); assert.deepEqual(row.state,before);
     await rejectUpdate("UPDATE certops_management_periods SET ended_reason='rewritten' WHERE id=$1", [period]);
