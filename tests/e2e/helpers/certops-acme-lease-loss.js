@@ -10,6 +10,22 @@ const assert = require("node:assert/strict"),
   crypto = require("node:crypto");
 const attachment = require("./certops-acme-lease-attachment");
 const active = new Set();
+function verifyFencedJob(fenced, jobId, row) {
+  assert.ok(fenced && Array.isArray(fenced.cancelledJobIds) && Array.isArray(fenced.orphanedJobIds));
+  const cancelled = fenced.cancelledJobIds.filter(id => id === jobId).length;
+  const orphaned = fenced.orphanedJobIds.filter(id => id === jobId).length;
+  assert.equal(cancelled + orphaned, 1, "Retirement must fence the exact owned job once");
+  assert.ok(row);
+  if (cancelled) {
+    assert.equal(row.status, "cancelled");
+    assert.equal(row.error_code, "CERTOPS_AGENT_FORCE_RETIRED");
+  } else {
+    assert.equal(row.status, "orphaned_unknown_effect");
+    assert.equal(row.error_code, "CERTOPS_AGENT_FORCE_RETIRED_UNKNOWN_EFFECT");
+    assert.equal(row.needs_operator_reconciliation, true);
+    assert.equal(row.reconciliation_reason, "Qualification native mutation-time lease loss");
+  }
+}
 function measureOwnedProcess(proof, { token, agent, barrierDirectory }) {
   assert.equal(proof.token, token);
   assert.ok(Number.isInteger(proof.pid) && proof.pid > 0);
@@ -144,15 +160,13 @@ module.exports = async function qualifyLeaseLoss({
     onMilestone("lease-key-unchanged");
     assert.equal(await servedFingerprint(), fingerprint);
     onMilestone("lease-tls-unchanged");
-    assert.equal(
-      (
-        await pool.query(
-          "SELECT status FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",
-          [workspaceId, jobId],
-        )
-      ).rows[0].status,
-      "cancelled",
-    );
+    const terminal = (await pool.query(
+      "SELECT status,error_code,needs_operator_reconciliation,reconciliation_reason FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",
+      [workspaceId, jobId],
+    )).rows[0];
+    // Use the retirement transaction's fenced list: a claimed job can become
+    // running after the earlier observation and before retirement commits.
+    verifyFencedJob(retired.body.fenced, jobId, terminal);
     onMilestone("lease-final-state-verified");
   } catch (error) {
     primary = error;
@@ -178,6 +192,7 @@ module.exports = async function qualifyLeaseLoss({
   }
   if (primary) throw primary;
 };
+module.exports.verifyFencedJob = verifyFencedJob;
 module.exports.assertCleanupSafe = function assertCleanupSafe(root) {
   assert.equal(
     active.has(path.resolve(root)),
