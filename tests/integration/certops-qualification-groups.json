@@ -31,6 +31,7 @@
       {
         "file": "certops-adcs-readiness.test.js",
         "names": [
+          "queues only one preflight when a due renewal lacks fresh evidence",
           "qualifies an agent whose safe preflight matches the confirmed CA, template, and key",
           "does not qualify a preflight older than the 24-hour freshness bound",
           "qualifies a preflight 23 hours old, inside the freshness bound",
