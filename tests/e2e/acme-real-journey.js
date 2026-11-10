@@ -644,7 +644,15 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
         throw error;
       }
     }
-    await require("./helpers/certops-acme-lease-loss")({pool,workspaceId,agentId,agent,publicSession,certificateId,certPath,keyPath,barrierDirectory,ownedJobIds,ownedLeaseResources,waitUntil,verifyDnsCleanup,servedFingerprint});
+    const leaseMilestones=[];
+    const leaseMilestoneNames=new Set(["lease-start","lease-armed","lease-job-admitted","lease-process-identified","lease-process-attached","lease-active-state-verified","lease-agent-retired","lease-process-exited","lease-final-state-verified","lease-owned-cleanup-completed"]);
+    try {
+      await require("./helpers/certops-acme-lease-loss")({pool,workspaceId,agentId,agent,publicSession,certificateId,certPath,keyPath,barrierDirectory,ownedJobIds,ownedLeaseResources,waitUntil,verifyDnsCleanup,servedFingerprint,onMilestone:name=>{if(leaseMilestoneNames.has(name)&&leaseMilestones.length<10)leaseMilestones.push(`real-acme-diagnostic-${name}`);}});
+    } catch(error) {
+      try { for(const name of leaseMilestones)await runScenario(name,async()=>{}); } catch { /* Preserve the original failure and owned cleanup. */ }
+      throw error;
+    }
+    await runScenario("real-acme-diagnostic-lease-completed",async()=>{});
     if (eabSecret) {
       const stored = await pool.query("SELECT metadata,redacted_output FROM certificate_evidence WHERE workspace_id=$1", [workspaceId]);
       const jobs = await pool.query("SELECT payload,result_metadata FROM certificate_jobs WHERE workspace_id=$1", [workspaceId]);
@@ -697,7 +705,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     await cleanup(()=>{if(barrierDirectory){for(const entry of fs.readdirSync("/proc")){if(!/^\d+$/.test(entry))continue;let argv;try{argv=fs.readFileSync(`/proc/${entry}/cmdline`, "utf8").split("\0");}catch(error){if(["ENOENT","ESRCH","EACCES"].includes(error.code))continue;throw error;}assert.ok(!(argv.includes(path.join(repoRoot,"tests/e2e/helpers/certops-acme-command-barrier.js"))&&argv.includes(barrierDirectory)),"Preserve records while an owned ACME command remains alive");}}});
     // Preserve native private material AND public ownership records if any
     // retained consumer/transport has not positively drained.
-    if (cleanupErrors.length) throw new AggregateError([...(primaryError?[primaryError]:[]),...cleanupErrors], "Owned ACME resource drainage unconfirmed; preserve fixture state");
+    if (cleanupErrors.length) { try { await runScenario("real-acme-diagnostic-resource-drain-failed",async()=>{}); } catch {} throw new AggregateError([...(primaryError?[primaryError]:[]),...cleanupErrors], "Owned ACME resource drainage unconfirmed; preserve fixture state"); }
     for(const ownedJobId of ownedJobIds) {
       await cleanup(() => pool.query("DELETE FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2", [workspaceId, ownedJobId]));
       await cleanup(() => pool.query("DELETE FROM certificate_job_log WHERE workspace_id=$1 AND job_id=$2", [workspaceId, ownedJobId]));
@@ -712,7 +720,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       require("./helpers/certops-acme-key-reuse").assertOwnedMaterialRoot(workDir,workDirIdentity);
       fs.rmSync(workDir, { recursive: true, force: true });
     });
-    if (cleanupErrors.length) throw new AggregateError([...(primaryError?[primaryError]:[]),...cleanupErrors], "Real ACME journey or owned fixture cleanup failed");
+    if (cleanupErrors.length) { try { await runScenario("real-acme-diagnostic-fixture-cleanup-failed",async()=>{}); } catch {} throw new AggregateError([...(primaryError?[primaryError]:[]),...cleanupErrors], "Real ACME journey or owned fixture cleanup failed"); }
   }
 };
 

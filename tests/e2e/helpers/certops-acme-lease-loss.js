@@ -51,7 +51,9 @@ module.exports = async function qualifyLeaseLoss({
   waitUntil,
   verifyDnsCleanup,
   servedFingerprint,
+  onMilestone = () => {},
 }) {
+  onMilestone("lease-start");
   assert.equal(process.platform, "linux");
   const beforeCert = fs.readFileSync(certPath),
     beforeKey = fs.readFileSync(keyPath),
@@ -64,6 +66,7 @@ module.exports = async function qualifyLeaseLoss({
   assert.ok(Array.isArray(ownedLeaseResources));
   active.add(path.resolve(barrierDirectory));
   fs.writeFileSync(arm, JSON.stringify({ token }), { flag: "wx", mode: 0o600 });
+  onMilestone("lease-armed");
   let proof, primary, owner;
   try {
     const created = await publicSession.request(
@@ -79,12 +82,14 @@ module.exports = async function qualifyLeaseLoss({
     assert.equal(created.status, 201);
     const jobId = created.body.job.id;
     ownedJobIds.push(jobId);
+    onMilestone("lease-job-admitted");
     await waitUntil(() => fs.existsSync(receipt), 60000);
     proof = measureOwnedProcess(JSON.parse(fs.readFileSync(receipt, "utf8")), {
       token,
       agent,
       barrierDirectory,
     });
+    onMilestone("lease-process-identified");
     owner = attachment.attach({
       proof,
       token,
@@ -94,6 +99,7 @@ module.exports = async function qualifyLeaseLoss({
       waitUntil,
     });
     await owner.ready;
+    onMilestone("lease-process-attached");
     assert.equal(agent.exitCode, null);
     assert.equal(agent.signalCode, null);
     const active = (
@@ -116,13 +122,16 @@ module.exports = async function qualifyLeaseLoss({
     ).rows[0];
     assert.ok(actualAgent);
     assert.equal(active.claimed_by_agent_id, actualAgent.id);
+    onMilestone("lease-active-state-verified");
     const retired = await publicSession.request(
       `/api/v1/workspaces/${workspaceId}/certops/agents/${actualAgent.id}/retire`,
       "POST",
       { force: true, reason: "Qualification native mutation-time lease loss" },
     );
     assert.equal(retired.status, 200);
+    onMilestone("lease-agent-retired");
     await owner.waitForNativeExit();
+    onMilestone("lease-process-exited");
     // The arm remains present throughout: only native lease-abort cancellation,
     // not a fixture release, can terminate this genuine executing command.
     assert.equal(JSON.parse(fs.readFileSync(arm, "utf8")).token, token);
@@ -139,6 +148,7 @@ module.exports = async function qualifyLeaseLoss({
       ).rows[0].status,
       "cancelled",
     );
+    onMilestone("lease-final-state-verified");
   } catch (error) {
     primary = error;
   } finally {
@@ -151,6 +161,7 @@ module.exports = async function qualifyLeaseLoss({
       await owner.stopAndDrain();
       owner.removeOwnedBarriersAndRelease();
       active.delete(path.resolve(barrierDirectory));
+      onMilestone("lease-owned-cleanup-completed");
     } catch (error) {
       failures.push(error);
     }
